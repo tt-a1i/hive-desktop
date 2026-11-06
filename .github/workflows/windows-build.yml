@@ -63,6 +63,7 @@ jobs:
       - name: Extract final zip
         run: Expand-Archive -Path target/hive-desktop-windows-portable.zip -DestinationPath target/portable-windows-extracted
       - name: Smoke extracted runtime and PTY
+        timeout-minutes: 5
         run: node scripts/check-package.mjs --bundle target/portable-windows-extracted
       - name: Upload portable desktop
         uses: actions/upload-artifact@v4
