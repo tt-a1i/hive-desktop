@@ -156,7 +156,6 @@ impl HiveApp {
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
         self.open_request += 1;
         self.unread.remove(&id);
-        self.optimistic_users.remove(&id);
         self.choosing_model = false;
         let request = self.open_request;
         if let Some(session) = self.sessions.iter().find(|s| s.id == id) {
@@ -197,36 +196,7 @@ impl HiveApp {
                         this.model = open.model;
                         this.event_sequence = open.event_sequence;
                         for (i, message) in open.history.into_iter().enumerate() {
-                            let text = message_text(&message);
-                            if text.trim().is_empty() {
-                                continue;
-                            }
-                            let message_id = if message["role"] == "toolResult" {
-                                message["toolCallId"].as_str().map(String::from)
-                            } else {
-                                None
-                            }
-                            .unwrap_or_else(|| open.history_message_ids[i].clone());
-                            if message["role"] == "toolResult" {
-                                this.upsert_tool(
-                                    message_id,
-                                    message["toolName"].as_str().unwrap_or("工具").into(),
-                                    if message["isError"].as_bool().unwrap_or(false) {
-                                        "失败"
-                                    } else {
-                                        "完成"
-                                    },
-                                    text,
-                                    cx,
-                                );
-                            } else {
-                                this.push_message(
-                                    message_id,
-                                    message["role"].as_str().unwrap_or("message").into(),
-                                    text,
-                                    cx,
-                                );
-                            }
+                            this.receive_message(open.history_message_ids[i].clone(), &message, cx);
                         }
                         if let Some(active) = open.active_message {
                             this.upsert(

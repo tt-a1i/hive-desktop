@@ -181,7 +181,13 @@ export function createStructuredLifecycle(
 					writeToRun: (target, text) => {
 						if (target !== runId)
 							return Promise.reject(new Error("Recovery target run mismatch"));
-						recoveryWrite = run.handle!.deliver(text);
+						recoveryWrite = run.handle!.deliver(text, {
+							presentation: {
+								version: 1,
+								origin: "recovery",
+								displayText: "已恢复会话，继续处理未完成的工作。",
+							},
+						});
 						return recoveryWrite;
 					},
 				});

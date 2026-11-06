@@ -8,7 +8,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "check:hive": "tsx checks/hive-host.ts",
     "check:runtime": "pnpm build && tsx checks/runtime.ts",
-    "check:team": "tsx checks/delivery-queue.ts && tsx checks/structured-runtime.ts && tsx checks/team-tool.ts && tsx checks/team-runtime.ts",
+    "check:team": "tsx checks/delivery-queue.ts && tsx checks/pi-delivery.ts && tsx checks/structured-runtime.ts && tsx checks/team-tool.ts && tsx checks/team-runtime.ts",
     "dev": "tsx src/main.ts"
   },
   "dependencies": {

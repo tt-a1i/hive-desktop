@@ -75,7 +75,7 @@ export class Chats implements StructuredSessionPort {
       const queue = new DeliveryQueue({
         directory: this.queueDir, sessionId: record.id, startPaused: true,
         completedIds: () => handle.completedDeliveryIds(),
-        execute: item => item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id }) : handle.addContext(item.text),
+        execute: item => item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text),
         onError: error => { if (!chat?.aborted) this.event(record.id, { type: 'error', sessionId: record.id, message: error.message }); },
         onState: busy => {
           this.event(record.id, { type: 'state', sessionId: record.id, busy, pending: queue.pending.length });
@@ -144,7 +144,7 @@ export class Chats implements StructuredSessionPort {
           const startupContext = text;
           this.index.save({ ...this.index.get(id), startupContext });
           await chat.handle.addContext(startupContext);
-        } else await chat.queue.enqueue(text);
+        } else await chat.queue.enqueue(text, true, options?.presentation);
       },
       ready: () => chat.queue.resume(),
       stop: () => this.stopLive(id, chat),
@@ -195,7 +195,9 @@ export class Chats implements StructuredSessionPort {
       if (record.agentId === `${record.workspaceId}:orchestrator`) {
         await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/user-input`, { text });
       } else {
-        await this.runtime.deliverSystemMessageToAgent(record.workspaceId, record.agentId!, text, { requireActiveRun: true });
+        await this.runtime.deliverSystemMessageToAgent(record.workspaceId, record.agentId!, text, {
+          requireActiveRun: true, presentation: { version: 1, origin: 'user', displayText: text },
+        });
       }
       return { accepted: true, session: this.index.get(id) };
     });

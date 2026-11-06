@@ -15,6 +15,7 @@ import type {
 	HiveAgentRuntime,
 	HiveAgentRuntimeFactoryContext,
 } from "./hive-runtime-contract.js";
+import type { DeliveryPresentation } from "./delivery-presentation.js";
 import { createStructuredLifecycle } from "./structured-runtime-lifecycle.js";
 import type {
 	StructuredRun,
@@ -40,7 +41,11 @@ export function createStructuredRuntime(
 		workspaceId: string,
 		agentId: string,
 		text: string,
-		options: { requireActiveRun?: boolean; beforeWrite?: () => boolean } = {},
+		options: {
+			requireActiveRun?: boolean;
+			beforeWrite?: () => boolean;
+			presentation?: DeliveryPresentation;
+		} = {},
 	): Promise<boolean> => {
 		const run = lifecycle.active(workspaceId, agentId);
 		if (!run) {
@@ -53,7 +58,9 @@ export function createStructuredRuntime(
 			if (run.terminal || run.live.userStopped || !run.handle)
 				throw new PtyInactiveError(`No active run for agent: ${agentId}`);
 			if (options.beforeWrite?.() === false) return false;
-			await run.handle.deliver(text);
+			await run.handle.deliver(text, {
+				presentation: options.presentation ?? { version: 1, origin: "system", displayText: text },
+			});
 			return true;
 		};
 		const result = run.queue.then(deliver, deliver);
@@ -181,7 +188,7 @@ export function createStructuredRuntime(
 							artifacts,
 							context.getFlags(),
 						),
-						input,
+						{ ...input, presentation: { version: 1, origin: "system", displayText: text, workerName } },
 					).then(() => {})
 				: fallback.writeStatusPrompt(
 						workspaceId,
@@ -238,7 +245,10 @@ export function createStructuredRuntime(
 				ids ? (digest?.text ?? null) : null,
 			);
 			try {
-				return write(workspaceId, workerId, payload, { requireActiveRun: true })
+				return write(workspaceId, workerId, payload, {
+					requireActiveRun: true,
+					presentation: { version: 1, origin: "dispatch", displayText: text, dispatchId, workerName: from },
+				})
 					.then(() => {})
 					.catch((error) => {
 						rollback();
@@ -255,7 +265,7 @@ export function createStructuredRuntime(
 						workspaceId,
 						workerId,
 						buildWorkerCancelPayload(dispatchId, reason),
-						input,
+						{ ...input, presentation: { version: 1, origin: "cancel", displayText: reason, dispatchId } },
 					).then(() => {})
 				: fallback.writeCancelPrompt(
 						workspaceId,
@@ -272,6 +282,7 @@ export function createStructuredRuntime(
 						workspaceId,
 						orchestrator(workspaceId),
 						buildOrchestratorUserInputPayload(text, context.getFlags()),
+						{ presentation: { version: 1, origin: "user", displayText: text } },
 					),
 				);
 			else fallback.writeUserInputPrompt(workspaceId, text);
@@ -287,7 +298,7 @@ export function createStructuredRuntime(
 						workspaceId,
 						orchestrator(workspaceId),
 						buildOrchestratorUserInputPayload(text, context.getFlags()),
-						input,
+						{ ...input, presentation: { version: 1, origin: "user", displayText: text } },
 					).then(() => {})
 				: fallback.deliverUserInputToOrchestrator(workspaceId, text, input);
 		},

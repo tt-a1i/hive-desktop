@@ -1,12 +1,30 @@
 import { randomUUID } from 'node:crypto';
-import { createAgentSession, SessionManager } from '@earendil-works/pi-coding-agent';
+import { createAgentSession } from '@earendil-works/pi-coding-agent';
+import { createDesktopSessionManager } from './pi-session-manager.js';
+import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
 import type { PiSessionHandle, PiSessionOptions } from './types.js';
+
+type DeliveryMetadata = DeliveryPresentation & { deliveryId: string };
+
+function deliveryMetadata(message: unknown): DeliveryMetadata | undefined {
+  if (typeof message !== 'object' || message === null || !('role' in message) || message.role !== 'custom'
+    || !('customType' in message) || message.customType !== 'hive-delivery' || !('details' in message)) return;
+  const details = message.details;
+  if (!isDeliveryPresentation(details) || !('deliveryId' in details) || typeof details.deliveryId !== 'string'
+    || details.deliveryId.length === 0) return;
+  return { version: 1, origin: details.origin, displayText: details.displayText, deliveryId: details.deliveryId,
+    ...(details.dispatchId !== undefined && { dispatchId: details.dispatchId }),
+    ...(details.workerName !== undefined && { workerName: details.workerName }) };
+}
+
+function presentedMessage<T>(message: T): T | (T & { presentation: DeliveryMetadata }) {
+  const presentation = deliveryMetadata(message);
+  return presentation ? { ...message, presentation } : message;
+}
 
 /** Uses Pi's normal resource loader, user settings, credentials and tool defaults. */
 export async function createPiSession(options: PiSessionOptions): Promise<PiSessionHandle> {
-  const manager = options.sessionFile
-    ? SessionManager.open(options.sessionFile, options.sessionDir)
-    : SessionManager.create(options.cwd, options.sessionDir);
+  const manager = createDesktopSessionManager(options.cwd, options.sessionDir, options.sessionFile);
   const { session } = await createAgentSession({
     cwd: options.cwd,
     ...(options.agentDir !== undefined && { agentDir: options.agentDir }),
@@ -20,6 +38,8 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const messageIds = new WeakMap<object, string>();
   const idForMessage = (message: (typeof session.messages)[number]): string => {
     if (message.role === 'toolResult') return message.toolCallId;
+    const delivery = deliveryMetadata(message);
+    if (delivery) return delivery.deliveryId;
     let id = messageIds.get(message);
     if (!id) {
       id = randomUUID();
@@ -27,7 +47,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     }
     return id;
   };
-  let active: { cancelled: boolean; done: Promise<void>; finalError: string | undefined; sdkAborted: boolean; userReceived: boolean } | undefined;
+  let active: { cancelled: boolean; done: Promise<void>; finalError: string | undefined; sdkAborted: boolean; deliveryId: string | undefined; deliveryReceived: boolean } | undefined;
   let disposed = false;
   const unsubscribe = session.subscribe((event) => {
     switch (event.type) {
@@ -58,9 +78,10 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
         break;
       }
       case 'message_end':
-        if (event.message.role === 'user') {
-          if (active) active.userReceived = true;
-          options.onEvent({ type: 'message_end', sessionId, messageId: idForMessage(event.message), message: event.message });
+        if (event.message.role === 'user' || (event.message.role === 'custom' && event.message.customType === 'hive-delivery')) {
+          const delivery = deliveryMetadata(event.message);
+          if (active && delivery && delivery.deliveryId === active.deliveryId) active.deliveryReceived = true;
+          options.onEvent({ type: 'message_end', sessionId, messageId: idForMessage(event.message), message: presentedMessage(event.message) });
         }
         if (event.message.role === 'assistant') {
           const finalId = messageId ?? idForMessage(event.message);
@@ -123,7 +144,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       } else if (current && streaming?.role === 'assistant') {
         current = { messageId: current.messageId, message: streaming };
       }
-      return { history, historyMessageIds: history.map(idForMessage),
+      return { history: history.map(presentedMessage), historyMessageIds: history.map(idForMessage),
         ...(current !== undefined && { activeMessage: current }) };
     },
     async addContext(text, customType = 'hive-context') {
@@ -141,17 +162,22 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     prompt(text, promptOptions) {
       if (disposed) return Promise.reject(new Error('Pi session is disposed'));
       if (active) return Promise.reject(new Error('Pi session is already processing a prompt'));
-      const run = { cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, userReceived: false };
+      const run = { cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, deliveryId: promptOptions?.deliveryId, deliveryReceived: false };
       active = run;
       run.done = Promise.resolve().then(async () => {
         try {
-          if (promptOptions?.automated) await session.sendUserMessage(text);
+          if (promptOptions?.deliveryId) {
+            const presentation: DeliveryPresentation = isDeliveryPresentation(promptOptions.presentation)
+              ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text };
+            await session.sendCustomMessage({ customType: 'hive-delivery', content: text, display: false,
+              details: { ...presentation, deliveryId: promptOptions.deliveryId } }, { triggerTurn: true });
+          } else if (promptOptions?.automated) await session.sendUserMessage(text);
           else await session.prompt(text);
           if (run.finalError && !run.cancelled && !promptOptions?.deliveryId) options.onEvent({ type: 'error', sessionId, message: run.finalError });
           if (promptOptions?.deliveryId) {
             if (run.cancelled || run.sdkAborted) throw new Error('Pi delivery was aborted');
             if (run.finalError) throw new Error(run.finalError);
-            if (!run.userReceived) throw new Error('Pi delivery was not added to the conversation');
+            if (!run.deliveryReceived) throw new Error('Pi delivery was not added to the conversation');
             manager.appendCustomEntry('hive-delivery-completed', { id: promptOptions.deliveryId });
           }
         } catch (error) {

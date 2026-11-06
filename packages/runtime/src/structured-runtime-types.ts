@@ -1,3 +1,4 @@
+import type { DeliveryPresentation } from "./delivery-presentation.js";
 import type {
 	AgentLaunchConfigInput,
 	LiveAgentRun,
@@ -10,7 +11,7 @@ export interface StructuredSessionHandle {
 	/** Whether the selected backend session actually retained Hive context. */
 	resumed?: boolean;
 	/** Acceptance into the backend queue, not completion of the model turn. */
-	deliver(text: string, options?: { triggerTurn?: boolean }): Promise<void>;
+	deliver(text: string, options?: { triggerTurn?: boolean; presentation?: DeliveryPresentation }): Promise<void>;
 	/** Resume durable queued work after Hive startup/recovery becomes ready. */
 	ready?(): void;
 	stop(): Promise<void>;

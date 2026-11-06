@@ -1,5 +1,5 @@
 use crate::{
-    app::{HiveApp, Message, ToolPresentation},
+    app::{DeliveryCard, HiveApp, Message, ToolPresentation},
     protocol::*,
 };
 use gpui_kit::{component::text::TextViewState, *};
@@ -26,11 +26,6 @@ impl HiveApp {
         self.busy.insert(id.clone());
         self.input
             .update(cx, |state, cx| state.set_value("", window, cx));
-        let optimistic_id = format!("local-{}-{}", self.open_request, self.messages.len());
-        self.optimistic_users
-            .insert(id.clone(), optimistic_id.clone());
-        self.push_message(optimistic_id, "user".into(), text.clone(), cx);
-        self.scroll.scroll_to_bottom();
         let window = window.window_handle();
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -40,18 +35,28 @@ impl HiveApp {
                 match result {
                     Err(error) => {
                         this.busy.remove(&id);
-                        if let Some(optimistic_id) = this.optimistic_users.remove(&id) {
-                            if this.session.as_ref().is_some_and(|s| s.id == id) {
-                                this.messages.retain(|m| m.id != optimistic_id);
-                                if this.input.read(cx).value().is_empty() {
-                                    let input = this.input.clone();
-                                    let _ = window.update(cx, |_, window, cx| {
-                                        input.update(cx, |state, cx| {
-                                            state.set_value(text.clone(), window, cx)
-                                        });
+                        if this.session.as_ref().is_some_and(|s| s.id == id)
+                            && this.input.read(cx).value().is_empty()
+                        {
+                            let input = this.input.clone();
+                            if window
+                                .update(cx, |_, window, cx| {
+                                    input.update(cx, |state, cx| {
+                                        state.set_value(text.clone(), window, cx)
                                     });
-                                }
+                                })
+                                .is_err()
+                            {
+                                this.failed_drafts
+                                    .entry(id.clone())
+                                    .or_default()
+                                    .push(text.clone());
                             }
+                        } else {
+                            this.failed_drafts
+                                .entry(id.clone())
+                                .or_default()
+                                .push(text.clone());
                         }
                         this.error = Some(error);
                     }
@@ -142,7 +147,10 @@ impl HiveApp {
         }
     }
     pub fn push_message(&mut self, id: String, role: String, text: String, cx: &mut Context<Self>) {
-        if !matches!(role.as_str(), "user" | "assistant" | "tool" | "toolResult") {
+        if !matches!(
+            role.as_str(),
+            "user" | "assistant" | "tool" | "toolResult" | "notice"
+        ) {
             return;
         }
         let markdown = cx.new(|cx| TextViewState::markdown(&text, cx));
@@ -152,7 +160,73 @@ impl HiveApp {
             text,
             markdown,
             tool: None,
+            delivery: None,
+            explicit_user: false,
         });
+    }
+    // Both snapshots and live events use the same provenance contract. Never infer
+    // a source from message text: users may paste a complete Hive envelope.
+    pub(crate) fn receive_message(&mut self, id: String, message: &Value, cx: &mut Context<Self>) {
+        let role = message["role"].as_str().unwrap_or("assistant");
+        let text = message_text(message);
+        if role == "custom" && message["customType"] == "hive-delivery" {
+            let presentation = delivery_presentation(message);
+            let id = presentation
+                .as_ref()
+                .map(|p| p.delivery_id.clone())
+                .unwrap_or(id);
+            let explicit_user = presentation
+                .as_ref()
+                .is_some_and(|p| p.origin == DeliveryOrigin::User);
+            let display = presentation
+                .as_ref()
+                .map(|p| p.display_text.clone())
+                .unwrap_or_else(|| "此消息缺少有效的来源记录。展开查看原文。".into());
+            let heading = presentation
+                .as_ref()
+                .map(|p| p.origin.heading())
+                .unwrap_or("来源未记录");
+            let expanded = self
+                .messages
+                .iter()
+                .find(|m| m.id == id)
+                .and_then(|m| m.delivery.as_ref())
+                .is_some_and(|d| d.expanded);
+            // Notice is a rendered role, never an engine role.
+            self.upsert(
+                id.clone(),
+                if explicit_user { "user" } else { "notice" },
+                display,
+                false,
+                cx,
+            );
+            if let Some(rendered) = self.messages.iter_mut().find(|m| m.id == id) {
+                rendered.explicit_user = explicit_user;
+                rendered.delivery = if explicit_user {
+                    None
+                } else {
+                    Some(DeliveryCard {
+                        heading: heading.into(),
+                        raw: text,
+                        expanded,
+                    })
+                };
+            }
+        } else if role == "toolResult" {
+            self.upsert_tool(
+                message["toolCallId"].as_str().unwrap_or(&id).into(),
+                message["toolName"].as_str().unwrap_or("工具").into(),
+                if message["isError"].as_bool().unwrap_or(false) {
+                    "失败"
+                } else {
+                    "完成"
+                },
+                text,
+                cx,
+            );
+        } else {
+            self.upsert(id, role, text, false, cx);
+        }
     }
     pub(crate) fn upsert_tool(
         &mut self,
@@ -230,7 +304,6 @@ impl HiveApp {
         }
         // GPUI stores a positive max_offset and a negative current offset.
         let follow = self.scroll.max_offset().y + self.scroll.offset().y <= px(4.);
-        let event_session_id = event.session_id().to_string();
         match event {
             PiEvent::State { .. } => {}
             PiEvent::AssistantDelta {
@@ -248,19 +321,7 @@ impl HiveApp {
                 message,
                 ..
             } => {
-                let role = message["role"].as_str().unwrap_or("assistant");
-                if role == "user" {
-                    if let Some(optimistic_id) =
-                        self.optimistic_users.remove(event_session_id.as_str())
-                    {
-                        if let Some(optimistic) =
-                            self.messages.iter_mut().find(|m| m.id == optimistic_id)
-                        {
-                            optimistic.id = message_id.clone();
-                        }
-                    }
-                }
-                self.upsert(message_id, role, message_text(&message), false, cx);
+                self.receive_message(message_id, &message, cx);
             }
             PiEvent::ToolStart {
                 tool_call_id,
@@ -333,4 +394,42 @@ pub(crate) fn message_text(message: &Value) -> String {
                 .join("\n\n")
         })
         .unwrap_or_else(|| message.to_string())
+}
+
+#[derive(serde::Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum DeliveryOrigin {
+    User,
+    Dispatch,
+    Report,
+    Cancel,
+    Recovery,
+    System,
+    Unknown,
+}
+impl DeliveryOrigin {
+    fn heading(&self) -> &'static str {
+        match self {
+            Self::User => "你",
+            Self::Dispatch => "派单",
+            Self::Report => "成员汇报",
+            Self::Cancel => "取消",
+            Self::Recovery => "会话恢复",
+            Self::System => "团队通知",
+            Self::Unknown => "来源未记录",
+        }
+    }
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeliveryPresentation {
+    version: u32,
+    delivery_id: String,
+    origin: DeliveryOrigin,
+    display_text: String,
+}
+fn delivery_presentation(message: &Value) -> Option<DeliveryPresentation> {
+    let presentation: DeliveryPresentation =
+        serde_json::from_value(message["presentation"].clone()).ok()?;
+    (presentation.version == 1 && !presentation.delivery_id.is_empty()).then_some(presentation)
 }

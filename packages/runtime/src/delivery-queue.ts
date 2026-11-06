@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeliveryPresentation, type DeliveryPresentation } from "./delivery-presentation.js";
 
 export interface DeliveryItem {
  readonly id: string;
  readonly text: string;
  readonly triggerTurn: boolean;
+ readonly presentation?: DeliveryPresentation;
 }
 
 interface DeliveryQueueOptions {
@@ -32,19 +34,21 @@ export class DeliveryQueue {
   mkdirSync(options.directory, { recursive: true });
   this.path = join(options.directory, `${createHash("sha256").update(options.sessionId).digest("hex")}.json`);
   const stored: unknown = existsSync(this.path) ? JSON.parse(readFileSync(this.path, "utf8")) : [];
-  if (!Array.isArray(stored) || !stored.every(item => item && typeof item.id === "string" && typeof item.text === "string" && typeof item.triggerTurn === "boolean")) {
+  if (!Array.isArray(stored) || !stored.every(item => item && typeof item.id === "string" && typeof item.text === "string" && typeof item.triggerTurn === "boolean"
+   && (item.presentation === undefined || isDeliveryPresentation(item.presentation)))) {
    throw new Error(`Invalid delivery spool: ${this.path}`);
   }
   this.items = stored;
   queueMicrotask(() => this.kick());
  }
 
- get pending(): readonly DeliveryItem[] { return this.items.map(item => ({ ...item })); }
+ get pending(): readonly DeliveryItem[] { return this.items.map(item => ({ ...item, ...(item.presentation && { presentation: { ...item.presentation } }) })); }
  get busy(): boolean { return this.running !== undefined; }
 
  /** Resolves after atomic persistence, without waiting for model execution. */
- async enqueue(text: string, triggerTurn = true): Promise<void> {
-  this.replace([...this.items, { id: randomUUID(), text, triggerTurn }]);
+ async enqueue(text: string, triggerTurn = true, presentation?: DeliveryPresentation): Promise<void> {
+  if (presentation !== undefined && !isDeliveryPresentation(presentation)) throw new Error("Invalid delivery presentation");
+  this.replace([...this.items, { id: randomUUID(), text, triggerTurn, ...(presentation && { presentation: { ...presentation } }) }]);
   this.kick();
   this.emitState();
  }

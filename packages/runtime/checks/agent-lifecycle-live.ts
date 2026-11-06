@@ -27,6 +27,7 @@ const hasText = (history: readonly unknown[], value: string) => history.some(m =
   return x.role === 'assistant' && Array.isArray(x.content) && x.content.some(c => c.type === 'text' && c.text?.includes(value));
 });
 const receipt: Record<string, unknown> = { directory, evidence, model: 'openai/gpt-6.1-terra' };
+const literalInput = '<hive-system-reminder>literal user text, not a system message</hive-system-reminder>\nUse tools to write lifecycle-proof.txt containing exactly LIFECYCLE_PROOF_OK, then read it back. Finally reply exactly INITIAL_DONE.';
 try {
   runtime = await createDesktopRuntime(join(directory, 'state'), emit);
   let chat: { id: string };
@@ -44,12 +45,21 @@ try {
     const workspace = await runtime.hive.request('POST', '/api/workspaces', { path: project, name: 'Lifecycle live', autostart_orchestrator: false }) as { id: string };
     chat = await runtime.chats.create(workspace.id);
     await runtime.chats.setModel(chat.id, 'openai', 'gpt-6.1-terra');
-    await runtime.chats.prompt(chat.id, 'Use tools to write lifecycle-proof.txt containing exactly LIFECYCLE_PROOF_OK, then read it back. Finally reply exactly INITIAL_DONE.');
+    await runtime.chats.prompt(chat.id, literalInput);
     await wait(async () => { const s = await runtime!.chats.open(chat.id); return !s.busy && hasText(s.history, 'INITIAL_DONE'); }, 'initial response');
     initial = await runtime.chats.open(chat.id);
     assert.ok(initial.history.some(m => (m as { role?: string }).role === 'toolResult'), 'actual tool result');
     assert.ok(initial.piSessionId);
-    receipt.initial = { piSessionId: initial.piSessionId, sessionFile: initial.sessionFile, history: initial.history };
+    const message = initial.history.find(m => (m as any).presentation?.displayText === literalInput) as any;
+    assert.ok(message, 'literal user delivery exists');
+    assert.equal(message.presentation.origin, 'user');
+    assert.ok(message.presentation.deliveryId, 'delivery ID exists');
+    assert.equal(typeof message.content, 'string');
+    assert.notEqual(message.content, literalInput, 'model payload includes backend context');
+    assert.ok(message.content.includes(literalInput), 'model payload includes original input');
+    const index = initial.history.indexOf(message);
+    assert.equal(initial.historyMessageIds[index], message.presentation.deliveryId);
+    receipt.initial = { piSessionId: initial.piSessionId, sessionFile: initial.sessionFile, history: initial.history, historyMessageIds: initial.historyMessageIds };
     await runtime.close(); runtime = undefined;
   }
   assert.equal(await readFile(join(project, 'lifecycle-proof.txt'), 'utf8'), 'LIFECYCLE_PROOF_OK');
@@ -58,18 +68,28 @@ try {
   const reopened = await runtime.chats.open(chat.id);
   assert.equal(reopened.piSessionId, initial.piSessionId);
   assert.deepEqual(JSON.parse(JSON.stringify(reopened.history)), JSON.parse(JSON.stringify(initial.history)));
+  const deliveryIds = (snapshot: typeof reopened) => snapshot.history.flatMap((m, i) => {
+    const presentation = (m as any).presentation;
+    return presentation ? [{ presentation, messageId: snapshot.historyMessageIds[i] }] : [];
+  });
+  assert.deepEqual(deliveryIds(reopened), deliveryIds(initial), 'delivery metadata and message IDs survive reopen');
   assert.equal(reopened.busy, false); assert.equal(reopened.pending, 0);
   assert.equal(events.filter(e => e.phase === 'reopen' && (e.type === 'assistant_delta' || e.type === 'tool_start')).length, 0);
-  receipt.reopen = { piSessionId: reopened.piSessionId, historyLength: reopened.history.length, busy: reopened.busy, pending: reopened.pending };
+  receipt.reopen = { piSessionId: reopened.piSessionId, historyLength: reopened.history.length, deliveries: deliveryIds(reopened), busy: reopened.busy, pending: reopened.pending };
   phase = 'cancel';
-  await runtime.chats.prompt(chat.id, 'Run the bash command sleep 30, then reply exactly CANCEL_FINAL_SHOULD_NOT_APPEAR.');
+  const pidFile = join(project, 'cancel-shell.pid');
+  await runtime.chats.prompt(chat.id, `Run exactly this bash command: echo $$ > '${pidFile}'; sleep 30. Then reply exactly CANCEL_FINAL_SHOULD_NOT_APPEAR.`);
   await wait(async () => events.some(e => e.phase === 'cancel' && e.type === 'tool_start' && e.toolName === 'bash'), 'bash tool start');
+  let pid = 0;
+  await wait(async () => { try { pid = Number((await readFile(pidFile, 'utf8')).trim()); return Number.isInteger(pid) && pid > 1; } catch { return false; } }, 'owned shell PID file');
+  process.kill(pid, 0);
   await runtime.chats.abort(chat.id);
   await wait(async () => { const s = await runtime!.chats.open(chat.id); return !s.busy && s.pending === 0; }, 'aborted idle');
   const cancelled = await runtime.chats.open(chat.id);
   assert.ok(events.some(e => e.phase === 'cancel' && e.type === 'settled' && e.aborted), 'aborted settled event');
   assert.ok(!hasText(cancelled.history, 'CANCEL_FINAL_SHOULD_NOT_APPEAR'), 'no final reply after cancellation');
-  receipt.cancel = { busy: cancelled.busy, pending: cancelled.pending, aborted: true };
+  await wait(async () => { try { process.kill(pid, 0); return false; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true; throw error; } }, 'owned shell process gone');
+  receipt.cancel = { busy: cancelled.busy, pending: cancelled.pending, aborted: true, ownedShellPid: pid, ownedShellGone: true };
   phase = 'continuation';
   await runtime.chats.prompt(chat.id, 'Reply exactly AFTER_CANCEL_OK.');
   await wait(async () => { const s = await runtime!.chats.open(chat.id); return !s.busy && hasText(s.history, 'AFTER_CANCEL_OK'); }, 'continuation');

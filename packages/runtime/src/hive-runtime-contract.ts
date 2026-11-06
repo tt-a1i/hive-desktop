@@ -1,6 +1,7 @@
 // Structural boundary for the pinned Hive 2.2.1 runtime factory.
 // Mirrors the installed package's dist JavaScript because it ships no declarations.
 // A newer Hive checkout has a different writeSendPrompt return type.
+import type { DeliveryPresentation } from './delivery-presentation.js';
 
 export type AgentStatus = "idle" | "working" | "stopped";
 export type WorkerRole = "coder" | "reviewer" | "tester" | "custom";
@@ -269,6 +270,6 @@ export interface HiveAgentRuntime {
 		workspaceId: string,
 		agentId: string,
 		text: string,
-		input?: { requireActiveRun?: boolean; beforeWrite?: () => boolean },
+		input?: { requireActiveRun?: boolean; beforeWrite?: () => boolean; presentation?: DeliveryPresentation },
 	) => Promise<void>;
 }

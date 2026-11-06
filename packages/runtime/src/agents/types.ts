@@ -1,3 +1,4 @@
+import type { DeliveryPresentation } from '../delivery-presentation.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
 export type PiEvent =
@@ -24,7 +25,7 @@ export interface PiSessionHandle {
   readonly sessionFile: string | undefined;
   history(): readonly unknown[];
   snapshot(): { history: readonly unknown[]; historyMessageIds: string[]; activeMessage?: { messageId: string; message: unknown } };
-  prompt(text: string, options?: { automated?: boolean; deliveryId?: string }): Promise<void>;
+  prompt(text: string, options?: { automated?: boolean; deliveryId?: string; presentation?: DeliveryPresentation }): Promise<void>;
   addContext(text: string, customType?: string): Promise<void>;
   completedDeliveryIds(): readonly string[];
   abort(): Promise<void>;

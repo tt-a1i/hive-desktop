@@ -20,12 +20,19 @@ pub struct ToolPresentation {
     pub status: &'static str,
     pub expanded: bool,
 }
+pub struct DeliveryCard {
+    pub heading: String,
+    pub raw: String,
+    pub expanded: bool,
+}
 pub struct Message {
     pub id: String,
     pub role: String,
     pub text: String,
     pub markdown: Entity<TextViewState>,
     pub tool: Option<ToolPresentation>,
+    pub delivery: Option<DeliveryCard>,
+    pub explicit_user: bool,
 }
 pub struct HiveApp {
     pub input: Entity<TextareaState>,
@@ -42,7 +49,7 @@ pub struct HiveApp {
     pub busy: HashSet<String>,
     pub pending: HashMap<String, usize>,
     pub unread: HashSet<String>,
-    pub optimistic_users: HashMap<String, String>,
+    pub failed_drafts: HashMap<String, Vec<String>>,
     pub background_sequences: HashMap<String, u64>,
     pub list_refreshing: bool,
     pub list_dirty: bool,
@@ -98,7 +105,7 @@ impl HiveApp {
             busy: HashSet::new(),
             pending: HashMap::new(),
             unread: HashSet::new(),
-            optimistic_users: HashMap::new(),
+            failed_drafts: HashMap::new(),
             background_sequences: HashMap::new(),
             list_refreshing: false,
             list_dirty: false,

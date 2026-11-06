@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DeliveryQueue, type DeliveryItem } from "../src/delivery-queue.js";
+import type { DeliveryPresentation } from "../src/delivery-presentation.js";
 
 const directory = mkdtempSync(join(tmpdir(), "hive-delivery-"));
 const deferred = () => {
@@ -19,7 +20,13 @@ try {
  });
  await first.enqueue("one");
  await started.promise;
- await first.enqueue("two", false); // Acceptance cannot wait for the blocked model.
+ const presentation: DeliveryPresentation = { version: 1, origin: "user", displayText: "<hive-system-reminder>literal user text</hive-system-reminder>" };
+ await first.enqueue("two", false, presentation); // Acceptance cannot wait for the blocked model.
+ const originalDisplay = presentation.displayText;
+ presentation.displayText = "caller mutation";
+ const exposed = first.pending[1]!.presentation!;
+ exposed.displayText = "snapshot mutation";
+ assert.equal(first.pending[1]?.presentation?.displayText, originalDisplay);
  assert.equal(first.busy, true);
  assert.deepEqual(first.pending.map(item => item.text), ["one", "two"]);
  const stopped = first.pause();
@@ -34,6 +41,8 @@ try {
  second.resume();
  await second.idle();
  assert.deepEqual(reopened.map(item => item.text), ["two"]);
+ assert.equal(reopened[0]?.presentation?.origin, "user");
+ assert.equal(reopened[0]?.presentation?.displayText, originalDisplay);
  assert.deepEqual(second.pending, []);
 
  const failure = new Error("Execution failed");

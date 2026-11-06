@@ -88,6 +88,8 @@ try {
   assert.equal(await switchVerdict, 'blocked');
   assert.equal(first.chats.list(workspace.id).find(chat => chat.id === a.id)?.agentId, agentId);
   assert.ok(queues(first.chats).get(a.id)!.queue.pending.some(item => item.text.includes('persisted-only-for-A')));
+  assert.deepEqual(queues(first.chats).get(a.id)!.queue.pending[0]?.presentation,
+    { version: 1, origin: 'user', displayText: 'persisted-only-for-A' });
   assert.equal((await first.chats.open(b.id)).pending, 0);
   // Exercise the installed npm runtime's actual send/report contract, with both
   // recipients paused so durable acceptance cannot invoke either model.
@@ -106,6 +108,10 @@ try {
   assert.equal(typeof submitted.submitted_at, 'number');
   assert.ok(queues(first.chats).get(workerChat.id)!.queue.pending.some(item =>
     item.text.includes(dispatchId) && item.text.includes('durable-worker-task')));
+  const taskDelivery = queues(first.chats).get(workerChat.id)!.queue.pending.find(item => item.text.includes(dispatchId));
+  assert.equal(taskDelivery?.presentation?.origin, 'dispatch');
+  assert.equal(taskDelivery?.presentation?.displayText, 'durable-worker-task');
+  assert.equal(taskDelivery?.presentation?.dispatchId, dispatchId);
   const workerToken = first.agents.peekAgentToken(worker.id);
   assert.ok(workerToken);
   const workerTool = createTeamTool({ workspaceId: workspace.id, agentId: worker.id, token: workerToken,
@@ -121,6 +127,7 @@ try {
   assert.equal(reported?.state, 'reported');
   assert.equal(reported.report_text, 'explicit-worker-report');
   assert.ok(queues(first.chats).get(a.id)!.queue.pending.some(item => item.text.includes('explicit-worker-report')));
+  assert.equal(queues(first.chats).get(a.id)!.queue.pending.find(item => item.text.includes('explicit-worker-report'))?.presentation?.origin, 'system');
   const pendingAtRestart = queues(first.chats).get(a.id)!.queue.pending.length;
   assert.equal(pendingAtRestart, 2);
   await first.close();
