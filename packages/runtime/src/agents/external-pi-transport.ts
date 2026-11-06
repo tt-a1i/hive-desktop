@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { OwnedCliProcess } from './owned-cli-process.js';
 import { randomUUID } from 'node:crypto';
 
 export type ExternalPiRecord = Record<string, unknown> & { type: string };
@@ -24,7 +25,7 @@ export class ExternalPiTransport {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<string, Pending>();
   private readonly listeners = new Set<(event: ExternalPiRecord) => void>();
-  private readonly exited: Promise<void>;
+  private readonly process: OwnedCliProcess;
   private ended = false;
   private closing = false;
   private closeTask: Promise<void> | undefined;
@@ -34,15 +35,16 @@ export class ExternalPiTransport {
 
   private constructor(private readonly options: ExternalPiTransportOptions) {
     if (options.onEvent) this.listeners.add(options.onEvent);
-    this.child = spawn(options.command ?? process.env.HIVE_PI_COMMAND ?? 'pi', [
+    this.process = new OwnedCliProcess(options.command ?? process.env.HIVE_PI_COMMAND ?? 'pi', [
       '--mode', 'rpc', '--session-dir', options.sessionDir,
       ...(options.model ? ['--provider', options.model.provider, '--model', options.model.id] : []),
       ...(options.sessionFile ? ['--session', options.sessionFile] : []), '--extension', options.extensionPath,
-    ], { cwd: options.cwd, shell: false, stdio: ['pipe', 'pipe', 'pipe'],
+    ], { cwd: options.cwd,
       env: { ...process.env, ...options.env, HIVE_PI_BRIDGE_COMMAND: this.bridgeCommand, HIVE_PI_TEAM_TOOL: this.teamToolName } });
-    this.exited = new Promise(resolve => this.child.once('close', (code, signal) => {
-      this.finish(new Error(`External Pi closed (${code ?? signal ?? 'unknown'})`)); resolve();
-    }));
+    this.child = this.process.child;
+    this.child.once('close', (code, signal) => {
+      this.finish(new Error(`External Pi closed (${code ?? signal ?? 'unknown'})`));
+    });
     this.child.once('error', error => this.fail(error));
     this.child.once('exit', (code, signal) => this.finish(new Error(`External Pi exited (${code ?? signal ?? 'unknown'})`)));
     for (const stream of [this.child.stdin, this.child.stdout, this.child.stderr]) stream.on('error', error => this.fail(error));
@@ -113,20 +115,7 @@ export class ExternalPiTransport {
     if (this.closeTask) return this.closeTask;
     this.closing = true;
     this.rejectPending(new Error('External Pi transport is closing'));
-    this.closeTask = this.shutdown(); return this.closeTask;
-  }
-  private async shutdown(): Promise<void> {
-    this.child.stdin.end();
-    if (await this.waitForExit(this.options.shutdownGraceMs ?? 1500)) return;
-    this.child.kill('SIGTERM');
-    if (await this.waitForExit(1000)) return;
-    this.child.kill('SIGKILL');
-    if (!await this.waitForExit(1000)) throw new Error('External Pi did not exit after SIGKILL');
-  }
-  private async waitForExit(ms: number): Promise<boolean> {
-    let timer: NodeJS.Timeout | undefined;
-    try { return await Promise.race([this.exited.then(() => true), new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), ms); })]); }
-    finally { clearTimeout(timer); }
+    this.closeTask = this.process.close(this.options.shutdownGraceMs ?? 1500); return this.closeTask;
   }
   private write(record: unknown): Promise<void> {
     if (this.closing || this.ended) return Promise.reject(new Error('External Pi transport is closed'));
@@ -168,7 +157,7 @@ export class ExternalPiTransport {
     if (this.ended) return;
     this.ended = true; this.rejectPending(error); this.options.onClose?.(error);
   }
-  private fail(error: Error): void { this.finish(error); void this.close(); }
+  private fail(error: Error): void { this.finish(error); void this.close().catch(() => { /* Owner receives this failure from awaited close(). */ }); }
 }
 function isRecord(value: unknown): value is ExternalPiRecord {
   return !!value && typeof value === 'object' && 'type' in value && typeof value.type === 'string' && !Array.isArray(value);

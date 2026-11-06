@@ -71,3 +71,19 @@ jobs:
           name: hive-desktop-windows-portable
           path: target/hive-desktop-windows-portable.zip
           if-no-files-found: error
+      - name: Verify official external CLIs without inference
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $env:HIVE_WINDOWS_NATIVE_CLI_PREFIX = Join-Path $env:RUNNER_TEMP 'official native CLI space'
+          npm install --global --prefix "$env:HIVE_WINDOWS_NATIVE_CLI_PREFIX" @earendil-works/pi-coding-agent@1.4.0 @openai/codex@0.166.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @hive-desktop/runtime exec tsx checks/windows-native-clis.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload external CLI check receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-cli-receipt
+          path: .artifacts/windows-native-clis.json
+          if-no-files-found: warn

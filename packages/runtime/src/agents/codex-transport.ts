@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { OwnedCliProcess } from './owned-cli-process.js';
 
 export type CodexRequestId = number | string;
 export type CodexServerRequest = { method: string; params: unknown; id: CodexRequestId };
@@ -30,7 +31,7 @@ export class CodexTransport {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, Pending>();
   private readonly notifications = new Set<(notification: CodexNotification) => void>();
-  private readonly exited: Promise<void>;
+  private readonly process: OwnedCliProcess;
   private nextId = 1;
   private closing = false;
   private closeTask: Promise<void> | undefined;
@@ -38,14 +39,12 @@ export class CodexTransport {
   private diagnosticBuffer = Buffer.alloc(0);
 
   private constructor(private readonly options: CodexTransportOptions) {
-    this.child = spawn(options.command ?? 'codex', ['app-server', '--listen', 'stdio://'], {
-      cwd: options.cwd, stdio: ['pipe', 'pipe', 'pipe'], shell: false,
+    this.process = new OwnedCliProcess(options.command ?? 'codex', ['app-server', '--listen', 'stdio://'], {
+      cwd: options.cwd,
     });
-    this.exited = new Promise((resolve) => {
-      this.child.once('close', (code, signal) => {
-        this.finish(new Error(`Codex app-server closed (${code ?? signal ?? 'unknown'})`), code, signal);
-        resolve();
-      });
+    this.child = this.process.child;
+    this.child.once('close', (code, signal) => {
+      this.finish(new Error(`Codex app-server closed (${code ?? signal ?? 'unknown'})`), code, signal);
     });
     this.child.once('error', (error) => this.fail(error));
     this.child.once('exit', (code, signal) => {
@@ -124,27 +123,8 @@ export class CodexTransport {
     if (this.closeTask) return this.closeTask;
     this.closing = true;
     this.rejectPending(new Error('Codex transport is closing'));
-    this.closeTask = this.shutdown();
+    this.closeTask = this.process.close(this.options.shutdownGraceMs ?? 1500);
     return this.closeTask;
-  }
-
-  private async shutdown(): Promise<void> {
-    this.child.stdin.end();
-    if (await this.waitForExit(this.options.shutdownGraceMs ?? 1500)) return;
-    this.child.kill('SIGTERM');
-    if (await this.waitForExit(1000)) return;
-    this.child.kill('SIGKILL');
-    await this.exited;
-  }
-
-  private async waitForExit(ms: number): Promise<boolean> {
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      return await Promise.race([
-        this.exited.then(() => true),
-        new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), ms); }),
-      ]);
-    } finally { clearTimeout(timer); }
   }
 
   private async write(message: unknown): Promise<void> {
@@ -215,7 +195,7 @@ export class CodexTransport {
 
   private fail(error: Error): void {
     this.finish(error, this.child.exitCode, this.child.signalCode);
-    void this.close();
+    void this.close().catch(() => { /* Awaited close() retains cleanup failure for the owner. */ });
   }
 }
 
