@@ -9,12 +9,35 @@ export class OwnedCliProcess {
   private closed = false;
   private rootExited = false;
   private closeTask: Promise<void> | undefined;
+  private readonly startedAt = performance.now();
+  private readonly events: { atMs: number; type: string; code?: number | string | null; signal?: NodeJS.Signals | null }[] = [];
 
   constructor(command: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv }) {
     // cross-spawn resolves Windows shims/PATHEXT and escapes argv; no shell command assembly here.
     this.child = crossSpawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true }) as ChildProcessWithoutNullStreams;
-    this.exited = new Promise(resolve => this.child.once('close', () => { this.closed = true; resolve(); }));
-    this.child.once('exit', () => { this.rootExited = true; });
+    this.child.once('spawn', () => this.record('spawn'));
+    this.child.once('error', error => this.record('error', (error as NodeJS.ErrnoException).code));
+    this.exited = new Promise(resolve => this.child.once('close', (code, signal) => { this.closed = true; this.record('close', code, signal); resolve(); }));
+    this.child.once('exit', (code, signal) => { this.rootExited = true; this.record('exit', code, signal); });
+    this.child.stdin.once('finish', () => this.record('stdin.finish'));
+    this.child.stdin.once('close', () => this.record('stdin.close'));
+    this.child.stdout.once('end', () => this.record('stdout.end'));
+    this.child.stdout.once('close', () => this.record('stdout.close'));
+    this.child.stderr.once('end', () => this.record('stderr.end'));
+    this.child.stderr.once('close', () => this.record('stderr.close'));
+  }
+
+  /** Lifecycle facts only: never contains argv, stdin, output content or environment. */
+  get diagnostics() {
+    return { pid: this.child.pid, spawnfile: this.child.spawnfile, rootExited: this.rootExited, closed: this.closed,
+      exitCode: this.child.exitCode, signalCode: this.child.signalCode,
+      stdin: { finished: this.child.stdin.writableFinished, destroyed: this.child.stdin.destroyed, closed: this.child.stdin.closed, bufferedBytes: this.child.stdin.writableLength },
+      stdout: { ended: this.child.stdout.readableEnded, destroyed: this.child.stdout.destroyed, closed: this.child.stdout.closed },
+      stderr: { ended: this.child.stderr.readableEnded, destroyed: this.child.stderr.destroyed, closed: this.child.stderr.closed },
+      events: this.events.map(event => ({ ...event })) };
+  }
+  private record(type: string, code?: number | string | null, signal?: NodeJS.Signals | null): void {
+    this.events.push({ atMs: Math.round(performance.now() - this.startedAt), type, ...(code !== undefined && { code }), ...(signal !== undefined && { signal }) });
   }
 
   close(graceMs = 1500): Promise<void> {
@@ -24,8 +47,10 @@ export class OwnedCliProcess {
   }
 
   private async shutdown(graceMs: number): Promise<void> {
+    this.record('stdin.end.requested');
     this.child.stdin.end();
     if (await this.waitForExit(graceMs)) return;
+    this.record('grace.expired');
     if (process.platform === 'win32') {
       // Killing cmd.exe alone leaves the real npm/pnpm CLI running. /T includes its descendants.
       // Never target a PID after observing its root exit: it may have been recycled.

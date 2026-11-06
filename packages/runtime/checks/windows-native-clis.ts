@@ -46,53 +46,101 @@ async function findCodexExe(root: string): Promise<string | undefined> {
     if (entry.isDirectory()) { const found = await findCodexExe(path); if (found) return found; }
   }
 }
+type ObservedTransport = { readonly pid: number | undefined; readonly lifecycleDiagnostics: unknown; close(): Promise<void> };
+async function closeObserved(transport: ObservedTransport, receipt: Record<string, unknown>, owned: ProcessInfo[], mark: (stage: string, details?: Record<string, unknown>) => void): Promise<ProcessInfo[]> {
+  try {
+    const before = await ownedTree(transport.pid!);
+    receipt.beforeStdinEofProcesses = before;
+    owned = [...new Map([...owned, ...before].map(process => [`${process.ProcessId}:${process.CreationDate}`, process])).values()];
+  } catch (error) { receipt.beforeStdinEofSnapshotError = String(error); }
+  mark('close.requested', { lifecycle: transport.lifecycleDiagnostics });
+  try { await transport.close(); mark('close.resolved'); }
+  catch (error) {
+    receipt.closeError = String(error);
+    mark('close.rejected', { lifecycle: transport.lifecycleDiagnostics });
+    try {
+      const now = await processes();
+      receipt.survivingOriginalProcesses = now.filter(current => owned.some(old => old.ProcessId === current.ProcessId && old.CreationDate === current.CreationDate));
+      receipt.currentProcessesLinkedToOriginalPid = await ownedTree(transport.pid!);
+    } catch (snapshotError) { receipt.afterFailureSnapshotError = String(snapshotError); }
+    throw error;
+  } finally { receipt.lifecycle = transport.lifecycleDiagnostics; }
+  return owned;
+}
+function beginCase(backend: string, command: string, unexpected: boolean) {
+  const stages: Record<string, unknown>[] = [];
+  const receipt: Record<string, unknown> = { backend, command, unexpected, stages };
+  receipts.push(receipt);
+  const mark = (stage: string, details: Record<string, unknown> = {}) => {
+    stages.push({ stage, at: new Date().toISOString(), ...details });
+    console.log(JSON.stringify({ backend, stage, command, unexpected }));
+  };
+  return { receipt, mark };
+}
 async function codex(command: string, unexpected = false) {
+  const { receipt, mark } = beginCase('codex', command, unexpected);
   let closed = 0;
   let notify!: () => void;
   const closedEvent = new Promise<void>(resolve => { notify = resolve; });
-  const transport = await CodexTransport.start({ command, cwd: directory, requestTimeoutMs: 20000, onClose() { closed++; notify(); } });
+  mark('initialize.requested');
+  const transport = await CodexTransport.start({ command, cwd: directory, requestTimeoutMs: 20000, onClose(info) { closed++; mark('transport.onClose', { code: info.code, signal: info.signal }); notify(); } });
+  receipt.initialized = true;
+  mark('initialize.resolved', { lifecycle: transport.lifecycleDiagnostics });
   let owned: ProcessInfo[] = [];
   try {
-    owned = await ownedTree(transport.pid!);
+    owned = await ownedTree(transport.pid!); receipt.afterInitializeProcesses = owned;
+    mark('model/list.requested');
     const result = await transport.sendRequest<{ data: unknown[] }>('model/list', { limit: 100 });
     assert.ok(Array.isArray(result.data));
+    mark('model/list.resolved', { modelCount: result.data.length });
     if (unexpected) {
       const native = owned.find(process => process.Name.toLowerCase() === 'codex.exe');
       assert.ok(native, 'Official native Codex descendant must be visible');
+      mark('native.kill.requested', { pid: native.ProcessId });
       process.kill(native.ProcessId, 'SIGKILL');
       await deadline(closedEvent, 'Codex unexpected exit');
       await assert.rejects(transport.sendRequest('model/list', {}));
     }
-  } finally { await transport.close(); }
+  } catch (error) { receipt.operationError = String(error); throw error; }
+  finally { owned = await closeObserved(transport, receipt, owned, mark); }
   assert.equal(closed, 1);
   await assertGone(owned);
-  receipts.push({ backend: 'codex', command, unexpected, initialized: true, owned });
+  receipt.owned = owned; receipt.pass = true;
 }
 async function pi(command: string, unexpected = false) {
+  const { receipt, mark } = beginCase('pi-rpc', command, unexpected);
   let notify!: () => void;
   const closedEvent = new Promise<void>(resolve => { notify = resolve; });
   const events: string[] = [];
+  mark('initialize.requested');
   const transport = await ExternalPiTransport.start({ command, cwd: directory, sessionDir: directory,
     extensionPath: resolve('dist/agents/external-pi-extension.js'), requestTimeoutMs: 20000,
-    onEvent: event => { events.push(event.type); }, onClose() { notify(); } });
+    onEvent: event => { events.push(event.type); }, onClose() { mark('transport.onClose'); notify(); } });
+  receipt.initialized = true;
+  mark('initialize.resolved', { lifecycle: transport.lifecycleDiagnostics });
   let owned: ProcessInfo[] = [];
   try {
-    owned = await ownedTree(transport.pid!);
+    owned = await ownedTree(transport.pid!); receipt.afterInitializeProcesses = owned;
+    mark('get_state.requested');
     const state = await transport.request<{ sessionFile: string; sessionId: string; isStreaming: boolean }>('get_state');
     assert.equal(state.isStreaming, false); assert.ok(state.sessionFile.includes(' ')); assert.ok(state.sessionId);
+    mark('get_state.resolved');
     const messages = await transport.request<{ messages: unknown[] }>('get_messages');
     assert.deepEqual(messages.messages, []);
+    mark('get_messages.resolved');
     if (unexpected) {
       const native = [...owned].reverse().find(process => process.ProcessId !== transport.pid && process.Name.toLowerCase() === 'node.exe');
       assert.ok(native, 'Official Pi Node descendant must be visible');
+      mark('native.kill.requested', { pid: native.ProcessId });
       process.kill(native.ProcessId, 'SIGKILL');
       await deadline(closedEvent, 'Pi unexpected exit');
       await assert.rejects(transport.request('get_state'));
     }
-  } finally { await transport.close(); }
+  } catch (error) { receipt.operationError = String(error); throw error; }
+  finally { owned = await closeObserved(transport, receipt, owned, mark); }
   assert.equal(events.includes('agent_start'), false);
   await assertGone(owned);
-  receipts.push({ backend: 'pi-rpc', command, unexpected, initialized: true, modelPrompts: 0, owned });
+  receipt.owned = owned; receipt.pass = true; receipt.modelPrompts = 0;
 }
 async function deadline<T>(operation: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

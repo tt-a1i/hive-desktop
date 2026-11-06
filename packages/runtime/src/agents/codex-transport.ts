@@ -99,6 +99,7 @@ export class CodexTransport {
   }
 
   get pid(): number | undefined { return this.child.pid; }
+  get lifecycleDiagnostics() { return this.process.diagnostics; }
   get diagnostics(): string { return this.diagnosticBuffer.toString('utf8'); }
 
   onNotification(listener: (notification: CodexNotification) => void): () => void {

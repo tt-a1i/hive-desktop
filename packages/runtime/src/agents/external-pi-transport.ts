@@ -83,6 +83,7 @@ export class ExternalPiTransport {
     } catch (error) { await transport.close(); throw error; }
   }
   get pid(): number | undefined { return this.child.pid; }
+  get lifecycleDiagnostics() { return this.process.diagnostics; }
   get diagnostics(): string { return this.stderr.toString('utf8'); }
   onEvent(listener: (event: ExternalPiRecord) => void): () => void {
     this.listeners.add(listener); return () => { this.listeners.delete(listener); };
