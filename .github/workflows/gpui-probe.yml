@@ -1,0 +1,50 @@
+name: GPUI selection probe
+
+on:
+  push:
+    branches: ["codex/gpui-validation"]
+    paths:
+      - "experiments/gpui-chat/**"
+      - ".github/workflows/gpui-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Native build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: experiments/gpui-chat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: experiments/gpui-chat
+      - name: Build the native probe
+        run: cargo build --locked -j 3
+      - name: Record compiler and build scope
+        shell: bash
+        run: |
+          rustc --version --verbose
+          echo 'This job verifies compilation and linking; it does not certify native interaction or performance.'
+      - name: Upload macOS executable
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive-gpui-probe-macos
+          path: experiments/gpui-chat/target/debug/hive-gpui-chat-probe
+      - name: Upload Windows executable
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive-gpui-probe-windows
+          path: experiments/gpui-chat/target/debug/hive-gpui-chat-probe.exe

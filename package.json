@@ -1,0 +1,15 @@
+{
+  "name": "hive-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.30.3",
+  "engines": { "node": "^22.19.0 || >=24.0.0" },
+  "scripts": {
+    "build:runtime": "pnpm --filter @hive-desktop/runtime build",
+    "check": "pnpm --filter @hive-desktop/runtime check",
+    "check:hive": "pnpm --filter @hive-desktop/runtime check:hive",
+    "dev:runtime": "pnpm --filter @hive-desktop/runtime dev",
+    "dev": "pnpm build:runtime && cargo run --manifest-path apps/desktop/Cargo.toml"
+  }
+}

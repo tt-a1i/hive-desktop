@@ -1,0 +1,7 @@
+/target/
+/build.log
+/run.log
+/toolchain-install.log
+/build-rust-1.93.1.log
+/build-rust-1.95.0.log
+/toolchain-1.98-install.log

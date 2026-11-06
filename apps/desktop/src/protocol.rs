@@ -1,0 +1,131 @@
+use serde::Deserialize;
+use serde_json::Value;
+
+#[derive(Clone, Deserialize)]
+pub struct Workspace {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+}
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub id: String,
+    pub title: String,
+    pub workspace_id: String,
+}
+#[derive(Clone, Deserialize)]
+pub struct Model {
+    pub provider: String,
+    pub id: String,
+    pub name: String,
+    pub available: bool,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenSession {
+    pub history_message_ids: Vec<String>,
+    pub active_message: Option<ActiveMessage>,
+    pub event_sequence: u64,
+    #[serde(default)]
+    pub busy: bool,
+    #[serde(flatten)]
+    pub session: Session,
+    #[serde(default)]
+    pub history: Vec<Value>,
+    #[serde(default)]
+    pub models: Vec<Model>,
+    pub model: Option<ModelIdentity>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveMessage {
+    pub message_id: String,
+    pub message: Value,
+}
+#[derive(Clone, Deserialize)]
+pub struct ModelIdentity {
+    pub provider: String,
+    pub id: String,
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PiEvent {
+    #[serde(rename_all = "camelCase")]
+    AssistantDelta {
+        session_id: String,
+        sequence: u64,
+        message_id: String,
+        kind: String,
+        delta: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    MessageEnd {
+        session_id: String,
+        sequence: u64,
+        message_id: String,
+        message: Value,
+    },
+    #[serde(rename_all = "camelCase")]
+    ToolStart {
+        session_id: String,
+        sequence: u64,
+        tool_call_id: String,
+        tool_name: String,
+        args: Value,
+    },
+    #[serde(rename_all = "camelCase")]
+    ToolUpdate {
+        session_id: String,
+        sequence: u64,
+        tool_call_id: String,
+        tool_name: String,
+        result: Value,
+    },
+    #[serde(rename_all = "camelCase")]
+    ToolEnd {
+        session_id: String,
+        sequence: u64,
+        tool_call_id: String,
+        tool_name: String,
+        result: Value,
+        is_error: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    Settled {
+        session_id: String,
+        sequence: u64,
+        aborted: bool,
+    },
+    #[serde(rename_all = "camelCase")]
+    Error {
+        session_id: String,
+        sequence: u64,
+        message: String,
+    },
+}
+impl PiEvent {
+    pub fn sequence(&self) -> u64 {
+        match self {
+            Self::AssistantDelta { sequence, .. }
+            | Self::MessageEnd { sequence, .. }
+            | Self::ToolStart { sequence, .. }
+            | Self::ToolUpdate { sequence, .. }
+            | Self::ToolEnd { sequence, .. }
+            | Self::Settled { sequence, .. }
+            | Self::Error { sequence, .. } => *sequence,
+        }
+    }
+
+    pub fn session_id(&self) -> &str {
+        match self {
+            Self::AssistantDelta { session_id, .. }
+            | Self::MessageEnd { session_id, .. }
+            | Self::ToolStart { session_id, .. }
+            | Self::ToolUpdate { session_id, .. }
+            | Self::ToolEnd { session_id, .. }
+            | Self::Settled { session_id, .. }
+            | Self::Error { session_id, .. } => session_id,
+        }
+    }
+}

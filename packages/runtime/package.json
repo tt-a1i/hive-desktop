@@ -1,0 +1,22 @@
+{
+  "name": "@hive-desktop/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "check:hive": "tsx checks/hive-host.ts",
+    "check:runtime": "pnpm build && tsx checks/runtime.ts",
+    "dev": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@tt-a1i/hive": "2.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
