@@ -1,4 +1,8 @@
 packages:
   - packages/*
+
 onlyBuiltDependencies:
   - esbuild
+
+patchedDependencies:
+  '@tt-a1i/hive@2.2.1': patches/@tt-a1i__hive@2.2.1.patch

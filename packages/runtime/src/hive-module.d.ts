@@ -3,6 +3,9 @@
 declare module "@tt-a1i/hive/dist/src/cli/hive.js" {
 	export function runHiveCommand(
 		argv: string[],
-		options?: { openBrowser?: boolean },
+		options?: {
+			openBrowser?: boolean;
+			agentRuntimeFactory?: import("./hive-runtime-contract.js").HiveAgentRuntimeFactory;
+		},
 	): Promise<{ port: number; close(): Promise<void> }>;
 }

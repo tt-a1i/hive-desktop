@@ -13,6 +13,7 @@ pub struct Session {
     pub id: String,
     pub title: String,
     pub workspace_id: String,
+    pub agent_id: Option<String>,
 }
 #[derive(Clone, Deserialize)]
 pub struct Model {
@@ -29,6 +30,8 @@ pub struct OpenSession {
     pub event_sequence: u64,
     #[serde(default)]
     pub busy: bool,
+    #[serde(default)]
+    pub pending: usize,
     #[serde(flatten)]
     pub session: Session,
     #[serde(default)]
@@ -51,6 +54,13 @@ pub struct ModelIdentity {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiEvent {
+    #[serde(rename_all = "camelCase")]
+    State {
+        session_id: String,
+        sequence: u64,
+        busy: bool,
+        pending: usize,
+    },
     #[serde(rename_all = "camelCase")]
     AssistantDelta {
         session_id: String,
@@ -107,7 +117,8 @@ pub enum PiEvent {
 impl PiEvent {
     pub fn sequence(&self) -> u64 {
         match self {
-            Self::AssistantDelta { sequence, .. }
+            Self::State { sequence, .. }
+            | Self::AssistantDelta { sequence, .. }
             | Self::MessageEnd { sequence, .. }
             | Self::ToolStart { sequence, .. }
             | Self::ToolUpdate { sequence, .. }
@@ -119,7 +130,8 @@ impl PiEvent {
 
     pub fn session_id(&self) -> &str {
         match self {
-            Self::AssistantDelta { session_id, .. }
+            Self::State { session_id, .. }
+            | Self::AssistantDelta { session_id, .. }
             | Self::MessageEnd { session_id, .. }
             | Self::ToolStart { session_id, .. }
             | Self::ToolUpdate { session_id, .. }

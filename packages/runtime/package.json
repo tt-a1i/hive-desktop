@@ -8,11 +8,13 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "check:hive": "tsx checks/hive-host.ts",
     "check:runtime": "pnpm build && tsx checks/runtime.ts",
+    "check:team": "tsx checks/delivery-queue.ts && tsx checks/structured-runtime.ts && tsx checks/team-tool.ts && tsx checks/team-runtime.ts",
     "dev": "tsx src/main.ts"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.4.0",
-    "@tt-a1i/hive": "2.2.1"
+    "@tt-a1i/hive": "2.2.1",
+    "typebox": "1.3.27"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

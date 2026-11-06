@@ -10,13 +10,22 @@ use gpui_kit::{
     *,
 };
 use serde_json::{Value, json};
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
+pub struct ToolPresentation {
+    pub name: String,
+    pub status: &'static str,
+    pub expanded: bool,
+}
 pub struct Message {
     pub id: String,
     pub role: String,
     pub text: String,
     pub markdown: Entity<TextViewState>,
+    pub tool: Option<ToolPresentation>,
 }
 pub struct HiveApp {
     pub input: Entity<TextareaState>,
@@ -31,6 +40,12 @@ pub struct HiveApp {
     pub models: Vec<Model>,
     pub model: Option<ModelIdentity>,
     pub busy: HashSet<String>,
+    pub pending: HashMap<String, usize>,
+    pub unread: HashSet<String>,
+    pub optimistic_users: HashMap<String, String>,
+    pub background_sequences: HashMap<String, u64>,
+    pub list_refreshing: bool,
+    pub list_dirty: bool,
     pub event_sequence: u64,
     pub open_request: u64,
     pub pending_events: Vec<PiEvent>,
@@ -81,6 +96,12 @@ impl HiveApp {
             models: vec![],
             model: None,
             busy: HashSet::new(),
+            pending: HashMap::new(),
+            unread: HashSet::new(),
+            optimistic_users: HashMap::new(),
+            background_sequences: HashMap::new(),
+            list_refreshing: false,
+            list_dirty: false,
             event_sequence: 0,
             open_request: 0,
             pending_events: vec![],
@@ -189,14 +210,17 @@ impl HiveApp {
             self.error = Some("后台尚未连接".into());
             return;
         };
+        let open_request = self.open_request;
         cx.spawn(async move |this, cx| {
             let result = runtime.request(method, params).await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(value) => done(this, value, cx),
                     Err(error) => {
-                        this.loading = false;
-                        this.error = Some(error);
+                        if this.open_request == open_request {
+                            this.loading = false;
+                            this.error = Some(error);
+                        }
                     }
                 }
                 cx.notify();

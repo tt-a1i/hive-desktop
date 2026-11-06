@@ -54,27 +54,85 @@ impl HiveApp {
         self.sessions.clear();
         self.models.clear();
         self.model = None;
-        self.request(
-            "chat.list",
-            json!({"workspaceId":id}),
-            cx,
-            move |this, value, cx| {
-                if this.workspace.as_ref() != Some(&id) {
+        self.open_request += 1;
+        self.refresh_sessions(cx);
+        cx.notify();
+    }
+    // Coalesce event bursts and serialize requests so older lists cannot replace newer ones.
+    pub fn refresh_sessions(&mut self, cx: &mut Context<Self>) {
+        self.list_dirty = true;
+        if self.list_refreshing {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        self.list_refreshing = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                smol::Timer::after(std::time::Duration::from_millis(180)).await;
+                let Ok(workspace) = this.update(cx, |this, _| {
+                    this.list_dirty = false;
+                    this.workspace.clone()
+                }) else {
                     return;
-                }
-                this.loading = false;
-                match serde_json::from_value::<Vec<Session>>(value) {
-                    Ok(sessions) => {
-                        this.sessions = sessions;
-                        if let Some(first) = this.sessions.first() {
-                            this.open_session(first.id.clone(), cx);
+                };
+                let Some(workspace) = workspace else {
+                    let _ = this.update(cx, |this, _| this.list_refreshing = false);
+                    return;
+                };
+                let result = runtime
+                    .request("chat.list", json!({"workspaceId": workspace}))
+                    .await;
+                let Ok(again) = this.update(cx, |this, cx| {
+                    if this.workspace.as_ref() == Some(&workspace) {
+                        match result {
+                            Ok(value) => match serde_json::from_value::<Vec<Session>>(value) {
+                                Ok(sessions) => {
+                                    this.sessions = sessions;
+                                    if let Some(selected) = &mut this.session {
+                                        if let Some(record) =
+                                            this.sessions.iter().find(|s| s.id == selected.id)
+                                        {
+                                            *selected = record.clone();
+                                        }
+                                    } else {
+                                        this.loading = false;
+                                        if let Some(first) = this.sessions.first() {
+                                            this.open_session(first.id.clone(), cx);
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    if this.session.is_none() {
+                                        this.loading = false;
+                                    }
+                                    this.error = Some(format!("会话列表格式错误：{error}"));
+                                }
+                            },
+                            Err(error) => {
+                                if this.session.is_none() {
+                                    this.loading = false;
+                                }
+                                this.error = Some(error);
+                            }
                         }
                     }
-                    Err(error) => this.error = Some(format!("会话列表格式错误：{error}")),
+                    let again = this.list_dirty;
+                    if !again {
+                        this.list_refreshing = false;
+                    }
+                    cx.notify();
+                    again
+                }) else {
+                    return;
+                };
+                if !again {
+                    return;
                 }
-            },
-        );
-        cx.notify();
+            }
+        })
+        .detach();
     }
     pub fn new_session(&mut self, cx: &mut Context<Self>) {
         let Some(workspace) = self.workspace.clone() else {
@@ -97,6 +155,9 @@ impl HiveApp {
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
         self.open_request += 1;
+        self.unread.remove(&id);
+        self.optimistic_users.remove(&id);
+        self.choosing_model = false;
         let request = self.open_request;
         if let Some(session) = self.sessions.iter().find(|s| s.id == id) {
             self.session = Some(session.clone());
@@ -128,6 +189,9 @@ impl HiveApp {
                         } else {
                             this.busy.remove(&id);
                         }
+                        this.pending.insert(id.clone(), open.pending);
+                        this.background_sequences
+                            .insert(id.clone(), open.event_sequence);
                         this.session = Some(open.session);
                         this.models = open.models;
                         this.model = open.model;
@@ -143,12 +207,26 @@ impl HiveApp {
                                 None
                             }
                             .unwrap_or_else(|| open.history_message_ids[i].clone());
-                            this.push_message(
-                                message_id,
-                                message["role"].as_str().unwrap_or("message").into(),
-                                text,
-                                cx,
-                            );
+                            if message["role"] == "toolResult" {
+                                this.upsert_tool(
+                                    message_id,
+                                    message["toolName"].as_str().unwrap_or("工具").into(),
+                                    if message["isError"].as_bool().unwrap_or(false) {
+                                        "失败"
+                                    } else {
+                                        "完成"
+                                    },
+                                    text,
+                                    cx,
+                                );
+                            } else {
+                                this.push_message(
+                                    message_id,
+                                    message["role"].as_str().unwrap_or("message").into(),
+                                    text,
+                                    cx,
+                                );
+                            }
                         }
                         if let Some(active) = open.active_message {
                             this.upsert(

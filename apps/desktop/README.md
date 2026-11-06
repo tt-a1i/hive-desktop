@@ -14,4 +14,4 @@ Workspace creation calls Hive's real API with `autostart_orchestrator: false`. C
 
 Closing the window or pressing Cmd/Ctrl-Q sends `shutdown`, allows the owned Node child three seconds to exit, then kills/reaps it if necessary. This happens asynchronously before quitting GPUI. The OS application-quit fallback has a shorter grace period because GPUI limits quit observers to 200 ms. Forced termination cannot guarantee cleanup.
 
-Current surface: local workspaces and Pi sessions. Team/member controls, external Agent adapters, runtime reconnect, Windows validation and distributable packages remain separate work.
+Current surface: local workspaces, Pi orchestrator/worker conversations, pending delivery resume, and collapsible tool details. Builtin team dispatch/report and nonempty history restore have real model evidence. Full team/member controls, external Agent adapters, runtime reconnect, Windows validation and distributable packages remain separate work.

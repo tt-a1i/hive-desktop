@@ -1,5 +1,5 @@
 use crate::{
-    app::{HiveApp, Message},
+    app::{HiveApp, Message, ToolPresentation},
     protocol::*,
 };
 use gpui_kit::{component::text::TextViewState, *};
@@ -10,7 +10,11 @@ impl HiveApp {
             return;
         };
         let text = self.input.read(cx).value().to_string();
-        if text.trim().is_empty() || self.busy.contains(&id) {
+        if text.trim().is_empty()
+            || self.busy.contains(&id)
+            || self.pending.get(&id).copied().unwrap_or(0) > 0
+            || self.loading
+        {
             return;
         }
         if self.closing {
@@ -22,13 +26,12 @@ impl HiveApp {
         self.busy.insert(id.clone());
         self.input
             .update(cx, |state, cx| state.set_value("", window, cx));
-        self.push_message(
-            format!("local-{}", self.messages.len()),
-            "user".into(),
-            text.clone(),
-            cx,
-        );
+        let optimistic_id = format!("local-{}-{}", self.open_request, self.messages.len());
+        self.optimistic_users
+            .insert(id.clone(), optimistic_id.clone());
+        self.push_message(optimistic_id, "user".into(), text.clone(), cx);
         self.scroll.scroll_to_bottom();
+        let window = window.window_handle();
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("chat.prompt", json!({"sessionId":id,"text":text}))
@@ -37,6 +40,19 @@ impl HiveApp {
                 match result {
                     Err(error) => {
                         this.busy.remove(&id);
+                        if let Some(optimistic_id) = this.optimistic_users.remove(&id) {
+                            if this.session.as_ref().is_some_and(|s| s.id == id) {
+                                this.messages.retain(|m| m.id != optimistic_id);
+                                if this.input.read(cx).value().is_empty() {
+                                    let input = this.input.clone();
+                                    let _ = window.update(cx, |_, window, cx| {
+                                        input.update(cx, |state, cx| {
+                                            state.set_value(text.clone(), window, cx)
+                                        });
+                                    });
+                                }
+                            }
+                        }
                         this.error = Some(error);
                     }
                     Ok(value) => {
@@ -61,6 +77,40 @@ impl HiveApp {
         })
         .detach();
         cx.notify();
+    }
+    pub fn resume(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {
+            return;
+        };
+        if self.loading
+            || self.busy.contains(&id)
+            || self.pending.get(&id).copied().unwrap_or(0) == 0
+        {
+            return;
+        }
+        self.request("chat.resume", json!({"sessionId":id}), cx, |this, _, cx| {
+            this.refresh_sessions(cx)
+        });
+    }
+    fn apply_activity(&mut self, event: &PiEvent) {
+        let id = event.session_id().to_string();
+        match event {
+            PiEvent::State { busy, pending, .. } => {
+                if *busy {
+                    self.busy.insert(id.clone());
+                } else {
+                    self.busy.remove(&id);
+                }
+                self.pending.insert(id, *pending);
+            }
+            PiEvent::Settled { .. } => {
+                self.busy.remove(&id);
+            }
+            PiEvent::AssistantDelta { .. } | PiEvent::ToolStart { .. } => {
+                self.busy.insert(id);
+            }
+            _ => {}
+        }
     }
     pub fn abort(&mut self, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
@@ -101,7 +151,26 @@ impl HiveApp {
             role,
             text,
             markdown,
+            tool: None,
         });
+    }
+    pub(crate) fn upsert_tool(
+        &mut self,
+        id: String,
+        name: String,
+        status: &'static str,
+        output: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.upsert(id.clone(), "toolResult", output, false, cx);
+        if let Some(message) = self.messages.iter_mut().find(|m| m.id == id) {
+            let expanded = message.tool.as_ref().is_some_and(|tool| tool.expanded);
+            message.tool = Some(ToolPresentation {
+                name,
+                status,
+                expanded,
+            });
+        }
     }
     pub(crate) fn upsert(
         &mut self,
@@ -129,13 +198,20 @@ impl HiveApp {
         }
     }
     pub(crate) fn agent_event(&mut self, event: PiEvent, cx: &mut Context<Self>) {
-        match &event {
-            PiEvent::Settled { session_id, .. } => {
-                self.busy.remove(session_id);
-            }
-            _ => {}
-        }
         if self.session.as_ref().map(|s| s.id.as_str()) != Some(event.session_id()) {
+            let previous = self
+                .background_sequences
+                .entry(event.session_id().into())
+                .or_default();
+            if event.sequence() <= *previous {
+                return;
+            }
+            *previous = event.sequence();
+            self.apply_activity(&event);
+            if !matches!(&event, PiEvent::State { .. } | PiEvent::Settled { .. }) {
+                self.unread.insert(event.session_id().into());
+            }
+            self.refresh_sessions(cx);
             return;
         }
         if self.loading {
@@ -146,9 +222,17 @@ impl HiveApp {
             return;
         }
         self.event_sequence = event.sequence();
+        self.background_sequences
+            .insert(event.session_id().into(), event.sequence());
+        self.apply_activity(&event);
+        if matches!(&event, PiEvent::State { .. } | PiEvent::Settled { .. }) {
+            self.refresh_sessions(cx);
+        }
         // GPUI stores a positive max_offset and a negative current offset.
         let follow = self.scroll.max_offset().y + self.scroll.offset().y <= px(4.);
+        let event_session_id = event.session_id().to_string();
         match event {
+            PiEvent::State { .. } => {}
             PiEvent::AssistantDelta {
                 message_id,
                 kind,
@@ -163,47 +247,58 @@ impl HiveApp {
                 message_id,
                 message,
                 ..
-            } => self.upsert(message_id, "assistant", message_text(&message), false, cx),
+            } => {
+                let role = message["role"].as_str().unwrap_or("assistant");
+                if role == "user" {
+                    if let Some(optimistic_id) =
+                        self.optimistic_users.remove(event_session_id.as_str())
+                    {
+                        if let Some(optimistic) =
+                            self.messages.iter_mut().find(|m| m.id == optimistic_id)
+                        {
+                            optimistic.id = message_id.clone();
+                        }
+                    }
+                }
+                self.upsert(message_id, role, message_text(&message), false, cx);
+            }
             PiEvent::ToolStart {
                 tool_call_id,
                 tool_name,
                 args,
                 ..
-            } => self.upsert(
-                tool_call_id,
-                "tool",
-                format!("{tool_name} · 执行中\n{args}"),
-                false,
-                cx,
-            ),
+            } => {
+                self.upsert_tool(
+                    tool_call_id,
+                    tool_name,
+                    "执行中",
+                    serde_json::to_string_pretty(&args).unwrap_or_else(|_| args.to_string()),
+                    cx,
+                );
+            }
             PiEvent::ToolUpdate {
                 tool_call_id,
                 tool_name,
                 result,
                 ..
-            } => self.upsert(
-                tool_call_id,
-                "tool",
-                format!("{tool_name}\n{result}"),
-                false,
-                cx,
-            ),
+            } => {
+                self.upsert_tool(tool_call_id, tool_name, "执行中", message_text(&result), cx);
+            }
             PiEvent::ToolEnd {
                 tool_call_id,
                 tool_name,
                 result,
                 is_error,
                 ..
-            } => self.upsert(
-                tool_call_id,
-                "tool",
-                format!(
-                    "{tool_name} · {}\n{result}",
-                    if is_error { "失败" } else { "完成" }
-                ),
-                false,
-                cx,
-            ),
+            } => {
+                self.upsert_tool(
+                    tool_call_id,
+                    tool_name,
+                    if is_error { "失败" } else { "完成" },
+                    message_text(&result),
+                    cx,
+                );
+            }
             PiEvent::Settled { aborted, .. } => {
                 if aborted {
                     self.status = "已停止当前回复".into();
@@ -227,7 +322,7 @@ pub(crate) fn message_text(message: &Value) -> String {
                 .iter()
                 .filter_map(|block| match block["type"].as_str() {
                     Some("text") => block["text"].as_str().map(String::from),
-                    Some("toolCall") => Some(format!(
+                    Some("toolCall") if message["role"] != "assistant" => Some(format!(
                         "{}\n{}",
                         block["name"].as_str().unwrap_or("工具"),
                         block["arguments"]

@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
+import type { HiveAgentRuntimeFactory } from "./hive-runtime-contract.js";
 
 export class HiveHttpError extends Error {
 	constructor(
@@ -23,8 +24,10 @@ let hostActive = false;
 
 export async function createHiveHost({
 	dataDir,
+	agentRuntimeFactory,
 }: {
 	dataDir: string;
+	agentRuntimeFactory?: HiveAgentRuntimeFactory;
 }): Promise<HiveHost> {
 	if (!isAbsolute(dataDir))
 		throw new Error("Hive desktop dataDir must be an absolute path");
@@ -40,7 +43,10 @@ export async function createHiveHost({
 
 	let runtime: Awaited<ReturnType<typeof runHiveCommand>>;
 	try {
-		runtime = await runHiveCommand(["--port", "0"], { openBrowser: false });
+		runtime = await runHiveCommand(["--port", "0"], {
+			openBrowser: false,
+			...(agentRuntimeFactory ? { agentRuntimeFactory } : {}),
+		});
 	} catch (error) {
 		release();
 		throw error;

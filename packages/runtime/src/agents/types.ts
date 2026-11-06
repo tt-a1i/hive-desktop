@@ -24,7 +24,9 @@ export interface PiSessionHandle {
   readonly sessionFile: string | undefined;
   history(): readonly unknown[];
   snapshot(): { history: readonly unknown[]; historyMessageIds: string[]; activeMessage?: { messageId: string; message: unknown } };
-  prompt(text: string): Promise<void>;
+  prompt(text: string, options?: { automated?: boolean; deliveryId?: string }): Promise<void>;
+  addContext(text: string, customType?: string): Promise<void>;
+  completedDeliveryIds(): readonly string[];
   abort(): Promise<void>;
   dispose(): void;
   currentModel(): { provider: string; id: string; name: string } | undefined;

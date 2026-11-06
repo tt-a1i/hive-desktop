@@ -7,6 +7,9 @@ export interface ChatRecord {
   workspaceId: string;
   title: string;
   sessionFile: string | null;
+  agentId?: string;
+  piSessionId?: string;
+  startupContext?: string;
   model?: { provider: string; id: string; name: string };
   updatedAt: number;
 }
@@ -31,8 +34,24 @@ export class ChatIndex {
     if (!record) throw new Error('Conversation not found');
     return record;
   }
+  forAgent(workspaceId: string, agentId: string): ChatRecord | undefined {
+    return this.records.find(record => record.workspaceId === workspaceId && record.agentId === agentId);
+  }
+  bind(id: string, agentId: string): ChatRecord {
+    const bound = { ...this.get(id), agentId };
+    const next = this.records.map(record => {
+      if (record.id === id) return bound;
+      if (record.workspaceId !== bound.workspaceId || record.agentId !== agentId) return record;
+      const { agentId: previousAgentId, ...unbound } = record;
+      return unbound;
+    });
+    this.commit(next);
+    return bound;
+  }
   save(record: ChatRecord): void {
-    const next = [...this.records.filter(item => item.id !== record.id), record];
+    this.commit([...this.records.filter(item => item.id !== record.id), record]);
+  }
+  private commit(next: ChatRecord[]): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
     renameSync(temporary, this.file);
@@ -45,6 +64,9 @@ function isChatRecord(value: unknown): value is ChatRecord {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
+  if (record.agentId !== undefined && typeof record.agentId !== 'string') return false;
+  if (record.piSessionId !== undefined && typeof record.piSessionId !== 'string') return false;
+  if (record.startupContext !== undefined && typeof record.startupContext !== 'string') return false;
   if (record.model !== undefined) {
     if (!record.model || typeof record.model !== 'object') return false;
     const model = record.model as Record<string, unknown>;

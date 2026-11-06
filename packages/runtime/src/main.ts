@@ -1,9 +1,8 @@
 import { format } from 'node:util';
 import { createInterface } from 'node:readline';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { Chats } from './chats.js';
-import { createHiveHost, HiveHttpError } from './hive-host.js';
+import { HiveHttpError } from './hive-host.js';
+import { createDesktopRuntime } from './desktop-runtime.js';
 import { desktopDataDir } from './paths.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
@@ -15,12 +14,10 @@ const send = (message: unknown) => protocolWrite(`${JSON.stringify(message)}\n`)
 
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
-const hive = await createHiveHost({ dataDir: join(dataDir, 'hive') });
-const chats = new Chats(hive, dataDir, event => send({ event: 'agent', data: event }));
+const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }));
+const { hive, chats } = runtime;
 let closing: Promise<void> | undefined;
-const close = () => closing ??= (async () => {
-  try { await chats.close(); } finally { await hive.close(); }
-})();
+const close = () => closing ??= runtime.close();
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an object');
@@ -42,6 +39,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.open': return chats.open(text(params, 'sessionId'));
     case 'chat.prompt': return chats.prompt(text(params, 'sessionId'), text(params, 'text'));
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));
+    case 'chat.resume': return chats.resume(text(params, 'sessionId'));
     case 'chat.setModel': return chats.setModel(text(params, 'sessionId'), text(params, 'provider'), text(params, 'modelId'));
     case 'shutdown': await close(); return { ok: true };
     default: throw new Error(`Unknown desktop method: ${method}`);

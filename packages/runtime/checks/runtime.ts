@@ -53,7 +53,8 @@ try {
   assert.equal(workspace.orchestrator_start.run_id, null);
   const created = await first.request('chat.create', { workspaceId: workspace.id });
   assert.equal(created.workspaceId, workspace.id);
-  assert.deepEqual(created.history, []);
+  assert.equal(created.history.filter((message: { role: string }) => message.role !== 'custom').length, 0);
+  assert.ok(created.history.some((message: { customType?: string }) => message.customType === 'hive-desktop'));
   assert.ok(Array.isArray(created.models) && created.models.length > 0);
   const listed = await first.request('chat.list', { workspaceId: workspace.id });
   assert.equal(listed.length, 1);
@@ -73,7 +74,8 @@ try {
   assert.equal(persisted[0].id, created.id);
   const restored = await second.request('chat.open', { sessionId: created.id });
   assert.equal(restored.id, created.id);
-  assert.deepEqual(restored.history, []);
+  assert.equal(restored.history.filter((message: { role: string }) => message.role !== 'custom').length, 0);
+  assert.ok(restored.history.some((message: { customType?: string }) => message.customType === 'hive-desktop'));
   assert.deepEqual(await second.request('shutdown'), { ok: true });
   assert.equal((await second.exited)[0], 0);
   console.log('Runtime integration passed: real Hive workspace + Pi SDK + restart + shutdown. No model request sent.');

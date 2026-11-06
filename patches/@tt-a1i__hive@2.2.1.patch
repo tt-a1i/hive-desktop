@@ -1,0 +1,72 @@
+diff --git a/dist/src/cli/hive.js b/dist/src/cli/hive.js
+index 27e9ed2bafba640a2e6f710844e72e9e00548984..f6122d657edb8071464491dceeaf7c35b0627301 100644
+--- a/dist/src/cli/hive.js
++++ b/dist/src/cli/hive.js
+@@ -224,6 +224,7 @@ export const runHiveCommand = async (argv, options = {}) => {
+     const app = createApp({
+         store: createRuntimeStore({
+             agentManager: createAgentManager(),
++            agentRuntimeFactory: options.agentRuntimeFactory,
+             dataDir,
+         }),
+         versionService,
+diff --git a/dist/src/server/routes-team.js b/dist/src/server/routes-team.js
+index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c0d7ca28e 100644
+--- a/dist/src/server/routes-team.js
++++ b/dist/src/server/routes-team.js
+@@ -46,6 +46,9 @@ const getReportStatus = (value) => {
+    built-in CLI visible on PATH, and only then to 'claude'. An explicit
+    `--cli` that is missing from PATH is rejected (400) with a suggestion. */
+ const resolveSpawnLaunchConfig = (store, workspaceId, cli) => {
++    const cliId = cli === undefined || cli === null || cli === '' ? undefined : requireNonEmptyString(cli, 'cli');
++    const custom = store.resolveSpawnLaunchConfig?.(workspaceId, cliId);
++    if (custom) return custom;
+     const ports = {
+         getCommandPreset: (id) => store.settings.getCommandPreset(id),
+         getOrchestratorLaunchConfig: () => store.peekAgentLaunchConfig(workspaceId, getOrchestratorId(workspaceId)),
+diff --git a/dist/src/server/runtime-store-helpers.js b/dist/src/server/runtime-store-helpers.js
+index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959ccac1d890 100644
+--- a/dist/src/server/runtime-store-helpers.js
++++ b/dist/src/server/runtime-store-helpers.js
+@@ -170,7 +170,7 @@ export const createRuntimeStoreServices = (options = {}) => {
+     const workerOutputTracker = options.agentManager
+         ? createWorkerOutputTracker(options.agentManager.getOutputBus())
+         : null;
+-    const agentRuntime = createAgentRuntime(options.agentManager, agentRunStore, agentSessionStore, settings.getCommandPreset, (workspaceId, agentId) => {
++    const onAgentExit = (workspaceId, agentId) => {
+         workerOutputTracker?.detach(workspaceId, agentId);
+         if (!workspaceStore.hasAgent(workspaceId, agentId))
+             return;
+@@ -212,7 +212,19 @@ export const createRuntimeStoreServices = (options = {}) => {
+             for (const child of children)
+                 removeWorkerCompletely(workspaceId, child.id);
+         }
+-    }, restartPolicy, (workspaceId, agentId) => workspaceStore.getAgent(workspaceId, agentId), getFlags, memoryInjection);
++    };
++    const getAgent = (workspaceId, agentId) => workspaceStore.getAgent(workspaceId, agentId);
++    const defaultRuntime = createAgentRuntime(options.agentManager, agentRunStore, agentSessionStore, settings.getCommandPreset, onAgentExit, restartPolicy, getAgent, getFlags, memoryInjection);
++    const agentRuntime = options.agentRuntimeFactory?.({
++        defaultRuntime,
++        agentRunStore,
++        sessionStore: agentSessionStore,
++        onAgentExit,
++        getAgent,
++        getFlags,
++        restartPolicy,
++        memoryInjection,
++    }) ?? defaultRuntime;
+     const dispatchMessageOps = createDispatchMessageOperations({
+         db,
+         ledger: dispatchLedgerStore,
+diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
+index 9b36020983e2e585aa03922183b8d12631f59ed7..70e6c4c4b1b1a74cbd5741f5e630a16b8d68d6b6 100644
+--- a/dist/src/server/runtime-store.js
++++ b/dist/src/server/runtime-store.js
+@@ -112,6 +112,7 @@ export const createRuntimeStore = (options = {}) => {
+         closeWorkspaceShell: lifecycle.closeWorkspaceShell,
+         configureAgentLaunch: lifecycle.configureAgentLaunch,
+         peekAgentLaunchConfig: lifecycle.peekAgentLaunchConfig,
++        resolveSpawnLaunchConfig: (workspaceId, cli) => services.agentRuntime.resolveSpawnLaunchConfig?.(workspaceId, cli),
+         startAgent: lifecycle.startAgent,
+         autostartConfiguredAgents: lifecycle.autostartConfiguredAgents,
+         startWorkspaceWatch: lifecycle.startWorkspaceWatch,

@@ -27,7 +27,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     }
     return id;
   };
-  let active: { cancelled: boolean; done: Promise<void>; finalError: string | undefined; sdkAborted: boolean } | undefined;
+  let active: { cancelled: boolean; done: Promise<void>; finalError: string | undefined; sdkAborted: boolean; userReceived: boolean } | undefined;
   let disposed = false;
   const unsubscribe = session.subscribe((event) => {
     switch (event.type) {
@@ -58,6 +58,10 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
         break;
       }
       case 'message_end':
+        if (event.message.role === 'user') {
+          if (active) active.userReceived = true;
+          options.onEvent({ type: 'message_end', sessionId, messageId: idForMessage(event.message), message: event.message });
+        }
         if (event.message.role === 'assistant') {
           const finalId = messageId ?? idForMessage(event.message);
           messageIds.set(event.message, finalId);
@@ -122,15 +126,34 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       return { history, historyMessageIds: history.map(idForMessage),
         ...(current !== undefined && { activeMessage: current }) };
     },
-    prompt(text) {
+    async addContext(text, customType = 'hive-context') {
+      if (disposed) throw new Error('Pi session is disposed');
+      if (active) throw new Error('Pi session is already processing a prompt');
+      await session.sendCustomMessage({ customType, content: text, display: false }, { triggerTurn: false });
+    },
+    completedDeliveryIds() {
+      return manager.getEntries().flatMap((entry) => {
+        if (entry.type !== 'custom' || entry.customType !== 'hive-delivery-completed') return [];
+        const data = entry.data;
+        return typeof data === 'object' && data !== null && 'id' in data && typeof data.id === 'string' ? [data.id] : [];
+      });
+    },
+    prompt(text, promptOptions) {
       if (disposed) return Promise.reject(new Error('Pi session is disposed'));
       if (active) return Promise.reject(new Error('Pi session is already processing a prompt'));
-      const run = { cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined };
+      const run = { cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, userReceived: false };
       active = run;
       run.done = Promise.resolve().then(async () => {
         try {
-          await session.prompt(text);
-          if (run.finalError && !run.cancelled) options.onEvent({ type: 'error', sessionId, message: run.finalError });
+          if (promptOptions?.automated) await session.sendUserMessage(text);
+          else await session.prompt(text);
+          if (run.finalError && !run.cancelled && !promptOptions?.deliveryId) options.onEvent({ type: 'error', sessionId, message: run.finalError });
+          if (promptOptions?.deliveryId) {
+            if (run.cancelled || run.sdkAborted) throw new Error('Pi delivery was aborted');
+            if (run.finalError) throw new Error(run.finalError);
+            if (!run.userReceived) throw new Error('Pi delivery was not added to the conversation');
+            manager.appendCustomEntry('hive-delivery-completed', { id: promptOptions.deliveryId });
+          }
         } catch (error) {
           if (!run.cancelled) options.onEvent({ type: 'error', sessionId, message: error instanceof Error ? error.message : String(error) });
           throw error;

@@ -4,7 +4,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
-2026-11-07：采用 GPUI + gpui-kit 构建 macOS / Windows 原生界面，复用 Hive Node 后台。正式应用骨架已在 macOS 跑通真实工作区、内置 Pi 会话、模型选择、文件工具和回复；完整团队协作、外部 Agent、配置体验及跨平台安装包仍在实施。
+2026-11-07：采用 GPUI + gpui-kit 构建 macOS / Windows 原生界面，复用 Hive Node 后台。macOS 已跑通内置 Pi 主控创建 Worker、派单、文件执行、显式汇报和主控核验，并验证非空会话恢复、真实取消及取消后继续。外部 Agent、完整配置与成员管理、界面打磨及跨平台安装包仍在实施。
 
 项目位置：`/Users/tsk/code/hive-desktop`。
 
@@ -42,8 +42,9 @@ pnpm dev
 pnpm check
 pnpm check:hive
 pnpm --filter @hive-desktop/runtime check:runtime
+pnpm --filter @hive-desktop/runtime check:team
 ```
 
-后两项会创建临时数据目录，运行真实 Hive HTTP / SQLite、Pi SDK 及重启检查，不请求模型。真实模型验证固定使用 Pi 原生 OpenAI / ChatGPT 接入的 `gpt-6.1-terra`，不依赖 Magpie。
+这些检查使用临时数据目录，其中团队集成会运行真实 Hive HTTP / SQLite、Pi SDK 和 team CLI，但暂停模型执行。真实模型验证固定使用 Pi 原生 OpenAI / ChatGPT 接入的 `gpt-6.1-terra`，不依赖 Magpie；见 [协作验收记录](docs/validation/2026-11-07-structured-team.md)。
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
