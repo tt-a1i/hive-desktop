@@ -24,6 +24,17 @@ impl HiveApp {
 
 impl Render for HiveApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.draft_target != self.draft_owner {
+            let text = self
+                .draft_target
+                .as_ref()
+                .and_then(|key| self.drafts.get(key))
+                .cloned()
+                .unwrap_or_default();
+            self.input
+                .update(cx, |input, cx| input.set_value(text, window, cx));
+            self.draft_owner = self.draft_target.clone();
+        }
         let placeholder = self
             .session
             .as_ref()

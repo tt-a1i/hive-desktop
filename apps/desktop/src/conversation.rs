@@ -24,6 +24,7 @@ impl HiveApp {
             return;
         };
         self.busy.insert(id.clone());
+        self.drafts.remove(&format!("session:{id}"));
         self.input
             .update(cx, |state, cx| state.set_value("", window, cx));
         let window = window.window_handle();
@@ -52,6 +53,10 @@ impl HiveApp {
                                     .or_default()
                                     .push(text.clone());
                             }
+                        } else if !this.session.as_ref().is_some_and(|s| s.id == id)
+                            && !this.drafts.contains_key(&format!("session:{id}"))
+                        {
+                            this.drafts.insert(format!("session:{id}"), text.clone());
                         } else {
                             this.failed_drafts
                                 .entry(id.clone())

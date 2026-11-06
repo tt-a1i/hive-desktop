@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = name => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
 const executable = arg('--executable');
+const runtime = arg('--runtime');
+if (!runtime || runtime.startsWith('--')) throw new Error('Pass --runtime PATH to a production-deployed runtime');
 if (!executable || executable.startsWith('--')) throw new Error('Pass --executable PATH to a native build for this host');
 if (!['darwin', 'win32'].includes(process.platform) || !['arm64', 'x64'].includes(process.arch)) throw new Error('Packaging supports native macOS or Windows arm64/x64 hosts only');
 const output = resolve(arg('--output') ?? join(root, '.artifacts', `portable-${process.platform}-${process.arch}`));
@@ -20,16 +22,15 @@ const archive = `${basename}.${ext}`;
 const url = `https://nodejs.org/dist/v${version}`;
 const temp = await mkdtemp(join(tmpdir(), 'hive-desktop-package-'));
 function run(command, args, options = {}) {
-  const isPnpmWindows = process.platform === 'win32' && command === 'pnpm.cmd';
-  if (isPnpmWindows && args.some(value => /[&|<>^%!\"\r\n]/.test(value))) throw new Error('Unsupported command characters in path');
-  const cmdline = isPnpmWindows ? `""pnpm.cmd" ${args.map(value => `"${value}"`).join(' ')}"` : '';
-  const result = isPnpmWindows
-    ? spawnSync('cmd.exe', ['/d', '/s', '/c', cmdline], { cwd: root, stdio: 'inherit', windowsVerbatimArguments: true, ...options })
-    : spawnSync(command, args, { cwd: root, stdio: 'inherit', ...options });
+  const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', ...options });
   if (result.error || result.status !== 0) throw result.error ?? new Error(`${command} failed: ${result.status}`);
 }
 try {
   const binary = await realpath(resolve(executable));
+  const deployedRuntime = await realpath(resolve(runtime));
+  for (const required of ['dist/main.js', 'package.json', 'node_modules']) await realpath(join(deployedRuntime, required));
+  const runtimeRelativeOutput = relative(deployedRuntime, output);
+  if (!runtimeRelativeOutput || (!runtimeRelativeOutput.startsWith('..') && !isAbsolute(runtimeRelativeOutput))) throw new Error('Output must be outside deployed runtime');
   try { await lstat(output); throw new Error(`Output already exists: ${output}`); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const app = process.platform === 'darwin' ? join(output, 'Hive Desktop.app', 'Contents') : output;
   const resources = join(app, process.platform === 'darwin' ? 'Resources' : 'resources');
@@ -38,7 +39,7 @@ try {
   await mkdir(resources, { recursive: true });
   await cp(binary, bin);
   if (process.platform === 'darwin') await writeFile(join(app, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>hive-desktop</string><key>CFBundleIdentifier</key><string>com.hive.desktop.dev</string><key>CFBundleName</key><string>Hive Desktop</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>0.1.0</string></dict></plist>`);
-  run(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['--filter', '@hive-desktop/runtime', 'deploy', '--prod', '--frozen-lockfile', '--node-linker=hoisted', join(resources, 'runtime')]);
+  await cp(deployedRuntime, join(resources, 'runtime'), { recursive: true, verbatimSymlinks: true });
   run('curl', ['-fL', '--retry', '2', '-o', join(temp, archive), `${url}/${archive}`]);
   run('curl', ['-fL', '--retry', '2', '-o', join(temp, 'SHASUMS256.txt'), `${url}/SHASUMS256.txt`]);
   const sums = await readFile(join(temp, 'SHASUMS256.txt'), 'utf8');

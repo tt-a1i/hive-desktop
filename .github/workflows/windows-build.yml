@@ -54,8 +54,10 @@ jobs:
         run: rustc --edition 2021 --test apps/desktop/src/runtime_location.rs -o target/runtime-location-tests.exe
       - name: Run runtime location tests
         run: ./target/runtime-location-tests.exe
+      - name: Deploy locked production runtime
+        run: pnpm --filter @hive-desktop/runtime deploy --prod --frozen-lockfile --node-linker=hoisted target/deployed-runtime
       - name: Package portable desktop
-        run: node scripts/package-desktop.mjs --executable target/windows-desktop/debug/hive-desktop.exe --output target/portable-windows
+        run: node scripts/package-desktop.mjs --executable target/windows-desktop/debug/hive-desktop.exe --runtime target/deployed-runtime --output target/portable-windows
       - name: Zip portable folder
         run: Compress-Archive -Path target/portable-windows/* -DestinationPath target/hive-desktop-windows-portable.zip
       - name: Extract final zip

@@ -3,6 +3,17 @@ use crate::{app::HiveApp, protocol::*};
 use gpui_kit::*;
 use serde_json::json;
 impl HiveApp {
+    fn switch_draft(&mut self, next: Option<String>, cx: &mut Context<Self>) {
+        if let Some(key) = self.draft_owner.clone() {
+            let text = self.input.read(cx).value().to_string();
+            if text.is_empty() {
+                self.drafts.remove(&key);
+            } else {
+                self.drafts.insert(key, text);
+            }
+        }
+        self.draft_target = next;
+    }
     pub fn load_workspaces(&mut self, cx: &mut Context<Self>) {
         self.request(
             "hive.request",
@@ -45,6 +56,7 @@ impl HiveApp {
         });
     }
     pub fn select_workspace(&mut self, id: String, cx: &mut Context<Self>) {
+        self.switch_draft(Some(format!("workspace:{id}")), cx);
         self.loading = true;
         self.workspace = Some(id.clone());
         self.session = None;
@@ -175,6 +187,7 @@ impl HiveApp {
         .detach();
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.switch_draft(Some(format!("session:{id}")), cx);
         self.close_settings();
         self.member_panel = false;
         self.open_request += 1;

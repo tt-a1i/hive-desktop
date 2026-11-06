@@ -36,6 +36,9 @@ pub struct Message {
 }
 pub struct HiveApp {
     pub input: Entity<TextareaState>,
+    pub drafts: HashMap<String, String>,
+    pub draft_owner: Option<String>,
+    pub draft_target: Option<String>,
     pub input_placeholder: String,
     pub folder: Entity<InputState>,
     pub model_search: Entity<InputState>,
@@ -133,6 +136,9 @@ impl HiveApp {
                     .auto_grow(2, 7)
                     .placeholder("输入消息…")
             }),
+            drafts: HashMap::new(),
+            draft_owner: None,
+            draft_target: None,
             input_placeholder: "输入消息…".into(),
             folder: cx.new(|cx| InputState::new(window, cx).placeholder("项目文件夹的绝对路径")),
             model_search,
