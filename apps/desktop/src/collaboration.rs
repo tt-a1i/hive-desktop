@@ -1,7 +1,10 @@
+mod tasks;
+
 use crate::app::HiveApp;
 use gpui_kit::{component::text::TextViewState, *};
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 
 const PAGE: usize = 20;
 #[derive(Clone, Deserialize)]
@@ -30,8 +33,8 @@ struct MessagePage {
     next_after_seq: Option<u64>,
 }
 #[derive(Deserialize)]
-struct Tasks {
-    content: String,
+pub(crate) struct Tasks {
+    pub content: String,
 }
 pub struct Collaboration {
     pub visible: bool,
@@ -40,6 +43,7 @@ pub struct Collaboration {
     pub task_loading: bool,
     pub task_error: Option<String>,
     pub task_generation: u64,
+    pub task_drafts: HashMap<String, tasks::TaskDraft>,
     pub filter: &'static str,
     pub offset: usize,
     pub dispatches: Vec<Dispatch>,
@@ -62,6 +66,7 @@ impl Collaboration {
             task_loading: false,
             task_error: None,
             task_generation: 0,
+            task_drafts: HashMap::new(),
             filter: "all",
             offset: 0,
             dispatches: vec![],
@@ -81,6 +86,7 @@ impl HiveApp {
     pub fn close_collaboration(&mut self) {
         self.collaboration.visible = false;
         self.collaboration.task_generation += 1;
+        self.collaboration.task_loading = false;
         self.collaboration.list_generation += 1;
         self.collaboration.message_generation += 1;
     }
@@ -100,13 +106,18 @@ impl HiveApp {
         self.load_tasks(cx);
         self.load_dispatches(cx);
     }
-    fn load_tasks(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn load_tasks(&mut self, cx: &mut Context<Self>) {
         let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())
         else {
             return;
         };
         let c = &mut self.collaboration;
         c.task_generation += 1;
+        if c.task_drafts.contains_key(&workspace) {
+            c.task_loading = false;
+            cx.notify();
+            return;
+        }
         let generation = c.task_generation;
         c.task_loading = true;
         c.task_error = None;
