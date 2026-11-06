@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { CodexTransport } from '../src/agents/codex-transport.js';
-import { ExternalPiTransport } from '../src/agents/external-pi-transport.js';
-import { OwnedCliProcess } from '../src/agents/owned-cli-process.js';
 if (process.platform !== 'win32') throw new Error('This check requires actual Windows; static support is not a Windows verification');
+// Exercise the built transport and its .js Job host, as shipped in the runtime package.
+const { CodexTransport } = await import(new URL('../dist/agents/codex-transport.js', import.meta.url).href) as typeof import('../src/agents/codex-transport.js');
+const { ExternalPiTransport } = await import(new URL('../dist/agents/external-pi-transport.js', import.meta.url).href) as typeof import('../src/agents/external-pi-transport.js');
+const { OwnedCliProcess } = await import(new URL('../dist/agents/owned-cli-process.js', import.meta.url).href) as typeof import('../src/agents/owned-cli-process.js');
 const prefix = process.env.HIVE_WINDOWS_NATIVE_CLI_PREFIX;
 assert.ok(prefix, 'Set HIVE_WINDOWS_NATIVE_CLI_PREFIX to an official npm install prefix containing spaces');
 assert.ok(prefix.includes(' '), 'The installed CLI prefix must contain a space');
@@ -147,7 +148,27 @@ async function deadline<T>(operation: Promise<T>, label: string): Promise<T> {
   try { return await Promise.race([operation, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} timed out`)), 20000); })]); }
   finally { clearTimeout(timer); }
 }
+async function naturalRootExitFixture(): Promise<void> {
+  // Explicitly detached child escapes Node's ordinary child job, but must remain in our session Job.
+  const fixture = join(directory, 'natural root leaves detached child.cjs');
+  await writeFile(fixture, `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'inherit',detached:true,windowsHide:true}); child.unref(); console.log(JSON.stringify({pid:process.pid,child:child.pid})); process.stdin.resume(); process.stdin.once('end',()=>{process.exitCode=17;});`);
+  const owned = new OwnedCliProcess(process.execPath, [fixture], { cwd: directory });
+  const receipt: Record<string, unknown> = { scope: 'synthetic natural root exit with detached inherited-stdio child; no CLI/model behavior' };
+  receipts.push(receipt);
+  let tree: ProcessInfo[] = [];
+  try {
+    owned.child.stderr.resume(); owned.child.stdin.on('error', () => {});
+    await deadline(new Promise<void>((resolve, reject) => { owned.child.stdout.once('data', () => resolve()); owned.child.once('error', reject); }), 'natural root fixture readiness');
+    tree = await ownedTree(owned.child.pid!); receipt.beforeStdinEofProcesses = tree;
+    assert.ok(tree.length >= 3, 'Launcher, native fixture root and detached child must all be present');
+  } finally { try { await owned.close(); } finally { receipt.lifecycle = owned.diagnostics; } }
+  assert.equal(owned.child.exitCode, 17, 'Launcher must naturally preserve the native root exit code');
+  assert.equal(owned.diagnostics.events.some(event => event.type === 'grace.expired'), false, 'Natural Job cleanup must not rely on forced shutdown');
+  await assertGone(tree);
+  receipt.pass = true; receipt.naturalExitCode = 17; receipt.owned = tree;
+}
 try {
+  await naturalRootExitFixture();
   for (const command of ['codex', join(prefix, 'codex.cmd')]) await codex(command);
   for (const command of ['pi', join(prefix, 'pi.cmd')]) await pi(command);
   const nativeCodex = await findCodexExe(join(prefix, 'node_modules', '@openai'));
@@ -169,8 +190,8 @@ try {
   await assertGone(tree);
   receipts.push({ scope: 'synthetic native Node process tree, not CLI/model behavior', forcedTreeTermination: true, owned: tree });
   await mkdir(resolve('../../.artifacts'), { recursive: true });
-  await writeFile(evidence, JSON.stringify({ pass: true, platform: process.platform, inference: false, installed, directory, receipts,
-    unverified: 'Descendants after arbitrary external force-kill of the root wrapper are not recoverable by taskkill /T once its PID is gone.' }, null, 2));
+  await writeFile(evidence, JSON.stringify({ pass: true, platform: process.platform, inference: false, runtimeArtifact: 'compiled dist/agents/*.js including owned-windows-cli-host.js', installed, directory, receipts,
+    ownership: 'Windows-only launcher self-assigns a kill-on-close Job before spawning the original CLI. Actual natural/abnormal exit and PID+creation-time cleanup assertions retained.' }, null, 2));
   console.log(JSON.stringify({ pass: true, evidence, cases: receipts.length, inference: false }));
 } catch (error) {
   await mkdir(resolve('../../.artifacts'), { recursive: true });

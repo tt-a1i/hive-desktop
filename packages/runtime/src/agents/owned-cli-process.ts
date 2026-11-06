@@ -1,5 +1,6 @@
 import { execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import crossSpawn from 'cross-spawn';
 
 /** A spawned CLI and the shutdown promise its caller must await. */
@@ -14,7 +15,10 @@ export class OwnedCliProcess {
 
   constructor(command: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv }) {
     // cross-spawn resolves Windows shims/PATHEXT and escapes argv; no shell command assembly here.
-    this.child = crossSpawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true }) as ChildProcessWithoutNullStreams;
+    const launch = process.platform === 'win32'
+      ? { command: process.execPath, args: [fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './owned-windows-cli-host.ts' : './owned-windows-cli-host.js', import.meta.url)), command, JSON.stringify(args)] }
+      : { command, args };
+    this.child = crossSpawn(launch.command, launch.args, { ...options, stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true }) as ChildProcessWithoutNullStreams;
     this.child.once('spawn', () => this.record('spawn'));
     this.child.once('error', error => this.record('error', (error as NodeJS.ErrnoException).code));
     this.exited = new Promise(resolve => this.child.once('close', (code, signal) => { this.closed = true; this.record('close', code, signal); resolve(); }));
@@ -52,7 +56,7 @@ export class OwnedCliProcess {
     if (await this.waitForExit(graceMs)) return;
     this.record('grace.expired');
     if (process.platform === 'win32') {
-      // Killing cmd.exe alone leaves the real npm/pnpm CLI running. /T includes its descendants.
+      // This root owns a kill-on-close Job. /T also requests immediate termination of its live descendants.
       // Never target a PID after observing its root exit: it may have been recycled.
       if (this.rootExited || !this.child.pid) throw new Error('Owned Windows CLI root exited before its inherited streams closed; descendant cleanup cannot be verified');
       const windows = process.env.SystemRoot ?? process.env.WINDIR;

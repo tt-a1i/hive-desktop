@@ -20,7 +20,8 @@
     "@tt-a1i/hive": "2.2.1",
     "typebox": "1.3.27",
     "zod": "4.6.7",
-    "cross-spawn": "7.0.6"
+    "cross-spawn": "7.0.6",
+    "@seydx/win-job": "0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",
