@@ -22,7 +22,7 @@ export function createTeamCommand(source: TeamToolOptions | (() => TeamToolOptio
   return {
     name: 'team',
     label: 'Team',
-    description: 'Run the native Hive team CLI (list, send, spawn, report, messages, guide, and other commands). Pass each CLI argument separately; use --stdin and stdin for long text. The CLI handles parsing, authentication, and the dispatch ledger.',
+    description: 'Run the native Hive team CLI (list, send, spawn, report, messages, guide, and other commands). Pass each CLI argument separately. For send, pass task text as a positional argument; it does not accept --stdin. Use stdin only for commands that support --stdin, such as report. The CLI handles parsing, authentication, and the dispatch ledger.',
     parameters: teamParameters,
     async execute(_id: string, { args, stdin }: { args: string[]; stdin?: string }, signal?: AbortSignal) {
       const options = typeof source === 'function' ? source() : source;

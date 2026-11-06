@@ -1,6 +1,8 @@
 mod app;
 mod conversation;
+mod members;
 mod protocol;
+mod runtime_location;
 mod sessions;
 mod transport;
 mod view;

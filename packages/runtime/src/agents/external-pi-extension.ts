@@ -8,14 +8,10 @@ export default function hiveDesktopBridge(pi: ExtensionAPI): void {
   const command = process.env.HIVE_PI_BRIDGE_COMMAND;
   const toolName = process.env.HIVE_PI_TEAM_TOOL;
   if (!command || !toolName) throw new Error('Missing Hive external Pi bridge identity');
+  let binding: { workspaceId: string; agentId: string; token: string; hivePort: string; cwd: string } | undefined;
   const team = createTeamTool(() => {
-    const required = (name: string): string => {
-      const value = process.env[name];
-      if (!value) throw new Error(`Missing Hive team environment: ${name}`);
-      return value;
-    };
-    return { workspaceId: required('HIVE_PROJECT_ID'), agentId: required('HIVE_AGENT_ID'),
-      token: required('HIVE_AGENT_TOKEN'), hivePort: required('HIVE_PORT'), cwd: process.cwd() };
+    if (!binding) throw new Error('Hive team binding is not active');
+    return binding;
   });
   // Per-child name prevents silently replacing a user's existing team tool.
   pi.registerTool({ ...team, name: toolName });
@@ -25,7 +21,18 @@ export default function hiveDesktopBridge(pi: ExtensionAPI): void {
       const value: unknown = JSON.parse(args);
       if (!value || typeof value !== 'object' || !('action' in value)) throw new Error('Invalid Hive bridge payload');
       if (!ctx.isIdle()) throw new Error('Hive bridge requires an idle Pi session');
-      if (value.action === 'initialize') {
+      if (value.action === 'bind') {
+        const candidate = 'binding' in value ? value.binding : undefined;
+        if (candidate === undefined || candidate === null) { binding = undefined; return; }
+        if (typeof candidate !== 'object') throw new Error('Invalid Hive team binding');
+        for (const key of ['workspaceId', 'agentId', 'token', 'hivePort', 'cwd']) {
+          if (!(key in candidate) || typeof candidate[key as keyof typeof candidate] !== 'string' || !candidate[key as keyof typeof candidate]) throw new Error('Invalid Hive team binding');
+        }
+        binding = candidate as typeof binding;
+      } else if (value.action === 'user') {
+        if (!('text' in value) || typeof value.text !== 'string') throw new Error('Hive user message must be a string');
+        pi.sendUserMessage(value.text, { expandPromptTemplates: false });
+      } else if (value.action === 'initialize') {
         const tools = pi.getAllTools().filter(tool => tool.name === toolName);
         if (tools.length !== 1) throw new Error('Hive external Pi team tool collision');
         const path = ctx.sessionManager.getSessionFile();

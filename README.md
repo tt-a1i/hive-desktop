@@ -4,7 +4,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
-2026-11-07：采用 GPUI + gpui-kit 构建 macOS / Windows 原生界面，复用 Hive Node 后台。macOS 已分别跑通内置 Pi 和外部 Codex 主控创建 Worker、派单、文件执行、显式汇报和主控核验，并验证恢复、中断与继续。Claude Code、外部 Pi、完整配置与成员管理、界面打磨及跨平台安装包仍在实施。Codex 的具体支持范围见 [原生接入验证](docs/validation/2026-11-07-codex.md)。
+2026-11-07：采用 GPUI + gpui-kit 构建 macOS / Windows 原生界面，复用 Hive Node 后台。macOS 已分别跑通内置 Pi、外部 Codex 和外部 Pi 主控创建 Worker、派单、文件执行、显式汇报、主控核验及会话恢复。外部 Pi 的范围见 [团队验证](docs/validation/2026-11-07-external-pi-team.md)，Codex 见 [原生接入验证](docs/validation/2026-11-07-codex.md)。成员管理与便携开发包已加入，Claude Code、完整配置、界面打磨和跨平台正式发行仍在实施。
 
 项目位置：`/Users/tsk/code/hive-desktop`。
 

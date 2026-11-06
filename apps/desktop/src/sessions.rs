@@ -52,10 +52,17 @@ impl HiveApp {
         self.pending_events.clear();
         self.event_sequence = 0;
         self.sessions.clear();
+        self.members.clear();
+        self.member_generation += 1;
+        self.member_stopping = None;
+        self.member_loading = false;
+        self.editing_member = None;
+        self.deleting_member = None;
         self.models.clear();
         self.model = None;
         self.open_request += 1;
         self.refresh_sessions(cx);
+        self.refresh_members(cx);
         cx.notify();
     }
     // Coalesce event bursts and serialize requests so older lists cannot replace newer ones.
@@ -168,6 +175,7 @@ impl HiveApp {
         .detach();
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.member_panel = false;
         self.open_request += 1;
         self.unread.remove(&id);
         self.choosing_model = false;

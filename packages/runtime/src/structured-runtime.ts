@@ -311,6 +311,6 @@ export function createStructuredRuntime(
 	};
 }
 
-function structuredCommand(command: string | undefined): command is "hive:pi" | "hive:codex" {
-  return command === "hive:pi" || command === "hive:codex";
+function structuredCommand(command: string | undefined): command is "hive:pi" | "hive:codex" | "hive:pi-rpc" {
+  return command === "hive:pi" || command === "hive:codex" || command === "hive:pi-rpc";
 }

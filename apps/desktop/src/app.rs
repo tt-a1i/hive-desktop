@@ -39,6 +39,20 @@ pub struct HiveApp {
     pub input_placeholder: String,
     pub folder: Entity<InputState>,
     pub model_search: Entity<InputState>,
+    pub member_name: Entity<InputState>,
+    pub member_description: Entity<InputState>,
+    pub member_rename: Entity<InputState>,
+    pub member_provider: Entity<InputState>,
+    pub member_model: Entity<InputState>,
+    pub members: Vec<Member>,
+    pub member_role: &'static str,
+    pub member_backend: &'static str,
+    pub member_panel: bool,
+    pub member_loading: bool,
+    pub member_generation: u64,
+    pub member_stopping: Option<String>,
+    pub editing_member: Option<String>,
+    pub deleting_member: Option<String>,
     pub runtime: Option<Arc<Runtime>>,
     pub workspaces: Vec<Workspace>,
     pub workspace: Option<String>,
@@ -66,6 +80,8 @@ pub struct HiveApp {
     events: Task<()>,
     _quit: Subscription,
     _model_search_subscription: Subscription,
+    _member_provider_subscription: Subscription,
+    _member_model_subscription: Subscription,
 }
 impl HiveApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -86,6 +102,24 @@ impl HiveApp {
                     cx.notify();
                 }
             });
+        let member_provider =
+            cx.new(|cx| InputState::new(window, cx).placeholder("模型提供商，如 openai"));
+        let member_model = cx.new(|cx| InputState::new(window, cx).placeholder("模型 ID"));
+        let member_provider_subscription = cx.subscribe_in(
+            &member_provider,
+            window,
+            |_, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            },
+        );
+        let member_model_subscription =
+            cx.subscribe_in(&member_model, window, |_, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            });
         let mut app = Self {
             input: cx.new(|cx| {
                 TextareaState::new(window, cx)
@@ -95,7 +129,24 @@ impl HiveApp {
             input_placeholder: "输入消息…".into(),
             folder: cx.new(|cx| InputState::new(window, cx).placeholder("项目文件夹的绝对路径")),
             model_search,
+            member_name: cx.new(|cx| InputState::new(window, cx).placeholder("成员名称")),
+            member_description: cx
+                .new(|cx| InputState::new(window, cx).placeholder("职责说明（可选）")),
+            member_rename: cx.new(|cx| InputState::new(window, cx).placeholder("新名称")),
+            member_provider,
+            member_model,
+            members: vec![],
+            member_role: "coder",
+            member_backend: "pi",
+            member_panel: false,
+            member_loading: false,
+            member_generation: 0,
+            member_stopping: None,
+            editing_member: None,
+            deleting_member: None,
             _model_search_subscription: model_search_subscription,
+            _member_provider_subscription: member_provider_subscription,
+            _member_model_subscription: member_model_subscription,
             runtime: None,
             workspaces: vec![],
             workspace: None,

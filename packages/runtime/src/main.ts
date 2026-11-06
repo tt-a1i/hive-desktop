@@ -36,7 +36,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'hive.request': return hive.request(text(params, 'method'), text(params, 'path'), params.body);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.create': {
-      if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex') throw new Error('Unsupported chat backend');
+      if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc') throw new Error('Unsupported chat backend');
       return chats.create(text(params, 'workspaceId'), params.backend);
     }
     case 'chat.open': return chats.open(text(params, 'sessionId'));

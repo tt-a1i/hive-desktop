@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCodexSession, type CodexSessionHandle } from './agents/codex.js';
+import { createExternalPiSession, type ExternalPiSessionHandle } from './agents/external-pi.js';
 import { createPiSession } from './agents/pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, type ChatRecord, type ChatBackend } from './chat-index.js';
@@ -16,7 +17,7 @@ interface LiveChat {
   failure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
 export type ChatEvent = (PiEvent | { type: 'state'; sessionId: string; busy: boolean; pending: number }) & { sequence: number };
-const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array and long input through stdin. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
+const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
 
 export class Chats implements StructuredSessionPort {
   private readonly index: ChatIndex;
@@ -64,20 +65,25 @@ export class Chats implements StructuredSessionPort {
       if (event.type === 'settled') { if (chat) chat.aborted = event.aborted; return; }
       this.event(record.id, event);
     };
+    const onUnexpectedExit = (error: Error) => {
+      if (chat) this.failLive(record.id, chat, error);
+      else earlyFailure = error;
+    };
     const model = record.model && { provider: record.model.provider, id: record.model.id };
     const command = createTeamCommand(binding);
     const handle = record.backend === 'codex'
       ? await createCodexSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'codex'),
         ...(process.env.HIVE_CODEX_COMMAND && { command: process.env.HIVE_CODEX_COMMAND }),
         ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(model && { model }), onEvent,
-        onUnexpectedExit: error => {
-          if (chat) this.failLive(record.id, chat, error);
-          else earlyFailure = error;
-        },
+        onUnexpectedExit,
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
         customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
           execute: (id, args, signal) => command.execute(id, args as { args: string[]; stdin?: string }, signal) }],
       })
+      : record.backend === 'pi-rpc'
+      ? await createExternalPiSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'external-pi'),
+        ...(process.env.HIVE_PI_COMMAND && { command: process.env.HIVE_PI_COMMAND }),
+        ...(sessionFile && { sessionFile }), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
       : await createPiSession({ cwd: workspace.path, sessionDir: this.sessionDir,
         ...(sessionFile && { sessionFile }), ...(model && { model }),
         customTools: [createTeamTool(binding)], onEvent });
@@ -87,10 +93,14 @@ export class Chats implements StructuredSessionPort {
       if (!handle.hasContext('hive-desktop')) {
         await handle.addContext(toolGuidance, 'hive-desktop');
       }
+      if (record.backend === 'pi-rpc') {
+        await handle.addContext(`Current external Pi integration: use the registered ${(handle as ExternalPiSessionHandle).teamToolName} tool for every Hive team command. This is the current process's team tool; older process tool names no longer exist. Pass CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Omit --cli to inherit this backend and model. Never invoke team through bash.`, 'hive-desktop-external');
+      }
       const model = handle.currentModel();
-      this.index.save({ ...this.index.get(record.id), ...(record.backend === 'pi'
-        ? { sessionFile: handle.sessionFile ?? null, piSessionId: handle.sessionId }
-        : (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}), ...(model ? { model } : {}) });
+      this.index.save({ ...this.index.get(record.id), ...(record.backend === 'codex'
+        ? (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}
+        : { sessionFile: handle.sessionFile ?? null, ...(record.backend === 'pi-rpc'
+          ? { externalPiSessionId: handle.sessionId } : { piSessionId: handle.sessionId }) }), ...(model ? { model } : {}) });
       let wasBusy = false;
       const queue = new DeliveryQueue({
         directory: this.queueDir, sessionId: record.id, startPaused: true,
@@ -144,7 +154,7 @@ export class Chats implements StructuredSessionPort {
 
   /** Hive invokes this for both the selected orchestrator and spawned workers. */
   async start(input: Parameters<StructuredSessionPort['start']>[0]): Promise<StructuredSessionHandle> {
-    const backend = input.config.command === 'hive:codex' ? 'codex' : 'pi';
+    const backend = input.config.command === 'hive:codex' ? 'codex' : input.config.command === 'hive:pi-rpc' ? 'pi-rpc' : 'pi';
     const args = input.config.args ?? [];
     const provider = args[args.indexOf('--provider') + 1];
     const modelId = args[args.indexOf('--model') + 1];
@@ -196,7 +206,7 @@ export class Chats implements StructuredSessionPort {
     };
   }
   private launchConfig(record: ChatRecord) {
-    return { command: record.backend === 'codex' ? 'hive:codex' : 'hive:pi', commandPresetId: null,
+    return { command: record.backend === 'codex' ? 'hive:codex' : record.backend === 'pi-rpc' ? 'hive:pi-rpc' : 'hive:pi', commandPresetId: null,
       args: record.model ? ['--provider', record.model.provider, '--model', record.model.id] : [] };
   }
   private async withWorkspace<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {

@@ -1,6 +1,6 @@
 # 外部 Pi RPC 桥接进度
 
-已实现独立进程 JSONL transport 与显式加载的 Hive 扩展，尚未接入 Chats、原生 UI 或团队主控/Worker 闭环。
+本文件保留独立桥接阶段的验证边界。后续已接入统一会话和真实团队，最新证据见 [会话适配器](2026-11-07-external-pi.md) 与 [团队闭环](2026-11-07-external-pi-team.md)。
 
 验证版本是本机 `/Users/tsk/Library/pnpm/pi` 1.4.0，协议依据为其安装包的 `docs/rpc.md`、`rpc-commands.md` 与 `extensions.md`。`HIVE_PI_COMMAND` 可显式选定可执行文件；不安装或改写外部 Pi 的全局配置。
 
@@ -19,4 +19,4 @@ RPC 的 prompt `handled` 只表示扩展命令被处理，不代表执行结束�
 
 首次 custom-only 会话通过公开 header/entries 与 `switchSession` 写盘和重新载入，不伪造用户消息。未实现的扩展对话请求会取消并产生显式事件，接入层必须把这些错误显示出来。关闭进程、取消执行与完成派单仍是不同语义。
 
-当前下一步是实现统一会话 handle、接入现有持久队列和运行生命周期，再验证真实主控/Worker、取消恢复、UI 与目标平台。原型单回合证据不代替这些验收。
+桥接阶段之后的统一会话、持久队列、生命周期和真实团队验证记录在上述后续收据；本文件的原型单回合证据本身不代替这些验收。

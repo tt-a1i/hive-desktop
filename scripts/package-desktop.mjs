@@ -1,0 +1,65 @@
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, cp, readFile, rm, writeFile, realpath, readdir, lstat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve, relative, isAbsolute } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const arg = name => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
+const executable = arg('--executable');
+if (!executable || executable.startsWith('--')) throw new Error('Pass --executable PATH to a native build for this host');
+if (!['darwin', 'win32'].includes(process.platform) || !['arm64', 'x64'].includes(process.arch)) throw new Error('Packaging supports native macOS or Windows arm64/x64 hosts only');
+const output = resolve(arg('--output') ?? join(root, '.artifacts', `portable-${process.platform}-${process.arch}`));
+if (output === root || root.startsWith(output + '/') || output === resolve('/')) throw new Error('Refusing unsafe output path');
+const version = '22.23.3';
+const platform = process.platform === 'darwin' ? 'darwin' : 'win';
+const ext = platform === 'win' ? 'zip' : 'tar.gz';
+const basename = `node-v${version}-${platform}-${process.arch}`;
+const archive = `${basename}.${ext}`;
+const url = `https://nodejs.org/dist/v${version}`;
+const temp = await mkdtemp(join(tmpdir(), 'hive-desktop-package-'));
+function run(command, args, options = {}) {
+  const isPnpmWindows = process.platform === 'win32' && command === 'pnpm.cmd';
+  if (isPnpmWindows && args.some(value => /[&|<>^%!\"\r\n]/.test(value))) throw new Error('Unsupported command characters in path');
+  const cmdline = isPnpmWindows ? `""pnpm.cmd" ${args.map(value => `"${value}"`).join(' ')}"` : '';
+  const result = isPnpmWindows
+    ? spawnSync('cmd.exe', ['/d', '/s', '/c', cmdline], { cwd: root, stdio: 'inherit', windowsVerbatimArguments: true, ...options })
+    : spawnSync(command, args, { cwd: root, stdio: 'inherit', ...options });
+  if (result.error || result.status !== 0) throw result.error ?? new Error(`${command} failed: ${result.status}`);
+}
+try {
+  const binary = await realpath(resolve(executable));
+  try { await lstat(output); throw new Error(`Output already exists: ${output}`); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const app = process.platform === 'darwin' ? join(output, 'Hive Desktop.app', 'Contents') : output;
+  const resources = join(app, process.platform === 'darwin' ? 'Resources' : 'resources');
+  const bin = process.platform === 'darwin' ? join(app, 'MacOS', 'hive-desktop') : join(app, 'hive-desktop.exe');
+  await mkdir(dirname(bin), { recursive: true });
+  await mkdir(resources, { recursive: true });
+  await cp(binary, bin);
+  if (process.platform === 'darwin') await writeFile(join(app, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>hive-desktop</string><key>CFBundleIdentifier</key><string>com.hive.desktop.dev</string><key>CFBundleName</key><string>Hive Desktop</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>0.1.0</string></dict></plist>`);
+  run(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['--filter', '@hive-desktop/runtime', 'deploy', '--prod', '--frozen-lockfile', '--node-linker=hoisted', join(resources, 'runtime')]);
+  run('curl', ['-fL', '--retry', '2', '-o', join(temp, archive), `${url}/${archive}`]);
+  run('curl', ['-fL', '--retry', '2', '-o', join(temp, 'SHASUMS256.txt'), `${url}/SHASUMS256.txt`]);
+  const sums = await readFile(join(temp, 'SHASUMS256.txt'), 'utf8');
+  const expected = sums.split(/\r?\n/).find(line => line.trim().endsWith(`  ${archive}`))?.split(/\s+/)[0];
+  const actual = createHash('sha256').update(await readFile(join(temp, archive))).digest('hex');
+  if (!expected || expected !== actual) throw new Error('Official Node archive SHA256 verification failed');
+  run('tar', ['-xf', join(temp, archive), '-C', temp]);
+  const nodeDir = join(resources, 'node');
+  await mkdir(nodeDir, { recursive: true });
+  if (platform === 'win') await cp(join(temp, basename, 'node.exe'), join(nodeDir, 'node.exe'));
+  else { await mkdir(join(nodeDir, 'bin')); await cp(join(temp, basename, 'bin', 'node'), join(nodeDir, 'bin', 'node')); }
+  await cp(join(temp, basename, 'LICENSE'), join(nodeDir, 'LICENSE'));
+  // Deployment may use links, but no target may escape the portable bundle.
+  const base = await realpath(output);
+  async function checkLinks(path) {
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      const child = join(path, entry.name);
+      if (entry.isSymbolicLink()) { const target = await realpath(child); const rel = relative(base, target); if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`External link in bundle: ${child}`); }
+      else if (entry.isDirectory()) await checkLinks(child);
+    }
+  }
+  await checkLinks(output);
+  console.log(`Packaged ${output}\nNode archive SHA256: ${actual}`);
+} finally { await rm(temp, { recursive: true, force: true }); }

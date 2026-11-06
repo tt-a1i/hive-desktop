@@ -7,6 +7,7 @@ on:
       - 'apps/desktop/**'
       - 'packages/**'
       - 'patches/**'
+      - 'scripts/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -16,6 +17,7 @@ on:
       - 'apps/desktop/**'
       - 'packages/**'
       - 'patches/**'
+      - 'scripts/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -48,9 +50,21 @@ jobs:
         run: pnpm build:runtime
       - name: Build desktop executable
         run: cargo build --locked --manifest-path apps/desktop/Cargo.toml
-      - name: Upload desktop executable
+      - name: Compile runtime location tests
+        run: rustc --edition 2021 --test apps/desktop/src/runtime_location.rs -o target/runtime-location-tests.exe
+      - name: Run runtime location tests
+        run: ./target/runtime-location-tests.exe
+      - name: Package portable desktop
+        run: node scripts/package-desktop.mjs --executable target/windows-desktop/debug/hive-desktop.exe --output target/portable-windows
+      - name: Zip portable folder
+        run: Compress-Archive -Path target/portable-windows/* -DestinationPath target/hive-desktop-windows-portable.zip
+      - name: Extract final zip
+        run: Expand-Archive -Path target/hive-desktop-windows-portable.zip -DestinationPath target/portable-windows-extracted
+      - name: Smoke extracted runtime and PTY
+        run: node scripts/check-package.mjs --bundle target/portable-windows-extracted
+      - name: Upload portable desktop
         uses: actions/upload-artifact@v4
         with:
-          name: hive-desktop-windows-executable
-          path: target/windows-desktop/debug/hive-desktop.exe
+          name: hive-desktop-windows-portable
+          path: target/hive-desktop-windows-portable.zip
           if-no-files-found: error

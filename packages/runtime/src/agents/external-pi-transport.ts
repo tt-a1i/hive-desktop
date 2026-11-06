@@ -8,6 +8,7 @@ export interface ExternalPiTransportOptions {
   sessionDir: string;
   extensionPath: string;
   command?: string;
+  model?: { provider: string; id: string };
   env?: NodeJS.ProcessEnv;
   requestTimeoutMs?: number;
   shutdownGraceMs?: number;
@@ -35,6 +36,7 @@ export class ExternalPiTransport {
     if (options.onEvent) this.listeners.add(options.onEvent);
     this.child = spawn(options.command ?? process.env.HIVE_PI_COMMAND ?? 'pi', [
       '--mode', 'rpc', '--session-dir', options.sessionDir,
+      ...(options.model ? ['--provider', options.model.provider, '--model', options.model.id] : []),
       ...(options.sessionFile ? ['--session', options.sessionFile] : []), '--extension', options.extensionPath,
     ], { cwd: options.cwd, shell: false, stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, ...options.env, HIVE_PI_BRIDGE_COMMAND: this.bridgeCommand, HIVE_PI_TEAM_TOOL: this.teamToolName } });

@@ -23,14 +23,60 @@ pub enum Backend {
     #[default]
     Pi,
     Codex,
+    #[serde(rename = "pi-rpc")]
+    PiRpc,
 }
 impl Backend {
     pub fn label(self) -> &'static str {
         match self {
             Self::Pi => "Pi",
             Self::Codex => "Codex",
+            Self::PiRpc => "外部 Pi",
         }
     }
+}
+#[derive(Clone, Deserialize)]
+pub struct Member {
+    pub id: String,
+    pub name: String,
+    pub role: String,
+    pub status: String,
+    #[serde(default)]
+    pub configured_command: Option<String>,
+}
+impl Member {
+    pub fn role_label(&self) -> &str {
+        match self.role.as_str() {
+            "coder" => "开发",
+            "reviewer" => "审查",
+            "tester" => "测试",
+            "custom" => "自定义",
+            other => other,
+        }
+    }
+    pub fn status_label(&self) -> &str {
+        match self.status.as_str() {
+            "idle" => "待命",
+            "working" => "工作中",
+            "stopped" => "已停止",
+            other => other,
+        }
+    }
+    pub fn backend_label(&self) -> &str {
+        match self.configured_command.as_deref() {
+            Some("hive:pi") => "Pi",
+            Some("hive:codex") => "Codex",
+            Some("hive:pi-rpc") => "外部 Pi",
+            Some(_) => "其他后端",
+            None => "未配置后端",
+        }
+    }
+}
+#[derive(Deserialize)]
+pub struct MemberRun {
+    pub agent_id: String,
+    pub run_id: String,
+    pub status: String,
 }
 #[derive(Clone, Deserialize)]
 pub struct Model {

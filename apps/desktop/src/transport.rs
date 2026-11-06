@@ -1,4 +1,4 @@
-use crate::protocol::PiEvent;
+use crate::{protocol::PiEvent, runtime_location::locate_runtime};
 use serde_json::{Value, json};
 use smol::channel::{Receiver, Sender, bounded, unbounded};
 use std::{
@@ -44,24 +44,38 @@ fn fail(
 impl Runtime {
     pub fn launch() -> Result<Arc<Self>, String> {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let entry = std::env::var_os("HIVE_DESKTOP_RUNTIME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| root.join("packages/runtime/dist/main.js"));
-        if !entry.is_file() {
-            return Err(format!(
-                "找不到后台 {}，请先运行 pnpm build:runtime",
-                entry.display()
+        let executable = std::env::current_exe().map_err(|e| format!("无法读取应用路径：{e}"))?;
+        let location = locate_runtime(
+            &executable,
+            &root,
+            std::env::var_os("HIVE_DESKTOP_RUNTIME"),
+            std::env::var_os("HIVE_DESKTOP_NODE"),
+        )?;
+        let mut command = Command::new(location.node);
+        command
+            .arg(location.entry)
+            .current_dir(location.cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        if let Some(directory) = location.node_directory {
+            let mut paths = vec![directory];
+            paths.extend(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
             ));
+            command.env(
+                "PATH",
+                std::env::join_paths(paths).map_err(|e| format!("无法设置后台 PATH：{e}"))?,
+            );
         }
-        let mut child =
-            Command::new(std::env::var_os("HIVE_DESKTOP_NODE").unwrap_or_else(|| "node".into()))
-                .arg(entry)
-                .current_dir(root)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .map_err(|e| format!("启动 Node 后台失败：{e}"))?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000); // CREATE_NO_WINDOW for the owned Node runtime.
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|e| format!("启动 Node 后台失败：{e}"))?;
         let mut stdin = child.stdin.take().ok_or("后台没有 stdin")?;
         let stdout = child.stdout.take().ok_or("后台没有 stdout")?;
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
