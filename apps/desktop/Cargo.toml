@@ -7,7 +7,7 @@ rust-version = "1.98"
 publish = false
 
 [dependencies]
-gpui-kit = "=0.9.0"
+gpui-kit = { version = "=0.9.0", optional = true }
 smol = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,7 +22,14 @@ libc = "=0.2.191"
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [features]
+default = ["desktop"]
+desktop = ["dep:gpui-kit"]
 process-supervisor-check = []
+
+[[bin]]
+name = "hive-desktop"
+path = "src/main.rs"
+required-features = ["desktop"]
 
 [[bin]]
 name = "process-supervisor-check"

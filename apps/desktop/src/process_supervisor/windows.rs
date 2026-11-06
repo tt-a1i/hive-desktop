@@ -64,6 +64,21 @@ impl Scope {
             _ => Err(io::Error::last_os_error()),
         }
     }
+    #[cfg(test)]
+    pub fn contains(&self, process: HANDLE) -> io::Result<bool> {
+        let mut contained = 0;
+        if unsafe {
+            windows_sys::Win32::System::JobObjects::IsProcessInJob(
+                process,
+                self.handle(),
+                &mut contained,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(contained != 0)
+    }
     pub fn descendants_gone(&self, _child: &Child) -> io::Result<bool> {
         let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { mem::zeroed() };
         if unsafe {

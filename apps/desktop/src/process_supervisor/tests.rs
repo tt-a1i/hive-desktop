@@ -127,8 +127,16 @@ struct ProcessProbe {
 impl ProcessProbe {
     fn open(pid: u32) -> Self {
         use std::os::windows::io::FromRawHandle;
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
-        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+        };
+        let handle = unsafe {
+            OpenProcess(
+                PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                0,
+                pid,
+            )
+        };
         assert!(
             !handle.is_null(),
             "OpenProcess({pid}) failed: {}",
@@ -192,6 +200,32 @@ fn check_tree(mode: u8) {
     assert!(alive(child) && alive(grandchild));
     #[cfg(windows)]
     assert!(child_probe.alive() && grandchild_probe.alive() && independent_probe.alive());
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        assert!(
+            owned
+                .scope
+                .contains(child_probe.handle.as_raw_handle())
+                .unwrap()
+        );
+        assert!(
+            owned
+                .scope
+                .contains(grandchild_probe.handle.as_raw_handle())
+                .unwrap()
+        );
+        assert!(
+            !owned
+                .scope
+                .contains(independent_probe.handle.as_raw_handle())
+                .unwrap()
+        );
+        eprintln!(
+            "fixture mode={} original handles verified in owned Job before cleanup",
+            mode as char
+        );
+    }
     if mode != b'f' {
         input.write_all(&[mode]).unwrap();
     }
@@ -217,6 +251,19 @@ fn check_tree(mode: u8) {
             alive(grandchild),
             alive(independent_pid)
         );
+        if child_alive || grandchild_alive {
+            use std::os::windows::io::AsRawHandle;
+            use windows_sys::Win32::System::Threading::WaitForSingleObject;
+            let start = Instant::now();
+            let child_wait =
+                unsafe { WaitForSingleObject(child_probe.handle.as_raw_handle(), 3000) };
+            let grandchild_wait =
+                unsafe { WaitForSingleObject(grandchild_probe.handle.as_raw_handle(), 3000) };
+            eprintln!(
+                "termination diagnostics (original immediate assertions retained): child_wait={child_wait}, grandchild_wait={grandchild_wait}, elapsed={:?}",
+                start.elapsed()
+            );
+        }
         assert!(!child_alive, "Owned child survived cleanup");
         assert!(!grandchild_alive, "Owned grandchild survived cleanup");
         assert!(

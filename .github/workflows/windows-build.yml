@@ -50,8 +50,6 @@ jobs:
         run: pnpm build:runtime
       - name: Build desktop executable
         run: cargo build --locked --manifest-path apps/desktop/Cargo.toml
-      - name: Test native process supervision
-        run: cargo test --locked --manifest-path apps/desktop/Cargo.toml --features process-supervisor-check --bin process-supervisor-check -- --nocapture
       - name: Compile runtime location tests
         run: rustc --edition 2021 --test apps/desktop/src/runtime_location.rs -o target/runtime-location-tests.exe
       - name: Run runtime location tests
@@ -73,6 +71,25 @@ jobs:
           name: hive-desktop-windows-portable
           path: target/hive-desktop-windows-portable.zip
           if-no-files-found: error
+  native-supervision:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.3
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - name: Install locked Node dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build runtime
+        run: pnpm build:runtime
+      - name: Test native process supervision
+        run: cargo test --locked --manifest-path apps/desktop/Cargo.toml --no-default-features --features process-supervisor-check --bin process-supervisor-check -- --nocapture
   native-clis:
     runs-on: windows-latest
     timeout-minutes: 20
