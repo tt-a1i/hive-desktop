@@ -25,6 +25,7 @@ pub struct OwnedProcess {
     child: Child,
     scope: Scope,
     cleaned: Option<CleanupReport>,
+    forced: bool,
 }
 impl OwnedProcess {
     /// Windows callers gate descendant startup until this returns (the Node
@@ -45,6 +46,7 @@ impl OwnedProcess {
             child,
             scope,
             cleaned: None,
+            forced: false,
         })
     }
     #[cfg(test)]
@@ -89,6 +91,8 @@ impl OwnedProcess {
             thread::sleep(Duration::from_millis(10));
         };
         if !normal {
+            // Preserve forced cleanup across a failed confirmation and retry.
+            self.forced = true;
             self.scope.terminate()?;
         }
         // Keep the leader unreaped through every signal to its process group.
@@ -107,7 +111,7 @@ impl OwnedProcess {
         }
         self.child.wait()?;
         Ok(CleanupReport {
-            forced: !normal,
+            forced: self.forced,
             scope: Scope::DESCRIPTION,
         })
     }
