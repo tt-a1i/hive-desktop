@@ -4,6 +4,7 @@ mod members;
 mod protocol;
 mod runtime_location;
 mod sessions;
+mod settings;
 mod transport;
 mod view;
 

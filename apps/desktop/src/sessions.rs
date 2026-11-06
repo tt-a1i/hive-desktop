@@ -175,6 +175,7 @@ impl HiveApp {
         .detach();
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.close_settings();
         self.member_panel = false;
         self.open_request += 1;
         self.unread.remove(&id);

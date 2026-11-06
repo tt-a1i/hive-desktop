@@ -6,6 +6,7 @@ import { createExternalPiSession, type ExternalPiSessionHandle } from './agents/
 import { createPiSession } from './agents/pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, type ChatRecord, type ChatBackend } from './chat-index.js';
+import type { DesktopSettings } from './desktop-settings.js';
 import { DeliveryQueue } from './delivery-queue.js';
 import type { HiveHost } from './hive-host.js';
 import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract.js';
@@ -30,7 +31,7 @@ export class Chats implements StructuredSessionPort {
   private closing = false;
 
   constructor(private readonly hive: HiveHost, dataDir: string, private readonly emit: (event: ChatEvent) => void,
-    private readonly runtime: HiveAgentRuntime) {
+    private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings) {
     const directory = join(dataDir, 'chats');
     this.sessionDir = join(directory, 'pi');
     this.queueDir = join(directory, 'deliveries');
@@ -71,9 +72,10 @@ export class Chats implements StructuredSessionPort {
     };
     const model = record.model && { provider: record.model.provider, id: record.model.id };
     const command = createTeamCommand(binding);
+    const executables = record.backend === 'pi' ? undefined : (await this.settings.get()).effective;
     const handle = record.backend === 'codex'
       ? await createCodexSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'codex'),
-        ...(process.env.HIVE_CODEX_COMMAND && { command: process.env.HIVE_CODEX_COMMAND }),
+        command: executables!.codex.command,
         ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(model && { model }), onEvent,
         onUnexpectedExit,
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
@@ -82,7 +84,7 @@ export class Chats implements StructuredSessionPort {
       })
       : record.backend === 'pi-rpc'
       ? await createExternalPiSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'external-pi'),
-        ...(process.env.HIVE_PI_COMMAND && { command: process.env.HIVE_PI_COMMAND }),
+        command: executables!.pi.command,
         ...(sessionFile && { sessionFile }), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
       : await createPiSession({ cwd: workspace.path, sessionDir: this.sessionDir,
         ...(sessionFile && { sessionFile }), ...(model && { model }),
