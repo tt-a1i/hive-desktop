@@ -3,7 +3,7 @@
 更新：2026-11-07。
 
 - [完整产品目标 #1](https://github.com/tt-a1i/hive-desktop/issues/1)：开放，涵盖 macOS / Windows 桌面、统一 Agent 聊天及现有 Hive 团队协作接入。完整应用尚未完成。
-- [基础阶段 #2](https://github.com/tt-a1i/hive-desktop/issues/2)：开放，目标是实际 Hive Node sidecar、持久内置 Pi 会话和 GPUI 真实聊天链路。它是 #1 的子任务，完成后仍需集成结构化 Hive 派单与汇报及外部 Agent，不能据此声称团队协作已完成。
+- [基础阶段 #2](https://github.com/tt-a1i/hive-desktop/issues/2)：开放，目标是实际 Hive Node sidecar、持久内置 Pi 会话和 GPUI 真实聊天链路。后续实现已包含三个后端的团队协作；该票据尚未收口，完整产品目标不会随基础链路完成而缩减。
 
 正式应用代码位于 `apps/desktop` 与 `packages/runtime`。macOS 已跑通实际工作区、Pi 会话、模型选择、真实 write/read 工具及最终回复；真实模型固定使用 Pi 原生 `openai/gpt-6.1-terra`，不经过 Magpie。详细范围见 [基础阶段收据](validation/2026-11-07-foundation.md)。
 
@@ -20,6 +20,10 @@ Windows CI 已在包含外部 Pi 桥接的提交 `9033d61` 通过正式应用与
 外部程序设置页已能保存 Pi/Codex 路径并显示实际来源；复用 Hive SQLite，优先级为环境变量 → 应用设置 → PATH，只对新启动进程生效，不改 Agent 全局默认。真实 RPC/SQLite 与原生设置页面均已验证，见 [设置证据](validation/2026-11-07-desktop-settings.md)。
 
 未发送草稿已按会话/工作区隔离，实际切换检查通过；草稿当前仅保存在应用进程内。完整配置和界面仍需继续打磨，当前界面不作为 Cindy/Maka 体验对标完成的证明。
+
+成员启动模型现在从该成员后端的原生目录读取，用户明确选择后才能启动。三个后端的目录读取检查均验证没有创建聊天、run、token 或派单，不发送模型请求；原生窗口已验证外部 Pi 的目录搜索与选择 `openai/gpt-6.1-terra`。协作概览已读取现有任务文档、派单和消息；真实团队的汇报详情、状态筛选，以及合成数据的 Markdown、25 条派单和 105 条消息分页均已走查。首次滚动观察未移动，诊断确认是 CUA 滚轮方向映射；正确输入后页面可达，未翻转产品滚轮。任务编辑、协作操作和视觉打磨仍待完善。
+
+Windows `96c8e70` 已完成打包与 zip 解压，但 smoke 检查超过 11 分钟未结束；该次运行已人工取消。检查新增阶段日志、进程退出期限与子进程清理，macOS 重跑通过；`400ea04` 的 Windows 运行仍待结果。尚无证据将停顿归因于 PTY 或 Hive 后台。
 
 下一步仍需完善外部 Agent 的结构化接入、成员管理和配置体验、任务与协作主页、应用后台重连及 macOS / Windows 安装包。Windows 尚未真机验收。基础阶段 #2 保持开放，完整目标 #1 不缩减为当前这条闭环。
 

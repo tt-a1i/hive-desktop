@@ -1,4 +1,5 @@
 mod app;
+mod collaboration;
 mod conversation;
 mod members;
 mod protocol;

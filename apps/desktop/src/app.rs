@@ -45,8 +45,14 @@ pub struct HiveApp {
     pub member_name: Entity<InputState>,
     pub member_description: Entity<InputState>,
     pub member_rename: Entity<InputState>,
-    pub member_provider: Entity<InputState>,
-    pub member_model: Entity<InputState>,
+    pub member_model_search: Entity<InputState>,
+    pub member_picker_target: Option<String>,
+    pub member_catalog_backend: Option<String>,
+    pub member_catalog: Vec<Model>,
+    pub member_selected_model: Option<(String, String, Model)>,
+    pub member_catalog_loading: bool,
+    pub member_catalog_error: Option<String>,
+    pub member_catalog_generation: u64,
     pub pi_command: Entity<InputState>,
     pub codex_command: Entity<InputState>,
     pub settings_panel: bool,
@@ -54,6 +60,7 @@ pub struct HiveApp {
     pub settings_generation: u64,
     pub settings_message: Option<String>,
     pub executable_settings: Option<crate::settings::ExecutableSettings>,
+    pub collaboration: crate::collaboration::Collaboration,
     pub members: Vec<Member>,
     pub member_role: &'static str,
     pub member_backend: &'static str,
@@ -87,11 +94,11 @@ pub struct HiveApp {
     pub error: Option<String>,
     pub loading: bool,
     pub scroll: ScrollHandle,
+    pub collaboration_scroll: ScrollHandle,
     events: Task<()>,
     _quit: Subscription,
     _model_search_subscription: Subscription,
-    _member_provider_subscription: Subscription,
-    _member_model_subscription: Subscription,
+    _member_model_search_subscription: Subscription,
 }
 impl HiveApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -112,11 +119,10 @@ impl HiveApp {
                     cx.notify();
                 }
             });
-        let member_provider =
-            cx.new(|cx| InputState::new(window, cx).placeholder("模型提供商，如 openai"));
-        let member_model = cx.new(|cx| InputState::new(window, cx).placeholder("模型 ID"));
-        let member_provider_subscription = cx.subscribe_in(
-            &member_provider,
+        let member_model_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("搜索提供商或模型"));
+        let member_model_search_subscription = cx.subscribe_in(
+            &member_model_search,
             window,
             |_, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -124,12 +130,6 @@ impl HiveApp {
                 }
             },
         );
-        let member_model_subscription =
-            cx.subscribe_in(&member_model, window, |_, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    cx.notify();
-                }
-            });
         let mut app = Self {
             input: cx.new(|cx| {
                 TextareaState::new(window, cx)
@@ -146,8 +146,14 @@ impl HiveApp {
             member_description: cx
                 .new(|cx| InputState::new(window, cx).placeholder("职责说明（可选）")),
             member_rename: cx.new(|cx| InputState::new(window, cx).placeholder("新名称")),
-            member_provider,
-            member_model,
+            member_model_search,
+            member_picker_target: None,
+            member_catalog_backend: None,
+            member_catalog: vec![],
+            member_selected_model: None,
+            member_catalog_loading: false,
+            member_catalog_error: None,
+            member_catalog_generation: 0,
             pi_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
             codex_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
             settings_panel: false,
@@ -155,6 +161,7 @@ impl HiveApp {
             settings_generation: 0,
             settings_message: None,
             executable_settings: None,
+            collaboration: crate::collaboration::Collaboration::new(cx),
             members: vec![],
             member_role: "coder",
             member_backend: "pi",
@@ -165,8 +172,7 @@ impl HiveApp {
             editing_member: None,
             deleting_member: None,
             _model_search_subscription: model_search_subscription,
-            _member_provider_subscription: member_provider_subscription,
-            _member_model_subscription: member_model_subscription,
+            _member_model_search_subscription: member_model_search_subscription,
             runtime: None,
             workspaces: vec![],
             workspace: None,
@@ -191,6 +197,7 @@ impl HiveApp {
             error: None,
             loading: true,
             scroll: ScrollHandle::new(),
+            collaboration_scroll: ScrollHandle::new(),
             events: Task::ready(()),
             _quit: cx.on_app_quit(|this: &mut Self, _| {
                 let runtime = this.runtime.take();

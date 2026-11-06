@@ -12,6 +12,19 @@ use gpui_kit::{
 };
 
 impl HiveApp {
+    fn agent_name(&self, id: &str) -> String {
+        self.members
+            .iter()
+            .find(|member| member.id == id)
+            .map(|member| member.name.clone())
+            .unwrap_or_else(|| {
+                if id.ends_with(":orchestrator") {
+                    "主控".into()
+                } else {
+                    id.into()
+                }
+            })
+    }
     fn session_title<'a>(&'a self, session: &'a crate::protocol::Session) -> &'a str {
         session
             .agent_id
@@ -57,8 +70,22 @@ impl Render for HiveApp {
             .copied()
             .unwrap_or(0);
         let query = self.model_search.read(cx).value().trim().to_lowercase();
-        let member_model_ready = !self.member_provider.read(cx).value().trim().is_empty()
-            && !self.member_model.read(cx).value().trim().is_empty();
+        let member_query = self
+            .member_model_search
+            .read(cx)
+            .value()
+            .trim()
+            .to_lowercase();
+        let matching_member_models: Vec<_> = self
+            .member_catalog
+            .iter()
+            .filter(|model| {
+                format!("{} {} {}", model.provider, model.id, model.name)
+                    .to_lowercase()
+                    .contains(&member_query)
+            })
+            .cloned()
+            .collect();
         let matching_models: Vec<_> = self
             .models
             .iter()
@@ -87,8 +114,9 @@ impl Render for HiveApp {
                     .child(Button::new("new-pi-chat").label("＋ Pi").accessibility_label("新建 Pi 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("pi", cx))))
                     .child(Button::new("new-codex-chat").label("＋ Codex").accessibility_label("新建 Codex 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("codex", cx)))))
                 .child(Button::new("new-pi-rpc-chat").label("＋ 外部 Pi").accessibility_label("新建外部 Pi 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("pi-rpc", cx))))
-                .child(Button::new("toggle-members").label(if self.member_panel { "返回会话" } else { "管理团队成员" }).disabled(self.workspace.is_none()).on_click(cx.listener(|this, _, _, cx| { this.close_settings(); this.member_panel = !this.member_panel; if this.member_panel { this.refresh_members(cx); } cx.notify(); })))
+                .child(Button::new("toggle-members").label(if self.member_panel { "返回会话" } else { "管理团队成员" }).disabled(self.workspace.is_none()).on_click(cx.listener(|this, _, _, cx| { this.close_settings(); this.close_collaboration(); this.member_panel = !this.member_panel; if this.member_panel { this.refresh_members(cx); } cx.notify(); })))
                 .child(Button::new("open-settings").label(if self.settings_panel { "返回会话" } else { "外部程序设置" }).on_click(cx.listener(|this, _, window, cx| { if this.settings_panel { this.close_settings(); cx.notify(); } else { this.open_settings(window, cx); } })))
+                .child(Button::new("open-collaboration").label(if self.collaboration.visible { "返回会话" } else { "协作概览" }).disabled(self.workspace.is_none()).on_click(cx.listener(|this, _, _, cx| { if this.collaboration.visible { this.close_collaboration(); } else { this.open_collaboration(cx); } cx.notify(); })))
                 .child(v_flex().id("sessions").flex_1().min_h_0().overflow_y_scroll().gap_2()
                     .children(self.sessions.iter().enumerate().map(|(i, session)| {
                         let id = session.id.clone();
@@ -100,10 +128,51 @@ impl Render for HiveApp {
                                 .child(div().flex_1().min_w_0().truncate().child(self.session_title(session).to_string()))
                                 .tooltip(session.agent_id.as_ref().map(|agent| format!("{}\n{agent}", self.session_title(session))).unwrap_or_else(|| self.session_title(session).to_string()))
                                 .selected(self.session.as_ref().is_some_and(|s| s.id == session.id))
-                                .on_click(cx.listener(move |this, _, _, cx| this.open_session(id.clone(), cx))))
+                                .on_click(cx.listener(move |this, _, _, cx| { this.close_collaboration(); this.open_session(id.clone(), cx); })))
                     })))
                 .child(div().text_xs().text_color(rgb(0x777c75)).child("本地会话")))
-            .child(if self.settings_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
+            .child(if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
+                .child(h_flex().justify_between().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("协作概览"))
+                    .child(Button::new("refresh-collaboration").label("刷新").on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx)))))
+                .child(div().id("collaboration-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.collaboration_scroll)
+                  .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_3()
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("任务 · 只读"))
+                    .when(self.collaboration.task_loading, |view| view.child(div().text_sm().child("正在读取任务…")))
+                    .when_some(self.collaboration.task_error.clone(), |view, error| view.child(div().text_sm().text_color(rgb(0xb54131)).child(error)))
+                    .when(!self.collaboration.task_loading && self.collaboration.task_error.is_none() && self.collaboration.task_text.is_empty(), |view| view.child(div().text_sm().child("任务文档为空")))
+                    .when(!self.collaboration.task_text.is_empty(), |view| view.child(div().p_3().rounded_lg().bg(rgb(0xffffff)).child(TextView::new(&self.collaboration.tasks).selectable(true))))
+                    .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("派单"))
+                    .child(h_flex().gap_1().children([("all", "全部"), ("queued", "排队中"), ("submitted", "已提交"), ("reported", "已汇报"), ("cancelled", "已取消")].into_iter().enumerate().map(|(i, (filter, label))| Button::new(("dispatch-filter", i)).label(label).selected(self.collaboration.filter == filter).on_click(cx.listener(move |this, _, _, cx| { this.collaboration.filter = filter; this.collaboration.offset = 0; this.load_dispatches(cx); })))))
+                    .when(self.collaboration.list_loading, |view| view.child(div().text_sm().child("正在读取派单…")))
+                    .when_some(self.collaboration.list_error.clone(), |view, error| view.child(div().text_sm().text_color(rgb(0xb54131)).child(error)))
+                    .when(!self.collaboration.list_loading && self.collaboration.list_error.is_none() && self.collaboration.dispatches.is_empty(), |view| view.child(div().text_sm().child("此页没有派单")))
+                    .children(self.collaboration.dispatches.iter().enumerate().map(|(i, dispatch)| {
+                        let item = dispatch.clone();
+                        let preview: String = dispatch.text.chars().take(100).collect();
+                        Button::new(("dispatch", i)).w_full().label(format!("{} · {} · {}", crate::collaboration::dispatch_state(&dispatch.state), self.agent_name(&dispatch.to_agent_id), preview)).selected(self.collaboration.selected.as_ref().is_some_and(|selected| selected.id == dispatch.id)).on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx)))
+                    }))
+                    .child(h_flex().gap_2()
+                        .child(Button::new("dispatch-prev").label("上一页").disabled(self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(20); this.load_dispatches(cx); })))
+                        .child(div().text_sm().child(format!("第 {} 页", self.collaboration.offset / 20 + 1)))
+                        .child(Button::new("dispatch-next").label("下一页").disabled(self.collaboration.dispatches.len() < 20 || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += 20; this.load_dispatches(cx); }))))
+                    .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(rgb(0xffffff))
+                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("派单详情 · {}", crate::collaboration::dispatch_state(&item.state))))
+                        .child(div().text_xs().child(format!("{} → {} · {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| "未记录发送者".into()), self.agent_name(&item.to_agent_id), item.id)))
+                        .child(div().text_sm().child("任务原文"))
+                        .child(div().text_sm().child(item.text.clone()))
+                        .when_some(item.report_text.clone(), |view, text| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if item.state == "cancelled" { "取消原因" } else { "汇报原文" })).child(div().text_sm().child(text)))
+                        .when(!item.artifacts.is_empty(), |view| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("产物")).children(item.artifacts.iter().map(|artifact| div().text_sm().child(artifact.clone()))))
+                        .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("派单消息"))
+                        .when(self.collaboration.message_loading, |view| view.child(div().text_sm().child("正在读取消息…")))
+                        .when_some(self.collaboration.message_error.clone(), |view, error| view.child(div().text_sm().text_color(rgb(0xb54131)).child(error)).child(Button::new("retry-dispatch-messages").label("重试读取消息").on_click(cx.listener(|this, _, _, cx| { let after = this.collaboration.next_seq.unwrap_or(0); this.load_dispatch_messages(after, cx); }))))
+                        .when(!self.collaboration.message_loading && self.collaboration.message_error.is_none() && self.collaboration.messages.is_empty(), |view| view.child(div().text_sm().child("没有消息")))
+                        .children(self.collaboration.messages.iter().map(|message| v_flex().gap_1().p_2().bg(rgb(0xf0f2ed))
+                            .child(div().text_xs().child(format!("#{} · {} → {} · {} · {}", message.sequence, self.agent_name(&message.from_agent_id), self.agent_name(&message.recipient_agent_id), crate::collaboration::message_kind(&message.kind), crate::collaboration::delivery_state(&message.delivery_state))))
+                            .child(div().text_sm().child(message.text.clone()))
+                            .when_some(message.delivery_error.clone(), |view, error| view.child(div().text_xs().text_color(rgb(0xb54131)).child(format!("投递错误：{error}"))))))
+                        .when_some(self.collaboration.next_seq, |view, seq| view.child(Button::new("more-dispatch-messages").label("加载更多消息").disabled(self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(seq, cx)))))))
+                )).into_any_element()
+            } else if self.settings_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("外部程序设置"))
                 .child(div().text_sm().child("设置外部 Pi 和 Codex 的可执行文件路径。留空时通过 PATH 查找；环境变量优先于此设置。"))
                 .child(div().text_sm().child("更改适用于之后新打开或重启的外部进程，正在运行的进程继续使用原配置。"))
@@ -132,9 +201,7 @@ impl Render for HiveApp {
                     .child(div().text_xs().child("成员后端"))
                     .child(h_flex().gap_1().children([("pi", "Pi"), ("codex", "Codex"), ("pi-rpc", "外部 Pi")].into_iter().enumerate().map(|(i, (backend, label))| Button::new(("member-backend", i)).label(label).selected(self.member_backend == backend).on_click(cx.listener(move |this, _, _, cx| { this.member_backend = backend; cx.notify(); })))))
                     .child(Button::new("add-member").label("添加成员").disabled(self.member_loading).on_click(cx.listener(|this, _, _, cx| this.add_member(cx))))
-                    .child(div().text_xs().child("启动成员前指定模型"))
-                    .child(h_flex().gap_3().child(div().flex_1().min_w_0().child(Input::new(&self.member_provider))).child(div().flex_1().min_w_0().child(Input::new(&self.member_model))))
-                    .when_some(self.model.clone(), |view, model| view.child(Button::new("use-current-model").label(format!("使用当前模型 · {} / {}", model.provider, model.id)).on_click(cx.listener(move |this, _, window, cx| { this.member_provider.update(cx, |input, cx| input.set_value(model.provider.clone(), window, cx)); this.member_model.update(cx, |input, cx| input.set_value(model.id.clone(), window, cx)); cx.notify(); }))))
+                    .child(div().text_xs().child("启动前请为对应成员选择该后端的模型"))
                     .child(h_flex().justify_between().child(div().text_sm().child("团队成员")).child(Button::new("refresh-members").label("刷新").disabled(self.member_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_members(cx)))))
                     .when(self.members.is_empty() && !self.member_loading, |view| view.child(div().text_xs().child("暂无成员")))
                     .children(self.members.iter().enumerate().map(|(i, member)| {
@@ -144,14 +211,33 @@ impl Render for HiveApp {
                         let deleting = self.deleting_member.as_ref() == Some(&id);
                         let running = member.status != "stopped";
                         let stopping = self.member_stopping.as_ref() == Some(&id);
+                        let backend = crate::members::command_backend(member.configured_command.as_deref());
+                        let picker_open = self.member_picker_target.as_ref() == Some(&id);
+                        let chosen = self.member_selected_model.as_ref().filter(|(target, selected_backend, _)| target == &id && Some(selected_backend.as_str()) == backend);
+                        let member_model_ready = chosen.is_some();
                         let session_id = self.sessions.iter().find(|session| session.agent_id.as_ref() == Some(&id)).map(|s| s.id.clone());
                         let start_id = id.clone(); let start_command = member.configured_command.clone();
+                        let picker_id = id.clone(); let picker_command = member.configured_command.clone();
                         let edit_id = id.clone(); let edit_name = member.name.clone();
                         let save_id = id.clone(); let save_workspace = workspace.clone();
                         let delete_id = id.clone(); let delete_workspace = workspace.clone();
                         v_flex().gap_1().p_2().rounded_lg().bg(rgb(0xffffff))
                             .child(div().text_sm().child(member.name.clone()))
                             .child(div().text_xs().child(format!("{} · {} · {}", member.role_label(), member.status_label(), member.backend_label())))
+                            .when(!running && backend.is_some(), |view| view.child(Button::new(("choose-member-model", i)).label(if picker_open { "重新读取模型" } else { "选择模型" }).disabled(self.member_loading).on_click(cx.listener(move |this, _, window, cx| { this.member_model_search.update(cx, |input, cx| input.set_value("", window, cx)); this.choose_member_models(picker_id.clone(), picker_command.clone(), cx); }))))
+                            .when(!running && backend.is_none(), |view| view.child(div().text_xs().child("此成员的后端未配置或不受支持")))
+                            .when_some(chosen, |view, (_, _, model)| view.child(div().text_xs().child(format!("已选择模型：{} / {}", model.provider, model.id))))
+                            .when(!running && !member_model_ready && backend.is_some(), |view| view.child(div().text_xs().child("请选择此成员后端的模型后启动")))
+                            .when(picker_open, |view| view.child(v_flex().gap_2()
+                                .child(Input::new(&self.member_model_search).aria_label("搜索此成员的可用模型"))
+                                .when(self.member_catalog_loading, |view| view.child(div().text_sm().child("正在读取可用模型…")))
+                                .when_some(self.member_catalog_error.clone(), |view, error| view.child(div().text_sm().text_color(rgb(0xb54131)).child(error)))
+                                .when(!self.member_catalog_loading && self.member_catalog_error.is_none() && matching_member_models.is_empty(), |view| view.child(div().text_sm().child("没有匹配的可用模型")))
+                                .child(v_flex().id(("member-model-list", i)).h(px(168.)).min_h_0().overflow_y_scroll().gap_1()
+                                    .children(matching_member_models.iter().cloned().enumerate().map(|(j, model)| {
+                                        let target = id.clone(); let backend = self.member_catalog_backend.clone().unwrap_or_default();
+                                        Button::new(("member-model", j)).label(format!("{} / {}", model.provider, model.name)).tooltip(model.id.clone()).on_click(cx.listener(move |this, _, _, cx| { this.member_selected_model = Some((target.clone(), backend.clone(), model.clone())); this.member_picker_target = None; cx.notify(); }))
+                                    })))))
                             .when_some(session_id, |view, session_id| view.child(Button::new(("member-chat", i)).label("打开会话").on_click(cx.listener(move |this, _, _, cx| this.open_session(session_id.clone(), cx)))))
                             .child(h_flex().gap_1()
                                 .child(Button::new(("member-start-stop", i)).label(if stopping { "正在停止…" } else if running { "停止" } else { "启动" }).disabled(self.member_loading || (!running && !member_model_ready)).on_click(cx.listener(move |this, _, _, cx| { if running { this.stop_member(start_id.clone(), cx); } else { this.start_member(start_id.clone(), start_command.clone(), cx); } })))

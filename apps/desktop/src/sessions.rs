@@ -65,6 +65,12 @@ impl HiveApp {
         self.event_sequence = 0;
         self.sessions.clear();
         self.members.clear();
+        self.member_catalog_generation += 1;
+        self.member_catalog_loading = false;
+        self.member_catalog.clear();
+        self.member_picker_target = None;
+        self.member_catalog_backend = None;
+        self.member_selected_model = None;
         self.member_generation += 1;
         self.member_stopping = None;
         self.member_loading = false;
@@ -75,6 +81,9 @@ impl HiveApp {
         self.open_request += 1;
         self.refresh_sessions(cx);
         self.refresh_members(cx);
+        if self.collaboration.visible {
+            self.reload_collaboration(cx);
+        }
         cx.notify();
     }
     // Coalesce event bursts and serialize requests so older lists cannot replace newer ones.
@@ -174,6 +183,7 @@ impl HiveApp {
                         Ok(session) => {
                             if this.workspace.as_ref() == Some(&session.workspace_id) {
                                 this.sessions.insert(0, session.clone());
+                                this.close_collaboration();
                                 this.open_session(session.id, cx);
                             }
                         }

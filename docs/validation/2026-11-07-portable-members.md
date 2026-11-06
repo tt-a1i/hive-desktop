@@ -28,3 +28,15 @@
 实际通过 runtime typecheck/build、现有 check:team/check:codex/check:runtime、外部 Pi 定向 RPC/生命周期/真实团队检查、Rust 1.98 build、stable fmt、4 个路径检查和包内 smoke。未跑无差别全量测试；本批验证集中于新增后端、成员 UI 和打包边界。未删除已有测试。
 
 完整产品目标仍开放：Claude Code、完整配置、协作工作台、后台重连、Windows 真机交互与签名安装包尚未完成。
+
+## 附：协作概览与分页
+
+原生协作概览使用已安装 Hive 2.2.1 的任务、派单、消息接口，不新增协作账本。任务以 Markdown 展示且只读；派单支持状态筛选和每页 20 条；详情保留原始任务、汇报/取消原因和产物，消息按 `after_seq` 每次追加最多 100 条。派单“已汇报”与消息“已投递”分别显示，不推断主控已确认报告。
+
+实际 CUA 打开 `.artifacts/external-pi-team-live-Zzqy1d/state` 的真实双 Agent 记录，验证成员名、已汇报派单及原文详情、切换 queued 后的空态。成员模型选择的独立验证见 [设置记录](2026-11-07-desktop-settings.md)。
+
+另用 `.artifacts/collaboration-pagination-sJy07u/receipt.json` 的隔离合成数据验证边界：25 条派单先显示 01–20，下一页显示 21–25，上一页返回；首条派单消息先显示到 100，加载更多后显示到 105，按钮消失。任务 Markdown 的标题、勾选列表和代码块实际渲染。工作区/成员/任务通过真实 HTTP 建立，派单和消息通过 Hive 自身 SQLite store 填充并以 HTTP 回读；这是 UI 分页夹具，不代表额外真实 Agent 协作或模型调用。
+
+滚动诊断记录 `.artifacts/collaboration-pagination-proof/scroll.log`：视口 736.5px，内容最大偏移 515.5px；CUA `down` 发出正 delta 并在顶部被 clamp，`up` 发出负 delta 后实际向下滚动。未改变生产滚轮方向，临时日志/监听已移除，未经验证的侧栏和成员布局调整已撤销。保留的协作视口结构经过实际滚动验证；没有证据称原结构必然有产品 bug。
+
+独立源码审查未发现阻断项，范围评分 B；审核了安装版 HTTP 契约、状态区分、分页游标和 workspace/generation 防旧响应。Rust build/fmt 与 runtime typecheck/build 通过。此片不含任务编辑、报告确认操作、关联派单树汇总；Windows 原生窗口仍未验证。

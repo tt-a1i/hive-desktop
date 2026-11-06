@@ -1,3 +1,4 @@
+import { AgentModels } from './agent-models.js';
 import { join } from 'node:path';
 import { Chats, type ChatEvent } from './chats.js';
 import { createHiveHost } from './hive-host.js';
@@ -21,10 +22,11 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     if (!agents) throw new Error('Hive runtime factory was not installed');
     chats = new Chats(hive, dataDir, emit, agents, settings);
   } catch (error) { await hive.close(); throw error; }
+  const agentModels = new AgentModels(hive, settings);
   let closing: Promise<void> | undefined;
-  return { hive, chats, agents, settings,
+  return { hive, chats, agents, settings, agentModels,
     close: () => closing ??= (async () => {
-      try { await hive.close(); } finally { await chats.close(); }
+      try { await agentModels.close(); await hive.close(); } finally { await chats.close(); }
     })(),
   };
 }

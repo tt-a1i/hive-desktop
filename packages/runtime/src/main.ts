@@ -15,7 +15,7 @@ const send = (message: unknown) => protocolWrite(`${JSON.stringify(message)}\n`)
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
 const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }));
-const { hive, chats, settings } = runtime;
+const { hive, chats, settings, agentModels } = runtime;
 let closing: Promise<void> | undefined;
 const close = () => closing ??= runtime.close();
 
@@ -33,6 +33,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
     case 'initialize': return { version: '0.1.0', dataDir, hivePort: hive.port };
+    case 'agent.models': return agentModels.list(text(params, 'workspaceId'), params.backend);
     case 'desktop.settings.get': return settings.get();
     case 'desktop.settings.update': return settings.update(params);
     case 'hive.request': return hive.request(text(params, 'method'), text(params, 'path'), params.body);

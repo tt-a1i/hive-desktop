@@ -1,11 +1,80 @@
 use crate::{
     app::HiveApp,
-    protocol::{Member, MemberRun},
+    protocol::{Member, MemberRun, Model},
 };
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+#[derive(serde::Deserialize)]
+struct ModelCatalog {
+    models: Vec<Model>,
+}
+pub fn command_backend(command: Option<&str>) -> Option<&'static str> {
+    match command {
+        Some("hive:pi") => Some("pi"),
+        Some("hive:codex") => Some("codex"),
+        Some("hive:pi-rpc") => Some("pi-rpc"),
+        _ => None,
+    }
+}
+
 impl HiveApp {
+    pub fn choose_member_models(
+        &mut self,
+        id: String,
+        command: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())
+        else {
+            return;
+        };
+        let Some(backend) = command_backend(command.as_deref()) else {
+            self.error = Some("该成员没有桌面支持的后端配置".into());
+            cx.notify();
+            return;
+        };
+        self.member_catalog_generation += 1;
+        let generation = self.member_catalog_generation;
+        self.member_picker_target = Some(id.clone());
+        self.member_catalog_backend = Some(backend.into());
+        self.member_catalog.clear();
+        self.member_selected_model = None;
+        self.member_catalog_error = None;
+        self.member_catalog_loading = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request(
+                    "agent.models",
+                    json!({"workspaceId":workspace,"backend":backend}),
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.workspace.as_ref() == Some(&workspace)
+                    && this.member_catalog_generation == generation
+                    && this.member_picker_target.as_ref() == Some(&id)
+                    && this.member_catalog_backend.as_deref() == Some(backend)
+                {
+                    this.member_catalog_loading = false;
+                    match result.and_then(|v| {
+                        serde_json::from_value::<ModelCatalog>(v).map_err(|e| e.to_string())
+                    }) {
+                        Ok(catalog) => {
+                            this.member_catalog =
+                                catalog.models.into_iter().filter(|m| m.available).collect()
+                        }
+                        Err(error) => {
+                            this.member_catalog_error =
+                                Some(format!("读取 {backend} 模型失败：{error}"))
+                        }
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
     pub fn refresh_members(&mut self, cx: &mut Context<Self>) {
         if self.member_loading {
             return;
@@ -128,13 +197,6 @@ impl HiveApp {
         else {
             return;
         };
-        let provider = self.member_provider.read(cx).value().trim().to_string();
-        let model = self.member_model.read(cx).value().trim().to_string();
-        if provider.is_empty() || model.is_empty() {
-            self.error = Some("启动成员前请填写模型提供商和模型 ID，或使用当前会话模型".into());
-            cx.notify();
-            return;
-        }
         let Some(command) =
             command.filter(|c| matches!(c.as_str(), "hive:pi" | "hive:codex" | "hive:pi-rpc"))
         else {
@@ -142,6 +204,19 @@ impl HiveApp {
             cx.notify();
             return;
         };
+        let Some((_, _, selected)) =
+            self.member_selected_model
+                .as_ref()
+                .filter(|(target, backend, _)| {
+                    target == &id && Some(backend.as_str()) == command_backend(Some(&command))
+                })
+        else {
+            self.error = Some("请先为此成员选择其后端的可用模型".into());
+            cx.notify();
+            return;
+        };
+        let provider = selected.provider.clone();
+        let model = selected.id.clone();
         self.member_loading = true;
         self.member_generation += 1;
         let generation = self.member_generation;

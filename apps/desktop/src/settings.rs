@@ -40,6 +40,7 @@ impl HiveApp {
         }
     }
     pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_collaboration();
         self.member_panel = false;
         self.settings_panel = true;
         self.settings_message = None;
