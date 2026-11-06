@@ -102,7 +102,7 @@ impl Render for HiveApp {
             .child(self.render_navigation_bar(cx))
             .child(h_flex().flex_1().min_h_0().w_full()
             .when(self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
-            .when(!narrow || !self.sidebar_open, |view| view.child(if self.roles.visible { v_flex().flex_1().min_w_0().h_full().child(self.render_settings_tabs(cx)).child(self.render_roles(cx)).into_any_element()
+            .when(!narrow || !self.sidebar_open, |view| view.child(if self.memory.visible { self.render_memory(cx).into_any_element() } else if self.roles.visible { v_flex().flex_1().min_w_0().h_full().child(self.render_settings_tabs(cx)).child(self.render_roles(cx)).into_any_element()
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(h_flex().justify_between().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("协作概览"))
                     .child(Button::new("refresh-collaboration").label("刷新").disabled(self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx)))))

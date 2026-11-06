@@ -42,6 +42,7 @@ impl HiveApp {
         }
     }
     pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_memory();
         self.close_roles();
         self.close_collaboration();
         self.member_panel = false;

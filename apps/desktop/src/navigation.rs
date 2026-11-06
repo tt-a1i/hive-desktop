@@ -52,6 +52,7 @@ impl HiveApp {
             )
             .when(
                 self.member_panel
+                    || self.memory.visible
                     || self.roles.visible
                     || self.settings_panel
                     || self.collaboration.visible,
@@ -60,6 +61,7 @@ impl HiveApp {
                         Button::new("return-chat")
                             .label("返回会话")
                             .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_memory();
                                 this.close_settings();
                                 this.close_roles();
                                 this.close_collaboration();
@@ -272,6 +274,7 @@ impl HiveApp {
                             .selected(self.member_panel)
                             .disabled(self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_memory();
                                 this.close_settings();
                                 this.close_collaboration();
                                 this.close_roles();
@@ -292,6 +295,20 @@ impl HiveApp {
                             .disabled(self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_collaboration(cx);
+                                if window.viewport_size().width < px(820.) {
+                                    this.sidebar_open = false;
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("open-memory")
+                            .w_full()
+                            .label("工作区记忆")
+                            .selected(self.memory.visible)
+                            .disabled(self.workspace.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_memory(cx);
                                 if window.viewport_size().width < px(820.) {
                                     this.sidebar_open = false;
                                 }

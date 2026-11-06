@@ -88,6 +88,9 @@ impl HiveApp {
         if self.collaboration.visible {
             self.reload_collaboration(cx);
         }
+        if self.memory.visible {
+            self.memory_workspace_changed(cx);
+        }
         cx.notify();
     }
     // Coalesce event bursts and serialize requests so older lists cannot replace newer ones.
@@ -130,8 +133,15 @@ impl HiveApp {
                                         }
                                     } else {
                                         this.loading = false;
-                                        if let Some(first) = this.sessions.first() {
-                                            this.open_session(first.id.clone(), cx);
+                                        if !this.memory.visible
+                                            && !this.member_panel
+                                            && !this.collaboration.visible
+                                            && !this.settings_panel
+                                            && !this.roles.visible
+                                        {
+                                            if let Some(first) = this.sessions.first() {
+                                                this.open_session(first.id.clone(), cx);
+                                            }
                                         }
                                     }
                                 }
@@ -201,6 +211,7 @@ impl HiveApp {
         .detach();
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.close_memory();
         self.close_roles();
         self.switch_draft(Some(format!("session:{id}")), cx);
         self.close_settings();

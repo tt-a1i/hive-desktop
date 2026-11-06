@@ -2,6 +2,7 @@ mod app;
 mod collaboration;
 mod conversation;
 mod members;
+mod memory;
 mod navigation;
 mod process_supervisor;
 mod protocol;
