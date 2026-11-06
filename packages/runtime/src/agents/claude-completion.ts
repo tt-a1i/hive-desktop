@@ -1,5 +1,5 @@
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
-import { isObject } from './claude-history.js';
+import { isObject, isClaudeSyntheticAssistant } from './claude-history.js';
 export type ClaudeTerminal = { subtype: string; is_error: boolean; uuid: string; user_message_uuid?: string; user_message_uuids?: string[]; terminal_reason?: string; queued_turn_count?: number };
 /** Requires an observed terminal result and its real assistant/input on the native active chain. */
 export function claudeCompletionAssistant(messages: readonly SessionMessage[], inputUuid: string, observedAssistants: ReadonlySet<string>, terminal: ClaudeTerminal): string {
@@ -11,6 +11,6 @@ export function claudeCompletionAssistant(messages: readonly SessionMessage[], i
   if (subsequent.some(message => message.type === 'user' && (!isObject(message.message) || !Array.isArray(message.message.content)
     || message.message.content.some(block => !isObject(block) || block.type !== 'tool_result')))) throw new Error('Claude delivery was superseded by a later input');
   const assistant = subsequent.findLast(message => message.type === 'assistant');
-  if (!assistant || !observedAssistants.has(assistant.uuid)) throw new Error('Claude terminal assistant is not durable on the active chain');
+  if (!assistant || isClaudeSyntheticAssistant(assistant) || !observedAssistants.has(assistant.uuid)) throw new Error('Claude terminal assistant is not durable on the active chain');
   return assistant.uuid;
 }

@@ -25,6 +25,7 @@ pub enum Backend {
     Codex,
     #[serde(rename = "pi-rpc")]
     PiRpc,
+    Claude,
 }
 impl Backend {
     pub fn label(self) -> &'static str {
@@ -32,6 +33,7 @@ impl Backend {
             Self::Pi => "Pi",
             Self::Codex => "Codex",
             Self::PiRpc => "外部 Pi",
+            Self::Claude => "Claude",
         }
     }
 }
@@ -67,6 +69,7 @@ impl Member {
             Some("hive:pi") => "Pi",
             Some("hive:codex") => "Codex",
             Some("hive:pi-rpc") => "外部 Pi",
+            Some("hive:claude") => "Claude",
             Some(_) => "其他后端",
             None => "未配置后端",
         }

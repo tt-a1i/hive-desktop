@@ -8,12 +8,14 @@ use serde_json::json;
 pub struct ExecutableSettings {
     pub pi_command: Option<String>,
     pub codex_command: Option<String>,
+    pub claude_command: Option<String>,
     pub effective: EffectiveCommands,
 }
 #[derive(Deserialize)]
 pub struct EffectiveCommands {
     pub pi: EffectiveCommand,
     pub codex: EffectiveCommand,
+    pub claude: EffectiveCommand,
 }
 #[derive(Deserialize)]
 pub struct EffectiveCommand {
@@ -56,8 +58,9 @@ impl HiveApp {
         };
         let pi = self.pi_command.read(cx).value().trim().to_string();
         let codex = self.codex_command.read(cx).value().trim().to_string();
+        let claude = self.claude_command.read(cx).value().trim().to_string();
         let params = if save {
-            json!({"piCommand":if pi.is_empty() { None } else { Some(pi) }, "codexCommand":if codex.is_empty() { None } else { Some(codex) }})
+            json!({"piCommand":if pi.is_empty() { None } else { Some(pi) }, "codexCommand":if codex.is_empty() { None } else { Some(codex) }, "claudeCommand":if claude.is_empty() { None } else { Some(claude) }})
         } else {
             json!({})
         };
@@ -89,13 +92,18 @@ impl HiveApp {
                             if !save {
                                 let pi_input = this.pi_command.clone();
                                 let codex_input = this.codex_command.clone();
+                                let claude_input = this.claude_command.clone();
                                 let pi = settings.pi_command.clone().unwrap_or_default();
                                 let codex = settings.codex_command.clone().unwrap_or_default();
+                                let claude = settings.claude_command.clone().unwrap_or_default();
                                 let _ = window.update(cx, |_, window, cx| {
                                     pi_input
                                         .update(cx, |input, cx| input.set_value(pi, window, cx));
                                     codex_input
                                         .update(cx, |input, cx| input.set_value(codex, window, cx));
+                                    claude_input.update(cx, |input, cx| {
+                                        input.set_value(claude, window, cx)
+                                    });
                                 });
                             }
                             this.executable_settings = Some(settings);

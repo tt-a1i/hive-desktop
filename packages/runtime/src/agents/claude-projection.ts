@@ -1,5 +1,5 @@
 import type { SDKPartialAssistantMessage } from '@anthropic-ai/claude-agent-sdk';
-import { isObject, projectClaudeMessage, type ClaudeHistoryItem } from './claude-history.js';
+import { isObject, isClaudeNoQueryPlaceholder, projectClaudeMessage, type ClaudeHistoryItem } from './claude-history.js';
 import type { ClaudeMetadata } from './claude-metadata.js';
 type Source = Parameters<typeof projectClaudeMessage>[0];
 /** SDK assistant envelopes may each contain one block of the same native API message. */
@@ -7,16 +7,23 @@ export class ClaudeProjection {
   private rows = new Map<string, ClaudeHistoryItem>();
   private groups = new Map<string, Source[]>();
   private aliases = new Map<string, string>();
+  private previous: Source | undefined;
   private apiId: string | undefined;
   private active: { messageId: string; message: Record<string, unknown> } | undefined;
   constructor(private readonly metadata: () => ClaudeMetadata) {}
-  clear(): void { this.rows.clear(); this.groups.clear(); }
+  clear(): void { this.rows.clear(); this.groups.clear(); this.previous = undefined; }
   endStream(): void { this.active = undefined; this.apiId = undefined; }
   hasNativeUuid(uuid: string): boolean { return [...this.rows.values()].some(item => {
     const source = item.message.source as { nativeUuid: string; nativeUuids?: string[] }; return source.nativeUuid === uuid || source.nativeUuids?.includes(uuid);
   }); }
   snapshot() { return { history: [...this.rows.values()].map(item => item.message), historyMessageIds: [...this.rows.keys()], ...(this.active && { activeMessage: structuredClone(this.active) }) }; }
   put(source: Source): ClaudeHistoryItem[] {
+    if (source.parent_tool_use_id !== null) return [];
+    const hiddenContextUuid = this.previous?.type === 'user' ? this.previous.uuid : undefined;
+    this.previous = source;
+    if (hiddenContextUuid && isClaudeNoQueryPlaceholder(source) && this.metadata().context.some(entry => entry.uuid === hiddenContextUuid)) {
+      return this.insert(projectClaudeMessage(source, this.metadata(), hiddenContextUuid));
+    }
     if (source.type !== 'assistant' || !isObject(source.message) || typeof source.message.id !== 'string') return this.insert(projectClaudeMessage(source, this.metadata()));
     const apiId = source.message.id;
     const group = this.groups.get(apiId) ?? [];

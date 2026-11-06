@@ -18,14 +18,14 @@ const options = { executableEnvironment: {} };
 const live = (chats: Chats) => (chats as unknown as { live: Map<string, { handle: PiSessionHandle }> }).live;
 try {
   runtime = await createDesktopRuntime(dataDir, () => {}, options);
-  assert.deepEqual(await runtime.settings.get(), { piCommand: null, codexCommand: null,
-    effective: { pi: { command: 'pi', source: 'path' }, codex: { command: 'codex', source: 'path' } } });
+  assert.deepEqual(await runtime.settings.get(), { piCommand: null, codexCommand: null, claudeCommand: null,
+    effective: { pi: { command: 'pi', source: 'path' }, codex: { command: 'codex', source: 'path' }, claude: { command: 'claude', source: 'path' } } });
   const saved = await runtime.settings.update({ piCommand: ' /Applications/External Agent/Pi CLI ', codexCommand: ' /Applications/Codex Agent/codex ' });
   assert.equal(saved.piCommand, '/Applications/External Agent/Pi CLI');
   assert.equal(saved.effective.pi.source, 'app');
   const row = await runtime.hive.request('GET', rowPath) as { key: string; value: string };
   assert.equal(row.key, 'desktop_executables');
-  assert.deepEqual(JSON.parse(row.value), { piCommand: saved.piCommand, codexCommand: saved.codexCommand });
+  assert.deepEqual(JSON.parse(row.value), { piCommand: saved.piCommand, codexCommand: saved.codexCommand, claudeCommand: null });
   for (const value of ['', '   ', '\0', 'bad\npath', 'bad\tpath', 'bad\u007fpath', 'bad\u009fpath', 'x'.repeat(4097), 42, undefined]) {
     await assert.rejects(runtime.settings.update({ piCommand: value, codexCommand: null }), DesktopSettingsValidationError);
     assert.deepEqual(await runtime.settings.get(), saved, 'Rejected input must leave the prior SQLite settings unchanged');
@@ -35,7 +35,7 @@ try {
   }
   const environment = new DesktopSettings(runtime.hive, { HIVE_PI_COMMAND: '/env/Agent With Spaces/pi', HIVE_CODEX_COMMAND: '/env/codex' });
   assert.deepEqual((await environment.get()).effective, {
-    pi: { command: '/env/Agent With Spaces/pi', source: 'env' }, codex: { command: '/env/codex', source: 'env' },
+    pi: { command: '/env/Agent With Spaces/pi', source: 'env' }, codex: { command: '/env/codex', source: 'env' }, claude: { command: 'claude', source: 'path' },
   });
   await runtime.close(); runtime = undefined;
   runtime = await createDesktopRuntime(dataDir, () => {}, options);

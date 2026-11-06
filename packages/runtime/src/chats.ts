@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { createClaudeSession, type ClaudeSessionHandle } from './agents/claude.js';
 import { createCodexSession, type CodexSessionHandle } from './agents/codex.js';
 import { createExternalPiSession, type ExternalPiSessionHandle } from './agents/external-pi.js';
 import { createPiSession } from './agents/pi.js';
@@ -82,6 +83,10 @@ export class Chats implements StructuredSessionPort {
         customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
           execute: (id, args, signal) => command.execute(id, args as { args: string[]; stdin?: string }, signal) }],
       })
+      : record.backend === 'claude'
+      ? await createClaudeSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'claude'),
+        command: executables!.claude.command, ...(record.nativeclaudeSessionId && { sessionId: record.nativeclaudeSessionId }),
+        ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
       : record.backend === 'pi-rpc'
       ? await createExternalPiSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'external-pi'),
         command: executables!.pi.command,
@@ -98,9 +103,13 @@ export class Chats implements StructuredSessionPort {
       if (record.backend === 'pi-rpc') {
         await handle.addContext(`Current external Pi integration: use the registered ${(handle as ExternalPiSessionHandle).teamToolName} tool for every Hive team command. This is the current process's team tool; older process tool names no longer exist. Pass CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Omit --cli to inherit this backend and model. Never invoke team through bash.`, 'hive-desktop-external');
       }
+      if (record.backend === 'claude') {
+        await handle.addContext(`Current Claude integration: use the registered ${(handle as ClaudeSessionHandle).teamToolName} MCP tool for every Hive team command. Older process tool names no longer exist. Pass CLI arguments as an array; team send takes task text as a positional argument. Use stdin only when the command supports --stdin. Omit --cli to inherit this backend and model. Never invoke team through bash. Tool permissions and user dialogs currently require an unsupported interaction error; do not bypass approval.`, 'hive-desktop-claude');
+      }
       const model = handle.currentModel();
       this.index.save({ ...this.index.get(record.id), ...(record.backend === 'codex'
         ? (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}
+        : record.backend === 'claude' ? { sessionFile: null, nativeclaudeSessionId: handle.sessionId }
         : { sessionFile: handle.sessionFile ?? null, ...(record.backend === 'pi-rpc'
           ? { externalPiSessionId: handle.sessionId } : { piSessionId: handle.sessionId }) }), ...(model ? { model } : {}) });
       let wasBusy = false;
@@ -156,7 +165,7 @@ export class Chats implements StructuredSessionPort {
 
   /** Hive invokes this for both the selected orchestrator and spawned workers. */
   async start(input: Parameters<StructuredSessionPort['start']>[0]): Promise<StructuredSessionHandle> {
-    const backend = input.config.command === 'hive:codex' ? 'codex' : input.config.command === 'hive:pi-rpc' ? 'pi-rpc' : 'pi';
+    const backend = input.config.command === 'hive:codex' ? 'codex' : input.config.command === 'hive:pi-rpc' ? 'pi-rpc' : input.config.command === 'hive:claude' ? 'claude' : 'pi';
     const args = input.config.args ?? [];
     const provider = args[args.indexOf('--provider') + 1];
     const modelId = args[args.indexOf('--model') + 1];
@@ -208,7 +217,7 @@ export class Chats implements StructuredSessionPort {
     };
   }
   private launchConfig(record: ChatRecord) {
-    return { command: record.backend === 'codex' ? 'hive:codex' : record.backend === 'pi-rpc' ? 'hive:pi-rpc' : 'hive:pi', commandPresetId: null,
+    return { command: record.backend === 'codex' ? 'hive:codex' : record.backend === 'pi-rpc' ? 'hive:pi-rpc' : record.backend === 'claude' ? 'hive:claude' : 'hive:pi', commandPresetId: null,
       args: record.model ? ['--provider', record.model.provider, '--model', record.model.id] : [] };
   }
   private async withWorkspace<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {

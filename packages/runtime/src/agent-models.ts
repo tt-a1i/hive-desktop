@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createClaudeSession } from './agents/claude.js';
 import { createPiSession } from './agents/pi.js';
 import { createCodexSession } from './agents/codex.js';
 import { createExternalPiSession } from './agents/external-pi.js';
@@ -23,7 +24,7 @@ export class AgentModels {
   constructor(private readonly hive: HiveHost, private readonly settings: DesktopSettings) {}
   list(workspaceId: string, backend: unknown): Promise<AgentModelCatalog> {
     if (this.closing) return Promise.reject(new Error('Model catalog runtime is closing'));
-    if (backend !== 'pi' && backend !== 'codex' && backend !== 'pi-rpc') {
+    if (backend !== 'pi' && backend !== 'codex' && backend !== 'pi-rpc' && backend !== 'claude') {
       return Promise.reject(new AgentModelsInputError('Unsupported model catalog backend'));
     }
     if (typeof workspaceId !== 'string' || !workspaceId.trim()) return Promise.reject(new AgentModelsInputError('workspaceId is required'));
@@ -48,6 +49,7 @@ export class AgentModels {
       const options = { cwd: workspace.path, sessionDir: directory, onEvent };
       handle = backend === 'pi' ? await createPiSession(options)
         : backend === 'codex' ? await createCodexSession({ ...options, command: executables!.codex.command, onUnexpectedExit })
+        : backend === 'claude' ? await createClaudeSession({ ...options, command: executables!.claude.command, onUnexpectedExit })
         : await createExternalPiSession({ ...options, command: executables!.pi.command, onUnexpectedExit });
       if (failure) throw failure;
       const models = handle.listModels().map(model => ({ provider: model.provider, id: model.id, name: model.name, available: model.available }));

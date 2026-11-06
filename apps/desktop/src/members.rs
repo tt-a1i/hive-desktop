@@ -14,6 +14,7 @@ pub fn command_backend(command: Option<&str>) -> Option<&'static str> {
         Some("hive:pi") => Some("pi"),
         Some("hive:codex") => Some("codex"),
         Some("hive:pi-rpc") => Some("pi-rpc"),
+        Some("hive:claude") => Some("claude"),
         _ => None,
     }
 }
@@ -197,9 +198,12 @@ impl HiveApp {
         else {
             return;
         };
-        let Some(command) =
-            command.filter(|c| matches!(c.as_str(), "hive:pi" | "hive:codex" | "hive:pi-rpc"))
-        else {
+        let Some(command) = command.filter(|c| {
+            matches!(
+                c.as_str(),
+                "hive:pi" | "hive:codex" | "hive:pi-rpc" | "hive:claude"
+            )
+        }) else {
             self.error = Some("该成员没有桌面支持的后端配置".into());
             cx.notify();
             return;

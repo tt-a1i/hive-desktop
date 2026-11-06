@@ -2,11 +2,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-export type ChatBackend = 'pi' | 'codex' | 'pi-rpc';
+export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude';
 
 export interface ChatRecord {
   backend: ChatBackend;
   codexThreadId?: string;
+  nativeclaudeSessionId?: string;
   id: string;
   workspaceId: string;
   title: string;
@@ -69,7 +70,8 @@ function isChatRecord(value: unknown): value is ChatRecord {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
-  if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex' && record.backend !== 'pi-rpc') return false;
+  if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex' && record.backend !== 'pi-rpc' && record.backend !== 'claude') return false;
+  if (record.nativeclaudeSessionId !== undefined && typeof record.nativeclaudeSessionId !== 'string') return false;
   if (record.codexThreadId !== undefined && typeof record.codexThreadId !== 'string') return false;
   if (record.agentId !== undefined && typeof record.agentId !== 'string') return false;
   if (record.externalPiSessionId !== undefined && typeof record.externalPiSessionId !== 'string') return false;
