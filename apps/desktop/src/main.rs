@@ -3,6 +3,7 @@ mod collaboration;
 mod conversation;
 mod members;
 mod protocol;
+mod roles;
 mod runtime_location;
 mod sessions;
 mod settings;

@@ -43,7 +43,11 @@ pub struct HiveApp {
     pub folder: Entity<InputState>,
     pub model_search: Entity<InputState>,
     pub member_name: Entity<InputState>,
-    pub member_description: Entity<InputState>,
+    pub member_templates_open: bool,
+    pub member_description: Entity<TextareaState>,
+    pub role_name: Entity<InputState>,
+    pub role_description: Entity<TextareaState>,
+    pub roles: crate::roles::Roles,
     pub member_rename: Entity<InputState>,
     pub member_model_search: Entity<InputState>,
     pub member_picker_target: Option<String>,
@@ -143,8 +147,19 @@ impl HiveApp {
             folder: cx.new(|cx| InputState::new(window, cx).placeholder("项目文件夹的绝对路径")),
             model_search,
             member_name: cx.new(|cx| InputState::new(window, cx).placeholder("成员名称")),
-            member_description: cx
-                .new(|cx| InputState::new(window, cx).placeholder("职责说明（可选）")),
+            member_templates_open: false,
+            member_description: cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .auto_grow(2, 6)
+                    .placeholder("职责说明（可选）")
+            }),
+            role_name: cx.new(|cx| InputState::new(window, cx).placeholder("模板名称")),
+            role_description: cx.new(|cx| {
+                TextareaState::new(window, cx)
+                    .auto_grow(3, 8)
+                    .placeholder("职责说明")
+            }),
+            roles: crate::roles::Roles::new(),
             member_rename: cx.new(|cx| InputState::new(window, cx).placeholder("新名称")),
             member_model_search,
             member_picker_target: None,

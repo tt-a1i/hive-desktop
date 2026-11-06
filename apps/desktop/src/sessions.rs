@@ -56,6 +56,7 @@ impl HiveApp {
         });
     }
     pub fn select_workspace(&mut self, id: String, cx: &mut Context<Self>) {
+        self.close_roles();
         self.switch_draft(Some(format!("workspace:{id}")), cx);
         self.loading = true;
         self.workspace = Some(id.clone());
@@ -81,6 +82,9 @@ impl HiveApp {
         self.open_request += 1;
         self.refresh_sessions(cx);
         self.refresh_members(cx);
+        if self.member_panel {
+            self.load_roles(cx);
+        }
         if self.collaboration.visible {
             self.reload_collaboration(cx);
         }
@@ -197,6 +201,7 @@ impl HiveApp {
         .detach();
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.close_roles();
         self.switch_draft(Some(format!("session:{id}")), cx);
         self.close_settings();
         self.member_panel = false;

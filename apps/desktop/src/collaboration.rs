@@ -85,6 +85,7 @@ impl HiveApp {
         self.collaboration.message_generation += 1;
     }
     pub fn open_collaboration(&mut self, cx: &mut Context<Self>) {
+        self.close_roles();
         self.close_settings();
         self.member_panel = false;
         self.collaboration.visible = true;
