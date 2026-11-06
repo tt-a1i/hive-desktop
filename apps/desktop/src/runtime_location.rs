@@ -118,7 +118,7 @@ mod tests {
         let node = f.file("Hive Desktop.app/Contents/Resources/node/bin/node");
         let location = locate_runtime(&exe, Path::new("/unavailable/source"), None, None).unwrap();
         assert_eq!(location.entry, entry);
-        assert_eq!(location.node, node.as_os_str());
+        assert_eq!(Path::new(&location.node), node.as_path());
         assert_eq!(location.cwd, entry.parent().unwrap().parent().unwrap());
     }
     #[test]
@@ -129,7 +129,7 @@ mod tests {
         let node = f.file("portable/resources/node/node.exe");
         let location = locate_runtime(&exe, &f.0, None, None).unwrap();
         assert_eq!(location.entry, entry);
-        assert_eq!(location.node, node.as_os_str());
+        assert_eq!(Path::new(&location.node), node.as_path());
     }
     #[test]
     fn broken_bundle_does_not_fall_back_to_development() {
