@@ -8,3 +8,5 @@ onlyBuiltDependencies:
 
 patchedDependencies:
   '@tt-a1i/hive@2.2.1': patches/@tt-a1i__hive@2.2.1.patch
+  '@lydell/node-pty-win32-x64@1.2.0-beta.15': patches/@lydell__node-pty-win32-x64@1.2.0-beta.15.patch
+  '@lydell/node-pty-win32-arm64@1.2.0-beta.15': patches/@lydell__node-pty-win32-arm64@1.2.0-beta.15.patch

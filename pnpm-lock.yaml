@@ -6,6 +6,12 @@ settings:
   injectWorkspacePackages: true
 
 patchedDependencies:
+  '@lydell/node-pty-win32-arm64@1.2.0-beta.15':
+    hash: 8d8b47fc35dd20b8f75dd05cb70d495405ad825357e8f92239f0aa56610a092a
+    path: patches/@lydell__node-pty-win32-arm64@1.2.0-beta.15.patch
+  '@lydell/node-pty-win32-x64@1.2.0-beta.15':
+    hash: 8d8b47fc35dd20b8f75dd05cb70d495405ad825357e8f92239f0aa56610a092a
+    path: patches/@lydell__node-pty-win32-x64@1.2.0-beta.15.patch
   '@tt-a1i/hive@2.2.1':
     hash: e39453fb62a2e123add6e39f585333caa27da71f94d5acb9c8882c333d528bfe
     path: patches/@tt-a1i__hive@2.2.1.patch
@@ -2769,10 +2775,10 @@ snapshots:
   '@lydell/node-pty-linux-x64@1.2.0-beta.15':
     optional: true
 
-  '@lydell/node-pty-win32-arm64@1.2.0-beta.15':
+  '@lydell/node-pty-win32-arm64@1.2.0-beta.15(patch_hash=8d8b47fc35dd20b8f75dd05cb70d495405ad825357e8f92239f0aa56610a092a)':
     optional: true
 
-  '@lydell/node-pty-win32-x64@1.2.0-beta.15':
+  '@lydell/node-pty-win32-x64@1.2.0-beta.15(patch_hash=8d8b47fc35dd20b8f75dd05cb70d495405ad825357e8f92239f0aa56610a092a)':
     optional: true
 
   '@lydell/node-pty@1.2.0-beta.15':
@@ -2781,8 +2787,8 @@ snapshots:
       '@lydell/node-pty-darwin-x64': 1.2.0-beta.15
       '@lydell/node-pty-linux-arm64': 1.2.0-beta.15
       '@lydell/node-pty-linux-x64': 1.2.0-beta.15
-      '@lydell/node-pty-win32-arm64': 1.2.0-beta.15
-      '@lydell/node-pty-win32-x64': 1.2.0-beta.15
+      '@lydell/node-pty-win32-arm64': 1.2.0-beta.15(patch_hash=8d8b47fc35dd20b8f75dd05cb70d495405ad825357e8f92239f0aa56610a092a)
+      '@lydell/node-pty-win32-x64': 1.2.0-beta.15(patch_hash=8d8b47fc35dd20b8f75dd05cb70d495405ad825357e8f92239f0aa56610a092a)
 
   '@modelcontextprotocol/sdk@1.32.2(zod@4.6.7)':
     dependencies:

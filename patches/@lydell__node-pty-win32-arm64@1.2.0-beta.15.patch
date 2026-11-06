@@ -1,0 +1,12 @@
+--- a/lib/windowsPtyAgent.js
++++ b/lib/windowsPtyAgent.js
+@@ -267,7 +267,9 @@
+         }
+         this._inSocket.readable = false;
+         this._outSocket.readable = false;
++        this._inSocket.destroy();
+         this._outSocket.destroy();
++        this._conoutSocketWorker.dispose();
+     };
+     return WindowsPtyAgent;
+ }());
