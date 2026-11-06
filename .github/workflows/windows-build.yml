@@ -29,7 +29,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/hive-desktop-target
+      CARGO_TARGET_DIR: target/windows-desktop
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v6
@@ -52,5 +52,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hive-desktop-windows-executable
-          path: ${{ runner.temp }}/hive-desktop-target/debug/hive-desktop.exe
+          path: target/windows-desktop/debug/hive-desktop.exe
           if-no-files-found: error
