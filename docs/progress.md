@@ -11,7 +11,9 @@
 
 聊天来源已通过独立元数据区分，实际窗口验证了派单、恢复通知与用户粘贴的 Hive 格式文本；完整模型上下文保留。追加真实验证确认来源随会话恢复、取消后的 shell PID 退出及继续对话。外部 Codex app-server 已接入同一执行器：两个真实 Terra 会话完成主控/Worker 协作与整体恢复，桌面新建、模型选择、输入和来源展示已走查，支持范围与一次失败检查的模型选择违规审计见 [Codex 验证](validation/2026-11-07-codex.md)。
 
-Windows CI 已在提交 `5870eec` 通过正式应用与 Node runtime 构建，并上传 exe（[运行记录](https://github.com/tt-a1i/hive-desktop/actions/runs/42273777316)）。该提交不含后续 Codex 接入，构建通过也不代表 Windows 真机或分发包验收；exe 尚未捆绑 Node/runtime 依赖。
+Windows CI 已在包含 Codex 接入的提交 `736c3e9` 通过正式应用与 Node runtime 构建，并上传 exe（[运行记录](https://github.com/tt-a1i/hive-desktop/actions/runs/42276935734)）。构建通过不代表 Windows 真机或分发包验收；exe 尚未捆绑 Node/runtime 依赖。
+
+外部 Pi 的独立 RPC 通信与显式 Hive 扩展桥已实现：原生配置与扩展保留，真实 Terra 单回合验证隐藏上下文，真实 RPC 验证首次自定义消息落盘与重开。独立复核修正了不同 delivery/分支之间误写完成标记的问题。尚未接入桌面会话和团队闭环，不能视为第三个已交付后端。
 
 下一步仍需完善外部 Agent 的结构化接入、成员管理和配置体验、任务与协作主页、应用后台重连及 macOS / Windows 安装包。Windows 尚未真机验收。基础阶段 #2 保持开放，完整目标 #1 不缩减为当前这条闭环。
 
