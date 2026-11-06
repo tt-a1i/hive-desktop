@@ -27,14 +27,27 @@ async function processes(): Promise<ProcessInfo[]> {
     { windowsHide: true, timeout: 15000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => error ? reject(error) : resolve(stdout)));
   const result = JSON.parse(stdout); return Array.isArray(result) ? result : [result];
 }
-async function ownedTree(pid: number): Promise<ProcessInfo[]> {
-  const all = await processes();
-  const owned = new Set([pid]);
+function selectOwnedTree(all: ProcessInfo[], pid: number, originalRoot?: ProcessInfo): ProcessInfo[] {
+  const root = all.find(process => process.ProcessId === pid && (!originalRoot || process.CreationDate === originalRoot.CreationDate));
+  if (!root) return [];
+  const creationTime = (process: ProcessInfo): number => {
+    const cim = /^\/Date\((\d+)(?:[+-]\d+)?\)\/$/.exec(process.CreationDate);
+    const time = cim ? Number(cim[1]) : Date.parse(process.CreationDate);
+    assert.ok(Number.isFinite(time), `Invalid process CreationDate for PID ${process.ProcessId}`);
+    return time;
+  };
+  const owned = new Map([[pid, root]]);
   for (let changed = true; changed;) {
     changed = false;
-    for (const process of all) if (owned.has(process.ParentProcessId) && !owned.has(process.ProcessId)) { owned.add(process.ProcessId); changed = true; }
+    for (const process of all) {
+      const parent = owned.get(process.ParentProcessId);
+      if (parent && !owned.has(process.ProcessId) && creationTime(process) >= creationTime(parent)) { owned.set(process.ProcessId, process); changed = true; }
+    }
   }
   return all.filter(process => owned.has(process.ProcessId));
+}
+async function ownedTree(pid: number, originalRoot?: ProcessInfo): Promise<ProcessInfo[]> {
+  return selectOwnedTree(await processes(), pid, originalRoot);
 }
 async function assertGone(owned: ProcessInfo[]): Promise<void> {
   const now = await processes();
@@ -49,8 +62,9 @@ async function findCodexExe(root: string): Promise<string | undefined> {
 }
 type ObservedTransport = { readonly pid: number | undefined; readonly lifecycleDiagnostics: unknown; close(): Promise<void> };
 async function closeObserved(transport: ObservedTransport, receipt: Record<string, unknown>, owned: ProcessInfo[], mark: (stage: string, details?: Record<string, unknown>) => void): Promise<ProcessInfo[]> {
+  const originalRoot = owned.find(process => process.ProcessId === transport.pid);
   try {
-    const before = await ownedTree(transport.pid!);
+    const before = originalRoot ? await ownedTree(transport.pid!, originalRoot) : [];
     receipt.beforeStdinEofProcesses = before;
     owned = [...new Map([...owned, ...before].map(process => [`${process.ProcessId}:${process.CreationDate}`, process])).values()];
   } catch (error) { receipt.beforeStdinEofSnapshotError = String(error); }
@@ -62,7 +76,7 @@ async function closeObserved(transport: ObservedTransport, receipt: Record<strin
     try {
       const now = await processes();
       receipt.survivingOriginalProcesses = now.filter(current => owned.some(old => old.ProcessId === current.ProcessId && old.CreationDate === current.CreationDate));
-      receipt.currentProcessesLinkedToOriginalPid = await ownedTree(transport.pid!);
+      receipt.currentProcessesLinkedToOriginalPid = originalRoot ? await ownedTree(transport.pid!, originalRoot) : [];
     } catch (snapshotError) { receipt.afterFailureSnapshotError = String(snapshotError); }
     throw error;
   } finally { receipt.lifecycle = transport.lifecycleDiagnostics; }
@@ -90,6 +104,7 @@ async function codex(command: string, unexpected = false) {
   let owned: ProcessInfo[] = [];
   try {
     owned = await ownedTree(transport.pid!); receipt.afterInitializeProcesses = owned;
+    assert.ok(owned.some(process => process.ProcessId === transport.pid), 'Launcher must be visible in the initial process snapshot');
     mark('model/list.requested');
     const result = await transport.sendRequest<{ data: unknown[] }>('model/list', { limit: 100 });
     assert.ok(Array.isArray(result.data));
@@ -122,6 +137,7 @@ async function pi(command: string, unexpected = false) {
   let owned: ProcessInfo[] = [];
   try {
     owned = await ownedTree(transport.pid!); receipt.afterInitializeProcesses = owned;
+    assert.ok(owned.some(process => process.ProcessId === transport.pid), 'Launcher must be visible in the initial process snapshot');
     mark('get_state.requested');
     const state = await transport.request<{ sessionFile: string; sessionId: string; isStreaming: boolean }>('get_state');
     assert.equal(state.isStreaming, false); assert.ok(state.sessionFile.includes(' ')); assert.ok(state.sessionId);
