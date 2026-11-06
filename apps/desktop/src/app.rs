@@ -35,6 +35,7 @@ pub struct Message {
     pub explicit_user: bool,
 }
 pub struct HiveApp {
+    pub sidebar_open: bool,
     pub input: Entity<TextareaState>,
     pub drafts: HashMap<String, String>,
     pub draft_owner: Option<String>,
@@ -136,6 +137,7 @@ impl HiveApp {
             },
         );
         let mut app = Self {
+            sidebar_open: true,
             input: cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .auto_grow(2, 7)

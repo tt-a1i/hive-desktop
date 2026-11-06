@@ -46,9 +46,13 @@ impl HiveApp {
         self.close_collaboration();
         self.member_panel = false;
         self.settings_panel = true;
-        self.settings_message = None;
-        self.executable_settings = None;
-        self.settings_request(false, window, cx);
+        // Reopening a tab must retain edits; only initial load or explicit reload
+        // replaces the input values with persisted settings.
+        if self.executable_settings.is_none() {
+            self.settings_request(false, window, cx);
+        } else {
+            cx.notify();
+        }
     }
     pub fn settings_request(&mut self, save: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(runtime) = self.runtime.clone() else {

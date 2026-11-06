@@ -2,6 +2,7 @@ mod app;
 mod collaboration;
 mod conversation;
 mod members;
+mod navigation;
 mod protocol;
 mod roles;
 mod runtime_location;

@@ -36,3 +36,12 @@
 原生 CUA 在 `.artifacts/role-template-ui/Hive Role Templates.app` 验证了内置只读、中文多行模板创建和编辑回填、Worker 模板选择和职责填充，最终创建 `template-ui-reviewer` 并显示“审查 · 已停止 · Pi”，尚未选模型，启动按钮禁用。清空模板名称后保存会显示“请输入模板名称”，职责不丢失。删除确认显示具体模板名称；此次窗口走查保留自定义模板，没有执行最终删除。中文通过粘贴输入，尚未验收真实输入法组合输入。
 
 补充走查：应用退出重开后模板仍在；删除确认旁的“取消”实际恢复普通删除按钮并保留模板。
+# Navigation and setting drafts (2026-11-07)
+
+The macOS native navigation now has one four-backend creation menu and one settings entry, with external-program and role-template tabs. Workspace and session entries share a scrollable area; team, collaboration and settings remain outside that list. At widths below 820 logical pixels, navigation occupies the content area and closes when a destination is selected. Chat text and the composer use a centered maximum width.
+
+Actual CUA in `.artifacts/navigation-ui-proof/Hive Desktop.app`, using the isolated pagination fixture state, verified keyboard creation of a builtin Pi chat and pointer creation of Codex, external Pi and Claude chats. No prompt was sent. A Chinese multiline Pi draft survived switching through all three other backends and returning; its session model was explicitly changed to native `openai/gpt-6.1-terra`, without changing global defaults.
+
+Independent review found that switching settings tabs discarded unsaved executable edits. Reopening now retains existing inputs; only the initial load, successful save or explicit reload fills persisted values. CUA entered three different unsaved paths, switched to role templates and back, verified all three survived, then used explicit reload to restore saved values. The actual native CLI paths were subsequently saved in this test data directory. Initial-load inputs are disabled until saved settings arrive.
+
+The window was actually resized from 1180×853 to 760×583 logical pixels. The session list scrolled to the last chat, opening it closed navigation, and its draft remained visible. Settings scrolled to the save/reload buttons; member role-template selection filled the existing Chinese multiline responsibility; collaboration Markdown and dispatch filters remained reachable. Existing pagination rows are synthetic, not additional model work. Native Windows interaction, IME composition and the final visual quality target remain unverified.

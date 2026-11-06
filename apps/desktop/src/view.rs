@@ -25,7 +25,7 @@ impl HiveApp {
                 }
             })
     }
-    fn session_title<'a>(&'a self, session: &'a crate::protocol::Session) -> &'a str {
+    pub(crate) fn session_title<'a>(&'a self, session: &'a crate::protocol::Session) -> &'a str {
         session
             .agent_id
             .as_ref()
@@ -97,44 +97,12 @@ impl Render for HiveApp {
             })
             .cloned()
             .collect();
-        h_flex().size_full().bg(rgb(0xfaf9f6)).text_color(rgb(0x282c2a))
-            .child(v_flex().w(px(270.)).h_full().bg(rgb(0xefefea)).p_4().gap_3()
-                .child(h_flex().gap_2().child(div().text_2xl().font_weight(FontWeight::BOLD).child("Hive"))
-                    .child(div().text_xs().text_color(rgb(0x777c75)).child("桌面工作台")))
-                .child(div().pt_3().text_xs().text_color(rgb(0x777c75)).child("工作区"))
-                .children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
-                    let id = workspace.id.clone();
-                    Button::new(("workspace", i)).label(workspace.name.clone()).tooltip(workspace.path.clone()).selected(self.workspace.as_ref() == Some(&workspace.id))
-                        .on_click(cx.listener(move |this, _, _, cx| this.select_workspace(id.clone(), cx)))
-                }))
-                .child(Input::new(&self.folder))
-                .child(Button::new("add-workspace").label("添加文件夹").disabled(self.runtime.is_none()).on_click(cx.listener(|this, _, window, cx| this.add_workspace(window, cx))))
-                .child(div().pt_4().text_xs().text_color(rgb(0x777c75)).child("会话与团队 · 新建"))
-                .child(h_flex().gap_2()
-                    .child(Button::new("new-pi-chat").label("＋ Pi").accessibility_label("新建 Pi 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("pi", cx))))
-                    .child(Button::new("new-codex-chat").label("＋ Codex").accessibility_label("新建 Codex 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("codex", cx)))))
-                .child(h_flex().gap_2()
-                    .child(Button::new("new-pi-rpc-chat").label("＋ 外部 Pi").accessibility_label("新建外部 Pi 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("pi-rpc", cx))))
-                    .child(Button::new("new-claude-chat").label("＋ Claude").accessibility_label("新建 Claude 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("claude", cx)))))
-                .child(Button::new("toggle-members").label(if self.member_panel { "返回会话" } else { "管理团队成员" }).disabled(self.workspace.is_none()).on_click(cx.listener(|this, _, _, cx| { this.close_settings(); this.close_collaboration(); this.close_roles(); this.member_panel = !this.member_panel; if this.member_panel { this.refresh_members(cx); this.load_roles(cx); } cx.notify(); })))
-                .child(Button::new("open-settings").label(if self.settings_panel { "返回会话" } else { "外部程序设置" }).on_click(cx.listener(|this, _, window, cx| { if this.settings_panel { this.close_settings(); cx.notify(); } else { this.open_settings(window, cx); } })))
-                .child(Button::new("open-roles").label(if self.roles.visible { "返回会话" } else { "角色模板" }).on_click(cx.listener(|this, _, _, cx| { if this.roles.visible { this.close_roles(); } else { this.open_roles(cx); } cx.notify(); })))
-                .child(Button::new("open-collaboration").label(if self.collaboration.visible { "返回会话" } else { "协作概览" }).disabled(self.workspace.is_none()).on_click(cx.listener(|this, _, _, cx| { if this.collaboration.visible { this.close_collaboration(); } else { this.open_collaboration(cx); } cx.notify(); })))
-                .child(v_flex().id("sessions").flex_1().min_h_0().overflow_y_scroll().gap_2()
-                    .children(self.sessions.iter().enumerate().map(|(i, session)| {
-                        let id = session.id.clone();
-                        let role = session.agent_id.as_deref().map(|agent| if agent.ends_with(":orchestrator") { "主控" } else { "成员" }).unwrap_or("会话");
-                        let activity = if self.busy.contains(&id) { " · 处理中" } else if self.pending.get(&id).copied().unwrap_or(0) > 0 { " · 已暂停" } else if self.unread.contains(&id) { " · 未读" } else { "" };
-                        v_flex().min_w_0().gap_1()
-                            .child(div().text_xs().text_color(rgb(0x63715c)).child(format!("{role} · {}{activity}", session.backend.label())))
-                            .child(Button::new(("session", i)).w_full().min_w_0()
-                                .child(div().flex_1().min_w_0().truncate().child(self.session_title(session).to_string()))
-                                .tooltip(session.agent_id.as_ref().map(|agent| format!("{}\n{agent}", self.session_title(session))).unwrap_or_else(|| self.session_title(session).to_string()))
-                                .selected(self.session.as_ref().is_some_and(|s| s.id == session.id))
-                                .on_click(cx.listener(move |this, _, _, cx| { this.close_collaboration(); this.open_session(id.clone(), cx); })))
-                    })))
-                .child(div().text_xs().text_color(rgb(0x777c75)).child("本地会话")))
-            .child(if self.roles.visible { self.render_roles(cx).into_any_element()
+        let narrow = window.viewport_size().width < px(820.);
+        v_flex().size_full().bg(rgb(0xfaf9f6)).text_color(rgb(0x282c2a))
+            .child(self.render_navigation_bar(cx))
+            .child(h_flex().flex_1().min_h_0().w_full()
+            .when(self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
+            .when(!narrow || !self.sidebar_open, |view| view.child(if self.roles.visible { v_flex().flex_1().min_w_0().h_full().child(self.render_settings_tabs(cx)).child(self.render_roles(cx)).into_any_element()
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(h_flex().justify_between().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("协作概览"))
                     .child(Button::new("refresh-collaboration").label("刷新").on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx)))))
@@ -177,6 +145,7 @@ impl Render for HiveApp {
                         .when_some(self.collaboration.next_seq, |view, seq| view.child(Button::new("more-dispatch-messages").label("加载更多消息").disabled(self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(seq, cx)))))))
                 )).into_any_element()
             } else if self.settings_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
+                .child(self.render_settings_tabs(cx))
                 .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("外部程序设置"))
                 .child(div().text_sm().child("设置外部 Pi、Codex 和 Claude 的可执行文件路径。留空时通过 PATH 查找；环境变量优先于此设置。"))
                 .child(div().text_sm().child("更改适用于之后新打开或重启的外部进程，正在运行的进程继续使用原配置。"))
@@ -266,8 +235,8 @@ impl Render for HiveApp {
                     .child(div().flex_1().text_sm().child(self.error.clone().unwrap_or_default()))
                     .child(Button::new("dismiss-error").label("关闭").on_click(cx.listener(|this, _, _, cx| { this.error = None; cx.notify(); })))))
                 .child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).p_3()
-                    .child(v_flex().gap_5()
-                        .when(self.messages.is_empty(), |view| view.child(div().py_8().text_color(rgb(0x777c75)).child(if self.loading { "正在读取…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else { "添加项目文件夹，再创建一个会话。" })))
+                    .child(v_flex().w_full().max_w(px(840.)).mx_auto().gap_5()
+                        .when(self.messages.is_empty(), |view| view.child(div().py_8().text_color(rgb(0x777c75)).child(if self.loading { "正在读取…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.iter().enumerate().map(|(i, message)| {
                             let heading = message.tool.as_ref().map(|tool| format!("{} · {}", tool.name, tool.status)).unwrap_or_else(|| message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), _ => "工具" }.into()));
                             let expanded = message.tool.as_ref().is_some_and(|tool| tool.expanded);
@@ -289,7 +258,8 @@ impl Render for HiveApp {
                                 .when(message.delivery.as_ref().is_some_and(|d| d.expanded), |view| view.child(div().min_w_0().p_3().rounded_lg().bg(rgb(0xffffff)).text_sm().child(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())))
                                 .when(!expanded && message.tool.as_ref().is_some_and(|tool| tool.status == "失败"), |view| view.child(div().text_sm().text_color(rgb(0xb54131)).child(message.text.chars().take(160).collect::<String>())))
                         }))))
-                .child(Button::new("choose-model").label(self.model.as_ref().map(|model| format!("模型 · {} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); })))
+                .child(v_flex().w_full().min_w_0().max_w(px(840.)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_lg().bg(rgb(0xffffff))
+                .child(Button::new("choose-model").w_full().min_w_0().label(self.model.as_ref().map(|model| format!("模型 · {} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); })))
                 .when(self.choosing_model, |view| view.child(v_flex().flex_shrink_0().min_h_0().gap_2()
                     .child(Input::new(&self.model_search))
                     .child(v_flex().id("model-list").h(px(168.)).min_h_0().flex_shrink_0().overflow_y_scroll().gap_2()
@@ -314,13 +284,13 @@ impl Render for HiveApp {
                         })))
                 }))))
                 .child(h_flex().gap_3().items_end()
-                    .child(div().flex_1().child(Textarea::new(&self.input).aria_label("聊天消息")))
+                    .child(div().flex_1().min_w_0().child(Textarea::new(&self.input).aria_label("聊天消息")))
                     .child(if running {
                         Button::new("stop").label("停止").on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {
                         Button::new("send").primary().label("发送").disabled(self.session.is_none() || self.loading || pending > 0).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
                     }))
-                .child(div().text_xs().text_color(rgb(0x8a8e87)).child(if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "Enter 换行 · 点击发送" }))
-                .into_any_element() })
+                .child(div().text_xs().text_color(rgb(0x8a8e87)).child(if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "Enter 换行 · 点击发送" })))
+                .into_any_element() })))
     }
 }
