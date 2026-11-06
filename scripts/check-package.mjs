@@ -14,8 +14,8 @@ const node = join(resources, 'node', process.platform === 'darwin' ? 'bin/node' 
 const runtime = join(resources, 'runtime');
 const directory = await mkdtemp(join(tmpdir(), 'hive-desktop-package-check-'));
 const children = [];
-function start(args) {
-  const child = spawn(node, args, { cwd: directory, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+function start(args, stdin = 'pipe') {
+  const child = spawn(node, args, { cwd: directory, stdio: [stdin, 'pipe', 'pipe'], detached: process.platform !== 'win32' });
   children.push(child);
   return child;
 }
@@ -39,8 +39,8 @@ function stop(child) {
 try {
   // Resolve the PTY from Hive's own dependency graph and actually launch a shell.
   progress('Starting PTY probe with bundled Node');
-  const code = `const {createRequire}=require('node:module');console.log('PTY: resolving Hive dependency');const r=createRequire(process.argv[1]+'/package.json');const h=createRequire(r.resolve('@tt-a1i/hive/package.json'));const p=h('@lydell/node-pty');const shell=process.platform==='win32'?process.env.ComSpec:'/bin/sh';const args=process.platform==='win32'?['/c','echo HIVE_PTY_OK']:['-c','printf HIVE_PTY_OK'];console.log('PTY: spawning shell');const t=p.spawn(shell,args,{cwd:process.cwd(),env:process.env});console.log('PTY: spawn returned');let out='';t.onData(x=>{out+=x;console.log('PTY: received data')});t.onExit(e=>{console.log('PTY: onExit '+JSON.stringify(e));if(e.exitCode!==0||!out.includes('HIVE_PTY_OK'))process.exitCode=1;else console.log('PTY OK')});`;
-  const pty = start(['-e', code, runtime]);
+  const code = `const {createRequire}=require('node:module');console.log('PTY: resolving Hive dependency');const r=createRequire(process.argv[1]+'/package.json');const h=createRequire(r.resolve('@tt-a1i/hive/package.json'));const p=h('@lydell/node-pty');const shell=process.platform==='win32'?process.env.ComSpec:'/bin/sh';const args=process.platform==='win32'?['/c','echo HIVE_PTY_OK']:['-c','printf HIVE_PTY_OK'];console.log('PTY: spawning shell');const t=p.spawn(shell,args,{cwd:process.cwd(),env:process.env});console.log('PTY: spawn returned');let out='';t.onData(x=>{out+=x;console.log('PTY: received data')});t.onExit(e=>{console.log('PTY: onExit '+JSON.stringify(e));const ok=e.exitCode===0&&out.includes('HIVE_PTY_OK');console.log('PTY: active resources at exit '+JSON.stringify(process.getActiveResourcesInfo()));setTimeout(()=>console.log('PTY: active resources after 1s '+JSON.stringify(process.getActiveResourcesInfo())),1000).unref();if(ok)console.log('PTY OK');else process.exitCode=1});`;
+  const pty = start(['-e', code, runtime], 'ignore');
   let ptyOutput = ''; pty.stdout.on('data', x => { ptyOutput += x; process.stdout.write(x); }); pty.stderr.on('data', x => { ptyOutput += x; process.stderr.write(x); });
   const [ptyExit] = await deadline(once(pty, 'exit'), 'PTY probe process exit'); assert.equal(ptyExit, 0, ptyOutput); assert.match(ptyOutput, /PTY OK/);
   progress('PTY probe completed; starting Hive runtime');
