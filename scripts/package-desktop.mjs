@@ -21,6 +21,7 @@ const basename = `node-v${version}-${platform}-${process.arch}`;
 const archive = `${basename}.${ext}`;
 const url = `https://nodejs.org/dist/v${version}`;
 const temp = await mkdtemp(join(tmpdir(), 'hive-desktop-package-'));
+function progress(message) { console.log(`[package] ${message}`); }
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', ...options });
   if (result.error || result.status !== 0) throw result.error ?? new Error(`${command} failed: ${result.status}`);
@@ -39,14 +40,22 @@ try {
   await mkdir(resources, { recursive: true });
   await cp(binary, bin);
   if (process.platform === 'darwin') await writeFile(join(app, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>hive-desktop</string><key>CFBundleIdentifier</key><string>com.hive.desktop.dev</string><key>CFBundleName</key><string>Hive Desktop</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>0.1.0</string></dict></plist>`);
+  progress('Copying production-deployed runtime');
   await cp(deployedRuntime, join(resources, 'runtime'), { recursive: true, verbatimSymlinks: true });
-  run('curl', ['-fL', '--retry', '2', '-o', join(temp, archive), `${url}/${archive}`]);
-  run('curl', ['-fL', '--retry', '2', '-o', join(temp, 'SHASUMS256.txt'), `${url}/SHASUMS256.txt`]);
+  progress('Runtime copy completed');
+  progress(`Downloading official Node archive ${archive}`);
+  run('curl', ['-fL', '--connect-timeout', '20', '--max-time', '120', '--retry', '2', '--retry-max-time', '300', '-o', join(temp, archive), `${url}/${archive}`]);
+  progress('Node archive downloaded');
+  progress('Downloading official checksums');
+  run('curl', ['-fL', '--connect-timeout', '20', '--max-time', '120', '--retry', '2', '--retry-max-time', '300', '-o', join(temp, 'SHASUMS256.txt'), `${url}/SHASUMS256.txt`]);
+  progress('Checksums downloaded; verifying archive');
   const sums = await readFile(join(temp, 'SHASUMS256.txt'), 'utf8');
   const expected = sums.split(/\r?\n/).find(line => line.trim().endsWith(`  ${archive}`))?.split(/\s+/)[0];
   const actual = createHash('sha256').update(await readFile(join(temp, archive))).digest('hex');
   if (!expected || expected !== actual) throw new Error('Official Node archive SHA256 verification failed');
+  progress('Node SHA256 verified; extracting archive');
   run('tar', ['-xf', join(temp, archive), '-C', temp]);
+  progress('Node archive extracted');
   const nodeDir = join(resources, 'node');
   await mkdir(nodeDir, { recursive: true });
   if (platform === 'win') await cp(join(temp, basename, 'node.exe'), join(nodeDir, 'node.exe'));
@@ -61,6 +70,8 @@ try {
       else if (entry.isDirectory()) await checkLinks(child);
     }
   }
+  progress('Checking bundle links');
   await checkLinks(output);
+  progress('Bundle link check completed');
   console.log(`Packaged ${output}\nNode archive SHA256: ${actual}`);
 } finally { await rm(temp, { recursive: true, force: true }); }
