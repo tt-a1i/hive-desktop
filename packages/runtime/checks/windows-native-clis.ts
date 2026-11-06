@@ -189,6 +189,26 @@ try {
   } finally { await owned.close(25); }
   await assertGone(tree);
   receipts.push({ scope: 'synthetic native Node process tree, not CLI/model behavior', forcedTreeTermination: true, owned: tree });
+  // Kill only the launcher with stdin still open: /T must not be what reaps its descendants.
+  const killed = new OwnedCliProcess(process.execPath, [fixture], { cwd: directory });
+  const killedReceipt: Record<string, unknown> = { scope: 'synthetic launcher-only death with stubborn child and grandchild; no CLI/model behavior', killMethod: 'process.kill(launcher PID, SIGKILL), no /T, before stdin EOF' };
+  receipts.push(killedReceipt);
+  let killedTree: ProcessInfo[] = [];
+  try {
+    killed.child.stderr.resume(); killed.child.stdin.on('error', () => {});
+    await deadline(new Promise<void>((resolve, reject) => { killed.child.stdout.once('data', () => resolve()); killed.child.once('error', reject); }), 'launcher-death fixture readiness');
+    killedTree = await ownedTree(killed.child.pid!);
+    assert.ok(killedTree.filter(process => process.Name.toLowerCase() === 'node.exe').length >= 3, 'Launcher, stubborn child and grandchild must be present');
+    killedReceipt.beforeKillProcesses = killedTree;
+    killedReceipt.beforeKillLifecycle = killed.diagnostics;
+    assert.equal(killed.diagnostics.stdin.finished, false, 'Do not close stdin before killing the launcher');
+    process.kill(killed.child.pid!, 'SIGKILL');
+    await killed.close();
+    assert.equal(killed.diagnostics.events.some(event => event.type === 'grace.expired'), false, 'Launcher-only death must not rely on taskkill /T');
+    await assertGone(killedTree);
+    killedReceipt.pass = true;
+  } finally { try { await killed.close(); } finally { killedReceipt.lifecycle = killed.diagnostics; } }
+
   await mkdir(resolve('../../.artifacts'), { recursive: true });
   await writeFile(evidence, JSON.stringify({ pass: true, platform: process.platform, inference: false, runtimeArtifact: 'compiled dist/agents/*.js including owned-windows-cli-host.js', installed, directory, receipts,
     ownership: 'Windows-only launcher self-assigns a kill-on-close Job before spawning the original CLI. Actual natural/abnormal exit and PID+creation-time cleanup assertions retained.' }, null, 2));

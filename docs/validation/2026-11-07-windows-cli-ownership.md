@@ -25,8 +25,30 @@ The runtime pins `@seydx/win-job` **0.1.0**, npm `gitHead` **84948f5579bf7b0eef4
 
 Measured registry unpacked sizes: root package 41,386 bytes, Windows x64 platform package 285,695 bytes, ARM64 260,620 bytes. The root has no OS/CPU restriction or install script; the platform binaries are optional dependencies. Its non-Windows entry is a stub, and only the separate Windows launcher imports the binding. Cost is one extra Node process per active Windows CLI and this small native dependency. It is a young 0.1.0 dependency, so version pinning, source review, actual Windows execution and platform-asset packaging checks are part of acceptance.
 
-## Validation status
+## Actual Windows validation
 
-At implementation handoff, runtime/check-script typechecks, runtime build, Mac real Pi 1.4.0 RPC, native Codex 0.166.0 metadata/control/close/death checks and the synthetic Codex JSONL peer passed. All were without model inference. Packaging-owner isolated Windows x64/ARM64 deploys selected the corresponding native binding; that checks asset selection, not Windows execution.
+Commit **1914a06**, [Windows run 42302725509](https://github.com/tt-a1i/hive-desktop/actions/runs/42302725509), `native-clis` job: **passed on Windows x64**. The receipt reports `pass:true`, `platform:win32`, `inference:false` and `runtimeArtifact:compiled dist/agents/*.js including owned-windows-cli-host.js`. It is saved as `.artifacts/windows-native-clis.json` in the job's receipt artifact; the inspected local copy was `/tmp/hive-native-job-fix/windows-native-clis.json`.
 
-**The Job fix is not yet claimed verified on Windows.** The next actual `windows-native-clis.ts` run retains official bare-name, explicit `.cmd`, native `.exe`, space-path, initialization/catalog, natural close, unexpected native exit and descendant identity assertions. A separate deterministic fixture naturally exits with code 17 while leaving an explicitly detached inherited-stdio child; it must preserve actual exit code 17, avoid grace expiry and leave every original PID/creation-time identity gone. A second fixture checks bounded forced tree shutdown. Synthetic fixtures are not evidence of model or team execution. No model prompt is sent.
+All nine cases completed their assertions:
+
+| Scope | Actual checks |
+| --- | --- |
+| Official Codex 0.166.0 | Bare `codex`, explicit official `.cmd` in an installation path containing spaces, and native `codex.exe`; initialize, model catalog, stdin EOF and awaited close. |
+| Official Pi 1.4.0 | Bare `pi` and explicit official `.cmd`; RPC initialization/state/messages, paths containing spaces, no model start, stdin EOF and awaited close. |
+| Unexpected native exit | The check killed only its owned native Codex or Pi descendant; subsequent requests were rejected and the owned tree was gone after awaited cleanup. |
+| Separate natural-root fixture | A synthetic root left an explicitly detached inherited-stdio child. The launcher actually exited with code **17**, no grace deadline expired, and all original process identities disappeared. This verifies natural exit and Job cleanup without `process.exit` or forced tree termination masking the result. |
+| Separate forced-tree fixture | A synthetic stubborn Node tree required bounded shutdown; all captured process identities disappeared afterward. |
+
+Successful official Codex cases captured Git, Git remote-helper and conhost descendants before stdin EOF. After close, the checks verified that every captured PID **with its original creation time** was absent. Thus this run covers actual background Git/console descendants as well as the separate deterministic orphan fixture. It still did not collect the Git subcommands, so the exact upstream Git call site remains unproven.
+
+The former taskkill-only limitation is resolved for descendants already owned by the session Job when their original CLI parents exit. This run directly verified normal CLI exit, unexpected native-child exit and controlled forced-tree shutdown. It did not separately kill only the launcher without `/T`, crash the entire parent runtime during inference, or exercise processes created outside Job ancestry through services such as WMI; those should not be described as independently tested guarantees.
+
+Runtime/check-script typechecks, runtime build, Mac real Pi RPC, native Codex metadata/control/close/death checks and the synthetic Codex JSONL peer also passed without inference. Packaging-owner isolated Windows x64/ARM64 deploys selected the corresponding native binding; ARM64 asset selection is **not ARM64 execution**.
+
+## Additional launcher-death case: pending Windows execution
+
+After the nine-case run above, the existing stubborn-process fixture was reused for one additional check: keep stdin open, capture the owned launcher/child/grandchild identities, kill **only** the launcher PID with `process.kill(..., 'SIGKILL')` (no `/T`), then await outer close and verify all original identities are gone without grace expiry. Only the check script changed; production code did not. Its TypeScript/diff checks passed, but this new case is **not part of the nine-case Windows success** and awaits the next actual Windows job.
+
+## Remaining boundaries
+
+This is Windows **x64 CI process/protocol validation**, not native GUI interaction or a Windows ARM64 run. No model inference, model prompt, active LLM tool execution, model-driven team dispatch/report loop, or cancellation/process death during an active LLM tool was exercised. Synthetic process fixtures remain separate from official CLI controls and are not team-live evidence. The Mac route was preserved and regression-checked; this receipt does not extend the Windows results to other platforms or untested CLI versions.

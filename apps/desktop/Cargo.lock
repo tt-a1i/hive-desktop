@@ -2737,9 +2737,11 @@ name = "hive-desktop"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
+ "libc",
  "serde",
  "serde_json",
  "smol",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

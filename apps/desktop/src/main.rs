@@ -3,6 +3,7 @@ mod collaboration;
 mod conversation;
 mod members;
 mod navigation;
+mod process_supervisor;
 mod protocol;
 mod roles;
 mod runtime_location;

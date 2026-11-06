@@ -297,11 +297,23 @@ impl HiveApp {
         let runtime = self.runtime.take();
         cx.spawn(async move |this, cx| {
             if let Some(runtime) = runtime {
-                runtime
-                    .shutdown_with_grace(std::time::Duration::from_secs(3))
-                    .await;
+                match runtime.shutdown_checked(std::time::Duration::from_secs(3)).await {
+                    Ok(_) => { let _ = this.update(cx, |_, cx| cx.quit()); }
+                    Err(error) => {
+                        let _ = this.update(cx, move |this, cx| {
+                            // Keep the owner/identity so another explicit Exit can
+                            // retry cleanup. Never create a replacement or resume work.
+                            this.runtime = Some(runtime);
+                            this.closing = false;
+                            this.status = "后台进程清理未确认，已保留窗口".into();
+                            this.error = Some(format!("未能确认后台进程已退出：{error}。请重试退出；当前不会启动新的后台。"));
+                            cx.notify();
+                        });
+                    }
+                }
+            } else {
+                let _ = this.update(cx, |_, cx| cx.quit());
             }
-            let _ = this.update(cx, |_, cx| cx.quit());
         })
         .detach();
     }

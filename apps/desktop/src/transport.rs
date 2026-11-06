@@ -1,18 +1,22 @@
-use crate::{protocol::PiEvent, runtime_location::locate_runtime};
+use crate::{
+    process_supervisor::{CleanupReport, OwnedProcess},
+    protocol::PiEvent,
+    runtime_location::locate_runtime,
+};
 use serde_json::{Value, json};
 use smol::channel::{Receiver, Sender, bounded, unbounded};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader, Write},
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 type Reply = Result<Value, String>;
@@ -26,7 +30,9 @@ pub struct Runtime {
     pending: Pending,
     next: AtomicU64,
     pub events: Receiver<RuntimeEvent>,
-    child: Mutex<Option<Child>>,
+    owned: Arc<Mutex<OwnedProcess>>,
+    closing: Arc<AtomicBool>,
+    events_tx: Sender<RuntimeEvent>,
     failure: Arc<Mutex<Option<String>>>,
 }
 fn fail(
@@ -68,16 +74,15 @@ impl Runtime {
                 std::env::join_paths(paths).map_err(|e| format!("无法设置后台 PATH：{e}"))?,
             );
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000); // CREATE_NO_WINDOW for the owned Node runtime.
-        }
-        let mut child = command
-            .spawn()
-            .map_err(|e| format!("启动 Node 后台失败：{e}"))?;
-        let mut stdin = child.stdin.take().ok_or("后台没有 stdin")?;
-        let stdout = child.stdout.take().ok_or("后台没有 stdout")?;
+        Self::launch_command(command)
+    }
+    fn launch_command(mut command: Command) -> Result<Arc<Self>, String> {
+        let mut owned = OwnedProcess::spawn(&mut command)
+            .map_err(|e| format!("启动/监督 Node 后台失败：{e}"))?;
+        let mut stdin = owned.take_stdin().ok_or("后台没有 stdin")?;
+        let stdout = owned.take_stdout().ok_or("后台没有 stdout")?;
+        let owned = Arc::new(Mutex::new(owned));
+        let closing = Arc::new(AtomicBool::new(false));
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let failure = Arc::new(Mutex::new(None));
         let (events_tx, events) = unbounded();
@@ -95,7 +100,7 @@ impl Runtime {
                 }
             }
         });
-        let (p, e, f) = (pending.clone(), events_tx, failure.clone());
+        let (p, e, f) = (pending.clone(), events_tx.clone(), failure.clone());
         thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 let value = match line
@@ -138,30 +143,97 @@ impl Runtime {
                 "后台连接已关闭；请重新启动 Hive。详细错误见后台日志。".into(),
             );
         });
+        // stdout may stay open in a descendant after Node exits. Observe the
+        // leader independently, without reaping/releasing its PID on macOS.
+        let (scope, stopping, p, e, f) = (
+            owned.clone(),
+            closing.clone(),
+            pending.clone(),
+            events_tx.clone(),
+            failure.clone(),
+        );
+        thread::spawn(move || {
+            loop {
+                if stopping.load(Ordering::Acquire) {
+                    return;
+                }
+                let exited = {
+                    let owner = scope.lock().unwrap();
+                    if owner.is_cleaned() {
+                        return;
+                    }
+                    owner.leader_exited()
+                };
+                match exited {
+                    Ok(false) => thread::sleep(Duration::from_millis(20)),
+                    outcome => {
+                        if stopping.swap(true, Ordering::AcqRel) {
+                            return;
+                        }
+                        let message = match outcome {
+                            Ok(true) => "Node 后台已退出，正在清理所属进程范围".into(),
+                            Err(error) => format!("无法检查后台进程状态：{error}"),
+                            _ => unreachable!(),
+                        };
+                        fail(&p, &e, &f, message);
+                        match scope.lock().unwrap().cleanup(Duration::ZERO) {
+                            Ok(report) => eprintln!(
+                                "[hive-desktop] sidecar scope exited: forced={}, scope={}",
+                                report.forced, report.scope
+                            ),
+                            Err(error) => {
+                                eprintln!("[hive-desktop] sidecar cleanup not confirmed: {error}");
+                                let _ = e.try_send(RuntimeEvent::Failed(format!(
+                                    "后台进程清理未确认：{error}"
+                                )));
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+        });
         Ok(Arc::new(Self {
             tx,
             pending,
             next: AtomicU64::new(1),
             events,
-            child: Mutex::new(Some(child)),
+            owned,
+            closing,
+            events_tx,
             failure,
         }))
     }
     pub async fn shutdown(&self) {
-        self.shutdown_with_grace(Duration::from_millis(100)).await;
+        // Last-chance, non-cancellable GPUI quit observer has only 200 ms.
+        // Normal window/shortcut exit performs its 3 s pre-cleanup separately.
+        // Issue scope termination immediately here, never spend that window in grace.
+        self.shutdown_with_grace(Duration::ZERO).await;
     }
     pub async fn shutdown_with_grace(&self, grace: Duration) {
+        if let Err(error) = self.shutdown_checked(grace).await {
+            eprintln!("[hive-desktop] sidecar cleanup not confirmed: {error}");
+            let _ = self
+                .events_tx
+                .try_send(RuntimeEvent::Failed(format!("后台进程清理未确认：{error}")));
+        }
+    }
+    /// Future reconnect must await this barrier and stop on Err. Success is scoped
+    /// to the owned group/Job; it does not attest to arbitrary detached processes.
+    pub async fn shutdown_checked(&self, grace: Duration) -> Result<CleanupReport, String> {
+        self.closing.store(true, Ordering::Release);
         let _ = self
             .tx
             .send(json!({"id":0,"method":"shutdown","params":{}}));
-        let child = self.child.lock().unwrap().take();
-        // GPUI gives quit observers 200 ms. Reap inside that window, rather than
-        // leaving a detached cleanup thread behind when the application exits.
-        if let Some(child) = child {
-            smol::unblock(move || reap(child, grace)).await;
-        }
+        let owned = self.owned.clone();
+        // Serialize concurrent cleanup callers. A second caller receives the
+        // same completed report, never "done" merely because Child was taken.
+        smol::unblock(move || owned.lock().unwrap().cleanup(grace)).await
     }
     pub async fn request(&self, method: &str, params: Value) -> Reply {
+        if self.closing.load(Ordering::Acquire) {
+            return Err("后台正在关闭或已退出".into());
+        }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = bounded(1);
         // Lock failure before pending so an EOF cannot strand a newly inserted request.
@@ -187,25 +259,19 @@ impl Runtime {
 }
 impl Drop for Runtime {
     fn drop(&mut self) {
-        // Reap only our child, off the UI thread. Give the runtime time to dispose Pi and Hive.
-        let Some(owned) = self.child.get_mut().unwrap().take() else {
-            return;
-        };
+        self.closing.store(true, Ordering::Release);
         let _ = self
             .tx
             .send(json!({"id":0,"method":"shutdown","params":{}}));
-        thread::spawn(move || reap(owned, Duration::from_secs(3)));
+        let owned = self.owned.clone();
+        thread::spawn(move || {
+            if let Err(error) = owned.lock().unwrap().cleanup(Duration::from_secs(3)) {
+                eprintln!("[hive-desktop] dropped sidecar cleanup not confirmed: {error}");
+            }
+        });
     }
 }
-fn reap(mut child: Child, grace: Duration) {
-    let deadline = Instant::now() + grace;
-    while Instant::now() < deadline {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Err(_) => break,
-            _ => thread::sleep(Duration::from_millis(10)),
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-}
+
+#[cfg(test)]
+#[path = "process_supervisor/transport_tests.rs"]
+mod tests;
