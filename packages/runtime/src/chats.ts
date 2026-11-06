@@ -1,16 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { createCodexSession, type CodexSessionHandle } from './agents/codex.js';
 import { createPiSession } from './agents/pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
-import { ChatIndex, type ChatRecord } from './chat-index.js';
+import { ChatIndex, type ChatRecord, type ChatBackend } from './chat-index.js';
 import { DeliveryQueue } from './delivery-queue.js';
 import type { HiveHost } from './hive-host.js';
 import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract.js';
 import type { StructuredSessionPort, StructuredSessionHandle } from './structured-runtime.js';
-import { createTeamTool } from './team-tool.js';
+import { createTeamTool, createTeamCommand } from './team-tool.js';
 
-interface LiveChat { handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean }
+interface LiveChat {
+  handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
+  failure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
+}
 export type ChatEvent = (PiEvent | { type: 'state'; sessionId: string; busy: boolean; pending: number }) & { sequence: number };
 const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array and long input through stdin. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
 
@@ -48,29 +52,45 @@ export class Chats implements StructuredSessionPort {
     const workspace = await this.workspace(record.workspaceId);
     const sessionFile = record.sessionFile && existsSync(record.sessionFile) ? record.sessionFile : undefined;
     let chat: LiveChat | undefined;
-    const handle = await createPiSession({
-      cwd: workspace.path, sessionDir: this.sessionDir,
-      ...(sessionFile ? { sessionFile } : {}),
-      ...(record.model ? { model: { provider: record.model.provider, id: record.model.id } } : {}),
-      customTools: [createTeamTool(() => {
-        const bound = this.index.get(record.id);
-        const agentId = bound.agentId;
-        const token = agentId && this.runtime.peekAgentToken(agentId);
-        if (!agentId || !token) throw new Error('This conversation is not an active team member');
-        return { workspaceId: bound.workspaceId, agentId, token, hivePort: String(this.hive.port), cwd: workspace.path };
-      })],
-      onEvent: event => {
-        if (event.type === 'settled') { if (chat) chat.aborted = event.aborted; return; }
-        this.event(record.id, event);
-      },
-    });
+    let earlyFailure: Error | undefined;
+    const binding = () => {
+      const bound = this.index.get(record.id);
+      const agentId = bound.agentId;
+      const token = agentId && this.runtime.peekAgentToken(agentId);
+      if (!agentId || !token) throw new Error('This conversation is not an active team member');
+      return { workspaceId: bound.workspaceId, agentId, token, hivePort: String(this.hive.port), cwd: workspace.path };
+    };
+    const onEvent = (event: PiEvent) => {
+      if (event.type === 'settled') { if (chat) chat.aborted = event.aborted; return; }
+      this.event(record.id, event);
+    };
+    const model = record.model && { provider: record.model.provider, id: record.model.id };
+    const command = createTeamCommand(binding);
+    const handle = record.backend === 'codex'
+      ? await createCodexSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'codex'),
+        ...(process.env.HIVE_CODEX_COMMAND && { command: process.env.HIVE_CODEX_COMMAND }),
+        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(model && { model }), onEvent,
+        onUnexpectedExit: error => {
+          if (chat) this.failLive(record.id, chat, error);
+          else earlyFailure = error;
+        },
+        onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
+        customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
+          execute: (id, args, signal) => command.execute(id, args as { args: string[]; stdin?: string }, signal) }],
+      })
+      : await createPiSession({ cwd: workspace.path, sessionDir: this.sessionDir,
+        ...(sessionFile && { sessionFile }), ...(model && { model }),
+        customTools: [createTeamTool(binding)], onEvent });
     try {
-      if (!sessionFile && record.startupContext) await handle.addContext(record.startupContext);
-      if (!handle.history().some(message => !!message && typeof message === 'object' && 'customType' in message && message.customType === 'hive-desktop')) {
+      if (earlyFailure) throw earlyFailure;
+      if (!handle.hasContext('hive-context') && record.startupContext) await handle.addContext(record.startupContext);
+      if (!handle.hasContext('hive-desktop')) {
         await handle.addContext(toolGuidance, 'hive-desktop');
       }
       const model = handle.currentModel();
-      this.index.save({ ...record, sessionFile: handle.sessionFile ?? null, piSessionId: handle.sessionId, ...(model ? { model } : {}) });
+      this.index.save({ ...this.index.get(record.id), ...(record.backend === 'pi'
+        ? { sessionFile: handle.sessionFile ?? null, piSessionId: handle.sessionId }
+        : (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}), ...(model ? { model } : {}) });
       let wasBusy = false;
       const queue = new DeliveryQueue({
         directory: this.queueDir, sessionId: record.id, startPaused: true,
@@ -83,10 +103,11 @@ export class Chats implements StructuredSessionPort {
           wasBusy = busy;
         },
       });
+      if (earlyFailure) throw earlyFailure;
       chat = { handle, queue, aborted: false };
       this.live.set(record.id, chat);
       return chat;
-    } catch (error) { handle.dispose(); throw error; }
+    } catch (error) { await handle.dispose(); throw error; }
   }
   private snapshot(id: string, chat: LiveChat) {
     const record = this.index.get(id);
@@ -100,6 +121,10 @@ export class Chats implements StructuredSessionPort {
   private async require(id: string): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const existing = this.live.get(id);
+    if (existing?.cleanup) {
+      await existing.cleanup;
+      return this.require(id);
+    }
     if (existing) return existing;
     const pending = this.opening.get(id);
     if (pending) return pending;
@@ -107,11 +132,11 @@ export class Chats implements StructuredSessionPort {
     this.opening.set(id, opening);
     return opening;
   }
-  async create(workspaceId: string) {
+  async create(workspaceId: string, backend: ChatBackend = 'pi') {
     if (this.closing) throw new Error('Chat runtime is closing');
     await this.workspace(workspaceId);
     if (this.closing) throw new Error('Chat runtime is closing');
-    const record: ChatRecord = { id: randomUUID(), workspaceId, title: '新会话', sessionFile: null, updatedAt: Date.now() };
+    const record: ChatRecord = { id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now() };
     this.index.save(record);
     return this.open(record.id);
   }
@@ -119,13 +144,21 @@ export class Chats implements StructuredSessionPort {
 
   /** Hive invokes this for both the selected orchestrator and spawned workers. */
   async start(input: Parameters<StructuredSessionPort['start']>[0]): Promise<StructuredSessionHandle> {
+    const backend = input.config.command === 'hive:codex' ? 'codex' : 'pi';
+    const args = input.config.args ?? [];
+    const provider = args[args.indexOf('--provider') + 1];
+    const modelId = args[args.indexOf('--model') + 1];
+    const explicitModel = args.includes('--provider') || args.includes('--model');
+    if (explicitModel && (!args.includes('--provider') || !args.includes('--model') || !provider || !modelId)) {
+      throw new Error('Structured launch requires both --provider and --model values');
+    }
     let record = this.index.forAgent(input.workspace.id, input.agentId);
+    if (record && record.backend !== backend) {
+      throw new Error(`This member is bound to a ${record.backend} conversation. Create and select a new ${backend} conversation before switching backend; the existing transcript is preserved.`);
+    }
     if (!record) {
       const members = await this.hive.request('GET', `/api/ui/workspaces/${input.workspace.id}/team`) as { id: string; name: string }[];
-      const args = input.config.args ?? [];
-      const provider = args[args.indexOf('--provider') + 1];
-      const modelId = args[args.indexOf('--model') + 1];
-      record = { id: randomUUID(), workspaceId: input.workspace.id, agentId: input.agentId,
+      record = { id: randomUUID(), workspaceId: input.workspace.id, agentId: input.agentId, backend,
         title: input.agentId.endsWith(':orchestrator') ? '主会话' : members.find(member => member.id === input.agentId)?.name ?? '成员会话', sessionFile: null, updatedAt: Date.now(),
         ...(args.includes('--provider') && args.includes('--model') && provider && modelId ? { model: { provider, id: modelId, name: modelId } } : {}),
       };
@@ -133,11 +166,23 @@ export class Chats implements StructuredSessionPort {
     }
     const id = record.id;
     const chat = await this.require(id);
-    // Keep resumed empty sessions authoritative: Pi's file does not exist until
-    // its first user message, so a newly loaded SDK can have a new session id.
+    if (chat.failure) throw chat.failure;
+    if (explicitModel) {
+      const current = chat.handle.currentModel();
+      if (!current || current.provider !== provider || current.id !== modelId) {
+        if (chat.queue.busy) throw new Error('Stop the current response before changing the launch model');
+        await chat.handle.setModel(provider!, modelId!);
+        const model = chat.handle.currentModel();
+        if (!model || model.provider !== provider || model.id !== modelId) throw new Error('Backend did not select the requested launch model');
+        this.index.save({ ...this.index.get(id), model });
+      }
+    }
+    chat.onExit = input.onExit;
+    // Backend context determines startup recovery. Display history may omit hidden
+    // context, and an empty native session may not have a durable rollout yet.
     return {
       sessionId: chat.handle.sessionId,
-      resumed: chat.handle.history().some(message => !!message && typeof message === 'object' && 'customType' in message && message.customType === 'hive-context'),
+      resumed: chat.handle.hasContext('hive-context'),
       ...(chat.handle.sessionFile ? { sessionFile: chat.handle.sessionFile } : {}),
       deliver: async (text, options) => {
         if (options?.triggerTurn === false) {
@@ -151,7 +196,7 @@ export class Chats implements StructuredSessionPort {
     };
   }
   private launchConfig(record: ChatRecord) {
-    return { command: 'hive:pi', commandPresetId: null,
+    return { command: record.backend === 'codex' ? 'hive:codex' : 'hive:pi', commandPresetId: null,
       args: record.model ? ['--provider', record.model.provider, '--model', record.model.id] : [] };
   }
   private async withWorkspace<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
@@ -231,11 +276,30 @@ export class Chats implements StructuredSessionPort {
       return { ok: true };
     });
   }
+  private failLive(id: string, chat: LiveChat, error: Error): void {
+    if (chat.cleanup) return;
+    chat.failure = error;
+    this.event(id, { type: 'error', sessionId: id, message: error.message });
+    const paused = chat.queue.pause();
+    chat.cleanup = (async () => {
+      const cleanup = await Promise.allSettled([chat.handle.abort(), paused]);
+      try { await chat.handle.dispose(); }
+      finally {
+        if (this.live.get(id) === chat) this.live.delete(id);
+        chat.onExit?.(error);
+      }
+      const failures = cleanup.filter(result => result.status === 'rejected').map(result => result.reason);
+      if (failures.length) throw new AggregateError(failures, 'Backend exit cleanup failed');
+    })();
+    void chat.cleanup.catch(cleanupError => this.event(id, { type: 'error', sessionId: id,
+      message: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }));
+  }
   private async stopLive(id: string, chat: LiveChat) {
+    if (chat.cleanup) return chat.cleanup;
     const paused = chat.queue.pause();
     await chat.handle.abort();
     await paused;
-    chat.handle.dispose();
+    await chat.handle.dispose();
     this.live.delete(id);
   }
   async close() {

@@ -5,13 +5,25 @@ use gpui_kit::{
         button::{Button, ButtonVariants},
         input::{Input, Textarea},
         text::TextView,
+        tooltip::Tooltip,
         *,
     },
     *,
 };
 
 impl Render for HiveApp {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let placeholder = self
+            .session
+            .as_ref()
+            .map(|s| format!("向 {} 发送消息…", s.backend.label()))
+            .unwrap_or_else(|| "输入消息…".into());
+        if self.input_placeholder != placeholder {
+            self.input_placeholder = placeholder.clone();
+            self.input.update(cx, |input, cx| {
+                input.set_placeholder(placeholder, window, cx)
+            });
+        }
         let running = self
             .session
             .as_ref()
@@ -46,25 +58,32 @@ impl Render for HiveApp {
                 }))
                 .child(Input::new(&self.folder))
                 .child(Button::new("add-workspace").label("添加文件夹").disabled(self.runtime.is_none()).on_click(cx.listener(|this, _, window, cx| this.add_workspace(window, cx))))
-                .child(h_flex().pt_4().justify_between().child(div().text_xs().text_color(rgb(0x777c75)).child("会话与团队"))
-                    .child(Button::new("new-chat").label("＋ 新会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session(cx)))))
+                .child(div().pt_4().text_xs().text_color(rgb(0x777c75)).child("会话与团队 · 新建"))
+                .child(h_flex().gap_2()
+                    .child(Button::new("new-pi-chat").label("＋ Pi").accessibility_label("新建 Pi 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("pi", cx))))
+                    .child(Button::new("new-codex-chat").label("＋ Codex").accessibility_label("新建 Codex 会话").disabled(self.workspace.is_none() || self.loading).on_click(cx.listener(|this, _, _, cx| this.new_session("codex", cx)))))
                 .child(v_flex().id("sessions").flex_1().min_h_0().overflow_y_scroll().gap_2()
                     .children(self.sessions.iter().enumerate().map(|(i, session)| {
                         let id = session.id.clone();
                         let role = session.agent_id.as_deref().map(|agent| if agent.ends_with(":orchestrator") { "主控" } else { "成员" }).unwrap_or("会话");
                         let activity = if self.busy.contains(&id) { " · 处理中" } else if self.pending.get(&id).copied().unwrap_or(0) > 0 { " · 已暂停" } else if self.unread.contains(&id) { " · 未读" } else { "" };
                         v_flex().min_w_0().gap_1()
-                            .child(div().text_xs().text_color(rgb(0x63715c)).child(format!("{role}{activity}")))
+                            .child(div().text_xs().text_color(rgb(0x63715c)).child(format!("{role} · {}{activity}", session.backend.label())))
                             .child(Button::new(("session", i)).w_full().min_w_0()
                                 .child(div().flex_1().min_w_0().truncate().child(session.title.clone()))
                                 .tooltip(session.agent_id.as_ref().map(|agent| format!("{}\n{agent}", session.title)).unwrap_or_else(|| session.title.clone()))
                                 .selected(self.session.as_ref().is_some_and(|s| s.id == session.id))
                                 .on_click(cx.listener(move |this, _, _, cx| this.open_session(id.clone(), cx))))
                     })))
-                .child(div().text_xs().text_color(rgb(0x777c75)).child("本地会话 · Pi")))
+                .child(div().text_xs().text_color(rgb(0x777c75)).child("本地会话")))
             .child(v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
-                .child(div().flex_shrink_0().min_w_0().w_full().truncate().text_xl().font_weight(FontWeight::SEMIBOLD).child(self.session.as_ref().map(|s| s.title.clone()).unwrap_or_else(|| "开始你的项目工作".into())))
-                .child(div().text_xs().text_color(rgb(0x777c75)).child(self.status.clone()))
+                .child(h_flex().flex_shrink_0().min_w_0().w_full().child({
+                    let title = self.session.as_ref().map(|s| s.title.clone()).unwrap_or_else(|| "开始你的项目工作".into());
+                    div().id("session-title").flex_1().min_w_0().truncate().text_xl().font_weight(FontWeight::SEMIBOLD)
+                        .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
+                        .child(title)
+                }))
+                .child(div().text_xs().text_color(rgb(0x777c75)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone())))
                 .when(self.error.is_some(), |view| view.child(h_flex().p_3().gap_2().bg(rgb(0xffe9e4)).rounded_lg()
                     .child(div().flex_1().text_sm().child(self.error.clone().unwrap_or_default()))
                     .child(Button::new("dismiss-error").label("关闭").on_click(cx.listener(|this, _, _, cx| { this.error = None; cx.notify(); })))))
@@ -72,7 +91,7 @@ impl Render for HiveApp {
                     .child(v_flex().gap_5()
                         .when(self.messages.is_empty(), |view| view.child(div().py_8().text_color(rgb(0x777c75)).child(if self.loading { "正在读取…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.iter().enumerate().map(|(i, message)| {
-                            let heading = message.tool.as_ref().map(|tool| format!("{} · {}", tool.name, tool.status)).unwrap_or_else(|| message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => "Pi", _ => "工具" }.into()));
+                            let heading = message.tool.as_ref().map(|tool| format!("{} · {}", tool.name, tool.status)).unwrap_or_else(|| message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), _ => "工具" }.into()));
                             let expanded = message.tool.as_ref().is_some_and(|tool| tool.expanded);
                             v_flex().id(("message", i)).min_w_0().gap_2().p_4().rounded_lg()
                                 .bg(if message.role == "user" { rgb(0xe9eee7) } else if message.delivery.is_some() { rgb(0xf0f2ed) } else { rgb(0xffffff) })

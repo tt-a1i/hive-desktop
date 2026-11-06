@@ -24,12 +24,13 @@ export interface PiSessionHandle {
   sessionId: string;
   readonly sessionFile: string | undefined;
   history(): readonly unknown[];
+  hasContext(customType: string): boolean;
   snapshot(): { history: readonly unknown[]; historyMessageIds: string[]; activeMessage?: { messageId: string; message: unknown } };
   prompt(text: string, options?: { automated?: boolean; deliveryId?: string; presentation?: DeliveryPresentation }): Promise<void>;
   addContext(text: string, customType?: string): Promise<void>;
   completedDeliveryIds(): readonly string[];
   abort(): Promise<void>;
-  dispose(): void;
+  dispose(): void | Promise<void>;
   currentModel(): { provider: string; id: string; name: string } | undefined;
   listModels(): { provider: string; id: string; name: string; available: boolean }[];
   setModel(provider: string, id: string): Promise<void>;

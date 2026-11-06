@@ -126,6 +126,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     sessionId,
     get sessionFile() { return manager.getSessionFile(); },
     history: () => session.messages,
+    hasContext: customType => session.messages.some(message => message.role === 'custom' && message.customType === customType),
     snapshot() {
       const history = [...session.messages];
       const streaming = session.state.streamingMessage;

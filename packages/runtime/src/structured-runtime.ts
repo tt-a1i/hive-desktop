@@ -26,7 +26,7 @@ export type {
 	StructuredSessionPort,
 } from "./structured-runtime-types.js";
 
-/** Only the explicit hive:pi launch marker selects the desktop SDK backend. */
+/** Explicit desktop launch markers select structured backends; other CLIs retain PTY execution. */
 export function createStructuredRuntime(
 	context: HiveAgentRuntimeFactoryContext,
 	port: StructuredSessionPort,
@@ -35,7 +35,7 @@ export function createStructuredRuntime(
 	const lifecycle = createStructuredLifecycle(context, port);
 	const selected = (workspaceId: string, agentId: string) =>
 		Boolean(lifecycle.active(workspaceId, agentId)) ||
-		fallback.peekAgentLaunchConfig(workspaceId, agentId)?.command === "hive:pi";
+		structuredCommand(fallback.peekAgentLaunchConfig(workspaceId, agentId)?.command);
 	const orchestrator = (workspaceId: string) => `${workspaceId}:orchestrator`;
 	const write = (
 		workspaceId: string,
@@ -110,15 +110,11 @@ export function createStructuredRuntime(
 				workspaceId,
 				orchestrator(workspaceId),
 			);
-			if (
-				cli !== "hive:pi" &&
-				(cli !== undefined || config?.command !== "hive:pi")
-			) {
-				return fallback.resolveSpawnLaunchConfig?.(workspaceId, cli);
-			}
+			const command = cli ?? config?.command;
+			if (!structuredCommand(command)) return fallback.resolveSpawnLaunchConfig?.(workspaceId, cli);
 			return {
-				command: "hive:pi",
-				args: [...(config?.command === "hive:pi" ? (config.args ?? []) : [])],
+				command,
+				args: [...(config?.command === command ? (config.args ?? []) : [])],
 				commandPresetId: null,
 			};
 		},
@@ -158,8 +154,8 @@ export function createStructuredRuntime(
 				fallback.getActiveRunByAgentId(workspace.id, agentId);
 			if (active) return Promise.resolve(active);
 			const config = fallback.peekAgentLaunchConfig(workspace.id, agentId);
-			return config?.command === "hive:pi"
-				? lifecycle.start(workspace, agentId, config, input.hivePort)
+			return structuredCommand(config?.command)
+				? lifecycle.start(workspace, agentId, config!, input.hivePort)
 				: fallback.startAgent(workspace, agentId, input);
 		},
 		stopAgentRun(runId) {
@@ -313,4 +309,8 @@ export function createStructuredRuntime(
 					);
 		},
 	};
+}
+
+function structuredCommand(command: string | undefined): command is "hive:pi" | "hive:codex" {
+  return command === "hive:pi" || command === "hive:codex";
 }

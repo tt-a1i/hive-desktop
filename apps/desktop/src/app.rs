@@ -36,6 +36,7 @@ pub struct Message {
 }
 pub struct HiveApp {
     pub input: Entity<TextareaState>,
+    pub input_placeholder: String,
     pub folder: Entity<InputState>,
     pub model_search: Entity<InputState>,
     pub runtime: Option<Arc<Runtime>>,
@@ -89,8 +90,9 @@ impl HiveApp {
             input: cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .auto_grow(2, 7)
-                    .placeholder("向 Pi 发送消息…")
+                    .placeholder("输入消息…")
             }),
+            input_placeholder: "输入消息…".into(),
             folder: cx.new(|cx| InputState::new(window, cx).placeholder("项目文件夹的绝对路径")),
             model_search,
             _model_search_subscription: model_search_subscription,
@@ -154,7 +156,7 @@ impl HiveApp {
                 }
                 match result {
                     Ok(_) => {
-                        this.status = "已连接 · Pi 就绪".into();
+                        this.status = "后台已连接".into();
                         this.load_workspaces(cx);
                     }
                     Err(error) => this.error = Some(error),

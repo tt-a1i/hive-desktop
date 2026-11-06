@@ -2,7 +2,11 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
+export type ChatBackend = 'pi' | 'codex';
+
 export interface ChatRecord {
+  backend: ChatBackend;
+  codexThreadId?: string;
   id: string;
   workspaceId: string;
   title: string;
@@ -14,8 +18,8 @@ export interface ChatRecord {
   updatedAt: number;
 }
 
-// Desktop navigation metadata only. Hive owns workspaces/team state and Pi owns
-// its conversation transcript. This index is not a second collaboration ledger.
+// Desktop navigation metadata only. Hive owns workspaces/team state and each
+// backend owns its conversation transcript. This index is not a second collaboration ledger.
 export class ChatIndex {
   private records: ChatRecord[];
   private readonly file: string;
@@ -24,7 +28,7 @@ export class ChatIndex {
     this.file = join(directory, 'index.json');
     const value: unknown = existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) : [];
     if (!Array.isArray(value) || !value.every(isChatRecord)) throw new Error('Invalid desktop chat index');
-    this.records = value;
+    this.records = value.map(record => ({ ...record, backend: record.backend ?? 'pi' }));
   }
   list(workspaceId: string): ChatRecord[] {
     return this.records.filter(record => record.workspaceId === workspaceId).sort((a, b) => b.updatedAt - a.updatedAt);
@@ -64,6 +68,8 @@ function isChatRecord(value: unknown): value is ChatRecord {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
+  if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex') return false;
+  if (record.codexThreadId !== undefined && typeof record.codexThreadId !== 'string') return false;
   if (record.agentId !== undefined && typeof record.agentId !== 'string') return false;
   if (record.piSessionId !== undefined && typeof record.piSessionId !== 'string') return false;
   if (record.startupContext !== undefined && typeof record.startupContext !== 'string') return false;

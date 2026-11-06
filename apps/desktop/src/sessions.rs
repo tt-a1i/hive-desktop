@@ -134,24 +134,38 @@ impl HiveApp {
         })
         .detach();
     }
-    pub fn new_session(&mut self, cx: &mut Context<Self>) {
+    pub fn new_session(&mut self, backend: &'static str, cx: &mut Context<Self>) {
         let Some(workspace) = self.workspace.clone() else {
             return;
         };
-        self.request(
-            "chat.create",
-            json!({"workspaceId":workspace}),
-            cx,
-            move |this, value, cx| match serde_json::from_value::<Session>(value) {
-                Ok(session) => {
-                    if this.workspace.as_ref() == Some(&session.workspace_id) {
-                        this.sessions.insert(0, session.clone());
-                        this.open_session(session.id, cx);
-                    }
+        let Some(runtime) = self.runtime.clone() else {
+            self.error = Some("后台尚未连接".into());
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request(
+                    "chat.create",
+                    json!({"workspaceId":workspace,"backend":backend}),
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(value) => match serde_json::from_value::<Session>(value) {
+                        Ok(session) => {
+                            if this.workspace.as_ref() == Some(&session.workspace_id) {
+                                this.sessions.insert(0, session.clone());
+                                this.open_session(session.id, cx);
+                            }
+                        }
+                        Err(error) => this.error = Some(format!("创建会话响应错误：{error}")),
+                    },
+                    Err(error) => this.error = Some(format!("创建 {backend} 会话失败：{error}")),
                 }
-                Err(error) => this.error = Some(format!("创建会话响应错误：{error}")),
-            },
-        );
+                cx.notify();
+            });
+        })
+        .detach();
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
         self.open_request += 1;

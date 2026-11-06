@@ -76,9 +76,11 @@ pnpm exec tsx checks/agent-lifecycle-live.ts --live
 
 `.artifacts/lifecycle-DCjoGa` 验证新消息格式下的实际模型路径：含 Hive 标签的用户原文保持 user 来源，完整历史和 delivery ID 在关闭重开后相同；实际 bash 先记录自身 PID，取消后该 PID 已不存在，随后对话继续成功。这只证明该次拥有的 shell PID 退出，不推广为全部后代进程或任意取消场景的保证。
 
-追加 macOS CUA 走查确认：派单卡片可展开完整原始 payload；恢复消息显示为“会话恢复”；用户粘贴 `<hive-system-reminder>` 文本仍显示为“你”，文字完整，真实助手返回 `UI_ORIGIN_OK`。发送失败后切换会话或已经输入下一条草稿时，新增按会话保留失败内容及复制/移除入口；该失败界面分支已构建并源码复核，尚未实际走查。
+追加 macOS CUA 走查确认：派单卡片可展开完整原始 payload；恢复消息显示为“会话恢复”；用户粘贴 `<hive-system-reminder>` 文本仍显示为“你”，文字完整，真实助手返回 `UI_ORIGIN_OK`。发送失败后切换会话或已经输入下一条草稿时，新增按会话保留失败内容及复制/移除入口；已通过实际暂停本应用拥有的 Node 后台、发送并切换会话、终止该后台的 CUA 检查：返回原会话后失败文字完整保留，可复制或移除。保留仅在当前应用进程内，尚不支持跨应用重启的草稿恢复。
 
-四个独立复核分别检查运行时与持久化、原生显示、验证证据及 Codex 通信层。发现的 Worker 停止检查绕过、新会话首次 custom 消息未落盘、失败输入丢失均已修正。补充真实恢复/取消证据；未把队列单元检查当作模型取消证明。待处理队列重启后的实际模型消费、取消时后续团队消息的保留仍需专项验证。
+四个独立复核分别检查运行时与持久化、原生显示、验证证据及 Codex 通信层。发现的 Worker 停止检查绕过、新会话首次 custom 消息未落盘、失败输入丢失均已修正。补充真实恢复/取消证据；未把队列单元检查当作模型取消证明。
+
+`.artifacts/queued-delivery-live-F4FuJ8` 补充真实 Terra 队列验证：实际 `sleep 30` 工具期间，通过 Hive runtime 投递后续团队通知，停止当前回复后该通知仍保留；重开后待处理 ID、来源与展示文字一致，显式调用 resume API 后得到 `QUEUED_RECOVERY_OK`，队列清空，成功路径未重复投递。这通过实际 runtime delivery API，不能称为双 Agent 测试。首轮 `.artifacts/queued-delivery-live-S09zOJ` 将先行 `pwd` 错当目标 bash，已收紧工具参数匹配；首轮不算 sleep 中断证据。
 
 ## 未完成范围
 

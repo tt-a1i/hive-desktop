@@ -5,7 +5,7 @@ import { Type } from 'typebox';
 
 const require = createRequire(import.meta.url);
 const teamCli = require.resolve('@tt-a1i/hive/dist/src/cli/team.js');
-const parameters = Type.Object({
+export const teamParameters = Type.Object({
   args: Type.Array(Type.String(), { description: 'CLI arguments after team, one argument per array item.' }),
   stdin: Type.Optional(Type.String({ description: 'Input for commands using --stdin.' })),
 });
@@ -18,13 +18,13 @@ type TeamToolOptions = {
   cwd: string;
 };
 
-export function createTeamTool(source: TeamToolOptions | (() => TeamToolOptions)): ToolDefinition<typeof parameters> {
+export function createTeamCommand(source: TeamToolOptions | (() => TeamToolOptions)) {
   return {
     name: 'team',
     label: 'Team',
     description: 'Run the native Hive team CLI (list, send, spawn, report, messages, guide, and other commands). Pass each CLI argument separately; use --stdin and stdin for long text. The CLI handles parsing, authentication, and the dispatch ledger.',
-    parameters,
-    async execute(_id, { args, stdin }, signal) {
+    parameters: teamParameters,
+    async execute(_id: string, { args, stdin }: { args: string[]; stdin?: string }, signal?: AbortSignal) {
       const options = typeof source === 'function' ? source() : source;
       if (signal?.aborted) throw new Error('Team command aborted');
       const output = await new Promise<string>((resolve, reject) => {
@@ -59,7 +59,11 @@ export function createTeamTool(source: TeamToolOptions | (() => TeamToolOptions)
         });
         child.stdin.end(stdin);
       });
-      return { content: [{ type: 'text', text: output }], details: undefined };
+      return { content: [{ type: 'text' as const, text: output }], details: undefined };
     },
   };
+}
+
+export function createTeamTool(source: TeamToolOptions | (() => TeamToolOptions)): ToolDefinition<typeof teamParameters> {
+  return createTeamCommand(source);
 }

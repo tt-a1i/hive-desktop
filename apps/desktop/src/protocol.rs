@@ -14,6 +14,23 @@ pub struct Session {
     pub title: String,
     pub workspace_id: String,
     pub agent_id: Option<String>,
+    #[serde(default)]
+    pub backend: Backend,
+}
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    #[default]
+    Pi,
+    Codex,
+}
+impl Backend {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pi => "Pi",
+            Self::Codex => "Codex",
+        }
+    }
 }
 #[derive(Clone, Deserialize)]
 pub struct Model {
