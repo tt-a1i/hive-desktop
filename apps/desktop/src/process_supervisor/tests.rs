@@ -4,8 +4,33 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Stdio,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+
+fn fixture_directory(prefix: &str) -> PathBuf {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    loop {
+        let directory = std::env::temp_dir().join(format!(
+            "{}-{}-{}-{}",
+            prefix,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::create_dir(&directory) {
+            Ok(()) => return directory,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!(
+                "Failed to create fixture directory {}: {error}",
+                directory.display()
+            ),
+        }
+    }
+}
 
 fn fixture(role: &str, directory: &Path) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
@@ -94,6 +119,44 @@ fn alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 #[cfg(windows)]
+struct ProcessProbe {
+    pid: u32,
+    handle: std::os::windows::io::OwnedHandle,
+}
+#[cfg(windows)]
+impl ProcessProbe {
+    fn open(pid: u32) -> Self {
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        assert!(
+            !handle.is_null(),
+            "OpenProcess({pid}) failed: {}",
+            std::io::Error::last_os_error()
+        );
+        Self {
+            pid,
+            handle: unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle) },
+        }
+    }
+    fn alive(&self) -> bool {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{
+            Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
+            System::Threading::WaitForSingleObject,
+        };
+        match unsafe { WaitForSingleObject(self.handle.as_raw_handle(), 0) } {
+            WAIT_OBJECT_0 => false,
+            WAIT_TIMEOUT => true,
+            _ => panic!(
+                "WaitForSingleObject({}) failed: {}",
+                self.pid,
+                std::io::Error::last_os_error()
+            ),
+        }
+    }
+}
+#[cfg(windows)]
 fn alive(pid: u32) -> bool {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, WAIT_TIMEOUT},
@@ -110,15 +173,7 @@ fn alive(pid: u32) -> bool {
     running
 }
 fn check_tree(mode: u8) {
-    let directory = std::env::temp_dir().join(format!(
-        "hive-owned-tree-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir(&directory).unwrap();
+    let directory = fixture_directory("hive-owned-tree");
     let external_directory = directory.join("independent");
     fs::create_dir(&external_directory).unwrap();
     let mut external = fixture("grandchild", &external_directory).spawn().unwrap();
@@ -128,7 +183,15 @@ fn check_tree(mode: u8) {
     input.write_all(b"g").unwrap();
     let child = pid(&directory.join("child.pid"));
     let grandchild = pid(&directory.join("grandchild.pid"));
+    #[cfg(windows)]
+    let (child_probe, grandchild_probe, independent_probe) = (
+        ProcessProbe::open(child),
+        ProcessProbe::open(grandchild),
+        ProcessProbe::open(independent_pid),
+    );
     assert!(alive(child) && alive(grandchild));
+    #[cfg(windows)]
+    assert!(child_probe.alive() && grandchild_probe.alive() && independent_probe.alive());
     if mode != b'f' {
         input.write_all(&[mode]).unwrap();
     }
@@ -140,12 +203,36 @@ fn check_tree(mode: u8) {
         })
         .unwrap();
     assert_eq!(report.forced, mode != b'q');
-    assert!(!alive(child), "Owned child survived cleanup");
-    assert!(!alive(grandchild), "Owned grandchild survived cleanup");
-    assert!(
-        alive(independent_pid),
-        "Independent process was killed by unrelated scope cleanup"
-    );
+    #[cfg(windows)]
+    {
+        let (child_alive, grandchild_alive, independent_alive) = (
+            child_probe.alive(),
+            grandchild_probe.alive(),
+            independent_probe.alive(),
+        );
+        eprintln!(
+            "fixture mode={} report={report:?}; original handles: child={child} alive={child_alive}, grandchild={grandchild} alive={grandchild_alive}, independent={independent_pid} alive={independent_alive}; PID lookup: child={}, grandchild={}, independent={}",
+            mode as char,
+            alive(child),
+            alive(grandchild),
+            alive(independent_pid)
+        );
+        assert!(!child_alive, "Owned child survived cleanup");
+        assert!(!grandchild_alive, "Owned grandchild survived cleanup");
+        assert!(
+            independent_alive,
+            "Independent process was killed by unrelated scope cleanup"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        assert!(!alive(child), "Owned child survived cleanup");
+        assert!(!alive(grandchild), "Owned grandchild survived cleanup");
+        assert!(
+            alive(independent_pid),
+            "Independent process was killed by unrelated scope cleanup"
+        );
+    }
     assert_eq!(
         owned.cleanup(Duration::ZERO).unwrap().forced,
         report.forced,
@@ -173,15 +260,7 @@ fn owned_tree_forced_shutdown() {
 fn node_sidecar_boot_does_not_spawn_agents_before_initialize() {
     use std::io::{BufRead, BufReader};
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let directory = std::env::temp_dir().join(format!(
-        "hive-sidecar-boot-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir(&directory).unwrap();
+    let directory = fixture_directory("hive-sidecar-boot");
     let mut command = Command::new("node");
     command
         .arg(root.join("packages/runtime/dist/main.js"))
