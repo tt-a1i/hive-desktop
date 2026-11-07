@@ -59,10 +59,16 @@ impl Render for HiveApp {
                 input.set_placeholder(placeholder, window, cx)
             });
         }
+        self.prepare_interactions(window, cx);
         let running = self
             .session
             .as_ref()
             .is_some_and(|s| self.busy.contains(&s.id));
+        let has_interactions = self
+            .session
+            .as_ref()
+            .and_then(|session| self.interactions.sessions.get(&session.id))
+            .is_some_and(|cards| !cards.is_empty());
         let pending = self
             .session
             .as_ref()
@@ -105,7 +111,7 @@ impl Render for HiveApp {
             .when(!narrow || !self.sidebar_open, |view| view.child(if self.memory.visible { self.render_memory(cx).into_any_element() } else if self.roles.visible { v_flex().flex_1().min_w_0().h_full().child(self.render_settings_tabs(cx)).child(self.render_roles(cx)).into_any_element()
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(h_flex().justify_between().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("协作概览"))
-                    .child(Button::new("refresh-collaboration").label("刷新").disabled(self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx)))))
+                    .child(Button::new("refresh-collaboration").label("刷新").disabled(!self.connected || self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx)))))
                 .child(div().id("collaboration-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.collaboration_scroll)
                   .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_3()
                     .child(self.render_tasks(cx))
@@ -120,9 +126,9 @@ impl Render for HiveApp {
                         Button::new(("dispatch", i)).w_full().label(format!("{} · {} · {}", crate::collaboration::dispatch_state(&dispatch.state), self.agent_name(&dispatch.to_agent_id), preview)).selected(self.collaboration.selected.as_ref().is_some_and(|selected| selected.id == dispatch.id)).on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx)))
                     }))
                     .child(h_flex().gap_2()
-                        .child(Button::new("dispatch-prev").label("上一页").disabled(self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(20); this.load_dispatches(cx); })))
+                        .child(Button::new("dispatch-prev").label("上一页").disabled(!self.connected || self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(20); this.load_dispatches(cx); })))
                         .child(div().text_sm().child(format!("第 {} 页", self.collaboration.offset / 20 + 1)))
-                        .child(Button::new("dispatch-next").label("下一页").disabled(self.collaboration.dispatches.len() < 20 || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += 20; this.load_dispatches(cx); }))))
+                        .child(Button::new("dispatch-next").label("下一页").disabled(!self.connected || self.collaboration.dispatches.len() < 20 || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += 20; this.load_dispatches(cx); }))))
                     .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(rgb(0xffffff))
                         .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("派单详情 · {}", crate::collaboration::dispatch_state(&item.state))))
                         .child(div().text_xs().child(format!("{} → {} · {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| "未记录发送者".into()), self.agent_name(&item.to_agent_id), item.id)))
@@ -138,7 +144,7 @@ impl Render for HiveApp {
                             .child(div().text_xs().child(format!("#{} · {} → {} · {} · {}", message.sequence, self.agent_name(&message.from_agent_id), self.agent_name(&message.recipient_agent_id), crate::collaboration::message_kind(&message.kind), crate::collaboration::delivery_state(&message.delivery_state))))
                             .child(div().text_sm().child(message.text.clone()))
                             .when_some(message.delivery_error.clone(), |view, error| view.child(div().text_xs().text_color(rgb(0xb54131)).child(format!("投递错误：{error}"))))))
-                        .when_some(self.collaboration.next_seq, |view, seq| view.child(Button::new("more-dispatch-messages").label("加载更多消息").disabled(self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(seq, cx)))))))
+                        .when_some(self.collaboration.next_seq, |view, seq| view.child(Button::new("more-dispatch-messages").label("加载更多消息").disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(seq, cx)))))))
                 )).into_any_element()
             } else if self.settings_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(self.render_settings_tabs(cx))
@@ -148,17 +154,17 @@ impl Render for HiveApp {
                 .when_some(self.settings_message.clone(), |view, message| view.child(div().p_3().rounded_lg().bg(rgb(0xefefea)).text_sm().child(message)))
                 .child(v_flex().id("settings-content").flex_1().min_h_0().overflow_y_scroll().gap_3()
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("外部 Pi 可执行文件"))
-                    .child(Input::new(&self.pi_command).aria_label("外部 Pi 可执行文件路径").disabled(self.settings_loading || self.executable_settings.is_none()))
+                    .child(Input::new(&self.pi_command).aria_label("外部 Pi 可执行文件路径").disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()))
                     .when_some(self.executable_settings.as_ref(), |view, settings| view.child(div().text_xs().child(settings.effective.pi.label())))
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Codex 可执行文件"))
-                    .child(Input::new(&self.codex_command).aria_label("Codex 可执行文件路径").disabled(self.settings_loading || self.executable_settings.is_none()))
+                    .child(Input::new(&self.codex_command).aria_label("Codex 可执行文件路径").disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()))
                     .when_some(self.executable_settings.as_ref(), |view, settings| view.child(div().text_xs().child(settings.effective.codex.label())))
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Claude 可执行文件"))
-                    .child(Input::new(&self.claude_command).aria_label("Claude 可执行文件路径").disabled(self.settings_loading || self.executable_settings.is_none()))
+                    .child(Input::new(&self.claude_command).aria_label("Claude 可执行文件路径").disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()))
                     .when_some(self.executable_settings.as_ref(), |view, settings| view.child(div().text_xs().child(settings.effective.claude.label())))
                     .child(h_flex().gap_2()
-                        .child(Button::new("save-executable-settings").primary().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(self.settings_loading || self.executable_settings.is_none()).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window, cx))))
-                        .child(Button::new("reload-executable-settings").label("重新读取").disabled(self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))))
+                        .child(Button::new("save-executable-settings").primary().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window, cx))))
+                        .child(Button::new("reload-executable-settings").label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))))
                 .into_any_element()
             } else if self.member_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("团队成员"))
@@ -173,9 +179,9 @@ impl Render for HiveApp {
                     .child(h_flex().gap_1().children([("coder", "开发"), ("reviewer", "审查"), ("tester", "测试"), ("custom", "自定义")].into_iter().enumerate().map(|(i, (role, label))| Button::new(("member-role", i)).label(label).selected(self.member_role == role).on_click(cx.listener(move |this, _, _, cx| { this.member_role = role; cx.notify(); })))))
                     .child(div().text_xs().child("成员后端"))
                     .child(h_flex().gap_1().children([("pi", "Pi"), ("codex", "Codex"), ("pi-rpc", "外部 Pi"), ("claude", "Claude")].into_iter().enumerate().map(|(i, (backend, label))| Button::new(("member-backend", i)).label(label).selected(self.member_backend == backend).on_click(cx.listener(move |this, _, _, cx| { this.member_backend = backend; cx.notify(); })))))
-                    .child(Button::new("add-member").label("添加成员").disabled(self.member_loading).on_click(cx.listener(|this, _, _, cx| this.add_member(cx))))
+                    .child(Button::new("add-member").label("添加成员").disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.add_member(cx))))
                     .child(div().text_xs().child("启动前请为对应成员选择该后端的模型"))
-                    .child(h_flex().justify_between().child(div().text_sm().child("团队成员")).child(Button::new("refresh-members").label("刷新").disabled(self.member_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_members(cx)))))
+                    .child(h_flex().justify_between().child(div().text_sm().child("团队成员")).child(Button::new("refresh-members").label("刷新").disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_members(cx)))))
                     .when(self.members.is_empty() && !self.member_loading, |view| view.child(div().text_xs().child("暂无成员")))
                     .children(self.members.iter().enumerate().map(|(i, member)| {
                         let id = member.id.clone();
@@ -197,7 +203,7 @@ impl Render for HiveApp {
                         v_flex().gap_1().p_2().rounded_lg().bg(rgb(0xffffff))
                             .child(div().text_sm().child(member.name.clone()))
                             .child(div().text_xs().child(format!("{} · {} · {}", member.role_label(), member.status_label(), member.backend_label())))
-                            .when(!running && backend.is_some(), |view| view.child(Button::new(("choose-member-model", i)).label(if picker_open { "重新读取模型" } else { "选择模型" }).disabled(self.member_loading).on_click(cx.listener(move |this, _, window, cx| { this.member_model_search.update(cx, |input, cx| input.set_value("", window, cx)); this.choose_member_models(picker_id.clone(), picker_command.clone(), cx); }))))
+                            .when(!running && backend.is_some(), |view| view.child(Button::new(("choose-member-model", i)).label(if picker_open { "重新读取模型" } else { "选择模型" }).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, window, cx| { this.member_model_search.update(cx, |input, cx| input.set_value("", window, cx)); this.choose_member_models(picker_id.clone(), picker_command.clone(), cx); }))))
                             .when(!running && backend.is_none(), |view| view.child(div().text_xs().child("此成员的后端未配置或不受支持")))
                             .when_some(chosen, |view, (_, _, model)| view.child(div().text_xs().child(format!("已选择模型：{} / {}", model.provider, model.id))))
                             .when(!running && !member_model_ready && backend.is_some(), |view| view.child(div().text_xs().child("请选择此成员后端的模型后启动")))
@@ -213,10 +219,10 @@ impl Render for HiveApp {
                                     })))))
                             .when_some(session_id, |view, session_id| view.child(Button::new(("member-chat", i)).label("打开会话").on_click(cx.listener(move |this, _, _, cx| this.open_session(session_id.clone(), cx)))))
                             .child(h_flex().gap_1()
-                                .child(Button::new(("member-start-stop", i)).label(if stopping { "正在停止…" } else if running { "停止" } else { "启动" }).disabled(self.member_loading || (!running && !member_model_ready)).on_click(cx.listener(move |this, _, _, cx| { if running { this.stop_member(start_id.clone(), cx); } else { this.start_member(start_id.clone(), start_command.clone(), cx); } })))
-                                .child(Button::new(("member-edit", i)).label("改名").disabled(self.member_loading).on_click(cx.listener(move |this, _, window, cx| { this.editing_member = Some(edit_id.clone()); this.member_rename.update(cx, |input, cx| input.set_value(edit_name.clone(), window, cx)); cx.notify(); })))
-                                .child(Button::new(("member-delete", i)).label(if deleting { "确认删除" } else { "删除" }).disabled(self.member_loading).on_click(cx.listener(move |this, _, _, cx| { if this.deleting_member.as_ref() == Some(&delete_id) { this.member_action("DELETE", format!("/api/workspaces/{delete_workspace}/workers/{delete_id}"), None, cx); } else { this.deleting_member = Some(delete_id.clone()); cx.notify(); } }))))
-                            .when(editing, |view| view.child(Input::new(&self.member_rename)).child(Button::new(("member-save", i)).label("保存名称").disabled(self.member_loading).on_click(cx.listener(move |this, _, _, cx| { let name = this.member_rename.read(cx).value().trim().to_string(); if name.is_empty() { this.error = Some("请输入成员名称".into()); cx.notify(); } else { this.member_action("PATCH", format!("/api/workspaces/{save_workspace}/workers/{save_id}"), Some(serde_json::json!({"name":name})), cx); } }))))
+                                .child(Button::new(("member-start-stop", i)).label(if stopping { "正在停止…" } else if running { "停止" } else { "启动" }).disabled(!self.connected || self.member_loading || (!running && !member_model_ready)).on_click(cx.listener(move |this, _, _, cx| { if running { this.stop_member(start_id.clone(), cx); } else { this.start_member(start_id.clone(), start_command.clone(), cx); } })))
+                                .child(Button::new(("member-edit", i)).label("改名").disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, window, cx| { this.editing_member = Some(edit_id.clone()); this.member_rename.update(cx, |input, cx| input.set_value(edit_name.clone(), window, cx)); cx.notify(); })))
+                                .child(Button::new(("member-delete", i)).label(if deleting { "确认删除" } else { "删除" }).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| { if this.deleting_member.as_ref() == Some(&delete_id) { this.member_action("DELETE", format!("/api/workspaces/{delete_workspace}/workers/{delete_id}"), None, cx); } else { this.deleting_member = Some(delete_id.clone()); cx.notify(); } }))))
+                            .when(editing, |view| view.child(Input::new(&self.member_rename)).child(Button::new(("member-save", i)).label("保存名称").disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| { let name = this.member_rename.read(cx).value().trim().to_string(); if name.is_empty() { this.error = Some("请输入成员名称".into()); cx.notify(); } else { this.member_action("PATCH", format!("/api/workspaces/{save_workspace}/workers/{save_id}"), Some(serde_json::json!({"name":name})), cx); } }))))
                     })))
                 .into_any_element()
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
@@ -230,9 +236,10 @@ impl Render for HiveApp {
                 .when(self.error.is_some(), |view| view.child(h_flex().p_3().gap_2().bg(rgb(0xffe9e4)).rounded_lg()
                     .child(div().flex_1().text_sm().child(self.error.clone().unwrap_or_default()))
                     .child(Button::new("dismiss-error").label("关闭").on_click(cx.listener(|this, _, _, cx| { this.error = None; cx.notify(); })))))
+                .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("Codex 等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.scroll.scroll_to_bottom(); cx.notify(); }))))
                 .child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).p_3()
                     .child(v_flex().w_full().max_w(px(840.)).mx_auto().gap_5()
-                        .when(self.messages.is_empty(), |view| view.child(div().py_8().text_color(rgb(0x777c75)).child(if self.loading { "正在读取…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
+                        .when(self.messages.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(rgb(0x777c75)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.iter().enumerate().map(|(i, message)| {
                             let heading = message.tool.as_ref().map(|tool| format!("{} · {}", tool.name, tool.status)).unwrap_or_else(|| message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), _ => "工具" }.into()));
                             let expanded = message.tool.as_ref().is_some_and(|tool| tool.expanded);
@@ -253,21 +260,22 @@ impl Render for HiveApp {
                                 .when(message.role == "user" || message.delivery.is_some() || expanded, |view| view.child(div().min_w_0().text_sm().child(message.text.clone())))
                                 .when(message.delivery.as_ref().is_some_and(|d| d.expanded), |view| view.child(div().min_w_0().p_3().rounded_lg().bg(rgb(0xffffff)).text_sm().child(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())))
                                 .when(!expanded && message.tool.as_ref().is_some_and(|tool| tool.status == "失败"), |view| view.child(div().text_sm().text_color(rgb(0xb54131)).child(message.text.chars().take(160).collect::<String>())))
-                        }))))
+                        }))
+                        .child(self.render_interactions(cx))))
                 .child(v_flex().w_full().min_w_0().max_w(px(840.)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_lg().bg(rgb(0xffffff))
-                .child(Button::new("choose-model").w_full().min_w_0().label(self.model.as_ref().map(|model| format!("模型 · {} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); })))
+                .child(Button::new("choose-model").w_full().min_w_0().label(self.model.as_ref().map(|model| format!("模型 · {} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); })))
                 .when(self.choosing_model, |view| view.child(v_flex().flex_shrink_0().min_h_0().gap_2()
                     .child(Input::new(&self.model_search))
                     .child(v_flex().id("model-list").h(px(168.)).min_h_0().flex_shrink_0().overflow_y_scroll().gap_2()
                         .when(matching_models.is_empty(), |view| view.child(div().p_3().text_sm().child("没有匹配的可用模型")))
                         .children(matching_models.into_iter().enumerate().map(|(i, model)| {
                             let selected = self.model.as_ref().is_some_and(|m| m.id == model.id && m.provider == model.provider);
-                            Button::new(("model", i)).flex_shrink_0().w_full().label(format!("{} / {}", model.provider, model.name)).tooltip(model.id.clone()).selected(selected).disabled(running || self.loading)
+                            Button::new(("model", i)).flex_shrink_0().w_full().label(format!("{} / {}", model.provider, model.name)).tooltip(model.id.clone()).selected(selected).disabled(!self.connected || running || self.loading)
                                 .on_click(cx.listener(move |this, _, _, cx| this.set_model(model.clone(), cx)))
                         })))))
                 .when(pending > 0, |view| view.child(h_flex().gap_3()
                     .child(div().text_sm().child(format!("团队消息待处理：{pending}")))
-                    .when(!running, |view| view.child(Button::new("resume").label("继续处理").disabled(self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
+                    .when(!running, |view| view.child(Button::new("resume").label("继续处理").disabled(!self.connected || self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
                 .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {
                     let session_id = session_id.clone();
                     let text = draft.clone();
@@ -279,14 +287,17 @@ impl Render for HiveApp {
                             cx.notify();
                         })))
                 }))))
+                .when(!self.connected && self.runtime.is_some(), |view| view.child(Button::new("copy-disconnected-draft").label("复制当前草稿").on_click(cx.listener(|this, _, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(this.input.read(cx).value().to_string()));
+                }))))
                 .child(h_flex().gap_3().items_end()
                     .child(div().flex_1().min_w_0().child(Textarea::new(&self.input).aria_label("聊天消息")))
                     .child(if running {
-                        Button::new("stop").label("停止").on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
+                        Button::new("stop").label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {
-                        Button::new("send").primary().label("发送").disabled(self.session.is_none() || self.loading || pending > 0).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+                        Button::new("send").primary().label("发送").disabled(!self.connected || self.session.is_none() || self.loading || pending > 0).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
                     }))
-                .child(div().text_xs().text_color(rgb(0x8a8e87)).child(if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "Enter 换行 · 点击发送" })))
+                .child(div().text_xs().text_color(rgb(0x8a8e87)).child(if !self.connected { "后台暂不可用 · 请先复制草稿，再重启应用" } else if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "Enter 换行 · 点击发送" })))
                 .into_any_element() })))
     }
 }

@@ -33,6 +33,9 @@ impl HiveApp {
         );
     }
     pub fn add_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
         let path = self.folder.read(cx).value().trim().to_string();
         if path.is_empty() {
             return;
@@ -177,6 +180,9 @@ impl HiveApp {
         .detach();
     }
     pub fn new_session(&mut self, backend: &'static str, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
         let Some(workspace) = self.workspace.clone() else {
             return;
         };
@@ -229,6 +235,9 @@ impl HiveApp {
         self.models.clear();
         self.model = None;
         self.loading = true;
+        if self.connected && !self.closing {
+            self.status = "正在打开会话…".into();
+        }
         self.request(
             "chat.open",
             json!({"sessionId":id}),
@@ -250,6 +259,7 @@ impl HiveApp {
                         } else {
                             this.busy.remove(&id);
                         }
+                        this.sync_interactions(&id, open.interactions);
                         this.pending.insert(id.clone(), open.pending);
                         this.background_sequences
                             .insert(id.clone(), open.event_sequence);

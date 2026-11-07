@@ -171,7 +171,10 @@ impl Runtime {
                             return;
                         }
                         let message = match outcome {
-                            Ok(true) => "Node 后台已退出，正在清理所属进程范围".into(),
+                            Ok(true) => {
+                                "后台已退出，请重新打开 Hive；未收到结果的操作请先核对执行情况。"
+                                    .into()
+                            }
                             Err(error) => format!("无法检查后台进程状态：{error}"),
                             _ => unreachable!(),
                         };

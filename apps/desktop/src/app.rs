@@ -36,6 +36,8 @@ pub struct Message {
 }
 pub struct HiveApp {
     pub sidebar_open: bool,
+    pub connected: bool,
+    pub interactions: crate::interactions::Interactions,
     pub input: Entity<TextareaState>,
     pub drafts: HashMap<String, String>,
     pub draft_owner: Option<String>,
@@ -139,6 +141,8 @@ impl HiveApp {
         );
         let mut app = Self {
             sidebar_open: true,
+            connected: false,
+            interactions: crate::interactions::Interactions::default(),
             input: cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .auto_grow(2, 7)
@@ -255,6 +259,7 @@ impl HiveApp {
                 }
                 match result {
                     Ok(_) => {
+                        this.connected = true;
                         this.status = "后台已连接".into();
                         this.load_workspaces(cx);
                     }
@@ -268,6 +273,9 @@ impl HiveApp {
                     .update(cx, |this, cx| {
                         match event {
                             RuntimeEvent::Failed(error) => {
+                                this.connected = false;
+                                this.loading = false;
+                                this.interactions.sessions.clear();
                                 this.status = "后台连接已断开".into();
                                 this.error = Some(error);
                                 this.busy.clear();
@@ -326,6 +334,12 @@ impl HiveApp {
         cx: &mut Context<Self>,
         done: impl FnOnce(&mut Self, Value, &mut Context<Self>) + 'static,
     ) {
+        if !self.connected {
+            self.loading = false;
+            self.error = Some("后台连接已断开，当前草稿仍保留。请先复制，再重启应用。".into());
+            cx.notify();
+            return;
+        }
         let Some(runtime) = self.runtime.clone() else {
             self.error = Some("后台尚未连接".into());
             return;

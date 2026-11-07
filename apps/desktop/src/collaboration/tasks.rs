@@ -65,6 +65,9 @@ impl HiveApp {
     }
 
     fn save_tasks(&mut self, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
         let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())
         else {
             return;
@@ -172,7 +175,7 @@ impl HiveApp {
                                 } else {
                                     "保存任务"
                                 })
-                                .disabled(draft.saving)
+                                .disabled(!self.connected || draft.saving)
                                 .on_click(cx.listener(|this, _, _, cx| this.save_tasks(cx))),
                         )
                         .child(Button::new("copy-task-draft").label("复制草稿").on_click(

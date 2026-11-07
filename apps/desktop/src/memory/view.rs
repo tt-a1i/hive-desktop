@@ -11,7 +11,7 @@ use gpui_kit::{
 impl HiveApp {
     pub fn render_memory(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let m = &self.memory;
-        let disabled = m.loading || m.acting;
+        let disabled = !self.connected || m.loading || m.acting;
         v_flex().flex_1().min_w_0().h_full().p_5().gap_3()
             .child(h_flex().justify_between().gap_2().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("工作区记忆"))
                 .child(Button::new("refresh-memory").label("刷新").disabled(disabled).on_click(cx.listener(|this, _, _, cx| this.load_memory(cx)))))
@@ -40,7 +40,7 @@ impl HiveApp {
     ) -> impl IntoElement + use<> {
         let selected = self.memory.selected.as_ref() == Some(&entry.id);
         let id = entry.id.clone();
-        let disabled = self.memory.acting || self.memory.loading;
+        let disabled = !self.connected || self.memory.acting || self.memory.loading;
         v_flex()
             .min_w_0()
             .gap_2()

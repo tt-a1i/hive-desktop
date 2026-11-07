@@ -220,6 +220,9 @@ impl HiveApp {
         body: Option<Value>,
         cx: &mut Context<Self>,
     ) {
+        if !self.connected {
+            return;
+        }
         if self.memory.loading || self.memory.acting {
             return;
         }

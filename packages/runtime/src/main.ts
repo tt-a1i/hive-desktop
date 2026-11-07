@@ -1,6 +1,7 @@
 import { format } from 'node:util';
 import { createInterface } from 'node:readline';
 import { mkdirSync } from 'node:fs';
+import { CodexInteractionError } from './agents/codex-interactions.js';
 import { HiveHttpError } from './hive-host.js';
 import { createDesktopRuntime } from './desktop-runtime.js';
 import { desktopDataDir } from './paths.js';
@@ -44,6 +45,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     }
     case 'chat.open': return chats.open(text(params, 'sessionId'));
     case 'chat.prompt': return chats.prompt(text(params, 'sessionId'), text(params, 'text'));
+    case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response);
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));
     case 'chat.resume': return chats.resume(text(params, 'sessionId'));
     case 'chat.setModel': return chats.setModel(text(params, 'sessionId'), text(params, 'provider'), text(params, 'modelId'));
@@ -64,7 +66,7 @@ input.on('line', line => {
     send({ id, result });
     if (method === 'shutdown') input.close();
   })().catch(error => send({ id, error: {
-    code: error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : 'DESKTOP_ERROR',
+    code: error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
     message: error instanceof Error ? error.message : String(error),
     ...(error instanceof HiveHttpError ? { details: error.body } : {}),
   } }));

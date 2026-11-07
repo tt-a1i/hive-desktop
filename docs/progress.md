@@ -27,13 +27,17 @@ Windows CI 已在包含外部 Pi 桥接的提交 `9033d61` 通过正式应用与
 
 Windows `96c8e70` 已完成打包与 zip 解压，但 smoke 检查超过 11 分钟未结束；该次运行已人工取消。后续有界探针确认 shell 已退出而 Node 因残留管道和 worker 未自然结束。`d694c5d` 在原清理路径关闭输入管道和 ConPTY worker，实际 Windows [运行 42294650248](https://github.com/tt-a1i/hive-desktop/actions/runs/42294650248) 已通过：解压后的直接 PTY、真实 Hive 成员自然退出和主动停止、HTTP/SQLite 及后台关闭均成功，便携 zip 已上传。运行后资源归回两个标准输出管道；没有强制退出探针掩盖泄漏。该结果不代表 Windows 原生窗口或 Agent 模型验收。
 
-外部 CLI 的独立 Windows 检查曾在 Codex 关闭阶段失败；`d37306f` 的诊断确认包装进程已退出，Git/conhost 后代仍持有继承管道。`1914a06` 为每个 CLI 设置独立 Windows Job 后，[运行 42302725509](https://github.com/tt-a1i/hive-desktop/actions/runs/42302725509) 的 9 个 CLI 案例全部通过，包含官方 Codex/Pi 普通命令与带空格的 `.cmd` 路径、异常退出、继承管道和强制清理。未进行模型推理；详情见 [进程所有权验证](validation/2026-11-07-windows-cli-ownership.md)。新增的只杀 launcher 案例仍待下一轮 CI。`8889d1d` 的精简生产依赖包也已通过 Windows zip 解压及真实 PTY/Hive smoke。
+外部 CLI 的独立 Windows 检查曾在 Codex 关闭阶段失败；`d37306f` 的诊断确认包装进程已退出，Git/conhost 后代仍持有继承管道。`1914a06` 为每个 CLI 设置独立 Windows Job 后，[运行 42302725509](https://github.com/tt-a1i/hive-desktop/actions/runs/42302725509) 的 9 个 CLI 案例全部通过，包含官方 Codex/Pi 普通命令与带空格的 `.cmd` 路径、异常退出、继承管道和强制清理。未进行模型推理；详情见 [进程所有权验证](validation/2026-11-07-windows-cli-ownership.md)。包括只杀 launcher 的 10 个案例已在 `4090285`、`0089580` 独立通过；`e3809c9` 首次进程枚举超时，重跑失败 job 后也为 10/10，无模型推理。`8889d1d` 的精简生产依赖包也已通过 Windows zip 解压及真实 PTY/Hive smoke。
 
-原生后台监督已加入 Mac 私有进程组与 Windows Job，正常退出等待清理结果；清理失败保留窗口和原后台。Mac 的 10 个定向检查通过，四角度独立复核发现的问题已修复；Windows 嵌套 Job 尚待 CI。Pi 的 detached bash 不在 Mac 进程组清理确认范围内，因此本次未实现后台重连或自动恢复执行。详细边界见 [后台监督验证](validation/2026-11-07-sidecar-supervision.md)。
+原生后台监督已加入 Mac 私有进程组与 Windows Job，正常退出等待清理结果；清理失败保留窗口和原后台。Mac 的 10 个定向检查通过，四角度独立复核发现的问题已修复；Windows 实跑曾暴露 Job 活动数归零早于原始进程对象退出的问题；`e3809c9` 改为等待原始句柄，保留失败重试状态后，9 项 Windows 监督检查通过（1 个 fixture 入口忽略），便携包构建和解压运行也通过。Pi 的 detached bash 不在 Mac 进程组清理确认范围内，因此本次未实现后台重连或自动恢复执行。详细边界见 [后台监督验证](validation/2026-11-07-sidecar-supervision.md)。
 
 角色模板配置与成员职责复用已接入现有 Hive 数据。原生窗口验证了中文多行模板保存、编辑、选择填充、显式创建停止成员及空名称校验；真实 HTTP/SQLite 另验证更新保留原命令字段、重启持久化和删除。未启动 Agent 或调用模型，详情见 [设置记录](validation/2026-11-07-desktop-settings.md)。
 
+工作区记忆页已接入现有 Hive 数据与操作。47 条真实 HTTP/SQLite 请求覆盖筛选、设置、状态操作和错误路径；原生窗口验证中文搜索、来源、固定/禁用、候选审核、归档及工作区隔离，窄窗口详情可滚动。两项异步导航问题经独立审查修复；全部为隔离合成数据，没有模型或 dream 调用。详见 [记忆验证](validation/2026-11-07-workspace-memory.md)。
+
 Claude 已使用固定版本官方 SDK 连接用户原样 CLI，并进入共享会话、Hive 执行器、成员后端和路径设置。实际无推理检查覆盖初始化、目录、MCP 握手、隐藏上下文持久化/恢复、SIGKILL 后恢复及旧设置兼容。原生窗口验证新建、设置、目录和重开；走查发现的内部零 token 占位气泡已修复，并在同一持久会话的安装包重开中确认。投影、完成判定和工具回调的合成/直调检查另行标明。未进行 Claude 推理、活跃取消或团队闭环，详见 [适配器边界](validation/2026-11-07-claude-adapter.md)。实际模型测试仍仅使用原生 OpenAI Terra。
+
+Codex 原生命令审批、文件审批与补充输入已接入统一聊天。13 会话真实传输/HTTP/SQLite 的合成检查通过，原生 Terra 单文件审批已实际执行；桌面合成对端验证单次回应、秘密掩码、切换保留、取消和后台断开草稿复制。工作区支持原生文件夹选择器与打开到现有 Hive 编辑器目标。真实与合成证据分开记录于 [交互验证](validation/2026-11-07-codex-interactions.md)。
 
 下一步仍需完善外部 Agent 的结构化接入、成员管理和配置体验、任务与协作主页、应用后台重连及 macOS / Windows 安装包。Windows 尚未真机验收。基础阶段 #2 保持开放，完整目标 #1 不缩减为当前这条闭环。
 

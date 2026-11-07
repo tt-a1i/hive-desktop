@@ -14,6 +14,7 @@ impl HiveApp {
             || self.busy.contains(&id)
             || self.pending.get(&id).copied().unwrap_or(0) > 0
             || self.loading
+            || !self.connected
         {
             return;
         }
@@ -287,6 +288,7 @@ impl HiveApp {
             }
             *previous = event.sequence();
             self.apply_activity(&event);
+            self.apply_interaction_event(&event);
             if !matches!(&event, PiEvent::State { .. } | PiEvent::Settled { .. }) {
                 self.unread.insert(event.session_id().into());
             }
@@ -304,13 +306,16 @@ impl HiveApp {
         self.background_sequences
             .insert(event.session_id().into(), event.sequence());
         self.apply_activity(&event);
+        self.apply_interaction_event(&event);
         if matches!(&event, PiEvent::State { .. } | PiEvent::Settled { .. }) {
             self.refresh_sessions(cx);
         }
         // GPUI stores a positive max_offset and a negative current offset.
         let follow = self.scroll.max_offset().y + self.scroll.offset().y <= px(4.);
         match event {
-            PiEvent::State { .. } => {}
+            PiEvent::State { .. }
+            | PiEvent::Interaction { .. }
+            | PiEvent::InteractionResolved { .. } => {}
             PiEvent::AssistantDelta {
                 message_id,
                 kind,

@@ -1,7 +1,17 @@
 import type { DeliveryPresentation } from '../delivery-presentation.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
+export interface CodexInteraction {
+  id: string; backend: 'codex';
+  method: 'item/commandExecution/requestApproval' | 'item/fileChange/requestApproval' | 'item/tool/requestUserInput';
+  threadId: string; turnId: string; itemId: string; nativeRequestId: string | number;
+  state: 'pending' | 'responding'; params: Record<string, unknown>; item?: unknown;
+}
+export type InteractionResolutionReason = 'resolved' | 'turn-ended' | 'aborted' | 'disconnected' | 'disposed';
+
 export type PiEvent =
+  | { type: 'interaction'; sessionId: string; interaction: CodexInteraction }
+  | { type: 'interaction_resolved'; sessionId: string; interactionId: string; reason: InteractionResolutionReason }
   | { type: 'assistant_delta'; sessionId: string; messageId: string; kind: 'text' | 'thinking'; contentIndex: number; delta: string }
   | { type: 'message_end'; sessionId: string; messageId: string; message: unknown }
   | { type: 'tool_start'; sessionId: string; toolCallId: string; toolName: string; args: unknown }
@@ -29,6 +39,8 @@ export interface PiSessionHandle {
   prompt(text: string, options?: { automated?: boolean; deliveryId?: string; presentation?: DeliveryPresentation }): Promise<void>;
   addContext(text: string, customType?: string): Promise<void>;
   completedDeliveryIds(): readonly string[];
+  interactions?(): readonly CodexInteraction[];
+  respondInteraction?(id: string, response: unknown): void;
   abort(): Promise<void>;
   dispose(): void | Promise<void>;
   currentModel(): { provider: string; id: string; name: string } | undefined;

@@ -91,6 +91,8 @@ pub struct Model {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
+    #[serde(default)]
+    pub interactions: Vec<CodexInteraction>,
     pub history_message_ids: Vec<String>,
     pub active_message: Option<ActiveMessage>,
     pub event_sequence: u64,
@@ -117,9 +119,36 @@ pub struct ModelIdentity {
     pub provider: String,
     pub id: String,
 }
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexInteraction {
+    pub id: String,
+    pub backend: String,
+    pub method: String,
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub native_request_id: Value,
+    pub state: String,
+    pub params: Value,
+    pub item: Option<Value>,
+}
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiEvent {
+    #[serde(rename_all = "camelCase")]
+    Interaction {
+        session_id: String,
+        sequence: u64,
+        interaction: CodexInteraction,
+    },
+    #[serde(rename_all = "camelCase")]
+    InteractionResolved {
+        session_id: String,
+        sequence: u64,
+        interaction_id: String,
+        reason: String,
+    },
     #[serde(rename_all = "camelCase")]
     State {
         session_id: String,
@@ -183,7 +212,9 @@ pub enum PiEvent {
 impl PiEvent {
     pub fn sequence(&self) -> u64 {
         match self {
-            Self::State { sequence, .. }
+            Self::Interaction { sequence, .. }
+            | Self::InteractionResolved { sequence, .. }
+            | Self::State { sequence, .. }
             | Self::AssistantDelta { sequence, .. }
             | Self::MessageEnd { sequence, .. }
             | Self::ToolStart { sequence, .. }
@@ -196,7 +227,9 @@ impl PiEvent {
 
     pub fn session_id(&self) -> &str {
         match self {
-            Self::State { session_id, .. }
+            Self::Interaction { session_id, .. }
+            | Self::InteractionResolved { session_id, .. }
+            | Self::State { session_id, .. }
             | Self::AssistantDelta { session_id, .. }
             | Self::MessageEnd { session_id, .. }
             | Self::ToolStart { session_id, .. }

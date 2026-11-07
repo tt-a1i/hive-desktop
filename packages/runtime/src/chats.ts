@@ -8,6 +8,7 @@ import { createPiSession } from './agents/pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, type ChatRecord, type ChatBackend } from './chat-index.js';
 import type { DesktopSettings } from './desktop-settings.js';
+import { CodexInteractionError } from './agents/codex-interactions.js';
 import { DeliveryQueue } from './delivery-queue.js';
 import type { HiveHost } from './hive-host.js';
 import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract.js';
@@ -133,7 +134,7 @@ export class Chats implements StructuredSessionPort {
   private snapshot(id: string, chat: LiveChat) {
     const record = this.index.get(id);
     return {
-      ...record, ...chat.handle.snapshot(), models: chat.handle.listModels(),
+      ...record, ...chat.handle.snapshot(), interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
       busy: chat.queue.busy, pending: chat.queue.pending.length,
       runId: record.agentId ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId)?.runId ?? null : null,
       eventSequence: this.sequences.get(id) ?? 0,
@@ -267,6 +268,14 @@ export class Chats implements StructuredSessionPort {
       }
       return { accepted: true, session: this.index.get(id) };
     });
+  }
+  respondInteraction(id: string, interactionId: string, response: unknown) {
+    const chat = this.live.get(id);
+    if (!chat || chat.failure || chat.cleanup || !chat.handle.respondInteraction) {
+      throw new CodexInteractionError('INTERACTION_STALE', 'This conversation has no live native interaction');
+    }
+    chat.handle.respondInteraction(interactionId, response);
+    return { accepted: true };
   }
   async abort(id: string) {
     const chat = await this.require(id);

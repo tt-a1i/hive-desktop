@@ -50,6 +50,14 @@ impl HiveApp {
                             .unwrap_or_else(|| "桌面工作台".into()),
                     ),
             )
+            .when(!self.connected && self.runtime.is_some(), |view| {
+                view.child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0xb54131))
+                        .child("后台未连接"),
+                )
+            })
             .when(
                 self.member_panel
                     || self.memory.visible
@@ -117,7 +125,7 @@ impl HiveApp {
                     .primary()
                     .label("＋ 新建会话 ▾")
                     .accessibility_label("新建会话，选择 Agent 后端")
-                    .disabled(self.workspace.is_none() || self.loading)
+                    .disabled(!self.connected || self.workspace.is_none() || self.loading)
                     .dropdown_menu(move |mut menu, _, _| {
                         for (backend, label) in [
                             ("pi", "内置 Pi"),
@@ -176,11 +184,76 @@ impl HiveApp {
                                         this.select_workspace(id.clone(), cx)
                                     }))
                             }))
+                            .when_some(
+                                self.workspaces
+                                    .iter()
+                                    .find(|w| Some(&w.id) == self.workspace.as_ref()),
+                                |view, workspace| {
+                                    let id = workspace.id.clone();
+                                    let weak = cx.weak_entity();
+                                    view.child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_xs()
+                                            .text_color(rgb(0x777c75))
+                                            .child(workspace.path.clone()),
+                                    )
+                                    .child(
+                                        Button::new("open-workspace-menu")
+                                            .w_full()
+                                            .label("打开当前项目 ▾")
+                                            .disabled(!self.connected)
+                                            .dropdown_menu(move |mut menu, _, _| {
+                                                for (target, label) in [
+                                                    (
+                                                        "finder",
+                                                        if cfg!(target_os = "macos") {
+                                                            "访达"
+                                                        } else {
+                                                            "文件管理器"
+                                                        },
+                                                    ),
+                                                    ("vscode", "Visual Studio Code"),
+                                                    ("vscode-insiders", "VS Code Insiders"),
+                                                    ("cursor", "Cursor"),
+                                                    ("zed", "Zed"),
+                                                ] {
+                                                    let weak = weak.clone();
+                                                    let id = id.clone();
+                                                    menu = menu.item(
+                                                        PopupMenuItem::new(label).on_click(
+                                                            move |_, _, cx| {
+                                                                let _ =
+                                                                    weak.update(cx, |this, cx| {
+                                                                        this.open_workspace_target(
+                                                                            id.clone(),
+                                                                            target,
+                                                                            cx,
+                                                                        )
+                                                                    });
+                                                            },
+                                                        ),
+                                                    );
+                                                }
+                                                menu
+                                            }),
+                                    )
+                                },
+                            )
                             .child(Input::new(&self.folder).aria_label("工作区文件夹的绝对路径"))
+                            .child(
+                                Button::new("choose-workspace-folder")
+                                    .label("选择文件夹…")
+                                    .disabled(!self.connected)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.choose_workspace_folder(window, cx)
+                                    })),
+                            )
                             .child(
                                 Button::new("add-workspace")
                                     .label("添加文件夹")
-                                    .disabled(self.runtime.is_none())
+                                    .disabled(!self.connected || self.runtime.is_none())
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.add_workspace(window, cx)
                                     })),
@@ -214,7 +287,9 @@ impl HiveApp {
                                         }
                                     })
                                     .unwrap_or("会话");
-                                let activity = if self.busy.contains(&id) {
+                                let activity = if self.interaction_count(&id) > 0 {
+                                    " · 待回应"
+                                } else if self.busy.contains(&id) {
                                     " · 处理中"
                                 } else if self.pending.get(&id).copied().unwrap_or(0) > 0 {
                                     " · 已暂停"

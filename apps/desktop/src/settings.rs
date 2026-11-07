@@ -51,11 +51,13 @@ impl HiveApp {
         // replaces the input values with persisted settings.
         if self.executable_settings.is_none() {
             self.settings_request(false, window, cx);
-        } else {
-            cx.notify();
         }
+        cx.notify();
     }
     pub fn settings_request(&mut self, save: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if save && !self.connected {
+            return;
+        }
         let Some(runtime) = self.runtime.clone() else {
             self.settings_message = Some("后台尚未连接".into());
             cx.notify();

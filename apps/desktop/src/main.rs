@@ -1,6 +1,7 @@
 mod app;
 mod collaboration;
 mod conversation;
+mod interactions;
 mod members;
 mod memory;
 mod navigation;
@@ -12,6 +13,7 @@ mod sessions;
 mod settings;
 mod transport;
 mod view;
+mod workspace_actions;
 
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::*;

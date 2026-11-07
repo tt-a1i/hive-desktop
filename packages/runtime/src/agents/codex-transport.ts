@@ -15,6 +15,8 @@ export interface CodexTransportOptions {
   onClose?: (info: CodexCloseInfo) => void;
 }
 
+export class CodexRequestCancelled extends Error { constructor() { super("Native request is no longer pending"); this.name = "CodexRequestCancelled"; } }
+
 export class CodexRpcError extends Error {
   constructor(readonly code: number, message: string, readonly data?: unknown) {
     super(message);
@@ -30,6 +32,7 @@ const MAX_STDERR_BYTES = 16 * 1024;
 export class CodexTransport {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, Pending>();
+  private readonly incoming = new Map<CodexRequestId, { cancelled: boolean }>();
   private readonly notifications = new Set<(notification: CodexNotification) => void>();
   private readonly process: OwnedCliProcess;
   private nextId = 1;
@@ -128,6 +131,8 @@ export class CodexTransport {
     return this.closeTask;
   }
 
+  cancelServerRequest(id: CodexRequestId): void { const pending = this.incoming.get(id); if (pending) pending.cancelled = true; }
+
   private async write(message: unknown): Promise<void> {
     if (this.closing || this.ended) return Promise.reject(new Error('Codex transport is closed'));
     const line = `${JSON.stringify(message)}\n`;
@@ -143,6 +148,7 @@ export class CodexTransport {
         if (typeof message.id !== 'string' && typeof message.id !== 'number') throw new Error('Invalid Codex request id');
         void this.answer({ method: message.method, params: message.params, id: message.id });
       } else {
+        if (message.method === 'serverRequest/resolved' && isObject(message.params) && (typeof message.params.requestId === 'string' || typeof message.params.requestId === 'number')) this.cancelServerRequest(message.params.requestId);
         const notification = { method: message.method, params: message.params };
         for (const listener of this.notifications) {
           // Consumer failures do not change transport or approval semantics.
@@ -166,16 +172,21 @@ export class CodexTransport {
   }
 
   private async answer(request: CodexServerRequest): Promise<void> {
+    const incoming = { cancelled: false };
+    if (this.incoming.has(request.id)) { this.fail(new Error("Duplicate inbound Codex request id")); return; }
+    this.incoming.set(request.id, incoming);
     let response: unknown;
     try {
       if (!this.options.onRequest) throw new CodexRpcError(-32601, `Unsupported server request: ${request.method}`);
       const result = await this.options.onRequest(request);
       response = { id: request.id, result: result ?? null };
     } catch (error) {
+      if (error instanceof CodexRequestCancelled) { this.incoming.delete(request.id); return; }
       const rpc = error instanceof CodexRpcError ? error : new CodexRpcError(-32603, asError(error).message);
       response = { id: request.id, error: { code: rpc.code, message: rpc.message, ...(rpc.data === undefined ? {} : { data: rpc.data }) } };
     }
-    if (this.closing || this.ended) return;
+    this.incoming.delete(request.id);
+    if (this.closing || this.ended || incoming.cancelled) return;
     try { await this.write(response); } catch (error) { this.fail(asError(error)); }
   }
 

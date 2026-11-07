@@ -120,6 +120,9 @@ impl HiveApp {
         .detach();
     }
     fn save_role(&mut self, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
         let name = self.role_name.read(cx).value().trim().to_string();
         let description = self.role_description.read(cx).value().to_string();
         if name.is_empty() {
@@ -144,6 +147,9 @@ impl HiveApp {
         body: Option<Value>,
         cx: &mut Context<Self>,
     ) {
+        if !self.connected {
+            return;
+        }
         let Some(runtime) = self.runtime.clone() else {
             self.roles.error = Some("后台尚未连接".into());
             cx.notify();
@@ -213,9 +219,9 @@ impl HiveApp {
                 .child(Input::new(&self.role_name).aria_label("角色模板名称"))
                 .child(Textarea::new(&self.role_description).aria_label("角色模板职责说明"))
                 .child(h_flex().gap_1().children([("orchestrator", "主控"), ("coder", "开发"), ("reviewer", "审查"), ("tester", "测试"), ("custom", "自定义")].into_iter().enumerate().map(|(i, (role, label))| Button::new(("role-type", i)).label(label).selected(self.roles.role_type == role).on_click(cx.listener(move |this, _, _, cx| { this.roles.role_type = role; cx.notify(); })))))
-                .child(h_flex().gap_2().child(Button::new("save-role").label(if self.roles.editing.is_some() { "保存修改" } else { "创建模板" }).disabled(self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.save_role(cx))))
-                    .child(Button::new("new-role-form").label("新建空白模板").disabled(self.roles.loading).on_click(cx.listener(|this, _, window, cx| { this.roles.editing = None; this.roles.role_type = "custom"; this.role_name.update(cx, |state, cx| state.set_value("", window, cx)); this.role_description.update(cx, |state, cx| state.set_value("", window, cx)); cx.notify(); }))))
-                .child(h_flex().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.loading { "正在读取或保存…" } else { "已有模板" })).child(Button::new("refresh-roles").label("刷新").disabled(self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.load_roles(cx)))))
+                .child(h_flex().gap_2().child(Button::new("save-role").label(if self.roles.editing.is_some() { "保存修改" } else { "创建模板" }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.save_role(cx))))
+                    .child(Button::new("new-role-form").label("新建空白模板").disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, window, cx| { this.roles.editing = None; this.roles.role_type = "custom"; this.role_name.update(cx, |state, cx| state.set_value("", window, cx)); this.role_description.update(cx, |state, cx| state.set_value("", window, cx)); cx.notify(); }))))
+                .child(h_flex().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.loading { "正在读取或保存…" } else { "已有模板" })).child(Button::new("refresh-roles").label("刷新").disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.load_roles(cx)))))
                 .when(!self.roles.loading && self.roles.items.is_empty(), |view| view.child(div().text_sm().child("暂无模板")))
                 .children(self.roles.items.iter().enumerate().map(|(i, template)| {
                     let item = template.clone(); let delete = template.id.clone(); let deleting = self.roles.deleting.as_ref() == Some(&template.id);
@@ -223,9 +229,9 @@ impl HiveApp {
                         .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{} · {}{}", template.name, role_label(&template.role_type), if template.is_builtin { " · 内置" } else { "" })))
                         .child(div().text_sm().child(template.description.clone()))
                         .when(!template.is_builtin, |view| view.child(h_flex().gap_2()
-                            .child(Button::new(("edit-role", i)).label("编辑").disabled(self.roles.loading).on_click(cx.listener(move |this, _, window, cx| { this.roles.role_type = role_key(&item.role_type); this.role_name.update(cx, |state, cx| state.set_value(item.name.clone(), window, cx)); this.role_description.update(cx, |state, cx| state.set_value(item.description.clone(), window, cx)); this.roles.editing = Some(item.clone()); this.roles.deleting = None; cx.notify(); })))
-                            .child(Button::new(("delete-role", i)).label(if deleting { format!("确认删除「{}」", template.name) } else { "删除".into() }).disabled(self.roles.loading).on_click(cx.listener(move |this, _, _, cx| { if this.roles.deleting.as_ref() == Some(&delete) { this.role_mutation("DELETE", format!("/api/settings/role-templates/{delete}"), None, cx); } else { this.roles.deleting = Some(delete.clone()); cx.notify(); } })))
-                            .when(deleting, |view| view.child(Button::new(("cancel-delete-role", i)).label("取消").accessibility_label(format!("取消删除角色模板 {}", template.name)).disabled(self.roles.loading).on_click(cx.listener(|this, _, _, cx| { this.roles.deleting = None; cx.notify(); }))))))
+                            .child(Button::new(("edit-role", i)).label("编辑").disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, window, cx| { this.roles.role_type = role_key(&item.role_type); this.role_name.update(cx, |state, cx| state.set_value(item.name.clone(), window, cx)); this.role_description.update(cx, |state, cx| state.set_value(item.description.clone(), window, cx)); this.roles.editing = Some(item.clone()); this.roles.deleting = None; cx.notify(); })))
+                            .child(Button::new(("delete-role", i)).label(if deleting { format!("确认删除「{}」", template.name) } else { "删除".into() }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, _, cx| { if this.roles.deleting.as_ref() == Some(&delete) { this.role_mutation("DELETE", format!("/api/settings/role-templates/{delete}"), None, cx); } else { this.roles.deleting = Some(delete.clone()); cx.notify(); } })))
+                            .when(deleting, |view| view.child(Button::new(("cancel-delete-role", i)).label("取消").accessibility_label(format!("取消删除角色模板 {}", template.name)).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| { this.roles.deleting = None; cx.notify(); }))))))
                 }))))
     }
     pub fn render_member_templates(&self, cx: &mut Context<Self>) -> impl IntoElement {

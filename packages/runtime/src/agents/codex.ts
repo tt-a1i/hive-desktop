@@ -3,6 +3,7 @@ import { Value } from 'typebox/value';
 import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
 import { CodexTransport, type CodexServerRequest } from './codex-transport.js';
 import { mkdirSync } from 'node:fs';
+import { CodexInteractions } from './codex-interactions.js';
 import { CodexProjection } from './codex-projection.js';
 import { CodexEvents } from './codex-events.js';
 import { readCodexMetadata, writeCodexMetadata } from './codex-metadata.js';
@@ -64,9 +65,12 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       persist({ ...metadata, deliveries: [...metadata.deliveries, { turnId, deliveryId: delivery.id, presentation: delivery.presentation }] });
     }
   };
-  const transport = await CodexTransport.start({ cwd: options.cwd,
+  let transport!: CodexTransport;
+  const interactions = new CodexInteractions(() => threadId, emit, id => transport?.cancelServerRequest(id));
+  transport = await CodexTransport.start({ cwd: options.cwd,
     ...(options.command && { command: options.command }),
     onClose(info) {
+      interactions.clear('disconnected');
       if (active) { active.controller.abort(); active.terminalComplete = true; active.reject(info.error); }
       if (initialized && !disposed) options.onUnexpectedExit?.(info.error);
     },
@@ -92,6 +96,15 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           return { success: false, contentItems: [{ type: 'inputText', text: asError(error).message }] };
         }
       }
+      if (interactions.supports(request.method) && params.threadId === threadId && active && active.turnId === params.turnId && !active.terminalComplete) {
+        try { return interactions.request(request); }
+        catch (error) {
+          active.error = asError(error);
+          active.controller.abort();
+          void transport.sendRequest('turn/interrupt', { threadId, turnId: active.turnId }).catch(active.reject);
+          throw error;
+        }
+      }
       if (options.onServerRequest) return options.onServerRequest(request);
       const error = new Error(`Codex requires unsupported interaction: ${request.method}`);
       emit({ type: 'error', sessionId: threadId, message: error.message });
@@ -106,9 +119,14 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       const params = notification.params as Record<string, unknown>;
       if (!params || params.threadId !== threadId) return;
       try {
+        if (notification.method === 'serverRequest/resolved') {
+          if (typeof params.requestId === 'number' || typeof params.requestId === 'string') interactions.resolved(params.requestId);
+          return;
+        }
         if (notification.method === 'turn/started' && active) active.turnId = (params.turn as CodexTurn).id;
         if (notification.method === 'item/started' || notification.method === 'item/completed') {
           const turnId = String(params.turnId);
+          if (active?.turnId === turnId && !active.terminalComplete) interactions.item(turnId, params.item);
           rememberDelivery(turnId);
           if (notification.method === 'item/completed') projection?.put(params.item as CodexItem, turnId);
           events?.item(params.item as CodexItem, turnId, notification.method === 'item/completed');
@@ -116,6 +134,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           const turn = params.turn as CodexTurn;
           if (!active.turnId || active.turnId === turn.id) {
             active.terminalComplete = true;
+            interactions.endTurn(turn.id, turn.status === 'interrupted' ? 'aborted' : 'turn-ended');
             if (turn.status === 'interrupted') {
               for (const item of events?.interruptedItems() ?? []) {
                 projection?.put(item, turn.id);
@@ -182,6 +201,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     get sessionFile() { return response.thread.path ?? undefined; },
     history: () => events!.snapshot().history,
     snapshot: () => events!.snapshot(),
+    interactions: () => interactions.snapshot(),
+    respondInteraction: (id, response) => interactions.respond(id, response),
     completedDeliveryIds: () => [...metadata.completed],
     hasContext: customType => metadata.context.some(entry => entry.customType === customType),
     async addContext(text, customType = 'hive-context') {
@@ -231,6 +252,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           throw error;
         } finally {
           await Promise.allSettled([...run.tools]);
+          if (run.turnId) interactions.endTurn(run.turnId);
           active = undefined;
           emit({ type: 'settled', sessionId: threadId, aborted: run.cancelled });
         }
@@ -238,6 +260,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       return run.done;
     },
     async abort() {
+      interactions.clear('aborted');
       const run = active;
       if (!run) return;
       run.cancelled = true; run.controller.abort();
@@ -246,6 +269,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     },
     dispose() {
       if (active) throw new Error('Abort and await the active Codex prompt before disposal');
+      interactions.clear('disposed');
       disposed = true;
       return transport.close();
     },
