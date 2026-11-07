@@ -228,7 +228,16 @@ impl HiveApp {
                             {
                                 this.sessions.insert(0, session.clone());
                                 this.close_collaboration();
+                                let workspace_draft = format!("workspace:{}", session.workspace_id);
+                                let transfer = this.session.is_none()
+                                    && this.draft_owner.as_ref() == Some(&workspace_draft);
+                                let session_key = format!("session:{}", session.id);
                                 this.open_session(session.id, cx);
+                                if transfer {
+                                    if let Some(text) = this.drafts.remove(&workspace_draft) {
+                                        this.drafts.insert(session_key, text);
+                                    }
+                                }
                             }
                         }
                         Err(error) => this.error = Some(format!("创建会话响应错误：{error}")),

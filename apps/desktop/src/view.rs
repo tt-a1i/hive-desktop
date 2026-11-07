@@ -1,4 +1,5 @@
 use crate::app::{HiveApp, SettingsSection};
+use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     component::{
@@ -138,8 +139,14 @@ impl Render for HiveApp {
             })
             .cloned()
             .collect();
+        let welcome = self.messages.is_empty()
+            && !has_interactions
+            && !running
+            && pending == 0
+            && self.connected
+            && !self.loading;
         let narrow = window.viewport_size().width < px(820.);
-        v_flex().size_full().bg(rgb(0xfaf9f6)).text_color(rgb(0x282c2a))
+        v_flex().size_full().bg(rgb(0xf8f8f6)).text_color(rgb(0x262626))
             .child(self.render_navigation_bar(cx))
             .child(h_flex().flex_1().min_h_0().w_full()
             .when(self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
@@ -275,43 +282,41 @@ impl Render for HiveApp {
                     })))
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
-            } else { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
-                .child(h_flex().flex_shrink_0().min_w_0().w_full().child({
-                    let title = self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "开始你的项目工作".into());
-                    div().id("session-title").flex_1().min_w_0().truncate().text_xl().font_weight(FontWeight::SEMIBOLD)
+            } else { v_flex().flex_1().min_w_0().h_full().gap_3().p_5().when(welcome, |v| v.justify_center())
+                .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(920.)).mx_auto().child({
+                    let title = if welcome { "Hive".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
+                    div().id("session-title").flex_1().min_w_0().truncate().when(welcome, |h| h.text_3xl()).when(!welcome, |h| h.text_lg()).font_weight(FontWeight::SEMIBOLD)
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
                         .child(title)
                 }))
-                .child(div().text_xs().text_color(rgb(0x777c75)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone())))
+                .when(!welcome, |v| v.child(div().text_xs().text_color(rgb(0x777c75)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone()))))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.scroll.scroll_to_bottom(); cx.notify(); }))))
-                .child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).p_3()
-                    .child(v_flex().w_full().max_w(px(840.)).mx_auto().gap_5()
+                .when(!welcome && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).p_3()
+                    .child(v_flex().w_full().max_w(px(920.)).mx_auto().gap_5()
                         .when(self.messages.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(rgb(0x777c75)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.iter().enumerate().map(|(i, message)| {
-                            let heading = message.tool.as_ref().map(|tool| format!("{} · {}", tool.name, tool.status)).unwrap_or_else(|| message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), _ => "工具" }.into()));
-                            let expanded = message.tool.as_ref().is_some_and(|tool| tool.expanded);
-                            v_flex().id(("message", i)).min_w_0().gap_2().p_4().rounded_lg()
-                                .bg(if message.role == "user" { rgb(0xe9eee7) } else if message.delivery.is_some() { rgb(0xf0f2ed) } else { rgb(0xffffff) })
+                            if let Some(tool) = &message.tool {
+                                return self.render_tool_message(i, message, tool, cx).into_any_element();
+                            }
+                            let heading = message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), _ => "工具" }.into());
+                            v_flex().id(("message", i)).min_w_0().gap_2().px_3().py_2().rounded_lg()
+                                .when(message.role == "user", |bubble| bubble.bg(rgb(0xececea)).ml_auto().max_w(px(680.)))
                                 .child(h_flex().min_w_0().gap_2().justify_between()
-                                    .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(if message.tool.as_ref().is_some_and(|tool| tool.status == "失败") { rgb(0xb54131) } else { rgb(0x63715c) }).child(heading))
-                                    .when(message.tool.is_some(), |view| view.child(Button::new(("expand-tool", i)).accessibility_label(format!("{}工具详情", if expanded { "收起" } else { "展开" })).label(if expanded { "收起" } else { "展开" }).on_click({ let id = message.id.clone(); cx.listener(move |this, _, _, cx| {
-                                        if let Some(tool) = this.messages.iter_mut().find(|m| m.id == id).and_then(|m| m.tool.as_mut()) { tool.expanded = !tool.expanded; }
-                                        cx.notify();
-                                    }) })))
+                                    .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(rgb(0x63715c)).child(heading))
                                     .when(message.delivery.is_some(), |view| view.child(Button::new(("expand-delivery", i)).accessibility_label(format!("{}消息原文", if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起" } else { "查看" })).label(if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起原文" } else { "查看原文" }).on_click({ let id = message.id.clone(); cx.listener(move |this, _, _, cx| {
                                         if let Some(delivery) = this.messages.iter_mut().find(|m| m.id == id).and_then(|m| m.delivery.as_mut()) { delivery.expanded = !delivery.expanded; }
                                         cx.notify();
                                     }) })))
                                     .child(Button::new(("copy", i)).accessibility_label(if message.delivery.is_some() { "复制完整消息原文" } else { "复制消息内容" }).label(if message.delivery.is_some() { "复制原文" } else { "复制" }).on_click({ let text = message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_else(|| message.text.clone()); cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))) })))
                                 .when(message.role == "assistant", |view| view.child(TextView::new(&message.markdown).selectable(true).stream_fade(true)))
-                                .when(message.role == "user" || message.delivery.is_some() || expanded, |view| view.child(div().min_w_0().text_sm().child(message.text.clone())))
+                                .when(message.role == "user" || message.delivery.is_some(), |view| view.child(div().min_w_0().text_sm().child(message.text.clone())))
                                 .when(message.delivery.as_ref().is_some_and(|d| d.expanded), |view| view.child(div().min_w_0().p_3().rounded_lg().bg(rgb(0xffffff)).text_sm().child(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())))
-                                .when(!expanded && message.tool.as_ref().is_some_and(|tool| tool.status == "失败"), |view| view.child(div().text_sm().text_color(rgb(0xb54131)).child(message.text.chars().take(160).collect::<String>())))
+                                .into_any_element()
                         }))
-                        .child(self.render_interactions(cx))))
-                .child(v_flex().w_full().min_w_0().max_w(px(840.)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_lg().bg(rgb(0xffffff))
-                .child(Button::new("choose-model").w_full().min_w_0().label(self.model.as_ref().map(|model| format!("模型 · {} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); })))
+                        .child(self.render_interactions(cx)))))
+                .child(v_flex().w_full().min_w_0().max_w(px(920.)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_xl().border_1().border_color(rgb(0xd7d7d4)).bg(rgb(0xffffff))
+
                 .when(self.choosing_model, |view| view.child(v_flex().flex_shrink_0().min_h_0().gap_2()
                     .child(Input::new(&self.model_search))
                     .child(v_flex().id("model-list").h(px(168.)).min_h_0().flex_shrink_0().overflow_y_scroll().gap_2()
@@ -338,14 +343,35 @@ impl Render for HiveApp {
                 .when(!self.connected && self.runtime.is_some(), |view| view.child(Button::new("copy-disconnected-draft").label("复制当前草稿").on_click(cx.listener(|this, _, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(this.input.read(cx).value().to_string()));
                 }))))
-                .child(h_flex().gap_3().items_end()
-                    .child(div().flex_1().min_w_0().child(Textarea::new(&self.input).aria_label("聊天消息")))
-                    .child(if running {
+                .when(self.workspace.is_some(), |v| v.child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息")))
+                .child(h_flex().min_w_0().gap_2().items_center()
+                    .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
+                        self.new_chat_menu("home-agent", "选择 Agent", cx).into_any_element()
+                    } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
+                    .child(div().flex_1())
+                    .when(self.session.is_some(), |row| row.child(Button::new("choose-model").ghost().compact().min_w_0().label(self.model.as_ref().map(|model| format!("{} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); }))))
+                    .when(self.session.is_some(), |row| row.child(if running {
                         Button::new("stop").label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {
-                        Button::new("send").primary().label("发送").disabled(!self.connected || self.session.is_none() || self.loading || pending > 0).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
-                    }))
-                .child(div().text_xs().text_color(rgb(0x8a8e87)).child(if !self.connected { "后台暂不可用 · 请先复制草稿，再重启应用" } else if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "Enter 换行 · 点击发送" })))
+                        Button::new("send").primary().icon(Glyph::ArrowUp).rounded(px(20.)).accessibility_label("发送消息").tooltip("发送消息").disabled(!self.connected || self.session.is_none() || self.loading || pending > 0).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+                    })))
+                .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(rgb(0x777777)).child(if !self.connected { "后台暂不可用 · 请先复制草稿，再重启应用" } else if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "" }))))
+                .when(welcome && self.workspace.is_some(), |surface| surface.child(
+                    v_flex().w_full().max_w(px(920.)).mx_auto().items_start().gap_1()
+                        .children([
+                            (Glyph::FolderOpen, "了解这个项目", "请梳理当前项目的结构、主要入口和运行方式。"),
+                            (Glyph::Search, "审查未提交的改动", "请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。"),
+                            (Glyph::Network, "拆分团队任务", "请先和我确认这次要达成的目标，再提出适合由成员并行处理的任务。"),
+                        ].into_iter().enumerate().map(|(i,(icon,label,prompt))| {
+                            Button::new(("starter",i)).ghost().icon(icon).label(label)
+                                .on_click(cx.listener(move |this, _, window, cx| this.input.update(cx, |input,cx| {
+                                    let current = input.value();
+                                    let value = if current.is_empty() { prompt.to_owned() } else { format!("{current}\n{prompt}") };
+                                    input.set_value(value, window, cx);
+                                    input.focus(window,cx);
+                                })))
+                        }))
+                ))
                 .into_any_element() })))
     }
 }

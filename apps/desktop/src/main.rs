@@ -12,6 +12,7 @@ mod runtime_location;
 mod sessions;
 mod settings;
 mod terminal;
+mod tool_message;
 mod transport;
 mod view;
 mod workspace_actions;

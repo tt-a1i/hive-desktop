@@ -1,4 +1,5 @@
 use crate::app::{HiveApp, SettingsSection};
+use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -20,14 +21,12 @@ impl HiveApp {
             .px_4()
             .py_2()
             .border_b_1()
-            .border_color(rgb(0xe5e6df))
+            .border_color(rgb(0xd7d7d4))
             .child(
                 Button::new("toggle-navigation")
-                    .label(if self.sidebar_open {
-                        "收起导航"
-                    } else {
-                        "打开导航"
-                    })
+                    .ghost()
+                    .icon(Glyph::PanelLeft)
+                    .tooltip("打开或收起导航")
                     .accessibility_label("打开或收起工作区与会话导航")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.sidebar_open = !this.sidebar_open;
@@ -131,49 +130,150 @@ impl HiveApp {
             )
     }
 
-    pub fn render_navigation(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn new_chat_menu(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let weak = cx.weak_entity();
+        Button::new(id)
+            .when(id == "new-session-menu", |b| b.w_full().justify_start())
+            .ghost()
+            .icon(Glyph::Plus)
+            .when(id == "new-session-menu", |b| {
+                b.child(div().flex_1().child(label))
+            })
+            .when(id != "new-session-menu", |b| b.label(label))
+            .accessibility_label(if id == "new-session-menu" {
+                "新建会话，选择 Agent 后端"
+            } else {
+                "选择主控 Agent"
+            })
+            .disabled(
+                !self.connected
+                    || self.workspace.is_none()
+                    || self.loading
+                    || !self.workspace_writes_allowed(),
+            )
+            .dropdown_menu(move |mut menu, _, _| {
+                for (backend, label) in [
+                    ("pi", "内置 Pi"),
+                    ("codex", "Codex"),
+                    ("pi-rpc", "外部 Pi"),
+                    ("claude", "Claude Code"),
+                ] {
+                    let weak = weak.clone();
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            if window.viewport_size().width < px(820.) {
+                                this.sidebar_open = false;
+                            }
+                            this.hide_terminal(cx);
+                            this.new_session(backend, cx);
+                        });
+                    }));
+                }
+                menu
+            })
+    }
+
+    pub fn render_navigation(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .when(narrow, |view| view.flex_1().min_w_0())
-            .when(!narrow, |view| view.w(px(248.)).flex_shrink_0())
+            .when(!narrow, |view| view.w(px(260.)).flex_shrink_0())
             .h_full()
-            .bg(rgb(0xefefea))
+            .bg(rgb(0xf8f8f6))
+            .border_r_1()
+            .border_color(rgb(0xd7d7d4))
             .p_3()
             .gap_3()
+            .child(self.new_chat_menu("new-session-menu", "新建会话", cx))
             .child(
-                Button::new("new-session-menu")
-                    .w_full()
-                    .primary()
-                    .label("＋ 新建会话 ▾")
-                    .accessibility_label("新建会话，选择 Agent 后端")
-                    .disabled(
-                        !self.connected
-                            || self.workspace.is_none()
-                            || self.loading
-                            || !self.workspace_writes_allowed(),
+                v_flex()
+                    .flex_shrink_0()
+                    .gap_1()
+                    .child(
+                        Button::new("open-terminal")
+                            .ghost()
+                            .icon(Glyph::SquareTerminal)
+                            .justify_start()
+                            .w_full()
+                            .accessibility_label("工作区终端")
+                            .child(div().flex_1().child("工作区终端"))
+                            .selected(self.terminal.visible)
+                            .disabled(
+                                !self.connected
+                                    || self.workspace.is_none()
+                                    || !self.workspace_writes_allowed(),
+                            )
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.show_terminal(window, cx)),
+                            ),
                     )
-                    .dropdown_menu(move |mut menu, _, _| {
-                        for (backend, label) in [
-                            ("pi", "内置 Pi"),
-                            ("codex", "Codex"),
-                            ("pi-rpc", "外部 Pi"),
-                            ("claude", "Claude Code"),
-                        ] {
-                            let weak = weak.clone();
-                            menu = menu.item(PopupMenuItem::new(label).on_click(
-                                move |_, window, cx| {
-                                    let _ = weak.update(cx, |this, cx| {
-                                        if window.viewport_size().width < px(820.) {
-                                            this.sidebar_open = false;
-                                        }
-                                        this.hide_terminal(cx);
-                                        this.new_session(backend, cx);
-                                    });
-                                },
-                            ));
-                        }
-                        menu
-                    }),
+                    .child(
+                        Button::new("toggle-members")
+                            .ghost()
+                            .icon(Glyph::Bot)
+                            .justify_start()
+                            .w_full()
+                            .accessibility_label("团队成员")
+                            .child(div().flex_1().child("团队成员"))
+                            .selected(self.member_panel)
+                            .disabled(self.workspace.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_memory();
+                                this.close_settings();
+                                this.close_collaboration();
+                                this.close_roles();
+                                this.hide_terminal(cx);
+                                this.member_panel = true;
+                                if window.viewport_size().width < px(820.) {
+                                    this.sidebar_open = false;
+                                }
+                                this.refresh_members(cx);
+                                this.load_roles(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("open-collaboration")
+                            .ghost()
+                            .icon(Glyph::Network)
+                            .justify_start()
+                            .w_full()
+                            .accessibility_label("协作概览")
+                            .child(div().flex_1().child("协作概览"))
+                            .selected(self.collaboration.visible)
+                            .disabled(self.workspace.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.hide_terminal(cx);
+                                this.open_collaboration(cx);
+                                if window.viewport_size().width < px(820.) {
+                                    this.sidebar_open = false;
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("open-memory")
+                            .ghost()
+                            .icon(Glyph::BookOpen)
+                            .justify_start()
+                            .w_full()
+                            .accessibility_label("工作区记忆")
+                            .child(div().flex_1().child("工作区记忆"))
+                            .selected(self.memory.visible)
+                            .disabled(self.workspace.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.hide_terminal(cx);
+                                this.open_memory(cx);
+                                if window.viewport_size().width < px(820.) {
+                                    this.sidebar_open = false;
+                                }
+                                cx.notify();
+                            })),
+                    ),
             )
             .child(
                 v_flex()
@@ -243,6 +343,8 @@ impl HiveApp {
                             .children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
                                 let id = workspace.id.clone();
                                 Button::new(("workspace", i))
+                                    .ghost()
+                                    .icon(Glyph::Folder)
                                     .w_full()
                                     .min_w_0()
                                     .child(
@@ -281,8 +383,10 @@ impl HiveApp {
                                     )
                                     .child(
                                         Button::new("open-workspace-menu")
+                                            .ghost()
+                                            .compact()
                                             .w_full()
-                                            .label("打开当前项目 ▾")
+                                            .label("项目操作 ▾")
                                             .disabled(!self.connected)
                                             .dropdown_menu(move |mut menu, _, _| {
                                                 for (target, label) in [
@@ -316,28 +420,20 @@ impl HiveApp {
                                                         ),
                                                     );
                                                 }
-                                                menu
+                                                let weak = weak.clone();
+                                                menu.separator().item(
+                                                    PopupMenuItem::new("移除当前工作区…").on_click(
+                                                        move |_, window, cx| {
+                                                            let _ = weak.update(cx, |this, cx| {
+                                                                this.remove_workspace(window, cx)
+                                                            });
+                                                        },
+                                                    ),
+                                                )
                                             }),
                                     )
                                 },
                             )
-                            .when(self.workspace.is_some(), |view| {
-                                view.child(
-                                    Button::new("remove-workspace")
-                                        .w_full()
-                                        .label(if self.workspace_removing.is_some() {
-                                            "正在移除工作区…"
-                                        } else {
-                                            "移除当前工作区…"
-                                        })
-                                        .disabled(
-                                            !self.connected || self.workspace_removing.is_some(),
-                                        )
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.remove_workspace(window, cx)
-                                        })),
-                                )
-                            })
                             .child(
                                 div()
                                     .pt_4()
@@ -387,6 +483,7 @@ impl HiveApp {
                                     ))
                                     .child(
                                         Button::new(("session", i))
+                                            .ghost()
                                             .accessibility_label(format!(
                                                 "{} · {} · {role}{activity}",
                                                 session.backend.label(),
@@ -421,88 +518,24 @@ impl HiveApp {
                     ),
             )
             .child(
-                v_flex()
-                    .flex_shrink_0()
-                    .gap_1()
-                    .child(
-                        Button::new("open-terminal")
-                            .w_full()
-                            .label("工作区终端")
-                            .selected(self.terminal.visible)
-                            .disabled(
-                                !self.connected
-                                    || self.workspace.is_none()
-                                    || !self.workspace_writes_allowed(),
-                            )
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.show_terminal(window, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("toggle-members")
-                            .w_full()
-                            .label("团队成员")
-                            .selected(self.member_panel)
-                            .disabled(self.workspace.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.close_memory();
-                                this.close_settings();
-                                this.close_collaboration();
-                                this.close_roles();
-                                this.hide_terminal(cx);
-                                this.member_panel = true;
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                this.refresh_members(cx);
-                                this.load_roles(cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("open-collaboration")
-                            .w_full()
-                            .label("协作概览")
-                            .selected(self.collaboration.visible)
-                            .disabled(self.workspace.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.hide_terminal(cx);
-                                this.open_collaboration(cx);
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("open-memory")
-                            .w_full()
-                            .label("工作区记忆")
-                            .selected(self.memory.visible)
-                            .disabled(self.workspace.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.hide_terminal(cx);
-                                this.open_memory(cx);
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("open-settings")
-                            .w_full()
-                            .label("设置")
-                            .selected(self.settings_panel || self.roles.visible)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.hide_terminal(cx);
-                                this.open_settings(window, cx);
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                cx.notify();
-                            })),
-                    ),
+                v_flex().flex_shrink_0().child(
+                    Button::new("open-settings")
+                        .ghost()
+                        .icon(Glyph::Settings)
+                        .justify_start()
+                        .w_full()
+                        .accessibility_label("设置")
+                        .child(div().flex_1().child("设置"))
+                        .selected(self.settings_panel || self.roles.visible)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.hide_terminal(cx);
+                            this.open_settings(window, cx);
+                            if window.viewport_size().width < px(820.) {
+                                this.sidebar_open = false;
+                            }
+                            cx.notify();
+                        })),
+                ),
             )
     }
 }
