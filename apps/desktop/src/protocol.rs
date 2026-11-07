@@ -259,3 +259,43 @@ impl PiEvent {
         }
     }
 }
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalRun {
+    pub run_id: String,
+    pub name: String,
+    pub status: String,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalWireEvent {
+    pub attachment_id: String,
+    pub workspace_id: String,
+    pub run_id: String,
+    #[serde(flatten)]
+    pub frame: TerminalFrame,
+}
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TerminalFrame {
+    Restore {
+        sequence: u64,
+        bytes: Vec<u8>,
+        cols: usize,
+        rows: usize,
+    },
+    Output {
+        sequence: u64,
+        bytes: Vec<u8>,
+    },
+    Exit {
+        code: Option<i32>,
+    },
+    Error {
+        message: String,
+    },
+    Closed {
+        reason: String,
+    },
+}

@@ -11,6 +11,7 @@ mod roles;
 mod runtime_location;
 mod sessions;
 mod settings;
+mod terminal;
 mod transport;
 mod view;
 mod workspace_actions;

@@ -16,8 +16,8 @@ const send = (message: unknown) => protocolWrite(`${JSON.stringify(message)}\n`)
 
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
-const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }));
-const { hive, chats, settings, agentModels } = runtime;
+const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }), { onTerminalEvent: data => send({ event: 'terminal', data }) });
+const { hive, chats, settings, agentModels, terminal } = runtime;
 let closing: Promise<void> | undefined;
 const close = () => closing ??= runtime.close();
 
@@ -38,6 +38,15 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'agent.models': return agentModels.list(text(params, 'workspaceId'), params.backend);
     case 'desktop.settings.get': return settings.get();
     case 'desktop.settings.update': return settings.update(params);
+    case 'terminal.list': return terminal.list(text(params, 'workspaceId'));
+    case 'terminal.start': return terminal.start(text(params, 'workspaceId'));
+    case 'terminal.attach': return terminal.attach({ attachmentId: text(params, 'attachmentId'), workspaceId: text(params, 'workspaceId'), runId: text(params, 'runId'), cols: params.cols as number, rows: params.rows as number });
+    case 'terminal.restoreComplete': return terminal.restoreComplete({ attachmentId: text(params, 'attachmentId'), sequence: params.sequence as number });
+    case 'terminal.ack': return terminal.ack({ attachmentId: text(params, 'attachmentId'), sequence: params.sequence as number, bytes: params.bytes as number });
+    case 'terminal.input': return terminal.input({ attachmentId: text(params, 'attachmentId'), bytes: params.bytes, ...(params.userInput !== undefined && { userInput: params.userInput as boolean }) });
+    case 'terminal.resize': return terminal.resize({ attachmentId: text(params, 'attachmentId'), cols: params.cols as number, rows: params.rows as number });
+    case 'terminal.detach': return terminal.detach({ attachmentId: text(params, 'attachmentId') });
+    case 'terminal.stop': return terminal.stop({ workspaceId: text(params, 'workspaceId'), runId: text(params, 'runId') });
     case 'workspace.remove': {
       try { return await runtime.removeWorkspace(text(params, 'workspaceId')); }
       catch (error) {

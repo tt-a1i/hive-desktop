@@ -36,7 +36,7 @@ impl HiveApp {
 }
 
 impl HiveApp {
-    fn render_error_banner(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn render_error_banner(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         h_flex()
             .w_full()
             .min_w_0()
@@ -94,6 +94,7 @@ impl Render for HiveApp {
             });
         }
         self.prepare_interactions(window, cx);
+        self.prepare_terminal_view(cx);
         let running = self
             .session
             .as_ref()
@@ -267,6 +268,7 @@ impl Render for HiveApp {
                             .when(editing, |view| view.child(Input::new(&self.member_rename)).child(Button::new(("member-save", i)).label("保存名称").disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| { let name = this.member_rename.read(cx).value().trim().to_string(); if name.is_empty() { this.error = Some("请输入成员名称".into()); cx.notify(); } else { this.member_action("PATCH", format!("/api/workspaces/{save_workspace}/workers/{save_id}"), Some(serde_json::json!({"name":name})), cx); } }))))
                     })))
                 .into_any_element()
+            } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().child({
                     let title = self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "开始你的项目工作".into());

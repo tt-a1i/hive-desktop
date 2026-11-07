@@ -149,3 +149,62 @@ setInterval(()=>{if(fs.existsSync(path.join(dir,'release-exit')))process.exit(0)
     drop(runtime);
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn synchronous_terminal_enqueue_preserves_fast_input_before_reply_polling() {
+    let directory =
+        std::env::temp_dir().join(format!("hive-terminal-fifo-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&directory).unwrap();
+    let script = directory.join("shell-peer.cjs");
+    fs::write(&script, r#"
+const {spawn}=require('node:child_process');
+const shell=spawn('/bin/sh',['-s'],{stdio:['pipe','pipe','pipe']});
+let output='',error='',ended=false;
+shell.stdout.on('data',data=>output+=data);shell.stderr.on('data',data=>error+=data);
+shell.on('exit',()=>ended=true);
+const send=(q,result)=>process.stdout.write(JSON.stringify({id:q.id,result})+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ const q=JSON.parse(line);
+ if(q.method==='terminal.input'){shell.stdin.write(Buffer.from(q.params.bytes));send(q,{ok:true});}
+ else if(q.method==='terminal.ack'||q.method==='terminal.resize')send(q,{ok:true});
+ else if(q.method==='read'){const until=Date.now()+5000;const poll=()=>ended?send(q,{output,error}):Date.now()>until?send(q,{timeout:true}):setTimeout(poll,5);poll();}
+ else if(q.method==='shutdown'){shell.kill();process.exit(0);}
+});
+"#).unwrap();
+    let mut command = Command::new("node");
+    command
+        .arg(&script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    let runtime = Runtime::launch_command(command).unwrap();
+    let expected: String = (0..512)
+        .map(|index| char::from(b'a' + (index % 26) as u8))
+        .collect();
+    let command = format!("printf '%s\\n' '{expected}'; exit\n");
+    let mut replies = Vec::new();
+    for (index, byte) in command.bytes().enumerate() {
+        replies.push(runtime.begin_request("terminal.input", json!({"bytes":[byte]})));
+        if index % 17 == 0 {
+            replies.push(runtime.begin_request("terminal.ack", json!({"sequence":index})));
+            replies.push(runtime.begin_request("terminal.resize", json!({"cols":80,"rows":24})));
+        }
+    }
+    let result = smol::block_on(async {
+        // Every byte is enqueued already. Reverse response polling cannot reorder wire input.
+        while let Some(reply) = replies.pop() {
+            assert_eq!(reply.await.unwrap()["ok"], true);
+        }
+        let output = runtime.request("read", json!({})).await.unwrap();
+        runtime
+            .shutdown_checked(Duration::from_secs(2))
+            .await
+            .unwrap();
+        output
+    });
+    assert_eq!(result["output"], format!("{expected}\n"));
+    assert_eq!(result["error"], "");
+    drop(runtime);
+    fs::remove_dir_all(directory).unwrap();
+}

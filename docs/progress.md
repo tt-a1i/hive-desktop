@@ -49,8 +49,10 @@ Claude 工具许可和 AskUserQuestion 已接入统一聊天。官方 SDK + 合�
 
 上述改动提交为 `39b1929`，Windows [运行 42322148256](https://github.com/tt-a1i/hive-desktop/actions/runs/42322148256) 首次通过构建、解压后的 runtime/PTY smoke、进程监督与外部 CLI 检查，并上传便携包。未进行 Windows 窗口、Claude 模型或实际通知投递验收。
 
-工作区移除已接入桌面。真实 Hive HTTP/SQLite、原生 Pi 与 JSONL 检查验证停止、删除、文件保留及部分失败；固定 Hive 补丁通过真实 workflow 所有权阻止清理中删除，并允许空闲的历史 interrupted 记录。Mac 新冻结依赖包通过运行检查，原生窗口完成取消、失败后保留、成功切换、最后项目清空与重新添加验证；长错误提示和旧状态文案的问题已修。详见 [工作区移除验证](validation/2026-11-07-workspace-removal.md)。本次变更的 Windows CI 待记录，未声称真机通过。
+工作区移除已接入桌面。真实 Hive HTTP/SQLite、原生 Pi 与 JSONL 检查验证停止、删除、文件保留及部分失败；固定 Hive 补丁通过真实 workflow 所有权阻止清理中删除，并允许空闲的历史 interrupted 记录。Mac 新冻结依赖包通过运行检查，原生窗口完成取消、失败后保留、成功切换、最后项目清空与重新添加验证；长错误提示和旧状态文案的问题已修。详见 [工作区移除验证](validation/2026-11-07-workspace-removal.md)。`e1dde8c` 的 Windows [运行 42325130739](https://github.com/tt-a1i/hive-desktop/actions/runs/42325130739) 首次通过全部三个 job，包含便携包上传、解压后的 runtime/PTY、进程监督和外部 CLI 检查；未进行 Windows 原生窗口验收。
 
-下一步仍需完善辅助终端、外部 Agent 的结构化接入、成员管理和配置体验、任务与协作主页、应用后台重连及 macOS / Windows 安装包。Windows 尚未真机验收。基础阶段 #2 保持开放，完整目标 #1 不缩减为当前这条闭环。
+辅助终端已在 macOS 接入真实 Shell，并验证中文粘贴、回车、屏幕恢复和进程退出。详见 [终端验收记录](validation/2026-11-07-workspace-terminal.md)。
+
+下一步仍需完善终端跨平台交互、外部 Agent 的结构化接入、成员管理和配置体验、任务与协作主页、应用后台重连及 macOS / Windows 安装包。Windows 尚未真机验收。基础阶段 #2 保持开放，完整目标 #1 不缩减为当前这条闭环。
 
 每天 09:00 的当前聊天目标提醒已启用。持续目标保持完整范围；单个可运行聊天版本不代表产品完成。

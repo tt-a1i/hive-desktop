@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'apps/desktop/**'
+      - 'crates/**'
       - 'packages/**'
       - 'patches/**'
       - 'scripts/**'
@@ -15,6 +16,7 @@ on:
   pull_request:
     paths:
       - 'apps/desktop/**'
+      - 'crates/**'
       - 'packages/**'
       - 'patches/**'
       - 'scripts/**'
@@ -54,6 +56,8 @@ jobs:
         run: rustc --edition 2021 --test apps/desktop/src/runtime_location.rs -o target/runtime-location-tests.exe
       - name: Run runtime location tests
         run: ./target/runtime-location-tests.exe
+      - name: Test terminal parser with desktop lockfile
+        run: cargo test --locked --manifest-path apps/desktop/Cargo.toml -p hive-terminal --lib
       - name: Deploy locked production runtime
         run: pnpm --filter @hive-desktop/runtime deploy --prod --frozen-lockfile --node-linker=hoisted target/deployed-runtime
       - name: Package portable desktop
@@ -65,6 +69,19 @@ jobs:
       - name: Smoke extracted runtime and PTY
         timeout-minutes: 5
         run: node scripts/check-package.mjs --bundle target/portable-windows-extracted
+      - name: Smoke extracted Windows terminal bridge
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          node scripts/check-windows-terminal.mjs --bundle target/portable-windows-extracted 2>&1 | Tee-Object -FilePath target/windows-terminal-smoke.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload terminal smoke log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-terminal-smoke-log
+          path: target/windows-terminal-smoke.log
+          if-no-files-found: ignore
       - name: Upload portable desktop
         uses: actions/upload-artifact@v4
         with:

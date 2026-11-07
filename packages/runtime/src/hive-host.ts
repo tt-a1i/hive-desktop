@@ -1,3 +1,4 @@
+import WebSocket from "ws";
 import { isAbsolute } from "node:path";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
 import type { HiveAgentRuntimeFactory } from "./hive-runtime-contract.js";
@@ -16,6 +17,7 @@ export interface HiveHost {
 	readonly port: number;
 	request(method: string, path: string, body?: unknown): Promise<unknown>;
 	withWorkspaceWorkflowIdle<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
+	openTerminalSocket(runId: string, channel: 'io' | 'control', clientId: string, cols: number, rows: number): WebSocket;
 	close(): Promise<void>;
 }
 
@@ -111,6 +113,12 @@ export async function createHiveHost({
 			if (!response.ok) throw new HiveHttpError(response.status, result);
 			return result;
 		},
+		openTerminalSocket(runId, channel, clientId, cols, rows) {
+            if (closing) throw new Error("Hive host is closed");
+            const url = new URL(`/ws/terminal/${encodeURIComponent(runId)}/${channel}`, base.replace('http:', 'ws:'));
+            url.search = new URLSearchParams({ clientId, cols: String(cols), rows: String(rows), restoreBarrier: '1' }).toString();
+            return new WebSocket(url, { headers: { cookie }, origin: base, handshakeTimeout: 10000, maxPayload: 8 * 1024 * 1024 });
+        },
 		withWorkspaceWorkflowIdle(workspaceId, operation) {
 			if (closing) return Promise.reject(new Error("Hive host is closed"));
 			return runtime.store.withWorkspaceWorkflowIdle(workspaceId, operation);

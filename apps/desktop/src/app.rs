@@ -38,6 +38,7 @@ pub struct HiveApp {
     pub sidebar_open: bool,
     pub connected: bool,
     pub interactions: crate::interactions::Interactions,
+    pub terminal: crate::terminal::WorkspaceTerminal,
     pub input: Entity<TextareaState>,
     pub drafts: HashMap<String, String>,
     pub draft_owner: Option<String>,
@@ -154,6 +155,7 @@ impl HiveApp {
             sidebar_open: true,
             connected: false,
             interactions: crate::interactions::Interactions::default(),
+            terminal: crate::terminal::WorkspaceTerminal::new(cx),
             input: cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .auto_grow(2, 7)
@@ -307,6 +309,7 @@ impl HiveApp {
                         match event {
                             RuntimeEvent::Failed(error) => {
                                 this.connected = false;
+                                this.terminal_disconnected(cx);
                                 this.loading = false;
                                 this.interactions.sessions.clear();
                                 this.status = "后台连接已断开".into();
@@ -314,6 +317,7 @@ impl HiveApp {
                                 this.busy.clear();
                             }
                             RuntimeEvent::Agent(event) => this.agent_event(event, cx),
+                            RuntimeEvent::Terminal(event) => this.terminal_wire_event(event, cx),
                         }
                         cx.notify();
                     })

@@ -1,3 +1,4 @@
+import { Terminals, type TerminalEvent } from './terminal.js';
 import { AgentModels } from './agent-models.js';
 import { join } from 'node:path';
 import { Chats, type ChatEvent } from './chats.js';
@@ -7,7 +8,7 @@ import { DesktopSettings, type DesktopExecutableEnvironment } from './desktop-se
 import { createStructuredRuntime } from './structured-runtime.js';
 
 export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEvent) => void,
-  options: { executableEnvironment?: DesktopExecutableEnvironment } = {}) {
+  options: { executableEnvironment?: DesktopExecutableEnvironment; onTerminalEvent?: (event: TerminalEvent) => void } = {}) {
   let chats: Chats;
   let agents: HiveAgentRuntime | undefined;
   const hive = await createHiveHost({
@@ -23,9 +24,10 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     if (!agents) throw new Error('Hive runtime factory was not installed');
     chats = new Chats(hive, dataDir, emit, agents, settings, agentModels);
   } catch (error) { await hive.close(); throw error; }
+  const terminal = new Terminals(hive, workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onTerminalEvent ?? (() => {}));
   let closing: Promise<void> | undefined;
-  return { hive, chats, agents, settings, agentModels,
-    removeWorkspace: (workspaceId: string) => chats.removeWorkspace(workspaceId),
+  return { hive, chats, agents, settings, agentModels, terminal,
+    removeWorkspace: (workspaceId: string) => chats.removeWorkspace(workspaceId, () => terminal.detachWorkspace(workspaceId)),
     requestHive: (method: string, path: string, body?: unknown) => {
       if (!['GET', 'HEAD'].includes(method.toUpperCase())) {
         const match = /^\/api\/workspaces\/([^/?#]+)(?:[/?#]|$)/.exec(path);
@@ -34,7 +36,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return hive.request(method, path, body);
     },
     close: () => closing ??= (async () => {
-      try { await agentModels.close(); await hive.close(); } finally { await chats.close(); }
+      try { await terminal.close(); await agentModels.close(); } finally { try { await hive.close(); } finally { await chats.close(); } }
     })(),
   };
 }

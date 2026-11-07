@@ -1,0 +1,19 @@
+Hive Terminal vendors gpui_xterm 0.2.1, MIT licensed.
+Source: https://crates.io/crates/gpui_xterm/0.2.1
+Repository: https://github.com/Modolet/gpui_xterm
+Published source commit: 4c007c1740f91cf3e35550beadba1384feba8caf
+The original copyright and license are retained in LICENSE.
+
+Hive modifications:
+- Adapt to the application's fixed gpui-kit 0.9.0 (gpui-pre 0.3.11).
+- Remove owned I/O threads, arbitrary readers/writers, PTY assumptions and flume.
+- Expose synchronous feed/reset/resize, input enablement and typed GPUI events.
+- Use GPUI clipboard for explicit user copy/paste; ignore OSC 52 clipboard requests.
+- Handle macOS/Windows clipboard shortcuts and bracketed paste from native mode.
+- Forward native terminal replies; retain real grid, selection and IME rendering.
+- Replace upstream tests with a focused parser/protocol self-check.
+- Correct inherited IME selected/marked UTF-16 ranges and preedit wide-cell positions.
+- Consume handled keys once; support inverse/hidden cells, wide-cell backgrounds,
+  combining marks and the terminal cursor visibility mode in the renderer.
+- Route macOS Return/control keys before printable text/IME deferral, while
+  keeping composition navigation out of shell input; use real platform mono fonts.

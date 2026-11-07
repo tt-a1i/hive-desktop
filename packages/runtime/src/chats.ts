@@ -324,7 +324,7 @@ export class Chats implements StructuredSessionPort {
       return { ok: true };
     });
   }
-  async removeWorkspace(workspaceId: string): Promise<{ ok: true; removedSessionIds: string[] }> {
+  async removeWorkspace(workspaceId: string, drainWorkspaceTerminals: () => Promise<void>): Promise<{ ok: true; removedSessionIds: string[] }> {
     if (typeof workspaceId !== 'string' || !workspaceId.trim()) throw new Error('workspaceId is required');
     if (this.closing) throw new Error('Chat runtime is closing');
     this.assertWorkspaceAvailable(workspaceId);
@@ -334,6 +334,7 @@ export class Chats implements StructuredSessionPort {
     try {
       return await this.hive.withWorkspaceWorkflowIdle(workspaceId, () => this.agentModels.withWorkspaceRemoval(workspaceId, () => this.withWorkspace(workspaceId, async () => {
         await this.workspace(workspaceId);
+        await drainWorkspaceTerminals();
         const path = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
         const records = this.index.list(workspaceId);
         const openings = records.flatMap(record => { const opening = this.opening.get(record.id); return opening ? [opening] : []; });

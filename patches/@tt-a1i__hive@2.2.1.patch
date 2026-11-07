@@ -10,6 +10,28 @@ index 27e9ed2bafba640a2e6f710844e72e9e00548984..f6122d657edb8071464491dceeaf7c35
              dataDir,
          }),
          versionService,
+diff --git a/dist/src/server/agent-manager-support.js b/dist/src/server/agent-manager-support.js
+index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..b9e27abce99157db799260327d5c793ab0d6e582 100644
+--- a/dist/src/server/agent-manager-support.js
++++ b/dist/src/server/agent-manager-support.js
+@@ -43,7 +43,6 @@ const isPtyReadEofError = (error, platform = process.platform) => {
+     const candidate = error;
+     return platform !== 'win32' && candidate?.code === 'EIO' && candidate.syscall === 'read';
+ };
+-const serializePtyInput = (input) => Buffer.isBuffer(input) ? input.toString('latin1') : input;
+ const defaultExecRunner = (cmd, args, done) => {
+     let settled = false;
+     const settle = (success) => {
+@@ -290,7 +289,8 @@ export const attachAgentPty = (run, pty, ptyOutputBus, platform = process.platfo
+             if (stdinClosed || run.status === 'exited' || run.status === 'error') {
+                 throw new Error(`PTY is not active for run: ${run.runId}`);
+             }
+-            pty.write(serializePtyInput(text));
++            // node-pty accepts strings and raw buffers; converting bytes to latin1 would re-encode them as UTF-8.
++            pty.write(text);
+         },
+     };
+     pty.onData((chunk) => {
 diff --git a/dist/src/server/routes-team.js b/dist/src/server/routes-team.js
 index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c0d7ca28e 100644
 --- a/dist/src/server/routes-team.js
@@ -90,6 +112,173 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..3e96d6a5e347497a4c37ad0941fdd5a4
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
+diff --git a/dist/src/server/terminal-state-mirror.js b/dist/src/server/terminal-state-mirror.js
+index 8bcdd5e1b51f9fbca0cde5022dbd39c134494bef..1917a7e2d80add22796c599969059011c2d967b8 100644
+--- a/dist/src/server/terminal-state-mirror.js
++++ b/dist/src/server/terminal-state-mirror.js
+@@ -70,10 +70,11 @@ export class TerminalStateMirror {
+         this.parserDisposables.length = 0;
+         this.terminal.dispose();
+     }
+-    async getSnapshot() {
+-        await this.operationQueue;
+-        // SerializeAddon restores tracking level but not SGR/SGR_PIXELS encoding.
+-        return this.serializeAddon.serialize() + mouseEncodingSuffix(this.mouseEncoding);
++    getSnapshot() {
++        // Capture a queue boundary: writes accepted after this call run only after serialization.
++        const snapshot = this.operationQueue.then(() => this.serializeAddon.serialize() + mouseEncodingSuffix(this.mouseEncoding));
++        this.operationQueue = snapshot.then(() => undefined, () => undefined);
++        return snapshot;
+     }
+     /**
+      * Returns the most recent non-empty scrollback line (trimmed, ANSI-stripped,
+diff --git a/dist/src/server/terminal-stream-hub.d.ts b/dist/src/server/terminal-stream-hub.d.ts
+index 551eceaa5e54e0f0a20256e720ea3eebbd4783d6..896871201a27f0debf0c5e2566ef4416bc03bfa4 100644
+--- a/dist/src/server/terminal-stream-hub.d.ts
++++ b/dist/src/server/terminal-stream-hub.d.ts
+@@ -2,8 +2,8 @@ import type WebSocket from 'ws';
+ import type { RuntimeStore } from './runtime-store.js';
+ import { type TerminalMirrorSize } from './terminal-state-mirror.js';
+ export interface TerminalStreamHub {
+-    attachControl: (runId: string, clientId: string, socket: WebSocket, initialSize?: TerminalMirrorSize) => void;
+-    attachIo: (runId: string, clientId: string, socket: WebSocket, initialSize?: TerminalMirrorSize) => void;
++    attachControl: (runId: string, clientId: string, socket: WebSocket, initialSize?: TerminalMirrorSize, restoreBarrier?: boolean) => void;
++    attachIo: (runId: string, clientId: string, socket: WebSocket, initialSize?: TerminalMirrorSize, restoreBarrier?: boolean) => void;
+     close: () => void;
+ }
+ export declare const createTerminalStreamHub: (store: RuntimeStore) => TerminalStreamHub;
+diff --git a/dist/src/server/terminal-stream-hub.js b/dist/src/server/terminal-stream-hub.js
+index ac8cf233917d5c23eaf2a2d996a236a9f66c61df..705538dbdceaa84965fd963e12f1f29aaac706bc 100644
+--- a/dist/src/server/terminal-stream-hub.js
++++ b/dist/src/server/terminal-stream-hub.js
+@@ -31,7 +31,7 @@ export const createTerminalStreamHub = (store) => {
+     const getOrCreateViewer = (state, clientId) => {
+         let viewer = state.viewers.get(clientId);
+         if (!viewer) {
+-            viewer = { clientId, controlSocket: null, flowState: null, ioSocket: null };
++            viewer = { clientId, controlSocket: null, flowState: null, ioSocket: null, restoreSnapshot: null };
+             state.viewers.set(clientId, viewer);
+         }
+         return viewer;
+@@ -102,20 +102,49 @@ export const createTerminalStreamHub = (store) => {
+         }, 25);
+     };
+     return {
+-        attachControl(runId, clientId, socket, initialSize) {
++        attachControl(runId, clientId, socket, initialSize, restoreBarrier = false) {
+             const state = getOrCreateState(runId, initialSize);
+             attachWebSocketErrorHandler(socket, `terminal ${runId} control`);
+             const viewer = getOrCreateViewer(state, clientId);
+             viewer.controlSocket = socket;
++            const controlIoSocket = viewer.ioSocket;
+             startExitWatcher(runId, state);
+-            void state.mirror
+-                .getSnapshot()
+-                .then((snapshot) => {
+-                sendWebSocketMessage(socket, serializeTerminalRestore(snapshot), `terminal ${runId} restore`);
+-            })
+-                .catch(() => {
+-                sendWebSocketMessage(socket, serializeTerminalRestore(''), `terminal ${runId} restore`);
+-            });
++            if (restoreBarrier) {
++                const captured = viewer.restoreSnapshot;
++                viewer.restoreSnapshot = null;
++                const rejectRestore = (error) => {
++                    if (viewer.controlSocket !== socket)
++                        return;
++                    sendWebSocketMessage(socket, serializeTerminalError(error instanceof Error ? error.message : 'Terminal restore boundary is unavailable'), `terminal ${runId} restore`);
++                    socket.close(1011, 'Terminal restore boundary is unavailable');
++                    if (controlIoSocket && viewer.ioSocket === controlIoSocket)
++                        controlIoSocket.close(1011, 'Terminal restore boundary is unavailable');
++                };
++                if (!captured || captured.ioSocket !== viewer.ioSocket) {
++                    rejectRestore(new Error('Terminal restore requires a matching fresh IO attachment'));
++                }
++                else {
++                    void captured.promise.then((result) => {
++                        if (viewer.controlSocket !== socket)
++                            return;
++                        if (viewer.ioSocket !== captured.ioSocket) {
++                            rejectRestore(new Error('Terminal IO attachment changed during restore'));
++                            return;
++                        }
++                        if ('error' in result)
++                            rejectRestore(result.error);
++                        else
++                            sendWebSocketMessage(socket, serializeTerminalRestore(result.snapshot), `terminal ${runId} restore`);
++                    });
++                }
++            }
++            else {
++                void state.mirror.getSnapshot().then((snapshot) => {
++                    sendWebSocketMessage(socket, serializeTerminalRestore(snapshot), `terminal ${runId} restore`);
++                }).catch(() => {
++                    sendWebSocketMessage(socket, serializeTerminalRestore(''), `terminal ${runId} restore`);
++                });
++            }
+             socket.on('message', (raw) => {
+                 try {
+                     const message = parseTerminalControlMessage(raw);
+@@ -135,17 +164,25 @@ export const createTerminalStreamHub = (store) => {
+                 }
+             });
+             socket.on('close', () => {
+-                if (viewer.controlSocket === socket)
++                if (viewer.controlSocket === socket) {
+                     viewer.controlSocket = null;
++                    if (viewer.restoreSnapshot?.ioSocket === controlIoSocket)
++                        viewer.restoreSnapshot = null;
++                }
+                 cleanupViewer(runId, state, clientId);
+             });
+         },
+-        attachIo(runId, clientId, socket, initialSize) {
++        attachIo(runId, clientId, socket, initialSize, restoreBarrier = false) {
+             const state = getOrCreateState(runId, initialSize);
+             attachWebSocketErrorHandler(socket, `terminal ${runId} io`);
+             const viewer = getOrCreateViewer(state, clientId);
+             viewer.ioSocket = socket;
+             viewer.flowState?.close();
++            // Capture before this IO generation can receive its first live chunk. No bytes are suppressed or deduplicated.
++            viewer.restoreSnapshot = restoreBarrier ? {
++                ioSocket: socket,
++                promise: state.mirror.getSnapshot().then(snapshot => ({ snapshot }), error => ({ error })),
++            } : null;
+             viewer.flowState = createTerminalOutputFlow(socket, {
+                 onBackpressureChange(backpressured) {
+                     if (backpressured) {
+@@ -167,10 +204,12 @@ export const createTerminalStreamHub = (store) => {
+                 }
+             });
+             socket.on('close', () => {
+-                if (viewer.ioSocket === socket)
++                if (viewer.ioSocket === socket) {
+                     viewer.ioSocket = null;
+-                viewer.flowState?.close();
+-                viewer.flowState = null;
++                    viewer.restoreSnapshot = null;
++                    viewer.flowState?.close();
++                    viewer.flowState = null;
++                }
+                 cleanupViewer(runId, state, clientId);
+             });
+         },
+diff --git a/dist/src/server/terminal-ws-server.js b/dist/src/server/terminal-ws-server.js
+index 64ac33b2a3de56853dce66b2cdd4efdc70481c7f..8b6b36ed3afe3ceee713f3d1dd98c60732235f39 100644
+--- a/dist/src/server/terminal-ws-server.js
++++ b/dist/src/server/terminal-ws-server.js
+@@ -101,9 +101,9 @@ export const createTerminalWebSocketServer = (server, store, tasksFileService) =
+             detachRawSocketErrorHandler();
+             const clientId = getClientId(url);
+             if (match.channel === 'io')
+-                hub.attachIo(match.runId, clientId, ws, getInitialSize(url));
++                hub.attachIo(match.runId, clientId, ws, getInitialSize(url), url.searchParams.get('restoreBarrier') === '1');
+             else
+-                hub.attachControl(match.runId, clientId, ws, getInitialSize(url));
++                hub.attachControl(match.runId, clientId, ws, getInitialSize(url), url.searchParams.get('restoreBarrier') === '1');
+         });
+     });
+     // Kept as an idempotent fallback for callers that drive
 diff --git a/dist/src/server/workflow-runner.d.ts b/dist/src/server/workflow-runner.d.ts
 index 7f1e616c416b50c7aec3a4ef6c6142b233f762b6..be4acbc012a16bb8106983c49aaf9d3de64c891a 100644
 --- a/dist/src/server/workflow-runner.d.ts

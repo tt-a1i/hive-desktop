@@ -61,7 +61,7 @@
 | 原生确认、草稿清理、失败后保留 | 已实现，Mac 原生窗口及源码独立复核通过 |
 | 项目、原生历史与 spool 保留 | 真实文件断言通过；不推断所有外部 Agent 都不写自己的历史 |
 | Worker 原生 error 事件、dispose 自身失败、DB 提交后的 Hive 清理失败 | 未分别注入验证；不把逻辑 done-failure、初始化失败或 DB trigger 当作等价证据 |
-| Windows | 本次变更尚未实跑；先前 `39b1929` CI 成功不覆盖此次补丁，原生窗口仍未验收 |
+| Windows | `e1dde8c` [CI 42325130739](https://github.com/tt-a1i/hive-desktop/actions/runs/42325130739) 首次通过构建、解压包 runtime/PTY、监督和 CLI 检查，未在 Windows 原生窗口走查移除流程 |
 
 ## Self-Review
 

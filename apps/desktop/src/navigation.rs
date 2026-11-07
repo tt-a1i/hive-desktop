@@ -59,7 +59,8 @@ impl HiveApp {
                 )
             })
             .when(
-                self.member_panel
+                self.terminal.visible
+                    || self.member_panel
                     || self.memory.visible
                     || self.roles.visible
                     || self.settings_panel
@@ -69,6 +70,7 @@ impl HiveApp {
                         Button::new("return-chat")
                             .label("返回会话")
                             .on_click(cx.listener(|this, _, _, cx| {
+                                this.hide_terminal(cx);
                                 this.close_memory();
                                 this.close_settings();
                                 this.close_roles();
@@ -145,6 +147,7 @@ impl HiveApp {
                                         if window.viewport_size().width < px(820.) {
                                             this.sidebar_open = false;
                                         }
+                                        this.hide_terminal(cx);
                                         this.new_session(backend, cx);
                                     });
                                 },
@@ -188,7 +191,10 @@ impl HiveApp {
                                     .disabled(
                                         self.workspace_removing.as_ref() == Some(&workspace.id),
                                     )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if this.terminal.visible {
+                                            this.remember_terminal_focus(window, cx);
+                                        }
                                         this.select_workspace(id.clone(), cx)
                                     }))
                             }))
@@ -357,6 +363,7 @@ impl HiveApp {
                                                 if window.viewport_size().width < px(820.) {
                                                     this.sidebar_open = false;
                                                 }
+                                                this.hide_terminal(cx);
                                                 this.close_collaboration();
                                                 this.open_session(id.clone(), cx);
                                             })),
@@ -369,6 +376,20 @@ impl HiveApp {
                     .flex_shrink_0()
                     .gap_1()
                     .child(
+                        Button::new("open-terminal")
+                            .w_full()
+                            .label("工作区终端")
+                            .selected(self.terminal.visible)
+                            .disabled(
+                                !self.connected
+                                    || self.workspace.is_none()
+                                    || !self.workspace_writes_allowed(),
+                            )
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.show_terminal(window, cx)),
+                            ),
+                    )
+                    .child(
                         Button::new("toggle-members")
                             .w_full()
                             .label("团队成员")
@@ -379,6 +400,7 @@ impl HiveApp {
                                 this.close_settings();
                                 this.close_collaboration();
                                 this.close_roles();
+                                this.hide_terminal(cx);
                                 this.member_panel = true;
                                 if window.viewport_size().width < px(820.) {
                                     this.sidebar_open = false;
@@ -395,6 +417,7 @@ impl HiveApp {
                             .selected(self.collaboration.visible)
                             .disabled(self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
+                                this.hide_terminal(cx);
                                 this.open_collaboration(cx);
                                 if window.viewport_size().width < px(820.) {
                                     this.sidebar_open = false;
@@ -409,6 +432,7 @@ impl HiveApp {
                             .selected(self.memory.visible)
                             .disabled(self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
+                                this.hide_terminal(cx);
                                 this.open_memory(cx);
                                 if window.viewport_size().width < px(820.) {
                                     this.sidebar_open = false;
@@ -422,6 +446,7 @@ impl HiveApp {
                             .label("设置")
                             .selected(self.settings_panel || self.roles.visible)
                             .on_click(cx.listener(|this, _, window, cx| {
+                                this.hide_terminal(cx);
                                 this.open_settings(window, cx);
                                 if window.viewport_size().width < px(820.) {
                                     this.sidebar_open = false;

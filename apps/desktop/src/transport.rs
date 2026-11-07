@@ -1,6 +1,6 @@
 use crate::{
     process_supervisor::{CleanupReport, OwnedProcess},
-    protocol::PiEvent,
+    protocol::{PiEvent, TerminalWireEvent},
     runtime_location::locate_runtime,
 };
 use serde_json::{Value, json};
@@ -23,6 +23,7 @@ type Reply = Result<Value, String>;
 type Pending = Arc<Mutex<HashMap<u64, Sender<Reply>>>>;
 pub enum RuntimeEvent {
     Agent(PiEvent),
+    Terminal(TerminalWireEvent),
     Failed(String),
 }
 pub struct Runtime {
@@ -123,6 +124,16 @@ impl Runtime {
                             Ok(value["result"].clone())
                         };
                         let _ = reply.try_send(result);
+                    }
+                } else if value["event"] == "terminal" {
+                    match serde_json::from_value(value["data"].clone()) {
+                        Ok(event) => {
+                            let _ = e.try_send(RuntimeEvent::Terminal(event));
+                        }
+                        Err(error) => {
+                            fail(&p, &e, &f, format!("终端事件格式错误：{error}"));
+                            return;
+                        }
                     }
                 } else if value["event"] == "agent" {
                     match serde_json::from_value(value["data"].clone()) {
@@ -234,30 +245,48 @@ impl Runtime {
         smol::unblock(move || owned.lock().unwrap().cleanup(grace)).await
     }
     pub async fn request(&self, method: &str, params: Value) -> Reply {
-        if self.closing.load(Ordering::Acquire) {
-            return Err("后台正在关闭或已退出".into());
-        }
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = bounded(1);
-        // Lock failure before pending so an EOF cannot strand a newly inserted request.
-        {
-            let failure = self.failure.lock().unwrap();
-            if let Some(error) = &*failure {
-                return Err(error.clone());
+        self.begin_request(method, params).await
+    }
+    /// Enqueue in caller order; the existing writer remains the only wire writer.
+    /// Terminal input/ACK must not depend on async task polling order.
+    pub fn begin_request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> impl std::future::Future<Output = Reply> + use<> {
+        let pending = (|| -> Result<Receiver<Reply>, String> {
+            if self.closing.load(Ordering::Acquire) {
+                return Err("后台正在关闭或已退出".into());
             }
-            self.pending.lock().unwrap().insert(id, tx);
+            let id = self.next.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = bounded(1);
+            // Lock failure before pending so an EOF cannot strand a newly inserted request.
+            {
+                let failure = self.failure.lock().unwrap();
+                if let Some(error) = &*failure {
+                    return Err(error.clone());
+                }
+                self.pending.lock().unwrap().insert(id, tx);
+            }
+            if self
+                .tx
+                .send(json!({"id":id,"method":method,"params":params}))
+                .is_err()
+            {
+                self.pending.lock().unwrap().remove(&id);
+                return Err("后台写入线程已停止".into());
+            }
+            Ok(rx)
+        })();
+        async move {
+            match pending {
+                Ok(rx) => rx
+                    .recv()
+                    .await
+                    .unwrap_or_else(|_| Err("后台响应通道已关闭".into())),
+                Err(error) => Err(error),
+            }
         }
-        if self
-            .tx
-            .send(json!({"id":id,"method":method,"params":params}))
-            .is_err()
-        {
-            self.pending.lock().unwrap().remove(&id);
-            return Err("后台写入线程已停止".into());
-        }
-        rx.recv()
-            .await
-            .unwrap_or_else(|_| Err("后台响应通道已关闭".into()))
     }
 }
 impl Drop for Runtime {
