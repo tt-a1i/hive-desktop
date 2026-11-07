@@ -3,6 +3,57 @@ use crate::{app::HiveApp, protocol::*};
 use gpui_kit::*;
 use serde_json::json;
 impl HiveApp {
+    fn remember_conversation_position(&mut self) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if self.loading || self.messages.is_empty() {
+            return;
+        }
+        let expanded = self
+            .messages
+            .iter()
+            .filter(|message| {
+                message.tool.as_ref().is_some_and(|tool| tool.expanded)
+                    || message
+                        .delivery
+                        .as_ref()
+                        .is_some_and(|delivery| delivery.expanded)
+            })
+            .map(|message| message.id.clone())
+            .collect();
+        let offset = (self.scroll.max_offset().y + self.scroll.offset().y > px(4.))
+            .then(|| self.scroll.offset());
+        self.positions.insert(
+            session.id.clone(),
+            crate::app::ConversationPosition { offset, expanded },
+        );
+    }
+
+    fn restore_conversation_position(&mut self, id: &str) {
+        let position = self.positions.get(id);
+        if let Some(position) = position {
+            for message in self
+                .messages
+                .iter_mut()
+                .filter(|m| position.expanded.contains(&m.id))
+            {
+                if let Some(tool) = &mut message.tool {
+                    tool.expanded = true;
+                }
+                if let Some(delivery) = &mut message.delivery {
+                    delivery.expanded = true;
+                }
+            }
+        }
+        self.scroll = ScrollHandle::new();
+        if let Some(offset) = position.and_then(|p| p.offset) {
+            self.scroll.set_offset(offset);
+        } else {
+            self.scroll.scroll_to_bottom();
+        }
+    }
+
     fn switch_draft(&mut self, next: Option<String>, cx: &mut Context<Self>) {
         if let Some(key) = self.draft_owner.clone() {
             let text = self.input.read(cx).value().to_string();
@@ -63,6 +114,7 @@ impl HiveApp {
         if self.workspace_removing.as_ref() == Some(&id) {
             return;
         }
+        self.remember_conversation_position();
         self.close_roles();
         self.switch_draft(Some(format!("workspace:{id}")), cx);
         if let Some(previous) = &self.workspace {
@@ -303,6 +355,7 @@ impl HiveApp {
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
             return;
         }
+        self.remember_conversation_position();
         self.close_memory();
         self.close_roles();
         self.switch_draft(Some(format!("session:{id}")), cx);
@@ -368,7 +421,7 @@ impl HiveApp {
                         for event in std::mem::take(&mut this.pending_events) {
                             this.agent_event(event, cx);
                         }
-                        this.scroll.scroll_to_bottom();
+                        this.restore_conversation_position(&id);
                     }
                     Err(error) => this.error = Some(format!("打开会话响应错误：{error}")),
                 }

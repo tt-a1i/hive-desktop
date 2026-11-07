@@ -41,6 +41,11 @@ pub struct Message {
     pub delivery: Option<DeliveryCard>,
     pub explicit_user: bool,
 }
+pub struct ConversationPosition {
+    pub offset: Option<Point<Pixels>>,
+    pub expanded: HashSet<String>,
+}
+
 pub struct HiveApp {
     pub sidebar_open: bool,
     pub connected: bool,
@@ -125,6 +130,7 @@ pub struct HiveApp {
     pub status: String,
     pub error: Option<String>,
     pub loading: bool,
+    pub positions: HashMap<String, ConversationPosition>,
     pub scroll: ScrollHandle,
     pub collaboration_scroll: ScrollHandle,
     events: Task<()>,
@@ -264,6 +270,7 @@ impl HiveApp {
             status: "正在启动 Hive 后台…".into(),
             error: None,
             loading: true,
+            positions: HashMap::new(),
             scroll: ScrollHandle::new(),
             collaboration_scroll: ScrollHandle::new(),
             events: Task::ready(()),

@@ -259,6 +259,7 @@ impl HiveApp {
             self.draft_target = None;
         }
         for id in sessions {
+            self.positions.remove(id);
             self.removed_sessions.insert(id.clone());
             self.interactions.sessions.remove(id);
             self.busy.remove(id);
