@@ -1,6 +1,7 @@
 mod app;
 mod appearance;
 mod artifacts;
+mod attachments;
 mod collaboration;
 mod conversation;
 mod conversation_find;

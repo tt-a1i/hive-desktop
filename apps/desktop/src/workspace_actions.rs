@@ -279,6 +279,8 @@ impl HiveApp {
             key == workspace_key || sessions.iter().any(|id| key == format!("session:{id}"))
         };
         self.drafts.retain(|key, _| !removed_key(key));
+        self.attachments.drafts.retain(|key, _| !removed_key(key));
+        self.attachments.prune();
         if self.draft_owner.as_deref().is_some_and(removed_key) {
             self.draft_owner = None;
             if self.draft_target.as_deref().is_some_and(removed_key) {

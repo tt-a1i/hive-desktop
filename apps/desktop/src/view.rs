@@ -312,7 +312,9 @@ impl Render for HiveApp {
             && self.conversation_ready
             && self.model.is_none()
             && !self.loading;
-        let can_submit = self.conversation_ready
+        self.ensure_attachment_previews(cx);
+        let can_submit = self.attachments.ready(self.draft_target.as_ref())
+            && self.conversation_ready
             && self.session.is_some()
             && !needs_pi_model
             && self.workspace_writes_allowed()
@@ -327,7 +329,8 @@ impl Render for HiveApp {
                 .update(cx, |input, cx| input.set_submit_on_enter(can_submit, cx));
         }
         self.sync_conversation_list(cx);
-        let has_text = !self.input.read(cx).value().trim().is_empty();
+        let has_text = !self.input.read(cx).value().trim().is_empty()
+            || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
         self.composer_has_text = has_text;
         let member_query = self
             .member_model_search
@@ -595,11 +598,13 @@ impl Render for HiveApp {
                 }))))
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child("选择本地项目文件夹，开始与 Agent 协作。")))
 
+                .child(self.render_input_attachments(cx))
                 .when(self.workspace.is_some(), |v| v.child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息")))
                 .child(h_flex().min_w_0().gap_2().items_center()
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
                         self.new_chat_menu("home-agent", "选择 Agent", None, cx).into_any_element()
                     } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
+                    .child(Button::new("attach-images").ghost().compact().icon(Glyph::Plus).label("图片").accessibility_label("添加图片").disabled(!self.connected || self.workspace.is_none() || self.loading || running || !self.attachments.ready(self.draft_target.as_ref())).on_click(cx.listener(|this,_,_,cx|this.choose_images(cx))))
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(self.model_picker(window, running, cx)))
                     .when(self.session.is_some(), |row| row.child(if running {

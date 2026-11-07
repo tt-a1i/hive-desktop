@@ -196,6 +196,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
       if (disposed) return;
       disposed = true; interactions.clear('disposed'); await transport.close();
     },
+    supportsImages:()=>state?.model?.input?.includes('image')??false,
     currentModel: () => state?.model && ({ provider: state.model.provider, id: state.model.id, name: state.model.name }),
     listModels: () => models.map(model => ({ provider: model.provider, id: model.id, name: model.name, available: true })),
     setModel,

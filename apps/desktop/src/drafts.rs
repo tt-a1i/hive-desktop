@@ -15,6 +15,8 @@ struct Draft {
     key: String,
     input: String,
     failed: Vec<String>,
+    #[serde(default)]
+    attachments: Vec<crate::attachments::AttachmentRef>,
 }
 
 impl Draft {
@@ -63,6 +65,7 @@ impl DraftStore {
         &mut self,
         inputs: &HashMap<String, String>,
         failed: &HashMap<String, Vec<String>>,
+        images: &HashMap<String, Vec<crate::attachments::AttachmentRef>>,
     ) -> io::Result<()> {
         let mut next = HashMap::new();
         for (key, text) in inputs.iter().filter(|(_, text)| !text.is_empty()) {
@@ -72,6 +75,7 @@ impl DraftStore {
                     key: key.clone(),
                     input: text.clone(),
                     failed: Vec::new(),
+                    attachments: Vec::new(),
                 },
             );
         }
@@ -82,9 +86,21 @@ impl DraftStore {
                     key,
                     input: String::new(),
                     failed: Vec::new(),
+                    attachments: Vec::new(),
                 })
                 .failed
                 .clone_from(messages);
+        }
+        for (key, items) in images.iter().filter(|(_, items)| !items.is_empty()) {
+            next.entry(key.clone())
+                .or_insert_with(|| Draft {
+                    key: key.clone(),
+                    input: String::new(),
+                    failed: Vec::new(),
+                    attachments: Vec::new(),
+                })
+                .attachments
+                .clone_from(items);
         }
         for (key, draft) in &next {
             if self.saved.get(key) == Some(draft) {
@@ -118,6 +134,11 @@ impl HiveApp {
     pub(crate) fn restore_drafts(&mut self, root: &Path) -> io::Result<()> {
         let store = DraftStore::open(root)?;
         for draft in store.saved.values() {
+            if !draft.attachments.is_empty() {
+                self.attachments
+                    .drafts
+                    .insert(draft.key.clone(), draft.attachments.clone());
+            }
             if !draft.input.is_empty() {
                 self.drafts.insert(draft.key.clone(), draft.input.clone());
             }
@@ -149,7 +170,19 @@ impl HiveApp {
     pub(crate) fn flush_drafts(&mut self, cx: &Context<Self>) -> io::Result<()> {
         self.capture_editor(cx);
         if let Some(store) = &mut self.draft_store {
-            store.save(&self.drafts, &self.failed_drafts)?;
+            let mut inputs = self.drafts.clone();
+            for (id, text) in &self.inflight_inputs {
+                let key = format!("session:{id}");
+                if self
+                    .attachments
+                    .drafts
+                    .get(&key)
+                    .is_some_and(|items| !items.is_empty())
+                {
+                    inputs.entry(key).or_insert_with(|| text.clone());
+                }
+            }
+            store.save(&inputs, &self.failed_drafts, &self.attachments.drafts)?;
         }
         Ok(())
     }
@@ -175,23 +208,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn image_only_draft_preserves_upload_identity_and_legacy_records() {
+        let root = tempfile::tempdir().unwrap();
+        let key = "session:images".to_owned();
+        let refs = vec![crate::attachments::AttachmentRef {
+            id: "image-id".into(),
+            workspace_id: "workspace".into(),
+            name: "截图.png".into(),
+            mime_type: "image/png".into(),
+            size: 128,
+        }];
+        let images = HashMap::from([(key.clone(), refs.clone())]);
+        let mut store = DraftStore::open(root.path()).unwrap();
+        store
+            .save(&HashMap::new(), &HashMap::new(), &images)
+            .unwrap();
+        assert!(
+            root.path()
+                .join("desktop-drafts/session-images.json")
+                .exists()
+        );
+        let reopened = DraftStore::open(root.path()).unwrap();
+        assert_eq!(reopened.saved[&key].attachments, refs);
+        assert!(reopened.saved[&key].input.is_empty());
+        std::fs::write(
+            root.path().join("desktop-drafts/session-legacy.json"),
+            r#"{"key":"session:legacy","input":"原有草稿","failed":[]}"#,
+        )
+        .unwrap();
+        let legacy = DraftStore::open(root.path()).unwrap();
+        assert_eq!(legacy.saved["session:legacy"].input, "原有草稿");
+        assert!(legacy.saved["session:legacy"].attachments.is_empty());
+        store
+            .save(&HashMap::new(), &HashMap::new(), &HashMap::new())
+            .unwrap();
+        assert!(
+            !root
+                .path()
+                .join("desktop-drafts/session-images.json")
+                .exists()
+        );
+    }
+
+    #[test]
     fn reopen_preserves_multiline_and_failures_without_overwriting_other_windows() {
         let root = tempfile::tempdir().unwrap();
         let mut first = DraftStore::open(root.path()).unwrap();
         let mut other = DraftStore::open(root.path()).unwrap();
         let inputs = HashMap::from([("session:alpha".into(), "请检查\n第二行".into())]);
         let failed = HashMap::from([("alpha".into(), vec!["第一次".into()])]);
-        first.save(&inputs, &failed).unwrap();
+        first.save(&inputs, &failed, &HashMap::new()).unwrap();
         other
             .save(
                 &HashMap::from([("workspace:beta".into(), "下一步".into())]),
+                &HashMap::new(),
                 &HashMap::new(),
             )
             .unwrap();
         let store = DraftStore::open(root.path()).unwrap();
         assert_eq!(store.saved["session:alpha"].input, "请检查\n第二行");
         assert_eq!(store.saved["session:alpha"].failed, ["第一次"]);
-        first.save(&HashMap::new(), &HashMap::new()).unwrap();
+        first
+            .save(&HashMap::new(), &HashMap::new(), &HashMap::new())
+            .unwrap();
         let store = DraftStore::open(root.path()).unwrap();
         assert_eq!(store.saved.len(), 1);
         assert_eq!(store.saved["workspace:beta"].input, "下一步");

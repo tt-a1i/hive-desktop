@@ -1,3 +1,4 @@
+import { ImageAttachments, attachmentIds, encodeImageInput, decodeImageInput } from './image-attachments.js';
 import { promptImages } from './prompt-images.js';
 import { restoreHistoricalReport } from './delivery-presentation.js';
 import type { AgentModels } from './agent-models.js';
@@ -33,6 +34,7 @@ export class Chats implements StructuredSessionPort {
   private readonly opening = new Map<string, Promise<LiveChat>>();
   private readonly sequences = new Map<string, number>();
   private readonly activating = new Map<string, Promise<void>>();
+  readonly attachments: ImageAttachments;
   private readonly sessionDir: string;
   private readonly queueDir: string;
   private closing = false;
@@ -40,6 +42,7 @@ export class Chats implements StructuredSessionPort {
 
   constructor(private readonly hive: HiveHost, dataDir: string, private readonly emit: (event: ChatEvent) => void,
     private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels) {
+    this.attachments=new ImageAttachments(hive);
     const directory = join(dataDir, 'chats');
     this.sessionDir = join(directory, 'pi');
     this.queueDir = join(directory, 'deliveries');
@@ -291,13 +294,25 @@ export class Chats implements StructuredSessionPort {
       resumed: chat.handle.hasContext('hive-context'),
       ...(chat.handle.sessionFile ? { sessionFile: chat.handle.sessionFile } : {}),
       deliver: async (text, options) => {
-        const images=promptImages(options?.images);
+        let images = promptImages(options?.images);
+        let presentation = options?.presentation;
+        if (presentation?.origin === 'user') {
+          const decoded = decodeImageInput(presentation.displayText);
+          if (decoded.text !== presentation.displayText) {
+            if (!text.startsWith(presentation.displayText)) throw new Error('用户图片来源与投递内容不匹配。');
+            const staged = await this.attachments.get(record.workspaceId, decoded.ids);
+            images = promptImages([...images, ...staged.map(item => item.image)]);
+            text = decoded.text + text.slice(presentation.displayText.length);
+            presentation = { ...presentation, displayText: decoded.text,
+              sourceText: presentation.displayText, attachments: staged.map(item => item.attachment) };
+          }
+        }
         if (options?.triggerTurn === false) {
-          if(images.length) throw new TypeError('不触发模型回合的投递暂不支持图片。');
+          if (images.length) throw new TypeError('不触发模型回合的投递暂不支持图片。');
           const startupContext = text;
           this.index.save({ ...this.index.get(id), startupContext });
           await chat.handle.addContext(startupContext);
-        } else await chat.queue.enqueue(text, true, options?.presentation, images);
+        } else await chat.queue.enqueue(text, true, presentation, images);
       },
       ready: () => chat.queue.resume(),
       stop: () => this.stopLive(id, chat),
@@ -339,24 +354,30 @@ export class Chats implements StructuredSessionPort {
     // The Hive route performs its normal agent status transition and outbox replay.
     await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/agents/${encodeURIComponent(agentId)}/start`);
   }
-  async prompt(id: string, text: string) {
+  async prompt(id: string, text: string, idsInput?: unknown) {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
-    if (!text.trim()) throw new Error('Message cannot be empty');
+    const ids = attachmentIds(idsInput);
+    if (!text.trim() && !ids.length) throw new Error('Message cannot be empty');
+    const inputText = encodeImageInput(text, ids);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       const opened = await this.require(id);
       if (this.index.get(id).backend === 'pi' && !opened.handle.currentModel()) {
         throw new Error('请先为内置 Pi 选择可用模型，再发送消息。');
       }
+      if (ids.length) {
+        await this.attachments.get(this.index.get(id).workspaceId, ids);
+        if (opened.handle.supportsImages?.() === false) throw new Error('当前模型不支持图片，请切换模型后重试。');
+      }
       await this.activateOnce(id);
       const chat = await this.require(id);
       if (!chat.queue.pendingCount) chat.queue.resume();
       const record = this.index.get(id);
-      this.index.save({ ...record, title: !record.customTitle && record.title === '新会话' ? text.trim().slice(0, 60) : record.title, updatedAt: Date.now() });
+      this.index.save({ ...record, title: !record.customTitle && record.title === '新会话' ? text.trim().slice(0, 60) || '图片消息' : record.title, updatedAt: Date.now() });
       if (record.agentId === `${record.workspaceId}:orchestrator`) {
-        await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/user-input`, { text });
+        await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/user-input`, { text: inputText });
       } else {
-        await this.runtime.deliverSystemMessageToAgent(record.workspaceId, record.agentId!, text, {
-          requireActiveRun: true, presentation: { version: 1, origin: 'user', displayText: text },
+        await this.runtime.deliverSystemMessageToAgent(record.workspaceId, record.agentId!, inputText, {
+          requireActiveRun: true, presentation: { version: 1, origin: 'user', displayText: inputText },
         });
       }
       return { accepted: true, session: this.index.get(id) };

@@ -13,7 +13,10 @@ impl HiveApp {
             return;
         };
         let text = self.input.read(cx).value().to_string();
-        if text.trim().is_empty()
+        let attachment_key = format!("session:{id}");
+        let refs = self.attachments.refs(Some(&attachment_key));
+        if (text.trim().is_empty() && refs.is_empty())
+            || !self.attachments.ready(Some(&attachment_key))
             || self.busy.contains(&id)
             || self.pending.get(&id).copied().unwrap_or(0) > 0
             || self.loading
@@ -37,7 +40,7 @@ impl HiveApp {
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
-                .request("chat.prompt", json!({"sessionId":id,"text":text}))
+                .request("chat.prompt", json!({"sessionId":id,"text":text,"attachmentIds":refs.iter().map(|item|&item.id).collect::<Vec<_>>()}))
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection {
@@ -46,6 +49,11 @@ impl HiveApp {
                 this.inflight_inputs.remove(&id);
                 if this.removed_sessions.contains(&id) {
                     return;
+                }
+                if result.is_ok() {
+                    if let Some(items)=this.attachments.drafts.get_mut(&attachment_key) {items.retain(|item| !refs.iter().any(|sent| sent.id==item.id));}
+                    this.attachments.prune();
+                    this.schedule_draft_save(cx);
                 }
                 match result {
                     Err(error) => {
@@ -298,6 +306,9 @@ impl HiveApp {
             tool: None,
             delivery: None,
             explicit_user: false,
+            images: vec![],
+            images_loading: false,
+            images_error: None,
         });
     }
     // Both snapshots and live events use the same provenance contract. Never infer
@@ -353,6 +364,7 @@ impl HiveApp {
                 false,
                 cx,
             );
+            self.load_message_images(id.clone(), message, cx);
             if let Some(rendered) = self.messages.iter_mut().find(|m| m.id == id) {
                 rendered.explicit_user = explicit_user;
                 rendered.delivery = if explicit_user {
@@ -391,6 +403,7 @@ impl HiveApp {
             );
         } else {
             self.upsert(id.clone(), role, text, false, cx);
+            self.load_message_images(id.clone(), message, cx);
         }
         self.refresh_conversation_find(&id);
     }
@@ -547,27 +560,38 @@ impl HiveApp {
     }
 }
 pub(crate) fn message_text(message: &Value) -> String {
-    if let Some(text) = message["content"].as_str() {
-        return text.into();
+    let mut text = if let Some(text) = message["content"].as_str() {
+        text.to_owned()
+    } else {
+        message["content"]
+            .as_array()
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|block| match block["type"].as_str() {
+                        Some("text") => block["text"].as_str().map(String::from),
+                        Some("toolCall") if message["role"] != "assistant" => Some(format!(
+                            "{}\n{}",
+                            block["name"].as_str().unwrap_or("工具"),
+                            block["arguments"]
+                        )),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            })
+            .unwrap_or_else(|| message.to_string())
+    };
+    if message["role"] == "assistant"
+        && message["stopReason"] == "error"
+        && let Some(error) = message["errorMessage"].as_str()
+    {
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&format!("回复失败：{error}"));
     }
-    message["content"]
-        .as_array()
-        .map(|blocks| {
-            blocks
-                .iter()
-                .filter_map(|block| match block["type"].as_str() {
-                    Some("text") => block["text"].as_str().map(String::from),
-                    Some("toolCall") if message["role"] != "assistant" => Some(format!(
-                        "{}\n{}",
-                        block["name"].as_str().unwrap_or("工具"),
-                        block["arguments"]
-                    )),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        })
-        .unwrap_or_else(|| message.to_string())
+    text
 }
 
 #[derive(serde::Deserialize, PartialEq)]

@@ -53,6 +53,7 @@ export interface PiSessionHandle {
   respondInteraction?(id: string, response: unknown): void | Promise<void>;
   abort(): Promise<void>;
   dispose(): void | Promise<void>;
+  supportsImages?(): boolean;
   currentModel(): { provider: string; id: string; name: string } | undefined;
   refreshModels?(): Promise<void>;
   listModels(): { provider: string; id: string; name: string; available: boolean }[];

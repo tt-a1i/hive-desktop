@@ -283,8 +283,19 @@ impl HiveApp {
             !self.connected
                 || if let Some(project) = project {
                     self.workspace_removing.as_ref() == Some(&project.id)
+                        || self
+                            .attachments
+                            .loading
+                            .contains(&format!("workspace:{}", project.id))
                 } else {
-                    self.workspace.is_none() || self.loading || !self.workspace_writes_allowed()
+                    self.workspace.is_none()
+                        || self.loading
+                        || !self.workspace_writes_allowed()
+                        || self.workspace.as_ref().is_some_and(|id| {
+                            self.attachments
+                                .loading
+                                .contains(&format!("workspace:{id}"))
+                        })
                 },
         )
         .dropdown_menu(move |mut menu, _, _| {

@@ -403,6 +403,13 @@ impl HiveApp {
         let Some(workspace) = self.workspace.clone() else {
             return;
         };
+        if self
+            .attachments
+            .loading
+            .contains(&format!("workspace:{workspace}"))
+        {
+            return;
+        }
         let Some(runtime) = self.runtime.clone() else {
             self.error = Some("后台尚未连接".into());
             return;
@@ -434,6 +441,8 @@ impl HiveApp {
                                 let session_key = format!("session:{}", session.id);
                                 this.open_session(session.id, cx);
                                 if transfer {
+                                    this.attachments
+                                        .transfer(&workspace_draft, session_key.clone());
                                     if let Some(text) = this.drafts.remove(&workspace_draft) {
                                         this.drafts.insert(session_key, text);
                                     }

@@ -109,6 +109,12 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     }
     case 'hive.request': return runtime.requestHive(text(params, 'method'), text(params, 'path'), params.body);
     case 'chat.pinned': return chats.pinned();
+    case 'chat.attachments.add': {
+      const workspace = text(params, 'workspaceId');
+      chats.assertWorkspaceAvailable(workspace);
+      return chats.attachments.add(workspace, params.path);
+    }
+    case 'chat.attachments.get': return chats.attachments.get(text(params, 'workspaceId'), params.ids);
     case 'chat.search': return chats.search(params.query);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.createRecord':
@@ -123,7 +129,10 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     }
     case 'chat.rename': return chats.rename(text(params, 'sessionId'), params.title);
     case 'chat.open': return chats.open(text(params, 'sessionId'));
-    case 'chat.prompt': return chats.prompt(text(params, 'sessionId'), text(params, 'text'));
+    case 'chat.prompt': {
+      if (typeof params.text !== 'string') throw new TypeError('text must be a string');
+      return chats.prompt(text(params, 'sessionId'), params.text, params.attachmentIds);
+    }
     case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response);
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));
     case 'chat.resume': return chats.resume(text(params, 'sessionId'));

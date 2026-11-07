@@ -146,23 +146,47 @@ impl HiveApp {
             .when_some(message.markdown.as_ref(), |view, markdown| {
                 view.child(TextView::new(markdown).selectable(true).stream_fade(true))
             })
-            .when(message.markdown.is_none(), |view| {
+            .when(
+                message.markdown.is_none() && !message.text.is_empty(),
+                |view| {
+                    view.child(
+                        div()
+                            .min_w_0()
+                            .text_size(px(15.))
+                            .line_height(px(24.))
+                            .when(message.role == "user", |bubble| {
+                                bubble
+                                    .px_4()
+                                    .py_2()
+                                    .rounded_xl()
+                                    .bg(Color::Card.get(cx))
+                                    .border_1()
+                                    .border_color(Color::Divider.get(cx))
+                            })
+                            .child(message.text.clone()),
+                    )
+                },
+            )
+            .when(message.images_loading, |view| {
+                view.child(div().text_xs().child("读取图片…"))
+            })
+            .when_some(message.images_error.as_ref(), |view, error| {
                 view.child(
                     div()
-                        .min_w_0()
-                        .text_size(px(15.))
-                        .line_height(px(24.))
-                        .when(message.role == "user", |bubble| {
-                            bubble
-                                .px_4()
-                                .py_2()
-                                .rounded_xl()
-                                .bg(Color::Card.get(cx))
-                                .border_1()
-                                .border_color(Color::Divider.get(cx))
-                        })
-                        .child(message.text.clone()),
+                        .text_xs()
+                        .text_color(Color::Error.get(cx))
+                        .child(format!("图片预览失败：{error}")),
                 )
+            })
+            .when(!message.images.is_empty(), |view| {
+                view.child(h_flex().min_w_0().flex_wrap().gap_2().children(
+                    message.images.iter().cloned().map(|image| {
+                        img(image)
+                            .w(px(144.))
+                            .h(px(112.))
+                            .object_fit(ObjectFit::Contain)
+                    }),
+                ))
             })
             .when_some(message.delivery.as_ref(), |view, delivery| {
                 view.children(

@@ -18,6 +18,8 @@ function deliveryMetadata(message: unknown): DeliveryMetadata | undefined {
     ...(details.dispatchId !== undefined && { dispatchId: details.dispatchId }),
     ...(details.workerName !== undefined && { workerName: details.workerName }),
     ...(details.workerId !== undefined && { workerId: details.workerId }),
+    ...(details.attachments !== undefined && { attachments: structuredClone(details.attachments) }),
+    ...(details.sourceText !== undefined && { sourceText: details.sourceText }),
     ...(details.artifacts !== undefined && { artifacts: details.artifacts }) };
 }
 
@@ -239,6 +241,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       if (configError) throw new Error(configError);
       if (current && available) await session.setModel(current, { persist: false });
     },
+    supportsImages: () => session.model?.input.includes('image') ?? false,
     listModels() {
       const available = new Set(session.modelRuntime.getAvailableSnapshot().map(model => `${model.provider}\0${model.id}`));
       return session.modelRuntime.getModels().map(model => ({ provider: model.provider, id: model.id,

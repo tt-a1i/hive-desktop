@@ -164,6 +164,7 @@ impl HiveApp {
         self.workspace_removing = None;
         self.session_name_loading = false;
         self.session_pin_loading.clear();
+        self.attachments.reset_connection();
         self.pinned_sessions.loading = false;
         self.pinned_sessions.dirty = false;
         self.refreshing_models = false;

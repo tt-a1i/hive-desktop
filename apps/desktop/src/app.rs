@@ -51,6 +51,9 @@ pub struct Message {
     pub tool: Option<ToolPresentation>,
     pub delivery: Option<DeliveryCard>,
     pub explicit_user: bool,
+    pub images: Vec<std::sync::Arc<RenderImage>>,
+    pub images_loading: bool,
+    pub images_error: Option<String>,
 }
 pub struct ConversationPosition {
     pub anchor: Option<crate::conversation_list::ReadingAnchor>,
@@ -84,6 +87,7 @@ pub struct HiveApp {
     pub input: Entity<TextareaState>,
     pub(crate) draft_store: Option<crate::drafts::DraftStore>,
     pub(crate) draft_save_task: Option<Task<()>>,
+    pub attachments: crate::attachments::Attachments,
     pub drafts: HashMap<String, String>,
     pub draft_owner: Option<String>,
     pub draft_target: Option<String>,
@@ -322,6 +326,7 @@ impl HiveApp {
             _composer_subscription: composer_subscription,
             draft_store: None,
             draft_save_task: None,
+            attachments: Default::default(),
             drafts: HashMap::new(),
             draft_owner: None,
             draft_target: None,

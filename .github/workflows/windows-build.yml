@@ -62,6 +62,9 @@ jobs:
       - name: Check image payloads and durable native transports
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:images
+      - name: Check image upload and Hive message association
+        timeout-minutes: 3
+        run: pnpm --filter @hive-desktop/runtime check:attachments
       - name: Build desktop executable
         run: cargo build --locked --manifest-path apps/desktop/Cargo.toml
       - name: Compile runtime location tests
