@@ -240,50 +240,77 @@ impl HiveApp {
         &self,
         id: &'static str,
         label: &'static str,
+        project: Option<&crate::protocol::Workspace>,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let weak = cx.weak_entity();
-        Button::new(id)
-            .when(id == "new-session-menu", |b| {
-                b.h(px(32.)).rounded_full().w_full().justify_start()
-            })
-            .ghost()
-            .icon(Glyph::Plus)
-            .when(id == "new-session-menu", |b| {
-                b.child(div().flex_1().font_weight(FontWeight::NORMAL).child(label))
-            })
-            .when(id != "new-session-menu", |b| b.label(label))
-            .accessibility_label(if id == "new-session-menu" {
-                "新建会话，选择 Agent 后端"
+        let target = project.map(|workspace| workspace.id.clone());
+        let project_label =
+            project.map(|workspace| format!("在 {} 中新建会话，选择 Agent 后端", workspace.name));
+        Button::new(
+            project
+                .map(|workspace| SharedString::from(format!("new-project-chat-{}", workspace.id)))
+                .unwrap_or_else(|| id.into()),
+        )
+        .when(project.is_some(), |button| {
+            button.compact().h(px(28.)).w(px(28.))
+        })
+        .when(id == "new-session-menu", |b| {
+            b.h(px(32.)).rounded_full().w_full().justify_start()
+        })
+        .ghost()
+        .icon(Glyph::Plus)
+        .when(id == "new-session-menu", |b| {
+            b.child(div().flex_1().font_weight(FontWeight::NORMAL).child(label))
+        })
+        .when(id != "new-session-menu" && project.is_none(), |b| {
+            b.label(label)
+        })
+        .tooltip(
+            project_label
+                .clone()
+                .unwrap_or_else(|| "新建会话，选择 Agent 后端".into()),
+        )
+        .accessibility_label(project_label.unwrap_or_else(|| {
+            if id == "new-session-menu" {
+                "新建会话，选择 Agent 后端".into()
             } else {
-                "选择主控 Agent"
-            })
-            .disabled(
-                !self.connected
-                    || self.workspace.is_none()
-                    || self.loading
-                    || !self.workspace_writes_allowed(),
-            )
-            .dropdown_menu(move |mut menu, _, _| {
-                for (backend, label) in [
-                    ("pi", "内置 Pi"),
-                    ("codex", "Codex"),
-                    ("pi-rpc", "外部 Pi"),
-                    ("claude", "Claude Code"),
-                ] {
-                    let weak = weak.clone();
-                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
-                        let _ = weak.update(cx, |this, cx| {
-                            if window.viewport_size().width < px(820.) {
-                                this.sidebar_open = false;
-                            }
-                            this.hide_terminal(cx);
+                "选择主控 Agent".into()
+            }
+        }))
+        .disabled(
+            !self.connected
+                || if let Some(project) = project {
+                    self.workspace_removing.as_ref() == Some(&project.id)
+                } else {
+                    self.workspace.is_none() || self.loading || !self.workspace_writes_allowed()
+                },
+        )
+        .dropdown_menu(move |mut menu, _, _| {
+            for (backend, label) in [
+                ("pi", "内置 Pi"),
+                ("codex", "Codex"),
+                ("pi-rpc", "外部 Pi"),
+                ("claude", "Claude Code"),
+            ] {
+                let weak = weak.clone();
+                let target = target.clone();
+                menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        if window.viewport_size().width < px(820.) {
+                            this.sidebar_open = false;
+                        }
+                        this.hide_terminal(cx);
+                        if let Some(project) = &target {
+                            this.new_session_in_project(project.clone(), backend, cx);
+                        } else {
                             this.new_session(backend, cx);
-                        });
-                    }));
-                }
-                menu
-            })
+                        }
+                    });
+                }));
+            }
+            menu
+        })
     }
 
     pub fn render_navigation(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement {
@@ -297,7 +324,7 @@ impl HiveApp {
             .p_3()
             .gap_1()
             .child(self.render_navigation_bar(cx))
-            .child(self.new_chat_menu("new-session-menu", "新建", cx))
+            .child(self.new_chat_menu("new-session-menu", "新建", None, cx))
             .child(Button::new("search-sessions").ghost().h(px(32.)).rounded_full().icon(Glyph::Search)
                 .justify_start().w_full().accessibility_label("搜索会话")
                 .tooltip(if cfg!(target_os = "macos") { "搜索会话 (⌘K)" } else { "搜索会话 (Ctrl+K)" })
@@ -499,6 +526,7 @@ impl HiveApp {
                                                     .ghost()
                                                     .compact()
                                                     .h(px(28.)).w(px(24.)).icon(if expanded { Glyph::ChevronDown } else { Glyph::ChevronRight })
+                                                    .toggled(expanded)
                                                     .accessibility_label(format!(
                                                         "{} {} 的会话",
                                                         if expanded { "收起" } else { "展开" },
@@ -553,6 +581,16 @@ impl HiveApp {
                                                         )),
                                                 ),
                                             )
+                                            .when(!expanded, |row| {
+                                                if let Some((label, detail)) = sessions.and_then(|items| self.project_activity(items)) {
+                                                    row.child(Button::new(SharedString::from(format!("project-activity-{}", workspace.id)))
+                                                        .ghost().compact().h(px(28.)).label(label)
+                                                        .accessibility_label(format!("展开 {} 的会话：{detail}", workspace.name))
+                                                        .tooltip(detail)
+                                                        .on_click(cx.listener({ let id=workspace.id.clone(); move |this,_,_,cx| this.toggle_project(id.clone(),cx) })))
+                                                } else { row }
+                                            })
+                                            .child(self.new_chat_menu("project-new-chat", "新建", Some(workspace), cx))
                                             .when(
                                                 self.workspace.as_ref() == Some(&workspace.id),
                                                 |row| {
@@ -651,6 +689,36 @@ impl HiveApp {
                     )
             })
     }
+    fn session_activity(&self, id: &str) -> Option<&'static str> {
+        if self.interaction_count(id) > 0 {
+            Some("待回应")
+        } else if self.busy.contains(id) {
+            Some("处理中")
+        } else if self.pending.get(id).copied().unwrap_or(0) > 0 {
+            Some("已暂停")
+        } else if self.unread.contains(id) {
+            Some("未读")
+        } else {
+            None
+        }
+    }
+
+    fn project_activity(&self, sessions: &[crate::protocol::Session]) -> Option<(String, String)> {
+        let summary: Vec<String> = ["待回应", "处理中", "已暂停", "未读"]
+            .into_iter()
+            .filter_map(|label| {
+                let count = sessions
+                    .iter()
+                    .filter(|session| self.session_activity(&session.id) == Some(label))
+                    .count();
+                (count > 0).then(|| format!("{count} {label}"))
+            })
+            .collect();
+        summary
+            .first()
+            .map(|first| (first.clone(), summary.join("，")))
+    }
+
     fn render_session_link(
         &self,
         session: &crate::protocol::Session,
@@ -669,17 +737,10 @@ impl HiveApp {
                 }
             })
             .unwrap_or("会话");
-        let activity = if self.interaction_count(&id) > 0 {
-            " · 待回应"
-        } else if self.busy.contains(&id) {
-            " · 处理中"
-        } else if self.pending.get(&id).copied().unwrap_or(0) > 0 {
-            " · 已暂停"
-        } else if self.unread.contains(&id) {
-            " · 未读"
-        } else {
-            ""
-        };
+        let activity = self
+            .session_activity(&id)
+            .map(|label| format!(" · {label}"))
+            .unwrap_or_default();
         Button::new(SharedString::from(format!("session-{id}")))
             .ghost()
             .h(px(30.))
@@ -703,7 +764,7 @@ impl HiveApp {
                     div()
                         .text_xs()
                         .text_color(Color::Muted.get(cx))
-                        .child(activity.trim_start_matches(" · ")),
+                        .child(activity.trim_start_matches(" · ").to_owned()),
                 )
             })
             .tooltip(format!(

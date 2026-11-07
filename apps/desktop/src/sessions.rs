@@ -365,6 +365,28 @@ impl HiveApp {
         })
         .detach();
     }
+    pub(crate) fn new_session_in_project(
+        &mut self,
+        project: String,
+        backend: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connected
+            || self.closing
+            || self.workspace_removing.as_ref() == Some(&project)
+            || !self
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == project)
+        {
+            return;
+        }
+        if self.workspace.as_ref() != Some(&project) {
+            self.select_workspace(project, cx);
+        }
+        self.new_session(backend, cx);
+    }
+
     pub fn new_session(&mut self, backend: &'static str, cx: &mut Context<Self>) {
         if !self.workspace_writes_allowed() || !self.connected {
             return;
