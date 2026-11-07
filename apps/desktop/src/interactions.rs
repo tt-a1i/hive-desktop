@@ -1,3 +1,4 @@
+mod claude;
 mod pi;
 mod questions;
 mod response;
@@ -31,7 +32,9 @@ pub struct InteractionCard {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Question {
+    #[serde(default)]
     id: String,
+    #[serde(default)]
     header: String,
     question: String,
     #[serde(default)]
@@ -39,23 +42,35 @@ struct Question {
     #[serde(default)]
     is_secret: bool,
     options: Option<Vec<QuestionOption>>,
+    #[serde(default)]
+    multi_select: bool,
 }
 #[derive(Clone, Deserialize)]
 struct QuestionOption {
     label: String,
+    #[serde(default)]
     description: String,
+    preview: Option<String>,
 }
 struct QuestionDraft {
     question: Question,
     input: Entity<InputState>,
     selected: Option<String>,
+    multiple_selected: Vec<String>,
     other: bool,
     _subscription: Subscription,
 }
 impl InteractionCard {
     fn new(raw: AgentInteraction) -> Self {
         let error = (!raw.has_native_identity()).then(|| {
-            "Codex 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。".into()
+            format!(
+                "{} 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。",
+                if raw.backend == "claude" {
+                    "Claude"
+                } else {
+                    "Codex"
+                }
+            )
         });
         Self {
             raw,
@@ -71,8 +86,15 @@ impl InteractionCard {
     fn is_pi(&self) -> bool {
         self.raw.backend == "pi-rpc"
     }
+    fn is_claude(&self) -> bool {
+        self.raw.backend == "claude"
+    }
     fn backend_label(&self) -> &'static str {
-        if self.is_pi() { "外部 Pi" } else { "Codex" }
+        match self.raw.backend.as_str() {
+            "pi-rpc" => "外部 Pi",
+            "claude" => "Claude",
+            _ => "Codex",
+        }
     }
     fn waiting(&self) -> bool {
         self.raw.has_native_identity() && !self.submitting && self.raw.state == "pending"
@@ -164,7 +186,7 @@ impl HiveApp {
             .find(|card| card.waiting())
             .unwrap_or(&cards[0]);
         if !card.raw.has_native_identity() {
-            self.status = "Codex 交互格式错误，可停止本轮".into();
+            self.status = format!("{} 交互格式错误，可停止本轮", card.backend_label());
             return true;
         }
         self.status = format!(
@@ -172,7 +194,7 @@ impl HiveApp {
             card.backend_label(),
             if card.waiting() {
                 "等待你的回应"
-            } else if card.is_pi() {
+            } else if card.is_pi() || card.is_claude() {
                 "正在发送回应"
             } else {
                 "正在处理回应"
@@ -181,7 +203,7 @@ impl HiveApp {
         true
     }
     fn upsert_interaction(&mut self, session: &str, raw: AgentInteraction) {
-        if raw.backend != "codex" && raw.backend != "pi-rpc" {
+        if !matches!(raw.backend.as_str(), "codex" | "pi-rpc" | "claude") {
             return;
         }
         let cards = self
@@ -199,9 +221,14 @@ impl HiveApp {
                 card.error = None;
             }
             if !raw.has_native_identity() {
-                card.error = Some(
-                    "Codex 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。".into(),
-                );
+                card.error = Some(format!(
+                    "{} 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。",
+                    if raw.backend == "claude" {
+                        "Claude"
+                    } else {
+                        "Codex"
+                    }
+                ));
             }
             card.raw = raw;
         } else {
@@ -222,6 +249,12 @@ impl HiveApp {
                 reason,
                 ..
             } => {
+                let claude = self
+                    .interactions
+                    .sessions
+                    .get(session_id)
+                    .and_then(|cards| cards.iter().find(|card| card.raw.id == *interaction_id))
+                    .is_some_and(InteractionCard::is_claude);
                 let pi = self
                     .interactions
                     .sessions
@@ -240,12 +273,16 @@ impl HiveApp {
                     && !self.refresh_interaction_status(session_id)
                 {
                     self.status = match reason.as_str() {
+                        "resolved" if claude => "Claude 回应已提交",
                         "resolved" if pi => "外部 Pi 回应已发送",
                         "resolved" => "Codex 已接收回应",
+                        "expired" if claude => "Claude 交互已超时",
                         "expired" => "外部 Pi 交互已超时",
                         "aborted" => "已停止当前回复",
+                        "disconnected" | "disposed" if claude => "Claude 交互已断开",
                         "disconnected" | "disposed" if pi => "外部 Pi 交互已断开",
                         "disconnected" | "disposed" => "Codex 交互已断开",
+                        _ if claude => "Claude 回合已结束",
                         _ if pi => "外部 Pi 回合已结束",
                         _ => "Codex 回合已结束",
                     }
@@ -264,6 +301,10 @@ impl HiveApp {
             return;
         };
         for card in cards {
+            if card.is_claude() {
+                card.prepare_claude(window, cx);
+                continue;
+            }
             if card.is_pi() {
                 card.prepare_pi(window, cx);
                 continue;
@@ -303,6 +344,7 @@ impl HiveApp {
                             question,
                             input,
                             selected: None,
+                            multiple_selected: vec![],
                             _subscription: subscription,
                         });
                     }

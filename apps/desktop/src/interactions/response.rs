@@ -138,7 +138,7 @@ impl HiveApp {
                     }
                     Ok(_) => {
                         card.error = Some(
-                            if card.is_pi() {
+                            if card.is_pi() || card.is_claude() {
                                 "回应尚未发送，请重试。"
                             } else {
                                 "Codex 尚未确认提交，请重试。"

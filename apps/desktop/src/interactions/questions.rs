@@ -30,6 +30,9 @@ impl HiveApp {
                     .child(question.header.clone()),
             )
             .child(div().text_sm().child(question.question.clone()))
+            .when(question.multi_select, |view| {
+                view.child(div().text_xs().child("可选择多项，也可补充其他回答。"))
+            })
             .children(
                 question
                     .options
@@ -49,20 +52,32 @@ impl HiveApp {
                                     .label(option.label.clone())
                                     .selected(
                                         !question.is_secret
-                                            && !draft.other
-                                            && draft.selected.as_deref()
-                                                == Some(option.label.as_str()),
+                                            && (if question.multi_select {
+                                                draft.multiple_selected.contains(&option.label)
+                                            } else {
+                                                !draft.other
+                                                    && draft.selected.as_deref()
+                                                        == Some(option.label.as_str())
+                                            }),
                                     )
                                     .disabled(disabled)
                                     .on_click(cx.listener(move |this, _, window, cx| {
+                                        if !this.connected
+                                            || this
+                                                .session
+                                                .as_ref()
+                                                .is_none_or(|current| current.id != session)
+                                        {
+                                            return;
+                                        }
                                         if let Some(draft) = this
                                             .interactions
                                             .sessions
                                             .get_mut(&session)
                                             .and_then(|cards| {
-                                                cards
-                                                    .iter_mut()
-                                                    .find(|card| card.raw.id == interaction)
+                                                cards.iter_mut().find(|card| {
+                                                    card.raw.id == interaction && card.waiting()
+                                                })
                                             })
                                             .and_then(|card| {
                                                 card.questions
@@ -75,6 +90,14 @@ impl HiveApp {
                                                     input.set_value(label.clone(), window, cx)
                                                 });
                                                 draft.other = true;
+                                            } else if draft.question.multi_select {
+                                                if draft.multiple_selected.contains(&label) {
+                                                    draft
+                                                        .multiple_selected
+                                                        .retain(|selected| selected != &label);
+                                                } else {
+                                                    draft.multiple_selected.push(label.clone());
+                                                }
                                             } else {
                                                 draft.selected = Some(label.clone());
                                                 draft.other = false;
@@ -84,6 +107,18 @@ impl HiveApp {
                                     })),
                             )
                             .child(div().text_xs().child(option.description.clone()))
+                            .when_some(option.preview.as_ref(), |view, preview| {
+                                view.child(
+                                    div()
+                                        .id(("question-preview", field * 1000 + k))
+                                        .max_h(px(160.))
+                                        .overflow_y_scroll()
+                                        .p_2()
+                                        .bg(rgb(0xffffff))
+                                        .text_xs()
+                                        .child(format!("预览（原文，不执行）\n{preview}")),
+                                )
+                            })
                     }),
             )
             .when(
@@ -102,12 +137,22 @@ impl HiveApp {
                             .on_click({
                                 let question_id = question.id.clone();
                                 cx.listener(move |this, _, _, cx| {
+                                    if !this.connected
+                                        || this
+                                            .session
+                                            .as_ref()
+                                            .is_none_or(|current| current.id != session)
+                                    {
+                                        return;
+                                    }
                                     if let Some(draft) = this
                                         .interactions
                                         .sessions
                                         .get_mut(&session)
                                         .and_then(|cards| {
-                                            cards.iter_mut().find(|card| card.raw.id == interaction)
+                                            cards.iter_mut().find(|card| {
+                                                card.raw.id == interaction && card.waiting()
+                                            })
                                         })
                                         .and_then(|card| {
                                             card.questions
@@ -115,7 +160,11 @@ impl HiveApp {
                                                 .find(|draft| draft.question.id == question_id)
                                         })
                                     {
-                                        draft.other = true;
+                                        draft.other = if draft.question.multi_select {
+                                            !draft.other
+                                        } else {
+                                            true
+                                        };
                                     }
                                     cx.notify();
                                 })

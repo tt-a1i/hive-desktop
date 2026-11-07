@@ -28,6 +28,11 @@ impl HiveApp {
         card: &InteractionCard,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        if card.is_claude() {
+            return self
+                .render_claude_interaction(i, session, card, cx)
+                .into_any_element();
+        }
         if card.is_pi() {
             return self
                 .render_pi_interaction(i, session, card, cx)

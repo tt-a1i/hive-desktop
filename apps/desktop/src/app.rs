@@ -68,6 +68,11 @@ pub struct HiveApp {
     pub settings_generation: u64,
     pub settings_message: Option<String>,
     pub executable_settings: Option<crate::settings::ExecutableSettings>,
+    pub notification_url: Entity<InputState>,
+    pub notification_loaded: bool,
+    pub notification_loading: bool,
+    pub notification_generation: u64,
+    pub notification_message: Option<String>,
     pub team_autostaff: Option<bool>,
     pub team_autostaff_loading: bool,
     pub team_autostaff_generation: u64,
@@ -189,6 +194,15 @@ impl HiveApp {
             settings_generation: 0,
             settings_message: None,
             executable_settings: None,
+            notification_url: cx.new(|cx| {
+                let mut input = InputState::new(window, cx).placeholder("https://…");
+                input.set_masked(true, window, cx);
+                input
+            }),
+            notification_loaded: false,
+            notification_loading: false,
+            notification_generation: 0,
+            notification_message: None,
             team_autostaff: None,
             team_autostaff_loading: false,
             team_autostaff_generation: 0,
@@ -241,6 +255,7 @@ impl HiveApp {
                 }
             }),
         };
+        let settings_window = window.window_handle();
         app.events = cx.spawn(async move |this, cx| {
             let runtime = match smol::unblock(Runtime::launch).await {
                 Ok(runtime) => runtime,
@@ -272,6 +287,9 @@ impl HiveApp {
                         this.load_workspaces(cx);
                         if this.settings_panel {
                             this.team_autostaff_request(None, cx);
+                            if !this.notification_loaded {
+                                this.notification_request(None, settings_window, cx);
+                            }
                         }
                     }
                     Err(error) => this.error = Some(error),

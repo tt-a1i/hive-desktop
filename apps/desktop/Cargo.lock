@@ -2741,6 +2741,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "url",
  "windows-sys 0.61.2",
 ]
 

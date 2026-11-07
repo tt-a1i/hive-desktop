@@ -5,6 +5,7 @@ import { delimiter, extname, isAbsolute, join, resolve } from 'node:path';
 import { getSessionMessages, query, type CanUseTool, type ModelInfo, type OnElicitation, type OnUserDialog,
   type Query, type SDKResultMessage, type SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
+import { ClaudeInteractions } from './claude-interactions.js';
 import { ClaudeInput, claudeDeadline } from './claude-input.js';
 import { claudeCompletionAssistant } from './claude-completion.js';
 import type { projectClaudeMessage } from './claude-history.js';
@@ -47,10 +48,11 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
   let currentModel = options.model?.id;
   let catalogs = { commands: [] as string[], models: [] as string[], mcpServers: [] as { name: string; status: string }[] };
   const emit = (event: PiEvent) => options.onEvent(event);
+  const interactions = new ClaudeInteractions(sessionId, () => active && ({ id: active.uuid, signal: active.controller.signal }), emit);
   const persist = (next: ClaudeMetadata) => { writeClaudeMetadata(options.sessionDir, sessionId, next); metadata = next; };
   const fail = (error: Error) => {
     if (disposed || failure) return;
-    failure = error; active?.controller.abort(); active?.reject(error);
+    failure = error; interactions.clear('disconnected'); active?.controller.abort(); active?.reject(error);
     if (ready) options.onUnexpectedExit?.(error);
   };
   const check = () => { if (disposed || failure) throw failure ?? new Error('Claude session is disposed'); };
@@ -81,7 +83,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     cwd: options.cwd, pathToClaudeCodeExecutable: executable, abortController: controller,
     ...(options.sessionId ? { resume: options.sessionId } : { sessionId }), ...(options.model && { model: options.model.id }),
     includePartialMessages: true, permissionMode: 'default', mcpServers: { [team.name]: team.server },
-    canUseTool: options.canUseTool ?? (async () => ({ behavior: 'deny', message: unsupported('tool permission').message, interrupt: true })),
+    canUseTool: options.canUseTool ?? ((toolName, input, nativeOptions) => interactions.request(toolName, input, nativeOptions)),
     onUserDialog: options.onUserDialog ?? (async request => { unsupported(`user dialog ${request.dialogKind}`); return { behavior: 'cancelled' }; }),
     ...(options.supportedDialogKinds && { supportedDialogKinds: options.supportedDialogKinds }),
     onElicitation: options.onElicitation ?? (async () => { unsupported('MCP elicitation'); return { action: 'cancel' }; }),
@@ -114,7 +116,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
         else if (message.type === 'result' && active) {
           const belongs = message.user_message_uuid === active.uuid || message.user_message_uuids?.includes(active.uuid);
           if (!belongs) active.reject(new Error('Claude terminal result cannot be correlated to the active input'));
-          else active.resolve(message);
+          else { interactions.clear(active.cancelled ? 'aborted' : 'turn-ended', active.uuid); active.resolve(message); }
         } else if (message.type === 'system' && message.subtype === 'init') currentModel = message.model;
         else if (message.type === 'system' && message.subtype === 'session_writes_lost') {
           const error = new Error('Claude could not persist the session transcript'); if (active) { active.error = error; active.reject(error); }
@@ -125,7 +127,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
   })();
   const close = (): Promise<void> => {
     if (closeTask) return closeTask;
-    disposed = true;
+    disposed = true; interactions.clear('disposed');
     closeTask = (async () => {
       input.close(); running.close();
       if (child) {
@@ -149,6 +151,8 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     catalog: () => structuredClone(catalogs), history: () => projection.snapshot().history,
     hasContext: customType => projection.snapshot().history.some(message => message.role === 'custom' && message.customType === customType),
     snapshot: () => projection.snapshot(),
+    interactions: () => interactions.snapshot(),
+    respondInteraction: (id, response) => { check(); interactions.respond(id, response); },
     completedDeliveryIds: () => metadata.completed.filter(entry => projection.hasNativeUuid(entry.userUuid) && projection.hasNativeUuid(entry.assistantUuid)).map(entry => entry.deliveryId),
     async addContext(text, customType = 'hive-context') {
       check(); if (active) throw new Error('Claude session is already processing a prompt');
@@ -185,6 +189,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
           }
         } catch (error) { if (!run.cancelled) emit({ type: 'error', sessionId, message: asError(error).message }); throw error; }
         finally {
+          interactions.clear(run.cancelled ? 'aborted' : 'turn-ended', run.uuid);
           run.controller.abort(); await Promise.allSettled([...run.tools]);
           active = undefined; projection.endStream(); emit({ type: 'settled', sessionId, aborted: run.cancelled });
         }
@@ -193,7 +198,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     },
     async abort() {
       const run = active; if (!run) return;
-      run.cancelled = true; run.controller.abort();
+      run.cancelled = true; interactions.clear('aborted', run.uuid); run.controller.abort();
       try { await claudeDeadline(running.interrupt(), 'interrupt'); }
       catch (error) { fail(asError(error)); running.close(); throw error; }
       finally { await run.done.catch(() => {}); }

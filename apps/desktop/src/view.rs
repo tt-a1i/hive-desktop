@@ -158,6 +158,7 @@ impl Render for HiveApp {
                         .child(Button::new("reload-team-autostaff").label("重新读取").disabled(!self.connected || self.team_autostaff_loading).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx)))))
                     .when(self.team_autostaff_loading && self.team_autostaff.is_some(), |view| view.child(div().text_xs().child("正在处理自动组队设置…")))
                     .when_some(self.team_autostaff_message.clone(), |view, message| view.child(div().text_sm().child(message)))
+                    .child(self.render_notification_settings(cx))
                     .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("外部程序设置"))
                     .child(div().text_sm().child("设置外部 Pi、Codex 和 Claude 的可执行文件路径。留空时通过 PATH 查找；环境变量优先于此设置。"))
                     .child(div().text_sm().child("更改适用于之后新打开或重启的外部进程，正在运行的进程继续使用原配置。"))

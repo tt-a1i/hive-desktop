@@ -2,6 +2,7 @@ use crate::app::HiveApp;
 use gpui_kit::*;
 use serde::Deserialize;
 use serde_json::json;
+mod notification;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +56,9 @@ impl HiveApp {
             self.settings_request(false, window, cx);
         }
         self.team_autostaff_request(None, cx);
+        if !self.notification_loaded {
+            self.notification_request(None, window.window_handle(), cx);
+        }
         cx.notify();
     }
     pub fn team_autostaff_request(&mut self, save: Option<bool>, cx: &mut Context<Self>) {

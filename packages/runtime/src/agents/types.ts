@@ -11,7 +11,11 @@ export interface ExternalPiInteraction {
   id: string; backend: 'pi-rpc'; method: 'select' | 'confirm' | 'input' | 'editor';
   nativeRequestId: string; state: 'pending' | 'responding'; params: Record<string, unknown>; expiresAt?: number;
 }
-export type AgentInteraction = CodexInteraction | ExternalPiInteraction;
+export interface ClaudeInteraction {
+  id: string; backend: 'claude'; method: 'tool-permission' | 'ask-user-question';
+  nativeRequestId: string; turnId: string; itemId: string; state: 'pending' | 'responding'; params: Record<string, unknown>;
+}
+export type AgentInteraction = CodexInteraction | ExternalPiInteraction | ClaudeInteraction;
 export type InteractionResolutionReason = 'resolved' | 'turn-ended' | 'aborted' | 'disconnected' | 'disposed' | 'expired';
 
 export type PiEvent =

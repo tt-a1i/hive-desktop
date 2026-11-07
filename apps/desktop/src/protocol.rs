@@ -135,10 +135,21 @@ pub struct AgentInteraction {
 }
 impl AgentInteraction {
     pub fn has_native_identity(&self) -> bool {
-        self.backend != "codex"
-            || [&self.thread_id, &self.turn_id, &self.item_id]
+        let present = |id: &Option<String>| id.as_ref().is_some_and(|id| !id.is_empty());
+        match self.backend.as_str() {
+            "codex" => [&self.thread_id, &self.turn_id, &self.item_id]
                 .iter()
-                .all(|id| id.as_ref().is_some_and(|id| !id.is_empty()))
+                .all(|id| present(id)),
+            "claude" => {
+                present(&self.turn_id)
+                    && present(&self.item_id)
+                    && self
+                        .native_request_id
+                        .as_str()
+                        .is_some_and(|id| !id.is_empty())
+            }
+            _ => true,
+        }
     }
 }
 #[derive(Deserialize)]

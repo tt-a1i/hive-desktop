@@ -43,6 +43,10 @@ Codex 原生命令审批、文件审批与补充输入已接入统一聊天。13
 
 提交 `077367a` 的 Windows [运行 42317121900](https://github.com/tt-a1i/hive-desktop/actions/runs/42317121900) 首次通过构建、解压后 PTY/runtime smoke、进程监督和 10 项外部 CLI 检查；这份结果不包含随后外部 Pi 对话框与自动组队设置改动，也不代表 Windows GUI 验收。
 
+包含外部 Pi 对话框与自动组队设置的 `8c5ad98`，Windows [运行 42319491234](https://github.com/tt-a1i/hive-desktop/actions/runs/42319491234) 首次通过全部三个 job，包括便携包构建上传、解压后运行检查、原生进程监督和外部 CLI 检查；仍未进行 Windows 原生窗口验收。
+
+Claude 工具许可和 AskUserQuestion 已接入统一聊天。官方 SDK + 合成 CLI 检查覆盖原生回调、真实 Hive 队列成功与取消；Mac 窗口验证单次回应、多选与中文补充、切换会话保留和窄窗滚动。原始 CLI 的八项无推理回归通过，但没有 Claude 模型验证。完成通知地址设置复用既有 Hive 配置，真实持久化与界面操作已验证；独立复核发现的跨页清除状态问题已修。证据与四角度复核见 [Claude 交互及通知设置](validation/2026-11-07-claude-interactions.md)。
+
 下一步仍需完善外部 Agent 的结构化接入、成员管理和配置体验、任务与协作主页、应用后台重连及 macOS / Windows 安装包。Windows 尚未真机验收。基础阶段 #2 保持开放，完整目标 #1 不缩减为当前这条闭环。
 
 每天 09:00 的当前聊天目标提醒已启用。持续目标保持完整范围；单个可运行聊天版本不代表产品完成。
