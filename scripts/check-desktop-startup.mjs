@@ -41,7 +41,7 @@ try {
 
   // The native window must select the second project, successfully open its chat
   // and replace the obsolete selection. Booting just the sidecar cannot do this.
-  const env = { ...process.env, HIVE_DESKTOP_DATA_DIR: state };
+  const env = { ...process.env, HIVE_DESKTOP_DATA_DIR: state, HIVE_DESKTOP_TRACE_RPC: '1' };
   delete env.HIVE_DESKTOP_NODE;
   delete env.HIVE_DESKTOP_RUNTIME;
   child = spawn(executable, [], { env, cwd: directory, stdio: 'inherit' });

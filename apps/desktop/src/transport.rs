@@ -88,9 +88,13 @@ impl Runtime {
         let failure = Arc::new(Mutex::new(None));
         let (events_tx, events) = unbounded();
         let (tx, rx) = mpsc::channel::<Value>();
+        let trace = std::env::var_os("HIVE_DESKTOP_TRACE_RPC").is_some();
         let (p, e, f) = (pending.clone(), events_tx.clone(), failure.clone());
         thread::spawn(move || {
             for value in rx {
+                if trace {
+                    eprintln!("[hive rpc] send {} {}", value["id"], value["method"]);
+                }
                 let result = serde_json::to_writer(&mut stdin, &value)
                     .map_err(std::io::Error::other)
                     .and_then(|_| stdin.write_all(b"\n"))
@@ -114,6 +118,13 @@ impl Runtime {
                     }
                 };
                 if let Some(id) = value["id"].as_u64() {
+                    if trace {
+                        if let Some(error) = value.get("error") {
+                            eprintln!("[hive rpc] reply {id} {error}");
+                        } else {
+                            eprintln!("[hive rpc] reply {id} ok");
+                        }
+                    }
                     if let Some(reply) = p.lock().unwrap().remove(&id) {
                         let result = if value.get("error").is_some() {
                             Err(format!(
