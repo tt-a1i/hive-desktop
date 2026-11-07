@@ -100,8 +100,7 @@ impl HiveApp {
                 .compact()
                 .icon(Glyph::ArrowLeft)
                 .accessibility_label(label.clone())
-                .tooltip(label.clone())
-                .label(label)
+                .tooltip(label)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.conversation_sources.pop();
                     match &source {
@@ -367,7 +366,7 @@ impl Render for HiveApp {
                                     .child(div().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).child(member.name.clone()))
                                     .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{} · {}", member.role_label(), member.backend_label()))))
                                 .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().child(member.status_label().to_owned()))
-                                .when_some(session_id, |view, session_id| view.child(Button::new(("member-chat", i)).ghost().compact().icon(Glyph::MessagesSquare).tooltip("打开会话").accessibility_label(format!("打开 {} 的成员会话", member.name)).on_click(cx.listener(move |this, _, _, cx| this.open_member_session(session_id.clone(), cx)))))
+                                .when_some(session_id, |view, session_id| view.child(Button::new(("member-chat", i)).ghost().compact().icon(Glyph::MessagesSquare).label("会话").tooltip("打开会话").accessibility_label(format!("打开 {} 的成员会话", member.name)).on_click(cx.listener(move |this, _, _, cx| this.open_member_session(session_id.clone(), cx)))))
                                 .child(Button::new(("member-start-stop", i)).ghost().compact().label(if stopping { "正在停止…" } else if running { "停止" } else { "启动" }).disabled(!self.connected || self.member_loading || (!running && !member_model_ready)).on_click(cx.listener(move |this, _, _, cx| { if running { this.stop_member(start_id.clone(), cx); } else { this.member_action("POST", format!("/api/workspaces/{start_workspace}/agents/{start_id}/start"), None, cx); } })))
                                 .child(self.member_menu(member, cx)))
                             .when(!running && backend.is_some(), |view| view.child(h_flex().child(Button::new(("choose-member-model", i)).ghost().compact()
@@ -401,18 +400,23 @@ impl Render for HiveApp {
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().p_5().when(welcome, |v| v.justify_center())
-                .when_some(self.conversation_return(cx), |view, back| view.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().child(back)))
-                .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().child({
+                .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
+                    .when_some(self.conversation_return(cx), |header, back| header.child(back))
+                    .child({
                     let title = if welcome && self.workspace.is_none() { "打开项目".into() } else if welcome { "新任务".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
                     div().id("session-title").flex_1().min_w_0().truncate().when(welcome, |h| h.text_3xl().mb_2()).when(!welcome, |h| h.text_lg()).font_weight(FontWeight::SEMIBOLD)
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
                         .child(title)
-                }).when(!welcome && self.reading_above_latest(), |header| header.child(
+                }).when(!welcome && !open_failed, |header| header.child(
+                    div().min_w_0().truncate().text_xs().text_color(Color::Muted.get(cx)).child(
+                        self.session.as_ref().map(|s| if self.status == "后台已连接" { s.backend.label().to_owned() }
+                        else { format!("{} · {}", s.backend.label(), self.status) }).unwrap_or_else(|| self.status.clone())
+                    )
+                )).when(!welcome && self.reading_above_latest(), |header| header.child(
                     Button::new("jump-to-latest").ghost().compact().icon(Glyph::ArrowDown)
                         .label("回到最新").accessibility_label("回到最新消息")
                         .on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))
                 )))
-                .when(!welcome && !open_failed, |v| v.child(div().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().text_xs().text_color(Color::Muted.get(cx)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone()))))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))))
                 .when(open_failed, |surface| surface.child(v_flex().flex_1().min_h_0().items_center().justify_center().gap_3()
@@ -520,8 +524,8 @@ impl Render for HiveApp {
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
                         self.new_chat_menu("home-agent", "选择 Agent", cx).into_any_element()
                     } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
-                    .when(self.session.is_some(), |row| row.child(Button::new("choose-model").accessibility_label("选择会话模型").ghost().compact().min_w_0().label(self.model.as_ref().map(|model| format!("{} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || !self.conversation_ready || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); }))))
                     .child(div().flex_1())
+                    .when(self.session.is_some(), |row| row.child(Button::new("choose-model").accessibility_label("选择会话模型").ghost().compact().min_w_0().label(self.model.as_ref().map(|model| format!("{} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || !self.conversation_ready || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); }))))
                     .when(self.session.is_some(), |row| row.child(if running {
                         Button::new("stop").label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {

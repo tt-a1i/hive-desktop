@@ -58,7 +58,6 @@ impl HiveApp {
                         cx.notify();
                     })),
             )
-            .child(div().font_weight(FontWeight::BOLD).child("Hive"))
             .child(
                 div()
                     .flex_1()

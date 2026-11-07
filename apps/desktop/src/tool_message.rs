@@ -1,6 +1,7 @@
 use crate::app::{HiveApp, Message, ToolPresentation};
 use crate::palette::Color;
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
         *,
@@ -209,15 +210,20 @@ impl HiveApp {
                             .child(div().min_w_0().text_sm().child(text))
                         })
                         .child(
-                            Button::new(("copy-tool", index))
-                                .disabled(details.is_empty())
-                                .label("复制详情")
-                                .accessibility_label(format!("复制 {} 工具详情", tool.name))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        details.clone(),
-                                    ))
-                                })),
+                            h_flex().justify_end().child(
+                                Button::new(("copy-tool", index))
+                                    .ghost()
+                                    .compact()
+                                    .icon(Glyph::Copy)
+                                    .disabled(details.is_empty())
+                                    .tooltip("复制详情")
+                                    .accessibility_label(format!("复制 {} 工具详情", tool.name))
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            details.clone(),
+                                        ))
+                                    })),
+                            ),
                         ),
                 )
             })
