@@ -51,6 +51,7 @@ impl HiveApp {
                 Ok(workspace) => {
                     let folder = this.folder.clone();
                     if folder.read(cx).value().trim() == path {
+                        this.add_workspace_open = false;
                         let _ = window.update(cx, |_, window, cx| folder.update(cx, |state, cx| state.set_value("", window, cx)));
                     }
                     let id = workspace.id.clone(); this.workspaces.push(workspace); this.select_workspace(id, cx); },

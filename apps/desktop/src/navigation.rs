@@ -168,11 +168,58 @@ impl HiveApp {
                             .flex_shrink_0()
                             .gap_2()
                             .child(
-                                div()
-                                    .pt_2()
-                                    .text_xs()
-                                    .text_color(rgb(0x777c75))
-                                    .child("工作区"),
+                                h_flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div().text_xs().text_color(rgb(0x777c75)).child("工作区"),
+                                    )
+                                    .when(!self.workspaces.is_empty(), |row| {
+                                        row.child(
+                                            Button::new("toggle-add-workspace")
+                                                .label(if self.add_workspace_open {
+                                                    "收起"
+                                                } else {
+                                                    "添加…"
+                                                })
+                                                .tooltip(if self.add_workspace_open {
+                                                    "收起添加工作区"
+                                                } else {
+                                                    "添加工作区"
+                                                })
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.add_workspace_open =
+                                                        !this.add_workspace_open;
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    }),
+                            )
+                            .when(
+                                self.add_workspace_open || self.workspaces.is_empty(),
+                                |section| {
+                                    section
+                                        .child(
+                                            Input::new(&self.folder)
+                                                .aria_label("工作区文件夹的绝对路径"),
+                                        )
+                                        .child(
+                                            Button::new("choose-workspace-folder")
+                                                .label("选择文件夹…")
+                                                .disabled(!self.connected)
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.choose_workspace_folder(window, cx)
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("add-workspace")
+                                                .label("添加文件夹")
+                                                .disabled(!self.connected || self.runtime.is_none())
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.add_workspace(window, cx)
+                                                })),
+                                        )
+                                },
                             )
                             .children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
                                 let id = workspace.id.clone();
@@ -272,23 +319,6 @@ impl HiveApp {
                                         })),
                                 )
                             })
-                            .child(Input::new(&self.folder).aria_label("工作区文件夹的绝对路径"))
-                            .child(
-                                Button::new("choose-workspace-folder")
-                                    .label("选择文件夹…")
-                                    .disabled(!self.connected)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.choose_workspace_folder(window, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("add-workspace")
-                                    .label("添加文件夹")
-                                    .disabled(!self.connected || self.runtime.is_none())
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.add_workspace(window, cx)
-                                    })),
-                            )
                             .child(
                                 div()
                                     .pt_4()
