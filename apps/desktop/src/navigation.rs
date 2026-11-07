@@ -171,7 +171,8 @@ impl HiveApp {
                         .rounded_full()
                         .icon(glyph)
                         .when(!compact, |row| row.w_full().justify_start())
-                        .label(label)
+                        .accessibility_label(label)
+                        .child(div().when(!compact, |text| text.flex_1()).child(label))
                         .selected(self.settings_panel && self.settings_section == section)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.settings_section = section;
@@ -189,7 +190,8 @@ impl HiveApp {
                     .rounded_full()
                     .icon(Glyph::Bot)
                     .when(!compact, |row| row.w_full().justify_start())
-                    .label("角色模板")
+                    .accessibility_label("角色模板")
+                    .child(div().when(!compact, |text| text.flex_1()).child("角色模板"))
                     .selected(self.roles.visible)
                     .on_click(cx.listener(|this, _, _, cx| {
                         if !this.roles.visible {

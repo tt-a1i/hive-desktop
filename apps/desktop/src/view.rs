@@ -448,7 +448,7 @@ impl Render for HiveApp {
                     }
                 }))
                 .into_any_element()
-            } else if self.member_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
+            } else if self.member_panel { v_flex().flex_1().min_w_0().h_full().w_full().max_w(px(960.)).mx_auto().gap_4().px_5().py_6().when(!narrow, |panel| panel.px_8().py_8())
                 .child(h_flex().w_full().items_center().gap_2().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("团队成员"))
                     .child(div().flex_1().text_xs().text_color(Color::Muted.get(cx)).child(if self.member_loading { "更新中".into() } else { format!("{} 位", self.members.len()) }))
                     .child(Button::new("refresh-members").ghost().compact().icon(Glyph::RefreshCw).tooltip("刷新成员").accessibility_label("刷新成员").disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_members(cx))))
@@ -465,7 +465,10 @@ impl Render for HiveApp {
                     .child(h_flex().gap_1().children([("pi", "Pi"), ("codex", "Codex"), ("pi-rpc", "外部 Pi"), ("claude", "Claude")].into_iter().enumerate().map(|(i, (backend, label))| Button::new(("member-backend", i)).label(label).selected(self.member_backend == backend).on_click(cx.listener(move |this, _, _, cx| { this.member_backend = backend; cx.notify(); })))))
                     .child(Button::new("add-member").label("添加成员").disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.add_member(cx))))))
 
-                    .when(self.members.is_empty() && !self.member_loading, |view| view.child(div().text_xs().child("暂无成员")))
+                    .when(self.members.is_empty() && !self.member_loading && !self.member_form_open, |view| view.child(v_flex().flex_1().items_center().justify_center().gap_3()
+                        .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("还没有团队成员"))
+                        .child(Button::new("first-member").rounded_full().icon(Glyph::Plus).label("添加第一位成员")
+                            .on_click(cx.listener(|this, _, window, cx| { this.member_form_open = true; this.member_name.update(cx, |input, cx| input.focus(window, cx)); cx.notify(); })))))
                     .children(self.members.iter().enumerate().map(|(i, member)| {
                         let id = member.id.clone();
                         let workspace = self.workspace.clone().unwrap_or_default();
@@ -484,6 +487,8 @@ impl Render for HiveApp {
                         let delete_id = id.clone(); let delete_workspace = workspace.clone();
                         v_flex().gap_2().py_3().px_2().border_b_1().border_color(Color::Divider.get(cx))
                             .child(h_flex().w_full().items_center().gap_3()
+                                .child(div().size(px(36.)).rounded_full().bg(Color::Inset.get(cx)).flex().items_center().justify_center().text_sm().font_weight(FontWeight::SEMIBOLD)
+                                    .child(member.name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default()))
                                 .child(v_flex().flex_1().min_w_0().gap_1()
                                     .child(div().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).child(member.name.clone()))
                                     .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{} · {}", member.role_label(), member.backend_label()))))
