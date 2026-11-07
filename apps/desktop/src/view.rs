@@ -334,10 +334,16 @@ impl Render for HiveApp {
             .when(self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
             .when(!narrow || !self.sidebar_open, |view| view.child(if self.memory.visible { self.render_memory(cx).into_any_element() } else if self.roles.visible { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full().child(self.render_settings_tabs(compact_settings, cx)).child(self.render_roles(cx)).into_any_element()
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
-                .child(h_flex().justify_between().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("协作概览"))
-                    .child(Button::new("refresh-collaboration").label("刷新").disabled(!self.connected || self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx)))))
-                .child(div().id("collaboration-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.collaboration_scroll)
+                .child(h_flex().justify_between().items_center()
+                    .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if self.collaboration.selected.is_some() { "派单详情" } else { "协作概览" }))
+                    .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").ghost().icon(Glyph::ArrowLeft).label("返回派单列表").on_click(cx.listener(|this, _, _, cx| {
+                        this.collaboration.selected = None;
+                        cx.notify();
+                    }))))
+                    .when(self.collaboration.selected.is_none(), |row| row.child(Button::new("refresh-collaboration").label("刷新").disabled(!self.connected || self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx))))))
+                .child(div().id("collaboration-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(if self.collaboration.selected.is_some() { &self.collaboration.detail_scroll } else { &self.collaboration_scroll })
                   .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_3()
+                    .when(self.collaboration.selected.is_none(), |list| list
                     .child(self.render_tasks(cx))
                     .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("派单"))
                     .child(h_flex().gap_1().children([("all", "全部"), ("queued", "排队中"), ("submitted", "已提交"), ("reported", "已汇报"), ("cancelled", "已取消")].into_iter().enumerate().map(|(i, (filter, label))| Button::new(("dispatch-filter", i)).label(label).selected(self.collaboration.filter == filter).on_click(cx.listener(move |this, _, _, cx| { this.collaboration.filter = filter; this.collaboration.offset = 0; this.load_dispatches(cx); })))))
@@ -347,15 +353,16 @@ impl Render for HiveApp {
                     .children(self.collaboration.dispatches.iter().enumerate().map(|(i, dispatch)| {
                         let item = dispatch.clone();
                         let preview: String = dispatch.text.chars().take(100).collect();
-                        Button::new(("dispatch", i)).w_full().label(format!("{} · {} · {}", crate::collaboration::dispatch_state(&dispatch.state), self.agent_name(&dispatch.to_agent_id), preview)).selected(self.collaboration.selected.as_ref().is_some_and(|selected| selected.id == dispatch.id)).on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx)))
+                        Button::new(("dispatch", i)).w_full().label(format!("{} · {} · {}", crate::collaboration::dispatch_state(&dispatch.state), self.agent_name(&dispatch.to_agent_id), preview)).on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx)))
                     }))
                     .child(h_flex().gap_2()
                         .child(Button::new("dispatch-prev").label("上一页").disabled(!self.connected || self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(20); this.load_dispatches(cx); })))
                         .child(div().text_sm().child(format!("第 {} 页", self.collaboration.offset / 20 + 1)))
                         .child(Button::new("dispatch-next").label("下一页").disabled(!self.connected || self.collaboration.dispatches.len() < 20 || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += 20; this.load_dispatches(cx); }))))
+                    )
                     .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
                         .child(h_flex().items_center().gap_2()
-                            .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("派单详情 · {}", crate::collaboration::dispatch_state(&item.state))))
+                            .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::collaboration::dispatch_state(&item.state).to_owned()))
                             .when_some(self.member_session_link(&item.id, Some(&item.to_agent_id), "负责人的会话", cx), |row, link| row.child(link)))
                         .child(div().text_xs().child(format!("{} → {} · {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| "未记录发送者".into()), self.agent_name(&item.to_agent_id), item.id)))
                         .child(div().text_sm().child("任务原文"))

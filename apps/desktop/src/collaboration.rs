@@ -51,6 +51,7 @@ pub struct Collaboration {
     pub list_error: Option<String>,
     pub list_generation: u64,
     pub selected: Option<Dispatch>,
+    pub detail_scroll: ScrollHandle,
     pub messages: Vec<DispatchMessage>,
     pub next_seq: Option<u64>,
     pub message_loading: bool,
@@ -74,6 +75,7 @@ impl Collaboration {
             list_error: None,
             list_generation: 0,
             selected: None,
+            detail_scroll: ScrollHandle::new(),
             messages: vec![],
             next_seq: None,
             message_loading: false,
@@ -188,6 +190,7 @@ impl HiveApp {
     }
     pub fn select_dispatch(&mut self, item: Dispatch, cx: &mut Context<Self>) {
         let c = &mut self.collaboration;
+        c.detail_scroll = ScrollHandle::new();
         c.selected = Some(item);
         c.messages.clear();
         c.next_seq = None;
