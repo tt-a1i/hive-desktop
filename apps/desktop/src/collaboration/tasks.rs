@@ -88,15 +88,14 @@ impl HiveApp {
         draft.operation = operation;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let path = format!("/api/workspaces/{workspace}/tasks");
-            let current = runtime.request("hive.request", json!({"method":"GET","path":path})).await
-                .and_then(|value| serde_json::from_value::<Tasks>(value).map_err(|error| error.to_string()));
-            let result = match current {
-                Ok(current) if current.content != base => Err("任务文档已被其他窗口或 Agent 修改。你的改动已保留；请先复制草稿，再取消编辑读取最新文档。".to_string()),
-                Ok(_) => runtime.request("hive.request", json!({"method":"PUT","path":path,"body":{"content":content}})).await
-                    .and_then(|value| serde_json::from_value::<Tasks>(value).map_err(|error| error.to_string())),
-                Err(error) => Err(format!("保存前读取任务失败：{error}")),
-            };
+            let result = runtime.request("workspace.saveTasks", json!({
+                "workspaceId": workspace, "base": base, "content": content
+            })).await.and_then(|value| {
+                if value["conflict"] == true {
+                    return Err("任务文档已被其他窗口或 Agent 修改。你的改动已保留；请先复制草稿，再取消编辑读取最新文档。".into());
+                }
+                serde_json::from_value::<Tasks>(value).map_err(|error| error.to_string())
+            });
             let _ = this.update(cx, |this, cx| {
                 let c = &mut this.collaboration;
                 if !c.task_drafts.get(&workspace).is_some_and(|draft| draft.saving && draft.operation == operation) { return; }

@@ -1,5 +1,6 @@
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { format } from 'node:util';
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { mkdirSync } from 'node:fs';
 import { CodexInteractionError } from './agents/codex-interactions.js';
@@ -73,6 +74,20 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'terminal.resize': return terminal.resize({ attachmentId: text(params, 'attachmentId'), cols: params.cols as number, rows: params.rows as number });
     case 'terminal.detach': return terminal.detach({ attachmentId: text(params, 'attachmentId') });
     case 'terminal.stop': return terminal.stop({ workspaceId: text(params, 'workspaceId'), runId: text(params, 'runId') });
+    case 'workspace.saveTasks': {
+      const workspace = text(params, 'workspaceId');
+      if (typeof params.base !== 'string' || typeof params.content !== 'string') throw new Error('Expected task document text');
+      const base_sha256 = createHash('sha256').update(params.base).digest('hex');
+      try {
+        return await runtime.requestHive('PUT', `/api/workspaces/${encodeURIComponent(workspace)}/tasks`, { base_sha256, content: params.content });
+      } catch (error) {
+        if (error instanceof HiveHttpError && error.status === 409 && error.body && typeof error.body === 'object'
+          && 'code' in error.body && error.body.code === 'TASKS_CHANGED') {
+          return { conflict: true };
+        }
+        throw error;
+      }
+    }
     case 'workspace.remove': {
       try { return await runtime.removeWorkspace(text(params, 'workspaceId')); }
       catch (error) {

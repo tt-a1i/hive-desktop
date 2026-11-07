@@ -110,6 +110,33 @@ index f6b3d7f2faf8ea14b06ddedca317a3c830ca7232..806177a51ff178dda0ee24576e890095
      route('GET', '/api/ui/workspaces/:workspaceId/dispatches/:dispatchId/messages', ({ params, request, response, store }) => {
          requireUiTokenFromRequest(request, store.validateUiToken, store.authorizeRemoteTunnelRequest);
          const workspaceId = getRequiredParam(response, params, 'workspaceId', 'Workspace id is required');
+diff --git a/dist/src/server/routes-tasks.js b/dist/src/server/routes-tasks.js
+index 52b93703f8dd19537a53d87f9ed47edd9d1e92db..47ca491b1bdd800c05fdda8fd533a2ac52ece427 100644
+--- a/dist/src/server/routes-tasks.js
++++ b/dist/src/server/routes-tasks.js
+@@ -1,3 +1,4 @@
++import { createHash } from 'node:crypto';
+ import { getRequiredParam, readJsonBody, route, sendJson } from './route-helpers.js';
+ import { computeRunnableTasks } from './task-deps.js';
+ import { authenticateCliAgent, requireCommandForRole } from './team-authz.js';
+@@ -41,6 +42,17 @@ export const taskRoutes = [
+         requireUiTokenFromRequest(request, store.validateUiToken, store.authorizeRemoteTunnelRequest);
+         const body = await readJsonBody(request);
+         const workspace = store.getWorkspaceSnapshot(workspaceId);
++        if (body.base_sha256 !== undefined) {
++            if (typeof body.base_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(body.base_sha256)) {
++                sendJson(response, 400, { error: 'Invalid base_sha256' });
++                return;
++            }
++            const current = tasksFileService.readTasks(workspace.summary.path);
++            if (createHash('sha256').update(current).digest('hex') !== body.base_sha256) {
++                sendJson(response, 409, { code: 'TASKS_CHANGED', error: 'Task document changed' });
++                return;
++            }
++        }
+         tasksFileService.writeTasks(workspace.summary.path, body.content);
+         sendJson(response, 200, { content: body.content });
+     }),
 diff --git a/dist/src/server/routes-team.js b/dist/src/server/routes-team.js
 index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c0d7ca28e 100644
 --- a/dist/src/server/routes-team.js

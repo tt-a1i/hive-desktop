@@ -69,6 +69,12 @@ try {
   progress('Creating workspace without orchestrator');
   const workspace = await request('hive.request', { method: 'POST', path: '/api/workspaces', body: { path: await realpath(directory), name: 'Portable smoke', autostart_orchestrator: false } });
   assert.equal(workspace.orchestrator_start.run_id, null);
+  const taskPath = `/api/workspaces/${workspace.id}/tasks`;
+  const original = await request('hive.request', { method: 'GET', path: taskPath });
+  const saveTasks = (base, content) => request('workspace.saveTasks', { workspaceId: workspace.id, base, content });
+  assert.deepEqual(await saveTasks(original.content, 'First edit'), { content: 'First edit' });
+  assert.deepEqual(await saveTasks(original.content, 'Stale edit'), { conflict: true });
+  assert.deepEqual(await saveTasks('First edit', ''), { content: '' });
   const listed = await request('hive.request', { method: 'GET', path: '/api/workspaces' }); assert.equal(listed[0].id, workspace.id);
   progress('Shutting down Hive runtime');
   assert.deepEqual(await request('shutdown'), { ok: true }); assert.equal((await deadline(exited, 'runtime process exit'))[0], 0);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, realpath, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHiveHost, HiveHttpError } from "../src/hive-host.js";
@@ -44,6 +45,23 @@ try {
 	assert.equal(listed.length, 1);
 	assert.equal(listed[0]?.id, created.id);
 	assert.equal(listed[0]?.path, path);
+	const tasks = `/api/workspaces/${created.id}/tasks`;
+	const file = join(path, ".hive", "tasks.md");
+	const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+	await host.request("PUT", tasks, { content: "共同底稿" });
+	const base = (await host.request("GET", tasks) as { content: string }).content;
+	const candidates = ["第一份修改", "第二份修改"];
+	const writes = await Promise.allSettled(candidates.map(content =>
+		host!.request("PUT", tasks, { content, base_sha256: hash(base) })));
+	const winner = writes.findIndex(result => result.status === "fulfilled");
+	assert.ok(winner >= 0);
+	const loser = writes[1 - winner]!;
+	assert.equal(loser.status, "rejected", "Only one writer may replace the same base");
+	assert.ok(loser.reason instanceof HiveHttpError && loser.reason.status === 409);
+	assert.equal(await readFile(file, "utf8"), candidates[winner]);
+	await writeFile(file, "Agent 的新进展");
+	await assert.rejects(host.request("PUT", tasks, { content: "旧草稿", base_sha256: hash(candidates[winner]!) }), { status: 409 });
+	assert.equal(await readFile(file, "utf8"), "Agent 的新进展");
 	const port = host.port;
 	await Promise.all([host.close(), host.close()]);
 	assert.equal(process.env.HIVE_DATA_DIR, previousDataDir);
