@@ -161,6 +161,12 @@ impl HiveApp {
                         SettingsSection::Appearance,
                     ),
                     (
+                        "settings-pi-accounts-tab",
+                        "内置 Pi",
+                        Glyph::Bot,
+                        SettingsSection::PiAccounts,
+                    ),
+                    (
                         "settings-team-tab",
                         "团队",
                         Glyph::Network,
@@ -192,6 +198,9 @@ impl HiveApp {
                         .selected(self.settings_panel && self.settings_section == section)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.settings_section = section;
+                            if section == SettingsSection::PiAccounts {
+                                this.load_pi_accounts(window.window_handle(), cx);
+                            }
                             if !this.settings_panel {
                                 this.open_settings(window, cx);
                             }

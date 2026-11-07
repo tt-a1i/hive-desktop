@@ -613,9 +613,10 @@ impl Render for HiveApp {
                         .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model {
                             format!("{} / {} 暂不可用", model.provider, model.id)
                         } else if self.models.iter().any(|m| m.available) { "选择模型后即可发送。".into() }
-                        else { "请在 Pi 中登录或配置模型提供商，然后刷新。".into() }))
+                        else { "请先连接 Pi 账号或配置模型提供商，然后刷新。".into() }))
                         .when_some(self.pi_agent_dir.clone(), |row, dir| row.child(Button::new("locate-pi-config").ghost().compact().label("定位配置目录").tooltip(dir.display().to_string())
                             .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&dir)))))
+                        .child(Button::new("open-pi-accounts").ghost().compact().label("连接账号").on_click(cx.listener(|this, _, window, cx| { this.settings_section = crate::app::SettingsSection::PiAccounts; this.open_settings(window, cx); })))
                         .child(Button::new("refresh-pi-models").ghost().compact().label(if self.refreshing_models { "刷新中…" } else { "刷新模型" })
                             .disabled(self.refreshing_models || running).on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))))))
                 )

@@ -14,8 +14,8 @@ const node = join(resources, 'node', process.platform === 'darwin' ? 'bin/node' 
 const runtime = join(resources, 'runtime');
 const directory = await mkdtemp(join(tmpdir(), 'hive-desktop-package-check-'));
 const children = [];
-function start(args, stdin = 'pipe') {
-  const child = spawn(node, args, { cwd: directory, stdio: [stdin, 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+function start(args, stdin = 'pipe', env = process.env) {
+  const child = spawn(node, args, { cwd: directory, env, stdio: [stdin, 'pipe', 'pipe'], detached: process.platform !== 'win32' });
   children.push(child);
   return child;
 }
@@ -52,7 +52,10 @@ try {
     const [managerExit] = await deadline(once(manager, 'exit'), `Hive agent-manager ${mode} probe process exit`); assert.equal(managerExit, 0, managerOutput); assert.match(managerOutput, /HIVE MANAGER OK/);
   }
   progress('Hive agent-manager probe completed; starting Hive runtime');
-  const child = start([join(runtime, 'dist', 'main.js'), '--data-dir', join(directory, 'state')]);
+  const piAgentDir = join(directory, 'pi-auth');
+  const child = start([join(runtime, 'dist', 'main.js'), '--data-dir', join(directory, 'state')], 'pipe', {
+    ...process.env, PI_CODING_AGENT_DIR: piAgentDir, PI_OFFLINE: '1',
+  });
   let stderr = ''; child.stderr.on('data', x => { stderr += x; process.stderr.write(x); });
   const pending = new Map(); let next = 0;
   createInterface({ input: child.stdout }).on('line', line => { const value = JSON.parse(line); const waiter = pending.get(value.id); if (waiter) { pending.delete(value.id); value.error ? waiter.reject(new Error(JSON.stringify(value.error))) : waiter.resolve(value.result); } });
@@ -65,6 +68,14 @@ try {
   });
   progress('Initializing Hive runtime');
   const init = await request('initialize'); assert.ok(init.hivePort > 0);
+  assert.equal(init.piAgentDir, piAgentDir);
+  const accounts = await request('pi.auth.providers');
+  assert.equal(accounts.agentDir, piAgentDir);
+  assert.equal(accounts.login, null);
+  assert.ok(accounts.providers.some(provider => provider.id === 'openai'));
+  assert.ok(accounts.providers.every(provider => provider.storedType === null));
+  assert.equal(await request('pi.auth.status'), null);
+  await assert.rejects(request('pi.auth.start', { providerId: 'invalid-provider' }));
   assert.deepEqual(await request('hive.request', { method: 'GET', path: '/api/workspaces' }), []);
   progress('Creating workspace without orchestrator');
   const workspace = await request('hive.request', { method: 'POST', path: '/api/workspaces', body: { path: await realpath(directory), name: 'Portable smoke', autostart_orchestrator: false } });
@@ -100,5 +111,5 @@ try {
   progress('Shutting down Hive runtime');
   assert.deepEqual(await request('shutdown'), { ok: true }); assert.equal((await deadline(exited, 'runtime process exit'))[0], 0);
   await assert.rejects(fetch(`http://127.0.0.1:${init.hivePort}/api/ui/session`, { signal: AbortSignal.timeout(5000) }), error => error.cause?.code === 'ECONNREFUSED');
-  console.log('Portable smoke passed: bundled Node, real PTY, Hive HTTP + SQLite workspace and shutdown; no model request.');
+  console.log('Portable smoke passed: bundled Node, real PTY, Pi account metadata, Hive HTTP + SQLite workspace and shutdown; no model request.');
 } finally { for (const child of children) stop(child); await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }); }

@@ -20,7 +20,7 @@ const send = (message: unknown) => protocolWrite(`${JSON.stringify(message)}\n`)
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
 const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }), { onTerminalEvent: data => send({ event: 'terminal', data }) });
-const { hive, chats, settings, agentModels, terminal } = runtime;
+const { hive, chats, settings, agentModels, terminal, piAuth } = runtime;
 let closing: Promise<void> | undefined;
 const close = () => closing ??= runtime.close();
 
@@ -37,6 +37,11 @@ function text(params: Record<string, unknown>, name: string): string {
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
+    case 'pi.auth.providers': return piAuth.providers();
+    case 'pi.auth.start': return piAuth.start(text(params, 'providerId'));
+    case 'pi.auth.status': return piAuth.status();
+    case 'pi.auth.respond': return piAuth.respond(text(params, 'loginId'), text(params, 'promptId'), text(params, 'value'));
+    case 'pi.auth.cancel': return piAuth.cancel(text(params, 'loginId'));
     case 'initialize': {
       return { version: '0.1.0', dataDir, piAgentDir: getAgentDir(), hivePort: hive.port, navigation: hive.getNavigation() };
     }

@@ -163,6 +163,11 @@ Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 
 Toggle-Action '外观：跟随系统'
 Wait-Appearance 'system' '跟随系统'
 Write-Host 'Persisted all appearance choices and verified their native toggle state.'
+Invoke-Action '内置 Pi'
+[void](Wait-Action '刷新账号状态')
+[void](Wait-Action '打开 Pi 配置目录')
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-pi-accounts.png')
+Write-Host 'Read the embedded Pi account catalog without starting a login.'
 Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')

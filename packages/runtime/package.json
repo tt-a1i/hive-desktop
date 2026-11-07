@@ -14,6 +14,7 @@
     "dev": "tsx src/main.ts",
     "check:claude": "tsx checks/claude-native-init.ts && tsx checks/claude-session.ts && tsx checks/claude-session-lifecycle.ts && tsx checks/claude-history-synthetic.ts && tsx checks/claude-team-callback.ts && tsx checks/claude-context-placeholder.ts && tsx checks/claude-placeholder-resume.ts && tsx checks/claude-runtime.ts && pnpm check:claude-interactions",
     "check:claude-interactions": "tsx checks/claude-interactions-sdk.ts && tsx checks/claude-interactions-hive.ts",
+    "check:pi-auth": "pnpm build && tsx checks/pi-auth.ts && tsx checks/pi-auth-wire.ts",
     "check:notification-settings": "tsx checks/notification-settings.ts",
     "check:external-pi-interactions": "tsx checks/external-pi-interactions-transport.ts && tsx checks/external-pi-interactions-native.ts",
     "check:team-autostaff": "tsx checks/team-autostaff-settings.ts",

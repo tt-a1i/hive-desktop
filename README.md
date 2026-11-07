@@ -36,7 +36,7 @@ pnpm install
 pnpm dev
 ```
 
-应用使用独立的桌面数据目录，读取 Pi 的现有模型与认证配置。桌面内切换会话模型不会改写 Pi 的全局默认。运行方式与环境变量见 [桌面应用](apps/desktop/README.md)。
+应用使用独立的桌面数据目录，读取 Pi 的现有模型与认证配置。“设置 → 内置 Pi”可连接 SDK 支持的 OAuth 账号，复用 Pi 凭据；API 提供商和自定义模型仍使用 Pi 配置。桌面内切换会话模型不会改写 Pi 的全局默认。运行方式与环境变量见 [桌面应用](apps/desktop/README.md)。
 
 ```sh
 pnpm check
