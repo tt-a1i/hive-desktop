@@ -1,3 +1,4 @@
+mod session_row;
 use crate::app::{HiveApp, SettingsSection};
 use crate::palette::Color;
 use gpui_kit::assets::IconName as Glyph;
@@ -440,6 +441,7 @@ impl HiveApp {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .child(self.render_pinned_navigation(cx))
                     .child(
                         v_flex()
                             .w_full()
@@ -717,123 +719,5 @@ impl HiveApp {
         summary
             .first()
             .map(|first| (first.clone(), summary.join("，")))
-    }
-
-    fn render_session_link(
-        &self,
-        session: &crate::protocol::Session,
-        cx: &Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let project = session.workspace_id.clone();
-        let id = session.id.clone();
-        let role = session
-            .agent_id
-            .as_deref()
-            .map(|agent| {
-                if agent.ends_with(":orchestrator") {
-                    "主控"
-                } else {
-                    "成员"
-                }
-            })
-            .unwrap_or("会话");
-        let activity = self
-            .session_activity(&id)
-            .map(|label| format!(" · {label}"))
-            .unwrap_or_default();
-        let menu_session = session.clone();
-        let weak = cx.weak_entity();
-        let pinning = self.session_pin_loading.contains(&id);
-        let menu = Button::new(SharedString::from(format!("session-menu-{id}")))
-            .ghost()
-            .compact()
-            .h(px(28.))
-            .w(px(28.))
-            .icon(Glyph::Ellipsis)
-            .tooltip("会话操作")
-            .accessibility_label(format!("{} 的会话操作", self.session_title(session)))
-            .disabled(
-                !self.connected || pinning || self.workspace_removing.as_ref() == Some(&project),
-            )
-            .dropdown_menu(move |menu, _, _| {
-                let session = menu_session.clone();
-                let weak = weak.clone();
-                menu.item(
-                    PopupMenuItem::new(if session.pinned {
-                        "取消置顶"
-                    } else {
-                        "置顶会话"
-                    })
-                    .on_click(move |_, _, cx| {
-                        let _ = weak.update(cx, |this, cx| {
-                            this.set_session_pinned(session.clone(), !session.pinned, cx)
-                        });
-                    }),
-                )
-            });
-        h_flex()
-            .min_w_0()
-            .w_full()
-            .child(
-                div().flex_1().min_w_0().child(
-                    Button::new(SharedString::from(format!("session-{id}")))
-                        .ghost()
-                        .h(px(30.))
-                        .rounded_lg()
-                        .accessibility_label(format!(
-                            "{} · {} · {role}{activity}{}",
-                            session.backend.label(),
-                            self.session_title(session),
-                            if session.pinned { " · 已置顶" } else { "" }
-                        ))
-                        .w_full()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(self.session_title(session).to_string()),
-                        )
-                        .when(session.pinned, |row| {
-                            row.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child("置顶"),
-                            )
-                        })
-                        .when(!activity.is_empty(), |row| {
-                            row.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(activity.trim_start_matches(" · ").to_owned()),
-                            )
-                        })
-                        .tooltip(format!(
-                            "{} · {role} · {}",
-                            self.session_title(session),
-                            session.backend.label()
-                        ))
-                        .disabled(self.workspace_removing.as_ref() == Some(&project))
-                        .selected(
-                            self.viewing_conversation()
-                                && self.session.as_ref().is_some_and(|s| s.id == session.id),
-                        )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if window.viewport_size().width < px(820.) {
-                                this.sidebar_open = false;
-                            }
-                            this.hide_terminal(cx);
-                            this.close_collaboration();
-                            if this.workspace.as_ref() != Some(&project) {
-                                this.select_workspace(project.clone(), cx);
-                            }
-                            this.open_session(id.clone(), cx);
-                        })),
-                ),
-            )
-            .child(menu)
     }
 }

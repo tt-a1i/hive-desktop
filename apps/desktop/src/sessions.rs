@@ -1,5 +1,6 @@
 mod naming;
 mod pinning;
+pub(crate) use pinning::PinnedSessions;
 mod search;
 use crate::conversation::message_text;
 use crate::{app::HiveApp, protocol::*};
@@ -91,6 +92,12 @@ impl HiveApp {
             |this, value, cx| match serde_json::from_value::<Vec<Workspace>>(value) {
                 Ok(workspaces) => {
                     this.workspaces = workspaces;
+                    this.pinned_sessions.records.retain(|hit| {
+                        this.workspaces
+                            .iter()
+                            .any(|workspace| workspace.id == hit.session.workspace_id)
+                    });
+                    this.refresh_pinned_sessions(cx);
                     if this.workspace.as_ref().is_some_and(|id| {
                         !this.workspaces.iter().any(|workspace| &workspace.id == id)
                     }) {
@@ -298,6 +305,7 @@ impl HiveApp {
                             Ok(value) => match serde_json::from_value::<Vec<Session>>(value) {
                                 Ok(sessions) => {
                                     this.sessions = sessions;
+                                    this.sync_pinned_project();
                                     if let Some(selected) = &mut this.session {
                                         if let Some(record) =
                                             this.sessions.iter().find(|s| s.id == selected.id)
@@ -441,6 +449,43 @@ impl HiveApp {
         })
         .detach();
     }
+    pub(crate) fn navigate_to_session(
+        &mut self,
+        session: Session,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.connected
+            || self.closing
+            || self.workspace_removing.as_ref() == Some(&session.workspace_id)
+            || !self
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == session.workspace_id)
+        {
+            return false;
+        }
+        if window.viewport_size().width < px(820.) {
+            self.sidebar_open = false;
+        }
+        self.hide_terminal(cx);
+        self.close_collaboration();
+        if self.workspace.as_ref() != Some(&session.workspace_id) {
+            let cached = self
+                .project_sessions
+                .entry(session.workspace_id.clone())
+                .or_default();
+            if !cached.iter().any(|item| item.id == session.id) {
+                cached.push(session.clone());
+            }
+            self.select_workspace(session.workspace_id.clone(), cx);
+        } else if !self.sessions.iter().any(|item| item.id == session.id) {
+            self.sessions.push(session.clone());
+        }
+        self.open_session(session.id, cx);
+        true
+    }
+
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
         self.conversation_sources.clear();
         self.show_session(id, cx);

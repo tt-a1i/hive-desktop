@@ -164,6 +164,8 @@ impl HiveApp {
         self.workspace_removing = None;
         self.session_name_loading = false;
         self.session_pin_loading.clear();
+        self.pinned_sessions.loading = false;
+        self.pinned_sessions.dirty = false;
         self.refreshing_models = false;
         self.settings_loading = false;
         self.reset_pi_accounts(window.window_handle(), cx);

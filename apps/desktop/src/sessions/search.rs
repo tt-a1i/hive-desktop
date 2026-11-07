@@ -1,4 +1,4 @@
-use crate::{app::HiveApp, palette::Color, protocol::Session, transport::Runtime};
+use crate::{app::HiveApp, palette::Color, transport::Runtime};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -12,13 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Hit {
-    session: Session,
-    workspace_name: String,
-    title: String,
-}
+use crate::protocol::SessionHit as Hit;
 #[derive(Default, Deserialize)]
 struct Page {
     matches: Vec<Hit>,
@@ -146,34 +140,7 @@ impl SessionSearch {
         let opened = self
             .app
             .update(cx, |app, cx| {
-                if !app
-                    .workspaces
-                    .iter()
-                    .any(|workspace| workspace.id == hit.session.workspace_id)
-                    || app.workspace_removing.as_ref() == Some(&hit.session.workspace_id)
-                {
-                    return false;
-                }
-                app.hide_terminal(cx);
-                app.close_collaboration();
-                if app.workspace.as_ref() != Some(&hit.session.workspace_id) {
-                    let cached = app
-                        .project_sessions
-                        .entry(hit.session.workspace_id.clone())
-                        .or_default();
-                    if !cached.iter().any(|session| session.id == hit.session.id) {
-                        cached.push(hit.session.clone());
-                    }
-                    app.select_workspace(hit.session.workspace_id.clone(), cx);
-                } else if !app
-                    .sessions
-                    .iter()
-                    .any(|session| session.id == hit.session.id)
-                {
-                    app.sessions.push(hit.session.clone());
-                }
-                app.open_session(hit.session.id, cx);
-                true
+                app.navigate_to_session(hit.session, window, cx)
             })
             .unwrap_or(false);
         if opened {

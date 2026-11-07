@@ -55,16 +55,31 @@ try {
   assert.equal(renamedMember.matches.length, 1);
   assert.equal(renamedMember.matches[0].title, '中文审查员');
   assert.equal(renamedMember.matches[0].session.agentId, member.id);
+  runtime.chats.setPinned(renamedMember.matches[0].session.id,true);
+  const pinnedMember=await runtime.chats.pinned();
+  assert.equal(pinnedMember.length,1);
+  assert.equal(pinnedMember[0].title,'中文审查员');
+  assert.equal(pinnedMember[0].session.agentId,member.id);
   assert.deepEqual(await runtime.hive.request('GET', `/api/ui/workspaces/${projects[0].id}/team`), membersBeforeSearch);
   assert.equal(events, eventsBeforeSearch);
   for (let i = 0; i < 101; i++) {
     const record = await runtime.chats.createRecord(projects[0].id);
     runtime.chats.rename(record.id, '分页查找 ' + i);
+    runtime.chats.setPinned(record.id,true);
   }
   const limited = await runtime.chats.search('分页查找');
   assert.equal(limited.total, 101);
   assert.equal(limited.matches.length, 100);
   assert.equal((await runtime.chats.search('分页查找 100')).matches[0].session.title, '分页查找 100');
+  const pins=await runtime.chats.pinned();
+  assert.equal(pins.length,102,'Global pins must not inherit the search result cap');
+  assert.equal(new Set(pins.map(hit=>hit.session.id)).size,102);
+  assert.equal(pins.filter(hit=>hit.session.agentId===member.id).length,1);
+  await runtime.close();runtime=undefined;
+  runtime=await createDesktopRuntime(join(directory,'state'),()=>{events++;});
+  assert.deepEqual(await runtime.chats.pinned(),pins,'Global pinned identities and member titles survive restart');
+  await runtime.removeWorkspace(projects[0].id);
+  assert.deepEqual(await runtime.chats.pinned(),[],'Removed workspaces must disappear from global pins');
   console.log('SESSION_SEARCH_OK: cross-project metadata, all backends, restart, result limit and no Agent initialization.');
 } finally {
   await runtime?.close();

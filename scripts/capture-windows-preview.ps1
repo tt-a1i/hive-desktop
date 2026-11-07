@@ -368,7 +368,9 @@ Invoke-Action '启动方式核验 的会话操作'
 Invoke-Action '置顶会话'
 Wait-SessionPin $true
 Wait-EditorText '聊天消息' '后台恢复核验草稿'
-Invoke-Action '启动方式核验 的会话操作'
+[void](Wait-Action '收起置顶会话')
+if ($null -ne (Find-Action '收起工作区列表')) { Invoke-Action '收起工作区列表' }
+Invoke-Action '启动方式核验 · Beta 的置顶会话操作'
 Invoke-Action '取消置顶'
 Wait-SessionPin $false
 Wait-EditorText '聊天消息' '后台恢复核验草稿'

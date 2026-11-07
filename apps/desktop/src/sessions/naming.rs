@@ -48,6 +48,7 @@ impl HiveApp {
                 this.session_name_loading = false;
                 match result {
                     Ok(renamed) => {
+                        this.refresh_pinned_sessions(cx);
                         for item in this
                             .sessions
                             .iter_mut()

@@ -16,10 +16,19 @@ pub struct Session {
     pub custom_title: bool,
     #[serde(default)]
     pub pinned: bool,
+    #[serde(default)]
+    pub updated_at: i64,
     pub workspace_id: String,
     pub agent_id: Option<String>,
     #[serde(default)]
     pub backend: Backend,
+}
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHit {
+    pub session: Session,
+    pub workspace_name: String,
+    pub title: String,
 }
 #[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]

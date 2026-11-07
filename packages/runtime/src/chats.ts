@@ -54,23 +54,34 @@ export class Chats implements StructuredSessionPort {
       throw new TypeError('搜索内容需为 200 个字符以内的文本。');
     }
     const terms = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
-    const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
-    const groups = await Promise.all(workspaces.filter(workspace => !this.removing.has(workspace.id)).map(async workspace => {
-      if (!this.index.list(workspace.id).length) return [];
-      const members = await this.hive.request('GET', `/api/ui/workspaces/${workspace.id}/team`) as { id: string; name: string }[];
-      const names = new Map(members.map(member => [member.id, member.name]));
-      return this.index.list(workspace.id).map(session => ({
-        session,
-        workspaceName: workspace.name,
-        title: !session.customTitle && session.agentId ? names.get(session.agentId) ?? session.title : session.title,
-      }));
-    }));
+    const groups = await this.navigationEntries(false);
     const matches = groups.flat().filter(hit => {
       const backendName = { pi: '内置 Pi', codex: 'Codex', 'pi-rpc': '外部 Pi', claude: 'Claude Code' }[hit.session.backend];
       const searchable = [hit.title, hit.session.title, hit.workspaceName, hit.session.backend, backendName].join(' ').toLocaleLowerCase();
       return terms.every(term => searchable.includes(term));
     }).sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
     return { matches: matches.slice(0, 100), total: matches.length };
+  }
+  private async navigationEntries(onlyPinned: boolean) {
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
+    const groups = await Promise.all(workspaces.filter(workspace => !this.removing.has(workspace.id)).map(async workspace => {
+      const records = () => this.index.list(workspace.id).filter(session => !onlyPinned || session.pinned);
+      if (!records().length) return [];
+      const members = await this.hive.request('GET', `/api/ui/workspaces/${workspace.id}/team`) as { id: string; name: string }[];
+      const names = new Map(members.map(member => [member.id, member.name]));
+      if (this.removing.has(workspace.id)) return [];
+      return records().map(session => ({
+        session,
+        workspaceName: workspace.name,
+        title: !session.customTitle && session.agentId ? names.get(session.agentId) ?? session.title : session.title,
+      }));
+    }));
+    return groups;
+  }
+  async pinned() {
+    return (await this.navigationEntries(true)).flat()
+      .sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
   }
   rename(id: string, title: unknown): ChatRecord {
     if (this.closing) throw new Error('Chat runtime is closing');

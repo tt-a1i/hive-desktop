@@ -110,6 +110,10 @@ try {
     assert.deepEqual(pin.session, { ...renamed, pinned: true });
     assert.equal(pin.sessions[0].id, original.id);
     assert.equal(pin.session.updatedAt, original.updatedAt);
+    const globalPins=await request('chat.pinned');
+    assert.equal(globalPins.length,1);
+    assert.equal(globalPins[0].session.id,original.id);
+    assert.equal(globalPins[0].workspaceName,'Portable smoke');
     await request('chat.pin', { sessionId: original.id, pinned: false });
     const sessions = await request('chat.list', { workspaceId: workspace.id });
     assert.equal(sessions.find(session => session.id === original.id).title, '发布检查 🐝');

@@ -31,8 +31,12 @@ try {
     const result = runtime.chats.setPinned(original.id, true);
     assert.deepEqual(result, { ...original, pinned: true }, 'Pin must preserve transcript identity and activity timestamp');
     assert.equal(runtime.chats.list(alpha)[0]!.id, original.id, 'A sole pin must sort before all unpinned sessions');
+    const global = await runtime.chats.pinned();
+    assert.equal(global.length, 1);
+    assert.deepEqual(global[0], {session: result, workspaceName:'Alpha', title:original.title});
     assert.deepEqual(runtime.chats.setPinned(original.id, true), result);
     assert.deepEqual(runtime.chats.setPinned(original.id, false), { ...original, pinned: false });
+    assert.deepEqual(await runtime.chats.pinned(), []);
   }
   const target = records[0]!;
   runtime.chats.setPinned(target.id, true);
@@ -97,6 +101,11 @@ try {
     const pinned = await rpc('chat.pin', {sessionId: foreign.id, pinned: true});
     assert.equal(pinned.error, undefined); assert.deepEqual(pinned.result.session, {...foreign, pinned: true});
     assert.deepEqual(pinned.result.sessions, [{...foreign, pinned: true}]);
+    const global = await rpc('chat.pinned');
+    assert.equal(global.error, undefined);
+    assert.equal(global.result.length, 3);
+    assert.deepEqual(new Set(global.result.map((hit:any)=>hit.workspaceName)),new Set(['Alpha','Beta']));
+    assert.deepEqual(new Set(global.result.map((hit:any)=>hit.session.id)),new Set([target.id,second.id,foreign.id]));
     assert.deepEqual((await rpc('chat.list', {workspaceId: alpha})).result, before);
     for (const invalid of [null, 'false', 0]) assert.ok((await rpc('chat.pin', {sessionId: foreign.id, pinned: invalid})).error);
     assert.ok((await rpc('chat.pin', {sessionId: 'missing', pinned: true})).error);

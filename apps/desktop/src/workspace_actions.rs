@@ -249,6 +249,7 @@ impl HiveApp {
                         this.forget_removed_workspace(&id, &session_ids, window, cx);
                         this.status = "工作区已移除".into();
                     }
+                    this.refresh_pinned_sessions(cx);
                     this.error = error;
                     cx.notify();
                 });
@@ -265,6 +266,9 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) {
         self.workspaces.retain(|item| item.id != workspace);
+        self.pinned_sessions
+            .records
+            .retain(|hit| hit.session.workspace_id != workspace);
         self.navigation.sessions.remove(workspace);
         if self.navigation.workspace.as_deref() == Some(workspace) {
             self.navigation.workspace = None;
