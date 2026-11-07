@@ -5,8 +5,10 @@ type Interaction = Parameters<ModelRuntime['login']>[2];
 type Prompt = Parameters<Interaction['prompt']>[0];
 type PromptView<T = Prompt> = T extends Prompt ? Omit<T, 'signal'> & { id: string } : never;
 type Notice = Parameters<Interaction['notify']>[0];
+type AuthType = Parameters<ModelRuntime['login']>[1];
 export interface PiLoginState {
   id: string; providerId: string;
+  authType: AuthType;
   state: 'running' | 'succeeded' | 'cancelled' | 'failed';
   notice?: Notice;
   authorization?: Notice;
@@ -18,10 +20,11 @@ type Login = {
   answer?: { id: string; submit(value: string): void };
 };
 
-/** The SDK owns OAuth and its existing locked credential store. Never serialize credentials. */
+/** The SDK owns authentication and its existing locked credential store. Never serialize credentials. */
 export class PiAuth {
   private models?: Promise<ModelRuntime>;
   private login?: Login;
+  private removal?: Promise<Awaited<ReturnType<PiAuth['providers']>> & { message: string }>;
   private closing = false;
   constructor(private readonly createModels = () => ModelRuntime.create({ refreshOnCreate: false })) {}
   private async runtime() {
@@ -33,25 +36,34 @@ export class PiAuth {
   }
   async providers() {
     const models = await this.runtime();
+    return this.catalog(models);
+  }
+  private async catalog(models: ModelRuntime) {
     const stored = new Map((await models.listCredentials()).map(info => [info.providerId, info.type]));
-    return { agentDir: getAgentDir(), login: this.status(), providers: models.getProviders().filter(provider => provider.auth.oauth).map(provider => ({
-      id: provider.id, name: provider.name, label: provider.auth.oauth!.loginLabel ?? provider.auth.oauth!.name,
+    return { agentDir: getAgentDir(), login: this.status(), providers: models.getProviders().map(provider => ({
+      id: provider.id, name: provider.name,
+      methods: [
+        ...(provider.auth.oauth ? [{ type: 'oauth' as const, label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name }] : []),
+        ...(provider.auth.apiKey?.login ? [{ type: 'api_key' as const, label: provider.auth.apiKey.name }] : []),
+      ],
       storedType: stored.get(provider.id) ?? null,
     })).sort((a, b) => Number(!!b.storedType) - Number(!!a.storedType) || a.name.localeCompare(b.name)) };
   }
   status(): PiLoginState | null { return this.login ? structuredClone(this.login.view) : null; }
-  async start(providerId: string): Promise<PiLoginState> {
+  async start(providerId: string, authType: unknown = 'oauth'): Promise<PiLoginState> {
     const models = await this.runtime();
-    if (this.login?.view.state === 'running') throw new Error('请先完成或取消当前登录');
-    if (!models.getProvider(providerId)?.auth.oauth) throw new Error('该提供商不支持 OAuth 登录');
+    this.assertIdle();
+    if (authType !== 'oauth' && authType !== 'api_key') throw new Error('不支持的认证方式');
+    const auth = models.getProvider(providerId)?.auth;
+    if (!(authType === 'oauth' ? auth?.oauth : auth?.apiKey?.login)) throw new Error('该提供商不支持此配置方式');
     const controller = new AbortController();
-    const login: Login = { view: { id: randomUUID(), providerId, state: 'running' }, controller, done: Promise.resolve() };
+    const login: Login = { view: { id: randomUUID(), providerId, authType, state: 'running' }, controller, done: Promise.resolve() };
     this.login = login;
-    const timeout = setTimeout(() => controller.abort(new Error('登录超时，请重新开始')), 10 * 60_000);
+    const timeout = setTimeout(() => controller.abort(new Error(authType === 'api_key' ? '配置超时，请重新开始' : '登录超时，请重新开始')), 10 * 60_000);
     timeout.unref();
     login.done = (async () => {
       try {
-        await models.login(providerId, 'oauth', {
+        await models.login(providerId, authType, {
           signal: controller.signal,
           notify: event => {
             if (controller.signal.aborted) return;
@@ -61,7 +73,7 @@ export class PiAuth {
           prompt: prompt => this.prompt(login, prompt),
         });
         login.view.state = 'succeeded';
-        login.view.message = '登录已保存。可返回会话刷新模型列表并选择模型。';
+        login.view.message = '配置已保存。可返回会话刷新模型列表并选择模型。';
       } catch (error) {
         login.view.state = error instanceof CredentialSynchronizationError ? 'succeeded' : controller.signal.aborted ? 'cancelled' : 'failed';
         login.view.message = error instanceof CredentialSynchronizationError ? '凭据已保存，但模型列表更新失败。请返回会话刷新模型；若仍失败，请检查 Pi 配置。'
@@ -101,8 +113,8 @@ export class PiAuth {
     if (!login || login.view.id !== id || login.view.state !== 'running' || login.answer?.id !== promptId) {
       throw new Error('登录步骤已结束，请刷新后继续');
     }
-    if (!value.trim()) throw new Error('请输入登录信息');
     const prompt = login.view.prompt;
+    if (prompt?.type !== 'text' && !value.trim()) throw new Error('请输入登录信息');
     if (prompt?.type === 'select' && !prompt.options.some(option => option.id === value)) throw new Error('无效的登录选项');
     login.answer.submit(value);
     return this.status();
@@ -110,13 +122,34 @@ export class PiAuth {
   async cancel(id: string) {
     const login = this.login;
     if (!login || login.view.id !== id) throw new Error('登录已结束');
-    if (login.view.state === 'running') login.controller.abort(new Error('登录已取消'));
+    if (login.view.state === 'running') login.controller.abort(new Error(login.view.authType === 'api_key' ? '配置已取消' : '登录已取消'));
     await login.done;
     return structuredClone(login.view);
+  }
+  private assertIdle() {
+    if (this.login?.view.state === 'running' || this.removal) throw new Error('请先完成或取消当前账号操作');
+  }
+  async logout(providerId: string) {
+    const models = await this.runtime();
+    this.assertIdle();
+    if (!models.getProvider(providerId)) throw new Error('提供商不存在');
+    this.removal = (async () => {
+      let message = '已移除本机保存的凭据。环境变量等其他登录来源不受影响。';
+      try { await models.logout(providerId); }
+      catch (error) {
+        if (!(error instanceof CredentialSynchronizationError)) throw error;
+        message = '凭据已移除，但模型列表更新失败。请返回会话刷新模型。';
+      }
+      if (this.login?.view.providerId === providerId) delete this.login;
+      return { ...await this.catalog(models), message };
+    })();
+    try { return await this.removal; }
+    finally { delete this.removal; }
   }
   async close() {
     this.closing = true;
     this.login?.controller.abort(new Error('后台已关闭，登录已取消'));
     await this.login?.done;
+    await Promise.allSettled(this.removal ? [this.removal] : []);
   }
 }

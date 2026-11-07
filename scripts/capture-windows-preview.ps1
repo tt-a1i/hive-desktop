@@ -166,6 +166,12 @@ Write-Host 'Persisted all appearance choices and verified their native toggle st
 Invoke-Action '内置 Pi'
 [void](Wait-Action '刷新账号状态')
 [void](Wait-Action '打开 Pi 配置目录')
+$providerSearch = Wait-Action '搜索 Pi 提供商'
+$providerSearch.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('OpenAI')
+[void](Wait-Action 'API 配置 · OpenAI')
+[void](Wait-Action '订阅登录 · OpenAI')
+Invoke-Action '清除搜索'
+Wait-EditorText '搜索 Pi 提供商' ''
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-pi-accounts.png')
 Write-Host 'Read the embedded Pi account catalog without starting a login.'
 Invoke-Action '外部程序'

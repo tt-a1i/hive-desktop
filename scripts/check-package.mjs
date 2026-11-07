@@ -73,6 +73,7 @@ try {
   assert.equal(accounts.agentDir, piAgentDir);
   assert.equal(accounts.login, null);
   assert.ok(accounts.providers.some(provider => provider.id === 'openai'));
+  assert.ok(accounts.providers.find(provider => provider.id === 'anthropic').methods.some(method => method.type === 'api_key'));
   assert.ok(accounts.providers.every(provider => provider.storedType === null));
   assert.equal(await request('pi.auth.status'), null);
   await assert.rejects(request('pi.auth.start', { providerId: 'invalid-provider' }));

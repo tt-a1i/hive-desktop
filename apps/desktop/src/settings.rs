@@ -361,7 +361,7 @@ impl HiveApp {
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
-                        SettingsSection::PiAccounts => content.id("settings-pi-accounts").overflow_y_scroll().child(self.render_pi_accounts(cx)),
+                        SettingsSection::PiAccounts => content.id("settings-pi-accounts").overflow_y_scroll().track_scroll(&self.pi_accounts.scroll).child(self.render_pi_accounts(cx)),
                         SettingsSection::Appearance => content.id("settings-appearance-content").overflow_y_scroll().child(self.render_appearance_settings(cx)),
                         SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()
                     .child(h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))

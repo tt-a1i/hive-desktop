@@ -38,10 +38,14 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
     case 'pi.auth.providers': return piAuth.providers();
-    case 'pi.auth.start': return piAuth.start(text(params, 'providerId'));
+    case 'pi.auth.start': return piAuth.start(text(params, 'providerId'), params.authType);
     case 'pi.auth.status': return piAuth.status();
-    case 'pi.auth.respond': return piAuth.respond(text(params, 'loginId'), text(params, 'promptId'), text(params, 'value'));
+    case 'pi.auth.respond': {
+      if (typeof params.value !== 'string') throw new Error('value must be a string');
+      return piAuth.respond(text(params, 'loginId'), text(params, 'promptId'), params.value);
+    }
     case 'pi.auth.cancel': return piAuth.cancel(text(params, 'loginId'));
+    case 'pi.auth.logout': return piAuth.logout(text(params, 'providerId'));
     case 'initialize': {
       return { version: '0.1.0', dataDir, piAgentDir: getAgentDir(), hivePort: hive.port, navigation: hive.getNavigation() };
     }

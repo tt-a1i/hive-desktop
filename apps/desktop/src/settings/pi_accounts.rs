@@ -5,6 +5,7 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+mod disconnect;
 mod view;
 
 #[derive(Clone, Deserialize)]
@@ -12,14 +13,22 @@ mod view;
 struct Provider {
     id: String,
     name: String,
-    label: String,
+    methods: Vec<AuthMethod>,
     stored_type: Option<String>,
+}
+#[derive(Clone, Deserialize)]
+struct AuthMethod {
+    #[serde(rename = "type")]
+    kind: String,
+    label: String,
 }
 #[derive(Clone, Deserialize)]
 struct Login {
     id: String,
     #[serde(rename = "providerId")]
     provider_id: String,
+    #[serde(rename = "authType")]
+    auth_type: String,
     state: String,
     message: Option<String>,
     notice: Option<Value>,
@@ -48,22 +57,33 @@ struct Catalog {
     agent_dir: String,
     providers: Vec<Provider>,
     login: Option<Login>,
+    message: Option<String>,
 }
 
 pub struct PiAccounts {
+    pub(super) scroll: ScrollHandle,
     providers: Option<Vec<Provider>>,
     agent_dir: Option<String>,
     login: Option<Login>,
     loading: bool,
     message: Option<String>,
     input: Entity<InputState>,
+    search: Entity<InputState>,
     generation: u64,
     poll: Option<Task<()>>,
     _input_subscription: Subscription,
+    _search_subscription: Subscription,
 }
 impl PiAccounts {
     pub fn new(window: &mut Window, cx: &mut Context<HiveApp>) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴授权码或回调地址"));
+        let search = cx
+            .new(|cx| InputState::new(window, cx).placeholder("搜索提供商，如 OpenAI、Anthropic…"));
+        let search_subscription = cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
         let subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -79,15 +99,18 @@ impl PiAccounts {
             }
         });
         Self {
+            scroll: ScrollHandle::new(),
             providers: None,
             agent_dir: None,
             login: None,
             loading: false,
             message: None,
             input,
+            search,
             generation: 0,
             poll: None,
             _input_subscription: subscription,
+            _search_subscription: search_subscription,
         }
     }
     pub fn reset_connection(&mut self) {
@@ -152,7 +175,7 @@ impl HiveApp {
             return;
         };
         let value = choice.unwrap_or_else(|| self.pi_accounts.input.read(cx).value().to_string());
-        if value.trim().is_empty() {
+        if prompt.kind != "text" && value.trim().is_empty() {
             return;
         }
         self.pi_auth_request(
@@ -175,6 +198,9 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
+        if matches!(method, "pi.auth.start" | "pi.auth.logout") {
+            self.pi_accounts.scroll.set_offset(point(px(0.), px(0.)));
+        }
         self.pi_accounts.poll = None;
         self.pi_accounts.generation += 1;
         let generation = self.pi_accounts.generation;
@@ -203,12 +229,13 @@ impl HiveApp {
                     .as_ref()
                     .map(|login| login.state.clone());
                 let result = result.and_then(|value| {
-                    if method == "pi.auth.providers" {
+                    if matches!(method, "pi.auth.providers" | "pi.auth.logout") {
                         let catalog: Catalog =
                             serde_json::from_value(value).map_err(|error| error.to_string())?;
                         this.pi_accounts.providers = Some(catalog.providers);
                         this.pi_accounts.agent_dir = Some(catalog.agent_dir);
                         this.pi_accounts.login = catalog.login;
+                        this.pi_accounts.message = catalog.message;
                     } else {
                         this.pi_accounts.login =
                             serde_json::from_value(value).map_err(|error| error.to_string())?;
@@ -231,7 +258,14 @@ impl HiveApp {
                     });
                     let placeholder = prompt
                         .and_then(|prompt| prompt.placeholder.clone())
-                        .unwrap_or_else(|| "粘贴授权码或回调地址".into());
+                        .unwrap_or_else(|| {
+                            match prompt.map(|prompt| prompt.kind.as_str()) {
+                                Some("secret") => "输入或粘贴凭据",
+                                Some("manual_code") => "粘贴授权码或回调地址",
+                                _ => "按上方提示输入",
+                            }
+                            .into()
+                        });
                     let input = this.pi_accounts.input.clone();
                     let fallback = this.preferences_focus.clone();
                     let focus = this.settings_panel
