@@ -26,13 +26,19 @@ impl HiveApp {
             .then(|| self.scroll.offset());
         self.positions.insert(
             session.id.clone(),
-            crate::app::ConversationPosition { offset, expanded },
+            crate::app::ConversationPosition {
+                offset,
+                expanded,
+                expanded_tool_groups: self.expanded_tool_groups.clone(),
+            },
         );
     }
 
     fn restore_conversation_position(&mut self, id: &str) {
         let position = self.positions.get(id);
         if let Some(position) = position {
+            self.expanded_tool_groups
+                .clone_from(&position.expanded_tool_groups);
             for message in self
                 .messages
                 .iter_mut()
@@ -205,6 +211,7 @@ impl HiveApp {
         self.session = None;
         self.messages.clear();
         self.tool_inputs.clear();
+        self.expanded_tool_groups.clear();
         self.pending_reports.clear();
         self.completed_deliveries.clear();
         self.pending_events.clear();
@@ -394,6 +401,7 @@ impl HiveApp {
         }
         self.messages.clear();
         self.tool_inputs.clear();
+        self.expanded_tool_groups.clear();
         self.pending_reports.clear();
         self.completed_deliveries.clear();
         self.pending_events.clear();

@@ -330,14 +330,21 @@ impl Render for HiveApp {
                 .when(!welcome && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).p_3()
                     .child(v_flex().w_full().max_w(px(920.)).mx_auto().gap_5()
                         .when(self.messages.is_empty() && self.pending_reports.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
-                        .children(self.messages.iter().enumerate().map(|(i, message)| {
+                        .children(self.messages.chunk_by(|left, right| left.completed_tool() && right.completed_tool())
+                            .scan(0usize, |offset, group| {
+                                let start = *offset;
+                                *offset += group.len();
+                                Some((start, group))
+                            }).map(|(i, group)| {
+                            if group.len() > 1 { return self.render_completed_tools(i, group, cx).into_any_element(); }
+                            let message = &group[0];
                             if let Some(tool) = &message.tool {
                                 return self.render_tool_message(i, message, tool, cx).into_any_element();
                             }
                             let heading = message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), "notice" => "会话通知", _ => "工具" }.into());
                             v_flex().id(("message", i)).min_w_0().gap_2().px_3().py_2().rounded_lg()
-                                .when(message.role == "user", |bubble| bubble.bg(Color::Bubble.get(cx)).ml_auto().max_w(px(680.)))
-                                .child(h_flex().min_w_0().gap_2().justify_between()
+                                .when(message.role == "user", |bubble| bubble.ml_auto().max_w(px(680.)))
+                                .when(!message.explicit_user, |view| view.child(h_flex().min_w_0().gap_2().justify_between()
                                     .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(Color::Secondary.get(cx)).child(heading))
                                     .when(message.delivery.as_ref().is_some_and(|card| card.report), |row| {
                                         let state = if self.completed_deliveries.contains(&message.id) {
@@ -356,9 +363,9 @@ impl Render for HiveApp {
                                         if let Some(delivery) = this.messages.iter_mut().find(|m| m.id == id).and_then(|m| m.delivery.as_mut()) { delivery.expanded = !delivery.expanded; }
                                         cx.notify();
                                     }) })))
-                                )
+                                ))
                                 .when_some(message.markdown.as_ref(), |view, markdown| view.child(TextView::new(markdown).selectable(true).stream_fade(true)))
-                                .when(message.markdown.is_none(), |view| view.child(div().min_w_0().text_size(px(15.)).line_height(px(24.)).child(message.text.clone())))
+                                .when(message.markdown.is_none(), |view| view.child(div().min_w_0().text_size(px(15.)).line_height(px(24.)).when(message.role == "user", |bubble| bubble.px_4().py_2().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))).child(message.text.clone())))
                                 .when_some(message.delivery.as_ref(), |view, delivery| view.children(delivery.artifacts.iter().map(|artifact|
                                     div().min_w_0().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))
                                 )))

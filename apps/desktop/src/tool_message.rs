@@ -36,6 +36,80 @@ fn input_summary(args: &serde_json::Value) -> Option<String> {
 }
 
 impl HiveApp {
+    pub fn render_completed_tools(
+        &self,
+        start: usize,
+        messages: &[Message],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let key = messages[0].id.clone();
+        let expanded = self.expanded_tool_groups.contains(&key)
+            || messages
+                .iter()
+                .any(|m| m.tool.as_ref().is_some_and(|t| t.expanded));
+        let count = messages.len();
+        v_flex()
+            .min_w_0()
+            .gap_1()
+            .child(
+                Button::new(("tool-group", start))
+                    .ghost()
+                    .w_full()
+                    .accessibility_label(format!(
+                        "{}工作过程，{count} 项工具已完成",
+                        if expanded { "收起" } else { "展开" }
+                    ))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .gap_2()
+                            .child(div().text_sm().child("工作过程"))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_xs()
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(format!("{count} 项已完成")),
+                            )
+                            .child(if expanded { "▾" } else { "▸" }),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if expanded {
+                            this.expanded_tool_groups.remove(&key);
+                            // The stream may have grown between drawing and clicking.
+                            if let Some(index) = this.messages.iter().position(|m| m.id == key) {
+                                for m in this.messages[index..]
+                                    .iter_mut()
+                                    .take_while(|m| m.completed_tool())
+                                {
+                                    if let Some(tool) = &mut m.tool {
+                                        tool.expanded = false;
+                                    }
+                                }
+                            }
+                        } else {
+                            this.expanded_tool_groups.insert(key.clone());
+                        }
+                        cx.notify();
+                    })),
+            )
+            .when(expanded, |group| {
+                group.child(
+                    v_flex()
+                        .ml_3()
+                        .pl_2()
+                        .border_l_1()
+                        .border_color(Color::Divider.get(cx))
+                        .children(messages.iter().enumerate().filter_map(|(index, message)| {
+                            message.tool.as_ref().map(|tool| {
+                                self.render_tool_message(start + index, message, tool, cx)
+                                    .into_any_element()
+                            })
+                        })),
+                )
+            })
+    }
+
     pub fn render_tool_message(
         &self,
         index: usize,
@@ -156,5 +230,11 @@ impl HiveApp {
                         .child(message.text.chars().take(160).collect::<String>()),
                 )
             })
+    }
+}
+
+impl Message {
+    pub(crate) fn completed_tool(&self) -> bool {
+        self.tool.as_ref().is_some_and(|tool| tool.status == "完成")
     }
 }

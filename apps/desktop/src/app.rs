@@ -47,6 +47,7 @@ pub struct Message {
 pub struct ConversationPosition {
     pub offset: Option<Point<Pixels>>,
     pub expanded: HashSet<String>,
+    pub expanded_tool_groups: HashSet<String>,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -127,6 +128,7 @@ pub struct HiveApp {
     pub sessions: Vec<Session>,
     pub session: Option<Session>,
     pub messages: Vec<Message>,
+    pub expanded_tool_groups: HashSet<String>,
     pub tool_inputs: HashMap<String, Value>,
     pub models: Vec<Model>,
     pub model: Option<ModelIdentity>,
@@ -297,6 +299,7 @@ impl HiveApp {
             sessions: vec![],
             session: None,
             messages: vec![],
+            expanded_tool_groups: HashSet::new(),
             tool_inputs: HashMap::new(),
             models: vec![],
             model: None,
