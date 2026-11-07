@@ -100,6 +100,7 @@ jobs:
           path: |
             target/windows-native-workspace.png
             target/windows-member-session.png
+            target/windows-tool-details.png
             target/windows-team.png
             target/windows-program-settings.png
           if-no-files-found: error

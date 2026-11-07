@@ -212,6 +212,10 @@ impl HiveApp {
             );
         }
     }
+    pub(crate) fn reading_above_latest(&self) -> bool {
+        self.scroll.max_offset().y + self.scroll.offset().y > px(4.)
+    }
+
     pub fn push_message(&mut self, id: String, role: String, text: String, cx: &mut Context<Self>) {
         if !matches!(
             role.as_str(),
@@ -398,7 +402,7 @@ impl HiveApp {
             self.refresh_sessions(cx);
         }
         // GPUI stores a positive max_offset and a negative current offset.
-        let follow = self.scroll.max_offset().y + self.scroll.offset().y <= px(4.);
+        let follow = !self.reading_above_latest();
         match event {
             PiEvent::State { .. }
             | PiEvent::Interaction { .. }

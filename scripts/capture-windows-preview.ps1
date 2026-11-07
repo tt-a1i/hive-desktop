@@ -71,8 +71,14 @@ Invoke-Action '团队成员'
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-team.png')
 Invoke-Action '打开 Reviewer 的成员会话'
 [void](Wait-Action '返回团队成员')
-[void](Wait-Action '选择会话模型')
+[void](Wait-Action '展开工作过程，2 项工具已完成')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-member-session.png')
+Invoke-Action '展开工作过程，2 项工具已完成'
+Invoke-Action '展开 read 工具详情，完成 README.md'
+[void](Wait-Action '收起 read 工具详情，完成 README.md')
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-tool-details.png')
+Invoke-Action '收起工作过程，2 项工具已完成'
+[void](Wait-Action '展开工作过程，2 项工具已完成')
 Invoke-Action '返回团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')
 Write-Host 'Opened the named member session and returned to the team roster through native controls.'

@@ -22,8 +22,7 @@ impl HiveApp {
             })
             .map(|message| message.id.clone())
             .collect();
-        let offset = (self.scroll.max_offset().y + self.scroll.offset().y > px(4.))
-            .then(|| self.scroll.offset());
+        let offset = self.reading_above_latest().then(|| self.scroll.offset());
         self.positions.insert(
             session.id.clone(),
             crate::app::ConversationPosition {
