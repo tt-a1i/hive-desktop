@@ -12,6 +12,8 @@ pub struct Workspace {
 pub struct Session {
     pub id: String,
     pub title: String,
+    #[serde(default)]
+    pub custom_title: bool,
     pub workspace_id: String,
     pub agent_id: Option<String>,
     #[serde(default)]

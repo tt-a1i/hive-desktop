@@ -49,6 +49,19 @@ export class Chats implements StructuredSessionPort {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
   list(workspaceId: string) { return this.index.list(workspaceId); }
+  rename(id: string, title: unknown): ChatRecord {
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const current = this.index.get(id);
+    this.assertWorkspaceAvailable(current.workspaceId);
+    if (typeof title !== 'string') throw new TypeError('Conversation name must be text');
+    const name = title.trim();
+    if (!name || Array.from(name).length > 120 || /[\u0000-\u001f\u007f-\u009f]/u.test(name)) {
+      throw new RangeError('会话名称需为 1–120 个字符，且不能包含换行或控制字符。');
+    }
+    const renamed = { ...current, title: name, customTitle: true };
+    this.index.save(renamed);
+    return renamed;
+  }
   private event(id: string, event: PiEvent | QueueState) {
     const sequence = (this.sequences.get(id) ?? 0) + 1;
     this.sequences.set(id, sequence);
@@ -291,7 +304,7 @@ export class Chats implements StructuredSessionPort {
       const chat = await this.require(id);
       if (!chat.queue.pendingCount) chat.queue.resume();
       const record = this.index.get(id);
-      this.index.save({ ...record, title: record.title === '新会话' ? text.trim().slice(0, 60) : record.title, updatedAt: Date.now() });
+      this.index.save({ ...record, title: !record.customTitle && record.title === '新会话' ? text.trim().slice(0, 60) : record.title, updatedAt: Date.now() });
       if (record.agentId === `${record.workspaceId}:orchestrator`) {
         await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/user-input`, { text });
       } else {

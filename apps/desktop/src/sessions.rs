@@ -1,3 +1,4 @@
+mod naming;
 use crate::conversation::message_text;
 use crate::{app::HiveApp, protocol::*};
 use gpui_kit::*;

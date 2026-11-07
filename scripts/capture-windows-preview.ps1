@@ -214,3 +214,12 @@ Invoke-Action '用当前草稿更新文档'
 [void](Wait-Action '编辑任务')
 if ([System.IO.File]::ReadAllText($TasksFile) -cne 'Agent update + My draft') { throw 'Reviewed task draft was not saved.' }
 Write-Host 'Verified conflict review and saving the reconciled task document in the native editor.'
+
+Invoke-Action '重命名当前会话'
+$titleInput = Wait-Action '会话名称'
+$titleInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('启动方式核验')
+Invoke-Action '保存名称'
+Invoke-Action '重命名当前会话'
+Wait-EditorText '会话名称' '启动方式核验'
+Invoke-Action '取消'
+Write-Host 'Renamed the lead session without changing its draft or team binding.'

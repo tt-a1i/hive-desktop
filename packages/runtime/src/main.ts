@@ -104,6 +104,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       const workspace = text(params, 'workspaceId');
       return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend) : chats.create(workspace, params.backend);
     }
+    case 'chat.rename': return chats.rename(text(params, 'sessionId'), params.title);
     case 'chat.open': return chats.open(text(params, 'sessionId'));
     case 'chat.prompt': return chats.prompt(text(params, 'sessionId'), text(params, 'text'));
     case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response);

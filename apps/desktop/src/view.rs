@@ -30,6 +30,9 @@ impl HiveApp {
             })
     }
     pub(crate) fn session_title<'a>(&'a self, session: &'a crate::protocol::Session) -> &'a str {
+        if session.custom_title {
+            return &session.title;
+        }
         session
             .agent_id
             .as_ref()
@@ -515,12 +518,19 @@ impl Render for HiveApp {
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .when(!welcome, |header| header.max_w_full().min_h(px(54.)).px_5().border_b_1().border_color(Color::Divider.get(cx)))
                     .when_some(self.conversation_return(cx), |header, back| header.child(back))
-                    .child({
+                    .when(self.session.is_none() || self.session_name_target.as_deref() != self.session.as_ref().map(|s| s.id.as_str()), |header| header.child({
                     let title = if welcome && self.workspace.is_none() { "打开项目".into() } else if welcome { "Hive".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
                     div().id("session-title").font_weight(FontWeight::SEMIBOLD).flex_1().min_w_0().truncate().when(welcome, |h| h.text_size(px(40.)).line_height(px(50.)).font_weight(FontWeight::BOLD)).when(!welcome, |h| h.text_lg())
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
                         .child(title)
-                })
+                }))
+                    .when(self.session.is_some() && self.session_name_target.as_deref() == self.session.as_ref().map(|s| s.id.as_str()), |header| header
+                        .child(div().flex_1().min_w_0().child(Input::new(&self.session_name).aria_label("会话名称").disabled(self.session_name_loading)))
+                        .child(Button::new("save-session-name").primary().label("保存名称").disabled(!self.connected || self.session_name_loading).on_click(cx.listener(|this, _, _, cx| this.save_session_name(cx))))
+                        .child(Button::new("cancel-session-name").ghost().label("取消").disabled(self.session_name_loading).on_click(cx.listener(|this, _, _, cx| { this.session_name_target = None; cx.notify(); }))))
+                    .when(!welcome && self.session_name_target.as_deref() != self.session.as_ref().map(|s| s.id.as_str()), |header| header
+                        .child(Button::new("rename-session").ghost().compact().icon(Glyph::SquarePen).tooltip("重命名会话").accessibility_label("重命名当前会话")
+                            .disabled(!self.connected || self.session_name_loading || !self.workspace_writes_allowed()).on_click(cx.listener(|this, _, window, cx| this.begin_session_rename(window, cx)))))
                 .when(welcome && self.workspace.is_some(), |header| header.child(
                     Button::new("home-team").ghost().rounded_full().icon(Glyph::Network)
                         .label("团队成员").on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx)))

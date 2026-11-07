@@ -16,6 +16,7 @@ export interface ChatRecord {
   id: string;
   workspaceId: string;
   title: string;
+  customTitle?: boolean;
   sessionFile: string | null;
   agentId?: string;
   piSessionId?: string;
@@ -82,6 +83,7 @@ function isChatRecord(value: unknown): value is ChatRecord {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
+  if (record.customTitle !== undefined && typeof record.customTitle !== 'boolean') return false;
   if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex' && record.backend !== 'pi-rpc' && record.backend !== 'claude') return false;
   if (record.nativeclaudeSessionId !== undefined && typeof record.nativeclaudeSessionId !== 'string') return false;
   if (record.codexThreadId !== undefined && typeof record.codexThreadId !== 'string') return false;

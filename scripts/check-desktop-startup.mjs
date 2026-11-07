@@ -142,6 +142,9 @@ try {
       '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-DispatchId', dispatch, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
     { stdio: 'inherit', timeout: 60_000 });
     await waitForSelection(leadChat);
+    const renamedLead = JSON.parse(await readFile(join(state, 'chats/index.json'), 'utf8')).find(session => session.id === leadChat);
+    assert.equal(renamedLead.title, '启动方式核验');
+    assert.equal(renamedLead.customTitle, true);
     const commands = reader.prepare("SELECT value FROM app_state WHERE key = 'desktop_executables'").get();
     assert.equal(JSON.parse(commands.value).codexCommand, String.raw`C:\Fixture Programs\codex.exe`);
     assert.equal(JSON.parse(await readFile(workerDraft, 'utf8')).input, `> ${prompt}\n\n${existingDraft}`);

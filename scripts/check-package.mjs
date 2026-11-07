@@ -82,6 +82,15 @@ try {
   assert.deepEqual(await saveTasks('Another edit + draft', ''), { content: '' });
   assert.deepEqual(await saveTasks('Outdated', 'Stale'), { conflict: true, currentContent: '' });
   const listed = await request('hive.request', { method: 'GET', path: '/api/workspaces' }); assert.equal(listed[0].id, workspace.id);
+  for (const backend of ['pi', 'codex', 'pi-rpc', 'claude']) {
+    const original = await request('chat.createRecord', { workspaceId: workspace.id, backend });
+    const renamed = await request('chat.rename', { sessionId: original.id, title: ' 发布检查 🐝 ' });
+    assert.deepEqual(renamed, { ...original, title: '发布检查 🐝', customTitle: true });
+    const sessions = await request('chat.list', { workspaceId: workspace.id });
+    assert.equal(sessions.find(session => session.id === original.id).title, '发布检查 🐝');
+    await assert.rejects(request('chat.rename', { sessionId: original.id, title: '   ' }));
+    assert.equal((await request('chat.list', { workspaceId: workspace.id })).find(session => session.id === original.id).title, '发布检查 🐝');
+  }
   progress('Shutting down Hive runtime');
   assert.deepEqual(await request('shutdown'), { ok: true }); assert.equal((await deadline(exited, 'runtime process exit'))[0], 0);
   await assert.rejects(fetch(`http://127.0.0.1:${init.hivePort}/api/ui/session`, { signal: AbortSignal.timeout(5000) }), error => error.cause?.code === 'ECONNREFUSED');

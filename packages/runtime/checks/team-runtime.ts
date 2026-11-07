@@ -78,6 +78,7 @@ try {
     return actualRequest(method, path, body);
   };
   const userText = 'Acknowledge with OK. When the worker report arrives, acknowledge receipt briefly. No tools needed.';
+  first.chats.rename(a.id, '新会话');
   const input = first.chats.prompt(a.id, userText);
   await atInput;
   const switching = first.chats.resume(b.id);
@@ -89,6 +90,8 @@ try {
   release();
   await input;
   assert.equal(await switchVerdict, 'blocked');
+  assert.equal(first.chats.list(workspace.id).find(chat => chat.id === a.id)?.title, '新会话');
+  assert.equal(first.chats.list(workspace.id).find(chat => chat.id === a.id)?.customTitle, true);
   assert.equal(first.chats.list(workspace.id).find(chat => chat.id === a.id)?.agentId, agentId);
   assert.ok(queues(first.chats).get(a.id)!.queue.pending.some(item => item.text.includes(userText)));
   assert.deepEqual(queues(first.chats).get(a.id)!.queue.pending[0]?.presentation,
@@ -163,6 +166,8 @@ try {
   assert.ok(!queues(runtime.chats).has(a.id), 'The persisted queue must prevent switching without relaunching the previous orchestrator');
   const reopenedA = await runtime.chats.open(a.id);
   assert.equal(reopenedA.agentId, agentId);
+  assert.equal(reopenedA.title, '新会话');
+  assert.equal(reopenedA.customTitle, true);
   assert.equal(reopenedA.pending, pendingAtRestart);
   const preview = [{ deliveryId: delivery.id, dispatchId, text: 'explicit-worker-report', workerName: 'sdk-worker', workerId: worker.id,
     artifacts: ['proof.txt'], processing: false }];
