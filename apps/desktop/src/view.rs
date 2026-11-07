@@ -419,7 +419,7 @@ impl Render for HiveApp {
                 )).into_any_element()
             } else if self.settings_panel { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full()
                 .child(self.render_settings_tabs(compact_settings, cx))
-                .child(v_flex().flex_1().w_full().max_w(px(800.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.px_10().py_8()).gap_5()
+                .child(v_flex().flex_1().w_full().max_w(px(960.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.pl_5().pr_6().py_7()).gap_5()
                 .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Programs => "外部程序" }))
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();

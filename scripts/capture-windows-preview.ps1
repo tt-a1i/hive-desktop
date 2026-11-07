@@ -106,6 +106,11 @@ Save-FixtureWindow $OutputPath
 if ($null -eq (Find-Action '团队成员')) {
     Invoke-Action '打开或收起工作区与会话导航'
 }
+Invoke-Action '收起工作区列表'
+[void](Wait-Action '展开工作区列表')
+if ($null -ne (Find-Action 'Pi · 新会话 · 会话')) { throw 'Collapsed project tree still exposes its chats.' }
+Invoke-Action '展开工作区列表'
+[void](Wait-Action 'Pi · 新会话 · 会话')
 Invoke-Action '设置'
 Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')

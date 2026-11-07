@@ -107,34 +107,41 @@ impl HiveApp {
             .flex_shrink_0()
             .p_3()
             .gap_1()
-            .bg(Color::Sidebar.get(cx))
+            .bg(Color::Surface.get(cx))
             .when(compact, |bar| bar.flex_row().flex_wrap().border_b_1())
-            .when(!compact, |bar| bar.flex_col().w(px(220.)).border_r_1())
+            .when(!compact, |bar| {
+                bar.flex_col().w(px(260.)).pl_6().pr_4().pt_7()
+            })
             .border_color(Color::Divider.get(cx))
             .child(
-                Button::new("leave-preferences")
-                    .ghost()
-                    .rounded_full()
-                    .icon(Glyph::ArrowLeft)
-                    .label("返回会话")
-                    .when(!compact, |button| button.justify_start().mb_3())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.close_settings();
-                        this.close_roles();
-                        this.hide_terminal(cx);
-                        cx.notify();
-                    })),
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .when(!compact, |row| row.px_3().pb_4())
+                    .child(
+                        Button::new("leave-preferences")
+                            .ghost()
+                            .compact()
+                            .rounded_full()
+                            .icon(Glyph::ArrowLeft)
+                            .accessibility_label("返回会话")
+                            .tooltip("返回会话")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_settings();
+                                this.close_roles();
+                                this.hide_terminal(cx);
+                                cx.notify();
+                            })),
+                    )
+                    .when(!compact, |row| {
+                        row.child(
+                            div()
+                                .text_2xl()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child("设置"),
+                        )
+                    }),
             )
-            .when(!compact, |bar| {
-                bar.child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .text_xs()
-                        .text_color(Color::Muted.get(cx))
-                        .child("设置"),
-                )
-            })
             .children(
                 [
                     (
@@ -375,10 +382,14 @@ impl HiveApp {
                                     .items_center()
                                     .justify_between()
                                     .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child("工作区"),
+                                        Button::new("toggle-project-section").ghost().compact()
+                                            .icon(if self.projects_collapsed { Glyph::ChevronRight } else { Glyph::ChevronDown })
+                                            .label("工作区")
+                                            .accessibility_label(if self.projects_collapsed { "展开工作区列表" } else { "收起工作区列表" })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.projects_collapsed = !this.projects_collapsed;
+                                                cx.notify();
+                                            })),
                                     )
                                     .child(
                                         Button::new("toggle-add-workspace")
@@ -428,7 +439,7 @@ impl HiveApp {
                                             })),
                                     )
                             })
-                            .children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
+                            .when(!self.projects_collapsed, |section| section.children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
                                 let id = workspace.id.clone();
                                 let toggle_id = id.clone();
                                 let expanded = self.expanded_projects.contains(&id);
@@ -446,7 +457,7 @@ impl HiveApp {
                                                 Button::new(("expand-project", i))
                                                     .ghost()
                                                     .compact()
-                                                    .label(if expanded { "▾" } else { "▸" })
+                                                    .h(px(28.)).w(px(24.)).icon(if expanded { Glyph::ChevronDown } else { Glyph::ChevronRight })
                                                     .accessibility_label(format!(
                                                         "{} {} 的会话",
                                                         if expanded { "收起" } else { "展开" },
@@ -465,7 +476,7 @@ impl HiveApp {
                                                 div().flex_1().min_w_0().child(
                                                     Button::new(("workspace", i))
                                                         .ghost()
-                                                        .icon(Glyph::Folder)
+                                                        .icon(if expanded { Glyph::FolderOpen } else { Glyph::Folder }).h(px(28.))
                                                         .w_full()
                                                         .min_w_0()
                                                         .child(
@@ -511,7 +522,7 @@ impl HiveApp {
                                             ),
                                     )
                                     .when(expanded, |group| {
-                                        let rows = v_flex().pl_6().min_w_0();
+                                        let rows = v_flex().pl_4().pt(px(2.)).gap(px(2.)).min_w_0();
                                         group.child(match sessions {
                                             Some(items) if items.is_empty() => rows.child(
                                                 div()
@@ -532,7 +543,7 @@ impl HiveApp {
                                             ),
                                         })
                                     })
-                            })),
+                            }))),
                     ),
             )
             .child(
@@ -564,7 +575,7 @@ impl HiveApp {
         Button::new("open-workspace-menu")
             .ghost()
             .compact()
-            .label("⋯")
+            .icon(Glyph::Ellipsis)
             .tooltip("项目操作")
             .accessibility_label("项目操作")
             .disabled(!self.connected)
@@ -631,6 +642,8 @@ impl HiveApp {
         };
         Button::new(SharedString::from(format!("session-{id}")))
             .ghost()
+            .h(px(30.))
+            .rounded_lg()
             .accessibility_label(format!(
                 "{} · {} · {role}{activity}",
                 session.backend.label(),
