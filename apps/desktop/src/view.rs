@@ -345,6 +345,7 @@ impl Render for HiveApp {
                     }))))
                     .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("refresh-dispatch").ghost().label("刷新详情").disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_dispatch(cx)))))
                     .when(self.collaboration.selected.is_none(), |row| row.child(Button::new("refresh-collaboration").label("刷新").disabled(!self.connected || self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx))))))
+                .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .child(div().id("collaboration-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(if self.collaboration.selected.is_some() { &self.collaboration.detail_scroll } else { &self.collaboration_scroll })
                   .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_3()
                     .when(self.collaboration.selected.is_none(), |list| list
@@ -373,7 +374,7 @@ impl Render for HiveApp {
                         .child(div().text_sm().child("任务原文"))
                         .child(div().text_sm().child(item.text.clone()))
                         .when_some(item.report_text.clone(), |view, text| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if item.state == "cancelled" { "取消原因" } else { "汇报原文" })).child(div().text_sm().child(text)))
-                        .when(!item.artifacts.is_empty(), |view| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("产物")).children(item.artifacts.iter().map(|artifact| div().text_sm().child(artifact.clone()))))
+                        .when(!item.artifacts.is_empty(), |view| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("产物")).children(item.artifacts.iter().enumerate().map(|(i, path)| self.artifact_link(&item.id, i, path, cx))))
                         .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("派单消息"))
                         .when(self.collaboration.message_loading, |view| view.child(div().text_sm().child("正在读取消息…")))
                         .when_some(self.collaboration.message_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)).child(Button::new("retry-dispatch-messages").label("重试读取消息").on_click(cx.listener(|this, _, _, cx| { let after = this.collaboration.requested_after; this.load_dispatch_messages(after, cx); }))))
@@ -562,8 +563,8 @@ impl Render for HiveApp {
                                 ))
                                 .when_some(message.markdown.as_ref(), |view, markdown| view.child(TextView::new(markdown).selectable(true).stream_fade(true)))
                                 .when(message.markdown.is_none(), |view| view.child(div().min_w_0().text_size(px(15.)).line_height(px(24.)).when(message.role == "user", |bubble| bubble.px_4().py_2().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))).child(message.text.clone())))
-                                .when_some(message.delivery.as_ref(), |view, delivery| view.children(delivery.artifacts.iter().map(|artifact|
-                                    div().min_w_0().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))
+                                .when_some(message.delivery.as_ref(), |view, delivery| view.children(delivery.artifacts.iter().enumerate().map(|(i, path)|
+                                    self.artifact_link(&message.id, i, path, cx)
                                 )))
                                 .when(message.delivery.as_ref().is_some_and(|d| d.expanded), |view| view.child(div().min_w_0().p_3().rounded_lg().bg(Color::Card.get(cx)).text_sm().child(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())))
                                 .child(self.message_actions(i, message, cx))
@@ -578,7 +579,7 @@ impl Render for HiveApp {
                                     .child(div().text_xs().text_color(Color::Muted.get(cx)).child(report.status()))
                                     .when_some(self.member_session_link(&report.delivery_id, report.worker_id.as_deref(), "成员会话", cx), |row, link| row.child(link)))
                                 .child(div().text_sm().child(report.text.clone()))
-                                .children(report.artifacts.iter().map(|artifact| div().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))))
+                                .children(report.artifacts.iter().enumerate().map(|(i, path)| self.artifact_link(&report.delivery_id, i, path, cx)))
                         }))
                         .child(self.render_interactions(cx)))))
                 .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))

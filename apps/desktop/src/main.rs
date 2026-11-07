@@ -1,4 +1,5 @@
 mod app;
+mod artifacts;
 mod collaboration;
 mod conversation;
 mod drafts;
