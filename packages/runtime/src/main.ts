@@ -97,6 +97,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       }
     }
     case 'hive.request': return runtime.requestHive(text(params, 'method'), text(params, 'path'), params.body);
+    case 'chat.search': return chats.search(params.query);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.createRecord':
     case 'chat.create': {

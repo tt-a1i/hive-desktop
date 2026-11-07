@@ -274,6 +274,11 @@ impl HiveApp {
             .gap_1()
             .child(self.render_navigation_bar(cx))
             .child(self.new_chat_menu("new-session-menu", "新建", cx))
+            .child(Button::new("search-sessions").ghost().h(px(32.)).rounded_full().icon(Glyph::Search)
+                .justify_start().w_full().accessibility_label("搜索会话")
+                .tooltip(if cfg!(target_os = "macos") { "搜索会话 (⌘K)" } else { "搜索会话 (Ctrl+K)" })
+                .child(div().flex_1().font_weight(FontWeight::NORMAL).child("搜索会话"))
+                .disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.open_session_search(window, cx))))
             .child(
                 v_flex()
                     .flex_shrink_0()

@@ -91,6 +91,12 @@ try {
     await assert.rejects(request('chat.rename', { sessionId: original.id, title: '   ' }));
     assert.equal((await request('chat.list', { workspaceId: workspace.id })).find(session => session.id === original.id).title, '发布检查 🐝');
   }
+  const found = await request('chat.search', { query: '发布检查' });
+  assert.equal(found.total, 4);
+  assert.deepEqual(new Set(found.matches.map(hit => hit.session.backend)), new Set(['pi', 'codex', 'pi-rpc', 'claude']));
+  assert.ok(found.matches.every(hit => hit.workspaceName === 'Portable smoke'));
+  assert.equal((await request('chat.search', { query: '外部 Pi' })).total, 1);
+  assert.equal((await request('chat.search', { query: '没有这条记录' })).total, 0);
   progress('Shutting down Hive runtime');
   assert.deepEqual(await request('shutdown'), { ok: true }); assert.equal((await deadline(exited, 'runtime process exit'))[0], 0);
   await assert.rejects(fetch(`http://127.0.0.1:${init.hivePort}/api/ui/session`, { signal: AbortSignal.timeout(5000) }), error => error.cause?.code === 'ECONNREFUSED');

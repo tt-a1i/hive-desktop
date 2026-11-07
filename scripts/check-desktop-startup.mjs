@@ -140,7 +140,7 @@ try {
     const capture = fileURLToPath(new URL('./capture-windows-preview.ps1', import.meta.url));
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
       '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-DispatchId', dispatch, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
-    { stdio: 'inherit', timeout: 60_000 });
+    { stdio: 'inherit', timeout: 90_000 });
     await waitForSelection(leadChat);
     const renamedLead = JSON.parse(await readFile(join(state, 'chats/index.json'), 'utf8')).find(session => session.id === leadChat);
     assert.equal(renamedLead.title, '启动方式核验');

@@ -215,6 +215,7 @@ Invoke-Action '用当前草稿更新文档'
 if ([System.IO.File]::ReadAllText($TasksFile) -cne 'Agent update + My draft') { throw 'Reviewed task draft was not saved.' }
 Write-Host 'Verified conflict review and saving the reconciled task document in the native editor.'
 
+Invoke-Action '返回会话'
 Invoke-Action '重命名当前会话'
 $titleInput = Wait-Action '会话名称'
 $titleInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('启动方式核验')
@@ -223,3 +224,17 @@ Invoke-Action '重命名当前会话'
 Wait-EditorText '会话名称' '启动方式核验'
 Invoke-Action '取消'
 Write-Host 'Renamed the lead session without changing its draft or team binding.'
+
+Invoke-Action '搜索会话'
+$search = Wait-Action '搜索会话名称、项目或 Agent'
+$search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('Reviewer')
+[void](Wait-Action '打开 Reviewer · Beta · Pi')
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-session-search.png')
+Invoke-Action '打开 Reviewer · Beta · Pi'
+Wait-EditorText '聊天消息' $quoted
+Invoke-Action '搜索会话'
+$search = Wait-Action '搜索会话名称、项目或 Agent'
+$search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('启动方式核验')
+Invoke-Action '打开 启动方式核验 · Beta · Pi'
+[void](Wait-Action '打开关联派单')
+Write-Host 'Searched member and lead conversations and preserved the isolated member draft.'

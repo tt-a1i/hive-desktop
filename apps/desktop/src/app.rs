@@ -2,6 +2,7 @@ use crate::{
     protocol::*,
     transport::{Runtime, RuntimeEvent},
 };
+use gpui_kit::component::WindowExt;
 use gpui_kit::{
     component::{
         input::{InputEvent, InputState, TextareaState},
@@ -193,11 +194,24 @@ impl HiveApp {
             let weak = weak.clone();
             cx.defer(move |cx| {
                 let _ = handle.update(cx, |_, window, cx| {
+                    if window.has_active_dialog(cx) {
+                        return;
+                    }
                     let _ = weak.update(cx, |this, cx| {
                         if !this.settings_panel && !this.roles.visible {
                             this.open_settings(window, cx);
                         }
                     });
+                });
+            });
+        });
+        let weak = cx.weak_entity();
+        let handle = window.window_handle();
+        gpui_kit::App::on_action(cx, move |_: &crate::OpenSessionSearch, cx| {
+            let weak = weak.clone();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| this.open_session_search(window, cx));
                 });
             });
         });

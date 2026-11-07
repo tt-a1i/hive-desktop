@@ -25,7 +25,15 @@ use gpui_kit::component::Theme;
 use gpui_kit::*;
 actions!(
     hive_desktop,
-    [Quit, OpenPreferences, ClosePreferences, CancelSessionRename]
+    [
+        Quit,
+        OpenPreferences,
+        ClosePreferences,
+        CancelSessionRename,
+        OpenSessionSearch,
+        NextSessionResult,
+        PreviousSessionResult
+    ]
 );
 
 fn main() {
@@ -36,6 +44,17 @@ fn main() {
             gpui_kit::init(cx);
             Theme::sync_system_appearance(None, cx);
             cx.bind_keys([
+                KeyBinding::new(
+                    if cfg!(target_os = "macos") {
+                        "cmd-k"
+                    } else {
+                        "ctrl-k"
+                    },
+                    OpenSessionSearch,
+                    None,
+                ),
+                KeyBinding::new("down", NextSessionResult, Some("HiveSessionSearch")),
+                KeyBinding::new("up", PreviousSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("escape", CancelSessionRename, Some("HiveSessionName")),
                 KeyBinding::new(
                     if cfg!(target_os = "macos") {
