@@ -92,6 +92,7 @@ pub struct Model {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingReport {
+    pub dispatch_id: Option<String>,
     pub delivery_id: String,
     pub text: String,
     pub worker_name: Option<String>,

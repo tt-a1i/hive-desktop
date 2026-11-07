@@ -51,6 +51,7 @@ pub struct Collaboration {
     pub list_error: Option<String>,
     pub list_generation: u64,
     pub selected: Option<Dispatch>,
+    pub chat_origin: Option<String>,
     pub detail_scroll: ScrollHandle,
     pub detail_error: Option<String>,
     detail_generation: u64,
@@ -78,6 +79,7 @@ impl Collaboration {
             list_error: None,
             list_generation: 0,
             selected: None,
+            chat_origin: None,
             detail_scroll: ScrollHandle::new(),
             detail_error: None,
             detail_generation: 0,
@@ -107,6 +109,7 @@ impl HiveApp {
         self.reload_collaboration(cx);
     }
     pub fn reload_collaboration(&mut self, cx: &mut Context<Self>) {
+        self.collaboration.chat_origin = None;
         self.collaboration.offset = 0;
         self.collaboration.selected = None;
         self.collaboration.messages.clear();
@@ -194,13 +197,54 @@ impl HiveApp {
             });
         }).detach();
     }
+    pub fn open_dispatch_from_chat(&mut self, id: String, cx: &mut Context<Self>) {
+        let (Some(workspace), Some(session), Some(runtime)) = (
+            self.workspace.clone(),
+            self.session.as_ref(),
+            self.runtime.clone(),
+        ) else {
+            return;
+        };
+        let origin = session.id.clone();
+        let open_request = self.open_request;
+        self.collaboration.detail_generation += 1;
+        let generation = self.collaboration.detail_generation;
+        cx.spawn(async move |this, cx| {
+            let result = read_dispatch(&runtime, &workspace, &id).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.collaboration.detail_generation != generation
+                    || this.open_request != open_request
+                    || !this.viewing_conversation()
+                    || this.workspace.as_ref() != Some(&workspace)
+                {
+                    return;
+                }
+                match result {
+                    Ok(record) => {
+                        let c = &mut this.collaboration;
+                        c.chat_origin = Some(origin);
+                        c.visible = true;
+                        this.show_dispatch(record, cx);
+                    }
+                    Err(error) => this.error = Some(format!("无法打开派单：{error}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
     pub fn select_dispatch(&mut self, item: Dispatch, cx: &mut Context<Self>) {
+        self.show_dispatch(item, cx);
+        self.load_dispatch_record(cx);
+    }
+    fn show_dispatch(&mut self, item: Dispatch, cx: &mut Context<Self>) {
         let c = &mut self.collaboration;
         c.detail_scroll = ScrollHandle::new();
+        c.detail_error = None;
         c.selected = Some(item);
         c.messages.clear();
         c.next_seq = None;
-        self.refresh_dispatch(cx);
+        self.load_dispatch_messages(0, cx);
     }
     pub fn refresh_dispatch(&mut self, cx: &mut Context<Self>) {
         self.load_dispatch_record(cx);
@@ -221,11 +265,15 @@ impl HiveApp {
         let generation = self.collaboration.detail_generation;
         self.collaboration.detail_error = None;
         cx.spawn(async move |this, cx| {
-            let result = runtime.request("hive.request", json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/dispatches/{id}")})).await
-                .and_then(|v| serde_json::from_value::<Dispatch>(v).map_err(|e| e.to_string()));
+            let result = read_dispatch(&runtime, &workspace, &id).await;
             let _ = this.update(cx, |this, cx| {
                 let c = &mut this.collaboration;
-                if this.workspace.as_ref() != Some(&workspace) || c.detail_generation != generation || !c.selected.as_ref().is_some_and(|d| d.id == id) { return; }
+                if this.workspace.as_ref() != Some(&workspace)
+                    || c.detail_generation != generation
+                    || !c.selected.as_ref().is_some_and(|d| d.id == id)
+                {
+                    return;
+                }
                 match result {
                     Ok(record) => {
                         if let Some(row) = c.dispatches.iter_mut().find(|row| row.id == id) {
@@ -237,7 +285,8 @@ impl HiveApp {
                 }
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     }
     pub fn load_dispatch_messages(&mut self, after: u64, cx: &mut Context<Self>) {
         let (Some(workspace), Some(runtime), Some(dispatch)) = (
@@ -266,6 +315,17 @@ impl HiveApp {
             });
         }).detach();
     }
+}
+async fn read_dispatch(
+    runtime: &crate::transport::Runtime,
+    workspace: &str,
+    id: &str,
+) -> Result<Dispatch, String> {
+    let path = format!("/api/ui/workspaces/{workspace}/dispatches/{id}");
+    let value = runtime
+        .request("hive.request", json!({"method":"GET","path":path}))
+        .await?;
+    serde_json::from_value(value).map_err(|e| e.to_string())
 }
 pub fn dispatch_state(value: &str) -> &str {
     match value {

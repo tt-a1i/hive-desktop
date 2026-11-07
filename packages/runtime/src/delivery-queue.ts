@@ -65,7 +65,7 @@ export class DeliveryQueue {
  get pendingReports() {
   return this.items.flatMap((item, index) => {
    const report = item.presentation;
-   return report?.origin === 'report' ? [{ deliveryId: item.id, text: report.displayText,
+   return report?.origin === 'report' ? [{ deliveryId: item.id, text: report.displayText, ...(report.dispatchId && { dispatchId: report.dispatchId }),
     workerName: report.workerName, ...(report.workerId && { workerId: report.workerId }), artifacts: [...(report.artifacts ?? [])], processing: index === 0 && this.busy && !this.paused }] : [];
   });
  }

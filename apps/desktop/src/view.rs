@@ -107,6 +107,29 @@ impl HiveApp {
             )
     }
 
+    fn dispatch_link(
+        &self,
+        source: &str,
+        dispatch: Option<&str>,
+        cx: &Context<Self>,
+    ) -> Option<Button> {
+        let id = dispatch?.to_owned();
+        if uuid::Uuid::try_parse(&id).is_err() {
+            return None;
+        }
+        Some(
+            Button::new(SharedString::from(format!("dispatch-link-{source}")))
+                .ghost()
+                .compact()
+                .label("派单详情")
+                .accessibility_label("打开关联派单")
+                .disabled(!self.connected)
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.open_dispatch_from_chat(id.clone(), cx)),
+                ),
+        )
+    }
+
     fn member_session_link(
         &self,
         source_id: &str,
@@ -186,7 +209,9 @@ impl HiveApp {
                         ConversationSource::Dispatch(_) => {
                             this.collaboration.visible = true;
                             this.load_dispatch_record(cx);
-                            this.load_tasks(cx);
+                            if this.collaboration.chat_origin.is_none() {
+                                this.load_tasks(cx);
+                            }
                             if this.collaboration.message_loading {
                                 let after = this.collaboration.requested_after;
                                 this.load_dispatch_messages(after, cx);
@@ -337,8 +362,15 @@ impl Render for HiveApp {
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(h_flex().justify_between().items_center()
                     .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if self.collaboration.selected.is_some() { "派单详情" } else { "协作概览" }))
-                    .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").ghost().icon(Glyph::ArrowLeft).label("返回派单列表").on_click(cx.listener(|this, _, _, cx| {
+                    .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").ghost().icon(Glyph::ArrowLeft).label(if self.collaboration.chat_origin.is_some() { "返回来源会话" } else { "返回派单列表" }).on_click(cx.listener(|this, _, _, cx| {
                         let c = &mut this.collaboration;
+                        if let Some(id) = c.chat_origin.take() {
+                            c.selected = None;
+                            this.close_collaboration();
+                            if this.session.as_ref().is_none_or(|s| s.id != id) { this.show_session(id, cx); }
+                            cx.notify();
+                            return;
+                        }
                         let changed_filter = c.selected.take().is_some_and(|d| c.filter != "all" && c.filter != d.state);
                         if changed_filter { this.load_dispatches(cx); }
                         cx.notify();
@@ -555,6 +587,7 @@ impl Render for HiveApp {
                                         };
                                         row.child(div().text_xs().text_color(Color::Muted.get(cx)).child(state))
                                     })
+                                    .when_some(self.dispatch_link(&message.id, message.delivery.as_ref().and_then(|d| d.dispatch_id.as_deref()), cx), |row, link| row.child(link))
                                     .when_some(self.member_session_link(&message.id, message.delivery.as_ref().and_then(|card| card.worker_id.as_deref()), "成员会话", cx), |row, link| row.child(link))
                                     .when(message.delivery.is_some(), |view| view.child(Button::new(("expand-delivery", i)).accessibility_label(format!("{}消息原文", if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起" } else { "查看" })).label(if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起原文" } else { "查看原文" }).on_click({ let id = message.id.clone(); cx.listener(move |this, _, _, cx| {
                                         if let Some(delivery) = this.messages.iter_mut().find(|m| m.id == id).and_then(|m| m.delivery.as_mut()) { delivery.expanded = !delivery.expanded; }
@@ -577,6 +610,7 @@ impl Render for HiveApp {
                                 .child(h_flex().gap_2().items_center()
                                     .child(div().flex_1().text_xs().font_weight(FontWeight::SEMIBOLD).child(format!("{} · 成员汇报", report.worker_name.as_deref().unwrap_or("Worker"))))
                                     .child(div().text_xs().text_color(Color::Muted.get(cx)).child(report.status()))
+                                    .when_some(self.dispatch_link(&report.delivery_id, report.dispatch_id.as_deref(), cx), |row, link| row.child(link))
                                     .when_some(self.member_session_link(&report.delivery_id, report.worker_id.as_deref(), "成员会话", cx), |row, link| row.child(link)))
                                 .child(div().text_sm().child(report.text.clone()))
                                 .children(report.artifacts.iter().enumerate().map(|(i, path)| self.artifact_link(&report.delivery_id, i, path, cx)))

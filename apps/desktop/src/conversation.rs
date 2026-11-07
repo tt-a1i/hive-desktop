@@ -297,6 +297,7 @@ impl HiveApp {
                     None
                 } else {
                     Some(DeliveryCard {
+                        dispatch_id: presentation.as_ref().and_then(|p| p.dispatch_id.clone()),
                         report: presentation
                             .as_ref()
                             .is_some_and(|p| p.origin == DeliveryOrigin::Report),
@@ -527,6 +528,7 @@ impl DeliveryOrigin {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeliveryPresentation {
+    dispatch_id: Option<String>,
     version: u32,
     delivery_id: String,
     origin: DeliveryOrigin,

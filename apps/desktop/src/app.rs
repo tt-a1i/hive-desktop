@@ -28,6 +28,7 @@ pub struct ToolPresentation {
     pub expanded: bool,
 }
 pub struct DeliveryCard {
+    pub dispatch_id: Option<String>,
     pub report: bool,
     pub worker_id: Option<String>,
     pub artifacts: Vec<String>,

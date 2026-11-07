@@ -134,12 +134,19 @@ Invoke-Action '返回团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')
 Invoke-Action 'Pi · 新会话 · 会话'
 Wait-ComposerText ''
-Invoke-Action 'Pi · Reviewer · 成员'
+Invoke-Action 'Pi · Reviewer · 成员 · 已暂停'
 Wait-ComposerText $quoted
 [void](Wait-Action '收起 read 工具详情，完成 README.md')
 Write-Host 'Verified isolated and restored quoted draft and expanded tool across native sessions.'
 Invoke-Action '收起工作过程，2 项工具已完成'
 [void](Wait-Action '展开工作过程，2 项工具已完成')
+Invoke-Action '打开主会话'
+Invoke-Action '打开关联派单'
+[void](Wait-Action '在文件资源管理器中显示：review.txt')
+[void](Wait-Action '刷新详情')
+Invoke-Action '返回来源会话'
+[void](Wait-Action '打开关联派单')
+Write-Host 'Opened the actual reported dispatch from the orchestrator queue and returned to its chat.'
 Invoke-Action '设置'
 Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')

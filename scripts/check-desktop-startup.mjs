@@ -25,6 +25,7 @@ try {
   const runtime = await createDesktopRuntime(state, () => {});
   let workspaceId;
   let chatId;
+  let leadChat;
   let workerChat;
   let workerFile;
   try {
@@ -43,6 +44,24 @@ try {
     workerChat = worker?.id;
     workerFile = worker?.sessionFile;
     assert.ok(workerChat, 'Starting the worker must create its actual member session');
+    // Pause both real delivery queues before dispatch so the fixture exercises
+    // the ledger and the pending report without starting model inference.
+    leadChat = (await runtime.chats.create(workspaceId)).id;
+    await runtime.chats.resume(leadChat);
+    await runtime.chats.live.get(leadChat).queue.pause();
+    await runtime.chats.live.get(workerChat).queue.pause();
+    const { createTeamCommand } = await import(pathToFileURL(join(resources, 'runtime/dist/team-tool.js')).href);
+    const team = async (agentId, args) => {
+      const token = runtime.agents.peekAgentToken(agentId);
+      assert.ok(token);
+      const cmd = createTeamCommand({ workspaceId, agentId, token, hivePort: String(runtime.hive.port), cwd: join(directory, 'Beta') });
+      return (await cmd.execute('startup-check', { args })).content[0].text;
+    };
+    const { dispatch_id: dispatch } = JSON.parse(await team(`${workspaceId}:orchestrator`, ['send', 'Reviewer', '核对项目启动方式']));
+    const inbox = JSON.parse(await team(member.id, ['messages', '--dispatch', dispatch]));
+    await writeFile(join(directory, 'Beta', 'review.txt'), 'pnpm dev');
+    await team(member.id, ['report', '已核对启动方式。', '--dispatch', dispatch, '--seen', String(inbox.required_seen_seq), '--artifact', 'review.txt']);
+    assert.equal((await runtime.chats.open(leadChat)).pendingReports[0].dispatchId, dispatch);
     chatId = (await runtime.chats.create(workspaceId)).id;
     assert.equal(runtime.chats.list(workspaceId)[0].id, chatId);
     runtime.hive.saveNavigation(JSON.stringify({ workspace: workspaceId, sessions: { [workspaceId]: 'removed-chat' } }));
@@ -105,7 +124,7 @@ try {
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
       '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-OutputPath', resolve(windowsPreview)],
     { stdio: 'inherit', timeout: 60_000 });
-    await waitForSelection(workerChat);
+    await waitForSelection(leadChat);
     assert.equal(JSON.parse(await readFile(workerDraft, 'utf8')).input, `> ${prompt}\n\n${existingDraft}`);
   }
   console.log('Native desktop opened the saved project and recovered its missing chat selection from the extracted bundle.');

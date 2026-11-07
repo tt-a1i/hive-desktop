@@ -28,7 +28,7 @@ impl HiveApp {
         cx.notify();
     }
 
-    fn viewing_conversation(&self) -> bool {
+    pub(crate) fn viewing_conversation(&self) -> bool {
         !(self.terminal.visible
             || self.member_panel
             || self.memory.visible
