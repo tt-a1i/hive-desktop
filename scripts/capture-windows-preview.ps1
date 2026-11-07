@@ -67,8 +67,10 @@ if ($null -eq (Find-Action '团队成员')) {
     Invoke-Action '打开或收起工作区与会话导航'
 }
 Invoke-Action '团队成员'
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-team.png')
 Invoke-Action '打开 Reviewer 的成员会话'
 [void](Wait-Action '返回团队成员')
+[void](Wait-Action '选择会话模型')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-member-session.png')
 Invoke-Action '返回团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')

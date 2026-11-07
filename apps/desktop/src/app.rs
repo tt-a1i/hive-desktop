@@ -137,6 +137,8 @@ pub struct HiveApp {
     pub messages: Vec<Message>,
     pub expanded_tool_groups: HashSet<String>,
     pub tool_inputs: HashMap<String, Value>,
+    pub pi_agent_dir: Option<std::path::PathBuf>,
+    pub refreshing_models: bool,
     pub models: Vec<Model>,
     pub model: Option<ModelIdentity>,
     pub unavailable_model: Option<ModelIdentity>,
@@ -309,6 +311,8 @@ impl HiveApp {
             messages: vec![],
             expanded_tool_groups: HashSet::new(),
             tool_inputs: HashMap::new(),
+            pi_agent_dir: None,
+            refreshing_models: false,
             models: vec![],
             model: None,
             unavailable_model: None,
@@ -372,6 +376,8 @@ impl HiveApp {
                 }
                 match result {
                     Ok(info) => {
+                        this.pi_agent_dir =
+                            info["piAgentDir"].as_str().map(std::path::PathBuf::from);
                         if let Some(value) = info["navigation"].as_str() {
                             match serde_json::from_str(value) {
                                 Ok(selection) => this.navigation = selection,

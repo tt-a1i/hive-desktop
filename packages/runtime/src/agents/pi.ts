@@ -225,6 +225,11 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       const model = session.model;
       return model && !savedModelUnavailable && !isUnsetPiModel(model) ? { provider: model.provider, id: model.id, name: model.name } : undefined;
     },
+    async refreshModels() {
+      await session.modelRuntime.refresh({ allowNetwork: false });
+      const configError = session.modelRuntime.getError();
+      if (configError) throw new Error(configError);
+    },
     listModels() {
       const available = new Set(session.modelRuntime.getAvailableSnapshot().map(model => `${model.provider}\0${model.id}`));
       return session.modelRuntime.getModels().map(model => ({ provider: model.provider, id: model.id,

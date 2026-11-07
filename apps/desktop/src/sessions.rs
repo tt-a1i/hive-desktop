@@ -230,6 +230,7 @@ impl HiveApp {
         self.editing_member = None;
         self.deleting_member = None;
         self.models.clear();
+        self.refreshing_models = false;
         self.model = None;
         self.unavailable_model = None;
         self.choosing_model = false;
@@ -431,6 +432,7 @@ impl HiveApp {
         self.pending_events.clear();
         self.event_sequence = 0;
         self.models.clear();
+        self.refreshing_models = false;
         self.model = None;
         self.unavailable_model = None;
         self.loading = true;

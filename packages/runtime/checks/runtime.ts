@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,8 +10,8 @@ import { once } from 'node:events';
 const directory = await mkdtemp(join(tmpdir(), 'hive-desktop-rpc-check-'));
 const entry = fileURLToPath(new URL('../dist/main.js', import.meta.url));
 const children: ReturnType<typeof spawn>[] = [];
-const launch = () => {
-  const child = spawn(process.execPath, [entry, '--data-dir', join(directory, 'state')], { stdio: ['pipe', 'pipe', 'pipe'] });
+const launch = (agentDir?: string) => {
+  const child = spawn(process.execPath, [entry, '--data-dir', join(directory, 'state')], { stdio: ['pipe', 'pipe', 'pipe'], env: agentDir ? { ...process.env, PI_CODING_AGENT_DIR: agentDir } : process.env });
   children.push(child);
   let next = 0;
   let stderr = '';
@@ -132,6 +132,25 @@ try {
   assert.ok(restored.history.some((message: { customType?: string }) => message.customType === 'hive-desktop'));
   assert.deepEqual(await second.request('shutdown'), { ok: true });
   assert.equal((await second.exited)[0], 0);
+  const agentDir = join(directory, 'pi-refresh');
+  await mkdir(agentDir);
+  const third = launch(agentDir);
+  assert.equal((await third.request('initialize')).piAgentDir, agentDir);
+  const draft = await third.request('chat.create', { workspaceId: workspace.id });
+  const provider = 'local-refresh-fixture';
+  const modelId = 'gpt-6.1-terra';
+  assert.ok(!draft.models.some((m: {provider: string}) => m.provider === provider));
+  await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: {
+    [provider]: { baseUrl: 'http://127.0.0.1:1/v1', api: 'openai-completions', apiKey: 'local-fixture', models: [{ id: modelId }] }
+  } }));
+  const refreshed = await third.request('chat.refreshPiModels', { sessionId: draft.id });
+  assert.ok(refreshed.some((m: {provider: string; id: string; available: boolean}) => m.provider === provider && m.id === modelId && m.available));
+  await third.request('chat.setModel', { sessionId: draft.id, provider, modelId });
+  const selected = await third.request('chat.open', { sessionId: draft.id });
+  assert.equal(selected.model.provider, provider);
+  assert.deepEqual(selected.history, draft.history);
+  await third.request('shutdown');
+  assert.equal((await third.exited)[0], 0);
   console.log('Runtime integration passed: real Hive workspace + Pi SDK + restart + shutdown. No model request sent.');
 } finally {
   for (const child of children) if (child.exitCode === null) child.kill();

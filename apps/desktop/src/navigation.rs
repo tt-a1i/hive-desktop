@@ -417,7 +417,8 @@ impl HiveApp {
                                                         .tooltip(workspace.path.clone())
                                                         .selected(
                                                             self.workspace.as_ref()
-                                                                == Some(&workspace.id),
+                                                                == Some(&workspace.id)
+                                                                && self.session.is_none(),
                                                         )
                                                         .disabled(
                                                             self.workspace_removing.as_ref()

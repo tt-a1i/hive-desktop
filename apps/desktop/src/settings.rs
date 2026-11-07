@@ -1,5 +1,14 @@
 use crate::app::HiveApp;
-use gpui_kit::*;
+use crate::palette::Color;
+use gpui_kit::{
+    component::{
+        button::Button,
+        input::{Input, InputState},
+        *,
+    },
+    prelude::FluentBuilder,
+    *,
+};
 use serde::Deserialize;
 use serde_json::json;
 mod notification;
@@ -35,6 +44,111 @@ impl EffectiveCommand {
     }
 }
 impl HiveApp {
+    pub(crate) fn executable_field(
+        &self,
+        label: &'static str,
+        input: &Entity<InputState>,
+        effective: Option<&EffectiveCommand>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let disabled =
+            !self.connected || self.settings_loading || self.executable_settings.is_none();
+        let target = input.clone();
+        v_flex()
+            .min_w_0()
+            .gap_2()
+            .py_3()
+            .border_b_1()
+            .border_color(Color::Divider.get(cx))
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(label),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Input::new(input)
+                                .aria_label(format!("{label} 可执行文件路径"))
+                                .disabled(disabled),
+                        ),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("browse-{label}")))
+                            .label("浏览…")
+                            .accessibility_label(format!("选择 {label} 可执行文件"))
+                            .disabled(disabled)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.browse_executable(label, target.clone(), window, cx)
+                            })),
+                    ),
+            )
+            .when_some(effective, |row, value| {
+                row.child(
+                    div()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
+                        .child(value.label()),
+                )
+            })
+    }
+
+    fn browse_executable(
+        &mut self,
+        label: &'static str,
+        target: Entity<InputState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(format!("选择 {label} 可执行文件").into()),
+        });
+        let window = window.window_handle();
+        let generation = self.settings_generation;
+        cx.spawn(async move |this, cx| {
+            let result = match selected.await {
+                Ok(Ok(Some(paths))) => paths
+                    .into_iter()
+                    .next()
+                    .map(|path| {
+                        path.into_os_string()
+                            .into_string()
+                            .map_err(|_| "文件路径无法显示为文本".to_owned())
+                    })
+                    .transpose(),
+                Ok(Ok(None)) => return,
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = window.update(cx, |_, window, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    if !this.settings_panel || this.settings_generation != generation {
+                        return;
+                    }
+                    match result {
+                        Ok(Some(path)) => {
+                            target.update(cx, |input, cx| input.set_value(path, window, cx));
+                            this.settings_message = None;
+                        }
+                        Ok(None) => return,
+                        Err(error) => {
+                            this.settings_message = Some(format!("选择文件失败：{error}"))
+                        }
+                    }
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
+
     pub fn close_settings(&mut self) {
         if self.settings_panel {
             self.settings_panel = false;

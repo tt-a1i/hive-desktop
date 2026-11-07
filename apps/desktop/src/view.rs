@@ -233,7 +233,9 @@ impl Render for HiveApp {
             })
             .cloned()
             .collect();
-        let welcome = self.messages.is_empty()
+        let welcome = self.session.as_ref().is_none_or(|s| s.agent_id.is_none())
+            && self.pending_reports.is_empty()
+            && self.messages.is_empty()
             && !has_interactions
             && !running
             && pending == 0
@@ -292,27 +294,23 @@ impl Render for HiveApp {
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
                         SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("自动组队"))
-                    .child(div().text_sm().child("全局设置，适用于所有工作区。开启后，Hive 会引导主控按任务需要组建团队；关闭后可自行安排成员。此设置改变主控指导语，不会直接创建或删除成员。"))
-                    .child(h_flex().flex_wrap().items_center().gap_2()
-                        .child(div().text_sm().child(match self.team_autostaff { Some(true) => "自动组队引导：已开启", Some(false) => "自动组队引导：已关闭", None if self.team_autostaff_loading => "正在读取自动组队设置…", None => "自动组队设置暂不可用" }))
-                        .when_some(self.team_autostaff, |view, enabled| view.child(Button::new("toggle-team-autostaff").label(if enabled { "关闭引导" } else { "开启引导" }).disabled(!self.connected || self.team_autostaff_loading).on_click(cx.listener(move |this, _, _, cx| this.team_autostaff_request(Some(!enabled), cx)))))
-                        .child(Button::new("reload-team-autostaff").label("重新读取").disabled(!self.connected || self.team_autostaff_loading).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx)))))
-                    .when(self.team_autostaff_loading && self.team_autostaff.is_some(), |view| view.child(div().text_xs().child("正在处理自动组队设置…")))
+                    .child(h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))
+                        .child(v_flex().flex_1().min_w_0().gap_1()
+                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("自动组队引导"))
+                            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("在所有工作区引导主控按任务需要组建团队。")))
+                        .when_some(self.team_autostaff, |row, enabled| row.child(gpui_kit::component::switch::Switch::new("toggle-team-autostaff")
+                            .accessibility_label("自动组队引导").checked(enabled).disabled(!self.connected || self.team_autostaff_loading)
+                            .on_change(cx.listener(|this, enabled, _, cx| this.team_autostaff_request(Some(*enabled), cx))))))
+                    .when(self.team_autostaff_loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child("正在同步设置…")))
+                    .when(!self.team_autostaff_loading, |view| view.child(h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label("重新读取").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx))))))
                     .when_some(self.team_autostaff_message.clone(), |view, message| view.child(div().text_sm().child(message))),
                         SettingsSection::Notifications => content.id("settings-notification-content").overflow_y_scroll().child(self.render_notification_settings(cx)),
                         SettingsSection::Programs => content.id("settings-programs-content").overflow_y_scroll()
                     .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("路径留空时使用 PATH 查找。环境变量优先，修改在下次启动对应 Agent 时生效。"))
                     .when_some(self.settings_message.clone(), |view, message| view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("外部 Pi 可执行文件"))
-                    .child(Input::new(&self.pi_command).aria_label("外部 Pi 可执行文件路径").disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()))
-                    .when_some(self.executable_settings.as_ref(), |view, settings| view.child(div().text_xs().child(settings.effective.pi.label())))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Codex 可执行文件"))
-                    .child(Input::new(&self.codex_command).aria_label("Codex 可执行文件路径").disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()))
-                    .when_some(self.executable_settings.as_ref(), |view, settings| view.child(div().text_xs().child(settings.effective.codex.label())))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Claude 可执行文件"))
-                    .child(Input::new(&self.claude_command).aria_label("Claude 可执行文件路径").disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()))
-                    .when_some(self.executable_settings.as_ref(), |view, settings| view.child(div().text_xs().child(settings.effective.claude.label())))
+                    .child(self.executable_field("外部 Pi", &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
+                    .child(self.executable_field("Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
+                    .child(self.executable_field("Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
                     .child(h_flex().gap_2()
                         .child(Button::new("save-executable-settings").primary().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window, cx))))
                         .child(Button::new("reload-executable-settings").label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))),
@@ -392,7 +390,7 @@ impl Render for HiveApp {
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().p_5().when(welcome, |v| v.justify_center())
                 .when_some(self.conversation_return(cx), |view, back| view.child(h_flex().w_full().max_w(px(920.)).mx_auto().child(back)))
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(920.)).mx_auto().child({
-                    let title = if welcome && self.workspace.is_none() { "打开项目".into() } else if welcome && self.session.as_ref().is_none_or(|s| s.agent_id.is_none()) { "新任务".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
+                    let title = if welcome && self.workspace.is_none() { "打开项目".into() } else if welcome { "新任务".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
                     div().id("session-title").flex_1().min_w_0().truncate().when(welcome, |h| h.text_3xl().mb_2()).when(!welcome, |h| h.text_lg()).font_weight(FontWeight::SEMIBOLD)
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
                         .child(title)
@@ -485,13 +483,13 @@ impl Render for HiveApp {
                     cx.write_to_clipboard(ClipboardItem::new_string(this.input.read(cx).value().to_string()));
                 }))))
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child("选择本地项目文件夹，开始与 Agent 协作。")))
-                .when(needs_pi_model && self.connected, |v| v.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model { format!("原来的模型 {} / {} 暂不可用。可选择其他模型，或恢复 Pi 配置后重开应用。", model.provider, model.id) } else if self.models.iter().any(|m| m.available) { "选择模型后即可发送。".into() } else { "请先配置 Pi 的模型提供商，再重新打开应用。草稿可继续编辑。".into() })))
+
                 .when(self.workspace.is_some(), |v| v.child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息")))
                 .child(h_flex().min_w_0().gap_2().items_center()
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
                         self.new_chat_menu("home-agent", "选择 Agent", cx).into_any_element()
                     } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
-                    .when(self.session.is_some(), |row| row.child(Button::new("choose-model").ghost().compact().min_w_0().label(self.model.as_ref().map(|model| format!("{} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); }))))
+                    .when(self.session.is_some(), |row| row.child(Button::new("choose-model").accessibility_label("选择会话模型").ghost().compact().min_w_0().label(self.model.as_ref().map(|model| format!("{} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); }))))
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(if running {
                         Button::new("stop").label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
@@ -499,7 +497,17 @@ impl Render for HiveApp {
                         Button::new("send").primary().icon(Glyph::ArrowUp).rounded(px(20.)).accessibility_label("发送消息").tooltip("Enter 发送，Shift+Enter 换行").disabled(!can_submit || !has_text).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
                     })))
                 .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { "后台暂不可用 · 请先复制草稿，再重启应用" } else if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "" }))))
-                .when(welcome && self.workspace.is_some(), |surface| surface.child(
+                .when(needs_pi_model && self.connected, |surface| surface.child(
+                    h_flex().w_full().max_w(px(914.)).mx_auto().min_w_0().flex_wrap().items_center().gap_2()
+                        .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model {
+                            format!("{} / {} 暂不可用", model.provider, model.id)
+                        } else if self.models.iter().any(|m| m.available) { "选择模型后即可发送。".into() }
+                        else { "请在 Pi 中登录或配置模型提供商，然后刷新。".into() }))
+                        .when_some(self.pi_agent_dir.clone(), |row, dir| row.child(Button::new("locate-pi-config").ghost().compact().label("定位配置目录").tooltip(dir.display().to_string())
+                            .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&dir)))))
+                        .child(Button::new("refresh-pi-models").ghost().compact().label(if self.refreshing_models { "刷新中…" } else { "刷新模型" })
+                            .disabled(self.refreshing_models || running).on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))))))
+                .when(welcome && self.workspace.is_some() && !needs_pi_model, |surface| surface.child(
                     v_flex().w_full().max_w(px(920.)).mx_auto().items_start().gap_1()
                         .children([
                             (Glyph::FolderOpen, "了解这个项目", "请梳理当前项目的结构、主要入口和运行方式。"),

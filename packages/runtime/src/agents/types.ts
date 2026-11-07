@@ -53,6 +53,7 @@ export interface PiSessionHandle {
   abort(): Promise<void>;
   dispose(): void | Promise<void>;
   currentModel(): { provider: string; id: string; name: string } | undefined;
+  refreshModels?(): Promise<void>;
   listModels(): { provider: string; id: string; name: string; available: boolean }[];
   setModel(provider: string, id: string): Promise<void>;
 }

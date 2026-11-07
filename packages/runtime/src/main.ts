@@ -1,3 +1,4 @@
+import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { format } from 'node:util';
 import { createInterface } from 'node:readline';
 import { mkdirSync } from 'node:fs';
@@ -36,7 +37,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
     case 'initialize': {
-      return { version: '0.1.0', dataDir, hivePort: hive.port, navigation: hive.getNavigation() };
+      return { version: '0.1.0', dataDir, piAgentDir: getAgentDir(), hivePort: hive.port, navigation: hive.getNavigation() };
     }
     case 'desktop.navigation.save': {
       const sessions = record(params.sessions);
@@ -90,6 +91,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response);
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));
     case 'chat.resume': return chats.resume(text(params, 'sessionId'));
+    case 'chat.refreshPiModels': return chats.refreshPiModels(text(params, 'sessionId'));
     case 'chat.setModel': return chats.setModel(text(params, 'sessionId'), text(params, 'provider'), text(params, 'modelId'));
     case 'shutdown': await close(); return { ok: true };
     default: throw new Error(`Unknown desktop method: ${method}`);

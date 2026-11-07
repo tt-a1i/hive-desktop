@@ -156,6 +156,39 @@ impl HiveApp {
             );
         }
     }
+    pub fn refresh_pi_models(&mut self, cx: &mut Context<Self>) {
+        if self.refreshing_models || !self.connected {
+            return;
+        }
+        let (Some(session), Some(runtime)) = (&self.session, self.runtime.clone()) else {
+            return;
+        };
+        let id = session.id.clone();
+        let open = self.open_request;
+        self.refreshing_models = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request("chat.refreshPiModels", json!({"sessionId":id}))
+                .await
+                .and_then(|v| serde_json::from_value::<Vec<Model>>(v).map_err(|e| e.to_string()));
+            let _ = this.update(cx, |this, cx| {
+                if this.open_request != open {
+                    return;
+                }
+                this.refreshing_models = false;
+                match result {
+                    Ok(models) => {
+                        this.choosing_model = models.iter().any(|m| m.available);
+                        this.models = models;
+                    }
+                    Err(e) => this.error = Some(format!("刷新 Pi 模型失败：{e}")),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
     pub fn set_model(&mut self, model: Model, cx: &mut Context<Self>) {
         if !self.workspace_writes_allowed() {
             return;

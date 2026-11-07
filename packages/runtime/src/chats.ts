@@ -322,6 +322,17 @@ export class Chats implements StructuredSessionPort {
       return { ok: true };
     });
   }
+  async refreshPiModels(id: string) {
+    const record = this.index.get(id);
+    this.assertWorkspaceAvailable(record.workspaceId);
+    return this.withWorkspace(record.workspaceId, async () => {
+      const chat = await this.require(id);
+      if (record.backend !== 'pi' || !chat.handle.refreshModels) throw new Error('Only built-in Pi supports reloading its local model configuration');
+      if (chat.queue.busy) throw new Error('请在当前回复结束后刷新模型');
+      await chat.handle.refreshModels();
+      return chat.handle.listModels();
+    });
+  }
   async setModel(id: string, provider: string, modelId: string) {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {

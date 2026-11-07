@@ -1,5 +1,4 @@
-import { execFile, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { join } from 'node:path';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import crossSpawn from 'cross-spawn';
 
@@ -56,16 +55,9 @@ export class OwnedCliProcess {
     if (await this.waitForExit(graceMs)) return;
     this.record('grace.expired');
     if (process.platform === 'win32') {
-      // This root owns a kill-on-close Job. /T also requests immediate termination of its live descendants.
-      // Never target a PID after observing its root exit: it may have been recycled.
-      if (this.rootExited || !this.child.pid) throw new Error('Owned Windows CLI root exited before its inherited streams closed; descendant cleanup cannot be verified');
-      const windows = process.env.SystemRoot ?? process.env.WINDIR;
-      if (!windows) throw new Error('Windows SystemRoot is required for owned CLI tree termination');
-      try {
-        await new Promise<void>((resolve, reject) => execFile(join(windows, 'System32', 'taskkill.exe'), ['/PID', String(this.child.pid), '/T', '/F'],
-          { windowsHide: true, timeout: 5000, maxBuffer: 16384 }, error => error ? reject(error) : resolve()));
-      } catch (error) { if (!this.closed) throw new Error('Failed to terminate the owned Windows CLI process tree', { cause: error }); }
-      if (!await this.waitForExit(2000)) throw new Error('Owned Windows CLI streams remained open after process tree termination');
+      // Exiting the launcher closes its sole Job handle and terminates its descendants.
+      if (!this.rootExited) this.child.kill('SIGKILL');
+      if (!await this.waitForExit(2000)) throw new Error('Owned Windows CLI streams remained open after its Job host exited');
       return;
     }
     this.child.kill('SIGTERM');
