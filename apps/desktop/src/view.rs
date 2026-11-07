@@ -352,13 +352,13 @@ impl Render for HiveApp {
             && self.connected
             && !self.loading;
         let narrow = window.viewport_size().width < px(820.);
-        let compact_settings =
-            window.viewport_size().width < px(if self.sidebar_open { 1060. } else { 800. });
+        let preferences = self.settings_panel || self.roles.visible;
+        let compact_settings = window.viewport_size().width < px(720.);
         v_flex().size_full().bg(Color::Surface.get(cx)).text_color(Color::Text.get(cx))
-            .when(!self.sidebar_open, |layout| layout.child(self.render_navigation_bar(cx)))
+            .when(!preferences && !self.sidebar_open, |layout| layout.child(self.render_navigation_bar(cx)))
             .child(h_flex().flex_1().min_h_0().w_full()
-            .when(self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
-            .when(!narrow || !self.sidebar_open, |view| view.child(if self.memory.visible { self.render_memory(cx).into_any_element() } else if self.roles.visible { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full().child(self.render_settings_tabs(compact_settings, cx)).child(self.render_roles(cx)).into_any_element()
+            .when(!preferences && self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
+            .when(preferences || !narrow || !self.sidebar_open, |view| view.child(if self.memory.visible { self.render_memory(cx).into_any_element() } else if self.roles.visible { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full().child(self.render_settings_tabs(compact_settings, cx)).child(self.render_roles(cx)).into_any_element()
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(h_flex().justify_between().items_center()
                     .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if self.collaboration.selected.is_some() { "派单详情" } else { "协作概览" }))
@@ -419,8 +419,8 @@ impl Render for HiveApp {
                 )).into_any_element()
             } else if self.settings_panel { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full()
                 .child(self.render_settings_tabs(compact_settings, cx))
-                .child(v_flex().flex_1().min_h_0().min_w_0().p_5().gap_3()
-                .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Programs => "外部程序" }))
+                .child(v_flex().flex_1().w_full().max_w(px(800.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.px_10().py_8()).gap_5()
+                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Programs => "外部程序" }))
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
@@ -443,8 +443,8 @@ impl Render for HiveApp {
                     .child(self.executable_field("Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
                     .child(self.executable_field("Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
                     .child(h_flex().gap_2()
-                        .child(Button::new("save-executable-settings").primary().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window, cx))))
-                        .child(Button::new("reload-executable-settings").label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))),
+                        .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window, cx))))
+                        .child(Button::new("reload-executable-settings").rounded_full().label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))),
                     }
                 }))
                 .into_any_element()
@@ -521,8 +521,9 @@ impl Render for HiveApp {
                     })))
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
-            } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow, |v| v.px(px(44.))).id("conversation-surface").when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
+            } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow && welcome, |v| v.px(px(44.))).when(!welcome, |v| v.px_0().pt_0()).id("conversation-surface").when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
+                    .when(!welcome, |header| header.max_w_full().min_h(px(54.)).px_5().border_b_1().border_color(Color::Divider.get(cx)))
                     .when_some(self.conversation_return(cx), |header, back| header.child(back))
                     .child({
                     let title = if welcome && self.workspace.is_none() { "打开项目".into() } else if welcome { "Hive".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
@@ -533,11 +534,6 @@ impl Render for HiveApp {
                 .when(welcome && self.workspace.is_some(), |header| header.child(
                     Button::new("home-team").ghost().rounded_full().icon(Glyph::Network)
                         .label("团队成员").on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx)))
-                )).when(!welcome && !open_failed, |header| header.child(
-                    div().min_w_0().truncate().text_xs().text_color(Color::Muted.get(cx)).child(
-                        self.session.as_ref().map(|s| if self.status == "后台已连接" { s.backend.label().to_owned() }
-                        else { format!("{} · {}", s.backend.label(), self.status) }).unwrap_or_else(|| self.status.clone())
-                    )
                 )).when(!welcome && self.reading_above_latest(), |header| header.child(
                     Button::new("jump-to-latest").ghost().compact().icon(Glyph::ArrowDown)
                         .label("回到最新").accessibility_label("回到最新消息")
@@ -559,7 +555,7 @@ impl Render for HiveApp {
                             this.show_session(session.id.clone(), cx);
                         }
                     })))))
-                .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).on_scroll(cx.listener(|_, _, _, cx| cx.notify())).py_3()
+                .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().px_5().when(!narrow, |column| column.px(px(44.))).track_scroll(&self.scroll).on_scroll(cx.listener(|_, _, _, cx| cx.notify())).py_3()
                     .child(v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().gap_5()
                         .when(self.messages.is_empty() && self.pending_reports.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if needs_pi_model { "还没有消息。" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.chunk_by(|left, right| left.completed_tool() && right.completed_tool())
@@ -616,6 +612,12 @@ impl Render for HiveApp {
                                 .children(report.artifacts.iter().enumerate().map(|(i, path)| self.artifact_link(&report.delivery_id, i, path, cx)))
                         }))
                         .child(self.render_interactions(cx)))))
+                .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_2().when(!welcome, |dock| dock.px_5().when(!narrow, |dock| dock.px(px(44.))))
+                .when(!welcome, |dock| dock.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
+                    .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().font_weight(FontWeight::SEMIBOLD)
+                        .child(self.session.as_ref().map(|s| s.backend.label()).unwrap_or("Hive")))
+                    .when(self.status != "后台已连接" || running, |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
+                        .child(if running { "正在回复…".to_string() } else { self.status.clone() })))))
                 .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
                 .when(pending > 0, |view| view.child(h_flex().gap_3()
@@ -646,7 +648,7 @@ impl Render for HiveApp {
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(self.model_picker(window, running, cx)))
                     .when(self.session.is_some(), |row| row.child(if running {
-                        Button::new("stop").label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
+                        Button::new("stop").rounded_full().icon(Glyph::Square).tooltip("停止回复").accessibility_label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {
                         Button::new("send").primary().icon(Glyph::ArrowUp).rounded(px(20.)).accessibility_label("发送消息").tooltip("Enter 发送，Shift+Enter 换行").disabled(!can_submit || !has_text).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
                     })))
@@ -661,7 +663,8 @@ impl Render for HiveApp {
                             .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&dir)))))
                         .child(Button::new("refresh-pi-models").ghost().compact().label(if self.refreshing_models { "刷新中…" } else { "刷新模型" })
                             .disabled(self.refreshing_models || running).on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))))))
-                .when(welcome && self.workspace.is_some() && !needs_pi_model, |surface| surface.child(
+                )
+                .when(welcome && self.workspace.is_some(), |surface| surface.child(
                     v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_start().mt_1().gap_1()
                         .children([
                             (Glyph::FolderOpen, "了解这个项目", "请梳理当前项目的结构、主要入口和运行方式。"),

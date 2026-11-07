@@ -107,36 +107,62 @@ impl HiveApp {
             .flex_shrink_0()
             .p_3()
             .gap_1()
+            .bg(Color::Sidebar.get(cx))
             .when(compact, |bar| bar.flex_row().flex_wrap().border_b_1())
+            .when(!compact, |bar| bar.flex_col().w(px(220.)).border_r_1())
+            .border_color(Color::Divider.get(cx))
+            .child(
+                Button::new("leave-preferences")
+                    .ghost()
+                    .rounded_full()
+                    .icon(Glyph::ArrowLeft)
+                    .label("返回会话")
+                    .when(!compact, |button| button.justify_start().mb_3())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.close_settings();
+                        this.close_roles();
+                        this.hide_terminal(cx);
+                        cx.notify();
+                    })),
+            )
             .when(!compact, |bar| {
-                bar.flex_col().w(px(154.)).border_r_1().child(
+                bar.child(
                     div()
-                        .px_2()
-                        .py_3()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
+                        .px_3()
+                        .py_2()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
                         .child("设置"),
                 )
             })
-            .border_color(Color::Divider.get(cx))
             .children(
                 [
-                    ("settings-team-tab", "团队", SettingsSection::Team),
+                    (
+                        "settings-team-tab",
+                        "团队",
+                        Glyph::Network,
+                        SettingsSection::Team,
+                    ),
                     (
                         "settings-notifications-tab",
                         "通知",
+                        Glyph::Bell,
                         SettingsSection::Notifications,
                     ),
                     (
                         "settings-programs-tab",
                         "外部程序",
+                        Glyph::SquareTerminal,
                         SettingsSection::Programs,
                     ),
                 ]
                 .into_iter()
-                .map(|(id, label, section)| {
+                .map(|(id, label, glyph, section)| {
                     Button::new(id)
                         .ghost()
+                        .h(px(36.))
+                        .rounded_full()
+                        .icon(glyph)
                         .when(!compact, |row| row.w_full().justify_start())
                         .label(label)
                         .selected(self.settings_panel && self.settings_section == section)
@@ -152,6 +178,9 @@ impl HiveApp {
             .child(
                 Button::new("settings-roles-tab")
                     .ghost()
+                    .h(px(36.))
+                    .rounded_full()
+                    .icon(Glyph::Bot)
                     .when(!compact, |row| row.w_full().justify_start())
                     .label("角色模板")
                     .selected(self.roles.visible)

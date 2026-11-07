@@ -73,12 +73,14 @@ impl HiveApp {
                     .child(
                         div().flex_1().min_w_0().child(
                             Input::new(input)
+                                .rounded_full()
                                 .aria_label(format!("{label} 可执行文件路径"))
                                 .disabled(disabled),
                         ),
                     )
                     .child(
                         Button::new(SharedString::from(format!("browse-{label}")))
+                            .rounded_full()
                             .label("浏览…")
                             .accessibility_label(format!("选择 {label} 可执行文件"))
                             .disabled(disabled)

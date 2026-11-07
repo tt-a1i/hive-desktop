@@ -106,6 +106,15 @@ Save-FixtureWindow $OutputPath
 if ($null -eq (Find-Action '团队成员')) {
     Invoke-Action '打开或收起工作区与会话导航'
 }
+Invoke-Action '设置'
+Invoke-Action '外部程序'
+[void](Wait-Action '选择 Codex 可执行文件')
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')
+if ($null -ne (Find-Action '工作区终端')) { throw 'Workspace navigation is covering preferences.' }
+Invoke-Action '角色模板'
+[void](Wait-Action '角色模板名称')
+Invoke-Action '返回会话'
+[void](Wait-Action '聊天消息')
 Invoke-Action '团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-team.png')
@@ -171,7 +180,3 @@ Invoke-Action '用当前草稿更新文档'
 [void](Wait-Action '编辑任务')
 if ([System.IO.File]::ReadAllText($TasksFile) -cne 'Agent update + My draft') { throw 'Reviewed task draft was not saved.' }
 Write-Host 'Verified conflict review and saving the reconciled task document in the native editor.'
-Invoke-Action '设置'
-Invoke-Action '外部程序'
-[void](Wait-Action '选择 Codex 可执行文件')
-Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')
