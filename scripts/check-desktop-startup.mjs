@@ -145,6 +145,9 @@ try {
     const renamedLead = JSON.parse(await readFile(join(state, 'chats/index.json'), 'utf8')).find(session => session.id === leadChat);
     assert.equal(renamedLead.title, '启动方式核验');
     assert.equal(renamedLead.customTitle, true);
+    const leadDraft = join(draftDir, `session-${leadChat}.json`);
+    // The native restart flushes the unsubmitted input before replacing its sidecar.
+    assert.equal(JSON.parse(await readFile(leadDraft, 'utf8')).input, '后台恢复核验草稿');
     const commands = reader.prepare("SELECT value FROM app_state WHERE key = 'desktop_executables'").get();
     assert.equal(JSON.parse(commands.value).codexCommand, String.raw`C:\Fixture Programs\codex.exe`);
     assert.equal(JSON.parse(await readFile(workerDraft, 'utf8')).input, `> ${prompt}\n\n${existingDraft}`);

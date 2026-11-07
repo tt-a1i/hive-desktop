@@ -69,9 +69,13 @@ impl HiveApp {
     pub(crate) fn save_navigation(&self, cx: &mut Context<Self>) {
         let Some(runtime) = &self.runtime else { return };
         let write = runtime.begin_request("desktop.navigation.save", json!(self.navigation));
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             if let Err(error) = write.await {
                 let _ = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return;
+                    }
                     this.error = Some(format!("保存会话位置失败：{error}"));
                     cx.notify();
                 });
@@ -87,6 +91,13 @@ impl HiveApp {
             |this, value, cx| match serde_json::from_value::<Vec<Workspace>>(value) {
                 Ok(workspaces) => {
                     this.workspaces = workspaces;
+                    if this.workspace.as_ref().is_some_and(|id| {
+                        !this.workspaces.iter().any(|workspace| &workspace.id == id)
+                    }) {
+                        this.capture_editor(cx);
+                        this.workspace = None;
+                        this.reset_workspace_view();
+                    }
                     if this.workspace.is_none() {
                         let saved = this
                             .workspaces
@@ -179,6 +190,7 @@ impl HiveApp {
             self.error = Some("后台未连接，无法读取项目会话".into());
             return;
         };
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let sessions = runtime
                 .request("chat.list", json!({"workspaceId": id}))
@@ -188,6 +200,9 @@ impl HiveApp {
                         .map_err(|error| format!("会话列表格式错误：{error}"))
                 });
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 if this.workspace.as_ref() == Some(&id)
                     || !this.expanded_projects.contains(&id)
                     || !this.workspaces.iter().any(|workspace| workspace.id == id)
@@ -248,23 +263,34 @@ impl HiveApp {
             return;
         };
         self.list_refreshing = true;
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             loop {
                 smol::Timer::after(std::time::Duration::from_millis(180)).await;
                 let Ok(workspace) = this.update(cx, |this, _| {
+                    if this.connection_generation != connection {
+                        return None;
+                    }
                     this.list_dirty = false;
                     this.workspace.clone()
                 }) else {
                     return;
                 };
                 let Some(workspace) = workspace else {
-                    let _ = this.update(cx, |this, _| this.list_refreshing = false);
+                    let _ = this.update(cx, |this, _| {
+                        if this.connection_generation == connection {
+                            this.list_refreshing = false;
+                        }
+                    });
                     return;
                 };
                 let result = runtime
                     .request("chat.list", json!({"workspaceId": workspace}))
                     .await;
                 let Ok(again) = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return false;
+                    }
                     if this.workspace.as_ref() == Some(&workspace) {
                         match result {
                             Ok(value) => match serde_json::from_value::<Vec<Session>>(value) {
@@ -349,6 +375,7 @@ impl HiveApp {
             self.error = Some("后台尚未连接".into());
             return;
         };
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -357,6 +384,9 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 match result {
                     Ok(value) => match serde_json::from_value::<Session>(value) {
                         Ok(session) => {

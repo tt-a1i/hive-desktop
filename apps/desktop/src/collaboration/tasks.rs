@@ -103,6 +103,7 @@ impl HiveApp {
         let operation = self.collaboration.task_generation;
         draft.operation = operation;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -116,6 +117,9 @@ impl HiveApp {
                     serde_json::from_value::<SaveOutcome>(value).map_err(|e| e.to_string())
                 });
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 let c = &mut this.collaboration;
                 if !c
                     .task_drafts

@@ -34,12 +34,16 @@ impl HiveApp {
             prompt: Some("选择项目文件夹".into()),
         });
         let window = window.window_handle();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| match receiver.await {
             Ok(Ok(Some(paths))) => {
                 if let Some(path) = paths.first() {
                     if let Some(path) = path.to_str() {
                         let _ = window.update(cx, |_, window, cx| {
                             let _ = this.update(cx, |this, cx| {
+                                if this.connection_generation != connection {
+                                    return;
+                                }
                                 if this.connected {
                                     this.folder
                                         .update(cx, |input, cx| input.set_value(path, window, cx));
@@ -49,6 +53,9 @@ impl HiveApp {
                         });
                     } else {
                         let _ = this.update(cx, |this, cx| {
+                            if this.connection_generation != connection {
+                                return;
+                            }
                             this.error = Some("所选文件夹路径无法显示为文本".into());
                             cx.notify();
                         });
@@ -58,12 +65,18 @@ impl HiveApp {
             Ok(Ok(None)) => {}
             Ok(Err(error)) => {
                 let _ = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return;
+                    }
                     this.error = Some(format!("选择文件夹失败：{error}"));
                     cx.notify();
                 });
             }
             Err(error) => {
                 let _ = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return;
+                    }
                     this.error = Some(format!("文件夹选择器已关闭：{error}"));
                     cx.notify();
                 });
@@ -84,9 +97,11 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime.request("hive.request", json!({"method":"POST", "path":format!("/api/workspaces/{workspace}/open"), "body":{"target_id":target}})).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) {
                     if let Err(error) = result { this.error = Some(format!("无法通过 {target} 打开项目，请确认目标应用已安装：{error}")); }
                     cx.notify();
@@ -143,9 +158,13 @@ impl HiveApp {
         }
         let window = window.window_handle();
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             if answer.await != Ok(1) {
                 let _ = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return;
+                    }
                     this.workspace_removing = None;
                     cx.notify();
                 });
@@ -199,6 +218,9 @@ impl HiveApp {
                 });
             let _ = window.update(cx, |_, window, cx| {
                 let _ = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return;
+                    }
                     this.workspace_removing = None;
                     let absent = refreshed.as_ref().is_ok_and(|workspaces| {
                         !workspaces.iter().any(|workspace| workspace.id == id)

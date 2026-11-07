@@ -1,3 +1,4 @@
+mod backend;
 use crate::{
     protocol::*,
     transport::{Runtime, RuntimeEvent},
@@ -165,6 +166,10 @@ pub struct HiveApp {
     pub pending_events: Vec<PiEvent>,
     pub choosing_model: bool,
     pub closing: bool,
+    pub restarting: bool,
+    pub backend_initialized: bool,
+    pub connection_generation: u64,
+    pub inflight_inputs: HashMap<String, String>,
     pub status: String,
     pub error: Option<String>,
     pub loading: bool,
@@ -399,6 +404,10 @@ impl HiveApp {
             pending_events: vec![],
             choosing_model: false,
             closing: false,
+            restarting: false,
+            backend_initialized: false,
+            connection_generation: 0,
+            inflight_inputs: HashMap::new(),
             status: "正在启动 Hive 后台…".into(),
             error: None,
             loading: true,
@@ -418,85 +427,7 @@ impl HiveApp {
                 }
             }),
         };
-        let settings_window = window.window_handle();
-        app.events = cx.spawn(async move |this, cx| {
-            let runtime = match smol::unblock(Runtime::launch).await {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = this.update(cx, |this, cx| {
-                        this.loading = false;
-                        this.error = Some(error);
-                        if this.closing {
-                            cx.quit();
-                        }
-                        cx.notify();
-                    });
-                    return;
-                }
-            };
-            let events = runtime.events.clone();
-            let result = runtime.request("initialize", json!({})).await;
-            let _ = this.update(cx, |this, cx| {
-                this.runtime = Some(runtime);
-                this.loading = false;
-                if this.closing {
-                    this.shutdown_and_quit(cx);
-                    return;
-                }
-                match result {
-                    Ok(info) => {
-                        this.pi_agent_dir =
-                            info["piAgentDir"].as_str().map(std::path::PathBuf::from);
-                        if let Some(value) = info["navigation"].as_str() {
-                            match serde_json::from_str(value) {
-                                Ok(selection) => this.navigation = selection,
-                                Err(error) => {
-                                    this.error = Some(format!("无法恢复上次的会话位置：{error}"))
-                                }
-                            }
-                        }
-                        if let Some(root) = info["dataDir"].as_str()
-                            && let Err(error) = this.restore_drafts(std::path::Path::new(root))
-                        {
-                            this.error =
-                                Some(format!("无法读取本地草稿，本次编辑仅在窗口中保留：{error}"));
-                        }
-                        this.connected = true;
-                        this.status = "后台已连接".into();
-                        this.load_workspaces(cx);
-                        if this.settings_panel {
-                            this.load_preferences(settings_window, cx);
-                        }
-                    }
-                    Err(error) => this.error = Some(error),
-                }
-                cx.notify();
-            });
-            // This task holds no Runtime Arc while awaiting notifications, allowing app drop to shut it down.
-            while let Ok(event) = events.recv().await {
-                if this
-                    .update(cx, |this, cx| {
-                        match event {
-                            RuntimeEvent::Failed(error) => {
-                                this.connected = false;
-                                this.terminal_disconnected(cx);
-                                this.loading = false;
-                                this.interactions.sessions.clear();
-                                this.status = "后台连接已断开".into();
-                                this.error = Some(error);
-                                this.busy.clear();
-                            }
-                            RuntimeEvent::Agent(event) => this.agent_event(event, cx),
-                            RuntimeEvent::Terminal(event) => this.terminal_wire_event(event, cx),
-                        }
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-        });
+        app.start_backend(window.window_handle(), cx);
         app
     }
     pub fn exit(&mut self, cx: &mut Context<Self>) {
@@ -560,7 +491,7 @@ impl HiveApp {
         }
         if !self.connected {
             self.loading = false;
-            self.error = Some("后台连接已断开，当前草稿仍保留。请先复制，再重启应用。".into());
+            self.error = Some("后台连接已断开，当前草稿仍保留。可在窗口顶部重新启动后台。".into());
             cx.notify();
             return;
         }
@@ -569,9 +500,13 @@ impl HiveApp {
             return;
         };
         let open_request = self.open_request;
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime.request(method, params).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 match result {
                     Ok(value) => done(this, value, cx),
                     Err(error) => {

@@ -114,6 +114,7 @@ impl HiveApp {
         });
         let window = window.window_handle();
         let generation = self.executable_picker_generation;
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = match selected.await {
                 Ok(Ok(Some(paths))) => paths
@@ -131,6 +132,9 @@ impl HiveApp {
             };
             let _ = window.update(cx, |_, window, cx| {
                 let _ = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return;
+                    }
                     if !this.settings_panel || this.executable_picker_generation != generation {
                         return;
                     }
@@ -206,6 +210,7 @@ impl HiveApp {
         self.team_autostaff_loading = true;
         self.team_autostaff_message = None;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let params = match save {
                 Some(enabled) => json!({"method":"PUT", "path":"/api/settings/team-autostaff", "body":{"enabled":enabled}}),
@@ -213,6 +218,7 @@ impl HiveApp {
             };
             let result = runtime.request("hive.request", params).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection { return; }
                 this.team_autostaff_loading = false;
                 match result {
                     Ok(value) => match value.get("enabled").and_then(|v| v.as_bool()) {
@@ -236,6 +242,18 @@ impl HiveApp {
         window: AnyWindowHandle,
         cx: &mut Context<Self>,
     ) {
+        self.request_executable_settings(save, !save, window, cx);
+    }
+    pub fn refresh_executable_snapshot(&mut self, window: AnyWindowHandle, cx: &mut Context<Self>) {
+        self.request_executable_settings(false, self.executable_settings.is_none(), window, cx);
+    }
+    fn request_executable_settings(
+        &mut self,
+        save: bool,
+        replace_inputs: bool,
+        window: AnyWindowHandle,
+        cx: &mut Context<Self>,
+    ) {
         if self.settings_loading || !self.connected {
             return;
         }
@@ -256,6 +274,7 @@ impl HiveApp {
         self.settings_loading = true;
         self.settings_message = None;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -268,11 +287,14 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 this.settings_loading = false;
                 match result {
                     Ok(value) => match serde_json::from_value::<ExecutableSettings>(value) {
                         Ok(settings) => {
-                            if !save {
+                            if replace_inputs {
                                 let pi_input = this.pi_command.clone();
                                 let codex_input = this.codex_command.clone();
                                 let claude_input = this.claude_command.clone();

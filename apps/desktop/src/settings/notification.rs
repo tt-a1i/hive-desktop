@@ -43,6 +43,7 @@ impl HiveApp {
         self.notification_loading = true;
         self.notification_message = None;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let params = if action.is_some() {
                 json!({"method":"PUT", "path":PATH, "body":{"value":value}})
@@ -51,6 +52,9 @@ impl HiveApp {
             };
             let result = runtime.request("hive.request", params).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 if this.notification_generation != generation {
                     return;
                 }

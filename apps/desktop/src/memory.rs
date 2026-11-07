@@ -200,10 +200,12 @@ impl HiveApp {
         m.entries.clear();
         m.enabled = None;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let list = runtime.request("hive.request", json!({"method":"GET","path":path})).await.and_then(|value| serde_json::from_value::<MemoryList>(value).map_err(|error| error.to_string()));
             let settings = runtime.request("hive.request", json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/memory/settings")})).await.and_then(|value| serde_json::from_value::<MemorySettings>(value).map_err(|error| error.to_string()));
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection { return; }
                 let m = &mut this.memory;
                 if !m.visible || this.workspace.as_ref() != Some(&workspace) || m.generation != generation { return; }
                 m.loading = false;
@@ -240,9 +242,11 @@ impl HiveApp {
         self.memory.error = None;
         self.memory.notice = None;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime.request("hive.request", json!({"method":method,"path":format!("/api/ui/workspaces/{workspace}/memory{suffix}"),"body":body})).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection { return; }
                 let outcome = if settings {
                     result.and_then(|value| serde_json::from_value::<MemorySettings>(value).map_err(|error| error.to_string())).map(|_| ())
                 } else {
@@ -269,5 +273,14 @@ impl HiveApp {
             self.memory.entries.clear();
             self.memory.selected = None;
         }
+    }
+}
+
+impl HiveApp {
+    pub fn reset_memory_connection(&mut self) {
+        self.memory.generation += 1;
+        self.memory.loading = false;
+        self.memory.acting = false;
+        self.memory.pending_actions.clear();
     }
 }

@@ -104,6 +104,7 @@ impl HiveApp {
         );
         self.refresh_interaction_status(&session);
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -112,6 +113,9 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 let Some(card) = this
                     .interactions
                     .sessions
@@ -193,11 +197,15 @@ impl HiveApp {
         let generation = card.generation;
         self.refresh_interaction_status(&session);
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("chat.abort", json!({"sessionId":session}))
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 let Some(card) = this
                     .interactions
                     .sessions

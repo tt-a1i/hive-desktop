@@ -91,6 +91,7 @@ impl HiveApp {
         self.roles.loading = true;
         self.roles.error = None;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -99,6 +100,9 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 if this.roles.generation != generation
                     || this.workspace != workspace
                     || (!this.roles.visible && !this.member_panel)
@@ -160,6 +164,7 @@ impl HiveApp {
         self.roles.error = None;
         self.roles.notice = None;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -169,6 +174,9 @@ impl HiveApp {
                 .await;
             let _ =
                 this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return;
+                    }
                     if this.roles.generation != generation
                         || this.workspace != workspace
                         || !this.roles.visible

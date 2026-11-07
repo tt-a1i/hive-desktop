@@ -33,6 +33,7 @@ impl HiveApp {
         self.error = None;
         self.session_name_loading = true;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("chat.rename", json!({"sessionId":id,"title":title}))
@@ -41,6 +42,9 @@ impl HiveApp {
                     serde_json::from_value::<Session>(value).map_err(|error| error.to_string())
                 });
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 this.session_name_loading = false;
                 match result {
                     Ok(renamed) => {

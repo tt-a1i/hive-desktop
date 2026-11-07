@@ -149,6 +149,7 @@ impl HiveApp {
         c.task_error = None;
         c.task_text.clear();
         c.tasks.update(cx, |state, cx| state.set_text("", cx));
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -157,6 +158,9 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 let c = &mut this.collaboration;
                 if c.visible
                     && this.workspace.as_ref() == Some(&workspace)
@@ -199,10 +203,12 @@ impl HiveApp {
         c.message_generation += 1;
         c.message_loading = false;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let state = if filter == "all" { String::new() } else { format!("&state={filter}") };
             let result = runtime.request("hive.request", json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/dispatches?limit={PAGE}&offset={offset}{state}")})).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection { return; }
                 let c = &mut this.collaboration;
                 if c.visible && this.workspace.as_ref() == Some(&workspace) && c.list_generation == generation {
                     c.list_loading = false;
@@ -224,9 +230,13 @@ impl HiveApp {
         let open_request = self.open_request;
         self.collaboration.detail_generation += 1;
         let generation = self.collaboration.detail_generation;
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = read_dispatch(&runtime, &workspace, &id).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 if this.collaboration.detail_generation != generation
                     || this.open_request != open_request
                     || !this.viewing_conversation()
@@ -280,9 +290,13 @@ impl HiveApp {
         self.collaboration.detail_generation += 1;
         let generation = self.collaboration.detail_generation;
         self.collaboration.detail_error = None;
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = read_dispatch(&runtime, &workspace, &id).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 let c = &mut this.collaboration;
                 if this.workspace.as_ref() != Some(&workspace)
                     || c.detail_generation != generation
@@ -319,6 +333,7 @@ impl HiveApp {
         c.requested_after = after.clone();
         c.message_error = None;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let mut query = url::form_urlencoded::Serializer::new(String::new());
             query.append_pair("scope", "collaboration");
@@ -333,6 +348,9 @@ impl HiveApp {
                 .request("hive.request", json!({"method":"GET", "path":path}))
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 let c = &mut this.collaboration;
                 if c.visible
                     && this.workspace.as_ref() == Some(&workspace)
@@ -397,5 +415,21 @@ pub fn delivery_state(value: &str) -> &str {
         "delivered" => "已投递",
         "cancelled" => "投递取消",
         _ => value,
+    }
+}
+
+impl HiveApp {
+    pub fn reset_collaboration_connection(&mut self) {
+        let c = &mut self.collaboration;
+        c.task_generation += 1;
+        c.list_generation += 1;
+        c.message_generation += 1;
+        c.detail_generation += 1;
+        c.task_loading = false;
+        c.list_loading = false;
+        c.message_loading = false;
+        for draft in c.task_drafts.values_mut() {
+            draft.saving = false;
+        }
     }
 }

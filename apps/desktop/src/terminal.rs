@@ -244,3 +244,14 @@ impl HiveApp {
         self.terminal.error = Some(error);
     }
 }
+
+impl HiveApp {
+    pub fn refresh_terminal_after_reconnect(&mut self, cx: &mut Context<Self>) {
+        self.terminal.runs.clear();
+        self.terminal.run_id = None;
+        self.terminal.status = "后台已恢复，正在核对 Shell 状态…".into();
+        if self.terminal.visible {
+            self.load_terminals(true, cx);
+        }
+    }
+}

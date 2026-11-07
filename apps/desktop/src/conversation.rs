@@ -28,16 +28,22 @@ impl HiveApp {
             return;
         };
         self.busy.insert(id.clone());
+        self.inflight_inputs.insert(id.clone(), text.clone());
         self.drafts.remove(&format!("session:{id}"));
         self.input
             .update(cx, |state, cx| state.set_value("", window, cx));
         self.schedule_draft_save(cx);
         let window = window.window_handle();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("chat.prompt", json!({"sessionId":id,"text":text}))
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
+                this.inflight_inputs.remove(&id);
                 if this.removed_sessions.contains(&id) {
                     return;
                 }
@@ -167,12 +173,16 @@ impl HiveApp {
         let open = self.open_request;
         self.refreshing_models = true;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("chat.refreshPiModels", json!({"sessionId":id}))
                 .await
                 .and_then(|v| serde_json::from_value::<Vec<Model>>(v).map_err(|e| e.to_string()));
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 if this.open_request != open {
                     return;
                 }

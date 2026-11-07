@@ -358,6 +358,11 @@ impl Render for HiveApp {
         let preferences = self.settings_panel || self.roles.visible;
         let compact_settings = window.viewport_size().width < px(720.);
         v_flex().size_full().bg(Color::Surface.get(cx)).text_color(Color::Text.get(cx))
+            .when(!self.connected && !self.closing && (!self.loading || self.restarting), |view| view.child(
+                h_flex().flex_shrink_0().items_center().gap_3().p_3().bg(Color::Attention.get(cx))
+                    .child(div().flex_1().min_w_0().text_sm().child(if self.restarting { "正在重新启动后台，当前草稿已保留。" } else { "后台未连接，当前草稿已保留。" }))
+                    .child(Button::new("restart-backend").label("重新启动后台").disabled(self.restarting)
+                        .on_click(cx.listener(|this, _, window, cx| this.restart_backend(window, cx))))))
             .when(!preferences && !self.sidebar_open, |layout| layout.child(self.render_navigation_bar(cx)))
             .child(h_flex().flex_1().min_h_0().w_full()
             .when(!preferences && self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
@@ -559,7 +564,7 @@ impl Render for HiveApp {
                     })))))
                 .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().px_5().when(!narrow, |column| column.px(px(44.))).track_scroll(&self.scroll).on_scroll(cx.listener(|_, _, _, cx| cx.notify())).py_3()
                     .child(v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().gap_5()
-                        .when(self.messages.is_empty() && self.pending_reports.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if needs_pi_model { "还没有消息。" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
+                        .when(self.messages.is_empty() && self.pending_reports.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。可在窗口顶部重新启动后台。" } else if running { "正在等待 Agent 回复…" } else if needs_pi_model { "还没有消息。" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.chunk_by(|left, right| left.completed_tool() && right.completed_tool())
                             .scan(0usize, |offset, group| {
                                 let start = *offset;
@@ -654,7 +659,7 @@ impl Render for HiveApp {
                     } else {
                         Button::new("send").primary().icon(Glyph::ArrowUp).rounded(px(20.)).accessibility_label("发送消息").tooltip("Enter 发送，Shift+Enter 换行").disabled(!can_submit || !has_text).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
                     })))
-                .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { "后台暂不可用 · 请先复制草稿，再重启应用" } else if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "" }))))
+                .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { "后台暂不可用 · 可在窗口顶部重新启动后台" } else if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "" }))))
                 .when(needs_pi_model && self.connected, |surface| surface.child(
                     h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().min_w_0().flex_wrap().items_center().gap_2()
                         .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model {

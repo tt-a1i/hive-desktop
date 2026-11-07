@@ -99,6 +99,7 @@ impl HiveApp {
         self.member_catalog_error = None;
         self.member_catalog_loading = true;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -107,6 +108,9 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 if this.workspace.as_ref() == Some(&workspace)
                     && this.member_catalog_generation == generation
                     && this.member_picker_target.as_ref() == Some(&id)
@@ -142,11 +146,15 @@ impl HiveApp {
         self.member_loading = true;
         self.member_generation += 1;
         let generation = self.member_generation;
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("team.members", json!({"workspaceId":workspace}))
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 if this.workspace.as_ref() == Some(&workspace)
                     && this.member_generation == generation
                 {
@@ -185,6 +193,7 @@ impl HiveApp {
         self.member_generation += 1;
         let generation = self.member_generation;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -193,6 +202,9 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
                 if this.workspace.as_ref() == Some(&workspace)
                     && this.member_generation == generation
                 {
@@ -239,6 +251,7 @@ impl HiveApp {
         self.member_generation += 1;
         let generation = self.member_generation;
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = async {
                 let member = runtime.request("hive.request", json!({"method":"POST","path":format!("/api/workspaces/{workspace}/workers"),"body":body})).await?;
@@ -247,6 +260,7 @@ impl HiveApp {
                 Ok::<(), String>(())
             }.await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {
                     this.member_loading = false;
                     if let Err(error) = result { this.error = Some(format!("添加成员：{error}")); } else { this.member_form_open = false; }
@@ -273,6 +287,7 @@ impl HiveApp {
         let generation = self.member_generation;
         self.member_stopping = Some(id.clone());
         cx.notify();
+        let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let operation = async {
                 let value = runtime.request("hive.request", json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/runs")})).await?;
@@ -293,6 +308,7 @@ impl HiveApp {
                 Err("等待停止确认超时；请求可能已送达，请刷新后查看状态".to_string())
             }).await;
             let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {
                     this.member_loading = false;
                     this.member_stopping = None;

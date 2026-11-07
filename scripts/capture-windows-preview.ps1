@@ -73,8 +73,8 @@ function Find-Action([string] $Name) {
         [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
     return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
-function Wait-Action([string] $Name) {
-    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+function Wait-Action([string] $Name, [int] $TimeoutSeconds = 8) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
         $action = Find-Action $Name
         if ($null -ne $action -and $action.Current.IsEnabled) { return $action }
@@ -238,3 +238,19 @@ $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Set
 Invoke-Action '打开 启动方式核验 · Beta · Pi'
 [void](Wait-Action '打开关联派单')
 Write-Host 'Searched member and lead conversations and preserved the isolated member draft.'
+
+$draft = Wait-Action '聊天消息'
+$draft.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('后台恢复核验草稿')
+$ownedNode = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $AppProcessId" | Where-Object { $_.Name -eq 'node.exe' })
+if ($ownedNode.Count -ne 1) { throw 'Could not identify exactly one owned fixture sidecar.' }
+$previousNodeId = [int]$ownedNode[0].ProcessId
+Stop-Process -Id $previousNodeId -Force
+[void](Wait-Action '重新启动后台')
+Invoke-Action '重新启动后台'
+[void](Wait-Action '搜索会话' 20)
+[void](Wait-Action '打开关联派单' 20)
+Wait-EditorText '聊天消息' '后台恢复核验草稿'
+$replacement = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $AppProcessId" | Where-Object { $_.Name -eq 'node.exe' })
+if ($replacement.Count -ne 1 -or [int]$replacement[0].ProcessId -eq $previousNodeId) { throw 'Restart did not establish one replacement sidecar.' }
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-backend-recovered.png')
+Write-Host 'Recovered the original lead session and draft after force-terminating its owned sidecar.'
