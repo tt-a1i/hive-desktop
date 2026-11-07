@@ -67,6 +67,7 @@ if ($null -eq (Find-Action '团队成员')) {
     Invoke-Action '打开或收起工作区与会话导航'
 }
 Invoke-Action '团队成员'
+[void](Wait-Action '打开 Reviewer 的成员会话')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-team.png')
 Invoke-Action '打开 Reviewer 的成员会话'
 [void](Wait-Action '返回团队成员')
@@ -75,3 +76,7 @@ Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 
 Invoke-Action '返回团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')
 Write-Host 'Opened the named member session and returned to the team roster through native controls.'
+Invoke-Action '设置'
+Invoke-Action '外部程序'
+[void](Wait-Action '选择 Codex 可执行文件')
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')

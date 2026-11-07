@@ -101,6 +101,7 @@ jobs:
             target/windows-native-workspace.png
             target/windows-member-session.png
             target/windows-team.png
+            target/windows-program-settings.png
           if-no-files-found: error
   native-supervision:
     runs-on: windows-latest
