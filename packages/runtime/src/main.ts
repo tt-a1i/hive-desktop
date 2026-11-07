@@ -5,6 +5,7 @@ import { CodexInteractionError } from './agents/codex-interactions.js';
 import { WorkspaceRemovalError } from './workspace-removal.js';
 import { HiveHttpError } from './hive-host.js';
 import { createDesktopRuntime } from './desktop-runtime.js';
+import { structuredCommand } from './structured-runtime.js';
 import { desktopDataDir } from './paths.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
@@ -44,6 +45,20 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       const value = JSON.stringify({ workspace: params.workspace, sessions });
       hive.saveNavigation(value);
       return { ok: true };
+    }
+    case 'team.members': {
+      const workspace = text(params, 'workspaceId');
+      const members = await hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspace)}/team`) as { id: string }[];
+      return members.map(member => {
+        const launch = runtime.agents.peekAgentLaunchConfig(workspace, member.id);
+        if (!launch || !structuredCommand(launch.command)) return member;
+        const args = launch.args ?? [];
+        const providerIndex = args.indexOf('--provider');
+        const modelIndex = args.indexOf('--model');
+        const provider = providerIndex >= 0 && args[providerIndex + 1];
+        const id = modelIndex >= 0 && args[modelIndex + 1];
+        return provider && id ? { ...member, desktop_model: { provider, id } } : member;
+      });
     }
     case 'agent.models': return agentModels.list(text(params, 'workspaceId'), params.backend);
     case 'desktop.settings.get': return settings.get();

@@ -45,6 +45,7 @@ pub struct Member {
     pub status: String,
     #[serde(default)]
     pub configured_command: Option<String>,
+    pub desktop_model: Option<ModelIdentity>,
 }
 impl Member {
     pub fn role_label(&self) -> &str {

@@ -43,7 +43,6 @@ impl HiveApp {
         self.member_picker_target = Some(id.clone());
         self.member_catalog_backend = Some(backend.into());
         self.member_catalog.clear();
-        self.member_selected_model = None;
         self.member_catalog_error = None;
         self.member_catalog_loading = true;
         cx.notify();
@@ -92,10 +91,7 @@ impl HiveApp {
         let generation = self.member_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
-                .request(
-                    "hive.request",
-                    json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/team")}),
-                )
+                .request("team.members", json!({"workspaceId":workspace}))
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.workspace.as_ref() == Some(&workspace)
@@ -203,59 +199,6 @@ impl HiveApp {
                     if let Err(error) = result { this.error = Some(format!("添加成员：{error}")); } else { this.member_form_open = false; }
                     this.refresh_members(cx);
                     this.refresh_sessions(cx);
-                    cx.notify();
-                }
-            });
-        }).detach();
-    }
-    pub fn start_member(&mut self, id: String, command: Option<String>, cx: &mut Context<Self>) {
-        if !self.workspace_writes_allowed() {
-            return;
-        }
-        if !self.connected {
-            return;
-        }
-        let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())
-        else {
-            return;
-        };
-        let Some(command) = command.filter(|c| {
-            matches!(
-                c.as_str(),
-                "hive:pi" | "hive:codex" | "hive:pi-rpc" | "hive:claude"
-            )
-        }) else {
-            self.error = Some("该成员没有桌面支持的后端配置".into());
-            cx.notify();
-            return;
-        };
-        let Some((_, _, selected)) =
-            self.member_selected_model
-                .as_ref()
-                .filter(|(target, backend, _)| {
-                    target == &id && Some(backend.as_str()) == command_backend(Some(&command))
-                })
-        else {
-            self.error = Some("请先为此成员选择其后端的可用模型".into());
-            cx.notify();
-            return;
-        };
-        let provider = selected.provider.clone();
-        let model = selected.id.clone();
-        self.member_loading = true;
-        self.member_generation += 1;
-        let generation = self.member_generation;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = async {
-                runtime.request("hive.request", json!({"method":"POST","path":format!("/api/workspaces/{workspace}/agents/{id}/config"),"body":{"command":command,"command_preset_id":null,"args":["--provider",provider,"--model",model]}})).await?;
-                runtime.request("hive.request", json!({"method":"POST","path":format!("/api/workspaces/{workspace}/agents/{id}/start")})).await?;
-                Ok::<(), String>(())
-            }.await;
-            let _ = this.update(cx, |this, cx| {
-                if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {
-                    this.member_loading = false;
-                    match result { Ok(()) => { this.refresh_members(cx); this.refresh_sessions(cx); }, Err(error) => this.error = Some(format!("启动成员失败：{error}")) }
                     cx.notify();
                 }
             });

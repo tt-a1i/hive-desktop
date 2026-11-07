@@ -52,6 +52,14 @@ try {
     path: directory, name: 'Runtime integration', autostart_orchestrator: false,
   } });
   assert.equal(workspace.orchestrator_start.run_id, null);
+  const workers = [];
+  for (const backend of ['pi', 'codex']) {
+    const worker = await first.request('hive.request', { method: 'POST', path: `/api/workspaces/${workspace.id}/workers`,
+      body: { name: `member-${backend}`, role: 'tester', autostart: false } });
+    await first.request('hive.request', { method: 'POST', path: `/api/workspaces/${workspace.id}/agents/${worker.id}/config`,
+      body: { command: `hive:${backend}`, args: ['--provider', 'openai', '--model', 'gpt-6.1-terra'] } });
+    workers.push({ id: worker.id, backend });
+  }
   const created = await first.request('chat.create', { workspaceId: workspace.id });
   assert.equal(created.workspaceId, workspace.id);
   assert.equal(created.history.filter((message: { role: string }) => message.role !== 'custom').length, 0);
@@ -92,6 +100,13 @@ try {
   const second = launch();
   const restart = await second.request('initialize');
   assert.deepEqual(JSON.parse(restart.navigation), lastSelection);
+  const roster = await second.request('team.members', { workspaceId: workspace.id });
+  for (const worker of workers) {
+    const row = roster.find((member: { id: string }) => member.id === worker.id);
+    assert.equal(row.configured_command, `hive:${worker.backend}`);
+    assert.deepEqual(row.desktop_model, { provider: 'openai', id: 'gpt-6.1-terra' });
+    assert.equal(row.status, 'stopped');
+  }
   const persisted = await second.request('chat.list', { workspaceId: workspace.id });
   assert.equal(persisted.length, 2);
   assert.equal(persisted[0].id, newer.id);

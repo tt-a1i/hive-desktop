@@ -216,7 +216,6 @@ impl HiveApp {
         self.member_catalog.clear();
         self.member_picker_target = None;
         self.member_catalog_backend = None;
-        self.member_selected_model = None;
         self.member_generation += 1;
         self.member_stopping = None;
         self.member_loading = false;
