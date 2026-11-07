@@ -1,3 +1,4 @@
+import { workspaceRemovalBlocked } from './workspace-removal.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +22,7 @@ export class AgentModelsInputError extends Error {
 export class AgentModels {
   private readonly pending = new Map<string, Promise<AgentModelCatalog>>();
   private closing = false;
+  private readonly removing = new Set<string>();
   constructor(private readonly hive: HiveHost, private readonly settings: DesktopSettings) {}
   list(workspaceId: string, backend: unknown): Promise<AgentModelCatalog> {
     if (this.closing) return Promise.reject(new Error('Model catalog runtime is closing'));
@@ -28,6 +30,7 @@ export class AgentModels {
       return Promise.reject(new AgentModelsInputError('Unsupported model catalog backend'));
     }
     if (typeof workspaceId !== 'string' || !workspaceId.trim()) return Promise.reject(new AgentModelsInputError('workspaceId is required'));
+    if (this.removing.has(workspaceId)) return Promise.reject(workspaceRemovalBlocked(workspaceId));
     const key = `${backend}:${workspaceId}`;
     const pending = this.pending.get(key);
     if (pending) return pending;
@@ -59,6 +62,17 @@ export class AgentModels {
       try { await handle?.dispose(); }
       finally { await rm(directory, { recursive: true, force: true }); }
     }
+  }
+  async withWorkspaceRemoval<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
+    if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
+    this.removing.add(workspaceId);
+    try {
+      const requests = [...this.pending].filter(([key]) => key.slice(key.indexOf(':') + 1) === workspaceId).map(([, request]) => request);
+      const settled = await Promise.allSettled(requests);
+      const errors = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+      if (errors.length) throw new AggregateError(errors, '工作区模型查询未正常结束，无法确认其原生进程已经退出。');
+      return await operation();
+    } finally { this.removing.delete(workspaceId); }
   }
   async close(): Promise<void> {
     this.closing = true;

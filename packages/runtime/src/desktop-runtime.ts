@@ -18,13 +18,21 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     },
   });
   const settings = new DesktopSettings(hive, options.executableEnvironment);
+  const agentModels = new AgentModels(hive, settings);
   try {
     if (!agents) throw new Error('Hive runtime factory was not installed');
-    chats = new Chats(hive, dataDir, emit, agents, settings);
+    chats = new Chats(hive, dataDir, emit, agents, settings, agentModels);
   } catch (error) { await hive.close(); throw error; }
-  const agentModels = new AgentModels(hive, settings);
   let closing: Promise<void> | undefined;
   return { hive, chats, agents, settings, agentModels,
+    removeWorkspace: (workspaceId: string) => chats.removeWorkspace(workspaceId),
+    requestHive: (method: string, path: string, body?: unknown) => {
+      if (!['GET', 'HEAD'].includes(method.toUpperCase())) {
+        const match = /^\/api\/workspaces\/([^/?#]+)(?:[/?#]|$)/.exec(path);
+        if (match) chats.assertWorkspaceAvailable(decodeURIComponent(match[1]!));
+      }
+      return hive.request(method, path, body);
+    },
     close: () => closing ??= (async () => {
       try { await agentModels.close(); await hive.close(); } finally { await chats.close(); }
     })(),

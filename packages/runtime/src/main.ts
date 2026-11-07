@@ -2,6 +2,7 @@ import { format } from 'node:util';
 import { createInterface } from 'node:readline';
 import { mkdirSync } from 'node:fs';
 import { CodexInteractionError } from './agents/codex-interactions.js';
+import { WorkspaceRemovalError } from './workspace-removal.js';
 import { HiveHttpError } from './hive-host.js';
 import { createDesktopRuntime } from './desktop-runtime.js';
 import { desktopDataDir } from './paths.js';
@@ -37,7 +38,14 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'agent.models': return agentModels.list(text(params, 'workspaceId'), params.backend);
     case 'desktop.settings.get': return settings.get();
     case 'desktop.settings.update': return settings.update(params);
-    case 'hive.request': return hive.request(text(params, 'method'), text(params, 'path'), params.body);
+    case 'workspace.remove': {
+      try { return await runtime.removeWorkspace(text(params, 'workspaceId')); }
+      catch (error) {
+        if (error instanceof WorkspaceRemovalError) return { ok: false, error: { code: error.code, message: error.message, details: error.details } };
+        throw error;
+      }
+    }
+    case 'hive.request': return runtime.requestHive(text(params, 'method'), text(params, 'path'), params.body);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.create': {
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');

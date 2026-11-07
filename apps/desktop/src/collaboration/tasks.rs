@@ -65,7 +65,7 @@ impl HiveApp {
     }
 
     fn save_tasks(&mut self, cx: &mut Context<Self>) {
-        if !self.connected {
+        if !self.connected || !self.workspace_writes_allowed() {
             return;
         }
         let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())

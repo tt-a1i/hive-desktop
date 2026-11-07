@@ -220,7 +220,7 @@ impl HiveApp {
         body: Option<Value>,
         cx: &mut Context<Self>,
     ) {
-        if !self.connected {
+        if !self.connected || !self.workspace_writes_allowed() {
             return;
         }
         if self.memory.loading || self.memory.acting {
@@ -248,7 +248,7 @@ impl HiveApp {
                 } else {
                     result.and_then(|value| serde_json::from_value::<MemoryMutation>(value).map_err(|error| error.to_string())).map(|response| { let _ = response.memory; })
                 }.map_err(|error| format!("保存记忆变更失败：{error}"));
-                this.memory.pending_actions.remove(&workspace);
+                if !this.memory.pending_actions.remove(&workspace) { return; }
                 this.memory.action_results.insert(workspace.clone(), outcome);
                 if this.memory.visible && this.workspace.as_ref() == Some(&workspace) {
                     this.load_memory(cx);
@@ -256,5 +256,18 @@ impl HiveApp {
                 cx.notify();
             });
         }).detach();
+    }
+}
+
+impl HiveApp {
+    pub(crate) fn forget_workspace_memory(&mut self, workspace: &str) {
+        self.memory.pending_actions.remove(workspace);
+        self.memory.action_results.remove(workspace);
+        if self.memory.workspace.as_deref() == Some(workspace) {
+            self.close_memory();
+            self.memory.workspace = None;
+            self.memory.entries.clear();
+            self.memory.selected = None;
+        }
     }
 }

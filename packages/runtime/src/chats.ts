@@ -1,3 +1,5 @@
+import type { AgentModels } from './agent-models.js';
+import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,14 +33,18 @@ export class Chats implements StructuredSessionPort {
   private readonly sessionDir: string;
   private readonly queueDir: string;
   private closing = false;
+  private readonly removing = new Set<string>();
 
   constructor(private readonly hive: HiveHost, dataDir: string, private readonly emit: (event: ChatEvent) => void,
-    private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings) {
+    private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels) {
     const directory = join(dataDir, 'chats');
     this.sessionDir = join(directory, 'pi');
     this.queueDir = join(directory, 'deliveries');
     mkdirSync(this.sessionDir, { recursive: true });
     this.index = new ChatIndex(directory);
+  }
+  assertWorkspaceAvailable(workspaceId: string): void {
+    if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
   list(workspaceId: string) { return this.index.list(workspaceId); }
   private event(id: string, event: PiEvent | { type: 'state'; sessionId: string; busy: boolean; pending: number }) {
@@ -142,6 +148,7 @@ export class Chats implements StructuredSessionPort {
   }
   private async require(id: string): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
+    this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     const existing = this.live.get(id);
     if (existing?.cleanup) {
       await existing.cleanup;
@@ -155,8 +162,10 @@ export class Chats implements StructuredSessionPort {
     return opening;
   }
   async create(workspaceId: string, backend: ChatBackend = 'pi') {
+    this.assertWorkspaceAvailable(workspaceId);
     if (this.closing) throw new Error('Chat runtime is closing');
     await this.workspace(workspaceId);
+    this.assertWorkspaceAvailable(workspaceId);
     if (this.closing) throw new Error('Chat runtime is closing');
     const record: ChatRecord = { id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now() };
     this.index.save(record);
@@ -166,6 +175,7 @@ export class Chats implements StructuredSessionPort {
 
   /** Hive invokes this for both the selected orchestrator and spawned workers. */
   async start(input: Parameters<StructuredSessionPort['start']>[0]): Promise<StructuredSessionHandle> {
+    this.assertWorkspaceAvailable(input.workspace.id);
     const backend = input.config.command === 'hive:codex' ? 'codex' : input.config.command === 'hive:pi-rpc' ? 'pi-rpc' : input.config.command === 'hive:claude' ? 'claude' : 'pi';
     const args = input.config.args ?? [];
     const provider = args[args.indexOf('--provider') + 1];
@@ -180,6 +190,7 @@ export class Chats implements StructuredSessionPort {
     }
     if (!record) {
       const members = await this.hive.request('GET', `/api/ui/workspaces/${input.workspace.id}/team`) as { id: string; name: string }[];
+      this.assertWorkspaceAvailable(input.workspace.id);
       record = { id: randomUUID(), workspaceId: input.workspace.id, agentId: input.agentId, backend,
         title: input.agentId.endsWith(':orchestrator') ? '主会话' : members.find(member => member.id === input.agentId)?.name ?? '成员会话', sessionFile: null, updatedAt: Date.now(),
         ...(args.includes('--provider') && args.includes('--model') && provider && modelId ? { model: { provider, id: modelId, name: modelId } } : {}),
@@ -231,6 +242,7 @@ export class Chats implements StructuredSessionPort {
   }
   private async activateOnce(id: string) {
     const record = this.index.get(id);
+    this.assertWorkspaceAvailable(record.workspaceId);
     const agentId = record.agentId ?? `${record.workspaceId}:orchestrator`;
     const previous = this.index.forAgent(record.workspaceId, agentId);
     if (previous && previous.id !== id) {
@@ -245,12 +257,14 @@ export class Chats implements StructuredSessionPort {
       this.runtime.stopAgentRun(active.runId);
       if (!await this.runtime.waitForRunExit(active.runId, 30_000)) throw new Error('Previous team session is still stopping');
     }
+    this.assertWorkspaceAvailable(record.workspaceId);
     this.index.bind(id, agentId);
     this.runtime.configureAgentLaunch(record.workspaceId, agentId, this.launchConfig(this.index.get(id)));
     // The Hive route performs its normal agent status transition and outbox replay.
     await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/agents/${encodeURIComponent(agentId)}/start`);
   }
   async prompt(id: string, text: string) {
+    this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     if (!text.trim()) throw new Error('Message cannot be empty');
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       await this.require(id);
@@ -274,11 +288,13 @@ export class Chats implements StructuredSessionPort {
     if (!chat || chat.failure || chat.cleanup || !chat.handle.respondInteraction) {
       throw new CodexInteractionError('INTERACTION_STALE', 'This conversation has no live native interaction');
     }
+    this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     await chat.handle.respondInteraction(interactionId, response);
     return { accepted: true };
   }
   async abort(id: string) {
-    const chat = await this.require(id);
+    const chat = this.removing.has(this.index.get(id).workspaceId) ? this.live.get(id) : await this.require(id);
+    if (!chat) throw workspaceRemovalBlocked(this.index.get(id).workspaceId);
     const paused = chat.queue.pause();
     await chat.handle.abort();
     await paused;
@@ -288,6 +304,7 @@ export class Chats implements StructuredSessionPort {
     return { ok: true };
   }
   async resume(id: string) {
+    this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       await this.activateOnce(id);
       (await this.require(id)).queue.resume();
@@ -295,6 +312,7 @@ export class Chats implements StructuredSessionPort {
     });
   }
   async setModel(id: string, provider: string, modelId: string) {
+    this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       const chat = await this.require(id);
       if (chat.queue.busy) throw new Error('Stop the current response before changing model');
@@ -305,6 +323,71 @@ export class Chats implements StructuredSessionPort {
       if (record.agentId) this.runtime.configureAgentLaunch(record.workspaceId, record.agentId, this.launchConfig(record));
       return { ok: true };
     });
+  }
+  async removeWorkspace(workspaceId: string): Promise<{ ok: true; removedSessionIds: string[] }> {
+    if (typeof workspaceId !== 'string' || !workspaceId.trim()) throw new Error('workspaceId is required');
+    if (this.closing) throw new Error('Chat runtime is closing');
+    this.assertWorkspaceAvailable(workspaceId);
+    this.removing.add(workspaceId);
+    const progress: { stage: WorkspaceRemovalStage; deleted: boolean } = { stage: 'prepare', deleted: false };
+    let sessionIds: string[] = [];
+    try {
+      return await this.hive.withWorkspaceWorkflowIdle(workspaceId, () => this.agentModels.withWorkspaceRemoval(workspaceId, () => this.withWorkspace(workspaceId, async () => {
+        await this.workspace(workspaceId);
+        const path = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
+        const records = this.index.list(workspaceId);
+        const openings = records.flatMap(record => { const opening = this.opening.get(record.id); return opening ? [opening] : []; });
+        const opened = await Promise.allSettled(openings);
+        // A failed opener has already awaited its own disposal; existing live cleanup must still be awaited below.
+        if (opened.some(result => result.status === 'rejected')) throw new Error('工作区会话未正常打开，无法确认其清理完成。');
+        sessionIds = this.index.list(workspaceId).map(record => record.id);
+        progress.stage = 'stop';
+        const listed = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspaceId)}/runs`) as { run_id: string; agent_id: string }[];
+        if (!Array.isArray(listed) || !listed.every(run => typeof run.run_id === 'string' && typeof run.agent_id === 'string')) throw new Error('Invalid workspace run list');
+        const runs = new Set<string>();
+        for (const entry of listed) {
+          const active = this.runtime.getActiveRunByAgentId(workspaceId, entry.agent_id);
+          if (active?.runId === entry.run_id) runs.add(active.runId); // Shells are owned by Hive's DELETE, not the agent runtime.
+        }
+        for (const record of this.index.list(workspaceId)) {
+          const active = record.agentId && this.runtime.getActiveRunByAgentId(workspaceId, record.agentId);
+          if (active) runs.add(active.runId);
+        }
+        for (const runId of runs) this.runtime.stopAgentRun(runId);
+        const stopped = await Promise.all([...runs].map(runId => this.runtime.waitForRunExit(runId, 30_000)));
+        if (stopped.some(exited => !exited)) throw new Error('未能确认工作区中的所有成员运行已经退出。');
+        const cleanup = await Promise.allSettled(sessionIds.flatMap(id => { const chat = this.live.get(id); return chat ? [this.stopLive(id, chat)] : []; }));
+        const errors = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+        if (errors.length) throw new AggregateError(errors, '工作区会话清理失败。');
+        progress.stage = 'delete';
+        await this.hive.request('DELETE', path);
+        progress.deleted = true; progress.stage = 'index';
+        this.index.removeWorkspace(workspaceId);
+        for (const id of sessionIds) this.sequences.delete(id);
+        // Native transcripts and physical delivery spools are retained; removed chats are no longer navigable.
+        return { ok: true as const, removedSessionIds: sessionIds };
+      })));
+    } catch (error) {
+      if (error instanceof WorkspaceRemovalError) throw error;
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'WORKSPACE_WORKFLOW_BUSY') {
+        throw new WorkspaceRemovalError('WORKSPACE_REMOVAL_BLOCKED', '工作区的工作流仍在启动、运行或清理中；请等待其实际执行与清理结束后再移除。',
+          { workspaceId, workspaceRemoved: false, removedSessionIds: [], stage: 'prepare', localIndexCleaned: false });
+      }
+      let workspaceRemoved: boolean | null = progress.deleted;
+      if (progress.stage === 'delete' && !progress.deleted) {
+        try {
+          const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
+          if (!Array.isArray(workspaces)) throw new Error('Invalid workspace list');
+          workspaceRemoved = !workspaces.some(workspace => workspace.id === workspaceId);
+        } catch { workspaceRemoved = null; }
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      const message = workspaceRemoved === true ? `工作区已移除，但桌面记录或后续清理未完成：${detail}`
+        : workspaceRemoved === null ? `移除失败，暂时无法确认工作区是否仍存在；请刷新工作区列表：${detail}`
+        : `工作区尚未移除，部分会话可能已停止；原有会话记录和待投递数据保留：${detail}`;
+      throw new WorkspaceRemovalError(workspaceRemoved === true ? 'WORKSPACE_REMOVAL_PARTIAL' : 'WORKSPACE_REMOVAL_FAILED', message,
+        { workspaceId, workspaceRemoved, removedSessionIds: workspaceRemoved === true ? sessionIds : [], stage: progress.stage, localIndexCleaned: false }, { cause: error });
+    } finally { this.removing.delete(workspaceId); }
   }
   private failLive(id: string, chat: LiveChat, error: Error): void {
     if (chat.cleanup) return;

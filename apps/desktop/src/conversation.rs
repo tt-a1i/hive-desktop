@@ -6,6 +6,9 @@ use gpui_kit::{component::text::TextViewState, *};
 use serde_json::{Value, json};
 impl HiveApp {
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.workspace_writes_allowed() {
+            return;
+        }
         let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {
             return;
         };
@@ -34,6 +37,9 @@ impl HiveApp {
                 .request("chat.prompt", json!({"sessionId":id,"text":text}))
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.removed_sessions.contains(&id) {
+                    return;
+                }
                 match result {
                     Err(error) => {
                         this.busy.remove(&id);
@@ -90,6 +96,9 @@ impl HiveApp {
         cx.notify();
     }
     pub fn resume(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace_writes_allowed() {
+            return;
+        }
         let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {
             return;
         };
@@ -134,6 +143,9 @@ impl HiveApp {
         }
     }
     pub fn set_model(&mut self, model: Model, cx: &mut Context<Self>) {
+        if !self.workspace_writes_allowed() {
+            return;
+        }
         if let Some(session) = &self.session {
             let id = session.id.clone();
             self.request(
@@ -278,6 +290,9 @@ impl HiveApp {
         }
     }
     pub(crate) fn agent_event(&mut self, event: PiEvent, cx: &mut Context<Self>) {
+        if self.removed_sessions.contains(event.session_id()) {
+            return;
+        }
         if self.session.as_ref().map(|s| s.id.as_str()) != Some(event.session_id()) {
             let previous = self
                 .background_sequences

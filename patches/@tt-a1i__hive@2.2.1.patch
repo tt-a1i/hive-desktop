@@ -24,6 +24,18 @@ index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c
      const ports = {
          getCommandPreset: (id) => store.settings.getCommandPreset(id),
          getOrchestratorLaunchConfig: () => store.peekAgentLaunchConfig(workspaceId, getOrchestratorId(workspaceId)),
+diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..078cc1a9985cc2223262f59bef19238e4b775146 100644
+--- a/dist/src/server/runtime-store-contract.d.ts
++++ b/dist/src/server/runtime-store-contract.d.ts
+@@ -138,6 +138,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+     setRemoteEnabled: (enabled: boolean) => void;
+     revokeRemoteDevice: (deviceId: string) => boolean;
+     getWorkflowDispatchAwaiter: () => WorkflowDispatchAwaiter;
++    withWorkspaceWorkflowIdle: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
+     runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
+     startWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
+     startWorkflowInline: (input: RunInlineWorkflowInput) => Promise<WorkflowRunRecord>;
 diff --git a/dist/src/server/runtime-store-helpers.js b/dist/src/server/runtime-store-helpers.js
 index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959ccac1d890 100644
 --- a/dist/src/server/runtime-store-helpers.js
@@ -59,7 +71,7 @@ index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959c
          db,
          ledger: dispatchLedgerStore,
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..70e6c4c4b1b1a74cbd5741f5e630a16b8d68d6b6 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..3e96d6a5e347497a4c37ad0941fdd5a4961a20cd 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
 @@ -112,6 +112,7 @@ export const createRuntimeStore = (options = {}) => {
@@ -70,3 +82,203 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..70e6c4c4b1b1a74cbd5741f5e630a16b
          startAgent: lifecycle.startAgent,
          autostartConfiguredAgents: lifecycle.autostartConfiguredAgents,
          startWorkspaceWatch: lifecycle.startWorkspaceWatch,
+@@ -141,6 +142,7 @@ export const createRuntimeStore = (options = {}) => {
+         getRetentionSignals: () => services.protocolEventStats.getRetentionSignals(),
+         ...createRuntimeStoreRemoteMethods(services),
+         getWorkflowDispatchAwaiter: () => services.workflowDispatchAwaiter,
++        withWorkspaceWorkflowIdle: (workspaceId, operation) => getWorkflowRuntime().runner.withWorkspaceWorkflowIdle(workspaceId, operation),
+         runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
+         startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
+         startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
+diff --git a/dist/src/server/workflow-runner.d.ts b/dist/src/server/workflow-runner.d.ts
+index 7f1e616c416b50c7aec3a4ef6c6142b233f762b6..be4acbc012a16bb8106983c49aaf9d3de64c891a 100644
+--- a/dist/src/server/workflow-runner.d.ts
++++ b/dist/src/server/workflow-runner.d.ts
+@@ -58,6 +58,7 @@ interface WorkflowRunStorePort {
+     listChildRuns: (parentRunId: string) => WorkflowRunRecord[];
+ }
+ export interface WorkflowRunner {
++    withWorkspaceWorkflowIdle: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
+     /** Runs the script to completion; returns the FINAL record. Used by tests
+      *  and any caller that wants to wait synchronously. */
+     runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
+diff --git a/dist/src/server/workflow-runner.js b/dist/src/server/workflow-runner.js
+index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..a0fc2b1732b79a3c7afe8e4c32692a634261586b 100644
+--- a/dist/src/server/workflow-runner.js
++++ b/dist/src/server/workflow-runner.js
+@@ -1,4 +1,5 @@
+ import { dirname, join } from 'node:path';
++import { ConflictError } from './http-errors.js';
+ import { assertWindowsSafeFilename } from './windows-filename.js';
+ import { createWorkflowAgentCallExecutor, } from './workflow-agent-call-executor.js';
+ import { createWorkflowDagLayerTracker } from './workflow-dag-layer-tracker.js';
+@@ -25,6 +26,34 @@ export const createWorkflowRunner = (deps) => {
+     const stoppedRuns = new Set();
+     const abortedRuns = new Map();
+     const activeScriptWorkers = new Map();
++    const workspaceActivities = new Map();
++    const idleLeases = new Set();
++    const busy = () => Object.assign(new ConflictError('Workspace workflow execution or cleanup is still active'), { code: 'WORKSPACE_WORKFLOW_BUSY' });
++    const trackWorkspaceActivity = (workspaceId, operation) => {
++        if (idleLeases.has(workspaceId))
++            throw busy();
++        let activities = workspaceActivities.get(workspaceId);
++        if (!activities) {
++            activities = new Set();
++            workspaceActivities.set(workspaceId, activities);
++        }
++        // Register before any loader await or queued execution can yield to workspace removal.
++        const activity = Promise.resolve().then(operation).finally(() => {
++            activities.delete(activity);
++            if (!activities.size)
++                workspaceActivities.delete(workspaceId);
++        });
++        activities.add(activity);
++        return activity;
++    };
++    const withWorkspaceWorkflowIdle = async (workspaceId, operation) => {
++        if (idleLeases.has(workspaceId) || workspaceActivities.get(workspaceId)?.size
++            || [...activeScriptWorkers.values()].some(entry => entry.workspaceId === workspaceId))
++            throw busy();
++        idleLeases.add(workspaceId);
++        try { return await operation(); }
++        finally { idleLeases.delete(workspaceId); }
++    };
+     // In-memory map: runId → triggering agent. Lost on restart; the spec already
+     // doesn't auto-resume interrupted runs, so this is consistent.
+     const triggeringAgentByRun = new Map();
+@@ -173,7 +202,7 @@ export const createWorkflowRunner = (deps) => {
+             compiledFunctionSource: loaded.compiledFunctionSource,
+             scriptPath: loaded.scriptPath,
+             workerSource: WORKFLOW_VM_WORKER_URL,
+-            onWorkerCreated: (worker) => activeScriptWorkers.set(run.id, worker),
++            onWorkerCreated: (worker) => activeScriptWorkers.set(run.id, { worker, workspaceId }),
+             onWorkerSettled: () => activeScriptWorkers.delete(run.id),
+             handlers: {
+                 agent: agentExecutor.agent,
+@@ -314,7 +343,7 @@ export const createWorkflowRunner = (deps) => {
+             throw new Error('Stopped by user');
+         }
+     };
+-    const runWorkflow = async (input) => {
++    const runWorkflowUntracked = async (input) => {
+         const loaded = await loadWorkflowScriptFile(input.scriptPath);
+         assertParentRunStillRunning(input);
+         const run = workflowRunStore.createRun(buildCreateInput(input, loaded));
+@@ -325,30 +354,29 @@ export const createWorkflowRunner = (deps) => {
+             throw new Error(`workflow run vanished mid-flight: ${run.id}`);
+         return finalized;
+     };
+-    const startWorkflow = async (input) => {
++    const startWorkflowUntracked = async (input) => {
+         const loaded = await loadWorkflowScriptFile(input.scriptPath);
+         assertParentRunStillRunning(input);
+         const run = workflowRunStore.createRun(buildCreateInput(input, loaded));
+         rememberTrigger(run.id, input.triggeredByAgentId);
+-        queueMicrotask(() => {
+-            executeWorkflow(run, loaded, input.args, input.hivePort).catch((error) => {
+-                console.error('[hive] swallowed:workflow.background', error);
+-            });
++        void trackWorkspaceActivity(run.workspaceId, () => executeWorkflow(run, loaded, input.args, input.hivePort)).catch((error) => {
++            console.error('[hive] swallowed:workflow.background', error);
+         });
+         return run;
+     };
+-    const startWorkflowInline = async (input) => {
++    const startWorkflowInlineUntracked = async (input) => {
+         const scriptPath = input.scriptPath ?? '<inline>';
+         const loaded = await loadWorkflowScriptSource(input.source, scriptPath);
+         const run = workflowRunStore.createRun(buildCreateInput({ ...input, scriptPath }, loaded));
+         rememberTrigger(run.id, input.triggeredByAgentId);
+-        queueMicrotask(() => {
+-            executeWorkflow(run, loaded, input.args, input.hivePort).catch((error) => {
+-                console.error('[hive] swallowed:workflow.background', error);
+-            });
++        void trackWorkspaceActivity(run.workspaceId, () => executeWorkflow(run, loaded, input.args, input.hivePort)).catch((error) => {
++            console.error('[hive] swallowed:workflow.background', error);
+         });
+         return run;
+     };
++    const runWorkflow = async (input) => trackWorkspaceActivity(input.workspaceId, () => runWorkflowUntracked(input));
++    const startWorkflow = async (input) => trackWorkspaceActivity(input.workspaceId, () => startWorkflowUntracked(input));
++    const startWorkflowInline = async (input) => trackWorkspaceActivity(input.workspaceId, () => startWorkflowInlineUntracked(input));
+     const stopRunAndChildren = (runId, visited) => {
+         if (visited.has(runId))
+             return false;
+@@ -359,7 +387,7 @@ export const createWorkflowRunner = (deps) => {
+         stoppedRuns.add(runId);
+         void activeScriptWorkers
+             .get(runId)
+-            ?.terminate()
++            ?.worker.terminate()
+             .catch(() => { });
+         // Cancel every open workflow dispatch tied to this run; this rejects the
+         // runner's pending `awaitReport` promises, which propagates up the
+@@ -380,5 +408,5 @@ export const createWorkflowRunner = (deps) => {
+         return true;
+     };
+     const stopRun = (runId) => stopRunAndChildren(runId, new Set());
+-    return { runWorkflow, startWorkflow, startWorkflowInline, stopRun };
++    return { runWorkflow, startWorkflow, startWorkflowInline, stopRun, withWorkspaceWorkflowIdle };
+ };
+diff --git a/dist/src/server/workflow-script-worker.d.ts b/dist/src/server/workflow-script-worker.d.ts
+index cb3f66fc98cdd161f2e7ba6eb7fbc93446099f74..12e82f00cccbdcc90ab6dad08f8f1e216f2d2cfb 100644
+--- a/dist/src/server/workflow-script-worker.d.ts
++++ b/dist/src/server/workflow-script-worker.d.ts
+@@ -7,6 +7,7 @@ export interface RunWorkflowScriptWorkerInput<AgentOptions> {
+     compiledFunctionSource: string;
+     handlers: WorkflowScriptHostHandlers<AgentOptions>;
+     onWorkerCreated?: (worker: WorkflowScriptWorker) => void;
++    /** Ownership release: actual worker exit and all accepted host calls settled. */
+     onWorkerSettled?: (worker: WorkflowScriptWorker) => void;
+     scriptPath: string;
+     workerSource: WorkflowScriptWorkerSource;
+diff --git a/dist/src/server/workflow-script-worker.js b/dist/src/server/workflow-script-worker.js
+index 1c4e590c4b5bb16d583b08f7057ecdf9ccd5c31c..cc483ccd697c5dc9ad9894d8521f61dacc557114 100644
+--- a/dist/src/server/workflow-script-worker.js
++++ b/dist/src/server/workflow-script-worker.js
+@@ -13,11 +13,18 @@ export const runWorkflowScriptWorker = ({ args, compiledFunctionSource, handlers
+     onWorkerCreated?.(worker);
+     let settled = false;
+     const activeHostCalls = new Set();
++    let exited = false;
++    let released = false;
++    const releaseOwnership = () => {
++        if (!exited || activeHostCalls.size || released)
++            return;
++        released = true;
++        onWorkerSettled?.(worker);
++    };
+     const settle = (fn, input) => {
+         if (settled)
+             return;
+         settled = true;
+-        onWorkerSettled?.(worker);
+         void (async () => {
+             if (input.waitForHostCalls) {
+                 await Promise.allSettled(activeHostCalls);
+@@ -68,14 +75,18 @@ export const runWorkflowScriptWorker = ({ args, compiledFunctionSource, handlers
+             }
+         })();
+         activeHostCalls.add(hostCall);
+-        void hostCall.finally(() => activeHostCalls.delete(hostCall));
++        void hostCall.finally(() => {
++            activeHostCalls.delete(hostCall);
++            releaseOwnership();
++        });
+     });
+     worker.on('error', (error) => settle(() => reject(error), { waitForHostCalls: false }));
+     worker.on('exit', (code) => {
+-        if (settled)
+-            return;
+-        settled = true;
+-        onWorkerSettled?.(worker);
+-        reject(new Error(`Hive workflow VM worker exited before completion (code ${code})`));
++        exited = true;
++        if (!settled) {
++            settled = true;
++            reject(new Error(`Hive workflow VM worker exited before completion (code ${code})`));
++        }
++        releaseOwnership();
+     });
+ });

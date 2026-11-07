@@ -125,7 +125,12 @@ impl HiveApp {
                     .primary()
                     .label("＋ 新建会话 ▾")
                     .accessibility_label("新建会话，选择 Agent 后端")
-                    .disabled(!self.connected || self.workspace.is_none() || self.loading)
+                    .disabled(
+                        !self.connected
+                            || self.workspace.is_none()
+                            || self.loading
+                            || !self.workspace_writes_allowed(),
+                    )
                     .dropdown_menu(move |mut menu, _, _| {
                         for (backend, label) in [
                             ("pi", "内置 Pi"),
@@ -180,6 +185,9 @@ impl HiveApp {
                                     )
                                     .tooltip(workspace.path.clone())
                                     .selected(self.workspace.as_ref() == Some(&workspace.id))
+                                    .disabled(
+                                        self.workspace_removing.as_ref() == Some(&workspace.id),
+                                    )
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.select_workspace(id.clone(), cx)
                                     }))
@@ -241,6 +249,23 @@ impl HiveApp {
                                     )
                                 },
                             )
+                            .when(self.workspace.is_some(), |view| {
+                                view.child(
+                                    Button::new("remove-workspace")
+                                        .w_full()
+                                        .label(if self.workspace_removing.is_some() {
+                                            "正在移除工作区…"
+                                        } else {
+                                            "移除当前工作区…"
+                                        })
+                                        .disabled(
+                                            !self.connected || self.workspace_removing.is_some(),
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.remove_workspace(window, cx)
+                                        })),
+                                )
+                            })
                             .child(Input::new(&self.folder).aria_label("工作区文件夹的绝对路径"))
                             .child(
                                 Button::new("choose-workspace-folder")
@@ -322,6 +347,7 @@ impl HiveApp {
                                                     .child(self.session_title(session).to_string()),
                                             )
                                             .tooltip(self.session_title(session).to_string())
+                                            .disabled(!self.workspace_writes_allowed())
                                             .selected(
                                                 self.session
                                                     .as_ref()

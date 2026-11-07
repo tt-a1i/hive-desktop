@@ -57,6 +57,9 @@ export class ChatIndex {
   save(record: ChatRecord): void {
     this.commit([...this.records.filter(item => item.id !== record.id), record]);
   }
+  removeWorkspace(workspaceId: string): void {
+    this.commit(this.records.filter(record => record.workspaceId !== workspaceId));
+  }
   private commit(next: ChatRecord[]): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });

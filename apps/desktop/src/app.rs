@@ -91,6 +91,8 @@ pub struct HiveApp {
     pub runtime: Option<Arc<Runtime>>,
     pub workspaces: Vec<Workspace>,
     pub workspace: Option<String>,
+    pub workspace_removing: Option<String>,
+    pub removed_sessions: HashSet<String>,
     pub sessions: Vec<Session>,
     pub session: Option<Session>,
     pub messages: Vec<Message>,
@@ -223,6 +225,8 @@ impl HiveApp {
             runtime: None,
             workspaces: vec![],
             workspace: None,
+            workspace_removing: None,
+            removed_sessions: HashSet::new(),
             sessions: vec![],
             session: None,
             messages: vec![],
@@ -363,6 +367,18 @@ impl HiveApp {
         cx: &mut Context<Self>,
         done: impl FnOnce(&mut Self, Value, &mut Context<Self>) + 'static,
     ) {
+        let workspace_write = method.starts_with("chat.")
+            && !matches!(method, "chat.open" | "chat.list")
+            || method == "hive.request"
+                && params["method"]
+                    .as_str()
+                    .is_some_and(|method| method != "GET")
+                && params["path"]
+                    .as_str()
+                    .is_some_and(|path| !path.starts_with("/api/settings/"));
+        if workspace_write && !self.workspace_writes_allowed() {
+            return;
+        }
         if !self.connected {
             self.loading = false;
             self.error = Some("后台连接已断开，当前草稿仍保留。请先复制，再重启应用。".into());

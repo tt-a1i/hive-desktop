@@ -15,6 +15,7 @@ export class HiveHttpError extends Error {
 export interface HiveHost {
 	readonly port: number;
 	request(method: string, path: string, body?: unknown): Promise<unknown>;
+	withWorkspaceWorkflowIdle<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
 	close(): Promise<void>;
 }
 
@@ -109,6 +110,10 @@ export async function createHiveHost({
 						: text;
 			if (!response.ok) throw new HiveHttpError(response.status, result);
 			return result;
+		},
+		withWorkspaceWorkflowIdle(workspaceId, operation) {
+			if (closing) return Promise.reject(new Error("Hive host is closed"));
+			return runtime.store.withWorkspaceWorkflowIdle(workspaceId, operation);
 		},
 		close() {
 			closing ??= runtime.close().finally(release);

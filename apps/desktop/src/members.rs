@@ -26,6 +26,9 @@ impl HiveApp {
         command: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        if !self.workspace_writes_allowed() {
+            return;
+        }
         let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())
         else {
             return;
@@ -119,6 +122,9 @@ impl HiveApp {
         body: Option<Value>,
         cx: &mut Context<Self>,
     ) {
+        if !self.workspace_writes_allowed() {
+            return;
+        }
         if !self.connected {
             return;
         }
@@ -158,6 +164,9 @@ impl HiveApp {
         .detach();
     }
     pub fn add_member(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace_writes_allowed() {
+            return;
+        }
         if !self.connected {
             return;
         }
@@ -200,6 +209,9 @@ impl HiveApp {
         }).detach();
     }
     pub fn start_member(&mut self, id: String, command: Option<String>, cx: &mut Context<Self>) {
+        if !self.workspace_writes_allowed() {
+            return;
+        }
         if !self.connected {
             return;
         }
@@ -250,6 +262,9 @@ impl HiveApp {
         }).detach();
     }
     pub fn stop_member(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.workspace_writes_allowed() {
+            return;
+        }
         if !self.connected {
             return;
         }

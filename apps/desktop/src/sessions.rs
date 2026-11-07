@@ -59,10 +59,31 @@ impl HiveApp {
         });
     }
     pub fn select_workspace(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.workspace_removing.as_ref() == Some(&id) {
+            return;
+        }
         self.close_roles();
         self.switch_draft(Some(format!("workspace:{id}")), cx);
-        self.loading = true;
         self.workspace = Some(id.clone());
+        self.reset_workspace_view();
+        self.loading = true;
+        if self.connected && !self.closing {
+            self.status = "正在读取工作区…".into();
+        }
+        self.refresh_sessions(cx);
+        self.refresh_members(cx);
+        if self.member_panel {
+            self.load_roles(cx);
+        }
+        if self.collaboration.visible {
+            self.reload_collaboration(cx);
+        }
+        if self.memory.visible {
+            self.memory_workspace_changed(cx);
+        }
+        cx.notify();
+    }
+    pub(crate) fn reset_workspace_view(&mut self) {
         self.session = None;
         self.messages.clear();
         self.pending_events.clear();
@@ -82,19 +103,8 @@ impl HiveApp {
         self.deleting_member = None;
         self.models.clear();
         self.model = None;
+        self.choosing_model = false;
         self.open_request += 1;
-        self.refresh_sessions(cx);
-        self.refresh_members(cx);
-        if self.member_panel {
-            self.load_roles(cx);
-        }
-        if self.collaboration.visible {
-            self.reload_collaboration(cx);
-        }
-        if self.memory.visible {
-            self.memory_workspace_changed(cx);
-        }
-        cx.notify();
     }
     // Coalesce event bursts and serialize requests so older lists cannot replace newer ones.
     pub fn refresh_sessions(&mut self, cx: &mut Context<Self>) {
@@ -136,6 +146,17 @@ impl HiveApp {
                                         }
                                     } else {
                                         this.loading = false;
+                                        if this.connected
+                                            && !this.closing
+                                            && this.workspace_writes_allowed()
+                                        {
+                                            this.status = if this.sessions.is_empty() {
+                                                "工作区已就绪，新建会话开始工作"
+                                            } else {
+                                                "工作区已就绪"
+                                            }
+                                            .into();
+                                        }
                                         if !this.memory.visible
                                             && !this.member_panel
                                             && !this.collaboration.visible
@@ -180,7 +201,7 @@ impl HiveApp {
         .detach();
     }
     pub fn new_session(&mut self, backend: &'static str, cx: &mut Context<Self>) {
-        if !self.connected {
+        if !self.workspace_writes_allowed() || !self.connected {
             return;
         }
         let Some(workspace) = self.workspace.clone() else {
@@ -201,7 +222,9 @@ impl HiveApp {
                 match result {
                     Ok(value) => match serde_json::from_value::<Session>(value) {
                         Ok(session) => {
-                            if this.workspace.as_ref() == Some(&session.workspace_id) {
+                            if this.workspace.as_ref() == Some(&session.workspace_id)
+                                && this.workspace_writes_allowed()
+                            {
                                 this.sessions.insert(0, session.clone());
                                 this.close_collaboration();
                                 this.open_session(session.id, cx);
@@ -217,6 +240,9 @@ impl HiveApp {
         .detach();
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
+            return;
+        }
         self.close_memory();
         self.close_roles();
         self.switch_draft(Some(format!("session:{id}")), cx);

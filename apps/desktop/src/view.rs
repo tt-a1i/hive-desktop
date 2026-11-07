@@ -35,6 +35,40 @@ impl HiveApp {
     }
 }
 
+impl HiveApp {
+    fn render_error_banner(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
+            .items_start()
+            .p_3()
+            .gap_2()
+            .bg(rgb(0xffe9e4))
+            .rounded_lg()
+            .child(
+                div()
+                    .id("error-banner-text")
+                    .flex_1()
+                    .min_w_0()
+                    .max_h(px(160.))
+                    .overflow_y_scroll()
+                    .text_sm()
+                    .whitespace_normal()
+                    .child(self.error.clone().unwrap_or_default()),
+            )
+            .child(
+                Button::new("dismiss-error")
+                    .flex_shrink_0()
+                    .label("关闭")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.error = None;
+                        cx.notify();
+                    })),
+            )
+    }
+}
+
 impl Render for HiveApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.draft_target != self.draft_owner {
@@ -178,9 +212,7 @@ impl Render for HiveApp {
                 .into_any_element()
             } else if self.member_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("团队成员"))
-                .when(self.error.is_some(), |view| view.child(h_flex().p_3().gap_2().bg(rgb(0xffe9e4)).rounded_lg()
-                    .child(div().flex_1().text_sm().child(self.error.clone().unwrap_or_default()))
-                    .child(Button::new("dismiss-member-error").label("关闭").on_click(cx.listener(|this, _, _, cx| { this.error = None; cx.notify(); })))))
+                .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .child(v_flex().id("members-panel").flex_1().min_h_0().min_w_0().overflow_y_scroll().gap_2()
                     .child(div().text_sm().child(if self.member_loading { "正在更新成员…" } else { "新建成员（默认停止）" }))
                     .child(h_flex().gap_3().child(div().flex_1().min_w_0().child(Input::new(&self.member_name))).child(div().flex_1().min_w_0().child(Textarea::new(&self.member_description).aria_label("成员职责说明"))))
@@ -243,9 +275,7 @@ impl Render for HiveApp {
                         .child(title)
                 }))
                 .child(div().text_xs().text_color(rgb(0x777c75)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone())))
-                .when(self.error.is_some(), |view| view.child(h_flex().p_3().gap_2().bg(rgb(0xffe9e4)).rounded_lg()
-                    .child(div().flex_1().text_sm().child(self.error.clone().unwrap_or_default()))
-                    .child(Button::new("dismiss-error").label("关闭").on_click(cx.listener(|this, _, _, cx| { this.error = None; cx.notify(); })))))
+                .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.scroll.scroll_to_bottom(); cx.notify(); }))))
                 .child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).p_3()
                     .child(v_flex().w_full().max_w(px(840.)).mx_auto().gap_5()

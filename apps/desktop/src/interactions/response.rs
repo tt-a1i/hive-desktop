@@ -9,7 +9,8 @@ impl HiveApp {
         decision: Option<&'static str>,
         cx: &mut Context<Self>,
     ) {
-        if !self.connected
+        if !self.workspace_writes_allowed()
+            || !self.connected
             || self
                 .session
                 .as_ref()
@@ -67,7 +68,8 @@ impl HiveApp {
         response: serde_json::Value,
         cx: &mut Context<Self>,
     ) {
-        if !self.connected
+        if !self.workspace_writes_allowed()
+            || !self.connected
             || self
                 .session
                 .as_ref()
@@ -162,7 +164,8 @@ impl HiveApp {
         id: String,
         cx: &mut Context<Self>,
     ) {
-        if !self.connected
+        if !self.workspace_writes_allowed()
+            || !self.connected
             || self
                 .session
                 .as_ref()

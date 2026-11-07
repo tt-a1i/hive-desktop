@@ -7,5 +7,7 @@ declare module "@tt-a1i/hive/dist/src/cli/hive.js" {
 			openBrowser?: boolean;
 			agentRuntimeFactory?: import("./hive-runtime-contract.js").HiveAgentRuntimeFactory;
 		},
-	): Promise<{ port: number; close(): Promise<void> }>;
+	): Promise<{ port: number; close(): Promise<void>; store: {
+        withWorkspaceWorkflowIdle<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
+    } }>;
 }
