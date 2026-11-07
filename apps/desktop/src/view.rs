@@ -360,8 +360,7 @@ impl Render for HiveApp {
             .when(!preferences && self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
             .when(preferences || !narrow || !self.sidebar_open, |view| view.child(if self.memory.visible { self.render_memory(cx).into_any_element() } else if self.roles.visible { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full().child(self.render_settings_tabs(compact_settings, cx)).child(self.render_roles(cx)).into_any_element()
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
-                .child(h_flex().justify_between().items_center()
-                    .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if self.collaboration.selected.is_some() { "派单详情" } else { "协作概览" }))
+                .child(h_flex().gap_2().items_center()
                     .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").ghost().icon(Glyph::ArrowLeft).label(if self.collaboration.chat_origin.is_some() { "返回来源会话" } else { "返回派单列表" }).on_click(cx.listener(|this, _, _, cx| {
                         let c = &mut this.collaboration;
                         if let Some(id) = c.chat_origin.take() {
@@ -375,6 +374,7 @@ impl Render for HiveApp {
                         if changed_filter { this.load_dispatches(cx); }
                         cx.notify();
                     }))))
+                    .child(div().flex_1().text_xl().font_weight(FontWeight::SEMIBOLD).child(if self.collaboration.selected.is_some() { "派单详情" } else { "协作概览" }))
                     .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("refresh-dispatch").ghost().label("刷新详情").disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_dispatch(cx)))))
                     .when(self.collaboration.selected.is_none(), |row| row.child(Button::new("refresh-collaboration").label("刷新").disabled(!self.connected || self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx))))))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
@@ -399,14 +399,17 @@ impl Render for HiveApp {
                     )
                     .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
                         .when_some(self.collaboration.detail_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
-                        .child(h_flex().items_center().gap_2()
-                            .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::collaboration::dispatch_state(&item.state).to_owned()))
-                            .when_some(self.member_session_link(&item.id, Some(&item.to_agent_id), "负责人的会话", cx), |row, link| row.child(link)))
-                        .child(div().text_xs().child(format!("{} → {} · {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| "未记录发送者".into()), self.agent_name(&item.to_agent_id), item.id)))
-                        .child(div().text_sm().child("任务原文"))
-                        .child(div().text_sm().child(item.text.clone()))
+                        .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(item.text.clone()))
+                        .child(h_flex().items_center().flex_wrap().gap_2()
+                            .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().child(crate::collaboration::dispatch_state(&item.state).to_owned()))
+                            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(format!("{} → {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| "未记录发送者".into()), self.agent_name(&item.to_agent_id))))
+                            .when_some(self.member_session_link(&item.id, Some(&item.to_agent_id), "负责人的会话", cx), |row, link| row.child(link))
+                            .child(div().flex_1())
+                            .child(Button::new("copy-dispatch-id").ghost().compact().icon(Glyph::Copy).accessibility_label("复制派单编号").tooltip(format!("复制派单编号 · {}", item.id)).on_click({
+                                let id = item.id.clone(); cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(id.clone())))
+                            })))
                         .when_some(item.report_text.clone(), |view, text| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if item.state == "cancelled" { "取消原因" } else { "汇报原文" })).child(div().text_sm().child(text)))
-                        .when(!item.artifacts.is_empty(), |view| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("产物")).children(item.artifacts.iter().enumerate().map(|(i, path)| self.artifact_link(&item.id, i, path, cx))))
+                        .when(!item.artifacts.is_empty(), |view| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("产物")).children(item.artifacts.iter().enumerate().map(|(i, path)| h_flex().child(self.artifact_link(&item.id, i, path, cx)))))
                         .when(self.collaboration.responsibilities.len() > 1, |view| view.child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("成员分工"))
                             .children(self.collaboration.responsibilities.iter().map(|task| v_flex().gap_1().py_1()
                                 .child(h_flex().items_center().gap_2().child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{} · {}", task.owner_name, crate::collaboration::dispatch_state(&task.state))))

@@ -4,6 +4,7 @@
     [Parameter(Mandatory)] [string] $WorkerPrompt,
     [Parameter(Mandatory)] [string] $ExistingDraft,
     [Parameter(Mandatory)] [string] $TasksFile,
+    [Parameter(Mandatory)] [string] $DispatchId,
     [Parameter(Mandatory)] [string] $OutputPath
 )
 $ErrorActionPreference = 'Stop'
@@ -159,6 +160,12 @@ Invoke-Action '打开主会话'
 Invoke-Action '打开关联派单'
 [void](Wait-Action '在文件资源管理器中显示：review.txt')
 [void](Wait-Action '打开 Tester 的成员会话')
+Invoke-Action '复制派单编号'
+$deadline = [DateTime]::UtcNow.AddSeconds(8)
+while ((Get-Clipboard -Raw) -cne $DispatchId) {
+    if ([DateTime]::UtcNow -ge $deadline) { throw 'Copied dispatch ID differs from the source report.' }
+    Start-Sleep -Milliseconds 120
+}
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-related-dispatch.png')
 Invoke-Action '打开 Tester 的成员会话'
 Invoke-Action '返回派单详情'

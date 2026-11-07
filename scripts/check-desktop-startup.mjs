@@ -28,6 +28,7 @@ try {
   let leadChat;
   let workerChat;
   let workerFile;
+  let dispatch;
   try {
     for (const name of ['Alpha', 'Beta']) {
       const path = join(directory, name);
@@ -57,7 +58,7 @@ try {
       const cmd = createTeamCommand({ workspaceId, agentId, token, hivePort: String(runtime.hive.port), cwd: join(directory, 'Beta') });
       return (await cmd.execute('startup-check', { args })).content[0].text;
     };
-    const { dispatch_id: dispatch } = JSON.parse(await team(`${workspaceId}:orchestrator`, ['send', 'Reviewer', '核对项目启动方式']));
+    dispatch = JSON.parse(await team(`${workspaceId}:orchestrator`, ['send', 'Reviewer', '核对项目启动方式'])).dispatch_id;
     const tester = await runtime.hive.request('POST', `${base}/workers`, { name: 'Tester', role: 'tester', autostart: false });
     await runtime.hive.request('POST', `${base}/agents/${tester.id}/config`, { command: 'hive:pi', args: [] });
     await runtime.hive.request('POST', `${base}/agents/${tester.id}/start`);
@@ -138,7 +139,7 @@ try {
   if (windowsPreview) {
     const capture = fileURLToPath(new URL('./capture-windows-preview.ps1', import.meta.url));
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
-      '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
+      '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-DispatchId', dispatch, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
     { stdio: 'inherit', timeout: 60_000 });
     await waitForSelection(leadChat);
     assert.equal(JSON.parse(await readFile(workerDraft, 'utf8')).input, `> ${prompt}\n\n${existingDraft}`);
