@@ -222,7 +222,8 @@ impl HiveApp {
             );
         }
     }
-    pub(crate) fn jump_to_latest(&self, cx: &mut Context<Self>) {
+    pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
+        self.conversation_find = None;
         // Update the header action now, then pin to the final offset after layout.
         self.scroll
             .set_offset(point(self.scroll.offset().x, -self.scroll.max_offset().y));
@@ -255,7 +256,12 @@ impl HiveApp {
     }
     // Both snapshots and live events use the same provenance contract. Never infer
     // a source from message text: users may paste a complete Hive envelope.
-    pub(crate) fn receive_message(&mut self, id: String, message: &Value, cx: &mut Context<Self>) {
+    pub(crate) fn receive_message(
+        &mut self,
+        mut id: String,
+        message: &Value,
+        cx: &mut Context<Self>,
+    ) {
         let role = message["role"].as_str().unwrap_or("assistant");
         if role == "assistant" {
             for block in message["content"].as_array().into_iter().flatten() {
@@ -269,7 +275,7 @@ impl HiveApp {
         let text = message_text(message);
         if role == "custom" && message["customType"] == "hive-delivery" {
             let presentation = delivery_presentation(message);
-            let id = presentation
+            id = presentation
                 .as_ref()
                 .map(|p| p.delivery_id.clone())
                 .unwrap_or(id);
@@ -338,8 +344,9 @@ impl HiveApp {
                 cx,
             );
         } else {
-            self.upsert(id, role, text, false, cx);
+            self.upsert(id.clone(), role, text, false, cx);
         }
+        self.refresh_conversation_find(&id);
     }
     pub(crate) fn upsert_tool(
         &mut self,
@@ -358,6 +365,7 @@ impl HiveApp {
                 expanded,
             });
         }
+        self.refresh_conversation_find(&id);
     }
     pub(crate) fn upsert(
         &mut self,
@@ -369,6 +377,7 @@ impl HiveApp {
     ) {
         if !append && role == "assistant" && text.trim().is_empty() {
             self.messages.retain(|message| message.id != id);
+            self.refresh_conversation_find(&id);
             return;
         }
         if let Some(message) = self.messages.iter_mut().find(|m| m.id == id) {
@@ -381,8 +390,9 @@ impl HiveApp {
                 markdown.update(cx, |state, cx| state.set_text(&message.text, cx));
             }
         } else {
-            self.push_message(id, role.into(), text, cx);
+            self.push_message(id.clone(), role.into(), text, cx);
         }
+        self.refresh_conversation_find(&id);
     }
     pub(crate) fn agent_event(&mut self, event: PiEvent, cx: &mut Context<Self>) {
         if self.removed_sessions.contains(event.session_id()) {
@@ -421,7 +431,7 @@ impl HiveApp {
             self.refresh_sessions(cx);
         }
         // GPUI stores a positive max_offset and a negative current offset.
-        let follow = !self.reading_above_latest();
+        let follow = self.conversation_find.is_none() && !self.reading_above_latest();
         match event {
             PiEvent::State { .. }
             | PiEvent::Interaction { .. }

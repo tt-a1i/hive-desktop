@@ -3,6 +3,7 @@ mod appearance;
 mod artifacts;
 mod collaboration;
 mod conversation;
+mod conversation_find;
 mod drafts;
 mod interactions;
 mod members;
@@ -33,6 +34,8 @@ actions!(
         ClosePreferences,
         CancelSessionRename,
         OpenSessionSearch,
+        OpenConversationFind,
+        CloseConversationFind,
         NextSessionResult,
         PreviousSessionResult
     ]
@@ -49,6 +52,16 @@ fn main() {
             cx.set_global(appearance::Appearance::default());
             appearance::apply(None, cx);
             cx.bind_keys([
+                KeyBinding::new(
+                    if cfg!(target_os = "macos") {
+                        "cmd-f"
+                    } else {
+                        "ctrl-f"
+                    },
+                    OpenConversationFind,
+                    None,
+                ),
+                KeyBinding::new("escape", CloseConversationFind, Some("HiveConversation")),
                 KeyBinding::new(
                     if cfg!(target_os = "macos") {
                         "cmd-k"

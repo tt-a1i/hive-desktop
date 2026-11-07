@@ -227,6 +227,7 @@ impl HiveApp {
         self.conversation_sources.clear();
         self.session = None;
         self.conversation_ready = false;
+        self.conversation_find = None;
         self.messages.clear();
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();
@@ -466,6 +467,7 @@ impl HiveApp {
         if let Some(session) = self.sessions.iter().find(|s| s.id == id) {
             self.session = Some(session.clone());
         }
+        self.conversation_find = None;
         self.messages.clear();
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();

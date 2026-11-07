@@ -124,6 +124,12 @@ impl HiveApp {
         let summary = input.and_then(input_summary);
         let failed = tool.status == "失败";
         v_flex()
+            .id(("tool-message-row", index))
+            .anchor_scroll(self.conversation_find_anchor(&message.id))
+            .when(
+                self.conversation_find_anchor(&message.id).is_some(),
+                |view| view.bg(Color::Attention.get(cx)).rounded_lg(),
+            )
             .min_w_0()
             .gap_1()
             .child(

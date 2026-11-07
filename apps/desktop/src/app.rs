@@ -68,6 +68,7 @@ pub enum ConversationSource {
 }
 
 pub struct HiveApp {
+    pub conversation_find: Option<crate::conversation_find::ConversationFind>,
     pub conversation_sources: Vec<ConversationSource>,
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
@@ -221,6 +222,16 @@ impl HiveApp {
                 });
             });
         });
+        let weak = cx.weak_entity();
+        let handle = window.window_handle();
+        gpui_kit::App::on_action(cx, move |_: &crate::OpenConversationFind, cx| {
+            let weak = weak.clone();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| this.open_conversation_find(window, cx));
+                });
+            });
+        });
         let [pi_command, codex_command, claude_command] = std::array::from_fn(|_| {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH"));
             cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
@@ -335,6 +346,7 @@ impl HiveApp {
             pi_command,
             codex_command,
             claude_command,
+            conversation_find: None,
             settings_panel: false,
             preferences_focus: cx.focus_handle(),
             preferences_return_focus: None,

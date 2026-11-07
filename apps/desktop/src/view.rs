@@ -519,7 +519,7 @@ impl Render for HiveApp {
                     })))
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
-            } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow && welcome, |v| v.px(px(44.))).when(!welcome, |v| v.px_0().pt_0()).id("conversation-surface").when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
+            } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow && welcome, |v| v.px(px(44.))).when(!welcome, |v| v.px_0().pt_0()).id("conversation-surface").key_context("HiveConversation").on_action(cx.listener(|this, _: &crate::CloseConversationFind, window, cx| this.close_conversation_find(window, cx))).when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .when(!welcome, |header| header.max_w_full().min_h(px(54.)).px_5().border_b_1().border_color(Color::Divider.get(cx)))
                     .when_some(self.conversation_return(cx), |header, back| header.child(back))
@@ -538,6 +538,9 @@ impl Render for HiveApp {
                     .when(!welcome && self.session_name_target.as_deref() != self.session.as_ref().map(|s| s.id.as_str()), |header| header
                         .child(Button::new("rename-session").ghost().compact().icon(Glyph::SquarePen).tooltip("重命名会话").accessibility_label("重命名当前会话")
                             .disabled(!self.connected || self.session_name_loading || !self.workspace_writes_allowed()).on_click(cx.listener(|this, _, window, cx| this.begin_session_rename(window, cx)))))
+                .when(!welcome && self.conversation_ready && self.session.is_some() && !self.loading, |header| header.child(
+                    Button::new("find-in-conversation").ghost().compact().icon(Glyph::Search).accessibility_label("查找当前会话").tooltip(if cfg!(target_os = "macos") { "查找会话内容 · ⌘F" } else { "查找会话内容 · Ctrl+F" }).on_click(cx.listener(|this, _, window, cx| this.open_conversation_find(window, cx)))
+                ))
                 .when(welcome && self.workspace.is_some(), |header| header.child(
                     Button::new("home-team").ghost().rounded_full().icon(Glyph::Network)
                         .label("团队成员").on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx)))
@@ -546,6 +549,7 @@ impl Render for HiveApp {
                         .label("回到最新").accessibility_label("回到最新消息")
                         .on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))
                 )))
+                .when(self.conversation_find.is_some(), |view| view.child(self.render_conversation_find(cx)))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))))
                 .when(open_failed, |surface| surface.child(v_flex().flex_1().min_h_0().items_center().justify_center().gap_3()
@@ -578,6 +582,8 @@ impl Render for HiveApp {
                             }
                             let heading = message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), "notice" => "会话通知", _ => "工具" }.into());
                             v_flex().id(("message", i)).min_w_0().gap_2().px_3().py_2().rounded_lg()
+                                .anchor_scroll(self.conversation_find_anchor(&message.id))
+                                .when(self.conversation_find_anchor(&message.id).is_some(), |view| view.bg(Color::Attention.get(cx)))
                                 .when(message.role == "user", |bubble| bubble.ml_auto().max_w(px(680.)))
                                 .when(!message.explicit_user, |view| view.child(h_flex().min_w_0().gap_2().justify_between()
                                     .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(Color::Secondary.get(cx)).child(heading))
