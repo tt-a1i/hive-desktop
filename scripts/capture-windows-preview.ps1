@@ -14,6 +14,7 @@ public static class PreviewWindow {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("dwmapi.dll")] public static extern int DwmFlush();
 }
 '@
 [void][PreviewWindow]::SetProcessDPIAware()
@@ -26,18 +27,39 @@ function Save-FixtureWindow([string] $FilePath) {
     $rect = New-Object PreviewWindow+Rect
     if (-not [PreviewWindow]::GetWindowRect($window, [ref]$rect)) { throw 'Window bounds unavailable.' }
     $image = New-Object System.Drawing.Bitmap ($rect.Right - $rect.Left), ($rect.Bottom - $rect.Top)
+    $hash = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $graphics = [System.Drawing.Graphics]::FromImage($image)
-        try {
-            $dc = $graphics.GetHdc()
+        # AccessKit publishes the new controls before the GPU presents them.
+        # Let PrintWindow request a repaint, then sample across compositor frames.
+        $deadline = [DateTime]::UtcNow.AddSeconds(6)
+        $previous = $null
+        $stable = 0
+        do {
+            if ([PreviewWindow]::DwmFlush() -ne 0) { throw 'Could not synchronize with the desktop compositor.' }
+            $graphics = [System.Drawing.Graphics]::FromImage($image)
             try {
-                if (-not [PreviewWindow]::PrintWindow($window, $dc, 2)) { throw 'PrintWindow failed.' }
-            } finally { $graphics.ReleaseHdc($dc) }
-        } finally { $graphics.Dispose() }
-        [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($FilePath))
-        $image.Save($FilePath, [System.Drawing.Imaging.ImageFormat]::Png)
-        Write-Host "Saved fixture window $($image.Width) x $($image.Height)."
-    } finally { $image.Dispose() }
+                $dc = $graphics.GetHdc()
+                try {
+                    if (-not [PreviewWindow]::PrintWindow($window, $dc, 2)) { throw 'PrintWindow failed.' }
+                } finally { $graphics.ReleaseHdc($dc) }
+            } finally { $graphics.Dispose() }
+            $stream = New-Object System.IO.MemoryStream
+            try {
+                $image.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
+                $stream.Position = 0
+                $digest = [Convert]::ToBase64String($hash.ComputeHash($stream))
+            } finally { $stream.Dispose() }
+            if ($digest -eq $previous) { $stable++ } else { $stable = 0 }
+            $previous = $digest
+            if ($stable -ge 2) {
+                [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($FilePath))
+                $image.Save($FilePath, [System.Drawing.Imaging.ImageFormat]::Png)
+                Write-Host "Saved fixture window $($image.Width) x $($image.Height): $FilePath."
+                return
+            }
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw "Fixture window did not settle for $FilePath."
+    } finally { $hash.Dispose(); $image.Dispose() }
 }
 
 Add-Type -AssemblyName UIAutomationClient
