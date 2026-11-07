@@ -5,6 +5,7 @@
     [Parameter(Mandatory)] [string] $ExistingDraft,
     [Parameter(Mandatory)] [string] $TasksFile,
     [Parameter(Mandatory)] [string] $DispatchId,
+    [Parameter(Mandatory)] [string] $DataDirectory,
     [Parameter(Mandatory)] [string] $OutputPath
 )
 $ErrorActionPreference = 'Stop'
@@ -88,6 +89,12 @@ function Invoke-Action([string] $Name) {
     $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
+function Toggle-Action([string] $Name) {
+    Write-Host "Toggling fixture control: $Name"
+    $action = Wait-Action $Name
+    $action.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+}
+
 function Wait-EditorText([string] $Name, [string] $Expected) {
     $deadline = [DateTime]::UtcNow.AddSeconds(8)
     do {
@@ -99,6 +106,39 @@ function Wait-EditorText([string] $Name, [string] $Expected) {
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "The editor '$Name' did not match the expected text."
+}
+
+function Wait-EnabledState([string] $Name, [bool] $Expected) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $action = Find-Action $Name
+        if ($null -ne $action -and $action.Current.IsEnabled -eq $Expected) { return }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Control '$Name' did not reach enabled=$Expected."
+}
+
+function Wait-Appearance([string] $Mode, [string] $Label) {
+    $path = Join-Path $DataDirectory 'desktop-appearance.json'
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        if (Test-Path -LiteralPath $path) {
+            $saved = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $path -Raw -Encoding UTF8)
+            if ($saved -ceq $Mode) {
+                $statesMatch = $true
+                foreach ($choice in @('跟随系统', '浅色', '深色')) {
+                    $control = Find-Action "外观：$choice"
+                    if ($null -eq $control) { $statesMatch = $false; break }
+                    $toggle = $control.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+                    $expected = if ($choice -ceq $Label) { [System.Windows.Automation.ToggleState]::On } else { [System.Windows.Automation.ToggleState]::Off }
+                    if ($toggle.Current.ToggleState -ne $expected) { $statesMatch = $false; break }
+                }
+                if ($statesMatch) { return }
+            }
+        }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Appearance '$Mode' was not persisted and selected in the native window."
 }
 
 # Only operate on this test app's window and the temporary Reviewer created by the startup check.
@@ -113,6 +153,16 @@ if ($null -ne (Find-Action 'Pi · 新会话 · 会话')) { throw 'Collapsed proj
 Invoke-Action '展开工作区列表'
 [void](Wait-Action 'Pi · 新会话 · 会话')
 Invoke-Action '设置'
+Invoke-Action '外观'
+Toggle-Action '外观：深色'
+Wait-Appearance 'dark' '深色'
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-theme-dark.png')
+Toggle-Action '外观：浅色'
+Wait-Appearance 'light' '浅色'
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-theme-light.png')
+Toggle-Action '外观：跟随系统'
+Wait-Appearance 'system' '跟随系统'
+Write-Host 'Persisted all appearance choices and verified their native toggle state.'
 Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')
@@ -149,6 +199,25 @@ Invoke-Action '重新打开会话'
 [void](Wait-Action '返回团队成员')
 [void](Wait-Action '展开工作过程，2 项工具已完成')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-member-session.png')
+Invoke-Action '查找当前会话'
+$query = Wait-Action '查找当前会话的消息和工具'
+$query.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('README.md')
+[void](Wait-Action '收起 read 工具详情，完成 README.md')
+Wait-EnabledState '下一条匹配消息' $true
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-conversation-find.png')
+$query = Wait-Action '查找当前会话的消息和工具'
+$query.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('no-such-hive-fixture-message')
+Wait-EnabledState '下一条匹配消息' $false
+Wait-EnabledState '上一条匹配消息' $false
+# Reveal the first message again so the group header is in the visible area.
+$query = Wait-Action '查找当前会话的消息和工具'
+$query.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($WorkerPrompt)
+Wait-EnabledState '下一条匹配消息' $true
+Invoke-Action '关闭会话查找'
+Wait-EditorText '聊天消息' $ExistingDraft
+Invoke-Action '收起工作过程，2 项工具已完成'
+[void](Wait-Action '展开工作过程，2 项工具已完成')
+Write-Host 'Found a hidden tool argument through native controls, rejected an absent query, and preserved the composer.'
 Invoke-Action '展开工作过程，2 项工具已完成'
 Invoke-Action '展开 read 工具详情，完成 README.md'
 [void](Wait-Action '收起 read 工具详情，完成 README.md')

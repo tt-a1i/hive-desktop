@@ -39,6 +39,7 @@ impl HiveApp {
                             .label(label)
                             .accessibility_label(format!("外观：{label}"))
                             .selected(saved.mode == mode)
+                            .toggled(saved.mode == mode)
                             .disabled(!appearance::available(cx))
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 appearance::choose(mode, window, cx)
