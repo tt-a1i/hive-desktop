@@ -141,10 +141,14 @@ try {
   await mkdir(agentDir);
   const third = launch(agentDir);
   assert.equal((await third.request('initialize')).piAgentDir, agentDir);
-  const draft = await third.request('chat.create', { workspaceId: workspace.id });
+  const draft = await third.request('chat.createRecord', { workspaceId: workspace.id });
+  assert.equal(draft.sessionFile, null);
+  const openedDraft = await third.request('chat.open', { sessionId: draft.id });
+  assert.equal(openedDraft.id, draft.id);
+  assert.ok(openedDraft.sessionFile);
   const provider = 'local-refresh-fixture';
   const modelId = 'gpt-6.1-terra';
-  assert.ok(!draft.models.some((m: {provider: string}) => m.provider === provider));
+  assert.ok(!openedDraft.models.some((m: {provider: string}) => m.provider === provider));
   await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: {
     [provider]: { baseUrl: 'http://127.0.0.1:1/v1', api: 'openai-completions', apiKey: 'local-fixture', models: [{ id: modelId }] }
   } }));
@@ -153,7 +157,7 @@ try {
   await third.request('chat.setModel', { sessionId: draft.id, provider, modelId });
   const selected = await third.request('chat.open', { sessionId: draft.id });
   assert.equal(selected.model.provider, provider);
-  assert.deepEqual(selected.history, draft.history);
+  assert.deepEqual(selected.history, openedDraft.history);
   await third.request('shutdown');
   assert.equal((await third.exited)[0], 0);
   console.log('Runtime integration passed: real Hive workspace + Pi SDK + restart + shutdown. No model request sent.');

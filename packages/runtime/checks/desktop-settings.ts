@@ -55,8 +55,9 @@ try {
   await runtime.settings.update({ piCommand: missing, codexCommand: null });
   assert.equal((await runtime.chats.open(existing.id)).model?.id, 'gpt-6.1-terra');
   assert.equal(live(runtime.chats).get(existing.id)!.handle, handle, 'Saved settings do not replace an already-running process');
-  await assert.rejects(runtime.chats.create(workspace.id, 'pi-rpc'), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
-  const failed = runtime.chats.list(workspace.id).find(record => record.id !== existing.id)!;
+  const failed = await runtime.chats.createRecord(workspace.id, 'pi-rpc');
+  await assert.rejects(runtime.chats.open(failed.id), (error: NodeJS.ErrnoException) => error.code === 'ENOENT');
+  assert.deepEqual(runtime.chats.list(workspace.id).map(record => record.id).sort(), [existing.id, failed.id].sort());
   await runtime.settings.update({ piCommand: nativePi, codexCommand: null });
   assert.equal((await runtime.chats.open(failed.id)).backend, 'pi-rpc', 'Next handle load must read the repaired app command');
   const beforeFailure = await runtime.settings.get();

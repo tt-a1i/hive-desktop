@@ -2,7 +2,15 @@ use crate::{
     app::HiveApp,
     protocol::{Member, MemberRun, Model},
 };
-use gpui_kit::*;
+use gpui_kit::{
+    assets::IconName as Glyph,
+    component::{
+        button::{Button, ButtonVariants},
+        menu::{DropdownMenu, PopupMenuItem},
+        *,
+    },
+    *,
+};
 use serde_json::{Value, json};
 
 #[derive(serde::Deserialize)]
@@ -20,6 +28,51 @@ pub fn command_backend(command: Option<&str>) -> Option<&'static str> {
 }
 
 impl HiveApp {
+    pub(crate) fn member_menu(
+        &self,
+        member: &Member,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let id = member.id.clone();
+        let name = member.name.clone();
+        let weak = cx.weak_entity();
+        Button::new(SharedString::from(format!("member-menu-{id}")))
+            .ghost()
+            .compact()
+            .icon(Glyph::Ellipsis)
+            .tooltip("成员操作")
+            .accessibility_label(format!("{} 的成员操作", member.name))
+            .disabled(!self.connected || self.member_loading)
+            .dropdown_menu(move |menu, _, _| {
+                let rename = weak.clone();
+                let rename_id = id.clone();
+                let current_name = name.clone();
+                let delete = weak.clone();
+                let delete_id = id.clone();
+                menu.item(
+                    PopupMenuItem::new("修改名称…").on_click(move |_, window, cx| {
+                        let _ = rename.update(cx, |this, cx| {
+                            this.deleting_member = None;
+                            this.editing_member = Some(rename_id.clone());
+                            this.member_rename.update(cx, |input, cx| {
+                                input.set_value(current_name.clone(), window, cx);
+                                input.focus(window, cx);
+                            });
+                            cx.notify();
+                        });
+                    }),
+                )
+                .separator()
+                .item(PopupMenuItem::new("删除成员…").on_click(move |_, _, cx| {
+                    let _ = delete.update(cx, |this, cx| {
+                        this.editing_member = None;
+                        this.deleting_member = Some(delete_id.clone());
+                        cx.notify();
+                    });
+                }))
+            })
+    }
+
     pub fn choose_member_models(
         &mut self,
         id: String,

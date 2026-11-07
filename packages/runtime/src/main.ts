@@ -82,9 +82,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     }
     case 'hive.request': return runtime.requestHive(text(params, 'method'), text(params, 'path'), params.body);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
+    case 'chat.createRecord':
     case 'chat.create': {
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');
-      return chats.create(text(params, 'workspaceId'), params.backend);
+      const workspace = text(params, 'workspaceId');
+      return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend) : chats.create(workspace, params.backend);
     }
     case 'chat.open': return chats.open(text(params, 'sessionId'));
     case 'chat.prompt': return chats.prompt(text(params, 'sessionId'), text(params, 'text'));

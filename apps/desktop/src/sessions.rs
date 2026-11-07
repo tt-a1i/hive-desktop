@@ -350,7 +350,7 @@ impl HiveApp {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
-                    "chat.create",
+                    "chat.createRecord",
                     json!({"workspaceId":workspace,"backend":backend}),
                 )
                 .await;
@@ -361,6 +361,7 @@ impl HiveApp {
                             if this.workspace.as_ref() == Some(&session.workspace_id)
                                 && this.workspace_writes_allowed()
                             {
+                                this.sessions.retain(|existing| existing.id != session.id);
                                 this.sessions.insert(0, session.clone());
                                 this.close_collaboration();
                                 let workspace_draft = format!("workspace:{}", session.workspace_id);

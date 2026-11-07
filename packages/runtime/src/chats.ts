@@ -172,7 +172,7 @@ export class Chats implements StructuredSessionPort {
     this.opening.set(id, opening);
     return opening;
   }
-  async create(workspaceId: string, backend: ChatBackend = 'pi') {
+  async createRecord(workspaceId: string, backend: ChatBackend = 'pi') {
     this.assertWorkspaceAvailable(workspaceId);
     if (this.closing) throw new Error('Chat runtime is closing');
     await this.workspace(workspaceId);
@@ -180,6 +180,10 @@ export class Chats implements StructuredSessionPort {
     if (this.closing) throw new Error('Chat runtime is closing');
     const record: ChatRecord = { id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now() };
     this.index.save(record);
+    return record;
+  }
+  async create(workspaceId: string, backend: ChatBackend = 'pi') {
+    const record = await this.createRecord(workspaceId, backend);
     return this.open(record.id);
   }
   async open(id: string) { return this.snapshot(id, await this.require(id)); }
