@@ -225,14 +225,15 @@ impl HiveApp {
     pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
         self.conversation_find = None;
         // Update the header action now, then pin to the final offset after layout.
-        self.scroll
-            .set_offset(point(self.scroll.offset().x, -self.scroll.max_offset().y));
-        self.scroll.scroll_to_bottom();
+        self.conversation_list
+            .state
+            .set_follow_mode(FollowMode::Tail);
+        self.conversation_list.state.scroll_to_end();
         cx.notify();
     }
 
     pub(crate) fn reading_above_latest(&self) -> bool {
-        self.scroll.max_offset().y + self.scroll.offset().y > px(4.)
+        !self.conversation_list.state.is_following_tail()
     }
 
     pub fn push_message(&mut self, id: String, role: String, text: String, cx: &mut Context<Self>) {
@@ -244,7 +245,26 @@ impl HiveApp {
         }
         let markdown =
             (role == "assistant").then(|| cx.new(|cx| TextViewState::markdown(&text, cx)));
+        let markdown_subscription = markdown.as_ref().map(|state| {
+            let id = id.clone();
+            let mut rendered = state.read(cx).rendered_text();
+            cx.observe(state, move |this, state, cx| {
+                let next = state.read(cx).rendered_text();
+                // Parse completion can change an offscreen row's height. Ignore
+                // selection/fade notifications that keep the same document.
+                if std::ptr::eq(next.source(), rendered.source()) {
+                    return;
+                }
+                rendered = next;
+                if let Some(message) = this.messages.iter_mut().find(|m| m.id == id) {
+                    message.layout_revision += 1;
+                    cx.notify();
+                }
+            })
+        });
         self.messages.push(Message {
+            layout_revision: 0,
+            _markdown_subscription: markdown_subscription,
             id,
             role,
             text,
@@ -381,6 +401,7 @@ impl HiveApp {
             return;
         }
         if let Some(message) = self.messages.iter_mut().find(|m| m.id == id) {
+            message.layout_revision += 1;
             if append {
                 message.text.push_str(&text);
             } else {
@@ -493,7 +514,9 @@ impl HiveApp {
             PiEvent::Error { message, .. } => self.error = Some(message),
         }
         if follow {
-            self.scroll.scroll_to_bottom();
+            self.conversation_list
+                .state
+                .set_follow_mode(FollowMode::Tail);
         }
     }
 }

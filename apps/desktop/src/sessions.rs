@@ -24,11 +24,14 @@ impl HiveApp {
             })
             .map(|message| message.id.clone())
             .collect();
-        let offset = self.reading_above_latest().then(|| self.scroll.offset());
+        let anchor = self
+            .reading_above_latest()
+            .then(|| self.conversation_list.anchor())
+            .flatten();
         self.positions.insert(
             session.id.clone(),
             crate::app::ConversationPosition {
-                offset,
+                anchor,
                 expanded,
                 expanded_tool_groups: self.expanded_tool_groups.clone(),
             },
@@ -53,12 +56,8 @@ impl HiveApp {
                 }
             }
         }
-        self.scroll = ScrollHandle::new();
-        if let Some(offset) = position.and_then(|p| p.offset) {
-            self.scroll.set_offset(offset);
-        } else {
-            self.scroll.scroll_to_bottom();
-        }
+        self.conversation_list
+            .reset(position.and_then(|p| p.anchor.clone()));
     }
 
     fn switch_draft(&mut self, next: Option<String>, cx: &mut Context<Self>) {
@@ -228,6 +227,7 @@ impl HiveApp {
         self.session = None;
         self.conversation_ready = false;
         self.conversation_find = None;
+        self.conversation_list.reset(None);
         self.messages.clear();
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();
@@ -468,6 +468,7 @@ impl HiveApp {
             self.session = Some(session.clone());
         }
         self.conversation_find = None;
+        self.conversation_list.reset(None);
         self.messages.clear();
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();

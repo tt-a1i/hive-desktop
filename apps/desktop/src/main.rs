@@ -4,6 +4,7 @@ mod artifacts;
 mod collaboration;
 mod conversation;
 mod conversation_find;
+mod conversation_list;
 mod drafts;
 mod interactions;
 mod members;

@@ -17,7 +17,6 @@ pub struct ConversationFind {
     query: String,
     hits: Vec<String>,
     selected: Option<String>,
-    anchor: ScrollAnchor,
     return_focus: Option<FocusHandle>,
     _subscription: Subscription,
 }
@@ -63,11 +62,11 @@ impl HiveApp {
                 query: String::new(),
                 hits: Vec::new(),
                 selected: None,
-                anchor: ScrollAnchor::for_handle(self.scroll.clone()),
                 return_focus: window.focused(cx),
                 _subscription: subscription,
             });
         }
+        self.conversation_list.state.pause_following_tail();
         let focus = self
             .conversation_find
             .as_ref()
@@ -130,7 +129,7 @@ impl HiveApp {
         cx.notify();
     }
 
-    fn reveal_conversation_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn reveal_conversation_match(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(find) = &self.conversation_find else {
             return;
         };
@@ -144,24 +143,8 @@ impl HiveApp {
             if let Some(card) = &mut message.delivery {
                 card.expanded = true;
             }
-            // Anchors resolve nested tool rows after the group has expanded.
-            let anchor = find.anchor.clone();
-            let input = find.input.entity_id();
-            let target = id.clone();
-            let weak = cx.weak_entity();
-            window.on_next_frame(move |window, cx| {
-                let current = weak
-                    .update(cx, |app, _| {
-                        app.conversation_find.as_ref().is_some_and(|find| {
-                            find.input.entity_id() == input
-                                && find.selected.as_ref() == Some(&target)
-                        })
-                    })
-                    .unwrap_or(false);
-                if current {
-                    anchor.scroll_to(window, cx);
-                }
-            });
+            let id = id.clone();
+            self.scroll_to_conversation_message(&id, cx);
         }
     }
 
@@ -193,9 +176,10 @@ impl HiveApp {
         }
     }
 
-    pub(crate) fn conversation_find_anchor(&self, id: &str) -> Option<ScrollAnchor> {
-        let find = self.conversation_find.as_ref()?;
-        (find.selected.as_deref() == Some(id)).then(|| find.anchor.clone())
+    pub(crate) fn conversation_find_matches(&self, id: &str) -> bool {
+        self.conversation_find
+            .as_ref()
+            .is_some_and(|find| find.selected.as_deref() == Some(id))
     }
 
     pub(crate) fn render_conversation_find(&self, cx: &mut Context<Self>) -> impl IntoElement {

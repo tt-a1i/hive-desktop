@@ -40,6 +40,8 @@ pub struct DeliveryCard {
     pub expanded: bool,
 }
 pub struct Message {
+    pub layout_revision: u64,
+    pub(crate) _markdown_subscription: Option<Subscription>,
     pub id: String,
     pub role: String,
     pub text: String,
@@ -49,7 +51,7 @@ pub struct Message {
     pub explicit_user: bool,
 }
 pub struct ConversationPosition {
-    pub offset: Option<Point<Pixels>>,
+    pub anchor: Option<crate::conversation_list::ReadingAnchor>,
     pub expanded: HashSet<String>,
     pub expanded_tool_groups: HashSet<String>,
 }
@@ -176,7 +178,7 @@ pub struct HiveApp {
     pub error: Option<String>,
     pub loading: bool,
     pub positions: HashMap<String, ConversationPosition>,
-    pub scroll: ScrollHandle,
+    pub conversation_list: crate::conversation_list::ConversationList,
     pub collaboration_scroll: ScrollHandle,
     events: Task<()>,
     _quit: Subscription,
@@ -425,7 +427,7 @@ impl HiveApp {
             error: None,
             loading: true,
             positions: HashMap::new(),
-            scroll: ScrollHandle::new(),
+            conversation_list: crate::conversation_list::ConversationList::new(cx.focus_handle()),
             collaboration_scroll: ScrollHandle::new(),
             events: Task::ready(()),
             _quit: cx.on_app_quit(|this: &mut Self, cx| {
@@ -440,6 +442,9 @@ impl HiveApp {
                 }
             }),
         };
+        app.conversation_list
+            .state
+            .set_scroll_handler(cx.listener(|_, _, _, cx| cx.notify()));
         app.start_backend(window.window_handle(), cx);
         app
     }

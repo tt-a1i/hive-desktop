@@ -6,14 +6,13 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::{Input, Textarea},
-        text::TextView,
         tooltip::Tooltip,
         *,
     },
     *,
 };
 
-const CHAT_COLUMN_WIDTH: f32 = 932.;
+use crate::conversation_list::CHAT_COLUMN_WIDTH;
 
 impl HiveApp {
     fn agent_name(&self, id: &str) -> String {
@@ -43,7 +42,7 @@ impl HiveApp {
 }
 
 impl HiveApp {
-    fn message_actions(
+    pub(crate) fn message_actions(
         &self,
         index: usize,
         message: &crate::app::Message,
@@ -110,7 +109,7 @@ impl HiveApp {
             )
     }
 
-    fn dispatch_link(
+    pub(crate) fn dispatch_link(
         &self,
         source: &str,
         dispatch: Option<&str>,
@@ -133,7 +132,7 @@ impl HiveApp {
         )
     }
 
-    fn member_session_link(
+    pub(crate) fn member_session_link(
         &self,
         source_id: &str,
         worker_id: Option<&str>,
@@ -327,6 +326,7 @@ impl Render for HiveApp {
             self.input
                 .update(cx, |input, cx| input.set_submit_on_enter(can_submit, cx));
         }
+        self.sync_conversation_list(cx);
         let has_text = !self.input.read(cx).value().trim().is_empty();
         self.composer_has_text = has_text;
         let member_query = self
@@ -566,65 +566,7 @@ impl Render for HiveApp {
                             this.show_session(session.id.clone(), cx);
                         }
                     })))))
-                .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().px_5().when(!narrow, |column| column.px(px(44.))).track_scroll(&self.scroll).on_scroll(cx.listener(|_, _, _, cx| cx.notify())).py_3()
-                    .child(v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().gap_5()
-                        .when(self.messages.is_empty() && self.pending_reports.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。可在窗口顶部重新启动后台。" } else if running { "正在等待 Agent 回复…" } else if needs_pi_model { "还没有消息。" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
-                        .children(self.messages.chunk_by(|left, right| left.completed_tool() && right.completed_tool())
-                            .scan(0usize, |offset, group| {
-                                let start = *offset;
-                                *offset += group.len();
-                                Some((start, group))
-                            }).map(|(i, group)| {
-                            if group.len() > 1 { return self.render_completed_tools(i, group, cx).into_any_element(); }
-                            let message = &group[0];
-                            if let Some(tool) = &message.tool {
-                                return self.render_tool_message(i, message, tool, cx).into_any_element();
-                            }
-                            let heading = message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), "notice" => "会话通知", _ => "工具" }.into());
-                            v_flex().id(("message", i)).min_w_0().gap_2().px_3().py_2().rounded_lg()
-                                .anchor_scroll(self.conversation_find_anchor(&message.id))
-                                .when(self.conversation_find_anchor(&message.id).is_some(), |view| view.bg(Color::Attention.get(cx)))
-                                .when(message.role == "user", |bubble| bubble.ml_auto().max_w(px(680.)))
-                                .when(!message.explicit_user, |view| view.child(h_flex().min_w_0().gap_2().justify_between()
-                                    .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(Color::Secondary.get(cx)).child(heading))
-                                    .when(message.delivery.as_ref().is_some_and(|card| card.report), |row| {
-                                        let state = if self.completed_deliveries.contains(&message.id) {
-                                            "处理回合已完成"
-                                        } else {
-                                            self.pending_reports.iter().find(|report| report.delivery_id == message.id)
-                                                .map(|report| report.status()).unwrap_or("已进入会话")
-                                        };
-                                        row.child(div().text_xs().text_color(Color::Muted.get(cx)).child(state))
-                                    })
-                                    .when_some(self.dispatch_link(&message.id, message.delivery.as_ref().and_then(|d| d.dispatch_id.as_deref()), cx), |row, link| row.child(link))
-                                    .when_some(self.member_session_link(&message.id, message.delivery.as_ref().and_then(|card| card.worker_id.as_deref()), "成员会话", cx), |row, link| row.child(link))
-                                    .when(message.delivery.is_some(), |view| view.child(Button::new(("expand-delivery", i)).accessibility_label(format!("{}消息原文", if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起" } else { "查看" })).label(if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起原文" } else { "查看原文" }).on_click({ let id = message.id.clone(); cx.listener(move |this, _, _, cx| {
-                                        if let Some(delivery) = this.messages.iter_mut().find(|m| m.id == id).and_then(|m| m.delivery.as_mut()) { delivery.expanded = !delivery.expanded; }
-                                        cx.notify();
-                                    }) })))
-                                ))
-                                .when_some(message.markdown.as_ref(), |view, markdown| view.child(TextView::new(markdown).selectable(true).stream_fade(true)))
-                                .when(message.markdown.is_none(), |view| view.child(div().min_w_0().text_size(px(15.)).line_height(px(24.)).when(message.role == "user", |bubble| bubble.px_4().py_2().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))).child(message.text.clone())))
-                                .when_some(message.delivery.as_ref(), |view, delivery| view.children(delivery.artifacts.iter().enumerate().map(|(i, path)|
-                                    self.artifact_link(&message.id, i, path, cx)
-                                )))
-                                .when(message.delivery.as_ref().is_some_and(|d| d.expanded), |view| view.child(div().min_w_0().p_3().rounded_lg().bg(Color::Card.get(cx)).text_sm().child(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())))
-                                .child(self.message_actions(i, message, cx))
-                                .into_any_element()
-                        }))
-                        .children(self.pending_reports.iter().filter(|report|
-                            !self.messages.iter().any(|message| message.id == report.delivery_id)
-                        ).map(|report| {
-                            v_flex().min_w_0().gap_2().px_3().py_2()
-                                .child(h_flex().gap_2().items_center()
-                                    .child(div().flex_1().text_xs().font_weight(FontWeight::SEMIBOLD).child(format!("{} · 成员汇报", report.worker_name.as_deref().unwrap_or("Worker"))))
-                                    .child(div().text_xs().text_color(Color::Muted.get(cx)).child(report.status()))
-                                    .when_some(self.dispatch_link(&report.delivery_id, report.dispatch_id.as_deref(), cx), |row, link| row.child(link))
-                                    .when_some(self.member_session_link(&report.delivery_id, report.worker_id.as_deref(), "成员会话", cx), |row, link| row.child(link)))
-                                .child(div().text_sm().child(report.text.clone()))
-                                .children(report.artifacts.iter().enumerate().map(|(i, path)| self.artifact_link(&report.delivery_id, i, path, cx)))
-                        }))
-                        .child(self.render_interactions(cx)))))
+                .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(self.render_conversation_list(narrow, cx)))
                 .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_2().when(!welcome, |dock| dock.px_5().when(!narrow, |dock| dock.px(px(44.))))
                 .when(!welcome, |dock| dock.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().font_weight(FontWeight::SEMIBOLD)
