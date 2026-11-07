@@ -57,6 +57,7 @@ function Wait-Action([string] $Name) {
     throw "Could not reach the fixture action '$Name'."
 }
 function Invoke-Action([string] $Name) {
+    Write-Host "Invoking fixture control: $Name"
     $action = Wait-Action $Name
     $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }

@@ -94,6 +94,7 @@ jobs:
           HIVE_WINDOWS_PREVIEW_PATH: target/windows-native-workspace.png
         run: node scripts/check-desktop-startup.mjs --bundle target/portable-windows-extracted
       - name: Upload native workspace preview
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: windows-native-workspace
@@ -103,7 +104,7 @@ jobs:
             target/windows-tool-details.png
             target/windows-team.png
             target/windows-program-settings.png
-          if-no-files-found: error
+          if-no-files-found: warn
   native-supervision:
     runs-on: windows-latest
     timeout-minutes: 20
