@@ -1,4 +1,5 @@
 use super::*;
+use crate::palette::Color;
 use gpui_kit::{
     component::{button::Button, *},
     prelude::FluentBuilder,
@@ -59,7 +60,7 @@ impl HiveApp {
             .gap_3()
             .p_4()
             .rounded_lg()
-            .bg(rgb(0xf1eee4))
+            .bg(Color::Attention.get(cx))
             .child(
                 div()
                     .text_sm()
@@ -85,7 +86,7 @@ impl HiveApp {
                 view.child(
                     div()
                         .p_3()
-                        .bg(rgb(0xffffff))
+                        .bg(Color::Card.get(cx))
                         .text_sm()
                         .child(command.to_string()),
                 )
@@ -167,7 +168,7 @@ impl HiveApp {
                                         .max_h(px(260.))
                                         .overflow_y_scroll()
                                         .p_3()
-                                        .bg(rgb(0xffffff))
+                                        .bg(Color::Card.get(cx))
                                         .text_sm()
                                         .child(
                                             change["diff"]
@@ -185,7 +186,12 @@ impl HiveApp {
                 }))
             })
             .when_some(card.error.clone(), |view, error| {
-                view.child(div().text_sm().text_color(rgb(0xb54131)).child(error))
+                view.child(
+                    div()
+                        .text_sm()
+                        .text_color(Color::Error.get(cx))
+                        .child(error),
+                )
             })
             .when(questions, |view| {
                 view.child(

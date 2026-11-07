@@ -1,4 +1,5 @@
 use crate::app::{HiveApp, SettingsSection};
+use crate::palette::Color;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::{
     component::{
@@ -21,7 +22,7 @@ impl HiveApp {
             .px_4()
             .py_2()
             .border_b_1()
-            .border_color(rgb(0xd7d7d4))
+            .border_color(Color::Divider.get(cx))
             .child(
                 Button::new("toggle-navigation")
                     .ghost()
@@ -40,7 +41,7 @@ impl HiveApp {
                     .min_w_0()
                     .truncate()
                     .text_sm()
-                    .text_color(rgb(0x777c75))
+                    .text_color(Color::Muted.get(cx))
                     .child(
                         self.workspaces
                             .iter()
@@ -53,7 +54,7 @@ impl HiveApp {
                 view.child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xb54131))
+                        .text_color(Color::Error.get(cx))
                         .child("后台未连接"),
                 )
             })
@@ -183,9 +184,9 @@ impl HiveApp {
             .when(narrow, |view| view.flex_1().min_w_0())
             .when(!narrow, |view| view.w(px(260.)).flex_shrink_0())
             .h_full()
-            .bg(rgb(0xf8f8f6))
+            .bg(Color::Sidebar.get(cx))
             .border_r_1()
-            .border_color(rgb(0xd7d7d4))
+            .border_color(Color::Divider.get(cx))
             .p_3()
             .gap_3()
             .child(self.new_chat_menu("new-session-menu", "新建会话", cx))
@@ -291,7 +292,10 @@ impl HiveApp {
                                     .items_center()
                                     .justify_between()
                                     .child(
-                                        div().text_xs().text_color(rgb(0x777c75)).child("工作区"),
+                                        div()
+                                            .text_xs()
+                                            .text_color(Color::Muted.get(cx))
+                                            .child("工作区"),
                                     )
                                     .when(!self.workspaces.is_empty(), |row| {
                                         row.child(
@@ -378,7 +382,7 @@ impl HiveApp {
                                             .min_w_0()
                                             .truncate()
                                             .text_xs()
-                                            .text_color(rgb(0x777c75))
+                                            .text_color(Color::Muted.get(cx))
                                             .child(workspace.path.clone()),
                                     )
                                     .child(
@@ -438,17 +442,21 @@ impl HiveApp {
                                 div()
                                     .pt_4()
                                     .text_xs()
-                                    .text_color(rgb(0x777c75))
+                                    .text_color(Color::Muted.get(cx))
                                     .child("会话"),
                             )
                             .when(self.sessions.is_empty(), |view| {
-                                view.child(div().py_3().text_sm().text_color(rgb(0x777c75)).child(
-                                    if self.workspace.is_some() {
-                                        "新建会话开始工作"
-                                    } else {
-                                        "选择工作区后新建会话"
-                                    },
-                                ))
+                                view.child(
+                                    div()
+                                        .py_3()
+                                        .text_sm()
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(if self.workspace.is_some() {
+                                            "新建会话开始工作"
+                                        } else {
+                                            "选择工作区后新建会话"
+                                        }),
+                                )
                             })
                             .children(self.sessions.iter().enumerate().map(|(i, session)| {
                                 let id = session.id.clone();
@@ -478,9 +486,14 @@ impl HiveApp {
                                     .min_w_0()
                                     .gap_1()
                                     .py_1()
-                                    .child(div().text_xs().text_color(rgb(0x63715c)).child(
-                                        format!("{role} · {}{activity}", session.backend.label()),
-                                    ))
+                                    .child(
+                                        div().text_xs().text_color(Color::Secondary.get(cx)).child(
+                                            format!(
+                                                "{role} · {}{activity}",
+                                                session.backend.label()
+                                            ),
+                                        ),
+                                    )
                                     .child(
                                         Button::new(("session", i))
                                             .ghost()

@@ -1,4 +1,5 @@
 use crate::app::{HiveApp, Message, ToolPresentation};
+use crate::palette::Color;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -40,7 +41,11 @@ impl HiveApp {
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(if failed { rgb(0xb54131) } else { rgb(0x586653) })
+                                    .text_color(if failed {
+                                        Color::Error.get(cx)
+                                    } else {
+                                        Color::Secondary.get(cx)
+                                    })
                                     .child(tool.status),
                             ),
                     )
@@ -63,7 +68,7 @@ impl HiveApp {
                         .gap_2()
                         .p_3()
                         .rounded_lg()
-                        .bg(rgb(0xf0f2ed))
+                        .bg(Color::Inset.get(cx))
                         .child(div().min_w_0().text_sm().child(text.clone()))
                         .child(
                             Button::new(("copy-tool", index))
@@ -80,7 +85,7 @@ impl HiveApp {
                     div()
                         .px_3()
                         .text_sm()
-                        .text_color(rgb(0xb54131))
+                        .text_color(Color::Error.get(cx))
                         .child(message.text.chars().take(160).collect::<String>()),
                 )
             })

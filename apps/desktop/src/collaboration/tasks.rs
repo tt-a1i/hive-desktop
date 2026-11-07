@@ -1,5 +1,6 @@
 use super::Tasks;
 use crate::app::HiveApp;
+use crate::palette::Color;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -161,7 +162,12 @@ impl HiveApp {
                         .disabled(draft.saving),
                 )
                 .when_some(draft.error.clone(), |view, error| {
-                    view.child(div().text_sm().text_color(rgb(0xb54131)).child(error))
+                    view.child(
+                        div()
+                            .text_sm()
+                            .text_color(Color::Error.get(cx))
+                            .child(error),
+                    )
                 })
                 .child(
                     h_flex()
@@ -200,7 +206,12 @@ impl HiveApp {
                     view.child(div().text_sm().child("正在读取任务…"))
                 })
                 .when_some(self.collaboration.task_error.clone(), |view, error| {
-                    view.child(div().text_sm().text_color(rgb(0xb54131)).child(error))
+                    view.child(
+                        div()
+                            .text_sm()
+                            .text_color(Color::Error.get(cx))
+                            .child(error),
+                    )
                 })
                 .when(
                     !self.collaboration.task_loading
@@ -213,7 +224,7 @@ impl HiveApp {
                         div()
                             .p_3()
                             .rounded_lg()
-                            .bg(rgb(0xffffff))
+                            .bg(Color::Card.get(cx))
                             .child(TextView::new(&self.collaboration.tasks).selectable(true)),
                     )
                 })

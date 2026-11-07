@@ -1,4 +1,5 @@
 use super::*;
+use crate::palette::Color;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -19,16 +20,16 @@ impl HiveApp {
                 .child(h_flex().flex_wrap().gap_2().items_center()
                     .child(div().text_sm().child(match m.enabled { Some(true) => "工作区记忆注入：已启用", Some(false) => "工作区记忆注入：已禁用", None if m.loading => "正在读取注入设置…", None => "注入设置暂不可用" }))
                     .when_some(m.enabled, |view, enabled| view.child(Button::new("toggle-memory-injection").label(if enabled { "禁用注入" } else { "启用注入" }).disabled(disabled).on_click(cx.listener(move |this, _, _, cx| this.memory_action("PUT", "/settings".into(), Some(json!({"enabled":!enabled})), cx))))))
-                .child(div().text_xs().text_color(rgb(0x777c75)).child("设置影响后续构建的会话与派单上下文；已发送给 Agent 的记忆不会从已有对话中移除。"))
-                .when_some(m.settings_error.clone(), |view, error| view.child(div().text_sm().text_color(rgb(0xb54131)).child(error)))
+                .child(div().text_xs().text_color(Color::Muted.get(cx)).child("设置影响后续构建的会话与派单上下文；已发送给 Agent 的记忆不会从已有对话中移除。"))
+                .when_some(m.settings_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
                 .child(h_flex().gap_2().child(div().flex_1().min_w_0().child(Input::new(&m.query).aria_label("搜索工作区记忆").disabled(disabled))).child(Button::new("search-memory").label("搜索").disabled(disabled).on_click(cx.listener(|this, _, _, cx| { this.memory.selected = None; this.load_memory(cx); }))))
                 .child(h_flex().flex_wrap().gap_1().children([("active", "有效"), ("candidate", "待审核"), ("archived", "已归档"), ("rejected", "已拒绝"), ("all", "全部状态")].into_iter().enumerate().map(|(i, (status, label))| Button::new(("memory-status", i)).label(label).selected(m.status == status).disabled(disabled).on_click(cx.listener(move |this, _, _, cx| { this.memory.status = status; this.memory.selected = None; this.load_memory(cx); })))))
                 .child(h_flex().flex_wrap().gap_1().children([("workspace", "工作区范围"), ("user", "用户范围"), ("all", "全部范围")].into_iter().enumerate().map(|(i, (scope, label))| Button::new(("memory-scope", i)).label(label).selected(m.scope == scope).disabled(disabled).on_click(cx.listener(move |this, _, _, cx| { this.memory.scope = scope; this.memory.selected = None; this.load_memory(cx); })))))
                 .when(m.loading, |view| view.child(div().text_sm().child("正在读取记忆…")))
-                .when_some(m.error.clone(), |view, error| view.child(div().text_sm().text_color(rgb(0xb54131)).child(error)))
+                .when_some(m.error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
                 .when_some(m.notice.clone(), |view, notice| view.child(div().text_sm().child(notice)))
                 .when(!m.loading && m.error.is_none() && m.entries.is_empty(), |view| view.child(div().py_4().text_sm().child("没有匹配的记忆")))
-                .child(div().text_xs().text_color(rgb(0x777c75)).child(format!("显示 {} 条，最多 50 条。可搜索或筛选缩小范围。", m.entries.len())))
+                .child(div().text_xs().text_color(Color::Muted.get(cx)).child(format!("显示 {} 条，最多 50 条。可搜索或筛选缩小范围。", m.entries.len())))
                 .children(m.entries.iter().enumerate().map(|(i, entry)| self.render_memory_entry(i, entry, cx)))))
     }
 
@@ -46,19 +47,24 @@ impl HiveApp {
             .gap_2()
             .p_3()
             .rounded_lg()
-            .bg(rgb(0xffffff))
-            .child(div().text_xs().text_color(rgb(0x63715c)).child(format!(
-                "{} · {} · {}{}{}",
-                kind_label(&entry.kind),
-                status_label(&entry.status),
-                if entry.scope == "user" {
-                    "用户"
-                } else {
-                    "工作区"
-                },
-                if entry.pinned { " · 已固定" } else { "" },
-                if entry.disabled { " · 已禁用" } else { "" }
-            )))
+            .bg(Color::Card.get(cx))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(Color::Secondary.get(cx))
+                    .child(format!(
+                        "{} · {} · {}{}{}",
+                        kind_label(&entry.kind),
+                        status_label(&entry.status),
+                        if entry.scope == "user" {
+                            "用户"
+                        } else {
+                            "工作区"
+                        },
+                        if entry.pinned { " · 已固定" } else { "" },
+                        if entry.disabled { " · 已禁用" } else { "" }
+                    )),
+            )
             .child(
                 Button::new(("memory-detail", i))
                     .w_full()
@@ -222,7 +228,7 @@ impl HiveApp {
                         v_flex()
                             .gap_1()
                             .p_2()
-                            .bg(rgb(0xf0f2ed))
+                            .bg(Color::Inset.get(cx))
                             .child(div().text_xs().child(format!(
                                     "{} · {} · {}{}",
                                     source_label(&source.source_type),

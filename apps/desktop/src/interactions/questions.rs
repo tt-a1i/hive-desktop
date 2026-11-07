@@ -1,4 +1,5 @@
 use super::*;
+use crate::palette::Color;
 use gpui_kit::{
     component::{button::Button, input::Input, *},
     prelude::FluentBuilder,
@@ -114,7 +115,7 @@ impl HiveApp {
                                         .max_h(px(160.))
                                         .overflow_y_scroll()
                                         .p_2()
-                                        .bg(rgb(0xffffff))
+                                        .bg(Color::Card.get(cx))
                                         .text_xs()
                                         .child(format!("预览（原文，不执行）\n{preview}")),
                                 )

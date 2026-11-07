@@ -1,4 +1,5 @@
 use crate::app::HiveApp;
+use crate::palette::Color;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
@@ -212,7 +213,7 @@ impl HiveApp {
         v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
             .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("角色模板"))
             .child(div().text_sm().child("保存常用职责。创建成员时可选择模板，仍需确认后创建。"))
-            .when_some(self.roles.error.clone(), |view, error| view.child(div().text_sm().text_color(rgb(0xb54131)).child(error)))
+            .when_some(self.roles.error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
             .when_some(self.roles.notice.clone(), |view, notice| view.child(div().text_sm().child(notice)))
             .child(div().id("roles-scroll").flex_1().min_h_0().overflow_y_scroll().child(v_flex().w_full().flex_shrink_0().gap_3()
                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.editing.is_some() { "编辑模板" } else { "新建模板" }))
@@ -225,7 +226,7 @@ impl HiveApp {
                 .when(!self.roles.loading && self.roles.items.is_empty(), |view| view.child(div().text_sm().child("暂无模板")))
                 .children(self.roles.items.iter().enumerate().map(|(i, template)| {
                     let item = template.clone(); let delete = template.id.clone(); let deleting = self.roles.deleting.as_ref() == Some(&template.id);
-                    v_flex().gap_2().p_3().rounded_lg().bg(rgb(0xffffff))
+                    v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
                         .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{} · {}{}", template.name, role_label(&template.role_type), if template.is_builtin { " · 内置" } else { "" })))
                         .child(div().text_sm().child(template.description.clone()))
                         .when(!template.is_builtin, |view| view.child(h_flex().gap_2()
@@ -256,12 +257,17 @@ impl HiveApp {
                 view.child(div().text_xs().child("正在读取模板…"))
             })
             .when_some(self.roles.error.clone(), |view, error| {
-                view.child(div().text_xs().text_color(rgb(0xb54131)).child(error))
-                    .child(
-                        Button::new("retry-member-roles")
-                            .label("重试读取模板")
-                            .on_click(cx.listener(|this, _, _, cx| this.load_roles(cx))),
-                    )
+                view.child(
+                    div()
+                        .text_xs()
+                        .text_color(Color::Error.get(cx))
+                        .child(error),
+                )
+                .child(
+                    Button::new("retry-member-roles")
+                        .label("重试读取模板")
+                        .on_click(cx.listener(|this, _, _, cx| this.load_roles(cx))),
+                )
             })
             .children(
                 self.roles

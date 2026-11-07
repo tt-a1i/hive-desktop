@@ -1,4 +1,5 @@
 use super::*;
+use crate::palette::Color;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -84,7 +85,7 @@ impl HiveApp {
                     .w_full()
                     .min_w_0()
                     .text_xs()
-                    .text_color(rgb(0x777c75))
+                    .text_color(Color::Muted.get(cx))
                     .whitespace_normal()
                     .child("隐藏后 Shell 继续运行；“停止 Shell”才结束进程。"),
             )
@@ -97,7 +98,7 @@ impl HiveApp {
                         .max_h(px(120.))
                         .overflow_y_scroll()
                         .p_2()
-                        .bg(rgb(0xffe9e4))
+                        .bg(Color::ErrorSurface.get(cx))
                         .text_sm()
                         .whitespace_normal()
                         .child(error.clone()),
