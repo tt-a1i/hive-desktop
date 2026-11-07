@@ -113,13 +113,24 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
         break;
     }
   });
+  let savedModelUnavailable = false;
   const setModel = async (provider: string, id: string) => {
     const model = session.modelRuntime.getModel(provider, id);
     if (!model) throw new Error(`Unknown Pi model: ${provider}/${id}`);
     await session.setModel(model, { persist: false });
+    savedModelUnavailable = false;
   };
   try {
-    if (options.model) await setModel(options.model.provider, options.model.id);
+    if (options.model) {
+      const { provider, id } = options.model;
+      // History stays readable when a provider is removed or signed out. Keep
+      // the saved choice until the user selects a replacement.
+      if (!session.modelRuntime.getModel(provider, id) || !await session.modelRuntime.checkAuth(provider)) {
+        savedModelUnavailable = true;
+      } else if (session.model?.provider !== provider || session.model?.id !== id) {
+        await setModel(provider, id);
+      }
+    }
   } catch (error) {
     unsubscribe();
     session.dispose();
@@ -165,6 +176,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     },
     prompt(text, promptOptions) {
       if (disposed) return Promise.reject(new Error('Pi session is disposed'));
+      if (savedModelUnavailable) return Promise.reject(new Error('原先的 Pi 模型不可用，请重新选择。'));
       if (active) return Promise.reject(new Error('Pi session is already processing a prompt'));
       const run = { cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, deliveryId: promptOptions?.deliveryId, deliveryReceived: false };
       active = run;
@@ -211,7 +223,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     },
     currentModel() {
       const model = session.model;
-      return model && !isUnsetPiModel(model) ? { provider: model.provider, id: model.id, name: model.name } : undefined;
+      return model && !savedModelUnavailable && !isUnsetPiModel(model) ? { provider: model.provider, id: model.id, name: model.name } : undefined;
     },
     listModels() {
       const available = new Set(session.modelRuntime.getAvailableSnapshot().map(model => `${model.provider}\0${model.id}`));

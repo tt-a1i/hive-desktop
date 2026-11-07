@@ -142,11 +142,12 @@ export class Chats implements StructuredSessionPort {
   private snapshot(id: string, chat: LiveChat) {
     const record = this.index.get(id);
     const snapshot = chat.handle.snapshot();
+    const model = chat.handle.currentModel();
     const agentId = record.agentId;
     const history = agentId ? snapshot.history.map(message => restoreHistoricalReport(message,
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
     return {
-      ...record, ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
+      ...record, ...(record.backend === 'pi' && { model, unavailableModel: model ? undefined : record.model }), ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
       busy: chat.queue.busy, pending: chat.queue.pendingCount, pendingReports: chat.queue.pendingReports,
       completedDeliveryIds: chat.handle.completedDeliveryIds(),
       runId: record.agentId ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId)?.runId ?? null : null,

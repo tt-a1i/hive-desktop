@@ -130,6 +130,7 @@ pub struct OpenSession {
     #[serde(default)]
     pub models: Vec<Model>,
     pub model: Option<ModelIdentity>,
+    pub unavailable_model: Option<ModelIdentity>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -96,6 +96,7 @@ try {
   const indexPath = join(directory, 'state', 'chats', 'index.json');
   const index = JSON.parse(await readFile(indexPath, 'utf8'));
   index.find((item: { id: string }) => item.id === created.id).model = { provider: 'unknown', id: 'unknown', name: 'unknown' };
+  index.find((item: { id: string }) => item.id === newer.id).model = { provider: 'removed-provider', id: 'gpt-6.1-terra', name: 'Terra' };
   await writeFile(indexPath, JSON.stringify(index));
   const second = launch();
   const restart = await second.request('initialize');
@@ -110,6 +111,20 @@ try {
   const persisted = await second.request('chat.list', { workspaceId: workspace.id });
   assert.equal(persisted.length, 2);
   assert.equal(persisted[0].id, newer.id);
+  const unavailable = await second.request('chat.open', { sessionId: newer.id });
+  assert.equal(unavailable.model, undefined);
+  assert.equal(unavailable.unavailableModel.provider, 'removed-provider');
+  assert.ok(unavailable.history.some((message: { customType?: string }) => message.customType === 'hive-desktop'));
+  await assert.rejects(second.request('chat.prompt', { sessionId: newer.id, text: '留在原会话' }));
+  const unchanged = await second.request('chat.list', { workspaceId: workspace.id });
+  assert.equal(unchanged.find((item: { id: string }) => item.id === newer.id).model.provider, 'removed-provider');
+  if (unavailable.models.some((m: { provider: string; id: string; available: boolean }) => m.provider === 'openai' && m.id === 'gpt-6.1-terra' && m.available)) {
+    await second.request('chat.setModel', { sessionId: newer.id, provider: 'openai', modelId: 'gpt-6.1-terra' });
+    const repaired = await second.request('chat.open', { sessionId: newer.id });
+    assert.equal(repaired.model.id, 'gpt-6.1-terra');
+    assert.equal(repaired.unavailableModel, undefined);
+    assert.deepEqual(repaired.history, unavailable.history);
+  }
   const restored = await second.request('chat.open', { sessionId: JSON.parse(restart.navigation).sessions[workspace.id] });
   assert.equal(restored.id, created.id);
   assert.notDeepEqual([restored.model?.provider, restored.model?.id], ['unknown', 'unknown']);

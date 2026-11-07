@@ -223,6 +223,7 @@ impl HiveApp {
         self.deleting_member = None;
         self.models.clear();
         self.model = None;
+        self.unavailable_model = None;
         self.choosing_model = false;
         self.open_request += 1;
     }
@@ -399,6 +400,7 @@ impl HiveApp {
         self.event_sequence = 0;
         self.models.clear();
         self.model = None;
+        self.unavailable_model = None;
         self.loading = true;
         if self.connected && !self.closing {
             self.status = "正在打开会话…".into();
@@ -440,6 +442,7 @@ impl HiveApp {
                         this.session = Some(open.session);
                         this.models = open.models;
                         this.model = open.model;
+                        this.unavailable_model = open.unavailable_model;
                         this.event_sequence = open.event_sequence;
                         for (i, message) in open.history.into_iter().enumerate() {
                             this.receive_message(open.history_message_ids[i].clone(), &message, cx);

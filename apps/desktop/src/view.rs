@@ -407,7 +407,7 @@ impl Render for HiveApp {
                     cx.write_to_clipboard(ClipboardItem::new_string(this.input.read(cx).value().to_string()));
                 }))))
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child("选择本地项目文件夹，开始与 Agent 协作。")))
-                .when(needs_pi_model && self.connected, |v| v.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if self.models.iter().any(|m| m.available) { "选择模型后即可发送。" } else { "请先配置 Pi 的模型提供商，再重新打开应用。草稿可继续编辑。" })))
+                .when(needs_pi_model && self.connected, |v| v.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model { format!("原来的模型 {} / {} 暂不可用。可选择其他模型，或恢复 Pi 配置后重开应用。", model.provider, model.id) } else if self.models.iter().any(|m| m.available) { "选择模型后即可发送。".into() } else { "请先配置 Pi 的模型提供商，再重新打开应用。草稿可继续编辑。".into() })))
                 .when(self.workspace.is_some(), |v| v.child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息")))
                 .child(h_flex().min_w_0().gap_2().items_center()
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
