@@ -40,6 +40,73 @@ impl HiveApp {
 }
 
 impl HiveApp {
+    fn message_actions(
+        &self,
+        index: usize,
+        message: &crate::app::Message,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let copy_id = message.id.clone();
+        let reply_id = message.id.clone();
+        let delivery = message.delivery.is_some();
+        h_flex()
+            .gap_1()
+            .when(message.role == "user", |row| row.justify_end())
+            .child(
+                Button::new(("copy", index))
+                    .ghost()
+                    .compact()
+                    .icon(Glyph::Copy)
+                    .tooltip(if delivery {
+                        "复制完整原文"
+                    } else {
+                        "复制消息"
+                    })
+                    .accessibility_label(if delivery {
+                        "复制完整消息原文"
+                    } else {
+                        "复制消息内容"
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(message) = this.messages.iter().find(|m| m.id == copy_id) {
+                            let text = message.delivery.as_ref().map_or(&message.text, |d| &d.raw);
+                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                        }
+                    })),
+            )
+            .when(
+                !message.text.is_empty()
+                    && (message.role == "assistant" || message.explicit_user || delivery),
+                |row| {
+                    row.child(
+                        Button::new(("quote", index))
+                            .ghost()
+                            .compact()
+                            .icon(Glyph::Reply)
+                            .tooltip("引用回复")
+                            .accessibility_label("引用消息到草稿")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if let Some(message) =
+                                    this.messages.iter().find(|m| m.id == reply_id)
+                                {
+                                    let quote = message
+                                        .text
+                                        .lines()
+                                        .map(|line| format!("> {line}"))
+                                        .collect::<Vec<_>>()
+                                        .join("\n");
+                                    this.input.update(cx, |input, cx| {
+                                        let value = format!("{quote}\n\n{}", input.value());
+                                        input.replace_all(value, window, cx);
+                                        input.focus(window, cx);
+                                    });
+                                }
+                            })),
+                    )
+                },
+            )
+    }
+
     fn member_session_link(
         &self,
         source_id: &str,
@@ -487,7 +554,7 @@ impl Render for HiveApp {
                                     div().min_w_0().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))
                                 )))
                                 .when(message.delivery.as_ref().is_some_and(|d| d.expanded), |view| view.child(div().min_w_0().p_3().rounded_lg().bg(Color::Card.get(cx)).text_sm().child(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())))
-                                .child(h_flex().when(message.role == "user", |row| row.justify_end()).child(Button::new(("copy", i)).ghost().compact().icon(Glyph::Copy).tooltip(if message.delivery.is_some() { "复制完整原文" } else { "复制消息" }).accessibility_label(if message.delivery.is_some() { "复制完整消息原文" } else { "复制消息内容" }).on_click({ let text = message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_else(|| message.text.clone()); cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))) })))
+                                .child(self.message_actions(i, message, cx))
                                 .into_any_element()
                         }))
                         .children(self.pending_reports.iter().filter(|report|
