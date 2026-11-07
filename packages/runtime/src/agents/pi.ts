@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createAgentSession } from '@earendil-works/pi-coding-agent';
+import { isUnsetPiModel } from '../chat-index.js';
 import { createDesktopSessionManager } from './pi-session-manager.js';
 import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
 import type { PiSessionHandle, PiSessionOptions } from './types.js';
@@ -210,7 +211,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     },
     currentModel() {
       const model = session.model;
-      return model && { provider: model.provider, id: model.id, name: model.name };
+      return model && !isUnsetPiModel(model) ? { provider: model.provider, id: model.id, name: model.name } : undefined;
     },
     listModels() {
       const available = new Set(session.modelRuntime.getAvailableSnapshot().map(model => `${model.provider}\0${model.id}`));

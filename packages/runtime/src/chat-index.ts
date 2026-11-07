@@ -4,6 +4,11 @@ import { join } from 'node:path';
 
 export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude';
 
+// Pi core uses this identity until an actual model has been selected.
+export function isUnsetPiModel(model: { provider: string; id: string } | undefined): boolean {
+  return model?.provider === 'unknown' && model.id === 'unknown';
+}
+
 export interface ChatRecord {
   backend: ChatBackend;
   codexThreadId?: string;
@@ -30,7 +35,11 @@ export class ChatIndex {
     this.file = join(directory, 'index.json');
     const value: unknown = existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) : [];
     if (!Array.isArray(value) || !value.every(isChatRecord)) throw new Error('Invalid desktop chat index');
-    this.records = value.map(record => ({ ...record, backend: record.backend ?? 'pi' }));
+    this.records = value.map(record => {
+      const normalized = { ...record, backend: record.backend ?? 'pi' };
+      if (normalized.backend === 'pi' && isUnsetPiModel(normalized.model)) delete normalized.model;
+      return normalized;
+    });
   }
   list(workspaceId: string): ChatRecord[] {
     return this.records.filter(record => record.workspaceId === workspaceId).sort((a, b) => b.updatedAt - a.updatedAt);

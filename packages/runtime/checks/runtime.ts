@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,14 @@ try {
   const opened = await first.request('chat.open', { sessionId: created.id });
   assert.equal(opened.id, created.id);
   assert.equal(opened.busy, false);
+  if (!opened.model) {
+    await assert.rejects(first.request('chat.prompt', { sessionId: created.id, text: '离线草稿' }));
+    const after = await first.request('chat.open', { sessionId: created.id });
+    assert.equal(after.runId, null);
+    assert.equal(after.agentId, undefined);
+    assert.equal(after.title, created.title);
+    assert.deepEqual(after.history, opened.history);
+  }
   await assert.rejects(first.request('chat.setModel', { sessionId: created.id, provider: '__missing__', modelId: '__missing__' }));
   const newer = await first.request('chat.create', { workspaceId: workspace.id });
   const selection = (session: string) => ({ workspace: workspace.id, sessions: { [workspace.id]: session } });
@@ -76,6 +84,11 @@ try {
   assert.equal((await first.exited)[0], 0);
   await assert.rejects(fetch(`http://127.0.0.1:${initialized.hivePort}/api/ui/session`));
 
+  // Previous Desktop builds persisted Pi core's no-model identity on first launch.
+  const indexPath = join(directory, 'state', 'chats', 'index.json');
+  const index = JSON.parse(await readFile(indexPath, 'utf8'));
+  index.find((item: { id: string }) => item.id === created.id).model = { provider: 'unknown', id: 'unknown', name: 'unknown' };
+  await writeFile(indexPath, JSON.stringify(index));
   const second = launch();
   const restart = await second.request('initialize');
   assert.deepEqual(JSON.parse(restart.navigation), lastSelection);
@@ -84,6 +97,7 @@ try {
   assert.equal(persisted[0].id, newer.id);
   const restored = await second.request('chat.open', { sessionId: JSON.parse(restart.navigation).sessions[workspace.id] });
   assert.equal(restored.id, created.id);
+  assert.notDeepEqual([restored.model?.provider, restored.model?.id], ['unknown', 'unknown']);
   assert.equal(restored.history.filter((message: { role: string }) => message.role !== 'custom').length, 0);
   assert.ok(restored.history.some((message: { customType?: string }) => message.customType === 'hive-desktop'));
   assert.deepEqual(await second.request('shutdown'), { ok: true });

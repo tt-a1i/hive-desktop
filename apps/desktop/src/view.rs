@@ -112,7 +112,14 @@ impl Render for HiveApp {
             .and_then(|s| self.pending.get(&s.id))
             .copied()
             .unwrap_or(0);
+        let needs_pi_model = self
+            .session
+            .as_ref()
+            .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Pi))
+            && self.model.is_none()
+            && !self.loading;
         let can_submit = self.session.is_some()
+            && !needs_pi_model
             && self.workspace_writes_allowed()
             && self.connected
             && !running
@@ -389,6 +396,7 @@ impl Render for HiveApp {
                     cx.write_to_clipboard(ClipboardItem::new_string(this.input.read(cx).value().to_string()));
                 }))))
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child("选择本地项目文件夹，开始与 Agent 协作。")))
+                .when(needs_pi_model && self.connected, |v| v.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if self.models.iter().any(|m| m.available) { "选择模型后即可发送。" } else { "请先配置 Pi 的模型提供商，再重新打开应用。草稿可继续编辑。" })))
                 .when(self.workspace.is_some(), |v| v.child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息")))
                 .child(h_flex().min_w_0().gap_2().items_center()
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {

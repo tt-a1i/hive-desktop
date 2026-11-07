@@ -274,7 +274,10 @@ export class Chats implements StructuredSessionPort {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     if (!text.trim()) throw new Error('Message cannot be empty');
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
-      await this.require(id);
+      const opened = await this.require(id);
+      if (this.index.get(id).backend === 'pi' && !opened.handle.currentModel()) {
+        throw new Error('请先为内置 Pi 选择可用模型，再发送消息。');
+      }
       await this.activateOnce(id);
       const chat = await this.require(id);
       if (!chat.queue.pendingCount) chat.queue.resume();
