@@ -25,7 +25,8 @@ interface LiveChat {
   failure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; completedReportId?: string };
-export type ChatEvent = (PiEvent | QueueState) & { sequence: number };
+type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
+export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & { sequence: number };
 const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
 
 export class Chats implements StructuredSessionPort {
@@ -53,24 +54,26 @@ export class Chats implements StructuredSessionPort {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
   list(workspaceId: string) { return this.index.list(workspaceId); }
-  async search(query: unknown) {
+  async search(query: unknown, archived: unknown = false, offset: unknown = 0) {
+    if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
+    if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new TypeError('Search offset must be a nonnegative integer');
     if (typeof query !== 'string' || Array.from(query).length > 200) {
       throw new TypeError('搜索内容需为 200 个字符以内的文本。');
     }
     const terms = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
-    const groups = await this.navigationEntries(false);
+    const groups = await this.navigationEntries(false, archived);
     const matches = groups.flat().filter(hit => {
       const backendName = { pi: '内置 Pi', codex: 'Codex', 'pi-rpc': '外部 Pi', claude: 'Claude Code' }[hit.session.backend];
       const searchable = [hit.title, hit.session.title, hit.workspaceName, hit.session.backend, backendName].join(' ').toLocaleLowerCase();
       return terms.every(term => searchable.includes(term));
     }).sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
-    return { matches: matches.slice(0, 100), total: matches.length };
+    return { matches: matches.slice(offset, offset + 100), total: matches.length };
   }
-  private async navigationEntries(onlyPinned: boolean) {
+  private async navigationEntries(onlyPinned: boolean, archived = false) {
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
     const groups = await Promise.all(workspaces.filter(workspace => !this.removing.has(workspace.id)).map(async workspace => {
-      const records = () => this.index.list(workspace.id).filter(session => !onlyPinned || session.pinned);
+      const records = () => this.index.list(workspace.id).filter(session => !!session.archived === archived && (!onlyPinned || session.pinned));
       if (!records().length) return [];
       const members = await this.hive.request('GET', `/api/ui/workspaces/${workspace.id}/team`) as { id: string; name: string }[];
       const names = new Map(members.map(member => [member.id, member.name]));
@@ -110,7 +113,55 @@ export class Chats implements StructuredSessionPort {
     this.index.save(changed);
     return changed;
   }
-  private event(id: string, event: PiEvent | QueueState) {
+  async setArchived(id: string, archived: unknown): Promise<ChatRecord> {
+    if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const workspaceId = this.index.get(id).workspaceId;
+    return this.withWorkspace(workspaceId, async () => {
+      if (this.closing) throw new Error('Chat runtime is closing');
+      this.assertWorkspaceAvailable(workspaceId);
+      const current = this.index.get(id);
+      if (!!current.archived === archived) {
+        this.navigationChanged(current);
+        return current;
+      }
+      if (archived) {
+        const assertIdle = () => {
+          const queue = this.live.get(id)?.queue;
+          if (queue?.busy || (queue?.pendingCount ?? DeliveryQueue.persistedCount(this.queueDir, id))) {
+            throw new Error('会话仍有执行或待处理消息，请处理完成后再归档。');
+          }
+        };
+        assertIdle();
+        if (current.agentId) {
+          const members = await this.hive.request('GET', `/api/ui/workspaces/${workspaceId}/team`) as {
+            id: string; pending_task_count: number; open_dispatches?: unknown[];
+          }[];
+          const relevant = current.agentId === `${workspaceId}:orchestrator` ? members : members.filter(member => member.id === current.agentId);
+          if (relevant.some(member => member.pending_task_count > 0 || member.open_dispatches?.length)) {
+            throw new Error('成员仍有执行或未结派单，请处理完成后再归档会话。');
+          }
+        }
+        assertIdle();
+        if (this.index.get(id) !== current) throw new Error('会话刚刚更新，请核对新内容后重新归档。');
+      }
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error('Chat runtime is closing');
+      const changed = { ...this.index.get(id), archived };
+      try { this.index.save(changed); }
+      catch (error) {
+        console.error('[hive-desktop] archive metadata save failed', error);
+        throw new Error('无法保存归档状态，历史与草稿仍保留，请稍后重试。', { cause: error });
+      }
+      this.navigationChanged(changed);
+      return changed;
+    });
+  }
+  private navigationChanged(record: ChatRecord) {
+    this.event(record.id, { type: 'session_navigation', sessionId: record.id,
+      archived: !!record.archived, pinned: !!record.pinned, updatedAt: record.updatedAt });
+  }
+  private event(id: string, event: PiEvent | QueueState | NavigationEvent) {
     const sequence = (this.sequences.get(id) ?? 0) + 1;
     this.sequences.set(id, sequence);
     this.emit({ ...event, sessionId: id, sequence });
@@ -312,7 +363,15 @@ export class Chats implements StructuredSessionPort {
           const startupContext = text;
           this.index.save({ ...this.index.get(id), startupContext });
           await chat.handle.addContext(startupContext);
-        } else await chat.queue.enqueue(text, true, presentation, images);
+        } else {
+          const current = this.index.get(id);
+          if (current.archived) {
+            const visible = { ...current, archived: false, updatedAt: Date.now() };
+            this.index.save(visible);
+            this.navigationChanged(visible);
+          }
+          await chat.queue.enqueue(text, true, presentation, images);
+        }
       },
       ready: () => chat.queue.resume(),
       stop: () => this.stopLive(id, chat),

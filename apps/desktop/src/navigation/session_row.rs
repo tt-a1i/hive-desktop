@@ -38,9 +38,13 @@ impl HiveApp {
             .session_activity(&id)
             .map(|label| format!(" · {label}"))
             .unwrap_or_default();
+        let archive_blocked = self.busy.contains(&id)
+            || self.pending.get(&id).copied().unwrap_or(0) > 0
+            || self.interaction_count(&id) > 0;
         let menu_session = session.clone();
         let weak = cx.weak_entity();
-        let pinning = self.session_pin_loading.contains(&id);
+        let pinning =
+            self.session_pin_loading.contains(&id) || self.session_archive_loading.contains(&id);
         let project_tooltip = project_name
             .as_ref()
             .map(|name| {
@@ -70,6 +74,8 @@ impl HiveApp {
             .dropdown_menu(move |menu, _, _| {
                 let session = menu_session.clone();
                 let weak = weak.clone();
+                let archive_session = session.clone();
+                let archive_app = weak.clone();
                 menu.item(
                     PopupMenuItem::new(if session.pinned {
                         "取消置顶"
@@ -79,6 +85,25 @@ impl HiveApp {
                     .on_click(move |_, _, cx| {
                         let _ = weak.update(cx, |this, cx| {
                             this.set_session_pinned(session.clone(), !session.pinned, cx)
+                        });
+                    }),
+                )
+                .item(
+                    PopupMenuItem::new(if archive_session.archived {
+                        "恢复会话"
+                    } else if archive_blocked {
+                        "归档会话（需先处理当前任务）"
+                    } else {
+                        "归档会话"
+                    })
+                    .disabled(!archive_session.archived && archive_blocked)
+                    .on_click(move |_, _, cx| {
+                        let _ = archive_app.update(cx, |this, cx| {
+                            this.set_session_archived(
+                                archive_session.clone(),
+                                !archive_session.archived,
+                                cx,
+                            )
                         });
                     }),
                 )

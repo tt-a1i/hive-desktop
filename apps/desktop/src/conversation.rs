@@ -459,6 +459,44 @@ impl HiveApp {
         if self.removed_sessions.contains(event.session_id()) {
             return;
         }
+        // Keep current-session navigation in the same snapshot replay as chat
+        // events, so an in-flight open cannot replace newer metadata.
+        if self.loading && self.session.as_ref().map(|s| s.id.as_str()) == Some(event.session_id())
+        {
+            self.pending_events.push(event);
+            return;
+        }
+        if let PiEvent::SessionNavigation {
+            session_id,
+            sequence,
+            archived,
+            pinned,
+            updated_at,
+        } = &event
+        {
+            let seen = self
+                .background_sequences
+                .get(session_id)
+                .copied()
+                .unwrap_or(0)
+                .max(
+                    if self
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| session.id == *session_id)
+                    {
+                        self.event_sequence
+                    } else {
+                        0
+                    },
+                );
+            if *sequence > seen {
+                self.background_sequences
+                    .insert(session_id.clone(), *sequence);
+                self.apply_archive_navigation(session_id, *archived, *pinned, *updated_at, cx);
+            }
+            return;
+        }
         if self.session.as_ref().map(|s| s.id.as_str()) != Some(event.session_id()) {
             let previous = self
                 .background_sequences
@@ -476,16 +514,14 @@ impl HiveApp {
             self.refresh_sessions(cx);
             return;
         }
-        if self.loading {
-            self.pending_events.push(event);
-            return;
-        }
         if event.sequence() <= self.event_sequence {
             return;
         }
         self.event_sequence = event.sequence();
         self.background_sequences
-            .insert(event.session_id().into(), event.sequence());
+            .entry(event.session_id().into())
+            .and_modify(|seen| *seen = (*seen).max(event.sequence()))
+            .or_insert(event.sequence());
         self.apply_activity(&event);
         self.apply_interaction_event(&event);
         if matches!(&event, PiEvent::State { .. } | PiEvent::Settled { .. }) {
@@ -494,7 +530,8 @@ impl HiveApp {
         // GPUI stores a positive max_offset and a negative current offset.
         let follow = self.conversation_find.is_none() && !self.reading_above_latest();
         match event {
-            PiEvent::State { .. }
+            PiEvent::SessionNavigation { .. }
+            | PiEvent::State { .. }
             | PiEvent::Interaction { .. }
             | PiEvent::InteractionResolved { .. } => {}
             PiEvent::AssistantDelta {

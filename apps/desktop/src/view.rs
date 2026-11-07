@@ -556,6 +556,14 @@ impl Render for HiveApp {
                 .when(self.conversation_find.is_some(), |view| view.child(self.render_conversation_find(cx)))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))))
+                .when(self.session.as_ref().is_some_and(|session|session.archived), |surface| {
+                    let session=self.session.as_ref().unwrap().clone();
+                    surface.child(h_flex().flex_wrap().gap_2().px_4().items_center()
+                        .child(div().text_sm().text_color(Color::Muted.get(cx)).child("已归档 · 发送或收到新消息后自动恢复"))
+                        .child(Button::new("restore-current-session").ghost().label("恢复会话")
+                            .disabled(!self.connected || self.session_archive_loading.contains(&session.id) || self.session_pin_loading.contains(&session.id))
+                            .on_click(cx.listener(move |this,_,_,cx|this.set_session_archived(session.clone(),false,cx)))))
+                })
                 .when(open_failed, |surface| surface.child(v_flex().flex_1().min_h_0().items_center().justify_center().gap_3()
                     .child(div().text_sm().child("未能打开会话，草稿已保留。"))
                     .when(self.session.as_ref().is_some_and(|s| !matches!(s.backend, crate::protocol::Backend::Pi)), |panel| panel.child(

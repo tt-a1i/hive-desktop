@@ -18,7 +18,9 @@ Hive 2.2.1 通过可重现 pnpm 补丁开放执行器 factory 与派生成员后
 | --- | --- | --- |
 | initialize | 空对象 | version、dataDir、hivePort |
 | hive.request | method、path、body? | Hive 原始响应；只接受本地 `/api/` 路径 |
-| chat.list | workspaceId | 当前工作区的桌面会话列表 |
+| chat.list | workspaceId | 当前工作区全部桌面会话列表（含归档，供身份/成员绑定复用） |
+| chat.search | query、archived?（默认 false）、offset?（默认 0） | 当前筛选的 matches（最多 100）及 total |
+| chat.archive | sessionId、archived（布尔值） | 保存后的 session 与本工作区完整 sessions |
 | chat.create | workspaceId | 新会话及完整快照 |
 | chat.open | sessionId | 会话及完整快照 |
 | chat.prompt | sessionId、text、attachmentIds? | accepted 与更新后的 session 元数据 |
@@ -45,3 +47,7 @@ Agent 通知为 `{event:"agent",data:{type,sessionId,sequence,...}}`。事件包
 这是原生客户端的保留格式，并非 Hive 通用附件协议。桌面文字包含该标记时会包一层空元数据，只解一次，保留用户原文；直接使用 Web/HTTP 手写此保留格式会被原生接入器解释。现有 Web 页面没有对应附件投影，不能把它视为已支持桌面图片消息的跨端展示。
 
 发送前校验上传归属及已知模型图片能力。上传副本独立于用户原文件；待发送草稿保留引用直到后台确认接受。后台确认前崩溃或响应丢失仍可能留下不确定草稿，需要用户核对历史后处理，不承诺跨 Hive 与桌面两个存储的恰好一次发送。详见 [图片附件验证](validation/2026-11-08-image-attachments.md)。
+
+## 会话归档
+
+归档是桌面导航元数据，不停止 Agent 或更改 Hive 协作状态。成功保存或幂等请求发出 `session_navigation {sessionId,sequence,archived,pinned,updatedAt}`，界面按事件顺序应用状态，RPC 回执只确认请求。忙碌、待投递或有未结派单的会话不能归档；新实际输入会在入队前恢复。全量列表保留归档记录，默认搜索和置顶过滤归档；归档搜索显式传 archived=true。实现和验证边界见 [归档记录](validation/2026-11-08-session-archives.md)。

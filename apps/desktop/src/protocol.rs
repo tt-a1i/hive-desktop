@@ -17,6 +17,8 @@ pub struct Session {
     #[serde(default)]
     pub pinned: bool,
     #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
     pub updated_at: i64,
     pub workspace_id: String,
     pub agent_id: Option<String>,
@@ -195,6 +197,14 @@ impl AgentInteraction {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiEvent {
     #[serde(rename_all = "camelCase")]
+    SessionNavigation {
+        session_id: String,
+        sequence: u64,
+        archived: bool,
+        pinned: bool,
+        updated_at: i64,
+    },
+    #[serde(rename_all = "camelCase")]
     Interaction {
         session_id: String,
         sequence: u64,
@@ -273,7 +283,8 @@ pub enum PiEvent {
 impl PiEvent {
     pub fn sequence(&self) -> u64 {
         match self {
-            Self::Interaction { sequence, .. }
+            Self::SessionNavigation { sequence, .. }
+            | Self::Interaction { sequence, .. }
             | Self::InteractionResolved { sequence, .. }
             | Self::State { sequence, .. }
             | Self::AssistantDelta { sequence, .. }
@@ -288,7 +299,8 @@ impl PiEvent {
 
     pub fn session_id(&self) -> &str {
         match self {
-            Self::Interaction { session_id, .. }
+            Self::SessionNavigation { session_id, .. }
+            | Self::Interaction { session_id, .. }
             | Self::InteractionResolved { session_id, .. }
             | Self::State { session_id, .. }
             | Self::AssistantDelta { session_id, .. }

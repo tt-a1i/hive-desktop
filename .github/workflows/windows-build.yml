@@ -61,6 +61,9 @@ jobs:
       - name: Check durable session pinning without Agent requests
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:session-pins
+      - name: Check session archives, restoration and dispatch guards
+        timeout-minutes: 3
+        run: pnpm --filter @hive-desktop/runtime check:session-archives
       - name: Check image payloads and durable native transports
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:images

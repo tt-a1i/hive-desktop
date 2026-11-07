@@ -120,7 +120,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       chats.assertWorkspaceAvailable(workspace);
       return chats.attachments.addClipboard(workspace, params.image);
     }
-    case 'chat.search': return chats.search(params.query);
+    case 'chat.search': return chats.search(params.query, params.archived, params.offset);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.createRecord':
     case 'chat.create': {
@@ -130,6 +130,10 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     }
     case 'chat.pin': {
       const session = chats.setPinned(text(params, 'sessionId'), params.pinned);
+      return { session, sessions: chats.list(session.workspaceId) };
+    }
+    case 'chat.archive': {
+      const session = await chats.setArchived(text(params, 'sessionId'), params.archived);
       return { session, sessions: chats.list(session.workspaceId) };
     }
     case 'chat.rename': return chats.rename(text(params, 'sessionId'), params.title);

@@ -1,3 +1,4 @@
+mod archiving;
 mod naming;
 mod pinning;
 pub(crate) use pinning::PinnedSessions;
@@ -318,7 +319,11 @@ impl HiveApp {
                                             && !this.closing
                                             && this.workspace_writes_allowed()
                                         {
-                                            this.status = if this.sessions.is_empty() {
+                                            this.status = if this
+                                                .sessions
+                                                .iter()
+                                                .all(|session| session.archived)
+                                            {
                                                 "工作区已就绪，新建会话开始工作"
                                             } else {
                                                 "工作区已就绪"
@@ -335,9 +340,11 @@ impl HiveApp {
                                                 this.navigation.sessions.get(&workspace).and_then(
                                                     |id| this.sessions.iter().find(|s| &s.id == id),
                                                 );
-                                            if let Some(first) =
-                                                saved.or_else(|| this.sessions.first())
-                                            {
+                                            if let Some(first) = saved.or_else(|| {
+                                                this.sessions
+                                                    .iter()
+                                                    .find(|session| !session.archived)
+                                            }) {
                                                 this.open_session(first.id.clone(), cx);
                                             }
                                         }

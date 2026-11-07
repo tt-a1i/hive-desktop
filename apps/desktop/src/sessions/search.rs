@@ -19,6 +19,8 @@ struct Page {
     total: usize,
 }
 struct SessionSearch {
+    archived: bool,
+    offset: usize,
     app: WeakEntity<HiveApp>,
     runtime: Arc<Runtime>,
     query: Entity<InputState>,
@@ -32,6 +34,17 @@ struct SessionSearch {
 
 impl HiveApp {
     pub fn open_session_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_session_browser(false, window, cx);
+    }
+    pub(crate) fn open_archived_sessions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_session_browser(true, window, cx);
+    }
+    fn open_session_browser(
+        &mut self,
+        archived: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.connected || window.has_active_dialog(cx) {
             return;
         }
@@ -40,8 +53,13 @@ impl HiveApp {
         };
         let parent = cx.weak_entity();
         let search = cx.new(|cx| {
-            let query =
-                cx.new(|cx| InputState::new(window, cx).placeholder("搜索会话名称、项目或 Agent…"));
+            let query = cx.new(|cx| {
+                InputState::new(window, cx).placeholder(if archived {
+                    "搜索已归档会话、项目或 Agent…"
+                } else {
+                    "搜索会话名称、项目或 Agent…"
+                })
+            });
             cx.subscribe_in(
                 &query,
                 window,
@@ -56,6 +74,8 @@ impl HiveApp {
             )
             .detach();
             let mut search = SessionSearch {
+                archived,
+                offset: 0,
                 app: parent,
                 runtime,
                 query,
@@ -71,7 +91,17 @@ impl HiveApp {
         });
         let focus = search.read(cx).query.read(cx).focus_handle(cx);
         window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title("搜索会话").w(px(660.)).child(search.clone())
+            dialog
+                .title(if archived {
+                    "已归档会话"
+                } else {
+                    "搜索会话"
+                })
+                .w(px(660.))
+                // Input's Enter propagates to the dialog before PressEnter is
+                // delivered. Keep it alive for open_selected to navigate/close.
+                .on_ok(|_, _, _| false)
+                .child(search.clone())
         });
         window.on_next_frame(move |window, cx| focus.focus(window, cx));
     }
@@ -79,10 +109,15 @@ impl HiveApp {
 
 impl SessionSearch {
     fn load(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        if debounce {
+            self.offset = 0;
+        }
         self.generation += 1;
         let generation = self.generation;
         let query = self.query.read(cx).value().to_string();
         let runtime = self.runtime.clone();
+        let archived = self.archived;
+        let offset = self.offset;
         self.loading = true;
         self.error = None;
         self.page = Page::default();
@@ -101,7 +136,10 @@ impl SessionSearch {
                 return;
             }
             let result = runtime
-                .request("chat.search", json!({"query":query}))
+                .request(
+                    "chat.search",
+                    json!({"query":query,"archived":archived,"offset":offset}),
+                )
                 .await
                 .and_then(|value| {
                     serde_json::from_value::<Page>(value).map_err(|error| error.to_string())
@@ -112,7 +150,17 @@ impl SessionSearch {
                 }
                 this.loading = false;
                 match result {
-                    Ok(page) => this.page = page,
+                    Ok(page) => {
+                        if page.total > 0 && this.offset >= page.total && page.matches.is_empty() {
+                            this.offset = ((page.total - 1) / 100) * 100;
+                            this.load(false, cx);
+                            return;
+                        }
+                        if page.total == 0 {
+                            this.offset = 0;
+                        }
+                        this.page = page;
+                    }
                     Err(error) => this.error = Some(format!("搜索失败：{error}")),
                 }
                 cx.notify();
@@ -263,19 +311,71 @@ impl Render for SessionSearch {
             )
             .child(
                 h_flex()
+                    .flex_wrap()
+                    .gap_2()
                     .justify_between()
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
-                    .child(if self.page.total > self.page.matches.len() {
+                    .child(if self.page.total == 0 {
+                        "0 个会话".into()
+                    } else {
                         format!(
-                            "显示前 {} 个结果，共 {} 个，请继续输入缩小范围。",
-                            self.page.matches.len(),
+                            "第 {}–{} 个，共 {} 个",
+                            self.offset + 1,
+                            self.offset + self.page.matches.len(),
                             self.page.total
                         )
-                    } else {
-                        format!("{} 个会话", self.page.total)
                     })
+                    .child(
+                        Button::new("refresh-session-search")
+                            .ghost()
+                            .compact()
+                            .label("刷新")
+                            .disabled(self.loading)
+                            .on_click(cx.listener(|this, _, _, cx| this.load(false, cx))),
+                    )
                     .child("↑↓ 选择 · Enter 打开 · Esc 返回"),
             )
+            .when(
+                self.offset > 0 || self.offset + self.page.matches.len() < self.page.total,
+                |view| {
+                    view.child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("session-search-previous")
+                                    .ghost()
+                                    .label("上一页")
+                                    .disabled(self.loading || self.offset == 0)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.offset = this.offset.saturating_sub(100);
+                                        this.load(false, cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("session-search-next")
+                                    .ghost()
+                                    .label("下一页")
+                                    .disabled(
+                                        self.loading
+                                            || self.offset + self.page.matches.len()
+                                                >= self.page.total,
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.offset += 100;
+                                        this.load(false, cx);
+                                    })),
+                            ),
+                    )
+                },
+            )
+            .when(self.archived, |view| {
+                view.child(
+                    div()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
+                        .child("历史和草稿均保留。打开会话后可恢复或继续发送。"),
+                )
+            })
     }
 }

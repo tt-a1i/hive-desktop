@@ -26,6 +26,7 @@ impl HiveApp {
         if !self.connected
             || self.closing
             || self.session_pin_loading.contains(&session.id)
+            || self.session_archive_loading.contains(&session.id)
             || self.workspace_removing.as_ref() == Some(&session.workspace_id)
         {
             return;
@@ -117,7 +118,8 @@ impl HiveApp {
                     if this.connection_generation != connection {
                         return false;
                     }
-                    if generation == this.pinned_sessions.generation {
+                    if generation == this.pinned_sessions.generation && !this.pinned_sessions.dirty
+                    {
                         match result {
                             Ok(records) => {
                                 this.pinned_sessions.records = records;
@@ -158,6 +160,7 @@ impl HiveApp {
                 hit.session.custom_title = session.custom_title;
                 hit.session.agent_id = session.agent_id.clone();
                 hit.session.updated_at = session.updated_at;
+                hit.session.archived = session.archived;
                 hit.title = if !session.custom_title {
                     session
                         .agent_id
@@ -170,6 +173,9 @@ impl HiveApp {
                 };
             }
         }
+        self.pinned_sessions
+            .records
+            .retain(|hit| !hit.session.archived);
         self.pinned_sessions.records.sort_by(|a, b| {
             b.session
                 .updated_at

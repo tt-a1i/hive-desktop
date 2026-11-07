@@ -342,6 +342,10 @@ impl HiveApp {
                 .tooltip(if cfg!(target_os = "macos") { "搜索会话 (⌘K)" } else { "搜索会话 (Ctrl+K)" })
                 .child(div().flex_1().font_weight(FontWeight::NORMAL).child("搜索会话"))
                 .disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.open_session_search(window, cx))))
+            .child(Button::new("archived-sessions").ghost().h(px(32.)).rounded_full().icon(Glyph::Archive)
+                .justify_start().w_full().accessibility_label("已归档会话")
+                .child(div().flex_1().font_weight(FontWeight::NORMAL).child("已归档"))
+                .disabled(!self.connected).on_click(cx.listener(|this,_,window,cx|this.open_archived_sessions(window,cx))))
             .child(
                 v_flex()
                     .flex_shrink_0()
@@ -616,14 +620,14 @@ impl HiveApp {
                                     .when(expanded, |group| {
                                         let rows = v_flex().pl_4().pt(px(2.)).gap(px(2.)).min_w_0();
                                         group.child(match sessions {
-                                            Some(items) if items.is_empty() => rows.child(
+                                            Some(items) if items.iter().all(|session|session.archived) => rows.child(
                                                 div()
                                                     .text_xs()
                                                     .text_color(Color::Muted.get(cx))
-                                                    .child("暂无会话"),
+                                                    .child("暂无未归档会话"),
                                             ),
                                             Some(items) => {
-                                                rows.children(items.iter().map(|session| {
+                                                rows.children(items.iter().filter(|session|!session.archived).map(|session| {
                                                     self.render_session_link(session, cx)
                                                 }))
                                             }
@@ -722,7 +726,9 @@ impl HiveApp {
             .filter_map(|label| {
                 let count = sessions
                     .iter()
-                    .filter(|session| self.session_activity(&session.id) == Some(label))
+                    .filter(|session| {
+                        !session.archived && self.session_activity(&session.id) == Some(label)
+                    })
                     .count();
                 (count > 0).then(|| format!("{count} {label}"))
             })

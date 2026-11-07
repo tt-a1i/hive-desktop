@@ -18,6 +18,7 @@ export interface ChatRecord {
   title: string;
   customTitle?: boolean;
   pinned?: boolean;
+  archived?: boolean;
   sessionFile: string | null;
   agentId?: string;
   piSessionId?: string;
@@ -87,6 +88,7 @@ function isChatRecord(value: unknown): value is ChatRecord {
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
   if (record.pinned !== undefined && typeof record.pinned !== 'boolean') return false;
+  if (record.archived !== undefined && typeof record.archived !== 'boolean') return false;
   if (record.customTitle !== undefined && typeof record.customTitle !== 'boolean') return false;
   if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex' && record.backend !== 'pi-rpc' && record.backend !== 'claude') return false;
   if (record.nativeclaudeSessionId !== undefined && typeof record.nativeclaudeSessionId !== 'string') return false;
