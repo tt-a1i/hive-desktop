@@ -1,4 +1,4 @@
-use crate::app::HiveApp;
+use crate::app::{HiveApp, SettingsSection};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     component::{
@@ -183,8 +183,11 @@ impl Render for HiveApp {
                 )).into_any_element()
             } else if self.settings_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(self.render_settings_tabs(cx))
-                .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("通用与外部程序"))
-                .child(v_flex().id("settings-content").flex_1().min_h_0().overflow_y_scroll().gap_3()
+                .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("设置"))
+                .child({
+                    let content = v_flex().flex_1().min_h_0().gap_3();
+                    match self.settings_section {
+                        SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("自动组队"))
                     .child(div().text_sm().child("全局设置，适用于所有工作区。开启后，Hive 会引导主控按任务需要组建团队；关闭后可自行安排成员。此设置改变主控指导语，不会直接创建或删除成员。"))
                     .child(h_flex().flex_wrap().items_center().gap_2()
@@ -192,8 +195,9 @@ impl Render for HiveApp {
                         .when_some(self.team_autostaff, |view, enabled| view.child(Button::new("toggle-team-autostaff").label(if enabled { "关闭引导" } else { "开启引导" }).disabled(!self.connected || self.team_autostaff_loading).on_click(cx.listener(move |this, _, _, cx| this.team_autostaff_request(Some(!enabled), cx)))))
                         .child(Button::new("reload-team-autostaff").label("重新读取").disabled(!self.connected || self.team_autostaff_loading).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx)))))
                     .when(self.team_autostaff_loading && self.team_autostaff.is_some(), |view| view.child(div().text_xs().child("正在处理自动组队设置…")))
-                    .when_some(self.team_autostaff_message.clone(), |view, message| view.child(div().text_sm().child(message)))
-                    .child(self.render_notification_settings(cx))
+                    .when_some(self.team_autostaff_message.clone(), |view, message| view.child(div().text_sm().child(message))),
+                        SettingsSection::Notifications => content.id("settings-notification-content").overflow_y_scroll().child(self.render_notification_settings(cx)),
+                        SettingsSection::Programs => content.id("settings-programs-content").overflow_y_scroll()
                     .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("外部程序设置"))
                     .child(div().text_sm().child("设置外部 Pi、Codex 和 Claude 的可执行文件路径。留空时通过 PATH 查找；环境变量优先于此设置。"))
                     .child(div().text_sm().child("更改适用于之后新打开或重启的外部进程，正在运行的进程继续使用原配置。"))
@@ -209,7 +213,9 @@ impl Render for HiveApp {
                     .when_some(self.executable_settings.as_ref(), |view, settings| view.child(div().text_xs().child(settings.effective.claude.label())))
                     .child(h_flex().gap_2()
                         .child(Button::new("save-executable-settings").primary().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window, cx))))
-                        .child(Button::new("reload-executable-settings").label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))))
+                        .child(Button::new("reload-executable-settings").label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))),
+                    }
+                })
                 .into_any_element()
             } else if self.member_panel { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("团队成员"))

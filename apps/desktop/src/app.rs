@@ -15,6 +15,13 @@ use std::{
     sync::Arc,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSection {
+    Team,
+    Notifications,
+    Programs,
+}
+
 pub struct ToolPresentation {
     pub name: String,
     pub status: &'static str,
@@ -66,6 +73,7 @@ pub struct HiveApp {
     pub codex_command: Entity<InputState>,
     pub claude_command: Entity<InputState>,
     pub settings_panel: bool,
+    pub settings_section: SettingsSection,
     pub settings_loading: bool,
     pub settings_generation: u64,
     pub settings_message: Option<String>,
@@ -196,6 +204,7 @@ impl HiveApp {
             codex_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
             claude_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
             settings_panel: false,
+            settings_section: SettingsSection::Team,
             settings_loading: false,
             settings_generation: 0,
             settings_message: None,

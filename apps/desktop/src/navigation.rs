@@ -1,4 +1,4 @@
-use crate::app::HiveApp;
+use crate::app::{HiveApp, SettingsSection};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -89,15 +89,34 @@ impl HiveApp {
             .flex_shrink_0()
             .gap_2()
             .p_3()
-            .child(
-                Button::new("settings-programs-tab")
-                    .label("通用与外部程序")
-                    .selected(self.settings_panel)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if !this.settings_panel {
-                            this.open_settings(window, cx);
-                        }
-                    })),
+            .flex_wrap()
+            .children(
+                [
+                    ("settings-team-tab", "团队", SettingsSection::Team),
+                    (
+                        "settings-notifications-tab",
+                        "通知",
+                        SettingsSection::Notifications,
+                    ),
+                    (
+                        "settings-programs-tab",
+                        "外部程序",
+                        SettingsSection::Programs,
+                    ),
+                ]
+                .into_iter()
+                .map(|(id, label, section)| {
+                    Button::new(id)
+                        .label(label)
+                        .selected(self.settings_panel && self.settings_section == section)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.settings_section = section;
+                            if !this.settings_panel {
+                                this.open_settings(window, cx);
+                            }
+                            cx.notify();
+                        }))
+                }),
             )
             .child(
                 Button::new("settings-roles-tab")
