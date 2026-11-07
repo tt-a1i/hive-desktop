@@ -58,6 +58,22 @@ try {
       return (await cmd.execute('startup-check', { args })).content[0].text;
     };
     const { dispatch_id: dispatch } = JSON.parse(await team(`${workspaceId}:orchestrator`, ['send', 'Reviewer', '核对项目启动方式']));
+    const tester = await runtime.hive.request('POST', `${base}/workers`, { name: 'Tester', role: 'tester', autostart: false });
+    await runtime.hive.request('POST', `${base}/agents/${tester.id}/config`, { command: 'hive:pi', args: [] });
+    await runtime.hive.request('POST', `${base}/agents/${tester.id}/start`);
+    const testerChat = runtime.chats.list(workspaceId).find(chat => chat.agentId === tester.id);
+    await runtime.chats.live.get(testerChat.id).queue.pause();
+    const child = JSON.parse(await team(`${workspaceId}:orchestrator`, ['send', 'Tester', '核对测试入口', '--related-to', dispatch])).dispatch_id;
+    const question = JSON.parse(await team(tester.id, ['message', '--dispatch', dispatch, '--from-dispatch', child, '--kind', 'question', '从哪个目录运行测试？'])).message;
+    const answer = JSON.parse(await team(member.id, ['message', '--dispatch', child, '--from-dispatch', dispatch, '--kind', 'answer', '--reply-to', question.id, '从项目根目录运行。'])).message;
+    for (const id of [dispatch, child]) {
+      const path = `/api/ui/workspaces/${workspaceId}/dispatches/${id}/messages?scope=collaboration`;
+      const history = await runtime.requestHive('GET', path);
+      assert.deepEqual(new Set(history.related_dispatches.map(task => task.owner_name)), new Set(['Reviewer', 'Tester']));
+      assert.equal(history.messages.find(m => m.id === answer.id)?.reply_to, question.id);
+      const later = await runtime.requestHive('GET', `${path}&after_message_id=${encodeURIComponent(question.id)}`);
+      assert.deepEqual(later.messages.map(m => m.id), [answer.id]);
+    }
     const inbox = JSON.parse(await team(member.id, ['messages', '--dispatch', dispatch]));
     await writeFile(join(directory, 'Beta', 'review.txt'), 'pnpm dev');
     await team(member.id, ['report', '已核对启动方式。', '--dispatch', dispatch, '--seen', String(inbox.required_seen_seq), '--artifact', 'review.txt']);

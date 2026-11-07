@@ -19,7 +19,9 @@ pub struct Dispatch {
 }
 #[derive(Clone, Deserialize)]
 pub struct DispatchMessage {
-    pub sequence: u64,
+    pub id: String,
+    pub dispatch_id: String,
+    pub reply_to: Option<String>,
     pub from_agent_id: String,
     pub recipient_agent_id: String,
     pub kind: String,
@@ -28,9 +30,18 @@ pub struct DispatchMessage {
     pub delivery_error: Option<String>,
 }
 #[derive(Deserialize)]
+pub struct Responsibility {
+    pub id: String,
+    pub to_agent_id: String,
+    pub owner_name: String,
+    pub text: String,
+    pub state: String,
+}
+#[derive(Deserialize)]
 struct MessagePage {
     messages: Vec<DispatchMessage>,
-    next_after_seq: Option<u64>,
+    related_dispatches: Vec<Responsibility>,
+    next_after_message_id: Option<String>,
 }
 #[derive(Deserialize)]
 pub(crate) struct Tasks {
@@ -56,9 +67,10 @@ pub struct Collaboration {
     pub detail_error: Option<String>,
     detail_generation: u64,
     pub messages: Vec<DispatchMessage>,
-    pub next_seq: Option<u64>,
+    pub responsibilities: Vec<Responsibility>,
+    pub next_message: Option<String>,
     pub message_loading: bool,
-    pub requested_after: u64,
+    pub requested_after: Option<String>,
     pub message_error: Option<String>,
     pub message_generation: u64,
 }
@@ -84,9 +96,10 @@ impl Collaboration {
             detail_error: None,
             detail_generation: 0,
             messages: vec![],
-            next_seq: None,
+            responsibilities: vec![],
+            next_message: None,
             message_loading: false,
-            requested_after: 0,
+            requested_after: None,
             message_error: None,
             message_generation: 0,
         }
@@ -113,7 +126,8 @@ impl HiveApp {
         self.collaboration.offset = 0;
         self.collaboration.selected = None;
         self.collaboration.messages.clear();
-        self.collaboration.next_seq = None;
+        self.collaboration.responsibilities.clear();
+        self.collaboration.next_message = None;
         self.collaboration.message_generation += 1;
         self.load_tasks(cx);
         self.load_dispatches(cx);
@@ -180,7 +194,8 @@ impl HiveApp {
         c.dispatches.clear();
         c.selected = None;
         c.messages.clear();
-        c.next_seq = None;
+        c.responsibilities.clear();
+        c.next_message = None;
         c.message_generation += 1;
         c.message_loading = false;
         cx.notify();
@@ -243,12 +258,13 @@ impl HiveApp {
         c.detail_error = None;
         c.selected = Some(item);
         c.messages.clear();
-        c.next_seq = None;
-        self.load_dispatch_messages(0, cx);
+        c.responsibilities.clear();
+        c.next_message = None;
+        self.load_dispatch_messages(None, cx);
     }
     pub fn refresh_dispatch(&mut self, cx: &mut Context<Self>) {
         self.load_dispatch_record(cx);
-        self.load_dispatch_messages(0, cx);
+        self.load_dispatch_messages(None, cx);
     }
     pub fn load_dispatch_record(&mut self, cx: &mut Context<Self>) {
         let (Some(workspace), Some(runtime), Some(id)) = (
@@ -288,7 +304,7 @@ impl HiveApp {
         })
         .detach();
     }
-    pub fn load_dispatch_messages(&mut self, after: u64, cx: &mut Context<Self>) {
+    pub fn load_dispatch_messages(&mut self, after: Option<String>, cx: &mut Context<Self>) {
         let (Some(workspace), Some(runtime), Some(dispatch)) = (
             self.workspace.clone(),
             self.runtime.clone(),
@@ -300,20 +316,48 @@ impl HiveApp {
         c.message_generation += 1;
         let generation = c.message_generation;
         c.message_loading = true;
-        c.requested_after = after;
+        c.requested_after = after.clone();
         c.message_error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = runtime.request("hive.request", json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/dispatches/{dispatch}/messages?after_seq={after}")})).await;
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            query.append_pair("scope", "collaboration");
+            if let Some(cursor) = &after {
+                query.append_pair("after_message_id", cursor);
+            }
+            let path = format!(
+                "/api/ui/workspaces/{workspace}/dispatches/{dispatch}/messages?{}",
+                query.finish()
+            );
+            let result = runtime
+                .request("hive.request", json!({"method":"GET", "path":path}))
+                .await;
             let _ = this.update(cx, |this, cx| {
                 let c = &mut this.collaboration;
-                if c.visible && this.workspace.as_ref() == Some(&workspace) && c.message_generation == generation && c.selected.as_ref().is_some_and(|d| d.id == dispatch) {
+                if c.visible
+                    && this.workspace.as_ref() == Some(&workspace)
+                    && c.message_generation == generation
+                    && c.selected.as_ref().is_some_and(|d| d.id == dispatch)
+                {
                     c.message_loading = false;
-                    match result.and_then(|v| serde_json::from_value::<MessagePage>(v).map_err(|e| e.to_string())) { Ok(page) => { if after == 0 { c.messages.clear(); } c.messages.extend(page.messages); c.next_seq = page.next_after_seq; }, Err(e) => c.message_error = Some(format!("读取消息失败：{e}")) }
+                    match result.and_then(|v| {
+                        serde_json::from_value::<MessagePage>(v).map_err(|e| e.to_string())
+                    }) {
+                        Ok(page) => {
+                            if after.is_none() {
+                                c.messages.clear();
+                            }
+                            c.messages.extend(page.messages);
+                            c.responsibilities = page.related_dispatches;
+                            c.next_message = page.next_after_message_id;
+                        }
+                        Err(e) => c.message_error = Some(format!("读取消息失败：{e}")),
+                    }
                     cx.notify();
                 }
             });
-        }).detach();
+        })
+        .detach();
     }
 }
 async fn read_dispatch(

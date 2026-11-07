@@ -213,7 +213,7 @@ impl HiveApp {
                                 this.load_tasks(cx);
                             }
                             if this.collaboration.message_loading {
-                                let after = this.collaboration.requested_after;
+                                let after = this.collaboration.requested_after.clone();
                                 this.load_dispatch_messages(after, cx);
                             }
                         }
@@ -407,15 +407,27 @@ impl Render for HiveApp {
                         .child(div().text_sm().child(item.text.clone()))
                         .when_some(item.report_text.clone(), |view, text| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if item.state == "cancelled" { "取消原因" } else { "汇报原文" })).child(div().text_sm().child(text)))
                         .when(!item.artifacts.is_empty(), |view| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("产物")).children(item.artifacts.iter().enumerate().map(|(i, path)| self.artifact_link(&item.id, i, path, cx))))
-                        .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("派单消息"))
+                        .when(self.collaboration.responsibilities.len() > 1, |view| view.child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("成员分工"))
+                            .children(self.collaboration.responsibilities.iter().map(|task| v_flex().gap_1().py_1()
+                                .child(h_flex().items_center().gap_2().child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{} · {}", task.owner_name, crate::collaboration::dispatch_state(&task.state))))
+                                    .when(task.id != item.id, |row| row.when_some(self.member_session_link(&task.id, Some(&task.to_agent_id), "成员会话", cx), |row, link| row.child(link))))
+                                .child(div().text_sm().child(task.text.clone())))))
+                        .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("协作消息"))
                         .when(self.collaboration.message_loading, |view| view.child(div().text_sm().child("正在读取消息…")))
-                        .when_some(self.collaboration.message_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)).child(Button::new("retry-dispatch-messages").label("重试读取消息").on_click(cx.listener(|this, _, _, cx| { let after = this.collaboration.requested_after; this.load_dispatch_messages(after, cx); }))))
+                        .when_some(self.collaboration.message_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)).child(Button::new("retry-dispatch-messages").label("重试读取消息").on_click(cx.listener(|this, _, _, cx| { let after = this.collaboration.requested_after.clone(); this.load_dispatch_messages(after, cx); }))))
                         .when(!self.collaboration.message_loading && self.collaboration.message_error.is_none() && self.collaboration.messages.is_empty(), |view| view.child(div().text_sm().child("没有消息")))
-                        .children(self.collaboration.messages.iter().map(|message| v_flex().gap_1().p_2().bg(Color::Inset.get(cx))
-                            .child(div().text_xs().child(format!("#{} · {} → {} · {} · {}", message.sequence, self.agent_name(&message.from_agent_id), self.agent_name(&message.recipient_agent_id), crate::collaboration::message_kind(&message.kind), crate::collaboration::delivery_state(&message.delivery_state))))
+                        .children(self.collaboration.messages.iter().map(|message| v_flex().gap_1().p_3().rounded_lg().bg(Color::Inset.get(cx))
+                            .child(div().text_xs().child(format!("{} → {} · {} · {}", self.agent_name(&message.from_agent_id), self.agent_name(&message.recipient_agent_id), crate::collaboration::message_kind(&message.kind), crate::collaboration::delivery_state(&message.delivery_state))))
+                            .when(self.collaboration.responsibilities.len() > 1, |row| row.when_some(self.collaboration.responsibilities.iter().find(|task| task.id == message.dispatch_id), |row, task|
+                                row.child(div().text_xs().truncate().text_color(Color::Muted.get(cx)).child(format!("派单 · {}", task.text)))))
+                            .when_some(message.reply_to.as_ref(), |row, id| {
+                                let original = self.collaboration.messages.iter().find(|m| &m.id == id);
+                                let quote = original.map(|m| format!("回复 {}：{}", self.agent_name(&m.from_agent_id), m.text)).unwrap_or_else(|| format!("回复消息 {id}"));
+                                row.child(div().border_l_2().border_color(Color::Divider.get(cx)).pl_2().text_sm().text_color(Color::Secondary.get(cx)).child(quote))
+                            })
                             .child(div().text_sm().child(message.text.clone()))
                             .when_some(message.delivery_error.clone(), |view, error| view.child(div().text_xs().text_color(Color::Error.get(cx)).child(format!("投递错误：{error}"))))))
-                        .when_some(self.collaboration.next_seq, |view, seq| view.child(Button::new("more-dispatch-messages").label("加载更多消息").disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(seq, cx)))))))
+                        .when_some(self.collaboration.next_message.clone(), |view, cursor| view.child(Button::new("more-dispatch-messages").label("加载更多消息").disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(Some(cursor.clone()), cx)))))))
                 )).into_any_element()
             } else if self.settings_panel { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full()
                 .child(self.render_settings_tabs(compact_settings, cx))

@@ -158,7 +158,11 @@ Invoke-Action '收起工作过程，2 项工具已完成'
 Invoke-Action '打开主会话'
 Invoke-Action '打开关联派单'
 [void](Wait-Action '在文件资源管理器中显示：review.txt')
-[void](Wait-Action '刷新详情')
+[void](Wait-Action '打开 Tester 的成员会话')
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-related-dispatch.png')
+Invoke-Action '打开 Tester 的成员会话'
+Invoke-Action '返回派单详情'
+[void](Wait-Action '在文件资源管理器中显示：review.txt')
 Invoke-Action '返回来源会话'
 [void](Wait-Action '打开关联派单')
 Write-Host 'Opened the actual reported dispatch from the orchestrator queue and returned to its chat.'
