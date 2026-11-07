@@ -47,6 +47,7 @@ try {
   for (const file of ['LICENSE', 'NOTICE']) {
     await cp(join(root, 'crates', 'hive-terminal', file), join(terminalNotices, file));
   }
+  await cp(join(root, 'apps/desktop/licenses/LICENSE-LUCIDE'), join(resources, 'licenses/LICENSE-LUCIDE'));
   progress('Runtime copy completed');
   progress(`Downloading official Node archive ${archive}`);
   run('curl', ['-fL', '--connect-timeout', '20', '--max-time', '120', '--retry', '2', '--retry-max-time', '300', '-o', join(temp, archive), `${url}/${archive}`]);
