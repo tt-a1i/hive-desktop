@@ -63,8 +63,8 @@ const wait = async <T>(fn: () => T | Promise<T>, predicate: (value: T) => boolea
     if (Date.now() > deadline) throw new Error('Fixture condition timed out');
     await new Promise(resolve => setTimeout(resolve, 10)); }
 };
-const stale = (fn: () => unknown) => assert.throws(fn, (error: unknown) => error instanceof CodexInteractionError && error.code === 'INTERACTION_STALE');
-const invalid = (fn: () => unknown) => assert.throws(fn, (error: unknown) => error instanceof CodexInteractionError && error.code === 'INTERACTION_INVALID_RESPONSE');
+const stale = (fn: () => Promise<unknown>) => assert.rejects(fn, (error: unknown) => error instanceof CodexInteractionError && error.code === 'INTERACTION_STALE');
+const invalid = (fn: () => Promise<unknown>) => assert.rejects(fn, (error: unknown) => error instanceof CodexInteractionError && error.code === 'INTERACTION_INVALID_RESPONSE');
 let count = 0;
 async function start(mode: string) {
   const cwd = join(directory, `session-${++count}`); await mkdir(cwd);
@@ -84,21 +84,21 @@ async function responses(cwd: string) {
 }
 async function finish(run: Awaited<ReturnType<typeof start>>) {
   await responses(run.cwd); assert.equal((await runtime.chats.open(run.record.id)).interactions[0]?.state, 'responding');
-  stale(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { decision: 'accept' }));
+  await stale(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { decision: 'accept' }));
   await writeFile(join(run.cwd, 'finish'), ''); await run.done;
   assert.deepEqual((await runtime.chats.open(run.record.id)).interactions, []);
-  stale(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { decision: 'accept' }));
+  await stale(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { decision: 'accept' }));
 }
 try {
   await runtime.settings.update({ piCommand: null, codexCommand: process.execPath });
   const a = await start('command'), b = await start('limited');
   assert.equal(a.card.nativeRequestId, b.card.nativeRequestId); assert.notEqual(a.card.id, b.card.id);
-  stale(() => runtime.chats.respondInteraction(b.record.id, a.card.id, { decision: 'accept' }));
-  const before = live().size; stale(() => runtime.chats.respondInteraction('missing', a.card.id, { decision: 'accept' })); assert.equal(live().size, before);
-  invalid(() => runtime.chats.respondInteraction(b.record.id, b.card.id, { decision: 'accept' }));
-  invalid(() => runtime.chats.respondInteraction(a.record.id, a.card.id, { decision: 'acceptForSession' }));
-  runtime.chats.respondInteraction(a.record.id, a.card.id, { decision: 'accept' });
-  runtime.chats.respondInteraction(b.record.id, b.card.id, { decision: 'decline' });
+  await stale(() => runtime.chats.respondInteraction(b.record.id, a.card.id, { decision: 'accept' }));
+  const before = live().size; await stale(() => runtime.chats.respondInteraction('missing', a.card.id, { decision: 'accept' })); assert.equal(live().size, before);
+  await invalid(() => runtime.chats.respondInteraction(b.record.id, b.card.id, { decision: 'accept' }));
+  await invalid(() => runtime.chats.respondInteraction(a.record.id, a.card.id, { decision: 'acceptForSession' }));
+  await runtime.chats.respondInteraction(a.record.id, a.card.id, { decision: 'accept' });
+  await runtime.chats.respondInteraction(b.record.id, b.card.id, { decision: 'decline' });
   await finish(a); await finish(b);
   assert.deepEqual((await responses(a.cwd))[0].result, { decision: 'accept' });
   assert.deepEqual((await responses(b.cwd))[0].result, { decision: 'decline' });
@@ -106,12 +106,12 @@ try {
     const run = await start(mode);
     let response: unknown = { decision: 'cancel' };
     if (mode === 'file') { assert.equal((run.card.item as { changes: { diff: string }[] }).changes[0]!.diff, '-old\n+new'); response = { decision: 'accept' }; }
-    if (mode === 'file-missing') invalid(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { decision: 'accept' }));
+    if (mode === 'file-missing') await invalid(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { decision: 'accept' }));
     if (mode === 'question') {
-      invalid(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { answers: { unknown: { answers: ['bad'] } } }));
+      await invalid(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { answers: { unknown: { answers: ['bad'] } } }));
       response = { answers: { secret: { answers: ['SECRET-SENTINEL-ONLY-NATIVE'] } } };
     }
-    runtime.chats.respondInteraction(run.record.id, run.card.id, response); await finish(run);
+    await runtime.chats.respondInteraction(run.record.id, run.card.id, response); await finish(run);
     assert.equal((await responses(run.cwd))[0].hash, createHash('sha256').update(JSON.stringify(response)).digest('hex'));
     assert.equal(JSON.stringify(await runtime.chats.open(run.record.id)).includes('SECRET-SENTINEL-ONLY-NATIVE'), false);
   }
@@ -120,12 +120,12 @@ try {
     if (mode === 'abort') await run.handle.abort(); else await writeFile(join(run.cwd, mode), '');
     if (mode === 'exit') await assert.rejects(run.done); else await run.done;
     assert.deepEqual(run.handle.interactions?.(), []);
-    stale(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { decision: 'accept' }));
+    await stale(() => runtime.chats.respondInteraction(run.record.id, run.card.id, { decision: 'accept' }));
     await assert.rejects(readFile(join(run.cwd, 'responses.jsonl')), (e: NodeJS.ErrnoException) => e.code === 'ENOENT');
   }
   const racing = await start('command');
-  runtime.chats.respondInteraction(racing.record.id, racing.card.id, { decision: 'accept' });
-  await racing.handle.abort(); await racing.done;
+  const racingAnswer = runtime.chats.respondInteraction(racing.record.id, racing.card.id, { decision: 'accept' });
+  await racing.handle.abort(); await racingAnswer; await racing.done;
   await assert.rejects(readFile(join(racing.cwd, 'responses.jsonl')), (e: NodeJS.ErrnoException) => e.code === 'ENOENT');
   for (const mode of ['unknown', 'malformed']) {
     const unsupported = await start(mode); await assert.rejects(unsupported.done);

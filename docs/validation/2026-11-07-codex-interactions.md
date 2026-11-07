@@ -8,6 +8,12 @@
 
 [先前预检失败收据](../../.artifacts/codex-native-interactions-Ecwar7/receipt.json) 保留了 0.166.0 拒绝 `untrusted` 策略的事实：未发送模型提示，不能算审批测试通过。
 
+## 真实原生桌面审批
+
+后续 [macOS 桌面收据](../../.artifacts/codex-native-ui-proof/receipt.json) 通过真实窗口发送原生 Terra 请求：先确认会话为 `openai/gpt-6.1-terra`，看到单个新增文件的路径及精确内容，独立确认审批前文件不存在，再点击“仅批准本次”。原生工具完成后审批卡消失、窗口显示 `APPROVAL_VERIFIED`，磁盘文件与指定内容逐字一致。原生 CLI 的只读/on-request/user 设置仅由测试包装进程传入，未改全局配置。这证明真实文件审批穿过桌面、后台与原生 Agent；仍不代表真实命令审批或补充输入已覆盖。
+
+验证构建见同目录 `build.json`；包含待回应状态及空提示修正，早于最后的空快照状态重置小修。后者经过独立源码复核及 Rust fmt/check/build，尚未做新版窗口回归。
+
 ## 合成协议与桌面走查
 
 [合成协议收据](../../packages/runtime/.artifacts/codex-interactions-BNGKwF/receipt.json) 使用真实 JSONL 传输、Hive HTTP 和 SQLite，覆盖 13 个会话中的请求隔离、状态快照、取消、终止、后端死亡及秘密输入不由 Hive 持久化等。合成对端不调用模型或执行命令。秘密不由 Hive 持久化不意味着 Codex 或外部系统绝不会回显或保存它。

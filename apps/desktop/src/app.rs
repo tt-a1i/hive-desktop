@@ -68,6 +68,10 @@ pub struct HiveApp {
     pub settings_generation: u64,
     pub settings_message: Option<String>,
     pub executable_settings: Option<crate::settings::ExecutableSettings>,
+    pub team_autostaff: Option<bool>,
+    pub team_autostaff_loading: bool,
+    pub team_autostaff_generation: u64,
+    pub team_autostaff_message: Option<String>,
     pub collaboration: crate::collaboration::Collaboration,
     pub memory: crate::memory::Memory,
     pub members: Vec<Member>,
@@ -185,6 +189,10 @@ impl HiveApp {
             settings_generation: 0,
             settings_message: None,
             executable_settings: None,
+            team_autostaff: None,
+            team_autostaff_loading: false,
+            team_autostaff_generation: 0,
+            team_autostaff_message: None,
             collaboration: crate::collaboration::Collaboration::new(cx),
             memory: crate::memory::Memory::new(window, cx),
             members: vec![],
@@ -262,6 +270,9 @@ impl HiveApp {
                         this.connected = true;
                         this.status = "后台已连接".into();
                         this.load_workspaces(cx);
+                        if this.settings_panel {
+                            this.team_autostaff_request(None, cx);
+                        }
                     }
                     Err(error) => this.error = Some(error),
                 }

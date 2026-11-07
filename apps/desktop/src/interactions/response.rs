@@ -17,9 +17,7 @@ impl HiveApp {
         {
             return;
         }
-        let Some(runtime) = self.runtime.clone() else {
-            return;
-        };
+
         let Some(card) = self
             .interactions
             .sessions
@@ -60,6 +58,37 @@ impl HiveApp {
             }
             json!({"answers":answers})
         };
+        self.submit_interaction(session, id, response, cx);
+    }
+    pub(super) fn submit_interaction(
+        &mut self,
+        session: String,
+        id: String,
+        response: serde_json::Value,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connected
+            || self
+                .session
+                .as_ref()
+                .is_none_or(|current| current.id != session)
+        {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let Some(card) = self
+            .interactions
+            .sessions
+            .get_mut(&session)
+            .and_then(|cards| cards.iter_mut().find(|card| card.raw.id == id))
+        else {
+            return;
+        };
+        if !card.waiting() {
+            return;
+        }
         card.submitting = true;
         card.error = None;
         card.generation += 1;
@@ -107,7 +136,16 @@ impl HiveApp {
                         card.questions.clear();
                         card.initialized = true;
                     }
-                    Ok(_) => card.error = Some("Codex 尚未确认提交，请重试。".into()),
+                    Ok(_) => {
+                        card.error = Some(
+                            if card.is_pi() {
+                                "回应尚未发送，请重试。"
+                            } else {
+                                "Codex 尚未确认提交，请重试。"
+                            }
+                            .into(),
+                        )
+                    }
                     // Do not display provider error bodies: they may contain submitted secret values.
                     Err(_) if card.raw.state == "responding" => {}
                     Err(_) => card.error = Some("提交失败，输入已保留。请检查连接后重试。".into()),

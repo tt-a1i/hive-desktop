@@ -89,7 +89,7 @@ impl HiveApp {
             .p_3()
             .child(
                 Button::new("settings-programs-tab")
-                    .label("外部程序")
+                    .label("通用与外部程序")
                     .selected(self.settings_panel)
                     .on_click(cx.listener(|this, _, window, cx| {
                         if !this.settings_panel {

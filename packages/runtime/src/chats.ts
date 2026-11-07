@@ -269,12 +269,12 @@ export class Chats implements StructuredSessionPort {
       return { accepted: true, session: this.index.get(id) };
     });
   }
-  respondInteraction(id: string, interactionId: string, response: unknown) {
+  async respondInteraction(id: string, interactionId: string, response: unknown) {
     const chat = this.live.get(id);
     if (!chat || chat.failure || chat.cleanup || !chat.handle.respondInteraction) {
       throw new CodexInteractionError('INTERACTION_STALE', 'This conversation has no live native interaction');
     }
-    chat.handle.respondInteraction(interactionId, response);
+    await chat.handle.respondInteraction(interactionId, response);
     return { accepted: true };
   }
   async abort(id: string) {

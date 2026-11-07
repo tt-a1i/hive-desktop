@@ -92,7 +92,7 @@ pub struct Model {
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
     #[serde(default)]
-    pub interactions: Vec<CodexInteraction>,
+    pub interactions: Vec<AgentInteraction>,
     pub history_message_ids: Vec<String>,
     pub active_message: Option<ActiveMessage>,
     pub event_sequence: u64,
@@ -121,17 +121,25 @@ pub struct ModelIdentity {
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CodexInteraction {
+pub struct AgentInteraction {
     pub id: String,
     pub backend: String,
     pub method: String,
-    pub thread_id: String,
-    pub turn_id: String,
-    pub item_id: String,
+    pub thread_id: Option<String>,
+    pub turn_id: Option<String>,
+    pub item_id: Option<String>,
     pub native_request_id: Value,
     pub state: String,
     pub params: Value,
     pub item: Option<Value>,
+}
+impl AgentInteraction {
+    pub fn has_native_identity(&self) -> bool {
+        self.backend != "codex"
+            || [&self.thread_id, &self.turn_id, &self.item_id]
+                .iter()
+                .all(|id| id.as_ref().is_some_and(|id| !id.is_empty()))
+    }
 }
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -140,7 +148,7 @@ pub enum PiEvent {
     Interaction {
         session_id: String,
         sequence: u64,
-        interaction: CodexInteraction,
+        interaction: AgentInteraction,
     },
     #[serde(rename_all = "camelCase")]
     InteractionResolved {

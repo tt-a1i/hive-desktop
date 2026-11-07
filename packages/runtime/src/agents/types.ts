@@ -7,10 +7,15 @@ export interface CodexInteraction {
   threadId: string; turnId: string; itemId: string; nativeRequestId: string | number;
   state: 'pending' | 'responding'; params: Record<string, unknown>; item?: unknown;
 }
-export type InteractionResolutionReason = 'resolved' | 'turn-ended' | 'aborted' | 'disconnected' | 'disposed';
+export interface ExternalPiInteraction {
+  id: string; backend: 'pi-rpc'; method: 'select' | 'confirm' | 'input' | 'editor';
+  nativeRequestId: string; state: 'pending' | 'responding'; params: Record<string, unknown>; expiresAt?: number;
+}
+export type AgentInteraction = CodexInteraction | ExternalPiInteraction;
+export type InteractionResolutionReason = 'resolved' | 'turn-ended' | 'aborted' | 'disconnected' | 'disposed' | 'expired';
 
 export type PiEvent =
-  | { type: 'interaction'; sessionId: string; interaction: CodexInteraction }
+  | { type: 'interaction'; sessionId: string; interaction: AgentInteraction }
   | { type: 'interaction_resolved'; sessionId: string; interactionId: string; reason: InteractionResolutionReason }
   | { type: 'assistant_delta'; sessionId: string; messageId: string; kind: 'text' | 'thinking'; contentIndex: number; delta: string }
   | { type: 'message_end'; sessionId: string; messageId: string; message: unknown }
@@ -39,8 +44,8 @@ export interface PiSessionHandle {
   prompt(text: string, options?: { automated?: boolean; deliveryId?: string; presentation?: DeliveryPresentation }): Promise<void>;
   addContext(text: string, customType?: string): Promise<void>;
   completedDeliveryIds(): readonly string[];
-  interactions?(): readonly CodexInteraction[];
-  respondInteraction?(id: string, response: unknown): void;
+  interactions?(): readonly AgentInteraction[];
+  respondInteraction?(id: string, response: unknown): void | Promise<void>;
   abort(): Promise<void>;
   dispose(): void | Promise<void>;
   currentModel(): { provider: string; id: string; name: string } | undefined;

@@ -28,6 +28,11 @@ impl HiveApp {
         card: &InteractionCard,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        if card.is_pi() {
+            return self
+                .render_pi_interaction(i, session, card, cx)
+                .into_any_element();
+        }
         let method = card.raw.method.as_str();
         let questions = method == "item/tool/requestUserInput";
         let files = method == "item/fileChange/requestApproval";
@@ -62,7 +67,7 @@ impl HiveApp {
                         "Codex 请求执行命令"
                     }),
             )
-            .when(!waiting, |view| {
+            .when(!waiting && card.raw.has_native_identity(), |view| {
                 view.child(div().text_sm().child(
                     if card.submitting && card.raw.state != "responding" {
                         "正在提交…"
@@ -251,5 +256,6 @@ impl HiveApp {
                     )
                 })
             })
+            .into_any_element()
     }
 }

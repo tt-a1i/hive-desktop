@@ -39,6 +39,8 @@ impl HiveApp {
             self.settings_panel = false;
             self.settings_generation += 1;
             self.settings_loading = false;
+            self.team_autostaff_generation += 1;
+            self.team_autostaff_loading = false;
         }
     }
     pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -52,7 +54,49 @@ impl HiveApp {
         if self.executable_settings.is_none() {
             self.settings_request(false, window, cx);
         }
+        self.team_autostaff_request(None, cx);
         cx.notify();
+    }
+    pub fn team_autostaff_request(&mut self, save: Option<bool>, cx: &mut Context<Self>) {
+        if !self.connected || self.team_autostaff_loading {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            self.team_autostaff_message = Some("后台尚未连接".into());
+            cx.notify();
+            return;
+        };
+        self.team_autostaff_generation += 1;
+        let generation = self.team_autostaff_generation;
+        self.team_autostaff_loading = true;
+        self.team_autostaff_message = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let params = match save {
+                Some(enabled) => json!({"method":"PUT", "path":"/api/settings/team-autostaff", "body":{"enabled":enabled}}),
+                None => json!({"method":"GET", "path":"/api/settings/team-autostaff"}),
+            };
+            let result = runtime.request("hive.request", params).await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.settings_panel || this.team_autostaff_generation != generation {
+                    return;
+                }
+                this.team_autostaff_loading = false;
+                match result {
+                    Ok(value) => match value.get("enabled").and_then(|v| v.as_bool()) {
+                        Some(enabled) => {
+                            this.team_autostaff = Some(enabled);
+                            if save.is_some() {
+                                this.team_autostaff_message = Some("设置已保存".into());
+                            }
+                        }
+                        None => this.team_autostaff_message = Some("自动组队设置响应格式错误".into()),
+                    },
+                    Err(error) => this.team_autostaff_message = Some(format!("{}自动组队设置失败：{error}", if save.is_some() { "保存" } else { "读取" })),
+                }
+                cx.notify();
+            });
+        }).detach();
     }
     pub fn settings_request(&mut self, save: bool, window: &mut Window, cx: &mut Context<Self>) {
         if save && !self.connected {

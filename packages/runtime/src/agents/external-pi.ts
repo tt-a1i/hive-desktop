@@ -4,6 +4,7 @@ import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
 import { assertExternalPiCompletion } from './external-pi-completion.js';
 import { applyExternalPiUpdate, externalPiBranch, externalPiMessage } from './external-pi-history.js';
+import { ExternalPiInteractions } from './external-pi-interactions.js';
 import { ExternalPiTransport, type ExternalPiRecord } from './external-pi-transport.js';
 import type { PiEvent, PiSessionHandle } from './types.js';
 
@@ -40,6 +41,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
   let eventWork = Promise.resolve();
   let transport: ExternalPiTransport;
   const emit = (event: PiEvent) => options.onEvent(event);
+  const interactions = new ExternalPiInteractions(() => state!.sessionId, emit, id => transport.expireUiRequest(id));
   const refresh = async () => {
     const result = await transport.request<{ entries: SessionEntry[]; leafId: string | null }>('get_entries');
     branch = externalPiBranch(result.entries, result.leafId);
@@ -94,8 +96,13 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
   transport = await ExternalPiTransport.start({ cwd: options.cwd, sessionDir: options.sessionDir,
     ...(options.sessionFile && { sessionFile: options.sessionFile }), ...(options.command && { command: options.command }), ...(options.model && { model: options.model }),
     extensionPath: fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './external-pi-extension.ts' : './external-pi-extension.js', import.meta.url)), onEvent,
+    onDialogRequest(request, write) {
+      if (!initialized) throw new Error('External Pi dialog arrived before the chat session was initialized');
+      interactions.request(request, write);
+    },
     onClose(error) {
       if (disposed) return;
+      interactions.clear('disconnected');
       failure = error; active?.reject(error);
       if (initialized) options.onUnexpectedExit?.(error);
     },
@@ -117,6 +124,8 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     teamToolName: transport.teamToolName,
     get sessionFile() { return state!.sessionFile; },
     history: () => history,
+    interactions: () => interactions.snapshot(),
+    respondInteraction: (id, response) => { ensureOpen(); return interactions.respond(id, response); },
     hasContext: customType => history.some(message => message.role === 'custom' && message.customType === customType),
     snapshot: () => ({ history: [...history], historyMessageIds: [...ids], ...(activeMessage && { activeMessage: { ...activeMessage } }) }),
     completedDeliveryIds: () => branch.flatMap(entry => entry.type === 'custom' && entry.customType === 'hive-delivery-completed'
@@ -164,6 +173,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
           if (!run.cancelled) emit({ type: 'error', sessionId: state!.sessionId, message: asError(error).message });
           throw error;
         } finally {
+          interactions.clear('turn-ended'); transport.clearUiRequests();
           active = undefined; activeMessage = undefined;
           emit({ type: 'settled', sessionId: state!.sessionId, aborted: run.cancelled || run.aborted });
         }
@@ -171,16 +181,16 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
       return run.done;
     },
     async abort() {
-      const run = active; if (!run) return;
+      const run = active; if (!run) { await interactions.cancel('aborted'); transport.clearUiRequests(); return; }
       run.cancelled = true;
-      try { await transport.request('clear_queue'); await transport.request('abort'); }
+      try { await interactions.cancel('aborted'); transport.clearUiRequests(); await transport.request('clear_queue'); await transport.request('abort'); }
       catch (error) { if (!failure) throw error; }
       await run.done.catch(() => {});
     },
     async dispose() {
       if (active) throw new Error('Abort and await the active external Pi prompt before disposal');
       if (disposed) return;
-      disposed = true; await transport.close();
+      disposed = true; interactions.clear('disposed'); await transport.close();
     },
     currentModel: () => state?.model && ({ provider: state.model.provider, id: state.model.id, name: state.model.name }),
     listModels: () => models.map(model => ({ provider: model.provider, id: model.id, name: model.name, available: true })),

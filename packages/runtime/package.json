@@ -12,7 +12,9 @@
     "check:codex": "tsx checks/codex-transport-fixture.ts && tsx checks/codex-session-normalization.ts && tsx checks/codex-session-failures.ts && tsx checks/codex-interactions.ts",
     "check:external-pi": "tsx checks/external-pi-transport.ts && tsx checks/external-pi-completion.ts && tsx checks/external-pi-session.ts && tsx checks/external-pi-session-lifecycle.ts && tsx checks/external-pi-runtime.ts && tsx checks/external-pi-runtime-lifecycle.ts",
     "dev": "tsx src/main.ts",
-    "check:claude": "tsx checks/claude-native-init.ts && tsx checks/claude-session.ts && tsx checks/claude-session-lifecycle.ts && tsx checks/claude-history-synthetic.ts && tsx checks/claude-team-callback.ts && tsx checks/claude-context-placeholder.ts && tsx checks/claude-placeholder-resume.ts && tsx checks/claude-runtime.ts"
+    "check:claude": "tsx checks/claude-native-init.ts && tsx checks/claude-session.ts && tsx checks/claude-session-lifecycle.ts && tsx checks/claude-history-synthetic.ts && tsx checks/claude-team-callback.ts && tsx checks/claude-context-placeholder.ts && tsx checks/claude-placeholder-resume.ts && tsx checks/claude-runtime.ts",
+    "check:external-pi-interactions": "tsx checks/external-pi-interactions-transport.ts && tsx checks/external-pi-interactions-native.ts",
+    "check:team-autostaff": "tsx checks/team-autostaff-settings.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.317",

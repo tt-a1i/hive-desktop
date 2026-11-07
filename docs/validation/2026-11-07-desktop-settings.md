@@ -45,3 +45,9 @@ Actual CUA in `.artifacts/navigation-ui-proof/Hive Desktop.app`, using the isola
 Independent review found that switching settings tabs discarded unsaved executable edits. Reopening now retains existing inputs; only the initial load, successful save or explicit reload fills persisted values. CUA entered three different unsaved paths, switched to role templates and back, verified all three survived, then used explicit reload to restore saved values. The actual native CLI paths were subsequently saved in this test data directory. Initial-load inputs are disabled until saved settings arrive.
 
 The window was actually resized from 1180×853 to 760×583 logical pixels. The session list scrolled to the last chat, opening it closed navigation, and its draft remained visible. Settings scrolled to the save/reload buttons; member role-template selection filled the existing Chinese multiline responsibility; collaboration Markdown and dispatch filters remained reachable. Existing pagination rows are synthetic, not additional model work. Native Windows interaction, IME composition and the final visual quality target remain unverified.
+
+## 全局自动组队引导
+
+设置页复用 Hive 2.2.1 的 GET/PUT `/api/settings/team-autostaff`，显示全局状态、保存和错误反馈。开关改变主控指导语，不直接创建或删除成员。独立真实 HTTP/SQLite 检查覆盖默认开启、关闭、错误类型请求 400 且状态不变、开启及两次重启持久化。
+
+macOS 窗口实际关闭、重新读取、返回后再打开设置并重新开启；未保存的 Codex 路径草稿保持不变，最终 SQLite `team.autostaff` 为 true。使用独立桌面数据目录，未改用户项目或认证。证据见 [Pi 与设置窗口收据](../../.artifacts/pi-interactions-ui-proof/receipt.json)。本轮没有验证 Windows 设置窗口；可运行 `pnpm --filter @hive-desktop/runtime check:team-autostaff` 重验后端契约。

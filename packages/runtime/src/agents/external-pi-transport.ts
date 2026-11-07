@@ -15,9 +15,10 @@ export interface ExternalPiTransportOptions {
   shutdownGraceMs?: number;
   onEvent?: (event: ExternalPiRecord) => void;
   onClose?: (error: Error) => void;
+  onDialogRequest?: (request: ExternalPiRecord, write: (response: Record<string, unknown>) => Promise<void>) => void;
   onUiRequest?: (request: ExternalPiRecord) => Promise<{ value?: string; confirmed?: boolean; cancelled?: boolean } | undefined>;
 }
-type Pending = { command: string; resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout };
+type Pending = { command: string; resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout | undefined; remainingMs: number; startedAt: number };
 const dialogs = new Set(['select', 'confirm', 'input', 'editor']);
 
 /** Pi 1.4 JSONL. User extensions/config/auth remain native to the external install. */
@@ -26,6 +27,8 @@ export class ExternalPiTransport {
   private readonly pending = new Map<string, Pending>();
   private readonly listeners = new Set<(event: ExternalPiRecord) => void>();
   private readonly process: OwnedCliProcess;
+  private rpcReady = false;
+  private readonly uiRequests = new Set<string>();
   private ended = false;
   private closing = false;
   private closeTask: Promise<void> | undefined;
@@ -73,6 +76,7 @@ export class ExternalPiTransport {
     const transport = new ExternalPiTransport(options);
     try {
       await transport.request('get_state');
+      transport.rpcReady = true;
       const result = await transport.request<{ commands: { name: string; source: string; sourceInfo?: { path?: string } }[] }>('get_commands');
       const commands = result.commands.filter(command => command.name === transport.bridgeCommand);
       if (commands.length !== 1 || commands[0]?.source !== 'extension' || commands[0].sourceInfo?.path !== options.extensionPath) {
@@ -92,10 +96,10 @@ export class ExternalPiTransport {
     if (this.closing || this.ended) return Promise.reject(new Error('External Pi transport is closed'));
     const id = randomUUID();
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id); reject(new Error(`External Pi request timed out: ${type}`));
-      }, this.options.requestTimeoutMs ?? 30000);
-      this.pending.set(id, { command: type, resolve: value => resolve(value as T), reject, timer });
+      const pending: Pending = { command: type, resolve: value => resolve(value as T), reject, timer: undefined,
+        remainingMs: this.options.requestTimeoutMs ?? 30000, startedAt: performance.now() };
+      this.pending.set(id, pending);
+      if (type !== 'prompt' || !this.uiRequests.size) this.armDeadline(id, pending);
       void this.write({ ...args, type, id }).catch(error => this.fail(asError(error)));
     });
   }
@@ -115,6 +119,7 @@ export class ExternalPiTransport {
   close(): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.closing = true;
+    this.clearUiRequests();
     this.rejectPending(new Error('External Pi transport is closing'));
     this.closeTask = this.process.close(this.options.shutdownGraceMs ?? 1500); return this.closeTask;
   }
@@ -139,16 +144,42 @@ export class ExternalPiTransport {
       if (value.type === 'extension_ui_request') void this.handleUi(value).catch(error => this.fail(asError(error)));
     }
   }
+  /** Invalidates local callbacks; Pi emits no native AbortSignal cancellation notification. */
+  expireUiRequest(id: string): void { this.uiRequests.delete(id); this.resumePromptTimers(); }
+  clearUiRequests(): void { this.uiRequests.clear(); this.resumePromptTimers(); }
+  private armDeadline(id: string, pending: Pending): void {
+    pending.startedAt = performance.now();
+    pending.timer = setTimeout(() => {
+      this.pending.delete(id); pending.reject(new Error(`External Pi request timed out: ${pending.command}`));
+    }, pending.remainingMs);
+  }
+  private resumePromptTimers(): void {
+    if (this.uiRequests.size) return;
+    for (const [id, pending] of this.pending) if (pending.command === 'prompt' && pending.timer === undefined) this.armDeadline(id, pending);
+  }
   private async handleUi(request: ExternalPiRecord): Promise<void> {
-    const response = await this.options.onUiRequest?.(request);
-    if (!dialogs.has(String(request.method))) return;
-    if (typeof request.id !== 'string') throw new Error('Invalid external Pi UI request');
-    if (this.closing || this.ended) return;
-    await this.write({ ...response, type: 'extension_ui_response', id: request.id, ...(response ? {} : { cancelled: true }) });
-    if (!response) {
-      const error: ExternalPiRecord = { type: 'hive_extension_ui_unsupported', method: request.method, message: 'External Pi extension dialog cancelled: desktop UI handler unavailable' };
-      for (const listener of this.listeners) listener(error);
+    if (!dialogs.has(String(request.method))) { await this.options.onUiRequest?.(request); return; }
+    if (!this.rpcReady) throw new Error('External Pi startup dialog cannot be answered: Pi 1.4 awaits session_start before installing its stdin reader');
+    if (typeof request.id !== 'string' || this.uiRequests.has(request.id)) throw new Error('Invalid or duplicate external Pi UI request');
+    const id = request.id;
+    this.uiRequests.add(id);
+    for (const pending of this.pending.values()) if (pending.command === 'prompt' && pending.timer !== undefined) {
+      clearTimeout(pending.timer); pending.timer = undefined;
+      pending.remainingMs = Math.max(1, pending.remainingMs - (performance.now() - pending.startedAt));
     }
+    const respond = async (response: Record<string, unknown>) => {
+      if (!this.uiRequests.has(id) || this.closing || this.ended) throw new Error('External Pi dialog is no longer pending');
+      // Remove synchronously before writing, so a second submission cannot write.
+      this.uiRequests.delete(id);
+      try { await this.write({ ...response, type: 'extension_ui_response', id }); }
+      catch (error) { this.fail(asError(error)); throw error; }
+      finally { this.resumePromptTimers(); }
+    };
+    if (this.options.onDialogRequest) { this.options.onDialogRequest(request, respond); return; }
+    const response = await this.options.onUiRequest?.(request);
+    if (!this.uiRequests.has(id) || this.closing || this.ended) return;
+    await respond(response ?? { cancelled: true });
+    if (!response) for (const listener of this.listeners) listener({ type: 'hive_extension_ui_unsupported', method: request.method, message: 'External Pi extension dialog cancelled: desktop UI handler unavailable' });
   }
   private rejectPending(error: Error): void {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
@@ -156,7 +187,7 @@ export class ExternalPiTransport {
   }
   private finish(error: Error): void {
     if (this.ended) return;
-    this.ended = true; this.rejectPending(error); this.options.onClose?.(error);
+    this.ended = true; this.clearUiRequests(); this.rejectPending(error); this.options.onClose?.(error);
   }
   private fail(error: Error): void { this.finish(error); void this.close().catch(() => { /* Owner receives this failure from awaited close(). */ }); }
 }

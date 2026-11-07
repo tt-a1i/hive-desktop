@@ -1,10 +1,11 @@
+mod pi;
 mod questions;
 mod response;
 mod view;
 
 use crate::{
     app::HiveApp,
-    protocol::{CodexInteraction, PiEvent},
+    protocol::{AgentInteraction, PiEvent},
 };
 use gpui_kit::{
     component::input::{InputEvent, InputState},
@@ -18,7 +19,9 @@ pub struct Interactions {
     pub sessions: HashMap<String, Vec<InteractionCard>>,
 }
 pub struct InteractionCard {
-    raw: CodexInteraction,
+    raw: AgentInteraction,
+    pi_input: Option<Entity<InputState>>,
+    pi_editor: Option<Entity<gpui_kit::component::input::TextareaState>>,
     questions: Vec<QuestionDraft>,
     initialized: bool,
     submitting: bool,
@@ -50,18 +53,29 @@ struct QuestionDraft {
     _subscription: Subscription,
 }
 impl InteractionCard {
-    fn new(raw: CodexInteraction) -> Self {
+    fn new(raw: AgentInteraction) -> Self {
+        let error = (!raw.has_native_identity()).then(|| {
+            "Codex 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。".into()
+        });
         Self {
             raw,
+            pi_input: None,
+            pi_editor: None,
             questions: vec![],
             initialized: false,
             submitting: false,
             generation: 0,
-            error: None,
+            error,
         }
     }
+    fn is_pi(&self) -> bool {
+        self.raw.backend == "pi-rpc"
+    }
+    fn backend_label(&self) -> &'static str {
+        if self.is_pi() { "外部 Pi" } else { "Codex" }
+    }
     fn waiting(&self) -> bool {
-        !self.submitting && self.raw.state == "pending"
+        self.raw.has_native_identity() && !self.submitting && self.raw.state == "pending"
     }
     fn accepts(&self, decision: &str) -> bool {
         self.raw.params["availableDecisions"]
@@ -106,7 +120,7 @@ impl HiveApp {
             cards.iter().filter(|card| card.waiting()).count()
         })
     }
-    pub fn sync_interactions(&mut self, session: &str, snapshot: Vec<CodexInteraction>) {
+    pub fn sync_interactions(&mut self, session: &str, snapshot: Vec<AgentInteraction>) {
         let cards = self
             .interactions
             .sessions
@@ -145,16 +159,29 @@ impl HiveApp {
         else {
             return false;
         };
-        self.status = if cards.iter().any(InteractionCard::waiting) {
-            "Codex 等待你的回应"
-        } else {
-            "Codex 正在处理回应"
+        let card = cards
+            .iter()
+            .find(|card| card.waiting())
+            .unwrap_or(&cards[0]);
+        if !card.raw.has_native_identity() {
+            self.status = "Codex 交互格式错误，可停止本轮".into();
+            return true;
         }
-        .into();
+        self.status = format!(
+            "{} {}",
+            card.backend_label(),
+            if card.waiting() {
+                "等待你的回应"
+            } else if card.is_pi() {
+                "正在发送回应"
+            } else {
+                "正在处理回应"
+            }
+        );
         true
     }
-    fn upsert_interaction(&mut self, session: &str, raw: CodexInteraction) {
-        if raw.backend != "codex" {
+    fn upsert_interaction(&mut self, session: &str, raw: AgentInteraction) {
+        if raw.backend != "codex" && raw.backend != "pi-rpc" {
             return;
         }
         let cards = self
@@ -167,6 +194,14 @@ impl HiveApp {
                 card.submitting = true;
                 card.questions.clear();
                 card.initialized = true;
+            }
+            if !card.raw.has_native_identity() && raw.has_native_identity() {
+                card.error = None;
+            }
+            if !raw.has_native_identity() {
+                card.error = Some(
+                    "Codex 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。".into(),
+                );
             }
             card.raw = raw;
         } else {
@@ -187,6 +222,12 @@ impl HiveApp {
                 reason,
                 ..
             } => {
+                let pi = self
+                    .interactions
+                    .sessions
+                    .get(session_id)
+                    .and_then(|cards| cards.iter().find(|card| card.raw.id == *interaction_id))
+                    .is_some_and(InteractionCard::is_pi);
                 if let Some(cards) = self.interactions.sessions.get_mut(session_id) {
                     cards.retain(|card| card.raw.id != *interaction_id);
                 }
@@ -199,9 +240,13 @@ impl HiveApp {
                     && !self.refresh_interaction_status(session_id)
                 {
                     self.status = match reason.as_str() {
+                        "resolved" if pi => "外部 Pi 回应已发送",
                         "resolved" => "Codex 已接收回应",
+                        "expired" => "外部 Pi 交互已超时",
                         "aborted" => "已停止当前回复",
+                        "disconnected" | "disposed" if pi => "外部 Pi 交互已断开",
                         "disconnected" | "disposed" => "Codex 交互已断开",
+                        _ if pi => "外部 Pi 回合已结束",
                         _ => "Codex 回合已结束",
                     }
                     .into();
@@ -219,7 +264,12 @@ impl HiveApp {
             return;
         };
         for card in cards {
-            if card.initialized
+            if card.is_pi() {
+                card.prepare_pi(window, cx);
+                continue;
+            }
+            if !card.raw.has_native_identity()
+                || card.initialized
                 || card.raw.state != "pending"
                 || card.raw.method != "item/tool/requestUserInput"
             {
