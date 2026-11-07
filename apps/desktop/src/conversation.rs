@@ -183,7 +183,8 @@ impl HiveApp {
         ) {
             return;
         }
-        let markdown = cx.new(|cx| TextViewState::markdown(&text, cx));
+        let markdown =
+            (role == "assistant").then(|| cx.new(|cx| TextViewState::markdown(&text, cx)));
         self.messages.push(Message {
             id,
             role,
@@ -198,6 +199,15 @@ impl HiveApp {
     // a source from message text: users may paste a complete Hive envelope.
     pub(crate) fn receive_message(&mut self, id: String, message: &Value, cx: &mut Context<Self>) {
         let role = message["role"].as_str().unwrap_or("assistant");
+        if role == "assistant" {
+            for block in message["content"].as_array().into_iter().flatten() {
+                if block["type"] == "toolCall" {
+                    if let (Some(id), Some(args)) = (block["id"].as_str(), block.get("arguments")) {
+                        self.tool_inputs.insert(id.to_owned(), args.clone());
+                    }
+                }
+            }
+        }
         let text = message_text(message);
         if role == "custom" && message["customType"] == "hive-delivery" {
             let presentation = delivery_presentation(message);
@@ -251,13 +261,19 @@ impl HiveApp {
                 };
             }
         } else if role == "toolResult" {
+            if let (Some(call), Some(args)) =
+                (message["toolCallId"].as_str(), message.get("toolInput"))
+            {
+                self.tool_inputs.insert(call.to_owned(), args.clone());
+            }
             self.upsert_tool(
                 message["toolCallId"].as_str().unwrap_or(&id).into(),
                 message["toolName"].as_str().unwrap_or("工具").into(),
-                if message["isError"].as_bool().unwrap_or(false) {
-                    "失败"
-                } else {
-                    "完成"
+                match message["toolStatus"].as_str() {
+                    Some("declined") => "已拒绝",
+                    Some("inProgress") => "执行中",
+                    _ if message["isError"] == true => "失败",
+                    _ => "完成",
                 },
                 text,
                 cx,
@@ -302,9 +318,9 @@ impl HiveApp {
             } else {
                 message.text = text;
             }
-            message
-                .markdown
-                .update(cx, |state, cx| state.set_text(&message.text, cx));
+            if let Some(markdown) = &message.markdown {
+                markdown.update(cx, |state, cx| state.set_text(&message.text, cx));
+            }
         } else {
             self.push_message(id, role.into(), text, cx);
         }
@@ -374,13 +390,8 @@ impl HiveApp {
                 args,
                 ..
             } => {
-                self.upsert_tool(
-                    tool_call_id,
-                    tool_name,
-                    "执行中",
-                    serde_json::to_string_pretty(&args).unwrap_or_else(|_| args.to_string()),
-                    cx,
-                );
+                self.tool_inputs.insert(tool_call_id.clone(), args);
+                self.upsert_tool(tool_call_id, tool_name, "执行中", String::new(), cx);
             }
             PiEvent::ToolUpdate {
                 tool_call_id,

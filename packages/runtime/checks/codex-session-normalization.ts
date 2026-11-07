@@ -29,3 +29,20 @@ assert.equal(legacy.customType, undefined);
 assert.equal(legacy.presentation, undefined);
 assert.deepEqual(raw, original, 'Presentation must not modify the backend payload');
 console.log('Codex normalization passed: native hive-delivery contract for all origins, live/snapshot parity, raw preservation, ordinary legacy input. No model calls.');
+
+
+const events: PiEvent[] = [];
+const tools = new CodexEvents('thread', event => events.push(event), () => undefined);
+const command = { type: 'commandExecution', id: 'shell', command: 'git status', cwd: '/project' };
+tools.item({ ...command, status: 'inProgress' }, 'turn', false);
+tools.item({ ...command, status: 'completed', aggregatedOutput: 'clean' }, 'turn', true);
+const start = events.find(event => event.type === 'tool_start');
+assert.deepEqual(start?.args, { command: 'git status', cwd: '/project' });
+const finished = tools.snapshot().history[0] as ReturnType<typeof normalizeCodexItem>;
+assert.deepEqual(finished.toolInput, start?.args);
+assert.deepEqual(finished.content, [{ type: 'text', text: 'clean' }]);
+assert.equal(normalizeCodexItem({ ...command, status: 'declined' }).toolStatus, 'declined');
+const result = normalizeCodexItem({ type: 'dynamicToolCall', tool: 'team', id: 'send',
+  arguments: { args: ['list'] }, contentItems: [{ type: 'inputText', text: 'worker ready' }] });
+assert.deepEqual(result.toolInput, { args: ['list'] });
+assert.deepEqual(result.content, [{ type: 'text', text: 'worker ready' }]);

@@ -300,7 +300,7 @@ impl Render for HiveApp {
                             if let Some(tool) = &message.tool {
                                 return self.render_tool_message(i, message, tool, cx).into_any_element();
                             }
-                            let heading = message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), _ => "工具" }.into());
+                            let heading = message.delivery.as_ref().map(|delivery| delivery.heading.clone()).unwrap_or_else(|| match message.role.as_str() { "user" if message.explicit_user => "你", "user" => "对话输入", "assistant" => self.session.as_ref().map(|s| s.backend.label()).unwrap_or("助手"), "notice" => "会话通知", _ => "工具" }.into());
                             v_flex().id(("message", i)).min_w_0().gap_2().px_3().py_2().rounded_lg()
                                 .when(message.role == "user", |bubble| bubble.bg(Color::Bubble.get(cx)).ml_auto().max_w(px(680.)))
                                 .child(h_flex().min_w_0().gap_2().justify_between()
@@ -323,8 +323,8 @@ impl Render for HiveApp {
                                         cx.notify();
                                     }) })))
                                     .child(Button::new(("copy", i)).accessibility_label(if message.delivery.is_some() { "复制完整消息原文" } else { "复制消息内容" }).label(if message.delivery.is_some() { "复制原文" } else { "复制" }).on_click({ let text = message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_else(|| message.text.clone()); cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))) })))
-                                .when(message.role == "assistant", |view| view.child(TextView::new(&message.markdown).selectable(true).stream_fade(true)))
-                                .when(message.role == "user" || message.delivery.is_some(), |view| view.child(div().min_w_0().text_sm().child(message.text.clone())))
+                                .when_some(message.markdown.as_ref(), |view, markdown| view.child(TextView::new(markdown).selectable(true).stream_fade(true)))
+                                .when(message.markdown.is_none(), |view| view.child(div().min_w_0().text_sm().child(message.text.clone())))
                                 .when_some(message.delivery.as_ref(), |view, delivery| view.children(delivery.artifacts.iter().map(|artifact|
                                     div().min_w_0().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))
                                 )))

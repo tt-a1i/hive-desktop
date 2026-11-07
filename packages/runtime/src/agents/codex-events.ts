@@ -1,5 +1,5 @@
 import type { PiEvent } from './types.js';
-import { normalizeCodexItem, toolName, type CodexDelivery, type CodexItem } from './codex-history.js';
+import { codexToolInput, normalizeCodexItem, toolName, type CodexDelivery, type CodexItem } from './codex-history.js';
 
 export class CodexEvents {
   private readonly items = new Map<string, { item: CodexItem; turnId: string }>();
@@ -24,7 +24,7 @@ export class CodexEvents {
       this.running.set(item.id, { messageId: item.id, message });
     } else if (!['userMessage', 'agentMessage', 'reasoning', 'plan'].includes(item.type)) {
       if (!completed) this.emit({ type: 'tool_start', sessionId: this.sessionId, toolCallId: item.id,
-        toolName: toolName(item), args: item.arguments ?? item });
+        toolName: toolName(item), args: codexToolInput(item) ?? null });
       else this.emit({ type: 'tool_end', sessionId: this.sessionId, toolCallId: item.id,
         toolName: toolName(item), result: message, isError: message.isError === true });
     }

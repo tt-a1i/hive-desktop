@@ -11,6 +11,29 @@ export function toolName(item: CodexItem): string {
   return typeof item.tool === 'string' ? item.tool : item.type;
 }
 
+export function codexToolInput(item: CodexItem): unknown {
+  if (item.arguments !== undefined) return item.arguments;
+  switch (item.type) {
+    case 'commandExecution': return { command: item.command, cwd: item.cwd };
+    case 'fileChange': return { changes: item.changes };
+    case 'webSearch': return { query: item.query, action: item.action };
+    default: return undefined;
+  }
+}
+
+function toolOutput(item: CodexItem): string {
+  if (typeof item.aggregatedOutput === 'string') return item.aggregatedOutput;
+  if (item.type === 'dynamicToolCall' && Array.isArray(item.contentItems)
+    && item.contentItems.every(part => part?.type === 'inputText' && typeof part.text === 'string')) {
+    return item.contentItems.map(part => part.text).join('\n\n');
+  }
+  if (item.type === 'mcpToolCall') {
+    const result = item.error ?? item.result;
+    if (result != null) return JSON.stringify(result, null, 2);
+  }
+  return JSON.stringify(item, null, 2);
+}
+
 /** Presentation projection only: Codex owns its rollout and all prompt history. */
 export function normalizeCodexItem(item: CodexItem, delivery?: CodexDelivery): Record<string, unknown> {
   const rawBackendItem = item;
@@ -31,8 +54,8 @@ export function normalizeCodexItem(item: CodexItem, delivery?: CodexDelivery): R
       return { role: 'assistant', content: [{ type: 'thinking', thinking:
         [...(Array.isArray(item.summary) ? item.summary : []), ...(Array.isArray(item.content) ? item.content : [])].join('\n') }], timestamp, rawBackendItem };
     default:
-      return { role: 'toolResult', toolCallId: item.id, toolName: toolName(item),
-        content: [{ type: 'text', text: typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : JSON.stringify(item) }],
+      return { role: 'toolResult', toolCallId: item.id, toolName: toolName(item), toolInput: codexToolInput(item),
+        toolStatus: item.status, content: [{ type: 'text', text: toolOutput(item) }],
         isError: item.status === 'failed' || item.success === false, timestamp, rawBackendItem };
   }
 }
