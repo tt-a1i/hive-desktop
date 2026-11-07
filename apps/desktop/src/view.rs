@@ -125,6 +125,7 @@ impl Render for HiveApp {
                 .update(cx, |input, cx| input.set_submit_on_enter(can_submit, cx));
         }
         let has_text = !self.input.read(cx).value().trim().is_empty();
+        self.composer_has_text = has_text;
         let query = self.model_search.read(cx).value().trim().to_lowercase();
         let member_query = self
             .member_model_search
@@ -380,6 +381,7 @@ impl Render for HiveApp {
                         .child(Button::new(("copy-failed-draft", i)).label("复制内容").accessibility_label("复制发送失败的内容").on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())))))
                         .child(Button::new(("dismiss-failed-draft", i)).label("移除").accessibility_label("移除发送失败的内容").on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(drafts) = this.failed_drafts.get_mut(&session_id) { if i < drafts.len() { drafts.remove(i); } }
+                            this.schedule_draft_save(cx);
                             cx.notify();
                         })))
                 }))))
@@ -411,7 +413,7 @@ impl Render for HiveApp {
                                 .on_click(cx.listener(move |this, _, window, cx| this.input.update(cx, |input,cx| {
                                     let current = input.value();
                                     let value = if current.is_empty() { prompt.to_owned() } else { format!("{current}\n{prompt}") };
-                                    input.set_value(value, window, cx);
+                                    input.replace_all(value, window, cx);
                                     input.focus(window,cx);
                                 })))
                         }))

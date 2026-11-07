@@ -59,10 +59,13 @@ pub struct HiveApp {
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
     pub composer_can_submit: bool,
+    pub composer_has_text: bool,
     pub connected: bool,
     pub interactions: crate::interactions::Interactions,
     pub terminal: crate::terminal::WorkspaceTerminal,
     pub input: Entity<TextareaState>,
+    pub(crate) draft_store: Option<crate::drafts::DraftStore>,
+    pub(crate) draft_save_task: Option<Task<()>>,
     pub drafts: HashMap<String, String>,
     pub draft_owner: Option<String>,
     pub draft_target: Option<String>,
@@ -189,7 +192,6 @@ impl HiveApp {
                 .auto_grow(2, 7)
                 .placeholder("输入消息…")
         });
-        let mut had_text = false;
         let composer_subscription = cx.subscribe_in(
             &input,
             window,
@@ -199,9 +201,9 @@ impl HiveApp {
                     shift: false,
                 } if this.composer_can_submit => this.send(window, cx),
                 InputEvent::Change => {
+                    this.schedule_draft_save(cx);
                     let has_text = !input.read(cx).value().trim().is_empty();
-                    if had_text != has_text {
-                        had_text = has_text;
+                    if this.composer_has_text != has_text {
                         cx.notify();
                     }
                 }
@@ -216,7 +218,10 @@ impl HiveApp {
             terminal: crate::terminal::WorkspaceTerminal::new(cx),
             input,
             composer_can_submit: false,
+            composer_has_text: false,
             _composer_subscription: composer_subscription,
+            draft_store: None,
+            draft_save_task: None,
             drafts: HashMap::new(),
             draft_owner: None,
             draft_target: None,
@@ -317,7 +322,10 @@ impl HiveApp {
             scroll: ScrollHandle::new(),
             collaboration_scroll: ScrollHandle::new(),
             events: Task::ready(()),
-            _quit: cx.on_app_quit(|this: &mut Self, _| {
+            _quit: cx.on_app_quit(|this: &mut Self, cx| {
+                if let Err(error) = this.flush_drafts(cx) {
+                    eprintln!("无法保存本地草稿：{error}");
+                }
                 let runtime = this.runtime.take();
                 async move {
                     if let Some(runtime) = runtime {
@@ -360,6 +368,12 @@ impl HiveApp {
                                     this.error = Some(format!("无法恢复上次的会话位置：{error}"))
                                 }
                             }
+                        }
+                        if let Some(root) = info["dataDir"].as_str()
+                            && let Err(error) = this.restore_drafts(std::path::Path::new(root))
+                        {
+                            this.error =
+                                Some(format!("无法读取本地草稿，本次编辑仅在窗口中保留：{error}"));
                         }
                         this.connected = true;
                         this.status = "后台已连接".into();
@@ -404,6 +418,11 @@ impl HiveApp {
     }
     pub fn exit(&mut self, cx: &mut Context<Self>) {
         if self.closing {
+            return;
+        }
+        if let Err(error) = self.flush_drafts(cx) {
+            self.error = Some(format!("无法保存草稿，请复制内容或重试退出：{error}"));
+            cx.notify();
             return;
         }
         self.closing = true;

@@ -55,14 +55,8 @@ impl HiveApp {
     }
 
     fn switch_draft(&mut self, next: Option<String>, cx: &mut Context<Self>) {
-        if let Some(key) = self.draft_owner.clone() {
-            let text = self.input.read(cx).value().to_string();
-            if text.is_empty() {
-                self.drafts.remove(&key);
-            } else {
-                self.drafts.insert(key, text);
-            }
-        }
+        self.capture_editor(cx);
+        self.schedule_draft_save(cx);
         self.draft_target = next;
     }
     pub(crate) fn save_navigation(&self, cx: &mut Context<Self>) {

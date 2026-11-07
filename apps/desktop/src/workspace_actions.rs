@@ -273,6 +273,7 @@ impl HiveApp {
             self.failed_drafts.remove(id);
             self.background_sequences.remove(id);
         }
+        self.schedule_draft_save(cx);
         self.expanded_projects.remove(workspace);
         self.project_sessions.remove(workspace);
         self.collaboration.task_drafts.remove(workspace);

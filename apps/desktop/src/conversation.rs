@@ -31,6 +31,7 @@ impl HiveApp {
         self.drafts.remove(&format!("session:{id}"));
         self.input
             .update(cx, |state, cx| state.set_value("", window, cx));
+        self.schedule_draft_save(cx);
         let window = window.window_handle();
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -70,6 +71,7 @@ impl HiveApp {
                                 .or_default()
                                 .push(text.clone());
                         }
+                        this.schedule_draft_save(cx);
                         this.error = Some(error);
                     }
                     Ok(value) => {

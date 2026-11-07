@@ -1,6 +1,7 @@
 mod app;
 mod collaboration;
 mod conversation;
+mod drafts;
 mod interactions;
 mod members;
 mod memory;
