@@ -23,6 +23,7 @@ Hive 2.2.1 通过可重现 pnpm 补丁开放执行器 factory 与派生成员后
 | chat.open | sessionId | 会话及完整快照 |
 | chat.prompt | sessionId、text、attachmentIds? | accepted 与更新后的 session 元数据 |
 | chat.attachments.add | workspaceId、path（本地绝对路径） | 工作区上传的 attachment 引用及原始 image 内容 |
+| chat.attachments.clipboard | workspaceId、image（规范 PromptImage） | 进入相同 Hive 上传的附件引用及原字节，不接收客户端路径 |
 | chat.attachments.get | workspaceId、ids | 经工作区校验的 attachment/image 列表 |
 | chat.abort | sessionId | 取消并等待该次调用结束 |
 | chat.resume | sessionId | 启动/恢复该成员并继续待处理投递 |

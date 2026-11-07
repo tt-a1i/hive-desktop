@@ -42,6 +42,11 @@ try {
   if (process.platform === 'darwin') await writeFile(join(app, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>hive-desktop</string><key>CFBundleIdentifier</key><string>com.hive.desktop.dev</string><key>CFBundleName</key><string>Hive Desktop</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>0.1.0</string></dict></plist>`);
   progress('Copying production-deployed runtime');
   await cp(deployedRuntime, join(resources, 'runtime'), { recursive: true, verbatimSymlinks: true });
+  const gpuiNotices = join(resources, 'licenses', 'gpui-pre');
+  await mkdir(gpuiNotices, { recursive: true });
+  for (const file of ['LICENSE-APACHE', 'HIVE-PATCH.md']) {
+    await cp(join(root, 'vendor', 'gpui-pre', file), join(gpuiNotices, file));
+  }
   const terminalNotices = join(resources, 'licenses', 'hive-terminal');
   await mkdir(terminalNotices, { recursive: true });
   for (const file of ['LICENSE', 'NOTICE']) {

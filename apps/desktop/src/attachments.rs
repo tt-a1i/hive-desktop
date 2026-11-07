@@ -36,18 +36,44 @@ struct StagedImage {
     attachment: AttachmentRef,
     image: ImageWire,
 }
+#[derive(Clone)]
+pub(crate) struct ImagePreview {
+    pub render: Arc<RenderImage>,
+    pub original: Arc<Image>,
+}
 #[derive(Default)]
 pub(crate) struct Attachments {
     pub drafts: HashMap<String, Vec<AttachmentRef>>,
-    previews: HashMap<String, Arc<RenderImage>>,
+    previews: HashMap<String, ImagePreview>,
     failed: HashMap<String, String>,
     pub loading: HashSet<String>,
     preparing: HashSet<String>,
 }
-fn preview(data: String, renderer: SvgRenderer) -> Result<Arc<RenderImage>, String> {
+fn preview(data: String, renderer: SvgRenderer) -> Result<ImagePreview, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|_| "图片内容无法解码".to_owned())?;
+    let decoded = decode_image(&bytes)?.thumbnail(144, 112);
+    let mut png = Cursor::new(Vec::new());
+    decoded
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|error| error.to_string())?;
+    let format = match image::guess_format(&bytes).map_err(|error| error.to_string())? {
+        image::ImageFormat::Png => ImageFormat::Png,
+        image::ImageFormat::Jpeg => ImageFormat::Jpeg,
+        image::ImageFormat::Gif => ImageFormat::Gif,
+        image::ImageFormat::WebP => ImageFormat::Webp,
+        _ => return Err("不支持的图片格式。".into()),
+    };
+    let render = Image::from_bytes(ImageFormat::Png, png.into_inner())
+        .to_image_data(renderer)
+        .map_err(|error| error.to_string())?;
+    Ok(ImagePreview {
+        render,
+        original: Arc::new(Image::from_bytes(format, bytes)),
+    })
+}
+pub(crate) fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let mut reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|error| error.to_string())?;
@@ -56,18 +82,11 @@ fn preview(data: String, renderer: SvgRenderer) -> Result<Arc<RenderImage>, Stri
     limits.max_image_height = Some(8000);
     limits.max_alloc = Some(64 * 1024 * 1024);
     reader.limits(limits);
-    let decoded = reader
+    reader
         .decode()
-        .map_err(|error| format!("无法预览图片：{error}"))?
-        .thumbnail(144, 112);
-    let mut png = Cursor::new(Vec::new());
-    decoded
-        .write_to(&mut png, image::ImageFormat::Png)
-        .map_err(|error| error.to_string())?;
-    Image::from_bytes(ImageFormat::Png, png.into_inner())
-        .to_image_data(renderer)
-        .map_err(|error| error.to_string())
+        .map_err(|error| format!("无法读取图片：{error}"))
 }
+
 impl Attachments {
     pub fn prune(&mut self) {
         self.drafts.retain(|_, items| !items.is_empty());
@@ -138,21 +157,46 @@ impl HiveApp {
         .detach();
     }
     pub(crate) fn import_image_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.import_image_sources(
+            paths
+                .into_iter()
+                .map(crate::image_input::ImageSource::File)
+                .collect(),
+            cx,
+        );
+    }
+    pub(crate) fn import_image_sources(
+        &mut self,
+        sources: Vec<crate::image_input::ImageSource>,
+        cx: &mut Context<Self>,
+    ) {
+        if sources.is_empty() {
+            return;
+        }
         let (Some(workspace), Some(key), Some(runtime)) = (
             self.workspace.clone(),
             self.draft_target.clone(),
             self.runtime.clone(),
         ) else {
+            self.error = Some("请先选择项目，再添加图片。".into());
+            cx.notify();
             return;
         };
         if !self.connected
             || self.closing
             || self.loading
+            || !self.workspace_writes_allowed()
+            || self
+                .session
+                .as_ref()
+                .is_some_and(|session| self.busy.contains(&session.id))
             || self.attachments.loading.contains(&key)
         {
+            self.error = Some("当前会话暂不能添加图片，请稍后再试。".into());
+            cx.notify();
             return;
         }
-        if paths.len() + self.attachments.refs(Some(&key)).len() > 10 {
+        if sources.len() + self.attachments.refs(Some(&key)).len() > 10 {
             self.error = Some("每条消息最多添加 10 张图片。".into());
             cx.notify();
             return;
@@ -164,17 +208,18 @@ impl HiveApp {
         cx.spawn(async move |this, cx| {
             let mut ready = Vec::new();
             let mut errors = Vec::new();
-            for path in paths {
-                match runtime
-                    .request(
-                        "chat.attachments.add",
-                        json!({"workspaceId":workspace,"path":path}),
-                    )
-                    .await
-                    .and_then(|value| {
-                        serde_json::from_value::<StagedImage>(value)
-                            .map_err(|error| error.to_string())
-                    }) {
+            for source in sources {
+                let (method, mut params) = match smol::unblock(move || source.prepare()).await {
+                    Ok(prepared) => prepared,
+                    Err(error) => {
+                        errors.push(error);
+                        continue;
+                    }
+                };
+                params["workspaceId"] = json!(workspace);
+                match runtime.request(method, params).await.and_then(|value| {
+                    serde_json::from_value::<StagedImage>(value).map_err(|error| error.to_string())
+                }) {
                     Ok(item) => {
                         let render = renderer.clone();
                         match smol::unblock(move || preview(item.image.data, render)).await {
@@ -313,10 +358,27 @@ impl HiveApp {
                         self.attachments.previews.get(&item.id).cloned(),
                         |card, image| {
                             card.child(
-                                img(image)
-                                    .w(px(112.))
-                                    .h(px(84.))
-                                    .object_fit(ObjectFit::Contain),
+                                Button::new(SharedString::from(format!(
+                                    "view-draft-image-{}",
+                                    item.id
+                                )))
+                                .ghost()
+                                .w(px(112.))
+                                .h(px(84.))
+                                .accessibility_label(format!("查看图片 {}", item.name))
+                                .child(
+                                    img(image.render)
+                                        .w(px(112.))
+                                        .h(px(84.))
+                                        .object_fit(ObjectFit::Contain),
+                                )
+                                .on_click(cx.listener({
+                                    let original = image.original;
+                                    let name = item.name.clone();
+                                    move |this, _, window, cx| {
+                                        this.open_image(original.clone(), name.clone(), window, cx)
+                                    }
+                                })),
                             )
                         },
                     )
@@ -410,7 +472,10 @@ impl HiveApp {
                     message.images_loading = false;
                     for result in results {
                         match result {
-                            Ok(image) => message.images.push(image),
+                            Ok(image) => {
+                                message.images.push(image.render);
+                                message.image_sources.push(image.original);
+                            }
                             Err(error) => message.images_error = Some(error),
                         }
                     }

@@ -115,6 +115,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return chats.attachments.add(workspace, params.path);
     }
     case 'chat.attachments.get': return chats.attachments.get(text(params, 'workspaceId'), params.ids);
+    case 'chat.attachments.clipboard': {
+      const workspace = text(params, 'workspaceId');
+      chats.assertWorkspaceAvailable(workspace);
+      return chats.attachments.addClipboard(workspace, params.image);
+    }
     case 'chat.search': return chats.search(params.query);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.createRecord':

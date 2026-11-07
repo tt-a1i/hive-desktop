@@ -307,6 +307,7 @@ impl HiveApp {
             delivery: None,
             explicit_user: false,
             images: vec![],
+            image_sources: vec![],
             images_loading: false,
             images_error: None,
         });

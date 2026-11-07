@@ -111,6 +111,27 @@ try {
   assert.equal(added.error, undefined);
   assert.equal(added.result.attachment.name, '图片.png');
   assert.equal(added.result.image.data, data);
+  const pasted = await rpc('chat.attachments.clipboard', { workspaceId, image: added.result.image });
+  assert.equal(pasted.error, undefined);
+  assert.equal(pasted.result.image.data, data);
+  assert.equal(pasted.result.attachment.name, '粘贴图片.png');
+  assert.notEqual(pasted.result.attachment.id, added.result.attachment.id);
+  assert.deepEqual(
+    (await rpc('chat.attachments.get', { workspaceId, ids: [pasted.result.attachment.id] })).result,
+    [pasted.result],
+  );
+  assert.ok(
+    (await rpc('chat.attachments.clipboard', { workspaceId, image: { ...added.result.image, data: 'bad' } }))
+      .error,
+  );
+  assert.ok(
+    (
+      await rpc('chat.attachments.clipboard', {
+        workspaceId,
+        image: { ...added.result.image, mimeType: 'image/jpeg' },
+      })
+    ).error,
+  );
   await writeFile(path, 'changed source');
   const ids = [added.result.attachment.id];
   assert.deepEqual((await rpc('chat.attachments.get', { workspaceId, ids })).result, [added.result]);
@@ -124,7 +145,7 @@ try {
   assert.ok((await rpc('chat.prompt', { sessionId, text: {}, attachmentIds: ids })).error);
   assert.ok((await rpc('chat.prompt', { sessionId, text: '', attachmentIds: [] })).error);
   assert.ok(
-    (await rpc('chat.prompt', { sessionId, text: '', attachmentIds: ids })).error,
+    (await rpc('chat.prompt', { sessionId, text: '', attachmentIds: [pasted.result.attachment.id] })).error,
     'Text-only Pi model must reject image-only input',
   );
   const after = await rpc('chat.open', { sessionId });

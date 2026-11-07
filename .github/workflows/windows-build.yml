@@ -6,6 +6,7 @@ on:
     paths:
       - 'apps/desktop/**'
       - 'crates/**'
+      - 'vendor/**'
       - 'packages/**'
       - 'patches/**'
       - 'scripts/**'
@@ -17,6 +18,7 @@ on:
     paths:
       - 'apps/desktop/**'
       - 'crates/**'
+      - 'vendor/**'
       - 'packages/**'
       - 'patches/**'
       - 'scripts/**'

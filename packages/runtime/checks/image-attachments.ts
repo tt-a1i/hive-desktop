@@ -84,6 +84,11 @@ try {
   await assert.rejects(runtime.chats.attachments.get(ws.id, ['../../outside']));
   await assert.rejects(runtime.chats.attachments.add(ws.id, path));
   await assert.rejects(runtime.chats.attachments.add(ws.id, dir));
+  const clipboard = await runtime.chats.attachments.addClipboard(ws.id, staged.image);
+  assert.equal(clipboard.image.data, data);
+  assert.equal(clipboard.attachment.name, '粘贴图片.png');
+  assert.notEqual(clipboard.attachment.id, staged.attachment.id);
+  await assert.rejects(runtime.chats.attachments.addClipboard(ws.id, { ...staged.image, data: 'bad' }));
   const encoded = encodeImageInput('原图核验', [staged.attachment.id]);
   assert.deepEqual(decodeImageInput(encoded), { text: '原图核验', ids: [staged.attachment.id] });
   assert.deepEqual(

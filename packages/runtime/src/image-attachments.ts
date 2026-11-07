@@ -58,6 +58,14 @@ export function decodeImageInput(source: string): { text: string; ids: string[] 
 }
 export class ImageAttachments {
   constructor(private readonly hive: HiveHost) {}
+  async addClipboard(workspaceId: string, value: unknown): Promise<StagedImage> {
+    const image = promptImages([value])[0]!;
+    return this.store(
+      workspaceId,
+      `粘贴图片.${image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType.slice(6)}`,
+      image,
+    );
+  }
   async add(workspaceId: string, path: unknown): Promise<StagedImage> {
     if (typeof path !== 'string' || !isAbsolute(path)) throw new TypeError('请选择本地图片文件的绝对路径。');
     if (!(await stat(path)).isFile()) throw new TypeError('所选路径不是普通图片文件。');
@@ -82,17 +90,20 @@ export class ImageAttachments {
     const mimeType = imageMimeType(bytes);
     if (!mimeType) throw new TypeError('仅支持 PNG、JPEG、GIF、WebP 图片。');
     const image = promptImages([{ type: 'image', mimeType, data: bytes.toString('base64') }])[0]!;
+    return this.store(workspaceId, basename(path), image);
+  }
+  private async store(workspaceId: string, name: string, image: PromptImage): Promise<StagedImage> {
     const record = (await this.hive.request(
       'POST',
       `/api/workspaces/${encodeURIComponent(workspaceId)}/uploads`,
-      { filename: basename(path), mime_type: mimeType, data: image.data },
+      { filename: name, mime_type: image.mimeType, data: image.data },
     )) as { id: string; workspace_id: string; original_name: string; size_bytes: number };
     return {
       attachment: {
         id: record.id,
         workspaceId: record.workspace_id,
         name: record.original_name,
-        mimeType,
+        mimeType: image.mimeType,
         size: record.size_bytes,
       },
       image,

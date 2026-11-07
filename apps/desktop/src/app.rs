@@ -52,6 +52,7 @@ pub struct Message {
     pub delivery: Option<DeliveryCard>,
     pub explicit_user: bool,
     pub images: Vec<std::sync::Arc<RenderImage>>,
+    pub image_sources: Vec<Arc<Image>>,
     pub images_loading: bool,
     pub images_error: Option<String>,
 }

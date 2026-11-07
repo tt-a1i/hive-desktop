@@ -1,6 +1,10 @@
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
-    component::{button::Button, text::TextView, *},
+    component::{
+        button::{Button, ButtonVariants},
+        text::TextView,
+        *,
+    },
     prelude::FluentBuilder,
     *,
 };
@@ -179,14 +183,34 @@ impl HiveApp {
                 )
             })
             .when(!message.images.is_empty(), |view| {
-                view.child(h_flex().min_w_0().flex_wrap().gap_2().children(
-                    message.images.iter().cloned().map(|image| {
-                        img(image)
-                            .w(px(144.))
-                            .h(px(112.))
-                            .object_fit(ObjectFit::Contain)
-                    }),
-                ))
+                view.child(
+                    h_flex().min_w_0().flex_wrap().gap_2().children(
+                        message
+                            .images
+                            .iter()
+                            .cloned()
+                            .enumerate()
+                            .map(|(index, image)| {
+                                let original = message.image_sources[index].clone();
+                                let name =
+                                    format!("图片-{}.{}", index + 1, original.format.extension());
+                                Button::new(SharedString::from(format!("view-image-{i}-{index}")))
+                                    .ghost()
+                                    .w(px(144.))
+                                    .h(px(112.))
+                                    .accessibility_label(format!("查看图片 {}", index + 1))
+                                    .child(
+                                        img(image)
+                                            .w(px(144.))
+                                            .h(px(112.))
+                                            .object_fit(ObjectFit::Contain),
+                                    )
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_image(original.clone(), name.clone(), window, cx)
+                                    }))
+                            }),
+                    ),
+                )
             })
             .when_some(message.delivery.as_ref(), |view, delivery| {
                 view.children(
