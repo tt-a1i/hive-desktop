@@ -153,6 +153,7 @@ try {
   runtime = await createDesktopRuntime(dataDir, event => { if (event.type === 'state') resumedStates.push(event); });
   assert.equal(queues(runtime.chats).size, 0, 'Restart should begin without loaded chats');
   await assert.rejects(runtime.chats.resume(b.id));
+  assert.ok(!queues(runtime.chats).has(a.id), 'The persisted queue must prevent switching without relaunching the previous orchestrator');
   const reopenedA = await runtime.chats.open(a.id);
   assert.equal(reopenedA.agentId, agentId);
   assert.equal(reopenedA.pending, pendingAtRestart);

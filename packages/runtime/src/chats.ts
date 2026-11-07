@@ -261,9 +261,10 @@ export class Chats implements StructuredSessionPort {
     const agentId = record.agentId ?? `${record.workspaceId}:orchestrator`;
     const previous = this.index.forAgent(record.workspaceId, agentId);
     if (previous && previous.id !== id) {
-      const old = await this.require(previous.id);
       const team = await this.hive.request('GET', `/api/ui/workspaces/${record.workspaceId}/team`) as { pending_task_count: number; open_dispatches?: unknown[] }[];
-      if (old?.queue.busy || old?.queue.pendingCount || team.some(member => member.pending_task_count > 0 || member.open_dispatches?.length)) {
+      const queue = this.live.get(previous.id)?.queue;
+      const pending = queue?.pendingCount ?? DeliveryQueue.persistedCount(this.queueDir, previous.id);
+      if (queue?.busy || pending || team.some(member => member.pending_task_count > 0 || member.open_dispatches?.length)) {
         throw new Error('当前主会话仍有执行或未结派单，请先完成或停止相关任务，再切换主会话。');
       }
     }

@@ -60,6 +60,18 @@ try {
   assert.deepEqual(runtime.chats.list(workspace.id).map(record => record.id).sort(), [existing.id, failed.id].sort());
   await runtime.settings.update({ piCommand: nativePi, codexCommand: null });
   assert.equal((await runtime.chats.open(failed.id)).backend, 'pi-rpc', 'Next handle load must read the repaired app command');
+  // The old orchestrator can be uninstalled while Desktop is closed.
+  await runtime.chats.resume(existing.id);
+  await runtime.close();
+  runtime = await createDesktopRuntime(dataDir, () => {}, options);
+  await runtime.settings.update({ piCommand: missing, codexCommand: null });
+  const replacement = await runtime.chats.create(workspace.id, 'pi');
+  await runtime.chats.resume(replacement.id);
+  const rebound = runtime.chats.list(workspace.id);
+  assert.equal(rebound.find(chat => chat.id === replacement.id)?.agentId, workspace.id + ':orchestrator');
+  assert.equal(rebound.find(chat => chat.id === existing.id)?.externalPiSessionId, existing.externalPiSessionId);
+  assert.equal(rebound.find(chat => chat.id === existing.id)?.agentId, undefined);
+  assert.equal(live(runtime.chats).has(existing.id), false);
   const beforeFailure = await runtime.settings.get();
   await runtime.hive.close();
   await assert.rejects(runtime.settings.update({ piCommand: '/should-not-save/pi', codexCommand: null }));

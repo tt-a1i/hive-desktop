@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isDeliveryPresentation, type DeliveryPresentation } from "./delivery-presentation.js";
 
@@ -20,6 +20,25 @@ interface DeliveryQueueOptions {
  onState?(busy: boolean, completedReportId?: string): void;
 }
 
+function spoolPath(directory: string, sessionId: string): string {
+ return join(directory, `${createHash("sha256").update(sessionId).digest("hex")}.json`);
+}
+
+function readSpool(path: string): DeliveryItem[] {
+ let contents: string;
+ try { contents = readFileSync(path, "utf8"); }
+ catch (error) {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+  throw error;
+ }
+ const stored: unknown = JSON.parse(contents);
+ if (!Array.isArray(stored) || !stored.every(item => item && typeof item.id === "string" && typeof item.text === "string" && typeof item.triggerTurn === "boolean"
+  && (item.presentation === undefined || isDeliveryPresentation(item.presentation)))) {
+  throw new Error(`Invalid delivery spool: ${path}`);
+ }
+ return stored;
+}
+
 /** A transport spool, not a task ledger. One owner per session is required. */
 export class DeliveryQueue {
  private readonly path: string;
@@ -32,14 +51,13 @@ export class DeliveryQueue {
  constructor(private readonly options: DeliveryQueueOptions) {
   this.paused = options.startPaused ?? false;
   mkdirSync(options.directory, { recursive: true });
-  this.path = join(options.directory, `${createHash("sha256").update(options.sessionId).digest("hex")}.json`);
-  const stored: unknown = existsSync(this.path) ? JSON.parse(readFileSync(this.path, "utf8")) : [];
-  if (!Array.isArray(stored) || !stored.every(item => item && typeof item.id === "string" && typeof item.text === "string" && typeof item.triggerTurn === "boolean"
-   && (item.presentation === undefined || isDeliveryPresentation(item.presentation)))) {
-   throw new Error(`Invalid delivery spool: ${this.path}`);
-  }
-  this.items = stored;
+  this.path = spoolPath(options.directory, options.sessionId);
+  this.items = readSpool(this.path);
   queueMicrotask(() => this.kick());
+ }
+
+ static persistedCount(directory: string, sessionId: string): number {
+  return readSpool(spoolPath(directory, sessionId)).length;
  }
 
  get pending(): readonly DeliveryItem[] { return this.items.map(item => ({ ...item, ...(item.presentation && { presentation: structuredClone(item.presentation) }) })); }
