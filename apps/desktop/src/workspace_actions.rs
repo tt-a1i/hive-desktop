@@ -267,6 +267,8 @@ impl HiveApp {
             self.failed_drafts.remove(id);
             self.background_sequences.remove(id);
         }
+        self.expanded_projects.remove(workspace);
+        self.project_sessions.remove(workspace);
         self.collaboration.task_drafts.remove(workspace);
         self.forget_workspace_memory(workspace);
         if self.workspace.as_deref() == Some(workspace) {

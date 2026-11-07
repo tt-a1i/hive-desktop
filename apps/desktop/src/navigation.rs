@@ -346,187 +346,106 @@ impl HiveApp {
                             )
                             .children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
                                 let id = workspace.id.clone();
-                                Button::new(("workspace", i))
-                                    .ghost()
-                                    .icon(Glyph::Folder)
-                                    .w_full()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .child(workspace.name.clone()),
-                                    )
-                                    .tooltip(workspace.path.clone())
-                                    .selected(self.workspace.as_ref() == Some(&workspace.id))
-                                    .disabled(
-                                        self.workspace_removing.as_ref() == Some(&workspace.id),
-                                    )
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        if this.terminal.visible {
-                                            this.remember_terminal_focus(window, cx);
-                                        }
-                                        this.select_workspace(id.clone(), cx)
-                                    }))
-                            }))
-                            .when_some(
-                                self.workspaces
-                                    .iter()
-                                    .find(|w| Some(&w.id) == self.workspace.as_ref()),
-                                |view, workspace| {
-                                    let id = workspace.id.clone();
-                                    let weak = cx.weak_entity();
-                                    view.child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_xs()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child(workspace.path.clone()),
-                                    )
-                                    .child(
-                                        Button::new("open-workspace-menu")
-                                            .ghost()
-                                            .compact()
-                                            .w_full()
-                                            .label("项目操作 ▾")
-                                            .disabled(!self.connected)
-                                            .dropdown_menu(move |mut menu, _, _| {
-                                                for (target, label) in [
-                                                    (
-                                                        "finder",
-                                                        if cfg!(target_os = "macos") {
-                                                            "访达"
-                                                        } else {
-                                                            "文件管理器"
-                                                        },
-                                                    ),
-                                                    ("vscode", "Visual Studio Code"),
-                                                    ("vscode-insiders", "VS Code Insiders"),
-                                                    ("cursor", "Cursor"),
-                                                    ("zed", "Zed"),
-                                                ] {
-                                                    let weak = weak.clone();
-                                                    let id = id.clone();
-                                                    menu = menu.item(
-                                                        PopupMenuItem::new(label).on_click(
-                                                            move |_, _, cx| {
-                                                                let _ =
-                                                                    weak.update(cx, |this, cx| {
-                                                                        this.open_workspace_target(
-                                                                            id.clone(),
-                                                                            target,
-                                                                            cx,
-                                                                        )
-                                                                    });
-                                                            },
-                                                        ),
-                                                    );
-                                                }
-                                                let weak = weak.clone();
-                                                menu.separator().item(
-                                                    PopupMenuItem::new("移除当前工作区…").on_click(
-                                                        move |_, window, cx| {
-                                                            let _ = weak.update(cx, |this, cx| {
-                                                                this.remove_workspace(window, cx)
-                                                            });
-                                                        },
-                                                    ),
-                                                )
-                                            }),
-                                    )
-                                },
-                            )
-                            .child(
-                                div()
-                                    .pt_4()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child("会话"),
-                            )
-                            .when(self.sessions.is_empty(), |view| {
-                                view.child(
-                                    div()
-                                        .py_3()
-                                        .text_sm()
-                                        .text_color(Color::Muted.get(cx))
-                                        .child(if self.workspace.is_some() {
-                                            "新建会话开始工作"
-                                        } else {
-                                            "选择工作区后新建会话"
-                                        }),
-                                )
-                            })
-                            .children(self.sessions.iter().enumerate().map(|(i, session)| {
-                                let id = session.id.clone();
-                                let role = session
-                                    .agent_id
-                                    .as_deref()
-                                    .map(|agent| {
-                                        if agent.ends_with(":orchestrator") {
-                                            "主控"
-                                        } else {
-                                            "成员"
-                                        }
-                                    })
-                                    .unwrap_or("会话");
-                                let activity = if self.interaction_count(&id) > 0 {
-                                    " · 待回应"
-                                } else if self.busy.contains(&id) {
-                                    " · 处理中"
-                                } else if self.pending.get(&id).copied().unwrap_or(0) > 0 {
-                                    " · 已暂停"
-                                } else if self.unread.contains(&id) {
-                                    " · 未读"
+                                let toggle_id = id.clone();
+                                let expanded = self.expanded_projects.contains(&id);
+                                let sessions = if self.workspace.as_ref() == Some(&id) {
+                                    Some(&self.sessions)
                                 } else {
-                                    ""
+                                    self.project_sessions.get(&id)
                                 };
                                 v_flex()
                                     .min_w_0()
-                                    .gap_1()
-                                    .py_1()
                                     .child(
-                                        div().text_xs().text_color(Color::Secondary.get(cx)).child(
-                                            format!(
-                                                "{role} · {}{activity}",
-                                                session.backend.label()
-                                            ),
-                                        ),
-                                    )
-                                    .child(
-                                        Button::new(("session", i))
-                                            .ghost()
-                                            .accessibility_label(format!(
-                                                "{} · {} · {role}{activity}",
-                                                session.backend.label(),
-                                                self.session_title(session)
-                                            ))
+                                        h_flex()
                                             .w_full()
-                                            .min_w_0()
                                             .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .truncate()
-                                                    .child(self.session_title(session).to_string()),
+                                                Button::new(("expand-project", i))
+                                                    .ghost()
+                                                    .compact()
+                                                    .label(if expanded { "▾" } else { "▸" })
+                                                    .accessibility_label(format!(
+                                                        "{} {} 的会话",
+                                                        if expanded { "收起" } else { "展开" },
+                                                        workspace.name
+                                                    ))
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _, cx| {
+                                                            this.toggle_project(
+                                                                toggle_id.clone(),
+                                                                cx,
+                                                            )
+                                                        },
+                                                    )),
                                             )
-                                            .tooltip(self.session_title(session).to_string())
-                                            .disabled(!self.workspace_writes_allowed())
-                                            .selected(
-                                                self.session
-                                                    .as_ref()
-                                                    .is_some_and(|s| s.id == session.id),
+                                            .child(
+                                                div().flex_1().min_w_0().child(
+                                                    Button::new(("workspace", i))
+                                                        .ghost()
+                                                        .icon(Glyph::Folder)
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .min_w_0()
+                                                                .truncate()
+                                                                .child(workspace.name.clone()),
+                                                        )
+                                                        .tooltip(workspace.path.clone())
+                                                        .selected(
+                                                            self.workspace.as_ref()
+                                                                == Some(&workspace.id),
+                                                        )
+                                                        .disabled(
+                                                            self.workspace_removing.as_ref()
+                                                                == Some(&workspace.id),
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            move |this, _, window, cx| {
+                                                                if this.terminal.visible {
+                                                                    this.remember_terminal_focus(
+                                                                        window, cx,
+                                                                    );
+                                                                }
+                                                                this.select_workspace(
+                                                                    id.clone(),
+                                                                    cx,
+                                                                )
+                                                            },
+                                                        )),
+                                                ),
                                             )
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                if window.viewport_size().width < px(820.) {
-                                                    this.sidebar_open = false;
-                                                }
-                                                this.hide_terminal(cx);
-                                                this.close_collaboration();
-                                                this.open_session(id.clone(), cx);
-                                            })),
+                                            .when(
+                                                self.workspace.as_ref() == Some(&workspace.id),
+                                                |row| {
+                                                    row.child(
+                                                        self.project_menu(workspace.id.clone(), cx),
+                                                    )
+                                                },
+                                            ),
                                     )
+                                    .when(expanded, |group| {
+                                        let rows = v_flex().pl_6().min_w_0();
+                                        group.child(match sessions {
+                                            Some(items) if items.is_empty() => rows.child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child("暂无会话"),
+                                            ),
+                                            Some(items) => {
+                                                rows.children(items.iter().map(|session| {
+                                                    self.render_session_link(session, cx)
+                                                }))
+                                            }
+                                            None => rows.child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child("正在读取会话…"),
+                                            ),
+                                        })
+                                    })
                             })),
                     ),
             )
@@ -550,5 +469,119 @@ impl HiveApp {
                         })),
                 ),
             )
+    }
+
+    fn project_menu(&self, id: String, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let weak = cx.weak_entity();
+        Button::new("open-workspace-menu")
+            .ghost()
+            .compact()
+            .label("⋯")
+            .tooltip("项目操作")
+            .accessibility_label("项目操作")
+            .disabled(!self.connected)
+            .dropdown_menu(move |mut menu, _, _| {
+                for (target, label) in [
+                    (
+                        "finder",
+                        if cfg!(target_os = "macos") {
+                            "访达"
+                        } else {
+                            "文件管理器"
+                        },
+                    ),
+                    ("vscode", "Visual Studio Code"),
+                    ("vscode-insiders", "VS Code Insiders"),
+                    ("cursor", "Cursor"),
+                    ("zed", "Zed"),
+                ] {
+                    let weak = weak.clone();
+                    let id = id.clone();
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        let _ = weak.update(cx, |this, cx| {
+                            this.open_workspace_target(id.clone(), target, cx)
+                        });
+                    }));
+                }
+                let weak = weak.clone();
+                menu.separator()
+                    .item(
+                        PopupMenuItem::new("移除当前工作区…").on_click(move |_, window, cx| {
+                            let _ = weak.update(cx, |this, cx| this.remove_workspace(window, cx));
+                        }),
+                    )
+            })
+    }
+    fn render_session_link(
+        &self,
+        session: &crate::protocol::Session,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let project = session.workspace_id.clone();
+        let id = session.id.clone();
+        let role = session
+            .agent_id
+            .as_deref()
+            .map(|agent| {
+                if agent.ends_with(":orchestrator") {
+                    "主控"
+                } else {
+                    "成员"
+                }
+            })
+            .unwrap_or("会话");
+        let activity = if self.interaction_count(&id) > 0 {
+            " · 待回应"
+        } else if self.busy.contains(&id) {
+            " · 处理中"
+        } else if self.pending.get(&id).copied().unwrap_or(0) > 0 {
+            " · 已暂停"
+        } else if self.unread.contains(&id) {
+            " · 未读"
+        } else {
+            ""
+        };
+        Button::new(SharedString::from(format!("session-{id}")))
+            .ghost()
+            .accessibility_label(format!(
+                "{} · {} · {role}{activity}",
+                session.backend.label(),
+                self.session_title(session)
+            ))
+            .w_full()
+            .min_w_0()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(self.session_title(session).to_string()),
+            )
+            .when(!activity.is_empty(), |row| {
+                row.child(
+                    div()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
+                        .child(activity.trim_start_matches(" · ")),
+                )
+            })
+            .tooltip(format!(
+                "{} · {role} · {}",
+                self.session_title(session),
+                session.backend.label()
+            ))
+            .disabled(self.workspace_removing.as_ref() == Some(&project))
+            .selected(self.session.as_ref().is_some_and(|s| s.id == session.id))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if window.viewport_size().width < px(820.) {
+                    this.sidebar_open = false;
+                }
+                this.hide_terminal(cx);
+                this.close_collaboration();
+                if this.workspace.as_ref() != Some(&project) {
+                    this.select_workspace(project.clone(), cx);
+                }
+                this.open_session(id.clone(), cx);
+            }))
     }
 }

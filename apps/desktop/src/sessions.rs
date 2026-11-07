@@ -65,8 +65,14 @@ impl HiveApp {
         }
         self.close_roles();
         self.switch_draft(Some(format!("workspace:{id}")), cx);
+        if let Some(previous) = &self.workspace {
+            self.project_sessions
+                .insert(previous.clone(), std::mem::take(&mut self.sessions));
+        }
+        self.expanded_projects.insert(id.clone());
         self.workspace = Some(id.clone());
         self.reset_workspace_view();
+        self.sessions = self.project_sessions.remove(&id).unwrap_or_default();
         self.loading = true;
         if self.connected && !self.closing {
             self.status = "正在读取工作区…".into();
@@ -83,6 +89,50 @@ impl HiveApp {
             self.memory_workspace_changed(cx);
         }
         cx.notify();
+    }
+    pub fn toggle_project(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.expanded_projects.remove(&id) {
+            cx.notify();
+            return;
+        }
+        self.expanded_projects.insert(id.clone());
+        cx.notify();
+        if self.workspace.as_ref() == Some(&id) {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone().filter(|_| self.connected) else {
+            self.expanded_projects.remove(&id);
+            self.error = Some("后台未连接，无法读取项目会话".into());
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let sessions = runtime
+                .request("chat.list", json!({"workspaceId": id}))
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<Vec<Session>>(value)
+                        .map_err(|error| format!("会话列表格式错误：{error}"))
+                });
+            let _ = this.update(cx, |this, cx| {
+                if this.workspace.as_ref() == Some(&id)
+                    || !this.expanded_projects.contains(&id)
+                    || !this.workspaces.iter().any(|workspace| workspace.id == id)
+                {
+                    return;
+                }
+                match sessions {
+                    Ok(sessions) => {
+                        this.project_sessions.insert(id, sessions);
+                    }
+                    Err(error) => {
+                        this.expanded_projects.remove(&id);
+                        this.error = Some(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
     pub(crate) fn reset_workspace_view(&mut self) {
         self.session = None;
