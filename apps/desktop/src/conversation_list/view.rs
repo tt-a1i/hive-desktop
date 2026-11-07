@@ -147,9 +147,21 @@ impl HiveApp {
                         }),
                 )
             })
-            .when_some(message.markdown.as_ref(), |view, markdown| {
-                view.child(TextView::new(markdown).selectable(true).stream_fade(true))
-            })
+            .children(
+                message
+                    .thinking
+                    .iter()
+                    .map(|block| self.render_thinking(i, &message.id, block, cx)),
+            )
+            .when_some(
+                message
+                    .markdown
+                    .as_ref()
+                    .filter(|_| !message.text.is_empty()),
+                |view, markdown| {
+                    view.child(TextView::new(markdown).selectable(true).stream_fade(true))
+                },
+            )
             .when(
                 message.markdown.is_none() && !message.text.is_empty(),
                 |view| {
@@ -241,7 +253,12 @@ impl HiveApp {
                     )
                 },
             )
-            .child(self.message_actions(i, message, cx))
+            .when(
+                !message.text.is_empty()
+                    || !message.images.is_empty()
+                    || message.delivery.is_some(),
+                |view| view.child(self.message_actions(i, message, cx)),
+            )
             .into_any_element()
     }
     pub(crate) fn render_conversation_tail(&self, cx: &mut Context<Self>) -> impl IntoElement {

@@ -51,4 +51,6 @@ pnpm --filter @hive-desktop/runtime check:team
 
 会话菜单增加归档/恢复，默认导航与置顶隐藏归档，独立入口可搜索分页；历史、草稿和成员身份保留，实际新消息自动恢复。当前验证范围见 [会话归档](docs/validation/2026-11-08-session-archives.md)。
 
+聊天已展示后端实际返回的思考过程，默认折叠，可展开、选择和复制，并支持历史恢复与会话内容查找；验证范围见 [思考展示](docs/validation/2026-11-08-thinking-display.md)。
+
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。

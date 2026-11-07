@@ -98,6 +98,7 @@ try {
     api: 'openai-responses', provider: 'openai', model: 'gpt-6.1-terra', stopReason,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } });
+  assistant([{ type: 'thinking', thinking: '先核对原生会话的启动方式，再检查测试入口。' }], 'stop');
   const reads = [['README.md', '使用 pnpm dev 启动开发环境。'], ['package.json', '{"scripts":{"test":"node --test"}}']];
   assistant(reads.map(([path], index) => ({ type: 'toolCall', id: `read-${index}`, name: 'read', arguments: { path } })), 'toolUse');
   for (const [index, [, text]] of reads.entries()) {
@@ -107,6 +108,7 @@ try {
   assistant([{ type: 'text', text: '项目用 `pnpm dev` 启动。测试入口是 `pnpm test`，对应 Node 自带的测试运行器。' }], 'stop');
   const persisted = createDesktopSessionManager(join(directory, 'Beta'), dirname(workerFile), workerFile);
   assert.deepEqual(persisted.buildSessionContext().messages.filter(m => m.role === 'toolResult').map(m => m.toolCallId), ['read-0', 'read-1']);
+  assert.ok(persisted.buildSessionContext().messages.some(m => m.role === 'assistant' && m.content.some(block => block.type === 'thinking' && block.thinking === '先核对原生会话的启动方式，再检查测试入口。')));
 
   // The native window must select the second project, successfully open its chat
   // and replace the obsolete selection. Booting just the sidecar cannot do this.

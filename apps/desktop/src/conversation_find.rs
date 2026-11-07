@@ -25,6 +25,10 @@ fn matches(message: &Message, input: Option<&serde_json::Value>, query: &str) ->
     !query.is_empty()
         && (message.text.to_lowercase().contains(query)
             || message
+                .thinking
+                .iter()
+                .any(|block| block.text.to_lowercase().contains(query))
+            || message
                 .tool
                 .as_ref()
                 .is_some_and(|tool| tool.name.to_lowercase().contains(query))
@@ -47,7 +51,7 @@ impl HiveApp {
         }
         if self.conversation_find.is_none() {
             let input =
-                cx.new(|cx| InputState::new(window, cx).placeholder("查找已加载消息和工具…"));
+                cx.new(|cx| InputState::new(window, cx).placeholder("查找已加载消息、思考和工具…"));
             let subscription =
                 cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
                     InputEvent::Change => this.change_conversation_find(window, cx),
@@ -137,6 +141,12 @@ impl HiveApp {
             return;
         };
         if let Some(message) = self.messages.iter_mut().find(|m| &m.id == id) {
+            for block in &mut message.thinking {
+                if block.text.to_lowercase().contains(&find.query) && !block.expanded {
+                    block.expanded = true;
+                    message.layout_revision += 1;
+                }
+            }
             if let Some(tool) = &mut message.tool {
                 tool.expanded = true;
             }

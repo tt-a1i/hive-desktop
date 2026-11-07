@@ -49,6 +49,7 @@ pub struct Message {
     pub text: String,
     pub markdown: Option<Entity<TextViewState>>,
     pub tool: Option<ToolPresentation>,
+    pub thinking: Vec<crate::thinking::ThinkingBlock>,
     pub delivery: Option<DeliveryCard>,
     pub explicit_user: bool,
     pub images: Vec<std::sync::Arc<RenderImage>>,
@@ -60,6 +61,7 @@ pub struct ConversationPosition {
     pub anchor: Option<crate::conversation_list::ReadingAnchor>,
     pub expanded: HashSet<String>,
     pub expanded_tool_groups: HashSet<String>,
+    pub expanded_thinking: HashSet<(String, usize)>,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]

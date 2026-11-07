@@ -51,3 +51,7 @@ Agent 通知为 `{event:"agent",data:{type,sessionId,sequence,...}}`。事件包
 ## 会话归档
 
 归档是桌面导航元数据，不停止 Agent 或更改 Hive 协作状态。成功保存或幂等请求发出 `session_navigation {sessionId,sequence,archived,pinned,updatedAt}`，界面按事件顺序应用状态，RPC 回执只确认请求。忙碌、待投递或有未结派单的会话不能归档；新实际输入会在入队前恢复。全量列表保留归档记录，默认搜索和置顶过滤归档；归档搜索显式传 archived=true。实现和验证边界见 [归档记录](validation/2026-11-08-session-archives.md)。
+
+## 思考内容展示
+
+Agent assistant_delta 的 kind 为 thinking 时，Rust 使用 messageId/contentIndex 维护独立思考段；message_end 与快照中的原生 content 提供最终内容。此处复用既有通知，并未添加 reasoning 请求或修改模型行为。未公开的 redacted_thinking 数据不显示，思考结束或取消不替代 Hive 汇报结算。见 [展示验证](validation/2026-11-08-thinking-display.md)。

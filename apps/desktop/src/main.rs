@@ -24,6 +24,7 @@ mod settings;
 #[cfg(target_os = "macos")]
 mod shell_owner;
 mod terminal;
+mod thinking;
 mod tool_message;
 mod transport;
 mod view;

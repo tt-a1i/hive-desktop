@@ -304,6 +304,7 @@ impl HiveApp {
             text,
             markdown,
             tool: None,
+            thinking: vec![],
             delivery: None,
             explicit_user: false,
             images: vec![],
@@ -329,6 +330,9 @@ impl HiveApp {
                     }
                 }
             }
+        }
+        if role == "assistant" {
+            self.sync_thinking(&id, message, false, cx);
         }
         let text = message_text(message);
         if role == "custom" && message["customType"] == "hive-delivery" {
@@ -435,7 +439,14 @@ impl HiveApp {
         append: bool,
         cx: &mut Context<Self>,
     ) {
-        if !append && role == "assistant" && text.trim().is_empty() {
+        if !append
+            && role == "assistant"
+            && text.trim().is_empty()
+            && !self
+                .messages
+                .iter()
+                .any(|message| message.id == id && !message.thinking.is_empty())
+        {
             self.messages.retain(|message| message.id != id);
             self.refresh_conversation_find(&id);
             return;
@@ -537,10 +548,14 @@ impl HiveApp {
             PiEvent::AssistantDelta {
                 message_id,
                 kind,
+                content_index,
                 delta,
                 ..
             } => {
-                if kind == "text" {
+                if kind == "thinking" {
+                    self.append_thinking(message_id, content_index, delta, cx);
+                } else if kind == "text" {
+                    self.finish_thinking_before(&message_id, content_index);
                     self.upsert(message_id, "assistant", delta, true, cx);
                 }
             }
@@ -584,6 +599,7 @@ impl HiveApp {
                 );
             }
             PiEvent::Settled { aborted, .. } => {
+                self.finish_thinking(aborted);
                 if aborted {
                     self.status = "已停止当前回复".into();
                 }

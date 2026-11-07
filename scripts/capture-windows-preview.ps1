@@ -222,6 +222,11 @@ Invoke-Action '重新打开会话'
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-member-session.png')
 Invoke-Action '查找当前会话'
 $query = Wait-Action '查找当前会话的消息和工具'
+$query.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('先核对原生会话')
+[void](Wait-Action '收起思考过程，第 1 段，思考过程')
+[void](Wait-Action '复制思考过程，第 1 段')
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-thinking-find.png')
+$query = Wait-Action '查找当前会话的消息和工具'
 $query.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('README.md')
 [void](Wait-Action '收起 read 工具详情，完成 README.md')
 Wait-EnabledState '下一条匹配消息' $true

@@ -233,6 +233,7 @@ pub enum PiEvent {
         sequence: u64,
         message_id: String,
         kind: String,
+        content_index: usize,
         delta: String,
     },
     #[serde(rename_all = "camelCase")]

@@ -3,7 +3,6 @@ mod naming;
 mod pinning;
 pub(crate) use pinning::PinnedSessions;
 mod search;
-use crate::conversation::message_text;
 use crate::{app::HiveApp, protocol::*};
 use gpui_kit::*;
 use serde_json::json;
@@ -37,6 +36,17 @@ impl HiveApp {
                 anchor,
                 expanded,
                 expanded_tool_groups: self.expanded_tool_groups.clone(),
+                expanded_thinking: self
+                    .messages
+                    .iter()
+                    .flat_map(|message| {
+                        message
+                            .thinking
+                            .iter()
+                            .filter(|block| block.expanded)
+                            .map(|block| (message.id.clone(), block.index))
+                    })
+                    .collect(),
             },
         );
     }
@@ -56,6 +66,15 @@ impl HiveApp {
                 }
                 if let Some(delivery) = &mut message.delivery {
                     delivery.expanded = true;
+                }
+            }
+        }
+        if let Some(position) = position {
+            for message in &mut self.messages {
+                for block in &mut message.thinking {
+                    block.expanded = position
+                        .expanded_thinking
+                        .contains(&(message.id.clone(), block.index));
                 }
             }
         }
@@ -616,13 +635,8 @@ impl HiveApp {
                             this.receive_message(open.history_message_ids[i].clone(), &message, cx);
                         }
                         if let Some(active) = open.active_message {
-                            this.upsert(
-                                active.message_id,
-                                "assistant",
-                                message_text(&active.message),
-                                false,
-                                cx,
-                            );
+                            this.receive_message(active.message_id.clone(), &active.message, cx);
+                            this.sync_thinking(&active.message_id, &active.message, true, cx);
                         }
                         for event in std::mem::take(&mut this.pending_events) {
                             this.agent_event(event, cx);
