@@ -156,7 +156,7 @@ try {
   const reopenedA = await runtime.chats.open(a.id);
   assert.equal(reopenedA.agentId, agentId);
   assert.equal(reopenedA.pending, pendingAtRestart);
-  const preview = [{ deliveryId: delivery.id, text: 'explicit-worker-report', workerName: 'sdk-worker',
+  const preview = [{ deliveryId: delivery.id, text: 'explicit-worker-report', workerName: 'sdk-worker', workerId: worker.id,
     artifacts: ['proof.txt'], processing: false }];
   assert.deepEqual(stateEvents.filter(event => event.sessionId === a.id).at(-1)?.pendingReports, preview);
   assert.deepEqual(reopenedA.pendingReports, preview);

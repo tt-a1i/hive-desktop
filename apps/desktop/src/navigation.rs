@@ -13,6 +13,21 @@ use gpui_kit::{
 };
 
 impl HiveApp {
+    pub(crate) fn show_team(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_memory();
+        self.close_settings();
+        self.close_collaboration();
+        self.close_roles();
+        self.hide_terminal(cx);
+        self.member_panel = true;
+        if window.viewport_size().width < px(820.) {
+            self.sidebar_open = false;
+        }
+        self.refresh_members(cx);
+        self.load_roles(cx);
+        cx.notify();
+    }
+
     pub fn render_navigation_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
@@ -241,18 +256,7 @@ impl HiveApp {
                             .selected(self.member_panel)
                             .disabled(self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.close_memory();
-                                this.close_settings();
-                                this.close_collaboration();
-                                this.close_roles();
-                                this.hide_terminal(cx);
-                                this.member_panel = true;
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                this.refresh_members(cx);
-                                this.load_roles(cx);
-                                cx.notify();
+                                this.show_team(window, cx);
                             })),
                     )
                     .child(

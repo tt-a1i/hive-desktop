@@ -97,7 +97,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-native-workspace
-          path: target/windows-native-workspace.png
+          path: |
+            target/windows-native-workspace.png
+            target/windows-member-session.png
           if-no-files-found: error
   native-supervision:
     runs-on: windows-latest

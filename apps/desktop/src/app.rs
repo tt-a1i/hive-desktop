@@ -56,7 +56,14 @@ pub struct NavigationSelection {
     pub sessions: HashMap<String, String>,
 }
 
+#[derive(Clone, PartialEq)]
+pub enum ConversationSource {
+    Team,
+    Session(String),
+}
+
 pub struct HiveApp {
+    pub conversation_sources: Vec<ConversationSource>,
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
     pub composer_can_submit: bool,
@@ -213,6 +220,7 @@ impl HiveApp {
             },
         );
         let mut app = Self {
+            conversation_sources: Vec::new(),
             navigation: NavigationSelection::default(),
             sidebar_open: window.viewport_size().width >= px(820.),
             connected: false,

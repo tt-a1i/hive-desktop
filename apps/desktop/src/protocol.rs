@@ -95,6 +95,7 @@ pub struct PendingReport {
     pub delivery_id: String,
     pub text: String,
     pub worker_name: Option<String>,
+    pub worker_id: Option<String>,
     pub artifacts: Vec<String>,
     pub processing: bool,
 }

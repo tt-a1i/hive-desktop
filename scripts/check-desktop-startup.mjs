@@ -25,6 +25,7 @@ try {
   const runtime = await createDesktopRuntime(state, () => {});
   let workspaceId;
   let chatId;
+  let workerChat;
   try {
     for (const name of ['Alpha', 'Beta']) {
       const path = join(directory, name);
@@ -33,7 +34,14 @@ try {
     }
     const projects = await runtime.hive.request('GET', '/api/workspaces');
     workspaceId = projects[1].id;
+    const base = `/api/workspaces/${workspaceId}`;
+    const member = await runtime.hive.request('POST', `${base}/workers`, { name: 'Reviewer', role: 'reviewer', autostart: false });
+    await runtime.hive.request('POST', `${base}/agents/${member.id}/config`, { command: 'hive:pi', args: [] });
+    await runtime.hive.request('POST', `${base}/agents/${member.id}/start`);
+    workerChat = runtime.chats.list(workspaceId).find(chat => chat.agentId === member.id)?.id;
+    assert.ok(workerChat, 'Starting the worker must create its actual member session');
     chatId = (await runtime.chats.create(workspaceId)).id;
+    assert.equal(runtime.chats.list(workspaceId)[0].id, chatId);
     runtime.hive.saveNavigation(JSON.stringify({ workspace: workspaceId, sessions: { [workspaceId]: 'removed-chat' } }));
   } finally {
     await runtime.close();
@@ -48,20 +56,23 @@ try {
   exited = once(child, 'exit');
   reader = new DatabaseSync(join(state, 'hive/runtime.sqlite'), { readOnly: true });
   const read = reader.prepare("SELECT value FROM app_state WHERE key = 'desktop_navigation'");
-  const deadline = Date.now() + 60_000;
-  let restored;
-  while (Date.now() < deadline) {
-    const selected = JSON.parse(read.get().value);
-    if (selected.workspace === workspaceId && selected.sessions[workspaceId] === chatId) { restored = selected; break; }
-    if (child.exitCode !== null || child.signalCode !== null) break;
-    await delay(200);
+  async function waitForSelection(expected) {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const selected = JSON.parse(read.get().value);
+      if (selected.workspace === workspaceId && selected.sessions[workspaceId] === expected) return;
+      if (child.exitCode !== null || child.signalCode !== null) break;
+      await delay(200);
+    }
+    assert.fail(`Native window did not open chat ${expected} (exit ${child.exitCode}, signal ${child.signalCode})`);
   }
-  assert.ok(restored, `Native window did not restore the chat (exit ${child.exitCode}, signal ${child.signalCode})`);
+  await waitForSelection(chatId);
   if (process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH) {
     const capture = fileURLToPath(new URL('./capture-windows-preview.ps1', import.meta.url));
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
       '-AppProcessId', String(child.pid), '-OutputPath', resolve(process.env.HIVE_WINDOWS_PREVIEW_PATH)],
-    { stdio: 'inherit', timeout: 20_000 });
+    { stdio: 'inherit', timeout: 60_000 });
+    await waitForSelection(workerChat);
   }
   console.log('Native desktop opened the saved project and recovered its missing chat selection from the extracted bundle.');
 } finally {

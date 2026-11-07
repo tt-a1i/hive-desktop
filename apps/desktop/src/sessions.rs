@@ -208,6 +208,7 @@ impl HiveApp {
         .detach();
     }
     pub(crate) fn reset_workspace_view(&mut self) {
+        self.conversation_sources.clear();
         self.session = None;
         self.messages.clear();
         self.tool_inputs.clear();
@@ -383,6 +384,29 @@ impl HiveApp {
         .detach();
     }
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.conversation_sources.clear();
+        self.show_session(id, cx);
+    }
+
+    pub(crate) fn open_member_session(&mut self, id: String, cx: &mut Context<Self>) {
+        use crate::app::ConversationSource;
+        if !self.workspace_writes_allowed() || !self.sessions.iter().any(|s| s.id == id) {
+            return;
+        }
+        if self.member_panel {
+            self.conversation_sources.clear();
+            self.conversation_sources.push(ConversationSource::Team);
+        } else if let Some(current) = &self.session {
+            if current.id == id {
+                return;
+            }
+            self.conversation_sources
+                .push(ConversationSource::Session(current.id.clone()));
+        }
+        self.show_session(id, cx);
+    }
+
+    pub(crate) fn show_session(&mut self, id: String, cx: &mut Context<Self>) {
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
             return;
         }

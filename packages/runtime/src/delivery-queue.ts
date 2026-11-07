@@ -48,7 +48,7 @@ export class DeliveryQueue {
   return this.items.flatMap((item, index) => {
    const report = item.presentation;
    return report?.origin === 'report' ? [{ deliveryId: item.id, text: report.displayText,
-    workerName: report.workerName, artifacts: [...(report.artifacts ?? [])], processing: index === 0 && this.busy && !this.paused }] : [];
+    workerName: report.workerName, ...(report.workerId && { workerId: report.workerId }), artifacts: [...(report.artifacts ?? [])], processing: index === 0 && this.busy && !this.paused }] : [];
   });
  }
  get busy(): boolean { return this.running !== undefined; }
