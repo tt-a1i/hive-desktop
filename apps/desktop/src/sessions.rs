@@ -209,6 +209,7 @@ impl HiveApp {
     pub(crate) fn reset_workspace_view(&mut self) {
         self.conversation_sources.clear();
         self.session = None;
+        self.conversation_ready = false;
         self.messages.clear();
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();
@@ -417,6 +418,7 @@ impl HiveApp {
         self.close_settings();
         self.member_panel = false;
         self.open_request += 1;
+        self.conversation_ready = false;
         self.unread.remove(&id);
         self.choosing_model = false;
         let request = self.open_request;
@@ -450,10 +452,15 @@ impl HiveApp {
                 this.loading = false;
                 match serde_json::from_value::<OpenSession>(value) {
                     Ok(open) => {
+                        if open.session.id != id {
+                            this.error = Some("打开响应中的会话身份不匹配".into());
+                            return;
+                        }
                         if open.history_message_ids.len() != open.history.len() {
                             this.error = Some("会话快照中的消息身份数量不匹配".into());
                             return;
                         }
+                        this.conversation_ready = true;
                         if open.busy {
                             this.busy.insert(id.clone());
                         } else {

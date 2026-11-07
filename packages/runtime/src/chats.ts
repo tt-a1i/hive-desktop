@@ -62,7 +62,10 @@ export class Chats implements StructuredSessionPort {
   }
   private async load(record: ChatRecord): Promise<LiveChat> {
     const workspace = await this.workspace(record.workspaceId);
-    const sessionFile = record.sessionFile && existsSync(record.sessionFile) ? record.sessionFile : undefined;
+    const sessionFile = record.sessionFile;
+    if (sessionFile && !existsSync(sessionFile)) {
+      throw new Error(`找不到已保存的 Pi 会话文件。恢复文件后可重新打开会话：${sessionFile}`);
+    }
     let chat: LiveChat | undefined;
     let earlyFailure: Error | undefined;
     const binding = () => {

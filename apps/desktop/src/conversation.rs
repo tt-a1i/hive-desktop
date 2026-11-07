@@ -6,7 +6,7 @@ use gpui_kit::{component::text::TextViewState, *};
 use serde_json::{Value, json};
 impl HiveApp {
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.workspace_writes_allowed() {
+        if !self.conversation_ready || !self.workspace_writes_allowed() {
             return;
         }
         let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {
@@ -98,7 +98,7 @@ impl HiveApp {
         cx.notify();
     }
     pub fn resume(&mut self, cx: &mut Context<Self>) {
-        if !self.workspace_writes_allowed() {
+        if !self.conversation_ready || !self.workspace_writes_allowed() {
             return;
         }
         let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {

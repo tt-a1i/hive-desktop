@@ -1,5 +1,6 @@
 ﻿param(
     [Parameter(Mandatory)] [int] $AppProcessId,
+    [Parameter(Mandatory)] [string] $WorkerFile,
     [Parameter(Mandatory)] [string] $OutputPath
 )
 $ErrorActionPreference = 'Stop'
@@ -69,7 +70,17 @@ if ($null -eq (Find-Action '团队成员')) {
 Invoke-Action '团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-team.png')
-Invoke-Action '打开 Reviewer 的成员会话'
+$offline = "$WorkerFile.offline"
+Move-Item -LiteralPath $WorkerFile -Destination $offline
+try {
+    Invoke-Action '打开 Reviewer 的成员会话'
+    [void](Wait-Action '重新打开会话')
+    $model = Find-Action '选择会话模型'
+    if ($null -eq $model -or $model.Current.IsEnabled) { throw 'Unavailable history must disable model selection.' }
+} finally {
+    Move-Item -LiteralPath $offline -Destination $WorkerFile
+}
+Invoke-Action '重新打开会话'
 [void](Wait-Action '返回团队成员')
 [void](Wait-Action '展开工作过程，2 项工具已完成')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-member-session.png')

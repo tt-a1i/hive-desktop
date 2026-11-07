@@ -95,7 +95,7 @@ try {
   if (process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH) {
     const capture = fileURLToPath(new URL('./capture-windows-preview.ps1', import.meta.url));
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
-      '-AppProcessId', String(child.pid), '-OutputPath', resolve(process.env.HIVE_WINDOWS_PREVIEW_PATH)],
+      '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-OutputPath', resolve(process.env.HIVE_WINDOWS_PREVIEW_PATH)],
     { stdio: 'inherit', timeout: 60_000 });
     await waitForSelection(workerChat);
   }

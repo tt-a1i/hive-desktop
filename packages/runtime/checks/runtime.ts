@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -111,6 +111,11 @@ try {
   const persisted = await second.request('chat.list', { workspaceId: workspace.id });
   assert.equal(persisted.length, 2);
   assert.equal(persisted[0].id, newer.id);
+  const original = index.find((item: { id: string }) => item.id === newer.id);
+  await rename(original.sessionFile, original.sessionFile + '.offline');
+  await assert.rejects(second.request('chat.open', { sessionId: newer.id }));
+  assert.deepEqual(JSON.parse(await readFile(indexPath, 'utf8')).find((item: { id: string }) => item.id === newer.id), original);
+  await rename(original.sessionFile + '.offline', original.sessionFile);
   const unavailable = await second.request('chat.open', { sessionId: newer.id });
   assert.equal(unavailable.model, undefined);
   assert.equal(unavailable.unavailableModel.provider, 'removed-provider');

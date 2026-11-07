@@ -184,13 +184,20 @@ impl Render for HiveApp {
             .and_then(|s| self.pending.get(&s.id))
             .copied()
             .unwrap_or(0);
+        let open_failed = self.session.is_some()
+            && !self.conversation_ready
+            && !self.loading
+            && self.connected
+            && !self.closing;
         let needs_pi_model = self
             .session
             .as_ref()
             .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Pi))
+            && self.conversation_ready
             && self.model.is_none()
             && !self.loading;
-        let can_submit = self.session.is_some()
+        let can_submit = self.conversation_ready
+            && self.session.is_some()
             && !needs_pi_model
             && self.workspace_writes_allowed()
             && self.connected
@@ -234,6 +241,7 @@ impl Render for HiveApp {
             .cloned()
             .collect();
         let welcome = self.session.as_ref().is_none_or(|s| s.agent_id.is_none())
+            && !open_failed
             && self.pending_reports.is_empty()
             && self.messages.is_empty()
             && !has_interactions
@@ -399,10 +407,18 @@ impl Render for HiveApp {
                         .label("回到最新").accessibility_label("回到最新消息")
                         .on_click(cx.listener(|this, _, _, cx| { this.scroll.scroll_to_bottom(); cx.notify(); }))
                 )))
-                .when(!welcome, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone()))))
+                .when(!welcome && !open_failed, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone()))))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.scroll.scroll_to_bottom(); cx.notify(); }))))
-                .when(!welcome && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).on_scroll(cx.listener(|_, _, _, cx| cx.notify())).p_3()
+                .when(open_failed, |surface| surface.child(v_flex().flex_1().min_h_0().items_center().justify_center().gap_3()
+                    .child(div().text_sm().child("未能打开会话，草稿已保留。"))
+                    .child(Button::new("retry-open-session").label("重新打开会话").on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(session) = &this.session {
+                            this.error = None;
+                            this.show_session(session.id.clone(), cx);
+                        }
+                    })))))
+                .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).on_scroll(cx.listener(|_, _, _, cx| cx.notify())).p_3()
                     .child(v_flex().w_full().max_w(px(920.)).mx_auto().gap_5()
                         .when(self.messages.is_empty() && self.pending_reports.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.chunk_by(|left, right| left.completed_tool() && right.completed_tool())
@@ -470,7 +486,7 @@ impl Render for HiveApp {
                         })))))
                 .when(pending > 0, |view| view.child(h_flex().gap_3()
                     .child(div().text_sm().child(format!("团队消息待处理：{pending}")))
-                    .when(!running, |view| view.child(Button::new("resume").label("继续处理").disabled(!self.connected || self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
+                    .when(!running, |view| view.child(Button::new("resume").label("继续处理").disabled(!self.connected || !self.conversation_ready || self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
                 .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {
                     let session_id = session_id.clone();
                     let text = draft.clone();
@@ -493,7 +509,7 @@ impl Render for HiveApp {
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
                         self.new_chat_menu("home-agent", "选择 Agent", cx).into_any_element()
                     } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
-                    .when(self.session.is_some(), |row| row.child(Button::new("choose-model").accessibility_label("选择会话模型").ghost().compact().min_w_0().label(self.model.as_ref().map(|model| format!("{} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || self.session.is_none() || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); }))))
+                    .when(self.session.is_some(), |row| row.child(Button::new("choose-model").accessibility_label("选择会话模型").ghost().compact().min_w_0().label(self.model.as_ref().map(|model| format!("{} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || !self.conversation_ready || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); }))))
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(if running {
                         Button::new("stop").label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
