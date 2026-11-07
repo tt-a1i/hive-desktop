@@ -28,6 +28,15 @@ impl HiveApp {
         cx.notify();
     }
 
+    fn viewing_conversation(&self) -> bool {
+        !(self.terminal.visible
+            || self.member_panel
+            || self.memory.visible
+            || self.roles.visible
+            || self.settings_panel
+            || self.collaboration.visible)
+    }
+
     pub fn render_navigation_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
@@ -73,32 +82,24 @@ impl HiveApp {
                         .child("后台未连接"),
                 )
             })
-            .when(
-                self.terminal.visible
-                    || self.member_panel
-                    || self.memory.visible
-                    || self.roles.visible
-                    || self.settings_panel
-                    || self.collaboration.visible,
-                |view| {
-                    view.child(
-                        Button::new("return-chat")
-                            .label("返回会话")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.hide_terminal(cx);
-                                this.close_memory();
-                                this.close_settings();
-                                this.close_roles();
-                                this.close_collaboration();
-                                this.member_panel = false;
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                cx.notify();
-                            })),
-                    )
-                },
-            )
+            .when(!self.viewing_conversation(), |view| {
+                view.child(
+                    Button::new("return-chat")
+                        .label("返回会话")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.hide_terminal(cx);
+                            this.close_memory();
+                            this.close_settings();
+                            this.close_roles();
+                            this.close_collaboration();
+                            this.member_panel = false;
+                            if window.viewport_size().width < px(820.) {
+                                this.sidebar_open = false;
+                            }
+                            cx.notify();
+                        })),
+                )
+            })
     }
 
     pub fn render_settings_tabs(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
@@ -418,7 +419,8 @@ impl HiveApp {
                                                         .selected(
                                                             self.workspace.as_ref()
                                                                 == Some(&workspace.id)
-                                                                && self.session.is_none(),
+                                                                && self.session.is_none()
+                                                                && self.viewing_conversation(),
                                                         )
                                                         .disabled(
                                                             self.workspace_removing.as_ref()
@@ -595,7 +597,10 @@ impl HiveApp {
                 session.backend.label()
             ))
             .disabled(self.workspace_removing.as_ref() == Some(&project))
-            .selected(self.session.as_ref().is_some_and(|s| s.id == session.id))
+            .selected(
+                self.viewing_conversation()
+                    && self.session.as_ref().is_some_and(|s| s.id == session.id),
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
                 if window.viewport_size().width < px(820.) {
                     this.sidebar_open = false;
