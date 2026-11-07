@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -74,6 +74,14 @@ try {
 
   // The native window must select the second project, successfully open its chat
   // and replace the obsolete selection. Booting just the sidecar cannot do this.
+  const windowsPreview = process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH;
+  const existingDraft = '请保留这条跟进问题。';
+  const draftDir = join(state, 'desktop-drafts');
+  const workerDraft = join(draftDir, `session-${workerChat}.json`);
+  if (windowsPreview) {
+    await mkdir(draftDir, { recursive: true });
+    await writeFile(workerDraft, JSON.stringify({ key: `session:${workerChat}`, input: existingDraft, failed: [] }));
+  }
   const env = { ...process.env, HIVE_DESKTOP_DATA_DIR: state, HIVE_DESKTOP_TRACE_RPC: '1' };
   delete env.HIVE_DESKTOP_NODE;
   delete env.HIVE_DESKTOP_RUNTIME;
@@ -92,12 +100,13 @@ try {
     assert.fail(`Native window did not open chat ${expected} (exit ${child.exitCode}, signal ${child.signalCode})`);
   }
   await waitForSelection(chatId);
-  if (process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH) {
+  if (windowsPreview) {
     const capture = fileURLToPath(new URL('./capture-windows-preview.ps1', import.meta.url));
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
-      '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-OutputPath', resolve(process.env.HIVE_WINDOWS_PREVIEW_PATH)],
+      '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-OutputPath', resolve(windowsPreview)],
     { stdio: 'inherit', timeout: 60_000 });
     await waitForSelection(workerChat);
+    assert.equal(JSON.parse(await readFile(workerDraft, 'utf8')).input, `> ${prompt}\n\n${existingDraft}`);
   }
   console.log('Native desktop opened the saved project and recovered its missing chat selection from the extracted bundle.');
 } finally {

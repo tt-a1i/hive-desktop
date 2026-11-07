@@ -1,6 +1,8 @@
 ﻿param(
     [Parameter(Mandatory)] [int] $AppProcessId,
     [Parameter(Mandatory)] [string] $WorkerFile,
+    [Parameter(Mandatory)] [string] $WorkerPrompt,
+    [Parameter(Mandatory)] [string] $ExistingDraft,
     [Parameter(Mandatory)] [string] $OutputPath
 )
 $ErrorActionPreference = 'Stop'
@@ -84,6 +86,19 @@ function Invoke-Action([string] $Name) {
     $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
+function Wait-ComposerText([string] $Expected) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $editor = Find-Action '聊天消息'
+        if ($null -ne $editor) {
+            $pattern = $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+            if (($pattern.Current.Value -replace "`r`n", "`n") -ceq $Expected) { return }
+        }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'The visible chat draft did not match the expected session text.'
+}
+
 # Only operate on this test app's window and the temporary Reviewer created by the startup check.
 Save-FixtureWindow $OutputPath
 [void](Wait-Action '打开或收起工作区与会话导航')
@@ -111,11 +126,20 @@ Invoke-Action '展开工作过程，2 项工具已完成'
 Invoke-Action '展开 read 工具详情，完成 README.md'
 [void](Wait-Action '收起 read 工具详情，完成 README.md')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-tool-details.png')
-Invoke-Action '收起工作过程，2 项工具已完成'
-[void](Wait-Action '展开工作过程，2 项工具已完成')
+Wait-ComposerText $ExistingDraft
+Invoke-Action '引用消息到草稿'
+$quoted = "> $WorkerPrompt`n`n$ExistingDraft"
+Wait-ComposerText $quoted
 Invoke-Action '返回团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')
-Write-Host 'Opened the named member session and returned to the team roster through native controls.'
+Invoke-Action 'Pi · 新会话 · 会话'
+Wait-ComposerText ''
+Invoke-Action 'Pi · Reviewer · 成员'
+Wait-ComposerText $quoted
+[void](Wait-Action '收起 read 工具详情，完成 README.md')
+Write-Host 'Verified isolated and restored quoted draft and expanded tool across native sessions.'
+Invoke-Action '收起工作过程，2 项工具已完成'
+[void](Wait-Action '展开工作过程，2 项工具已完成')
 Invoke-Action '设置'
 Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')
