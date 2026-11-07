@@ -28,7 +28,7 @@ type Pending = { resolve: (result: unknown) => void; reject: (error: Error) => v
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 
-/** Local Node backend only. Windows CLI launch has not been verified. */
+/** JSONL transport for the configured local Codex CLI. */
 export class CodexTransport {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, Pending>();
@@ -97,6 +97,10 @@ export class CodexTransport {
       return transport;
     } catch (error) {
       await transport.close();
+      const diagnostic = transport.diagnostics.trim().slice(-1200);
+      if (diagnostic && error instanceof Error && !('code' in error)) {
+        throw new Error(`Codex 初始化失败（${options.command ?? 'codex'}）。请在「设置 → 外部程序」核对可执行文件。\n${error.message}\n${diagnostic}`, { cause: error });
+      }
       throw error;
     }
   }

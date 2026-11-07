@@ -90,7 +90,15 @@ jobs:
           if-no-files-found: error
       - name: Open the saved workspace in the extracted native application
         timeout-minutes: 4
+        env:
+          HIVE_WINDOWS_PREVIEW_PATH: target/windows-native-workspace.png
         run: node scripts/check-desktop-startup.mjs --bundle target/portable-windows-extracted
+      - name: Upload native workspace preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-workspace
+          path: target/windows-native-workspace.png
+          if-no-files-found: error
   native-supervision:
     runs-on: windows-latest
     timeout-minutes: 20

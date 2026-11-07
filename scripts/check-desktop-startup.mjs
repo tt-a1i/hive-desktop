@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const flag = process.argv.indexOf('--bundle');
 assert.ok(flag >= 0 && process.argv[flag + 1], 'Pass --bundle followed by the extracted package directory');
@@ -57,6 +57,12 @@ try {
     await delay(200);
   }
   assert.ok(restored, `Native window did not restore the chat (exit ${child.exitCode}, signal ${child.signalCode})`);
+  if (process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH) {
+    const capture = fileURLToPath(new URL('./capture-windows-preview.ps1', import.meta.url));
+    execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
+      '-AppProcessId', String(child.pid), '-OutputPath', resolve(process.env.HIVE_WINDOWS_PREVIEW_PATH)],
+    { stdio: 'inherit', timeout: 20_000 });
+  }
   console.log('Native desktop opened the saved project and recovered its missing chat selection from the extracted bundle.');
 } finally {
   reader?.close();
