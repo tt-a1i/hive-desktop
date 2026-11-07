@@ -11,6 +11,7 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::json;
+mod appearance;
 mod notification;
 
 #[derive(Deserialize)]
@@ -354,10 +355,11 @@ impl HiveApp {
             self.render_roles(cx).into_any_element()
         } else {
             v_flex().flex_1().w_full().max_w(px(960.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.pl_5().pr_6().py_7()).gap_5()
-                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Programs => "外部程序" }))
+                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Appearance => "外观", SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Programs => "外部程序" }))
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
+                        SettingsSection::Appearance => content.id("settings-appearance-content").overflow_y_scroll().child(self.render_appearance_settings(cx)),
                         SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()
                     .child(h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))
                         .child(v_flex().flex_1().min_w_0().gap_1()

@@ -1,4 +1,5 @@
 mod app;
+mod appearance;
 mod artifacts;
 mod collaboration;
 mod conversation;
@@ -23,7 +24,6 @@ mod transport;
 mod view;
 mod workspace_actions;
 
-use gpui_kit::component::Theme;
 use gpui_kit::*;
 actions!(
     hive_desktop,
@@ -46,7 +46,8 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
-            Theme::sync_system_appearance(None, cx);
+            cx.set_global(appearance::Appearance::default());
+            appearance::apply(None, cx);
             cx.bind_keys([
                 KeyBinding::new(
                     if cfg!(target_os = "macos") {
@@ -92,10 +93,10 @@ fn main() {
                 },
                 cx,
                 |window, cx| {
-                    Theme::sync_system_appearance(Some(window), cx);
+                    appearance::apply(Some(window), cx);
                     window
                         .observe_window_appearance(|window, cx| {
-                            Theme::sync_system_appearance(Some(window), cx);
+                            appearance::apply(Some(window), cx);
                         })
                         .detach();
                     cx.new(|cx| app::HiveApp::new(window, cx))

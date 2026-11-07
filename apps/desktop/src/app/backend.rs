@@ -54,6 +54,9 @@ impl HiveApp {
                 }
                 match result {
                     Ok(info) => {
+                        if let Some(root) = info["dataDir"].as_str() {
+                            crate::appearance::restore(std::path::Path::new(root), cx);
+                        }
                         this.pi_agent_dir =
                             info["piAgentDir"].as_str().map(std::path::PathBuf::from);
                         if !this.backend_initialized

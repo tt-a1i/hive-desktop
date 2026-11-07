@@ -155,6 +155,12 @@ impl HiveApp {
             .children(
                 [
                     (
+                        "settings-appearance-tab",
+                        "外观",
+                        Glyph::Monitor,
+                        SettingsSection::Appearance,
+                    ),
+                    (
                         "settings-team-tab",
                         "团队",
                         Glyph::Network,

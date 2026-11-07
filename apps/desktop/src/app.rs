@@ -19,6 +19,7 @@ use std::{
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
+    Appearance,
     Team,
     Notifications,
     Programs,
@@ -337,7 +338,7 @@ impl HiveApp {
             settings_panel: false,
             preferences_focus: cx.focus_handle(),
             preferences_return_focus: None,
-            settings_section: SettingsSection::Team,
+            settings_section: SettingsSection::Appearance,
             settings_loading: false,
             executable_picker_generation: 0,
             settings_message: None,
