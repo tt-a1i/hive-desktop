@@ -42,11 +42,9 @@ impl HiveApp {
             .w_full()
             .flex_shrink_0()
             .items_center()
-            .gap_3()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(Color::Divider.get(cx))
+            .gap_2()
+            .min_h(px(34.))
+            .when(!self.sidebar_open, |bar| bar.px_3())
             .child(
                 Button::new("toggle-navigation")
                     .ghost()
@@ -84,6 +82,8 @@ impl HiveApp {
             .when(!self.viewing_conversation(), |view| {
                 view.child(
                     Button::new("return-chat")
+                        .ghost()
+                        .compact()
                         .label("返回会话")
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.hide_terminal(cx);
@@ -172,11 +172,13 @@ impl HiveApp {
     ) -> impl IntoElement {
         let weak = cx.weak_entity();
         Button::new(id)
-            .when(id == "new-session-menu", |b| b.w_full().justify_start())
+            .when(id == "new-session-menu", |b| {
+                b.h(px(32.)).rounded_full().w_full().justify_start()
+            })
             .ghost()
             .icon(Glyph::Plus)
             .when(id == "new-session-menu", |b| {
-                b.child(div().flex_1().child(label))
+                b.child(div().flex_1().font_weight(FontWeight::NORMAL).child(label))
             })
             .when(id != "new-session-menu", |b| b.label(label))
             .accessibility_label(if id == "new-session-menu" {
@@ -221,20 +223,28 @@ impl HiveApp {
             .border_r_1()
             .border_color(Color::Divider.get(cx))
             .p_3()
-            .gap_3()
-            .child(self.new_chat_menu("new-session-menu", "新建会话", cx))
+            .gap_1()
+            .child(self.render_navigation_bar(cx))
+            .child(self.new_chat_menu("new-session-menu", "新建", cx))
             .child(
                 v_flex()
                     .flex_shrink_0()
                     .gap_1()
                     .child(
                         Button::new("open-terminal")
+                            .h(px(32.))
+                            .rounded_full()
                             .ghost()
                             .icon(Glyph::SquareTerminal)
                             .justify_start()
                             .w_full()
                             .accessibility_label("工作区终端")
-                            .child(div().flex_1().child("工作区终端"))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .font_weight(FontWeight::NORMAL)
+                                    .child("工作区终端"),
+                            )
                             .selected(self.terminal.visible)
                             .disabled(
                                 !self.connected
@@ -247,12 +257,19 @@ impl HiveApp {
                     )
                     .child(
                         Button::new("toggle-members")
+                            .h(px(32.))
+                            .rounded_full()
                             .ghost()
                             .icon(Glyph::Bot)
                             .justify_start()
                             .w_full()
                             .accessibility_label("团队成员")
-                            .child(div().flex_1().child("团队成员"))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .font_weight(FontWeight::NORMAL)
+                                    .child("团队成员"),
+                            )
                             .selected(self.member_panel)
                             .disabled(self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -261,12 +278,19 @@ impl HiveApp {
                     )
                     .child(
                         Button::new("open-collaboration")
+                            .h(px(32.))
+                            .rounded_full()
                             .ghost()
                             .icon(Glyph::Network)
                             .justify_start()
                             .w_full()
                             .accessibility_label("协作概览")
-                            .child(div().flex_1().child("协作概览"))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .font_weight(FontWeight::NORMAL)
+                                    .child("协作概览"),
+                            )
                             .selected(self.collaboration.visible)
                             .disabled(self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -280,12 +304,19 @@ impl HiveApp {
                     )
                     .child(
                         Button::new("open-memory")
+                            .h(px(32.))
+                            .rounded_full()
                             .ghost()
                             .icon(Glyph::BookOpen)
                             .justify_start()
                             .w_full()
                             .accessibility_label("工作区记忆")
-                            .child(div().flex_1().child("工作区记忆"))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .font_weight(FontWeight::NORMAL)
+                                    .child("工作区记忆"),
+                            )
                             .selected(self.memory.visible)
                             .disabled(self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -301,6 +332,7 @@ impl HiveApp {
             .child(
                 v_flex()
                     .id("workspace-session-navigation")
+                    .mt_4()
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -477,12 +509,14 @@ impl HiveApp {
             .child(
                 v_flex().flex_shrink_0().child(
                     Button::new("open-settings")
+                        .h(px(32.))
+                        .rounded_full()
                         .ghost()
                         .icon(Glyph::Settings)
                         .justify_start()
                         .w_full()
                         .accessibility_label("设置")
-                        .child(div().flex_1().child("设置"))
+                        .child(div().flex_1().font_weight(FontWeight::NORMAL).child("设置"))
                         .selected(self.settings_panel || self.roles.visible)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.hide_terminal(cx);

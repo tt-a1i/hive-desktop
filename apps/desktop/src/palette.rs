@@ -20,7 +20,7 @@ impl Color {
     pub fn get(self, cx: &App) -> Rgba {
         let (light, dark) = match self {
             Self::Surface => (0xf8f8f6, 0x191919),
-            Self::Sidebar => (0xf5f5f3, 0x101010),
+            Self::Sidebar => (0xf5f5f3, 0x181818),
             Self::Card => (0xffffff, 0x212121),
             Self::Divider => (0xd7d7d4, 0x3c3c3a),
             Self::Text => (0x262626, 0xd4d4d4),

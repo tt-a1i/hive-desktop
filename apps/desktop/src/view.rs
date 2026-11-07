@@ -13,7 +13,7 @@ use gpui_kit::{
     *,
 };
 
-const CHAT_COLUMN_WIDTH: f32 = 914.;
+const CHAT_COLUMN_WIDTH: f32 = 932.;
 
 impl HiveApp {
     fn agent_name(&self, id: &str) -> String {
@@ -40,10 +40,11 @@ impl HiveApp {
 }
 
 impl HiveApp {
-    fn report_worker_link(
+    fn member_session_link(
         &self,
-        delivery_id: &str,
+        source_id: &str,
         worker_id: Option<&str>,
+        label: &'static str,
         cx: &Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
         let worker = worker_id?;
@@ -53,10 +54,10 @@ impl HiveApp {
             .find(|s| s.agent_id.as_deref() == Some(worker))?;
         let id = member_chat.id.clone();
         Some(
-            Button::new(SharedString::from(format!("report-worker-{delivery_id}")))
+            Button::new(SharedString::from(format!("member-link-{source_id}")))
                 .ghost()
                 .compact()
-                .label("成员会话")
+                .label(label)
                 .accessibility_label(format!(
                     "打开 {} 的成员会话",
                     self.session_title(member_chat)
@@ -72,6 +73,17 @@ impl HiveApp {
         let session = self.session.as_ref()?;
         let origin = self.conversation_sources.last().cloned();
         let (label, source) = match origin {
+            Some(ConversationSource::Dispatch(id)) => {
+                if !self
+                    .collaboration
+                    .selected
+                    .as_ref()
+                    .is_some_and(|d| d.id == id)
+                {
+                    return None;
+                }
+                ("返回派单详情".to_owned(), ConversationSource::Dispatch(id))
+            }
             Some(ConversationSource::Team) => ("返回团队成员".to_owned(), ConversationSource::Team),
             Some(ConversationSource::Session(id)) => {
                 let previous = self.sessions.iter().find(|s| s.id == id)?;
@@ -104,6 +116,14 @@ impl HiveApp {
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.conversation_sources.pop();
                     match &source {
+                        ConversationSource::Dispatch(_) => {
+                            this.collaboration.visible = true;
+                            this.load_tasks(cx);
+                            if this.collaboration.message_loading {
+                                let after = this.collaboration.next_seq.unwrap_or(0);
+                                this.load_dispatch_messages(after, cx);
+                            }
+                        }
                         ConversationSource::Team => this.show_team(window, cx),
                         ConversationSource::Session(id) => this.show_session(id.clone(), cx),
                     }
@@ -242,7 +262,7 @@ impl Render for HiveApp {
         let compact_settings =
             window.viewport_size().width < px(if self.sidebar_open { 1060. } else { 800. });
         v_flex().size_full().bg(Color::Surface.get(cx)).text_color(Color::Text.get(cx))
-            .child(self.render_navigation_bar(cx))
+            .when(!self.sidebar_open, |layout| layout.child(self.render_navigation_bar(cx)))
             .child(h_flex().flex_1().min_h_0().w_full()
             .when(self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
             .when(!narrow || !self.sidebar_open, |view| view.child(if self.memory.visible { self.render_memory(cx).into_any_element() } else if self.roles.visible { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full().child(self.render_settings_tabs(compact_settings, cx)).child(self.render_roles(cx)).into_any_element()
@@ -267,7 +287,9 @@ impl Render for HiveApp {
                         .child(div().text_sm().child(format!("第 {} 页", self.collaboration.offset / 20 + 1)))
                         .child(Button::new("dispatch-next").label("下一页").disabled(!self.connected || self.collaboration.dispatches.len() < 20 || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += 20; this.load_dispatches(cx); }))))
                     .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
-                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("派单详情 · {}", crate::collaboration::dispatch_state(&item.state))))
+                        .child(h_flex().items_center().gap_2()
+                            .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("派单详情 · {}", crate::collaboration::dispatch_state(&item.state))))
+                            .when_some(self.member_session_link(&item.id, Some(&item.to_agent_id), "负责人的会话", cx), |row, link| row.child(link)))
                         .child(div().text_xs().child(format!("{} → {} · {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| "未记录发送者".into()), self.agent_name(&item.to_agent_id), item.id)))
                         .child(div().text_sm().child("任务原文"))
                         .child(div().text_sm().child(item.text.clone()))
@@ -387,15 +409,19 @@ impl Render for HiveApp {
                     })))
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
-            } else { v_flex().flex_1().min_w_0().h_full().gap_3().p_5().when(welcome, |v| v.justify_center())
+            } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow, |v| v.px(px(44.))).id("conversation-surface").when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .when_some(self.conversation_return(cx), |header, back| header.child(back))
                     .child({
-                    let title = if welcome && self.workspace.is_none() { "打开项目".into() } else if welcome { "新任务".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
-                    div().id("session-title").flex_1().min_w_0().truncate().when(welcome, |h| h.text_3xl().mb_2()).when(!welcome, |h| h.text_lg()).font_weight(FontWeight::SEMIBOLD)
+                    let title = if welcome && self.workspace.is_none() { "打开项目".into() } else if welcome { "Hive".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
+                    div().id("session-title").font_weight(FontWeight::SEMIBOLD).flex_1().min_w_0().truncate().when(welcome, |h| h.text_size(px(40.)).line_height(px(50.)).font_weight(FontWeight::BOLD)).when(!welcome, |h| h.text_lg())
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
                         .child(title)
-                }).when(!welcome && !open_failed, |header| header.child(
+                })
+                .when(welcome && self.workspace.is_some(), |header| header.child(
+                    Button::new("home-team").ghost().rounded_full().icon(Glyph::Network)
+                        .label("团队成员").on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx)))
+                )).when(!welcome && !open_failed, |header| header.child(
                     div().min_w_0().truncate().text_xs().text_color(Color::Muted.get(cx)).child(
                         self.session.as_ref().map(|s| if self.status == "后台已连接" { s.backend.label().to_owned() }
                         else { format!("{} · {}", s.backend.label(), self.status) }).unwrap_or_else(|| self.status.clone())
@@ -449,7 +475,7 @@ impl Render for HiveApp {
                                         };
                                         row.child(div().text_xs().text_color(Color::Muted.get(cx)).child(state))
                                     })
-                                    .when_some(self.report_worker_link(&message.id, message.delivery.as_ref().and_then(|card| card.worker_id.as_deref()), cx), |row, link| row.child(link))
+                                    .when_some(self.member_session_link(&message.id, message.delivery.as_ref().and_then(|card| card.worker_id.as_deref()), "成员会话", cx), |row, link| row.child(link))
                                     .when(message.delivery.is_some(), |view| view.child(Button::new(("expand-delivery", i)).accessibility_label(format!("{}消息原文", if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起" } else { "查看" })).label(if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起原文" } else { "查看原文" }).on_click({ let id = message.id.clone(); cx.listener(move |this, _, _, cx| {
                                         if let Some(delivery) = this.messages.iter_mut().find(|m| m.id == id).and_then(|m| m.delivery.as_mut()) { delivery.expanded = !delivery.expanded; }
                                         cx.notify();
@@ -471,12 +497,12 @@ impl Render for HiveApp {
                                 .child(h_flex().gap_2().items_center()
                                     .child(div().flex_1().text_xs().font_weight(FontWeight::SEMIBOLD).child(format!("{} · 成员汇报", report.worker_name.as_deref().unwrap_or("Worker"))))
                                     .child(div().text_xs().text_color(Color::Muted.get(cx)).child(report.status()))
-                                    .when_some(self.report_worker_link(&report.delivery_id, report.worker_id.as_deref(), cx), |row, link| row.child(link)))
+                                    .when_some(self.member_session_link(&report.delivery_id, report.worker_id.as_deref(), "成员会话", cx), |row, link| row.child(link)))
                                 .child(div().text_sm().child(report.text.clone()))
                                 .children(report.artifacts.iter().map(|artifact| div().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))))
                         }))
                         .child(self.render_interactions(cx)))))
-                .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
+                .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
                 .when(pending > 0, |view| view.child(h_flex().gap_3()
                     .child(div().text_sm().child(format!("团队消息待处理：{pending}")))
@@ -522,13 +548,13 @@ impl Render for HiveApp {
                         .child(Button::new("refresh-pi-models").ghost().compact().label(if self.refreshing_models { "刷新中…" } else { "刷新模型" })
                             .disabled(self.refreshing_models || running).on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))))))
                 .when(welcome && self.workspace.is_some() && !needs_pi_model, |surface| surface.child(
-                    v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_start().gap_1()
+                    v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_start().mt_1().gap_1()
                         .children([
                             (Glyph::FolderOpen, "了解这个项目", "请梳理当前项目的结构、主要入口和运行方式。"),
                             (Glyph::Search, "审查未提交的改动", "请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。"),
                             (Glyph::Network, "拆分团队任务", "请先和我确认这次要达成的目标，再提出适合由成员并行处理的任务。"),
                         ].into_iter().enumerate().map(|(i,(icon,label,prompt))| {
-                            Button::new(("starter",i)).ghost().icon(icon).label(label)
+                            Button::new(("starter",i)).ghost().h(px(35.)).rounded_full().text_color(Color::Muted.get(cx)).icon(icon).label(label)
                                 .on_click(cx.listener(move |this, _, window, cx| this.input.update(cx, |input,cx| {
                                     let current = input.value();
                                     let value = if current.is_empty() { prompt.to_owned() } else { format!("{current}\n{prompt}") };

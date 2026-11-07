@@ -59,6 +59,7 @@ pub struct NavigationSelection {
 #[derive(Clone, PartialEq)]
 pub enum ConversationSource {
     Team,
+    Dispatch(String),
     Session(String),
 }
 

@@ -395,7 +395,15 @@ impl HiveApp {
         if !self.workspace_writes_allowed() || !self.sessions.iter().any(|s| s.id == id) {
             return;
         }
-        if self.member_panel {
+        if self.collaboration.visible {
+            let Some(dispatch) = &self.collaboration.selected else {
+                return;
+            };
+            self.conversation_sources.clear();
+            self.conversation_sources
+                .push(ConversationSource::Dispatch(dispatch.id.clone()));
+            self.close_collaboration();
+        } else if self.member_panel {
             self.conversation_sources.clear();
             self.conversation_sources.push(ConversationSource::Team);
         } else if let Some(current) = &self.session {
