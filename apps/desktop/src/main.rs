@@ -5,6 +5,7 @@ mod drafts;
 mod interactions;
 mod members;
 mod memory;
+mod model_picker;
 mod navigation;
 mod palette;
 mod process_supervisor;

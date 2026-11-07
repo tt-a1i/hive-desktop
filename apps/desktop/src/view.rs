@@ -213,7 +213,6 @@ impl Render for HiveApp {
         }
         let has_text = !self.input.read(cx).value().trim().is_empty();
         self.composer_has_text = has_text;
-        let query = self.model_search.read(cx).value().trim().to_lowercase();
         let member_query = self
             .member_model_search
             .read(cx)
@@ -227,17 +226,6 @@ impl Render for HiveApp {
                 format!("{} {} {}", model.provider, model.id, model.name)
                     .to_lowercase()
                     .contains(&member_query)
-            })
-            .cloned()
-            .collect();
-        let matching_models: Vec<_> = self
-            .models
-            .iter()
-            .filter(|model| {
-                model.available
-                    && format!("{} {} {}", model.provider, model.id, model.name)
-                        .to_lowercase()
-                        .contains(&query)
             })
             .cloned()
             .collect();
@@ -490,15 +478,6 @@ impl Render for HiveApp {
                         .child(self.render_interactions(cx)))))
                 .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
-                .when(self.choosing_model, |view| view.child(v_flex().flex_shrink_0().min_h_0().gap_2()
-                    .child(Input::new(&self.model_search))
-                    .child(v_flex().id("model-list").h(px(168.)).min_h_0().flex_shrink_0().overflow_y_scroll().gap_2()
-                        .when(matching_models.is_empty(), |view| view.child(div().p_3().text_sm().child("没有匹配的可用模型")))
-                        .children(matching_models.into_iter().enumerate().map(|(i, model)| {
-                            let selected = self.model.as_ref().is_some_and(|m| m.id == model.id && m.provider == model.provider);
-                            Button::new(("model", i)).flex_shrink_0().w_full().label(format!("{} / {}", model.provider, model.name)).tooltip(model.id.clone()).selected(selected).disabled(!self.connected || running || self.loading)
-                                .on_click(cx.listener(move |this, _, _, cx| this.set_model(model.clone(), cx)))
-                        })))))
                 .when(pending > 0, |view| view.child(h_flex().gap_3()
                     .child(div().text_sm().child(format!("团队消息待处理：{pending}")))
                     .when(!running, |view| view.child(Button::new("resume").label("继续处理").disabled(!self.connected || !self.conversation_ready || self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
@@ -525,7 +504,7 @@ impl Render for HiveApp {
                         self.new_chat_menu("home-agent", "选择 Agent", cx).into_any_element()
                     } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
                     .child(div().flex_1())
-                    .when(self.session.is_some(), |row| row.child(Button::new("choose-model").accessibility_label("选择会话模型").ghost().compact().min_w_0().label(self.model.as_ref().map(|model| format!("{} / {} ▾", model.provider, model.id)).unwrap_or_else(|| "选择模型 ▾".into())).disabled(!self.connected || !self.conversation_ready || running || self.loading).on_click(cx.listener(|this, _, _, cx| { this.choosing_model = !this.choosing_model; cx.notify(); }))))
+                    .when(self.session.is_some(), |row| row.child(self.model_picker(window, running, cx)))
                     .when(self.session.is_some(), |row| row.child(if running {
                         Button::new("stop").label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {
