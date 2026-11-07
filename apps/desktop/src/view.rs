@@ -13,6 +13,8 @@ use gpui_kit::{
     *,
 };
 
+const CHAT_COLUMN_WIDTH: f32 = 914.;
+
 impl HiveApp {
     fn agent_name(&self, id: &str) -> String {
         self.members
@@ -396,8 +398,8 @@ impl Render for HiveApp {
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().p_5().when(welcome, |v| v.justify_center())
-                .when_some(self.conversation_return(cx), |view, back| view.child(h_flex().w_full().max_w(px(920.)).mx_auto().child(back)))
-                .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(920.)).mx_auto().child({
+                .when_some(self.conversation_return(cx), |view, back| view.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().child(back)))
+                .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().child({
                     let title = if welcome && self.workspace.is_none() { "打开项目".into() } else if welcome { "新任务".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
                     div().id("session-title").flex_1().min_w_0().truncate().when(welcome, |h| h.text_3xl().mb_2()).when(!welcome, |h| h.text_lg()).font_weight(FontWeight::SEMIBOLD)
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
@@ -405,11 +407,11 @@ impl Render for HiveApp {
                 }).when(!welcome && self.reading_above_latest(), |header| header.child(
                     Button::new("jump-to-latest").ghost().compact().icon(Glyph::ArrowDown)
                         .label("回到最新").accessibility_label("回到最新消息")
-                        .on_click(cx.listener(|this, _, _, cx| { this.scroll.scroll_to_bottom(); cx.notify(); }))
+                        .on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))
                 )))
-                .when(!welcome && !open_failed, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone()))))
+                .when(!welcome && !open_failed, |v| v.child(div().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().text_xs().text_color(Color::Muted.get(cx)).child(self.session.as_ref().map(|s| format!("{} · {}", s.backend.label(), self.status)).unwrap_or_else(|| self.status.clone()))))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
-                .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.scroll.scroll_to_bottom(); cx.notify(); }))))
+                .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))))
                 .when(open_failed, |surface| surface.child(v_flex().flex_1().min_h_0().items_center().justify_center().gap_3()
                     .child(div().text_sm().child("未能打开会话，草稿已保留。"))
                     .child(Button::new("retry-open-session").label("重新打开会话").on_click(cx.listener(|this, _, _, cx| {
@@ -418,8 +420,8 @@ impl Render for HiveApp {
                             this.show_session(session.id.clone(), cx);
                         }
                     })))))
-                .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).on_scroll(cx.listener(|_, _, _, cx| cx.notify())).p_3()
-                    .child(v_flex().w_full().max_w(px(920.)).mx_auto().gap_5()
+                .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).on_scroll(cx.listener(|_, _, _, cx| cx.notify())).py_3()
+                    .child(v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().gap_5()
                         .when(self.messages.is_empty() && self.pending_reports.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.chunk_by(|left, right| left.completed_tool() && right.completed_tool())
                             .scan(0usize, |offset, group| {
@@ -473,7 +475,7 @@ impl Render for HiveApp {
                                 .children(report.artifacts.iter().map(|artifact| div().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))))
                         }))
                         .child(self.render_interactions(cx)))))
-                .child(v_flex().w_full().min_w_0().max_w(px(914.)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
+                .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
                 .when(self.choosing_model, |view| view.child(v_flex().flex_shrink_0().min_h_0().gap_2()
                     .child(Input::new(&self.model_search))
@@ -518,7 +520,7 @@ impl Render for HiveApp {
                     })))
                 .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { "后台暂不可用 · 请先复制草稿，再重启应用" } else if running { "团队正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "" }))))
                 .when(needs_pi_model && self.connected, |surface| surface.child(
-                    h_flex().w_full().max_w(px(914.)).mx_auto().min_w_0().flex_wrap().items_center().gap_2()
+                    h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().min_w_0().flex_wrap().items_center().gap_2()
                         .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model {
                             format!("{} / {} 暂不可用", model.provider, model.id)
                         } else if self.models.iter().any(|m| m.available) { "选择模型后即可发送。".into() }
@@ -528,7 +530,7 @@ impl Render for HiveApp {
                         .child(Button::new("refresh-pi-models").ghost().compact().label(if self.refreshing_models { "刷新中…" } else { "刷新模型" })
                             .disabled(self.refreshing_models || running).on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))))))
                 .when(welcome && self.workspace.is_some() && !needs_pi_model, |surface| surface.child(
-                    v_flex().w_full().max_w(px(920.)).mx_auto().items_start().gap_1()
+                    v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_start().gap_1()
                         .children([
                             (Glyph::FolderOpen, "了解这个项目", "请梳理当前项目的结构、主要入口和运行方式。"),
                             (Glyph::Search, "审查未提交的改动", "请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。"),

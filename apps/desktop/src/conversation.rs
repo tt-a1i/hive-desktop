@@ -212,6 +212,14 @@ impl HiveApp {
             );
         }
     }
+    pub(crate) fn jump_to_latest(&self, cx: &mut Context<Self>) {
+        // Update the header action now, then pin to the final offset after layout.
+        self.scroll
+            .set_offset(point(self.scroll.offset().x, -self.scroll.max_offset().y));
+        self.scroll.scroll_to_bottom();
+        cx.notify();
+    }
+
     pub(crate) fn reading_above_latest(&self) -> bool {
         self.scroll.max_offset().y + self.scroll.offset().y > px(4.)
     }
