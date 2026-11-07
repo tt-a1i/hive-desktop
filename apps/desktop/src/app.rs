@@ -214,6 +214,20 @@ impl HiveApp {
             .detach();
             input
         });
+        let session_name = cx.new(|cx| InputState::new(window, cx).placeholder("会话名称"));
+        cx.subscribe(&session_name, |this, _, event: &InputEvent, cx| {
+            if matches!(
+                event,
+                InputEvent::PressEnter {
+                    secondary: false,
+                    shift: false
+                }
+            ) && this.session_name_target.is_some()
+            {
+                this.save_session_name(cx);
+            }
+        })
+        .detach();
         let model_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索模型、提供商…"));
         let model_search_subscription =
@@ -346,7 +360,7 @@ impl HiveApp {
             sessions: vec![],
             session: None,
             session_name_target: None,
-            session_name: cx.new(|cx| InputState::new(window, cx).placeholder("会话名称")),
+            session_name,
             session_name_loading: false,
             messages: vec![],
             expanded_tool_groups: HashSet::new(),

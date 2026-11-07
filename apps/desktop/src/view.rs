@@ -525,6 +525,8 @@ impl Render for HiveApp {
                         .child(title)
                 }))
                     .when(self.session.is_some() && self.session_name_target.as_deref() == self.session.as_ref().map(|s| s.id.as_str()), |header| header
+                        .key_context("HiveSessionName")
+                        .on_action(cx.listener(|this, _: &crate::CancelSessionRename, _, cx| { if !this.session_name_loading { this.session_name_target = None; cx.notify(); } }))
                         .child(div().flex_1().min_w_0().child(Input::new(&self.session_name).aria_label("会话名称").disabled(self.session_name_loading)))
                         .child(Button::new("save-session-name").primary().label("保存名称").disabled(!self.connected || self.session_name_loading).on_click(cx.listener(|this, _, _, cx| this.save_session_name(cx))))
                         .child(Button::new("cancel-session-name").ghost().label("取消").disabled(self.session_name_loading).on_click(cx.listener(|this, _, _, cx| { this.session_name_target = None; cx.notify(); }))))

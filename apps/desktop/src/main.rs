@@ -23,7 +23,10 @@ mod workspace_actions;
 
 use gpui_kit::component::Theme;
 use gpui_kit::*;
-actions!(hive_desktop, [Quit, OpenPreferences, ClosePreferences]);
+actions!(
+    hive_desktop,
+    [Quit, OpenPreferences, ClosePreferences, CancelSessionRename]
+);
 
 fn main() {
     gpui_kit::application()
@@ -33,6 +36,7 @@ fn main() {
             gpui_kit::init(cx);
             Theme::sync_system_appearance(None, cx);
             cx.bind_keys([
+                KeyBinding::new("escape", CancelSessionRename, Some("HiveSessionName")),
                 KeyBinding::new(
                     if cfg!(target_os = "macos") {
                         "cmd-,"
