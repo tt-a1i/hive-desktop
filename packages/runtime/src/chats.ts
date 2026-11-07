@@ -1,3 +1,4 @@
+import { restoreHistoricalReport } from './delivery-presentation.js';
 import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { randomUUID } from 'node:crypto';
@@ -139,8 +140,12 @@ export class Chats implements StructuredSessionPort {
   }
   private snapshot(id: string, chat: LiveChat) {
     const record = this.index.get(id);
+    const snapshot = chat.handle.snapshot();
+    const agentId = record.agentId;
+    const history = agentId ? snapshot.history.map(message => restoreHistoricalReport(message,
+      (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
     return {
-      ...record, ...chat.handle.snapshot(), interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
+      ...record, ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
       busy: chat.queue.busy, pending: chat.queue.pending.length,
       runId: record.agentId ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId)?.runId ?? null : null,
       eventSequence: this.sequences.get(id) ?? 0,

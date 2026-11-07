@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import { createTeamTool } from '../src/team-tool.js';
 import type { DeliveryQueue } from '../src/delivery-queue.js';
+import { restoreHistoricalReport } from '../src/delivery-presentation.js';
 import type { Chats } from '../src/chats.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'hive-team-runtime-'));
@@ -122,12 +123,25 @@ try {
   assert.equal(inbox.dispatch_id, dispatchId);
   assert.ok(Number.isSafeInteger(inbox.required_seen_seq));
   await workerTool.execute('report-check', { args: ['report', 'explicit-worker-report', '--dispatch', dispatchId,
-    '--seen', String(inbox.required_seen_seq)] }, undefined, undefined, undefined as never);
+    '--seen', String(inbox.required_seen_seq), '--artifact', 'proof.txt'] }, undefined, undefined, undefined as never);
   const reported = (await dispatches()).find(dispatch => dispatch.id === dispatchId);
   assert.equal(reported?.state, 'reported');
   assert.equal(reported.report_text, 'explicit-worker-report');
-  assert.ok(queues(first.chats).get(a.id)!.queue.pending.some(item => item.text.includes('explicit-worker-report')));
-  assert.equal(queues(first.chats).get(a.id)!.queue.pending.find(item => item.text.includes('explicit-worker-report'))?.presentation?.origin, 'system');
+  const delivery = queues(first.chats).get(a.id)!.queue.pending.find(item => item.presentation?.dispatchId === dispatchId);
+  assert.ok(delivery);
+  const report = { version: 1, origin: 'report', displayText: 'explicit-worker-report', dispatchId,
+    workerName: 'sdk-worker', workerId: worker.id, artifacts: ['proof.txt'] };
+  assert.deepEqual(delivery.presentation, report);
+  const legacy = { role: 'custom', customType: 'hive-delivery', content: delivery.text,
+    presentation: { version: 1, origin: 'system', deliveryId: delivery.id, displayText: delivery.text } };
+  const restore = (message: typeof legacy, recipient: string) => restoreHistoricalReport(message,
+    (id, payload) => first.hive.findReportPresentation(workspace.id, recipient, id, payload));
+  assert.deepEqual(restore(legacy, agentId), { ...legacy, presentation: { ...report, deliveryId: delivery.id } });
+  assert.equal(restore(legacy, worker.id), legacy);
+  const edited = { ...legacy, content: delivery.text + 'edited', presentation: { ...legacy.presentation, displayText: delivery.text + 'edited' } };
+  assert.equal(restore(edited, agentId), edited);
+  const pasted = { ...legacy, presentation: { ...legacy.presentation, origin: 'user' } };
+  assert.equal(restore(pasted, agentId), pasted);
   const pendingAtRestart = queues(first.chats).get(a.id)!.queue.pending.length;
   assert.equal(pendingAtRestart, 2);
   await first.close();

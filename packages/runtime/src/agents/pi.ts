@@ -14,7 +14,9 @@ function deliveryMetadata(message: unknown): DeliveryMetadata | undefined {
     || details.deliveryId.length === 0) return;
   return { version: 1, origin: details.origin, displayText: details.displayText, deliveryId: details.deliveryId,
     ...(details.dispatchId !== undefined && { dispatchId: details.dispatchId }),
-    ...(details.workerName !== undefined && { workerName: details.workerName }) };
+    ...(details.workerName !== undefined && { workerName: details.workerName }),
+    ...(details.workerId !== undefined && { workerId: details.workerId }),
+    ...(details.artifacts !== undefined && { artifacts: details.artifacts }) };
 }
 
 function presentedMessage<T>(message: T): T | (T & { presentation: DeliveryMetadata }) {

@@ -202,8 +202,11 @@ impl HiveApp {
                 .unwrap_or_else(|| "此消息缺少有效的来源记录。展开查看原文。".into());
             let heading = presentation
                 .as_ref()
-                .map(|p| p.origin.heading())
-                .unwrap_or("来源未记录");
+                .map(|p| match (&p.worker_name, &p.origin) {
+                    (Some(worker), DeliveryOrigin::Report) => format!("{worker} · 成员汇报"),
+                    _ => p.origin.heading().to_string(),
+                })
+                .unwrap_or_else(|| "来源未记录".into());
             let expanded = self
                 .messages
                 .iter()
@@ -224,7 +227,9 @@ impl HiveApp {
                     None
                 } else {
                     Some(DeliveryCard {
-                        heading: heading.into(),
+                        heading,
+                        worker_id: presentation.as_ref().and_then(|p| p.worker_id.clone()),
+                        artifacts: presentation.map(|p| p.artifacts).unwrap_or_default(),
                         raw: text,
                         expanded,
                     })
@@ -452,6 +457,10 @@ struct DeliveryPresentation {
     delivery_id: String,
     origin: DeliveryOrigin,
     display_text: String,
+    worker_name: Option<String>,
+    worker_id: Option<String>,
+    #[serde(default)]
+    artifacts: Vec<String>,
 }
 fn delivery_presentation(message: &Value) -> Option<DeliveryPresentation> {
     let presentation: DeliveryPresentation =

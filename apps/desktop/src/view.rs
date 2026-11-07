@@ -305,6 +305,10 @@ impl Render for HiveApp {
                                 .when(message.role == "user", |bubble| bubble.bg(Color::Bubble.get(cx)).ml_auto().max_w(px(680.)))
                                 .child(h_flex().min_w_0().gap_2().justify_between()
                                     .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(Color::Secondary.get(cx)).child(heading))
+                                    .when_some(message.delivery.as_ref().and_then(|card| card.worker_id.as_ref()).and_then(|worker| self.sessions.iter().find(|s| s.agent_id.as_ref() == Some(worker))), |view, session| {
+                                        let session_id = session.id.clone();
+                                        view.child(Button::new(("open-report-worker", i)).ghost().compact().label("成员会话").on_click(cx.listener(move |this, _, _, cx| this.open_session(session_id.clone(), cx))))
+                                    })
                                     .when(message.delivery.is_some(), |view| view.child(Button::new(("expand-delivery", i)).accessibility_label(format!("{}消息原文", if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起" } else { "查看" })).label(if message.delivery.as_ref().is_some_and(|d| d.expanded) { "收起原文" } else { "查看原文" }).on_click({ let id = message.id.clone(); cx.listener(move |this, _, _, cx| {
                                         if let Some(delivery) = this.messages.iter_mut().find(|m| m.id == id).and_then(|m| m.delivery.as_mut()) { delivery.expanded = !delivery.expanded; }
                                         cx.notify();
@@ -312,6 +316,9 @@ impl Render for HiveApp {
                                     .child(Button::new(("copy", i)).accessibility_label(if message.delivery.is_some() { "复制完整消息原文" } else { "复制消息内容" }).label(if message.delivery.is_some() { "复制原文" } else { "复制" }).on_click({ let text = message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_else(|| message.text.clone()); cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))) })))
                                 .when(message.role == "assistant", |view| view.child(TextView::new(&message.markdown).selectable(true).stream_fade(true)))
                                 .when(message.role == "user" || message.delivery.is_some(), |view| view.child(div().min_w_0().text_sm().child(message.text.clone())))
+                                .when_some(message.delivery.as_ref(), |view, delivery| view.children(delivery.artifacts.iter().map(|artifact|
+                                    div().min_w_0().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))
+                                )))
                                 .when(message.delivery.as_ref().is_some_and(|d| d.expanded), |view| view.child(div().min_w_0().p_3().rounded_lg().bg(Color::Card.get(cx)).text_sm().child(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())))
                                 .into_any_element()
                         }))

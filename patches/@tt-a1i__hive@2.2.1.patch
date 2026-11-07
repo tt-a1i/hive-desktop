@@ -32,6 +32,56 @@ index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..b9e27abce99157db799260327d5c793a
          },
      };
      pty.onData((chunk) => {
+diff --git a/dist/src/server/report-outbox-store.js b/dist/src/server/report-outbox-store.js
+index ef0204c62bad803129ee03cbb87f97e45ec81fb8..4f9bb4e930f22294a203a4f5756d1ef02ca9ea58 100644
+--- a/dist/src/server/report-outbox-store.js
++++ b/dist/src/server/report-outbox-store.js
+@@ -4,6 +4,11 @@ const rowToEntry = (row) => ({
+     targetAgentId: row.target_agent_id,
+     dispatchId: row.dispatch_id,
+     payload: row.payload,
++    ...(row.report_text != null && { presentation: {
++        version: 1, origin: 'report', displayText: row.report_text,
++        dispatchId: row.dispatch_id, workerName: row.worker_name ?? row.worker_id,
++        workerId: row.worker_id, artifacts: JSON.parse(row.report_artifacts ?? '[]'),
++    } }),
+     createdAt: row.created_at,
+     deliveredAt: row.delivered_at,
+ });
+@@ -16,11 +21,21 @@ export const createReportOutboxStore = (db) => {
+         (workspace_id, target_agent_id, dispatch_id, payload, created_at)
+        VALUES (?, ?, ?, ?, ?)`).run(input.workspaceId, input.targetAgentId, input.dispatchId, input.payload, Date.now());
+     };
++    const reportRows = `SELECT o.*, d.report_text, d.artifacts AS report_artifacts,
++                  d.to_agent_id AS worker_id, w.name AS worker_name
++           FROM report_outbox o
++           LEFT JOIN dispatches d ON d.id = o.dispatch_id AND d.workspace_id = o.workspace_id AND d.status = 'reported'
++           LEFT JOIN workers w ON w.id = d.to_agent_id AND w.workspace_id = o.workspace_id`;
++    const findReportPresentation = (workspaceId, agentId, dispatchId, payload) => {
++        const row = db.prepare(`${reportRows}
++           WHERE o.workspace_id = ? AND o.target_agent_id = ? AND o.dispatch_id = ? AND o.payload = ?`)
++            .get(workspaceId, agentId, dispatchId, payload);
++        return row ? rowToEntry(row).presentation : undefined;
++    };
+     const listPending = (workspaceId, targetAgentId) => db
+-        .prepare(`SELECT id, workspace_id, target_agent_id, dispatch_id, payload, created_at, delivered_at
+-           FROM report_outbox
+-           WHERE workspace_id = ? AND target_agent_id = ? AND delivered_at IS NULL
+-           ORDER BY created_at ASC, id ASC`)
++        .prepare(`${reportRows}
++           WHERE o.workspace_id = ? AND o.target_agent_id = ? AND o.delivered_at IS NULL
++           ORDER BY o.created_at ASC, o.id ASC`)
+         .all(workspaceId, targetAgentId).map(rowToEntry);
+     const markDelivered = (id) => {
+         db.prepare(`UPDATE report_outbox SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL`).run(Date.now(), id);
+@@ -33,6 +48,7 @@ export const createReportOutboxStore = (db) => {
+            WHERE workspace_id = ? AND target_agent_id = ? AND delivered_at IS NULL`)
+         .get(workspaceId, targetAgentId).n;
+     return {
++        findReportPresentation,
+         deletePendingForDispatch,
+         enqueue,
+         listPending,
 diff --git a/dist/src/server/routes-team.js b/dist/src/server/routes-team.js
 index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c0d7ca28e 100644
 --- a/dist/src/server/routes-team.js
@@ -47,13 +97,14 @@ index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c
          getCommandPreset: (id) => store.settings.getCommandPreset(id),
          getOrchestratorLaunchConfig: () => store.peekAgentLaunchConfig(workspaceId, getOrchestratorId(workspaceId)),
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
-index 531749345d132f9a9f93f4f5ad10c8f48e368acd..078cc1a9985cc2223262f59bef19238e4b775146 100644
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..b8b2dbd9f75faed17e076b5762f8f82ba86f677f 100644
 --- a/dist/src/server/runtime-store-contract.d.ts
 +++ b/dist/src/server/runtime-store-contract.d.ts
-@@ -138,6 +138,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -138,6 +138,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      setRemoteEnabled: (enabled: boolean) => void;
      revokeRemoteDevice: (deviceId: string) => boolean;
      getWorkflowDispatchAwaiter: () => WorkflowDispatchAwaiter;
++    findReportPresentation(workspaceId: string, agentId: string, dispatchId: string, payload: string): unknown;
 +    withWorkspaceWorkflowIdle: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
@@ -93,7 +144,7 @@ index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959c
          db,
          ledger: dispatchLedgerStore,
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..3e96d6a5e347497a4c37ad0941fdd5a4961a20cd 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..587a10f2a132900c7d6e1fb1721a668d92916d57 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
 @@ -112,6 +112,7 @@ export const createRuntimeStore = (options = {}) => {
@@ -104,14 +155,27 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..3e96d6a5e347497a4c37ad0941fdd5a4
          startAgent: lifecycle.startAgent,
          autostartConfiguredAgents: lifecycle.autostartConfiguredAgents,
          startWorkspaceWatch: lifecycle.startWorkspaceWatch,
-@@ -141,6 +142,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -141,6 +142,8 @@ export const createRuntimeStore = (options = {}) => {
          getRetentionSignals: () => services.protocolEventStats.getRetentionSignals(),
          ...createRuntimeStoreRemoteMethods(services),
          getWorkflowDispatchAwaiter: () => services.workflowDispatchAwaiter,
++        findReportPresentation: services.reportOutbox.findReportPresentation,
 +        withWorkspaceWorkflowIdle: (workspaceId, operation) => getWorkflowRuntime().runner.withWorkspaceWorkflowIdle(workspaceId, operation),
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
+diff --git a/dist/src/server/team-operations.js b/dist/src/server/team-operations.js
+index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..bdf1c4adaf6ffa3611d7c87fc030f8556c5dba81 100644
+--- a/dist/src/server/team-operations.js
++++ b/dist/src/server/team-operations.js
+@@ -79,6 +79,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
+             try {
+                 void agentRuntime
+                     .deliverSystemMessageToAgent(workspaceId, targetAgentId, entry.payload, {
++                    presentation: entry.presentation,
+                     requireActiveRun: true,
+                 })
+                     .then(() => {
 diff --git a/dist/src/server/terminal-state-mirror.js b/dist/src/server/terminal-state-mirror.js
 index 8bcdd5e1b51f9fbca0cde5022dbd39c134494bef..1917a7e2d80add22796c599969059011c2d967b8 100644
 --- a/dist/src/server/terminal-state-mirror.js

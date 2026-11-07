@@ -16,6 +16,7 @@ export class HiveHttpError extends Error {
 export interface HiveHost {
 	readonly port: number;
 	request(method: string, path: string, body?: unknown): Promise<unknown>;
+	findReportPresentation(workspaceId: string, agentId: string, dispatchId: string, payload: string): unknown;
 	withWorkspaceWorkflowIdle<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
 	openTerminalSocket(runId: string, channel: 'io' | 'control', clientId: string, cols: number, rows: number): WebSocket;
 	close(): Promise<void>;
@@ -119,6 +120,7 @@ export async function createHiveHost({
             url.search = new URLSearchParams({ clientId, cols: String(cols), rows: String(rows), restoreBarrier: '1' }).toString();
             return new WebSocket(url, { headers: { cookie }, origin: base, handshakeTimeout: 10000, maxPayload: 8 * 1024 * 1024 });
         },
+		findReportPresentation: runtime.store.findReportPresentation,
 		withWorkspaceWorkflowIdle(workspaceId, operation) {
 			if (closing) return Promise.reject(new Error("Hive host is closed"));
 			return runtime.store.withWorkspaceWorkflowIdle(workspaceId, operation);
