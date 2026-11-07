@@ -23,7 +23,7 @@ mod workspace_actions;
 
 use gpui_kit::component::Theme;
 use gpui_kit::*;
-actions!(hive_desktop, [Quit]);
+actions!(hive_desktop, [Quit, OpenPreferences, ClosePreferences]);
 
 fn main() {
     gpui_kit::application()
@@ -32,15 +32,27 @@ fn main() {
         .run(|cx| {
             gpui_kit::init(cx);
             Theme::sync_system_appearance(None, cx);
-            cx.bind_keys([KeyBinding::new(
-                if cfg!(target_os = "macos") {
-                    "cmd-q"
-                } else {
-                    "ctrl-q"
-                },
-                Quit,
-                None,
-            )]);
+            cx.bind_keys([
+                KeyBinding::new(
+                    if cfg!(target_os = "macos") {
+                        "cmd-,"
+                    } else {
+                        "ctrl-,"
+                    },
+                    OpenPreferences,
+                    None,
+                ),
+                KeyBinding::new("escape", ClosePreferences, Some("HivePreferences")),
+                KeyBinding::new(
+                    if cfg!(target_os = "macos") {
+                        "cmd-q"
+                    } else {
+                        "ctrl-q"
+                    },
+                    Quit,
+                    None,
+                ),
+            ]);
             cx.activate(true);
             gpui_kit::open_window(
                 WindowOptions {

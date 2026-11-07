@@ -96,12 +96,16 @@ impl HiveApp {
     }
     pub fn prepare_terminal_view(&mut self, cx: &mut Context<Self>) {
         self.sync_terminal_workspace(cx);
-        let input_enabled = self.connected
+        self.set_terminal_input_enabled(self.can_type_in_terminal(), cx);
+    }
+    fn can_type_in_terminal(&self) -> bool {
+        self.connected
             && self.terminal.visible
+            && !self.roles.visible
+            && !self.settings_panel
             && self.terminal.ready
             && self.terminal.workspace == self.workspace
-            && self.workspace_writes_allowed();
-        self.set_terminal_input_enabled(input_enabled, cx);
+            && self.workspace_writes_allowed()
     }
     pub(crate) fn remember_terminal_focus(&mut self, window: &mut Window, cx: &Context<Self>) {
         self.terminal.window = Some(window.window_handle());
@@ -147,8 +151,6 @@ impl HiveApp {
     pub fn sync_terminal_workspace(&mut self, cx: &mut Context<Self>) {
         let visible = self.terminal.visible
             && !self.memory.visible
-            && !self.roles.visible
-            && !self.settings_panel
             && !self.collaboration.visible
             && !self.member_panel;
         let changed = self.terminal.workspace != self.workspace;

@@ -102,6 +102,19 @@ impl HiveApp {
     }
 
     pub fn render_settings_tabs(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        let back = if self.terminal.visible {
+            "返回工作区终端"
+        } else if self.memory.visible {
+            "返回工作区记忆"
+        } else if self.collaboration.visible && self.collaboration.selected.is_some() {
+            "返回派单详情"
+        } else if self.collaboration.visible {
+            "返回协作概览"
+        } else if self.member_panel {
+            "返回团队成员"
+        } else {
+            "返回会话"
+        };
         div()
             .flex()
             .flex_shrink_0()
@@ -124,13 +137,10 @@ impl HiveApp {
                             .compact()
                             .rounded_full()
                             .icon(Glyph::ArrowLeft)
-                            .accessibility_label("返回会话")
-                            .tooltip("返回会话")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_settings();
-                                this.close_roles();
-                                this.hide_terminal(cx);
-                                cx.notify();
+                            .accessibility_label(back)
+                            .tooltip(back)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.leave_preferences(window, cx)
                             })),
                     )
                     .when(!compact, |row| {
@@ -557,11 +567,10 @@ impl HiveApp {
                         .icon(Glyph::Settings)
                         .justify_start()
                         .w_full()
-                        .accessibility_label("设置")
+                        .tooltip(if cfg!(target_os = "macos") { "设置 (⌘,)" } else { "设置 (Ctrl+,)" }).accessibility_label("设置")
                         .child(div().flex_1().font_weight(FontWeight::NORMAL).child("设置"))
                         .selected(self.settings_panel || self.roles.visible)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.hide_terminal(cx);
                             this.open_settings(window, cx);
                             if window.viewport_size().width < px(820.) {
                                 this.sidebar_open = false;

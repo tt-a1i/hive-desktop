@@ -358,7 +358,8 @@ impl Render for HiveApp {
             .when(!preferences && !self.sidebar_open, |layout| layout.child(self.render_navigation_bar(cx)))
             .child(h_flex().flex_1().min_h_0().w_full()
             .when(!preferences && self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
-            .when(preferences || !narrow || !self.sidebar_open, |view| view.child(if self.memory.visible { self.render_memory(cx).into_any_element() } else if self.roles.visible { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full().child(self.render_settings_tabs(compact_settings, cx)).child(self.render_roles(cx)).into_any_element()
+            .when(preferences || !narrow || !self.sidebar_open, |view| view.child(if preferences { self.render_preferences(compact_settings, cx).into_any_element()
+            } else if self.memory.visible { self.render_memory(cx).into_any_element()
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(h_flex().gap_2().items_center()
                     .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").ghost().icon(Glyph::ArrowLeft).label(if self.collaboration.chat_origin.is_some() { "返回来源会话" } else { "返回派单列表" }).on_click(cx.listener(|this, _, _, cx| {
@@ -432,37 +433,6 @@ impl Render for HiveApp {
                             .when_some(message.delivery_error.clone(), |view, error| view.child(div().text_xs().text_color(Color::Error.get(cx)).child(format!("投递错误：{error}"))))))
                         .when_some(self.collaboration.next_message.clone(), |view, cursor| view.child(Button::new("more-dispatch-messages").label("加载更多消息").disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(Some(cursor.clone()), cx)))))))
                 )).into_any_element()
-            } else if self.settings_panel { h_flex().items_stretch().when(compact_settings, |layout| layout.flex_col()).flex_1().min_w_0().h_full()
-                .child(self.render_settings_tabs(compact_settings, cx))
-                .child(v_flex().flex_1().w_full().max_w(px(960.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.pl_5().pr_6().py_7()).gap_5()
-                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Programs => "外部程序" }))
-                .child({
-                    let content = v_flex().flex_1().min_h_0().gap_3();
-                    match self.settings_section {
-                        SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()
-                    .child(h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))
-                        .child(v_flex().flex_1().min_w_0().gap_1()
-                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("自动组队引导"))
-                            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("在所有工作区引导主控按任务需要组建团队。")))
-                        .when_some(self.team_autostaff, |row, enabled| row.child(gpui_kit::component::switch::Switch::new("toggle-team-autostaff")
-                            .accessibility_label("自动组队引导").checked(enabled).disabled(!self.connected || self.team_autostaff_loading)
-                            .on_change(cx.listener(|this, enabled, _, cx| this.team_autostaff_request(Some(*enabled), cx))))))
-                    .when(self.team_autostaff_loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child("正在同步设置…")))
-                    .when(!self.team_autostaff_loading, |view| view.child(h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label("重新读取").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx))))))
-                    .when_some(self.team_autostaff_message.clone(), |view, message| view.child(div().text_sm().child(message))),
-                        SettingsSection::Notifications => content.id("settings-notification-content").overflow_y_scroll().child(self.render_notification_settings(cx)),
-                        SettingsSection::Programs => content.id("settings-programs-content").overflow_y_scroll()
-                    .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("路径留空时使用 PATH 查找。环境变量优先，修改在下次启动对应 Agent 时生效。"))
-                    .when_some(self.settings_message.clone(), |view, message| view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
-                    .child(self.executable_field("外部 Pi", &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
-                    .child(self.executable_field("Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
-                    .child(self.executable_field("Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
-                    .child(h_flex().gap_2()
-                        .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window, cx))))
-                        .child(Button::new("reload-executable-settings").rounded_full().label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))),
-                    }
-                }))
-                .into_any_element()
             } else if self.member_panel { v_flex().flex_1().min_w_0().h_full().w_full().max_w(px(960.)).mx_auto().gap_4().px_5().py_6().when(!narrow, |panel| panel.px_8().py_8())
                 .child(h_flex().w_full().items_center().gap_2().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("团队成员"))
                     .child(div().flex_1().text_xs().text_color(Color::Muted.get(cx)).child(if self.member_loading { "更新中".into() } else { format!("{} 位", self.members.len()) }))

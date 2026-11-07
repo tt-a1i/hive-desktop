@@ -75,10 +75,7 @@ impl HiveApp {
         self.roles.loading = false;
     }
     pub fn open_roles(&mut self, cx: &mut Context<Self>) {
-        self.close_memory();
         self.close_settings();
-        self.close_collaboration();
-        self.member_panel = false;
         self.roles.visible = true;
         self.load_roles(cx);
     }

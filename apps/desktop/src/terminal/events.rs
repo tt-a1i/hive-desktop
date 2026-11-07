@@ -87,7 +87,7 @@ impl HiveApp {
                 if !self.connected
                     || !self.terminal.visible
                     || self.terminal.workspace != self.workspace
-                    || (*user_input && (!self.terminal.ready || !self.workspace_writes_allowed()))
+                    || (*user_input && !self.can_type_in_terminal())
                 {
                     return;
                 }
@@ -153,7 +153,7 @@ impl HiveApp {
                             this.terminal.ready = true;
                             this.terminal.loading = false;
                             this.terminal.status = "Shell 已连接".into();
-                            this.set_terminal_input_enabled(this.workspace_writes_allowed(), cx);
+                            this.set_terminal_input_enabled(this.can_type_in_terminal(), cx);
                             this.focus_ready_terminal(cx);
                             // Layout can change while the restore handshake is in flight.
                             // Publish the newest dimensions after ready, in the same writer FIFO.

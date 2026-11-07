@@ -160,6 +160,10 @@ Invoke-Action '打开主会话'
 Invoke-Action '打开关联派单'
 [void](Wait-Action '在文件资源管理器中显示：review.txt')
 [void](Wait-Action '打开 Tester 的成员会话')
+Invoke-Action '设置'
+Invoke-Action '角色模板'
+Invoke-Action '返回派单详情'
+[void](Wait-Action '打开 Tester 的成员会话')
 Invoke-Action '复制派单编号'
 $deadline = [DateTime]::UtcNow.AddSeconds(8)
 while ((Get-Clipboard -Raw) -cne $DispatchId) {
@@ -177,6 +181,9 @@ Invoke-Action '协作概览'
 Invoke-Action '编辑任务'
 $editor = Wait-Action '任务文档 Markdown'
 $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('My draft')
+Wait-EditorText '任务文档 Markdown' 'My draft'
+Invoke-Action '设置'
+Invoke-Action '返回协作概览'
 Wait-EditorText '任务文档 Markdown' 'My draft'
 [System.IO.File]::WriteAllText($TasksFile, 'Agent update')
 Invoke-Action '保存任务'

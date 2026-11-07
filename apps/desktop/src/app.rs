@@ -101,6 +101,8 @@ pub struct HiveApp {
     pub codex_command: Entity<InputState>,
     pub claude_command: Entity<InputState>,
     pub settings_panel: bool,
+    pub preferences_focus: FocusHandle,
+    pub preferences_return_focus: Option<FocusHandle>,
     pub settings_section: SettingsSection,
     pub settings_loading: bool,
     pub settings_generation: u64,
@@ -182,6 +184,20 @@ impl HiveApp {
         let weak = cx.weak_entity();
         gpui_kit::App::on_action(cx, move |_: &crate::Quit, cx| {
             let _ = weak.update(cx, |this, cx| this.exit(cx));
+        });
+        let weak = cx.weak_entity();
+        let handle = window.window_handle();
+        gpui_kit::App::on_action(cx, move |_: &crate::OpenPreferences, cx| {
+            let weak = weak.clone();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        if !this.settings_panel && !this.roles.visible {
+                            this.open_settings(window, cx);
+                        }
+                    });
+                });
+            });
         });
         let model_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索模型、提供商…"));
@@ -271,6 +287,8 @@ impl HiveApp {
             codex_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
             claude_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
             settings_panel: false,
+            preferences_focus: cx.focus_handle(),
+            preferences_return_focus: None,
             settings_section: SettingsSection::Team,
             settings_loading: false,
             settings_generation: 0,
