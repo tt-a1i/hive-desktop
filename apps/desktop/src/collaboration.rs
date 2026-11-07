@@ -52,9 +52,12 @@ pub struct Collaboration {
     pub list_generation: u64,
     pub selected: Option<Dispatch>,
     pub detail_scroll: ScrollHandle,
+    pub detail_error: Option<String>,
+    detail_generation: u64,
     pub messages: Vec<DispatchMessage>,
     pub next_seq: Option<u64>,
     pub message_loading: bool,
+    pub requested_after: u64,
     pub message_error: Option<String>,
     pub message_generation: u64,
 }
@@ -76,9 +79,12 @@ impl Collaboration {
             list_generation: 0,
             selected: None,
             detail_scroll: ScrollHandle::new(),
+            detail_error: None,
+            detail_generation: 0,
             messages: vec![],
             next_seq: None,
             message_loading: false,
+            requested_after: 0,
             message_error: None,
             message_generation: 0,
         }
@@ -194,8 +200,44 @@ impl HiveApp {
         c.selected = Some(item);
         c.messages.clear();
         c.next_seq = None;
-        c.message_generation += 1;
+        self.refresh_dispatch(cx);
+    }
+    pub fn refresh_dispatch(&mut self, cx: &mut Context<Self>) {
+        self.load_dispatch_record(cx);
         self.load_dispatch_messages(0, cx);
+    }
+    pub fn load_dispatch_record(&mut self, cx: &mut Context<Self>) {
+        let (Some(workspace), Some(runtime), Some(id)) = (
+            self.workspace.clone(),
+            self.runtime.clone(),
+            self.collaboration
+                .selected
+                .as_ref()
+                .map(|item| item.id.clone()),
+        ) else {
+            return;
+        };
+        self.collaboration.detail_generation += 1;
+        let generation = self.collaboration.detail_generation;
+        self.collaboration.detail_error = None;
+        cx.spawn(async move |this, cx| {
+            let result = runtime.request("hive.request", json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/dispatches/{id}")})).await
+                .and_then(|v| serde_json::from_value::<Dispatch>(v).map_err(|e| e.to_string()));
+            let _ = this.update(cx, |this, cx| {
+                let c = &mut this.collaboration;
+                if this.workspace.as_ref() != Some(&workspace) || c.detail_generation != generation || !c.selected.as_ref().is_some_and(|d| d.id == id) { return; }
+                match result {
+                    Ok(record) => {
+                        if let Some(row) = c.dispatches.iter_mut().find(|row| row.id == id) {
+                            row.clone_from(&record);
+                        }
+                        c.selected = Some(record);
+                    }
+                    Err(error) => c.detail_error = Some(format!("未能更新派单详情：{error}")),
+                }
+                cx.notify();
+            });
+        }).detach();
     }
     pub fn load_dispatch_messages(&mut self, after: u64, cx: &mut Context<Self>) {
         let (Some(workspace), Some(runtime), Some(dispatch)) = (
@@ -209,6 +251,7 @@ impl HiveApp {
         c.message_generation += 1;
         let generation = c.message_generation;
         c.message_loading = true;
+        c.requested_after = after;
         c.message_error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {

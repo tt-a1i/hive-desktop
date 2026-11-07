@@ -106,7 +106,13 @@ try {
   assert.ok(dispatchId);
   type Dispatch = { id: string; state: string; submitted_at: number | null; report_text: string | null };
   const dispatches = () => first.hive.request('GET', `/api/ui/workspaces/${workspace.id}/dispatches`) as Promise<Dispatch[]>;
-  const submitted = (await dispatches()).find(dispatch => dispatch.id === dispatchId);
+  const detail = () => first.requestHive('GET', `/api/ui/workspaces/${workspace.id}/dispatches/${dispatchId}`) as Promise<Dispatch>;
+  const anonymous = await fetch(`http://127.0.0.1:${first.hive.port}/api/ui/workspaces/${workspace.id}/dispatches/${dispatchId}`);
+  assert.equal(anonymous.status, 403);
+  await anonymous.body?.cancel();
+  await assert.rejects(first.requestHive('GET', `/api/ui/workspaces/${workspace.id}/dispatches/missing`), { status: 404 });
+  const submitted = await detail();
+  assert.deepEqual(submitted, (await dispatches()).find(dispatch => dispatch.id === dispatchId));
   assert.equal(submitted?.state, 'submitted');
   assert.equal(typeof submitted.submitted_at, 'number');
   assert.ok(queues(first.chats).get(workerChat.id)!.queue.pending.some(item =>
@@ -126,7 +132,8 @@ try {
   assert.ok(Number.isSafeInteger(inbox.required_seen_seq));
   await workerTool.execute('report-check', { args: ['report', 'explicit-worker-report', '--dispatch', dispatchId,
     '--seen', String(inbox.required_seen_seq), '--artifact', 'proof.txt'] }, undefined, undefined, undefined as never);
-  const reported = (await dispatches()).find(dispatch => dispatch.id === dispatchId);
+  const reported = await detail();
+  assert.deepEqual(reported, (await dispatches()).find(dispatch => dispatch.id === dispatchId));
   assert.equal(reported?.state, 'reported');
   assert.equal(reported.report_text, 'explicit-worker-report');
   const delivery = queues(first.chats).get(a.id)!.queue.pending.find(item => item.presentation?.dispatchId === dispatchId);

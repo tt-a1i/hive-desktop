@@ -185,9 +185,10 @@ impl HiveApp {
                     match &source {
                         ConversationSource::Dispatch(_) => {
                             this.collaboration.visible = true;
+                            this.load_dispatch_record(cx);
                             this.load_tasks(cx);
                             if this.collaboration.message_loading {
-                                let after = this.collaboration.next_seq.unwrap_or(0);
+                                let after = this.collaboration.requested_after;
                                 this.load_dispatch_messages(after, cx);
                             }
                         }
@@ -337,9 +338,12 @@ impl Render for HiveApp {
                 .child(h_flex().justify_between().items_center()
                     .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(if self.collaboration.selected.is_some() { "派单详情" } else { "协作概览" }))
                     .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").ghost().icon(Glyph::ArrowLeft).label("返回派单列表").on_click(cx.listener(|this, _, _, cx| {
-                        this.collaboration.selected = None;
+                        let c = &mut this.collaboration;
+                        let changed_filter = c.selected.take().is_some_and(|d| c.filter != "all" && c.filter != d.state);
+                        if changed_filter { this.load_dispatches(cx); }
                         cx.notify();
                     }))))
+                    .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("refresh-dispatch").ghost().label("刷新详情").disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_dispatch(cx)))))
                     .when(self.collaboration.selected.is_none(), |row| row.child(Button::new("refresh-collaboration").label("刷新").disabled(!self.connected || self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx))))))
                 .child(div().id("collaboration-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(if self.collaboration.selected.is_some() { &self.collaboration.detail_scroll } else { &self.collaboration_scroll })
                   .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_3()
@@ -361,6 +365,7 @@ impl Render for HiveApp {
                         .child(Button::new("dispatch-next").label("下一页").disabled(!self.connected || self.collaboration.dispatches.len() < 20 || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += 20; this.load_dispatches(cx); }))))
                     )
                     .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
+                        .when_some(self.collaboration.detail_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
                         .child(h_flex().items_center().gap_2()
                             .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(crate::collaboration::dispatch_state(&item.state).to_owned()))
                             .when_some(self.member_session_link(&item.id, Some(&item.to_agent_id), "负责人的会话", cx), |row, link| row.child(link)))
@@ -371,7 +376,7 @@ impl Render for HiveApp {
                         .when(!item.artifacts.is_empty(), |view| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("产物")).children(item.artifacts.iter().map(|artifact| div().text_sm().child(artifact.clone()))))
                         .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("派单消息"))
                         .when(self.collaboration.message_loading, |view| view.child(div().text_sm().child("正在读取消息…")))
-                        .when_some(self.collaboration.message_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)).child(Button::new("retry-dispatch-messages").label("重试读取消息").on_click(cx.listener(|this, _, _, cx| { let after = this.collaboration.next_seq.unwrap_or(0); this.load_dispatch_messages(after, cx); }))))
+                        .when_some(self.collaboration.message_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)).child(Button::new("retry-dispatch-messages").label("重试读取消息").on_click(cx.listener(|this, _, _, cx| { let after = this.collaboration.requested_after; this.load_dispatch_messages(after, cx); }))))
                         .when(!self.collaboration.message_loading && self.collaboration.message_error.is_none() && self.collaboration.messages.is_empty(), |view| view.child(div().text_sm().child("没有消息")))
                         .children(self.collaboration.messages.iter().map(|message| v_flex().gap_1().p_2().bg(Color::Inset.get(cx))
                             .child(div().text_xs().child(format!("#{} · {} → {} · {} · {}", message.sequence, self.agent_name(&message.from_agent_id), self.agent_name(&message.recipient_agent_id), crate::collaboration::message_kind(&message.kind), crate::collaboration::delivery_state(&message.delivery_state))))

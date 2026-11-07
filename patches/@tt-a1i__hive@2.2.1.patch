@@ -82,6 +82,34 @@ index ef0204c62bad803129ee03cbb87f97e45ec81fb8..4f9bb4e930f22294a203a4f5756d1ef0
          deletePendingForDispatch,
          enqueue,
          listPending,
+diff --git a/dist/src/server/routes-dispatches.js b/dist/src/server/routes-dispatches.js
+index f6b3d7f2faf8ea14b06ddedca317a3c830ca7232..806177a51ff178dda0ee24576e89009525807f6d 100644
+--- a/dist/src/server/routes-dispatches.js
++++ b/dist/src/server/routes-dispatches.js
+@@ -21,6 +21,23 @@ const readBoundedInt = (response, value, name, fallback, max) => {
+ };
+ const isDispatchStatus = (value) => DISPATCH_STATUSES.has(value);
+ export const dispatchRoutes = [
++    route('GET', '/api/ui/workspaces/:workspaceId/dispatches/:dispatchId', ({ params, request, response, store }) => {
++        requireUiTokenFromRequest(request, store.validateUiToken, store.authorizeRemoteTunnelRequest);
++        const workspaceId = getRequiredParam(response, params, 'workspaceId', 'Workspace id is required');
++        const dispatchId = getRequiredParam(response, params, 'dispatchId', 'Dispatch id is required');
++        if (!workspaceId || !dispatchId)
++            return;
++        if (!store.listWorkspaces().some((workspace) => workspace.id === workspaceId)) {
++            sendJson(response, 404, { error: 'Workspace not found' });
++            return;
++        }
++        const dispatch = store.getDispatch(workspaceId, dispatchId);
++        if (!dispatch) {
++            sendJson(response, 404, { error: 'Dispatch not found' });
++            return;
++        }
++        sendJson(response, 200, serializeDispatchRecord(dispatch));
++    }),
+     route('GET', '/api/ui/workspaces/:workspaceId/dispatches/:dispatchId/messages', ({ params, request, response, store }) => {
+         requireUiTokenFromRequest(request, store.validateUiToken, store.authorizeRemoteTunnelRequest);
+         const workspaceId = getRequiredParam(response, params, 'workspaceId', 'Workspace id is required');
 diff --git a/dist/src/server/routes-team.js b/dist/src/server/routes-team.js
 index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c0d7ca28e 100644
 --- a/dist/src/server/routes-team.js
@@ -97,10 +125,18 @@ index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c
          getCommandPreset: (id) => store.settings.getCommandPreset(id),
          getOrchestratorLaunchConfig: () => store.peekAgentLaunchConfig(workspaceId, getOrchestratorId(workspaceId)),
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
-index 531749345d132f9a9f93f4f5ad10c8f48e368acd..b8b2dbd9f75faed17e076b5762f8f82ba86f677f 100644
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..ac31ab54ae3631bb6769111fb83096f2915fb212 100644
 --- a/dist/src/server/runtime-store-contract.d.ts
 +++ b/dist/src/server/runtime-store-contract.d.ts
-@@ -138,6 +138,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -55,6 +55,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+     drainReportOutbox: (workspaceId: string, targetAgentId?: string) => void;
+     statusTask: (workspaceId: string, workerId: string, input?: StatusTaskInput) => ReportTaskResult;
+     cancelTask: (workspaceId: string, dispatchId: string, input: CancelTaskInput) => Promise<ReportTaskResult>;
++    getDispatch: (workspaceId: string, dispatchId: string) => DispatchRecord | undefined;
+     listDispatches: (workspaceId: string, options?: ListDispatchesOptions) => DispatchRecord[];
+     listOpenDispatches: (workspaceId: string) => DispatchRecord[];
+     listRecentDispatches: (workspaceId: string, limit?: number) => DispatchRecord[];
+@@ -138,6 +139,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      setRemoteEnabled: (enabled: boolean) => void;
      revokeRemoteDevice: (deviceId: string) => boolean;
      getWorkflowDispatchAwaiter: () => WorkflowDispatchAwaiter;
@@ -144,10 +180,18 @@ index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959c
          db,
          ledger: dispatchLedgerStore,
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..587a10f2a132900c7d6e1fb1721a668d92916d57 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..7626d5e00fe8fa9b94a6a671438646b797f67d01 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
-@@ -112,6 +112,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -98,6 +98,7 @@ export const createRuntimeStore = (options = {}) => {
+         drainReportOutbox: services.teamOps.drainReportOutbox,
+         statusTask: controller.statusTask,
+         ...services.dispatchMessageOps,
++        getDispatch: services.dispatchLedgerStore.getDispatch,
+         listDispatches: services.dispatchLedgerStore.listWorkspaceDispatches,
+         listOpenDispatches: services.dispatchLedgerStore.listOpenWorkspaceDispatches,
+         listRecentDispatches: services.dispatchLedgerStore.listRecentWorkspaceDispatches,
+@@ -112,6 +113,7 @@ export const createRuntimeStore = (options = {}) => {
          closeWorkspaceShell: lifecycle.closeWorkspaceShell,
          configureAgentLaunch: lifecycle.configureAgentLaunch,
          peekAgentLaunchConfig: lifecycle.peekAgentLaunchConfig,
@@ -155,7 +199,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..587a10f2a132900c7d6e1fb1721a668d
          startAgent: lifecycle.startAgent,
          autostartConfiguredAgents: lifecycle.autostartConfiguredAgents,
          startWorkspaceWatch: lifecycle.startWorkspaceWatch,
-@@ -141,6 +142,8 @@ export const createRuntimeStore = (options = {}) => {
+@@ -141,6 +143,8 @@ export const createRuntimeStore = (options = {}) => {
          getRetentionSignals: () => services.protocolEventStats.getRetentionSignals(),
          ...createRuntimeStoreRemoteMethods(services),
          getWorkflowDispatchAwaiter: () => services.workflowDispatchAwaiter,
