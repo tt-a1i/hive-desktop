@@ -1,3 +1,4 @@
+import { promptImages } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
@@ -20,7 +21,7 @@ export interface ExternalPiSessionOptions {
   teamBinding?: () => ExternalPiTeamBinding | undefined;
 }
 export interface ExternalPiSessionHandle extends PiSessionHandle { readonly teamToolName: string; dispose(): Promise<void> }
-type Model = { provider: string; id: string; name: string };
+type Model = { provider: string; id: string; name: string; input?: string[] };
 type State = { sessionId: string; sessionFile: string; model?: Model; isStreaming: boolean };
 type Run = { cancelled: boolean; aborted: boolean; started: boolean; error?: Error; lastAssistant?: Record<string, unknown>;
   terminal: Promise<void>; resolve(): void; reject(error: Error): void; done: Promise<void> };
@@ -111,7 +112,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     ensureOpen();
     if (active) throw new Error('External Pi session is already processing a prompt');
     const model = await transport.request<Model>('set_model', { provider, modelId: id });
-    if (state) state.model = { provider: model.provider, id: model.id, name: model.name };
+    if (state) state.model = {provider:model.provider,id:model.id,name:model.name,...(model.input && {input:[...model.input]})};
   };
   try {
     state = await transport.request<State>('get_state');
@@ -136,7 +137,10 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
       await eventWork; await refresh();
     },
     prompt(text, promptOptions) {
+      let images: ReturnType<typeof promptImages>;
+      try { images = promptImages(promptOptions?.images); } catch (error) { return Promise.reject(error); }
       try { ensureOpen(); } catch (error) { return Promise.reject(error); }
+      if (images.length && !state?.model?.input?.includes('image')) return Promise.reject(new Error('当前外部 Pi 模型未提供图片输入能力。'));
       if (active) return Promise.reject(new Error('External Pi session is already processing a prompt'));
       let resolve!: () => void; let reject!: (error: Error) => void;
       const terminal = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
@@ -150,12 +154,12 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
           const before = new Set(branch.map(entry => entry.id));
           if (promptOptions?.deliveryId) {
             const presentation = isDeliveryPresentation(promptOptions.presentation) ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text };
-            await transport.bridge({ action: 'delivery', text, details: { ...presentation, deliveryId: promptOptions.deliveryId } });
+            await transport.bridge({ action: 'delivery', text, ...(images.length && {images}), details: { ...presentation, deliveryId: promptOptions.deliveryId } });
             await terminal;
           } else if (promptOptions?.automated) {
-            await transport.bridge({ action: 'user', text }); await terminal;
+            await transport.bridge({ action: 'user', text, ...(images.length && {images}) }); await terminal;
           } else {
-            const disposition = await transport.request<{ disposition: string }>('prompt', { message: text });
+            const disposition = await transport.request<{ disposition: string }>('prompt', { message: text, ...(images.length && {images}) });
             if (disposition.disposition !== 'handled' || run.started) await terminal;
           }
           await eventWork; await refresh();

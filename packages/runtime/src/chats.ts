@@ -1,3 +1,4 @@
+import { promptImages } from './prompt-images.js';
 import { restoreHistoricalReport } from './delivery-presentation.js';
 import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
@@ -185,7 +186,7 @@ export class Chats implements StructuredSessionPort {
       const queue = new DeliveryQueue({
         directory: this.queueDir, sessionId: record.id, startPaused: true,
         completedIds: () => handle.completedDeliveryIds(),
-        execute: item => item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text),
+        execute: item => item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.images && {images:item.images}), ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text),
         onError: error => { if (!chat?.aborted) this.event(record.id, { type: 'error', sessionId: record.id, message: error.message }); },
         onState: (busy, completedReportId) => {
           this.event(record.id, { type: 'state', sessionId: record.id, busy, pending: queue.pendingCount, pendingReports: queue.pendingReports, ...(completedReportId && { completedReportId }) });
@@ -290,11 +291,13 @@ export class Chats implements StructuredSessionPort {
       resumed: chat.handle.hasContext('hive-context'),
       ...(chat.handle.sessionFile ? { sessionFile: chat.handle.sessionFile } : {}),
       deliver: async (text, options) => {
+        const images=promptImages(options?.images);
         if (options?.triggerTurn === false) {
+          if(images.length) throw new TypeError('不触发模型回合的投递暂不支持图片。');
           const startupContext = text;
           this.index.save({ ...this.index.get(id), startupContext });
           await chat.handle.addContext(startupContext);
-        } else await chat.queue.enqueue(text, true, options?.presentation);
+        } else await chat.queue.enqueue(text, true, options?.presentation, images);
       },
       ready: () => chat.queue.resume(),
       stop: () => this.stopLive(id, chat),

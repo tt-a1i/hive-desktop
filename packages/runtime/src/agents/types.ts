@@ -1,3 +1,4 @@
+import type { PromptImage } from '../prompt-images.js';
 import type { DeliveryPresentation } from '../delivery-presentation.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 
@@ -45,7 +46,7 @@ export interface PiSessionHandle {
   history(): readonly unknown[];
   hasContext(customType: string): boolean;
   snapshot(): { history: readonly unknown[]; historyMessageIds: string[]; activeMessage?: { messageId: string; message: unknown } };
-  prompt(text: string, options?: { automated?: boolean; deliveryId?: string; presentation?: DeliveryPresentation }): Promise<void>;
+  prompt(text: string, options?: { images?: readonly PromptImage[]; automated?: boolean; deliveryId?: string; presentation?: DeliveryPresentation }): Promise<void>;
   addContext(text: string, customType?: string): Promise<void>;
   completedDeliveryIds(): readonly string[];
   interactions?(): readonly AgentInteraction[];

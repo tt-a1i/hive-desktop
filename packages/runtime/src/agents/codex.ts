@@ -1,3 +1,4 @@
+import { promptImages } from '../prompt-images.js';
 import type { TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
@@ -212,6 +213,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       persist(next);
     },
     prompt(text, promptOptions) {
+      let images: ReturnType<typeof promptImages>;
+      try { images = promptImages(promptOptions?.images); } catch (error) { return Promise.reject(error); }
       try { ensureIdle(); } catch (error) { return Promise.reject(error); }
       let resolve!: Run['resolve']; let reject!: Run['reject'];
       const terminal = new Promise<CodexTurn>((yes, no) => { resolve = yes; reject = no; });
@@ -225,7 +228,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
         try {
           await notifyMaterialized();
           const started = await transport.sendRequest<{ turn: CodexTurn }>('turn/start', { threadId,
-            input: [{ type: 'text', text, text_elements: [] }],
+            input: [...(text ? [{ type: 'text', text, text_elements: [] }] : []), ...images.map(image=>({type:'image',url:`data:${image.mimeType};base64,${image.data}`}))],
             ...(metadata.context.length > 0 && { additionalContext: { 'hive-context': { kind: 'application',
               value: metadata.context.map(entry => entry.text).join('\n\n') } } }) });
           run.turnId = started.turn.id;

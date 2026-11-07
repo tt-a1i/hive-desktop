@@ -1,3 +1,4 @@
+import { promptImages, imageMessage } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
 import { createAgentSession } from '@earendil-works/pi-coding-agent';
 import { isUnsetPiModel } from '../chat-index.js';
@@ -175,6 +176,9 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       });
     },
     prompt(text, promptOptions) {
+      let images: ReturnType<typeof promptImages>;
+      try { images = promptImages(promptOptions?.images); } catch (error) { return Promise.reject(error); }
+      if (images.length && !session.model?.input.includes('image')) return Promise.reject(new Error('当前 Pi 模型不支持图片输入。'));
       if (disposed) return Promise.reject(new Error('Pi session is disposed'));
       if (savedModelUnavailable) return Promise.reject(new Error('原先的 Pi 模型不可用，请重新选择。'));
       if (active) return Promise.reject(new Error('Pi session is already processing a prompt'));
@@ -185,10 +189,10 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
           if (promptOptions?.deliveryId) {
             const presentation: DeliveryPresentation = isDeliveryPresentation(promptOptions.presentation)
               ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text };
-            await session.sendCustomMessage({ customType: 'hive-delivery', content: text, display: false,
+            await session.sendCustomMessage({ customType: 'hive-delivery', content: imageMessage(text,images), display: false,
               details: { ...presentation, deliveryId: promptOptions.deliveryId } }, { triggerTurn: true });
-          } else if (promptOptions?.automated) await session.sendUserMessage(text);
-          else await session.prompt(text);
+          } else if (promptOptions?.automated) await session.sendUserMessage(imageMessage(text,images));
+          else await session.prompt(text, {images});
           if (run.finalError && !run.cancelled && !promptOptions?.deliveryId) options.onEvent({ type: 'error', sessionId, message: run.finalError });
           if (promptOptions?.deliveryId) {
             if (run.cancelled || run.sdkAborted) throw new Error('Pi delivery was aborted');

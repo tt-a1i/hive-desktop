@@ -1,3 +1,4 @@
+import { promptImages, type PromptImage } from "./prompt-images.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8,6 +9,7 @@ export interface DeliveryItem {
  readonly text: string;
  readonly triggerTurn: boolean;
  readonly presentation?: DeliveryPresentation;
+ readonly images?: readonly PromptImage[];
 }
 
 interface DeliveryQueueOptions {
@@ -36,6 +38,7 @@ function readSpool(path: string): DeliveryItem[] {
   && (item.presentation === undefined || isDeliveryPresentation(item.presentation)))) {
   throw new Error(`Invalid delivery spool: ${path}`);
  }
+ for (const item of stored) { if (item.images !== undefined && promptImages(item.images).length && !item.triggerTurn) throw new TypeError("Invalid context-only image delivery"); }
  return stored;
 }
 
@@ -60,7 +63,7 @@ export class DeliveryQueue {
   return readSpool(spoolPath(directory, sessionId)).length;
  }
 
- get pending(): readonly DeliveryItem[] { return this.items.map(item => ({ ...item, ...(item.presentation && { presentation: structuredClone(item.presentation) }) })); }
+ get pending(): readonly DeliveryItem[] { return structuredClone(this.items); }
  get pendingCount(): number { return this.items.length; }
  get pendingReports() {
   return this.items.flatMap((item, index) => {
@@ -72,9 +75,11 @@ export class DeliveryQueue {
  get busy(): boolean { return this.running !== undefined; }
 
  /** Resolves after atomic persistence, without waiting for model execution. */
- async enqueue(text: string, triggerTurn = true, presentation?: DeliveryPresentation): Promise<void> {
+ async enqueue(text: string, triggerTurn = true, presentation?: DeliveryPresentation, imageInput?: readonly PromptImage[]): Promise<void> {
   if (presentation !== undefined && !isDeliveryPresentation(presentation)) throw new Error("Invalid delivery presentation");
-  this.replace([...this.items, { id: randomUUID(), text, triggerTurn, ...(presentation && { presentation: structuredClone(presentation) }) }]);
+  const images = promptImages(imageInput);
+  if (images.length && !triggerTurn) throw new TypeError("不触发模型回合的投递暂不支持图片。");
+  this.replace([...this.items, { id: randomUUID(), text, triggerTurn, ...(images.length && {images}), ...(presentation && { presentation: structuredClone(presentation) }) }]);
   this.kick();
   this.emitState();
  }

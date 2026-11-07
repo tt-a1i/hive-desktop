@@ -1,3 +1,4 @@
+import { promptImages } from '../prompt-images.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID, type UUID } from 'node:crypto';
 import { accessSync, constants } from 'node:fs';
@@ -163,6 +164,8 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
       })(), 'hidden context persistence', 5000);
     },
     prompt(text, promptOptions) {
+      let images: ReturnType<typeof promptImages>;
+      try { images = promptImages(promptOptions?.images); } catch (error) { return Promise.reject(error); }
       try { check(); } catch (error) { return Promise.reject(error); }
       if (active) return Promise.reject(new Error('Claude session is already processing a prompt'));
       let resolve!: (value: SDKResultMessage) => void; let reject!: (error: Error) => void;
@@ -176,7 +179,11 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
             const presentation = isDeliveryPresentation(promptOptions.presentation) ? promptOptions.presentation : { version: 1 as const, origin: 'unknown' as const, displayText: text };
             persist({ ...metadata, deliveries: [...metadata.deliveries, { uuid: run.uuid, deliveryId: promptOptions.deliveryId, presentation }] });
           }
-          input.push({ type: 'user', uuid: run.uuid, session_id: sessionId, message: { role: 'user', content: text }, parent_tool_use_id: null,
+          const content = images.length ? [
+            ...(text ? [{type:'text' as const,text}] : []),
+            ...images.map(image=>({type:'image' as const,source:{type:'base64' as const,media_type:image.mimeType,data:image.data}})),
+          ] : text;
+          input.push({ type: 'user', uuid: run.uuid, session_id: sessionId, message: { role: 'user', content }, parent_tool_use_id: null,
             ...((promptOptions?.automated || promptOptions?.deliveryId) && { client_composed: true }) });
           const result = await terminal;
           await Promise.allSettled([...run.tools]); const durableMessages = await refresh();

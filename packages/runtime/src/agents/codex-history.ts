@@ -42,7 +42,8 @@ export function normalizeCodexItem(item: CodexItem, delivery?: CodexDelivery): R
     case 'hiveProjectionNotice': return { role: 'notice', content: [{ type: 'text', text: item.text }], rawBackendItem };
     case 'userMessage': {
       const content = Array.isArray(item.content) ? item.content.map((part: Record<string, unknown>) =>
-        part.type === 'text' ? { type: 'text', text: part.text } : part) : [];
+        part.type === 'text' ? { type: 'text', text: part.text } : part.type==='image' && typeof part.url==='string' && /^data:(image\/(?:png|jpeg|gif|webp));base64,/.test(part.url)
+          ? {type:'image',mimeType:part.url.slice(5,part.url.indexOf(';')),data:part.url.slice(part.url.indexOf(',')+1)} : part) : [];
       if (!delivery) return { role: 'user', content, timestamp, rawBackendItem };
       const presentation = { ...delivery.presentation, deliveryId: delivery.deliveryId };
       return { role: 'custom', customType: 'hive-delivery', display: false, content, timestamp, rawBackendItem,

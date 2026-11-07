@@ -8,6 +8,8 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "check:hive": "tsx checks/hive-host.ts",
     "check:runtime": "pnpm build && tsx checks/runtime.ts",
+    "check:images": "pnpm build && tsx checks/prompt-images.ts && tsx checks/prompt-images-peers.ts && tsx checks/prompt-images-pi.ts",
+    "check:images-native-pi": "pnpm build && tsx checks/prompt-images-pi.ts --external",
     "check:session-pins": "pnpm build && tsx checks/session-pins.ts",
     "check:team": "tsx checks/delivery-queue.ts && tsx checks/pi-delivery.ts && tsx checks/structured-runtime.ts && tsx checks/team-tool.ts && tsx checks/team-runtime.ts && tsx checks/session-titles.ts && tsx checks/session-search.ts",
     "check:codex": "tsx checks/codex-transport-fixture.ts && tsx checks/codex-session-normalization.ts && tsx checks/codex-session-failures.ts && tsx checks/codex-interactions.ts",

@@ -37,6 +37,18 @@ function stop(child) {
   }
 }
 try {
+  progress('Checking compiled image payload contract with bundled Node');
+  const imageProbe = start(['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';import {pathToFileURL} from 'node:url';
+    const {promptImages,imageMessage}=await import(pathToFileURL(process.argv[1]+'/dist/prompt-images.js'));
+    const image={type:'image',mimeType:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC'};
+    assert.deepEqual(imageMessage('original',promptImages([image])),[{type:'text',text:'original'},image]);
+    assert.throws(()=>promptImages([{...image,data:'invalid'}]));console.log('IMAGE_PAYLOAD_OK');
+  `, runtime]);
+  let imageOutput='';imageProbe.stdout.on('data',chunk=>{imageOutput+=chunk;});
+  imageProbe.stderr.on('data',chunk=>process.stderr.write(chunk));
+  assert.equal((await deadline(once(imageProbe,'close'),'image payload probe'))[0],0);
+  assert.ok(imageOutput.includes('IMAGE_PAYLOAD_OK'));
   // Resolve the PTY from Hive's own dependency graph and actually launch a shell.
   progress('Starting PTY probe with bundled Node');
   const code = `const {createRequire}=require('node:module');console.log('PTY: baseline resources '+JSON.stringify(process.getActiveResourcesInfo()));console.log('PTY: resolving Hive dependency');const r=createRequire(process.argv[1]+'/package.json');const h=createRequire(r.resolve('@tt-a1i/hive/package.json'));const p=h('@lydell/node-pty');const shell=process.platform==='win32'?process.env.ComSpec:'/bin/sh';const args=process.platform==='win32'?['/c','echo HIVE_PTY_OK']:['-c','printf HIVE_PTY_OK'];console.log('PTY: spawning shell');const t=p.spawn(shell,args,{cwd:process.cwd(),env:process.env});console.log('PTY: spawn returned');let out='';t.onData(x=>{out+=x;console.log('PTY: received data')});t.onExit(e=>{console.log('PTY: onExit '+JSON.stringify(e));const ok=e.exitCode===0&&out.includes('HIVE_PTY_OK');console.log('PTY: active resources at exit '+JSON.stringify(process.getActiveResourcesInfo()));setTimeout(()=>console.log('PTY: active resources after 1s '+JSON.stringify(process.getActiveResourcesInfo())),1000).unref();if(ok)console.log('PTY OK');else process.exitCode=1});`;

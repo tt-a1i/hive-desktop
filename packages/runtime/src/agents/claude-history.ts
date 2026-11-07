@@ -15,7 +15,8 @@ export function projectClaudeMessage(source: ClaudeSource, metadata: ClaudeMetad
   const toolResults = blocks.filter(block => block.type === 'tool_result').map(block => ({ id: String(block.tool_use_id), message: {
     role: 'toolResult', toolCallId: block.tool_use_id, content: typeof block.content === 'string' ? [{ type: 'text', text: block.content }] : block.content ?? [], isError: block.is_error === true, ...base } }));
   const content = blocks.filter(block => block.type !== 'tool_result').map(block => block.type === 'tool_use'
-    ? { type: 'toolCall', id: block.id, name: block.name, arguments: block.input } : block);
+    ? { type: 'toolCall', id: block.id, name: block.name, arguments: block.input } : block.type==='image' && isObject(block.source) && block.source.type==='base64'
+      ? {type:'image',mimeType:block.source.media_type,data:block.source.data} : block);
   if (toolResults.length && content.length === 0) return toolResults;
   const delivery = metadata.deliveries.find(entry => entry.uuid === source.uuid);
   const context = metadata.context.find(entry => entry.uuid === source.uuid);

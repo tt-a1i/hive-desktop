@@ -1,3 +1,4 @@
+import { promptImages, imageMessage } from '../prompt-images.js';
 import { existsSync, writeFileSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createTeamTool } from '../team-tool.js';
@@ -31,7 +32,7 @@ export default function hiveDesktopBridge(pi: ExtensionAPI): void {
         binding = candidate as typeof binding;
       } else if (value.action === 'user') {
         if (!('text' in value) || typeof value.text !== 'string') throw new Error('Hive user message must be a string');
-        pi.sendUserMessage(value.text, { expandPromptTemplates: false });
+        pi.sendUserMessage(imageMessage(value.text,promptImages('images' in value?value.images:undefined)), { expandPromptTemplates: false });
       } else if (value.action === 'initialize') {
         const tools = pi.getAllTools().filter(tool => tool.name === toolName);
         if (tools.length !== 1) throw new Error('Hive external Pi team tool collision');
@@ -51,7 +52,7 @@ export default function hiveDesktopBridge(pi: ExtensionAPI): void {
         const customType = value.action === 'delivery' ? 'hive-delivery'
           : 'customType' in value && typeof value.customType === 'string' ? value.customType : 'hive-context';
         const details = 'details' in value ? value.details : undefined;
-        pi.sendMessage({ customType, content: value.text, display: false, details }, { triggerTurn: value.action === 'delivery' && (!('triggerTurn' in value) || value.triggerTurn !== false) });
+        pi.sendMessage({ customType, content: imageMessage(value.text,promptImages('images' in value?value.images:undefined)), display: false, details }, { triggerTurn: value.action === 'delivery' && (!('triggerTurn' in value) || value.triggerTurn !== false) });
       } else if (value.action === 'complete') {
         if (!('deliveryId' in value) || typeof value.deliveryId !== 'string') throw new Error('Missing Hive delivery ID');
         const id = value.deliveryId;
