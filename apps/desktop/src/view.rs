@@ -295,7 +295,7 @@ impl Render for HiveApp {
                 .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id)))).on_click(cx.listener(|this, _, _, cx| { this.scroll.scroll_to_bottom(); cx.notify(); }))))
                 .when(!welcome && self.session.is_some(), |surface| surface.child(div().id("messages").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll).p_3()
                     .child(v_flex().w_full().max_w(px(920.)).mx_auto().gap_5()
-                        .when(self.messages.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
+                        .when(self.messages.is_empty() && self.pending_reports.is_empty() && (!has_interactions || !self.connected), |view| view.child(div().py_8().text_color(Color::Muted.get(cx)).child(if self.loading { "正在读取…" } else if !self.connected { "后台连接已断开，当前草稿仍保留。请先复制需要的内容，再重启应用。" } else if running { "正在等待 Agent 回复…" } else if self.session.is_some() { "会话已就绪。发送第一条消息开始工作。" } else if self.workspace.is_some() { "新建会话开始工作" } else { "添加项目文件夹，再创建一个会话。" })))
                         .children(self.messages.iter().enumerate().map(|(i, message)| {
                             if let Some(tool) = &message.tool {
                                 return self.render_tool_message(i, message, tool, cx).into_any_element();
@@ -305,6 +305,15 @@ impl Render for HiveApp {
                                 .when(message.role == "user", |bubble| bubble.bg(Color::Bubble.get(cx)).ml_auto().max_w(px(680.)))
                                 .child(h_flex().min_w_0().gap_2().justify_between()
                                     .child(div().flex_1().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(Color::Secondary.get(cx)).child(heading))
+                                    .when(message.delivery.as_ref().is_some_and(|card| card.report), |row| {
+                                        let state = if self.completed_deliveries.contains(&message.id) {
+                                            "处理回合已完成"
+                                        } else {
+                                            self.pending_reports.iter().find(|report| report.delivery_id == message.id)
+                                                .map(|report| report.status()).unwrap_or("已进入会话")
+                                        };
+                                        row.child(div().text_xs().text_color(Color::Muted.get(cx)).child(state))
+                                    })
                                     .when_some(message.delivery.as_ref().and_then(|card| card.worker_id.as_ref()).and_then(|worker| self.sessions.iter().find(|s| s.agent_id.as_ref() == Some(worker))), |view, session| {
                                         let session_id = session.id.clone();
                                         view.child(Button::new(("open-report-worker", i)).ghost().compact().label("成员会话").on_click(cx.listener(move |this, _, _, cx| this.open_session(session_id.clone(), cx))))
@@ -321,6 +330,16 @@ impl Render for HiveApp {
                                 )))
                                 .when(message.delivery.as_ref().is_some_and(|d| d.expanded), |view| view.child(div().min_w_0().p_3().rounded_lg().bg(Color::Card.get(cx)).text_sm().child(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())))
                                 .into_any_element()
+                        }))
+                        .children(self.pending_reports.iter().filter(|report|
+                            !self.messages.iter().any(|message| message.id == report.delivery_id)
+                        ).map(|report| {
+                            v_flex().min_w_0().gap_2().px_3().py_2()
+                                .child(h_flex().gap_2().items_center()
+                                    .child(div().flex_1().text_xs().font_weight(FontWeight::SEMIBOLD).child(format!("{} · 成员汇报", report.worker_name.as_deref().unwrap_or("Worker"))))
+                                    .child(div().text_xs().text_color(Color::Muted.get(cx)).child(report.status())))
+                                .child(div().text_sm().child(report.text.clone()))
+                                .children(report.artifacts.iter().map(|artifact| div().text_sm().text_color(Color::Secondary.get(cx)).child(format!("交付物 · {artifact}"))))
                         }))
                         .child(self.render_interactions(cx)))))
                 .child(v_flex().w_full().min_w_0().max_w(px(920.)).mx_auto().flex_shrink_0().gap_2().p_3().rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))

@@ -17,7 +17,7 @@ interface DeliveryQueueOptions {
  execute(item: DeliveryItem): Promise<void>;
  completedIds(): readonly string[];
  onError(error: Error): void;
- onState?(busy: boolean): void;
+ onState?(busy: boolean, completedReportId?: string): void;
 }
 
 /** A transport spool, not a task ledger. One owner per session is required. */
@@ -42,13 +42,21 @@ export class DeliveryQueue {
   queueMicrotask(() => this.kick());
  }
 
- get pending(): readonly DeliveryItem[] { return this.items.map(item => ({ ...item, ...(item.presentation && { presentation: { ...item.presentation } }) })); }
+ get pending(): readonly DeliveryItem[] { return this.items.map(item => ({ ...item, ...(item.presentation && { presentation: structuredClone(item.presentation) }) })); }
+ get pendingCount(): number { return this.items.length; }
+ get pendingReports() {
+  return this.items.flatMap((item, index) => {
+   const report = item.presentation;
+   return report?.origin === 'report' ? [{ deliveryId: item.id, text: report.displayText,
+    workerName: report.workerName, artifacts: [...(report.artifacts ?? [])], processing: index === 0 && this.busy && !this.paused }] : [];
+  });
+ }
  get busy(): boolean { return this.running !== undefined; }
 
  /** Resolves after atomic persistence, without waiting for model execution. */
  async enqueue(text: string, triggerTurn = true, presentation?: DeliveryPresentation): Promise<void> {
   if (presentation !== undefined && !isDeliveryPresentation(presentation)) throw new Error("Invalid delivery presentation");
-  this.replace([...this.items, { id: randomUUID(), text, triggerTurn, ...(presentation && { presentation: { ...presentation } }) }]);
+  this.replace([...this.items, { id: randomUUID(), text, triggerTurn, ...(presentation && { presentation: structuredClone(presentation) }) }]);
   this.kick();
   this.emitState();
  }
@@ -70,11 +78,11 @@ export class DeliveryQueue {
   this.emitState();
  }
 
- private emitState(): void {
+ private emitState(completedReportId?: string): void {
   const state = `${this.busy}:${this.items.length}`;
-  if (state === this.lastState) return;
+  if (state === this.lastState && !completedReportId) return;
   this.lastState = state;
-  this.options.onState?.(this.busy);
+  this.options.onState?.(this.busy, completedReportId);
  }
 
  private replace(items: DeliveryItem[]): void {
@@ -110,7 +118,8 @@ export class DeliveryQueue {
    }
    this.replace(this.items.slice(1));
    this.attemptedId = undefined;
-   this.emitState();
+   const completed = item.presentation?.origin === "report" && this.options.completedIds().includes(item.id);
+   this.emitState(completed ? item.id : undefined);
   }
  }
 }

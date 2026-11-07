@@ -88,6 +88,24 @@ pub struct Model {
     pub name: String,
     pub available: bool,
 }
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingReport {
+    pub delivery_id: String,
+    pub text: String,
+    pub worker_name: Option<String>,
+    pub artifacts: Vec<String>,
+    pub processing: bool,
+}
+impl PendingReport {
+    pub fn status(&self) -> &'static str {
+        if self.processing {
+            "正在处理"
+        } else {
+            "已收到 · 待处理"
+        }
+    }
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
@@ -100,6 +118,10 @@ pub struct OpenSession {
     pub busy: bool,
     #[serde(default)]
     pub pending: usize,
+    #[serde(default)]
+    pub pending_reports: Vec<PendingReport>,
+    #[serde(default)]
+    pub completed_delivery_ids: Vec<String>,
     #[serde(flatten)]
     pub session: Session,
     #[serde(default)]
@@ -174,6 +196,9 @@ pub enum PiEvent {
         sequence: u64,
         busy: bool,
         pending: usize,
+        #[serde(default)]
+        pending_reports: Vec<PendingReport>,
+        completed_report_id: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     AssistantDelta {

@@ -28,6 +28,7 @@ pub struct ToolPresentation {
     pub expanded: bool,
 }
 pub struct DeliveryCard {
+    pub report: bool,
     pub worker_id: Option<String>,
     pub artifacts: Vec<String>,
     pub heading: String,
@@ -118,6 +119,8 @@ pub struct HiveApp {
     pub models: Vec<Model>,
     pub model: Option<ModelIdentity>,
     pub busy: HashSet<String>,
+    pub pending_reports: Vec<PendingReport>,
+    pub completed_deliveries: HashSet<String>,
     pub pending: HashMap<String, usize>,
     pub unread: HashSet<String>,
     pub failed_drafts: HashMap<String, Vec<String>>,
@@ -258,6 +261,8 @@ impl HiveApp {
             models: vec![],
             model: None,
             busy: HashSet::new(),
+            pending_reports: Vec::new(),
+            completed_deliveries: HashSet::new(),
             pending: HashMap::new(),
             unread: HashSet::new(),
             failed_drafts: HashMap::new(),

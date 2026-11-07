@@ -22,7 +22,8 @@ interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
   failure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
-export type ChatEvent = (PiEvent | { type: 'state'; sessionId: string; busy: boolean; pending: number }) & { sequence: number };
+type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; completedReportId?: string };
+export type ChatEvent = (PiEvent | QueueState) & { sequence: number };
 const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
 
 export class Chats implements StructuredSessionPort {
@@ -48,7 +49,7 @@ export class Chats implements StructuredSessionPort {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
   list(workspaceId: string) { return this.index.list(workspaceId); }
-  private event(id: string, event: PiEvent | { type: 'state'; sessionId: string; busy: boolean; pending: number }) {
+  private event(id: string, event: PiEvent | QueueState) {
     const sequence = (this.sequences.get(id) ?? 0) + 1;
     this.sequences.set(id, sequence);
     this.emit({ ...event, sessionId: id, sequence });
@@ -126,8 +127,8 @@ export class Chats implements StructuredSessionPort {
         completedIds: () => handle.completedDeliveryIds(),
         execute: item => item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text),
         onError: error => { if (!chat?.aborted) this.event(record.id, { type: 'error', sessionId: record.id, message: error.message }); },
-        onState: busy => {
-          this.event(record.id, { type: 'state', sessionId: record.id, busy, pending: queue.pending.length });
+        onState: (busy, completedReportId) => {
+          this.event(record.id, { type: 'state', sessionId: record.id, busy, pending: queue.pendingCount, pendingReports: queue.pendingReports, ...(completedReportId && { completedReportId }) });
           if (wasBusy && !busy) this.event(record.id, { type: 'settled', sessionId: record.id, aborted: chat?.aborted ?? false });
           wasBusy = busy;
         },
@@ -146,7 +147,8 @@ export class Chats implements StructuredSessionPort {
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
     return {
       ...record, ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
-      busy: chat.queue.busy, pending: chat.queue.pending.length,
+      busy: chat.queue.busy, pending: chat.queue.pendingCount, pendingReports: chat.queue.pendingReports,
+      completedDeliveryIds: chat.handle.completedDeliveryIds(),
       runId: record.agentId ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId)?.runId ?? null : null,
       eventSequence: this.sequences.get(id) ?? 0,
     };
@@ -253,7 +255,7 @@ export class Chats implements StructuredSessionPort {
     if (previous && previous.id !== id) {
       const old = await this.require(previous.id);
       const team = await this.hive.request('GET', `/api/ui/workspaces/${record.workspaceId}/team`) as { pending_task_count: number; open_dispatches?: unknown[] }[];
-      if (old?.queue.busy || old?.queue.pending.length || team.some(member => member.pending_task_count > 0 || member.open_dispatches?.length)) {
+      if (old?.queue.busy || old?.queue.pendingCount || team.some(member => member.pending_task_count > 0 || member.open_dispatches?.length)) {
         throw new Error('当前主会话仍有执行或未结派单，请先完成或停止相关任务，再切换主会话。');
       }
     }
@@ -275,7 +277,7 @@ export class Chats implements StructuredSessionPort {
       await this.require(id);
       await this.activateOnce(id);
       const chat = await this.require(id);
-      if (!chat.queue.pending.length) chat.queue.resume();
+      if (!chat.queue.pendingCount) chat.queue.resume();
       const record = this.index.get(id);
       this.index.save({ ...record, title: record.title === '新会话' ? text.trim().slice(0, 60) : record.title, updatedAt: Date.now() });
       if (record.agentId === `${record.workspaceId}:orchestrator`) {

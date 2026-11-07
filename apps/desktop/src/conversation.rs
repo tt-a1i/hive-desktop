@@ -115,7 +115,19 @@ impl HiveApp {
     fn apply_activity(&mut self, event: &PiEvent) {
         let id = event.session_id().to_string();
         match event {
-            PiEvent::State { busy, pending, .. } => {
+            PiEvent::State {
+                busy,
+                pending,
+                pending_reports,
+                completed_report_id,
+                ..
+            } => {
+                if self.session.as_ref().is_some_and(|s| s.id == id) {
+                    self.pending_reports.clone_from(pending_reports);
+                    if let Some(id) = completed_report_id {
+                        self.completed_deliveries.insert(id.clone());
+                    }
+                }
                 if *busy {
                     self.busy.insert(id.clone());
                 } else {
@@ -227,6 +239,9 @@ impl HiveApp {
                     None
                 } else {
                     Some(DeliveryCard {
+                        report: presentation
+                            .as_ref()
+                            .is_some_and(|p| p.origin == DeliveryOrigin::Report),
                         heading,
                         worker_id: presentation.as_ref().and_then(|p| p.worker_id.clone()),
                         artifacts: presentation.map(|p| p.artifacts).unwrap_or_default(),

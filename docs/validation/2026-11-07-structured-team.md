@@ -87,3 +87,7 @@ pnpm exec tsx checks/agent-lifecycle-live.ts --live
 外部 Claude Code、Codex、Pi 的完整桌面接入，成员管理/配置/协作主页，桌面后台意外断开后的重连，Windows 真实运行与两端安装包均未完成。
 
 崩溃可能发生在工具副作用完成与完成标记写入之间；持久队列不会把该窗口变成 exactly-once。当前检查没有证明系统强杀、机器掉电、磁盘损坏或全部上游工作流的恢复行为。基础阶段与完整目标均保持开放。
+
+### 主控忙碌期间的汇报
+
+运行 `pnpm --filter @hive-desktop/runtime exec tsx checks/team-runtime.ts --live-report` 可用内置 Pi 和 `openai/gpt-6.1-terra` 验证汇报从持久队列进入会话。检查先暂停主控队列，让 Worker 经 team CLI 提交带交付物的汇报，确认在线事件和重启快照都含相同的正文、交付物与投递 ID。恢复队列后，检查观察到处理状态和后端完成标记，再次重启后聊天历史中只有一条相应消息。“处理回合已完成”表示 Agent 处理这次投递的回合已结束，任务验收仍由 Hive 协作流程决定。默认 `check:team` 验证暂停队列和重启读取，不调用模型。

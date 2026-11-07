@@ -10,7 +10,7 @@ import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import { createTeamTool } from '../src/team-tool.js';
 import type { DeliveryQueue } from '../src/delivery-queue.js';
 import { restoreHistoricalReport } from '../src/delivery-presentation.js';
-import type { Chats } from '../src/chats.js';
+import type { Chats, ChatEvent } from '../src/chats.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'hive-team-runtime-'));
 type Runtime = Awaited<ReturnType<typeof createDesktopRuntime>>;
@@ -18,7 +18,8 @@ const queues = (chats: Chats) => (chats as unknown as { live: Map<string, { queu
 let runtime: Runtime | undefined;
 try {
   const dataDir = join(directory, 'state');
-  runtime = await createDesktopRuntime(dataDir, () => {});
+  const stateEvents: Extract<ChatEvent, { type: 'state' }>[] = [];
+  runtime = await createDesktopRuntime(dataDir, event => { if (event.type === 'state') stateEvents.push(event); });
   const first = runtime;
   const workspace = await first.hive.request('POST', '/api/workspaces', {
     path: directory, name: 'Team runtime integration', autostart_orchestrator: false,
@@ -76,7 +77,8 @@ try {
     }
     return actualRequest(method, path, body);
   };
-  const input = first.chats.prompt(a.id, 'persisted-only-for-A');
+  const userText = 'Acknowledge with OK. When the worker report arrives, acknowledge receipt briefly. No tools needed.';
+  const input = first.chats.prompt(a.id, userText);
   await atInput;
   const switching = first.chats.resume(b.id);
   const switchVerdict = switching.then(() => 'switched' as const, () => 'blocked' as const);
@@ -88,9 +90,9 @@ try {
   await input;
   assert.equal(await switchVerdict, 'blocked');
   assert.equal(first.chats.list(workspace.id).find(chat => chat.id === a.id)?.agentId, agentId);
-  assert.ok(queues(first.chats).get(a.id)!.queue.pending.some(item => item.text.includes('persisted-only-for-A')));
+  assert.ok(queues(first.chats).get(a.id)!.queue.pending.some(item => item.text.includes(userText)));
   assert.deepEqual(queues(first.chats).get(a.id)!.queue.pending[0]?.presentation,
-    { version: 1, origin: 'user', displayText: 'persisted-only-for-A' });
+    { version: 1, origin: 'user', displayText: userText });
   assert.equal((await first.chats.open(b.id)).pending, 0);
   // Exercise the installed npm runtime's actual send/report contract, with both
   // recipients paused so durable acceptance cannot invoke either model.
@@ -147,15 +149,42 @@ try {
   await first.close();
   runtime = undefined;
 
-  runtime = await createDesktopRuntime(dataDir, () => {});
+  const resumedStates: typeof stateEvents = [];
+  runtime = await createDesktopRuntime(dataDir, event => { if (event.type === 'state') resumedStates.push(event); });
   assert.equal(queues(runtime.chats).size, 0, 'Restart should begin without loaded chats');
   await assert.rejects(runtime.chats.resume(b.id));
   const reopenedA = await runtime.chats.open(a.id);
   assert.equal(reopenedA.agentId, agentId);
   assert.equal(reopenedA.pending, pendingAtRestart);
+  const preview = [{ deliveryId: delivery.id, text: 'explicit-worker-report', workerName: 'sdk-worker',
+    artifacts: ['proof.txt'], processing: false }];
+  assert.deepEqual(stateEvents.filter(event => event.sessionId === a.id).at(-1)?.pendingReports, preview);
+  assert.deepEqual(reopenedA.pendingReports, preview);
+  assert.ok(!reopenedA.completedDeliveryIds.includes(delivery.id));
+  assert.deepEqual((await runtime.chats.open(b.id)).pendingReports, []);
   assert.equal(reopenedA.busy, false);
   assert.equal((await runtime.chats.open(b.id)).agentId, undefined);
-  console.log('Team runtime passed: fresh-chat startup, CLI backend/model inheritance, actual dispatch/seen/report delivery, concurrent input isolation, persisted queue switch guard. No model request sent.');
+  if (process.argv.includes('--live-report')) {
+    assert.deepEqual([reopenedA.model?.provider, reopenedA.model?.id], ['openai', 'gpt-6.1-terra']);
+    await runtime.chats.resume(a.id);
+    const deadline = Date.now() + 240_000;
+    while (!resumedStates.some(event => event.completedReportId === delivery.id)) {
+      assert.ok(Date.now() < deadline, 'Expected a native completion marker for the report');
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    assert.ok(resumedStates.some(event => event.pendingReports.some(report => report.deliveryId === delivery.id && report.processing)));
+    await runtime.close();
+    runtime = await createDesktopRuntime(dataDir, () => {});
+    const finished = await runtime.chats.open(a.id);
+    assert.ok(finished.completedDeliveryIds.includes(delivery.id));
+    assert.ok(!finished.pendingReports.some(report => report.deliveryId === delivery.id));
+    assert.equal(finished.history.filter(message => typeof message === 'object' && message !== null
+      && 'presentation' in message && typeof message.presentation === 'object' && message.presentation !== null
+      && 'deliveryId' in message.presentation && message.presentation.deliveryId === delivery.id).length, 1);
+    console.log('Live report passed: processing, native completion and one history entry after restart.');
+  } else {
+    console.log('Team runtime passed: fresh-chat startup, CLI backend/model inheritance, actual dispatch/seen/report delivery, concurrent input isolation, persisted queue switch guard. No model request sent.');
+  }
 } finally {
   await runtime?.close();
   await rm(directory, { recursive: true, force: true });

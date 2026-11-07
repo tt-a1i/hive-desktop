@@ -189,6 +189,8 @@ impl HiveApp {
     pub(crate) fn reset_workspace_view(&mut self) {
         self.session = None;
         self.messages.clear();
+        self.pending_reports.clear();
+        self.completed_deliveries.clear();
         self.pending_events.clear();
         self.event_sequence = 0;
         self.sessions.clear();
@@ -369,6 +371,8 @@ impl HiveApp {
             self.session = Some(session.clone());
         }
         self.messages.clear();
+        self.pending_reports.clear();
+        self.completed_deliveries.clear();
         self.pending_events.clear();
         self.event_sequence = 0;
         self.models.clear();
@@ -400,6 +404,9 @@ impl HiveApp {
                         }
                         this.sync_interactions(&id, open.interactions);
                         this.pending.insert(id.clone(), open.pending);
+                        this.pending_reports = open.pending_reports;
+                        this.completed_deliveries =
+                            open.completed_delivery_ids.into_iter().collect();
                         this.background_sequences
                             .insert(id.clone(), open.event_sequence);
                         this.session = Some(open.session);
