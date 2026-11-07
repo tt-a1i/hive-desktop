@@ -88,6 +88,9 @@ jobs:
           name: hive-desktop-windows-portable
           path: target/hive-desktop-windows-portable.zip
           if-no-files-found: error
+      - name: Open the saved workspace in the extracted native application
+        timeout-minutes: 4
+        run: node scripts/check-desktop-startup.mjs --bundle target/portable-windows-extracted
   native-supervision:
     runs-on: windows-latest
     timeout-minutes: 20

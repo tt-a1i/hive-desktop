@@ -49,7 +49,14 @@ pub struct ConversationPosition {
     pub expanded: HashSet<String>,
 }
 
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+pub struct NavigationSelection {
+    pub workspace: Option<String>,
+    pub sessions: HashMap<String, String>,
+}
+
 pub struct HiveApp {
+    pub navigation: NavigationSelection,
     pub sidebar_open: bool,
     pub connected: bool,
     pub interactions: crate::interactions::Interactions,
@@ -175,6 +182,7 @@ impl HiveApp {
             },
         );
         let mut app = Self {
+            navigation: NavigationSelection::default(),
             sidebar_open: true,
             connected: false,
             interactions: crate::interactions::Interactions::default(),
@@ -318,7 +326,15 @@ impl HiveApp {
                     return;
                 }
                 match result {
-                    Ok(_) => {
+                    Ok(info) => {
+                        if let Some(value) = info["navigation"].as_str() {
+                            match serde_json::from_str(value) {
+                                Ok(selection) => this.navigation = selection,
+                                Err(error) => {
+                                    this.error = Some(format!("无法恢复上次的会话位置：{error}"))
+                                }
+                            }
+                        }
                         this.connected = true;
                         this.status = "后台已连接".into();
                         this.load_workspaces(cx);

@@ -65,6 +65,19 @@ impl HiveApp {
         }
         self.draft_target = next;
     }
+    pub(crate) fn save_navigation(&self, cx: &mut Context<Self>) {
+        let Some(runtime) = &self.runtime else { return };
+        let write = runtime.begin_request("desktop.navigation.save", json!(self.navigation));
+        cx.spawn(async move |this, cx| {
+            if let Err(error) = write.await {
+                let _ = this.update(cx, |this, cx| {
+                    this.error = Some(format!("保存会话位置失败：{error}"));
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
     pub fn load_workspaces(&mut self, cx: &mut Context<Self>) {
         self.request(
             "hive.request",
@@ -74,7 +87,11 @@ impl HiveApp {
                 Ok(workspaces) => {
                     this.workspaces = workspaces;
                     if this.workspace.is_none() {
-                        if let Some(first) = this.workspaces.first() {
+                        let saved = this
+                            .workspaces
+                            .iter()
+                            .find(|w| Some(&w.id) == this.navigation.workspace.as_ref());
+                        if let Some(first) = saved.or_else(|| this.workspaces.first()) {
                             this.select_workspace(first.id.clone(), cx);
                         }
                     }
@@ -123,6 +140,10 @@ impl HiveApp {
         }
         self.expanded_projects.insert(id.clone());
         self.workspace = Some(id.clone());
+        if self.workspace != self.navigation.workspace {
+            self.navigation.workspace = self.workspace.clone();
+            self.save_navigation(cx);
+        }
         self.reset_workspace_view();
         self.sessions = self.project_sessions.remove(&id).unwrap_or_default();
         self.loading = true;
@@ -269,7 +290,13 @@ impl HiveApp {
                                             && !this.settings_panel
                                             && !this.roles.visible
                                         {
-                                            if let Some(first) = this.sessions.first() {
+                                            let saved =
+                                                this.navigation.sessions.get(&workspace).and_then(
+                                                    |id| this.sessions.iter().find(|s| &s.id == id),
+                                                );
+                                            if let Some(first) =
+                                                saved.or_else(|| this.sessions.first())
+                                            {
                                                 this.open_session(first.id.clone(), cx);
                                             }
                                         }
@@ -411,6 +438,12 @@ impl HiveApp {
                             open.completed_delivery_ids.into_iter().collect();
                         this.background_sequences
                             .insert(id.clone(), open.event_sequence);
+                        if this.navigation.sessions.get(&open.session.workspace_id) != Some(&id) {
+                            this.navigation
+                                .sessions
+                                .insert(open.session.workspace_id.clone(), id.clone());
+                            this.save_navigation(cx);
+                        }
                         this.session = Some(open.session);
                         this.models = open.models;
                         this.model = open.model;

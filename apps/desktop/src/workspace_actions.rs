@@ -243,6 +243,11 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) {
         self.workspaces.retain(|item| item.id != workspace);
+        self.navigation.sessions.remove(workspace);
+        if self.navigation.workspace.as_deref() == Some(workspace) {
+            self.navigation.workspace = None;
+        }
+        self.save_navigation(cx);
         let workspace_key = format!("workspace:{workspace}");
         let removed_key = |key: &str| {
             key == workspace_key || sessions.iter().any(|id| key == format!("session:{id}"))

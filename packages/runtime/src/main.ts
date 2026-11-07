@@ -34,7 +34,17 @@ function text(params: Record<string, unknown>, name: string): string {
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
-    case 'initialize': return { version: '0.1.0', dataDir, hivePort: hive.port };
+    case 'initialize': {
+      return { version: '0.1.0', dataDir, hivePort: hive.port, navigation: hive.getNavigation() };
+    }
+    case 'desktop.navigation.save': {
+      const sessions = record(params.sessions);
+      if (!(params.workspace === null || typeof params.workspace === 'string')
+        || !Object.values(sessions).every(id => typeof id === 'string')) throw new Error('Invalid workspace selection');
+      const value = JSON.stringify({ workspace: params.workspace, sessions });
+      hive.saveNavigation(value);
+      return { ok: true };
+    }
     case 'agent.models': return agentModels.list(text(params, 'workspaceId'), params.backend);
     case 'desktop.settings.get': return settings.get();
     case 'desktop.settings.update': return settings.update(params);

@@ -14,6 +14,8 @@ export class HiveHttpError extends Error {
 }
 
 export interface HiveHost {
+    getNavigation(): string | null;
+    saveNavigation(value: string): void;
 	readonly port: number;
 	request(method: string, path: string, body?: unknown): Promise<unknown>;
 	findReportPresentation(workspaceId: string, agentId: string, dispatchId: string, payload: string): unknown;
@@ -80,6 +82,8 @@ export async function createHiveHost({
 	let closing: Promise<void> | undefined;
 	return {
 		port: runtime.port,
+        getNavigation: () => runtime.store.settings.getAppState("desktop_navigation")?.value ?? null,
+        saveNavigation: value => runtime.store.settings.setAppState("desktop_navigation", value),
 		async request(method, path, body) {
 			if (closing) throw new Error("Hive host is closed");
 			// Parse before attaching credentials: URL normalization must not escape

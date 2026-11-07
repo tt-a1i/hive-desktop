@@ -45,6 +45,7 @@ try {
   const first = launch();
   const initialized = await first.request('initialize');
   assert.equal(initialized.version, '0.1.0');
+  assert.equal(initialized.navigation, null);
   assert.ok(Number.isInteger(initialized.hivePort) && initialized.hivePort > 0);
   assert.deepEqual(await first.request('hive.request', { method: 'GET', path: '/api/workspaces' }), []);
   const workspace = await first.request('hive.request', { method: 'POST', path: '/api/workspaces', body: {
@@ -63,16 +64,25 @@ try {
   assert.equal(opened.id, created.id);
   assert.equal(opened.busy, false);
   await assert.rejects(first.request('chat.setModel', { sessionId: created.id, provider: '__missing__', modelId: '__missing__' }));
-  assert.deepEqual(await first.request('shutdown'), { ok: true });
+  const newer = await first.request('chat.create', { workspaceId: workspace.id });
+  const selection = (session: string) => ({ workspace: workspace.id, sessions: { [workspace.id]: session } });
+  const lastSelection = selection(created.id);
+  // Last click and immediate quit use the same ordered input stream.
+  await Promise.all([
+    first.request('desktop.navigation.save', selection(newer.id)),
+    first.request('desktop.navigation.save', lastSelection),
+    first.request('shutdown'),
+  ]);
   assert.equal((await first.exited)[0], 0);
   await assert.rejects(fetch(`http://127.0.0.1:${initialized.hivePort}/api/ui/session`));
 
   const second = launch();
-  await second.request('initialize');
+  const restart = await second.request('initialize');
+  assert.deepEqual(JSON.parse(restart.navigation), lastSelection);
   const persisted = await second.request('chat.list', { workspaceId: workspace.id });
-  assert.equal(persisted.length, 1);
-  assert.equal(persisted[0].id, created.id);
-  const restored = await second.request('chat.open', { sessionId: created.id });
+  assert.equal(persisted.length, 2);
+  assert.equal(persisted[0].id, newer.id);
+  const restored = await second.request('chat.open', { sessionId: JSON.parse(restart.navigation).sessions[workspace.id] });
   assert.equal(restored.id, created.id);
   assert.equal(restored.history.filter((message: { role: string }) => message.role !== 'custom').length, 0);
   assert.ok(restored.history.some((message: { customType?: string }) => message.customType === 'hive-desktop'));
