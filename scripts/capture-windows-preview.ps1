@@ -3,6 +3,7 @@
     [Parameter(Mandatory)] [string] $WorkerFile,
     [Parameter(Mandatory)] [string] $WorkerPrompt,
     [Parameter(Mandatory)] [string] $ExistingDraft,
+    [Parameter(Mandatory)] [string] $TasksFile,
     [Parameter(Mandatory)] [string] $OutputPath
 )
 $ErrorActionPreference = 'Stop'
@@ -86,17 +87,17 @@ function Invoke-Action([string] $Name) {
     $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
-function Wait-ComposerText([string] $Expected) {
+function Wait-EditorText([string] $Name, [string] $Expected) {
     $deadline = [DateTime]::UtcNow.AddSeconds(8)
     do {
-        $editor = Find-Action '聊天消息'
+        $editor = Find-Action $Name
         if ($null -ne $editor) {
             $pattern = $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
             if (($pattern.Current.Value -replace "`r`n", "`n") -ceq $Expected) { return }
         }
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'The visible chat draft did not match the expected session text.'
+    throw "The editor '$Name' did not match the expected text."
 }
 
 # Only operate on this test app's window and the temporary Reviewer created by the startup check.
@@ -126,16 +127,16 @@ Invoke-Action '展开工作过程，2 项工具已完成'
 Invoke-Action '展开 read 工具详情，完成 README.md'
 [void](Wait-Action '收起 read 工具详情，完成 README.md')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-tool-details.png')
-Wait-ComposerText $ExistingDraft
+Wait-EditorText '聊天消息' $ExistingDraft
 Invoke-Action '引用消息到草稿'
 $quoted = "> $WorkerPrompt`n`n$ExistingDraft"
-Wait-ComposerText $quoted
+Wait-EditorText '聊天消息' $quoted
 Invoke-Action '返回团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')
 Invoke-Action 'Pi · 新会话 · 会话'
-Wait-ComposerText ''
+Wait-EditorText '聊天消息' ''
 Invoke-Action 'Pi · Reviewer · 成员 · 已暂停'
-Wait-ComposerText $quoted
+Wait-EditorText '聊天消息' $quoted
 [void](Wait-Action '收起 read 工具详情，完成 README.md')
 Write-Host 'Verified isolated and restored quoted draft and expanded tool across native sessions.'
 Invoke-Action '收起工作过程，2 项工具已完成'
@@ -147,6 +148,29 @@ Invoke-Action '打开关联派单'
 Invoke-Action '返回来源会话'
 [void](Wait-Action '打开关联派单')
 Write-Host 'Opened the actual reported dispatch from the orchestrator queue and returned to its chat.'
+Invoke-Action '协作概览'
+Invoke-Action '编辑任务'
+$editor = Wait-Action '任务文档 Markdown'
+$editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('My draft')
+Wait-EditorText '任务文档 Markdown' 'My draft'
+[System.IO.File]::WriteAllText($TasksFile, 'Agent update')
+Invoke-Action '保存任务'
+Invoke-Action '复制最新版'
+$deadline = [DateTime]::UtcNow.AddSeconds(8)
+while ((Get-Clipboard -Raw) -cne 'Agent update') {
+    if ([DateTime]::UtcNow -ge $deadline) { throw 'Latest task preview did not contain the external edit.' }
+    Start-Sleep -Milliseconds 120
+}
+Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-task-conflict.png')
+Wait-EditorText '任务文档 Markdown' 'My draft'
+if ([System.IO.File]::ReadAllText($TasksFile) -cne 'Agent update') { throw 'Conflict replaced the external edit.' }
+$editor = Wait-Action '任务文档 Markdown'
+$editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('Agent update + My draft')
+Wait-EditorText '任务文档 Markdown' 'Agent update + My draft'
+Invoke-Action '用当前草稿更新文档'
+[void](Wait-Action '编辑任务')
+if ([System.IO.File]::ReadAllText($TasksFile) -cne 'Agent update + My draft') { throw 'Reviewed task draft was not saved.' }
+Write-Host 'Verified conflict review and saving the reconciled task document in the native editor.'
 Invoke-Action '设置'
 Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')

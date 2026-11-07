@@ -13,9 +13,20 @@ use gpui_kit::{
 };
 use serde_json::json;
 
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum SaveOutcome {
+    Saved(Tasks),
+    Conflict {
+        #[serde(rename = "currentContent")]
+        current_content: String,
+    },
+}
+
 pub(crate) struct TaskDraft {
     input: Entity<TextareaState>,
     base: String,
+    conflicting_content: Option<SharedString>,
     pub saving: bool,
     operation: u64,
     error: Option<String>,
@@ -46,6 +57,7 @@ impl HiveApp {
             TaskDraft {
                 input,
                 base,
+                conflicting_content: None,
                 saving: false,
                 operation: 0,
                 error: None,
@@ -80,7 +92,11 @@ impl HiveApp {
             return;
         }
         let content = draft.input.read(cx).value().to_string();
-        let base = draft.base.clone();
+        let base = draft
+            .conflicting_content
+            .as_deref()
+            .unwrap_or(&draft.base)
+            .to_owned();
         draft.saving = true;
         draft.error = None;
         self.collaboration.task_generation += 1;
@@ -88,34 +104,53 @@ impl HiveApp {
         draft.operation = operation;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = runtime.request("workspace.saveTasks", json!({
-                "workspaceId": workspace, "base": base, "content": content
-            })).await.and_then(|value| {
-                if value["conflict"] == true {
-                    return Err("任务文档已被其他窗口或 Agent 修改。你的改动已保留；请先复制草稿，再取消编辑读取最新文档。".into());
-                }
-                serde_json::from_value::<Tasks>(value).map_err(|error| error.to_string())
-            });
+            let result = runtime
+                .request(
+                    "workspace.saveTasks",
+                    json!({
+                        "workspaceId": workspace, "base": base, "content": content
+                    }),
+                )
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<SaveOutcome>(value).map_err(|e| e.to_string())
+                });
             let _ = this.update(cx, |this, cx| {
                 let c = &mut this.collaboration;
-                if !c.task_drafts.get(&workspace).is_some_and(|draft| draft.saving && draft.operation == operation) { return; }
+                if !c
+                    .task_drafts
+                    .get(&workspace)
+                    .is_some_and(|draft| draft.saving && draft.operation == operation)
+                {
+                    return;
+                }
                 match result {
-                    Ok(tasks) => {
+                    Ok(SaveOutcome::Saved(tasks)) => {
                         c.task_drafts.remove(&workspace);
                         if c.visible && this.workspace.as_ref() == Some(&workspace) {
                             c.task_text = tasks.content;
-                            c.tasks.update(cx, |state, cx| state.set_text(&c.task_text, cx));
+                            c.tasks
+                                .update(cx, |state, cx| state.set_text(&c.task_text, cx));
                             c.task_error = None;
                         }
                     }
-                    Err(error) => if let Some(draft) = c.task_drafts.get_mut(&workspace) {
-                        draft.saving = false;
-                        draft.error = Some(error);
+                    Ok(SaveOutcome::Conflict { current_content }) => {
+                        if let Some(draft) = c.task_drafts.get_mut(&workspace) {
+                            draft.saving = false;
+                            draft.conflicting_content = Some(current_content.into());
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(draft) = c.task_drafts.get_mut(&workspace) {
+                            draft.saving = false;
+                            draft.error = Some(error);
+                        }
                     }
                 }
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     }
 
     pub fn render_tasks(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -155,7 +190,54 @@ impl HiveApp {
             )
             .when_some(draft, |view, draft| {
                 let input = draft.input.clone();
-                view.child(
+                view.when_some(draft.conflicting_content.clone(), |view, latest| {
+                    let copy = latest.clone();
+                    view.child(
+                        v_flex()
+                            .min_w_0()
+                            .gap_2()
+                            .p_3()
+                            .rounded_lg()
+                            .bg(Color::Inset.get(cx))
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child("其他人已更新任务文档"),
+                                    )
+                                    .child(
+                                        Button::new("copy-latest-tasks")
+                                            .ghost()
+                                            .compact()
+                                            .label("复制最新版")
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    copy.to_string(),
+                                                ))
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("latest-task-content")
+                                    .min_w_0()
+                                    .max_h(px(200.))
+                                    .overflow_y_scroll()
+                                    .text_sm()
+                                    .child(if latest.is_empty() {
+                                        SharedString::from("（文档为空）")
+                                    } else {
+                                        latest
+                                    }),
+                            ),
+                    )
+                    .child(div().text_sm().child("你的草稿 · 对照上方版本编辑后保存"))
+                })
+                .child(
                     Textarea::new(&draft.input)
                         .aria_label("任务文档 Markdown")
                         .disabled(draft.saving),
@@ -177,6 +259,8 @@ impl HiveApp {
                                 .primary()
                                 .label(if draft.saving {
                                     "正在保存…"
+                                } else if draft.conflicting_content.is_some() {
+                                    "用当前草稿更新文档"
                                 } else {
                                     "保存任务"
                                 })

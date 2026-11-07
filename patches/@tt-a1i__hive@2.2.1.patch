@@ -111,7 +111,7 @@ index f6b3d7f2faf8ea14b06ddedca317a3c830ca7232..806177a51ff178dda0ee24576e890095
          requireUiTokenFromRequest(request, store.validateUiToken, store.authorizeRemoteTunnelRequest);
          const workspaceId = getRequiredParam(response, params, 'workspaceId', 'Workspace id is required');
 diff --git a/dist/src/server/routes-tasks.js b/dist/src/server/routes-tasks.js
-index 52b93703f8dd19537a53d87f9ed47edd9d1e92db..47ca491b1bdd800c05fdda8fd533a2ac52ece427 100644
+index 52b93703f8dd19537a53d87f9ed47edd9d1e92db..3db2f661ab74f9c49da1d1ba33c45cb6549d480f 100644
 --- a/dist/src/server/routes-tasks.js
 +++ b/dist/src/server/routes-tasks.js
 @@ -1,3 +1,4 @@
@@ -130,7 +130,7 @@ index 52b93703f8dd19537a53d87f9ed47edd9d1e92db..47ca491b1bdd800c05fdda8fd533a2ac
 +            }
 +            const current = tasksFileService.readTasks(workspace.summary.path);
 +            if (createHash('sha256').update(current).digest('hex') !== body.base_sha256) {
-+                sendJson(response, 409, { code: 'TASKS_CHANGED', error: 'Task document changed' });
++                sendJson(response, 409, { code: 'TASKS_CHANGED', error: 'Task document changed', current_content: current });
 +                return;
 +            }
 +        }

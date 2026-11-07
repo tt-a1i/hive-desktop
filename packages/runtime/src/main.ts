@@ -82,8 +82,9 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
         return await runtime.requestHive('PUT', `/api/workspaces/${encodeURIComponent(workspace)}/tasks`, { base_sha256, content: params.content });
       } catch (error) {
         if (error instanceof HiveHttpError && error.status === 409 && error.body && typeof error.body === 'object'
-          && 'code' in error.body && error.body.code === 'TASKS_CHANGED') {
-          return { conflict: true };
+          && 'code' in error.body && error.body.code === 'TASKS_CHANGED'
+          && 'current_content' in error.body && typeof error.body.current_content === 'string') {
+          return { conflict: true, currentContent: error.body.current_content };
         }
         throw error;
       }

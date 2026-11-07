@@ -73,8 +73,14 @@ try {
   const original = await request('hive.request', { method: 'GET', path: taskPath });
   const saveTasks = (base, content) => request('workspace.saveTasks', { workspaceId: workspace.id, base, content });
   assert.deepEqual(await saveTasks(original.content, 'First edit'), { content: 'First edit' });
-  assert.deepEqual(await saveTasks(original.content, 'Stale edit'), { conflict: true });
-  assert.deepEqual(await saveTasks('First edit', ''), { content: '' });
+  const conflict = await saveTasks(original.content, 'Stale edit');
+  assert.deepEqual(conflict, { conflict: true, currentContent: 'First edit' });
+  await request('hive.request', { method: 'PUT', path: taskPath, body: { content: 'Another edit' } });
+  const newer = await saveTasks(conflict.currentContent, 'First edit + draft');
+  assert.deepEqual(newer, { conflict: true, currentContent: 'Another edit' });
+  assert.deepEqual(await saveTasks(newer.currentContent, 'Another edit + draft'), { content: 'Another edit + draft' });
+  assert.deepEqual(await saveTasks('Another edit + draft', ''), { content: '' });
+  assert.deepEqual(await saveTasks('Outdated', 'Stale'), { conflict: true, currentContent: '' });
   const listed = await request('hive.request', { method: 'GET', path: '/api/workspaces' }); assert.equal(listed[0].id, workspace.id);
   progress('Shutting down Hive runtime');
   assert.deepEqual(await request('shutdown'), { ok: true }); assert.equal((await deadline(exited, 'runtime process exit'))[0], 0);

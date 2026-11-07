@@ -102,6 +102,7 @@ jobs:
             target/windows-native-workspace.png
             target/windows-member-session.png
             target/windows-tool-details.png
+            target/windows-task-conflict.png
             target/windows-team.png
             target/windows-program-settings.png
           if-no-files-found: warn
