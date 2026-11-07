@@ -1,5 +1,5 @@
 # Hive Desktop 进度
- 
+
 ## 最新验证状态（2026-11-07 晚）
 
 会话支持独立重命名，原生 Mac 已验证中文与 emoji、保存/取消、Enter/Escape、切换、退出重开及草稿保留。四后端记录通过真实 runtime、持久索引和打包 RPC 验证，完整边界见 [会话名称记录](validation/2026-11-07-session-names.md)。
