@@ -58,6 +58,7 @@ pub struct NavigationSelection {
 pub struct HiveApp {
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
+    pub composer_can_submit: bool,
     pub connected: bool,
     pub interactions: crate::interactions::Interactions,
     pub terminal: crate::terminal::WorkspaceTerminal,
@@ -108,6 +109,7 @@ pub struct HiveApp {
     pub member_role: &'static str,
     pub member_backend: &'static str,
     pub member_panel: bool,
+    pub member_form_open: bool,
     pub member_loading: bool,
     pub member_generation: u64,
     pub member_stopping: Option<String>,
@@ -148,6 +150,7 @@ pub struct HiveApp {
     pub collaboration_scroll: ScrollHandle,
     events: Task<()>,
     _quit: Subscription,
+    _composer_subscription: Subscription,
     _model_search_subscription: Subscription,
     _member_model_search_subscription: Subscription,
 }
@@ -181,17 +184,39 @@ impl HiveApp {
                 }
             },
         );
+        let input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(2, 7)
+                .placeholder("输入消息…")
+        });
+        let mut had_text = false;
+        let composer_subscription = cx.subscribe_in(
+            &input,
+            window,
+            move |this: &mut Self, input, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter {
+                    secondary: false,
+                    shift: false,
+                } if this.composer_can_submit => this.send(window, cx),
+                InputEvent::Change => {
+                    let has_text = !input.read(cx).value().trim().is_empty();
+                    if had_text != has_text {
+                        had_text = has_text;
+                        cx.notify();
+                    }
+                }
+                _ => {}
+            },
+        );
         let mut app = Self {
             navigation: NavigationSelection::default(),
-            sidebar_open: true,
+            sidebar_open: window.viewport_size().width >= px(820.),
             connected: false,
             interactions: crate::interactions::Interactions::default(),
             terminal: crate::terminal::WorkspaceTerminal::new(cx),
-            input: cx.new(|cx| {
-                TextareaState::new(window, cx)
-                    .auto_grow(2, 7)
-                    .placeholder("输入消息…")
-            }),
+            input,
+            composer_can_submit: false,
+            _composer_subscription: composer_subscription,
             drafts: HashMap::new(),
             draft_owner: None,
             draft_target: None,
@@ -250,6 +275,7 @@ impl HiveApp {
             member_role: "coder",
             member_backend: "pi",
             member_panel: false,
+            member_form_open: false,
             member_loading: false,
             member_generation: 0,
             member_stopping: None,

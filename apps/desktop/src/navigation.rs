@@ -69,14 +69,16 @@ impl HiveApp {
                     view.child(
                         Button::new("return-chat")
                             .label("返回会话")
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(|this, _, window, cx| {
                                 this.hide_terminal(cx);
                                 this.close_memory();
                                 this.close_settings();
                                 this.close_roles();
                                 this.close_collaboration();
                                 this.member_panel = false;
-                                this.sidebar_open = false;
+                                if window.viewport_size().width < px(820.) {
+                                    this.sidebar_open = false;
+                                }
                                 cx.notify();
                             })),
                     )
@@ -84,12 +86,24 @@ impl HiveApp {
             )
     }
 
-    pub fn render_settings_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
+    pub fn render_settings_tabs(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
             .flex_shrink_0()
-            .gap_2()
             .p_3()
-            .flex_wrap()
+            .gap_1()
+            .when(compact, |bar| bar.flex_row().flex_wrap().border_b_1())
+            .when(!compact, |bar| {
+                bar.flex_col().w(px(154.)).border_r_1().child(
+                    div()
+                        .px_2()
+                        .py_3()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("设置"),
+                )
+            })
+            .border_color(Color::Divider.get(cx))
             .children(
                 [
                     ("settings-team-tab", "团队", SettingsSection::Team),
@@ -107,6 +121,8 @@ impl HiveApp {
                 .into_iter()
                 .map(|(id, label, section)| {
                     Button::new(id)
+                        .ghost()
+                        .when(!compact, |row| row.w_full().justify_start())
                         .label(label)
                         .selected(self.settings_panel && self.settings_section == section)
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -120,6 +136,8 @@ impl HiveApp {
             )
             .child(
                 Button::new("settings-roles-tab")
+                    .ghost()
+                    .when(!compact, |row| row.w_full().justify_start())
                     .label("角色模板")
                     .selected(self.roles.visible)
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -297,53 +315,54 @@ impl HiveApp {
                                             .text_color(Color::Muted.get(cx))
                                             .child("工作区"),
                                     )
-                                    .when(!self.workspaces.is_empty(), |row| {
-                                        row.child(
-                                            Button::new("toggle-add-workspace")
-                                                .label(if self.add_workspace_open {
-                                                    "收起"
-                                                } else {
-                                                    "添加…"
-                                                })
-                                                .tooltip(if self.add_workspace_open {
-                                                    "收起添加工作区"
-                                                } else {
-                                                    "添加工作区"
-                                                })
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.add_workspace_open =
-                                                        !this.add_workspace_open;
-                                                    cx.notify();
-                                                })),
-                                        )
-                                    }),
+                                    .child(
+                                        Button::new("toggle-add-workspace")
+                                            .ghost()
+                                            .compact()
+                                            .icon(if self.add_workspace_open {
+                                                Glyph::PanelLeft
+                                            } else {
+                                                Glyph::Plus
+                                            })
+                                            .accessibility_label(if self.add_workspace_open {
+                                                "收起添加工作区"
+                                            } else {
+                                                "添加工作区"
+                                            })
+                                            .tooltip(if self.add_workspace_open {
+                                                "收起添加工作区"
+                                            } else {
+                                                "添加工作区"
+                                            })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.add_workspace_open = !this.add_workspace_open;
+                                                cx.notify();
+                                            })),
+                                    ),
                             )
-                            .when(
-                                self.add_workspace_open || self.workspaces.is_empty(),
-                                |section| {
-                                    section
-                                        .child(
-                                            Input::new(&self.folder)
-                                                .aria_label("工作区文件夹的绝对路径"),
-                                        )
-                                        .child(
-                                            Button::new("choose-workspace-folder")
-                                                .label("选择文件夹…")
-                                                .disabled(!self.connected)
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.choose_workspace_folder(window, cx)
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("add-workspace")
-                                                .label("添加文件夹")
-                                                .disabled(!self.connected || self.runtime.is_none())
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.add_workspace(window, cx)
-                                                })),
-                                        )
-                                },
-                            )
+                            .when(self.add_workspace_open, |section| {
+                                section
+                                    .child(
+                                        Input::new(&self.folder)
+                                            .aria_label("工作区文件夹的绝对路径"),
+                                    )
+                                    .child(
+                                        Button::new("choose-workspace-folder")
+                                            .label("选择文件夹…")
+                                            .disabled(!self.connected)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.choose_workspace_folder(window, cx)
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("add-workspace")
+                                            .label("添加文件夹")
+                                            .disabled(!self.connected || self.runtime.is_none())
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.add_workspace(window, cx)
+                                            })),
+                                    )
+                            })
                             .children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
                                 let id = workspace.id.clone();
                                 let toggle_id = id.clone();

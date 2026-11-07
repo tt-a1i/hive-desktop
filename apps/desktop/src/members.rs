@@ -200,7 +200,7 @@ impl HiveApp {
             let _ = this.update(cx, |this, cx| {
                 if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {
                     this.member_loading = false;
-                    if let Err(error) = result { this.error = Some(format!("添加成员：{error}")); }
+                    if let Err(error) = result { this.error = Some(format!("添加成员：{error}")); } else { this.member_form_open = false; }
                     this.refresh_members(cx);
                     this.refresh_sessions(cx);
                     cx.notify();
