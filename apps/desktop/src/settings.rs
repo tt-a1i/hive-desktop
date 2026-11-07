@@ -113,7 +113,7 @@ impl HiveApp {
             prompt: Some(format!("选择 {label} 可执行文件").into()),
         });
         let window = window.window_handle();
-        let generation = self.settings_generation;
+        let generation = self.executable_picker_generation;
         cx.spawn(async move |this, cx| {
             let result = match selected.await {
                 Ok(Ok(Some(paths))) => paths
@@ -131,7 +131,7 @@ impl HiveApp {
             };
             let _ = window.update(cx, |_, window, cx| {
                 let _ = this.update(cx, |this, cx| {
-                    if !this.settings_panel || this.settings_generation != generation {
+                    if !this.settings_panel || this.executable_picker_generation != generation {
                         return;
                     }
                     match result {
@@ -151,13 +151,24 @@ impl HiveApp {
         .detach();
     }
 
+    pub fn executable_paths_changed(&self, cx: &App) -> bool {
+        self.executable_settings.as_ref().is_some_and(|saved| {
+            [
+                (&self.pi_command, &saved.pi_command),
+                (&self.codex_command, &saved.codex_command),
+                (&self.claude_command, &saved.claude_command),
+            ]
+            .iter()
+            .any(|(input, path)| {
+                input.read(cx).value().trim() != path.as_deref().unwrap_or_default()
+            })
+        })
+    }
+
     pub fn close_settings(&mut self) {
         if self.settings_panel {
             self.settings_panel = false;
-            self.settings_generation += 1;
-            self.settings_loading = false;
-            self.team_autostaff_generation += 1;
-            self.team_autostaff_loading = false;
+            self.executable_picker_generation += 1;
         }
     }
     pub fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -167,16 +178,21 @@ impl HiveApp {
         }
         self.close_roles();
         self.settings_panel = true;
-        // Reopening a tab must retain edits; only initial load or explicit reload
-        // replaces the input values with persisted settings.
+        self.load_preferences(window.window_handle(), cx);
+        cx.notify();
+    }
+    pub fn load_preferences(&mut self, window: AnyWindowHandle, cx: &mut Context<Self>) {
+        if !self.connected {
+            return;
+        }
+        // Only initial load and explicit reload replace unsaved executable paths.
         if self.executable_settings.is_none() {
             self.settings_request(false, window, cx);
         }
         self.team_autostaff_request(None, cx);
         if !self.notification_loaded {
-            self.notification_request(None, window.window_handle(), cx);
+            self.notification_request(None, window, cx);
         }
-        cx.notify();
     }
     pub fn team_autostaff_request(&mut self, save: Option<bool>, cx: &mut Context<Self>) {
         if !self.connected || self.team_autostaff_loading {
@@ -187,8 +203,6 @@ impl HiveApp {
             cx.notify();
             return;
         };
-        self.team_autostaff_generation += 1;
-        let generation = self.team_autostaff_generation;
         self.team_autostaff_loading = true;
         self.team_autostaff_message = None;
         cx.notify();
@@ -199,9 +213,6 @@ impl HiveApp {
             };
             let result = runtime.request("hive.request", params).await;
             let _ = this.update(cx, |this, cx| {
-                if !this.settings_panel || this.team_autostaff_generation != generation {
-                    return;
-                }
                 this.team_autostaff_loading = false;
                 match result {
                     Ok(value) => match value.get("enabled").and_then(|v| v.as_bool()) {
@@ -219,8 +230,13 @@ impl HiveApp {
             });
         }).detach();
     }
-    pub fn settings_request(&mut self, save: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if save && !self.connected {
+    pub fn settings_request(
+        &mut self,
+        save: bool,
+        window: AnyWindowHandle,
+        cx: &mut Context<Self>,
+    ) {
+        if self.settings_loading || !self.connected {
             return;
         }
         let Some(runtime) = self.runtime.clone() else {
@@ -236,11 +252,9 @@ impl HiveApp {
         } else {
             json!({})
         };
-        self.settings_generation += 1;
-        let generation = self.settings_generation;
+        self.executable_picker_generation += 1;
         self.settings_loading = true;
         self.settings_message = None;
-        let window = window.window_handle();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -254,9 +268,6 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
-                if !this.settings_panel || this.settings_generation != generation {
-                    return;
-                }
                 this.settings_loading = false;
                 match result {
                     Ok(value) => match serde_json::from_value::<ExecutableSettings>(value) {
@@ -343,9 +354,10 @@ impl HiveApp {
                     .child(self.executable_field("外部 Pi", &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
                     .child(self.executable_field("Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
                     .child(self.executable_field("Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
-                    .child(h_flex().gap_2()
-                        .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || self.executable_settings.is_none()).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window, cx))))
-                        .child(Button::new("reload-executable-settings").rounded_full().label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window, cx))))),
+                    .child(h_flex().items_center().gap_2()
+                        .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || !self.executable_paths_changed(cx)).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window.window_handle(), cx))))
+                        .child(Button::new("reload-executable-settings").rounded_full().label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window.window_handle(), cx))))
+                        .when(!self.settings_loading && self.executable_paths_changed(cx), |row| row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child("有未保存的修改")))),
                     }
                 }).into_any_element()
         };

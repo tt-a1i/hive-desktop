@@ -105,7 +105,7 @@ pub struct HiveApp {
     pub preferences_return_focus: Option<FocusHandle>,
     pub settings_section: SettingsSection,
     pub settings_loading: bool,
-    pub settings_generation: u64,
+    pub executable_picker_generation: u64,
     pub settings_message: Option<String>,
     pub executable_settings: Option<crate::settings::ExecutableSettings>,
     pub notification_url: Entity<InputState>,
@@ -115,7 +115,6 @@ pub struct HiveApp {
     pub notification_message: Option<String>,
     pub team_autostaff: Option<bool>,
     pub team_autostaff_loading: bool,
-    pub team_autostaff_generation: u64,
     pub team_autostaff_message: Option<String>,
     pub collaboration: crate::collaboration::Collaboration,
     pub memory: crate::memory::Memory,
@@ -198,6 +197,19 @@ impl HiveApp {
                     });
                 });
             });
+        });
+        let [pi_command, codex_command, claude_command] = std::array::from_fn(|_| {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH"));
+            cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    if this.executable_paths_changed(cx) {
+                        this.settings_message = None;
+                    }
+                    cx.notify();
+                }
+            })
+            .detach();
+            input
         });
         let model_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索模型、提供商…"));
@@ -283,15 +295,15 @@ impl HiveApp {
             member_catalog_loading: false,
             member_catalog_error: None,
             member_catalog_generation: 0,
-            pi_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
-            codex_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
-            claude_command: cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH")),
+            pi_command,
+            codex_command,
+            claude_command,
             settings_panel: false,
             preferences_focus: cx.focus_handle(),
             preferences_return_focus: None,
             settings_section: SettingsSection::Team,
             settings_loading: false,
-            settings_generation: 0,
+            executable_picker_generation: 0,
             settings_message: None,
             executable_settings: None,
             notification_url: cx.new(|cx| {
@@ -305,7 +317,6 @@ impl HiveApp {
             notification_message: None,
             team_autostaff: None,
             team_autostaff_loading: false,
-            team_autostaff_generation: 0,
             team_autostaff_message: None,
             collaboration: crate::collaboration::Collaboration::new(cx),
             memory: crate::memory::Memory::new(window, cx),
@@ -420,10 +431,7 @@ impl HiveApp {
                         this.status = "后台已连接".into();
                         this.load_workspaces(cx);
                         if this.settings_panel {
-                            this.team_autostaff_request(None, cx);
-                            if !this.notification_loaded {
-                                this.notification_request(None, settings_window, cx);
-                            }
+                            this.load_preferences(settings_window, cx);
                         }
                     }
                     Err(error) => this.error = Some(error),

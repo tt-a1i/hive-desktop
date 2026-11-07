@@ -117,6 +117,17 @@ Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')
 if ($null -ne (Find-Action '工作区终端')) { throw 'Workspace navigation is covering preferences.' }
+$codexPath = 'C:\Fixture Programs\codex.exe'
+$commandInput = Wait-Action 'Codex 可执行文件路径'
+$commandInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($codexPath)
+Invoke-Action '保存设置'
+Invoke-Action '角色模板'
+[void](Wait-Action '角色模板名称')
+Invoke-Action '外部程序'
+Wait-EditorText 'Codex 可执行文件路径' $codexPath
+[void](Wait-Action '选择 Codex 可执行文件')
+$save = Find-Action '保存设置'
+if ($null -eq $save -or $save.Current.IsEnabled) { throw 'Saved paths still appear modified after returning from another section.' }
 Invoke-Action '角色模板'
 [void](Wait-Action '角色模板名称')
 Invoke-Action '返回会话'

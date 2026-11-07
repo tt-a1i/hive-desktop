@@ -142,6 +142,8 @@ try {
       '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-DispatchId', dispatch, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
     { stdio: 'inherit', timeout: 60_000 });
     await waitForSelection(leadChat);
+    const commands = reader.prepare("SELECT value FROM app_state WHERE key = 'desktop_executables'").get();
+    assert.equal(JSON.parse(commands.value).codexCommand, String.raw`C:\Fixture Programs\codex.exe`);
     assert.equal(JSON.parse(await readFile(workerDraft, 'utf8')).input, `> ${prompt}\n\n${existingDraft}`);
   }
   console.log('Native desktop opened the saved project and recovered its missing chat selection from the extracted bundle.');
