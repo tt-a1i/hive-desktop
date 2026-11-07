@@ -85,6 +85,16 @@ export class Chats implements StructuredSessionPort {
     this.index.save(renamed);
     return renamed;
   }
+  setPinned(id: string, pinned: unknown): ChatRecord {
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const current = this.index.get(id);
+    this.assertWorkspaceAvailable(current.workspaceId);
+    if (typeof pinned !== 'boolean') throw new TypeError('Pinned state must be a boolean');
+    if (!!current.pinned === pinned) return current;
+    const changed = { ...current, pinned };
+    this.index.save(changed);
+    return changed;
+  }
   private event(id: string, event: PiEvent | QueueState) {
     const sequence = (this.sequences.get(id) ?? 0) + 1;
     this.sequences.set(id, sequence);

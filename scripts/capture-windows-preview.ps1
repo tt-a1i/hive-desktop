@@ -344,3 +344,32 @@ $replacement = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $AppPr
 if ($replacement.Count -ne 1 -or [int]$replacement[0].ProcessId -eq $previousNodeId) { throw 'Restart did not establish one replacement sidecar.' }
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-backend-recovered.png')
 Write-Host 'Recovered the original lead session and draft after force-terminating its owned sidecar.'
+
+
+# Metadata-only actions must preserve the current chat and unsent draft.
+$chatIndex = Join-Path $DataDirectory 'chats/index.json'
+$pinRecord = @(Get-Content -Raw $chatIndex | ConvertFrom-Json | Where-Object { $_.title -eq '启动方式核验' })
+if ($pinRecord.Count -ne 1) { throw 'Could not identify the named fixture conversation for pinning.' }
+$pinId = $pinRecord[0].id
+$pinTimestamp = $pinRecord[0].updatedAt
+function Wait-SessionPin([bool] $Expected) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $record = @(Get-Content -Raw $chatIndex | ConvertFrom-Json | Where-Object { $_.id -eq $pinId })
+        if ($record.Count -eq 1 -and [bool]$record[0].pinned -eq $Expected) {
+            if ($record[0].updatedAt -ne $pinTimestamp) { throw 'Pinning changed the activity timestamp.' }
+            return
+        }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Conversation pin state did not persist.'
+}
+Invoke-Action '启动方式核验 的会话操作'
+Invoke-Action '置顶会话'
+Wait-SessionPin $true
+Wait-EditorText '聊天消息' '后台恢复核验草稿'
+Invoke-Action '启动方式核验 的会话操作'
+Invoke-Action '取消置顶'
+Wait-SessionPin $false
+Wait-EditorText '聊天消息' '后台恢复核验草稿'
+Write-Host 'Pinned and unpinned the named conversation without changing its timestamp or draft.'

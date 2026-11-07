@@ -54,11 +54,13 @@ impl HiveApp {
                             .chain(this.project_sessions.values_mut().flatten())
                         {
                             if item.id == id {
-                                *item = renamed.clone();
+                                item.title = renamed.title.clone();
+                                item.custom_title = renamed.custom_title;
                             }
                         }
-                        if this.session.as_ref().is_some_and(|item| item.id == id) {
-                            this.session = Some(renamed);
+                        if let Some(item) = this.session.as_mut().filter(|item| item.id == id) {
+                            item.title = renamed.title;
+                            item.custom_title = renamed.custom_title;
                         }
                         if this.session_name_target.as_ref() == Some(&id) {
                             this.session_name_target = None;

@@ -116,6 +116,10 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       const workspace = text(params, 'workspaceId');
       return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend) : chats.create(workspace, params.backend);
     }
+    case 'chat.pin': {
+      const session = chats.setPinned(text(params, 'sessionId'), params.pinned);
+      return { session, sessions: chats.list(session.workspaceId) };
+    }
     case 'chat.rename': return chats.rename(text(params, 'sessionId'), params.title);
     case 'chat.open': return chats.open(text(params, 'sessionId'));
     case 'chat.prompt': return chats.prompt(text(params, 'sessionId'), text(params, 'text'));

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -17,6 +17,7 @@ export interface ChatRecord {
   workspaceId: string;
   title: string;
   customTitle?: boolean;
+  pinned?: boolean;
   sessionFile: string | null;
   agentId?: string;
   piSessionId?: string;
@@ -43,7 +44,7 @@ export class ChatIndex {
     });
   }
   list(workspaceId: string): ChatRecord[] {
-    return this.records.filter(record => record.workspaceId === workspaceId).sort((a, b) => b.updatedAt - a.updatedAt);
+    return this.records.filter(record => record.workspaceId === workspaceId).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
   }
   get(id: string): ChatRecord {
     const record = this.records.find(record => record.id === id);
@@ -72,9 +73,11 @@ export class ChatIndex {
   }
   private commit(next: ChatRecord[]): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
-    writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
-    renameSync(temporary, this.file);
-    this.records = next;
+    try {
+      writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
+      renameSync(temporary, this.file);
+      this.records = next;
+    } finally { rmSync(temporary, { force: true }); }
   }
 }
 
@@ -83,6 +86,7 @@ function isChatRecord(value: unknown): value is ChatRecord {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
+  if (record.pinned !== undefined && typeof record.pinned !== 'boolean') return false;
   if (record.customTitle !== undefined && typeof record.customTitle !== 'boolean') return false;
   if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex' && record.backend !== 'pi-rpc' && record.backend !== 'claude') return false;
   if (record.nativeclaudeSessionId !== undefined && typeof record.nativeclaudeSessionId !== 'string') return false;

@@ -106,6 +106,11 @@ try {
     const original = await request('chat.createRecord', { workspaceId: workspace.id, backend });
     const renamed = await request('chat.rename', { sessionId: original.id, title: ' 发布检查 🐝 ' });
     assert.deepEqual(renamed, { ...original, title: '发布检查 🐝', customTitle: true });
+    const pin = await request('chat.pin', { sessionId: original.id, pinned: true });
+    assert.deepEqual(pin.session, { ...renamed, pinned: true });
+    assert.equal(pin.sessions[0].id, original.id);
+    assert.equal(pin.session.updatedAt, original.updatedAt);
+    await request('chat.pin', { sessionId: original.id, pinned: false });
     const sessions = await request('chat.list', { workspaceId: workspace.id });
     assert.equal(sessions.find(session => session.id === original.id).title, '发布检查 🐝');
     await assert.rejects(request('chat.rename', { sessionId: original.id, title: '   ' }));

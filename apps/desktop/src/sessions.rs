@@ -1,4 +1,5 @@
 mod naming;
+mod pinning;
 mod search;
 use crate::conversation::message_text;
 use crate::{app::HiveApp, protocol::*};
