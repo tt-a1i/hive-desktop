@@ -15,6 +15,8 @@ mod roles;
 mod runtime_location;
 mod sessions;
 mod settings;
+#[cfg(target_os = "macos")]
+mod shell_owner;
 mod terminal;
 mod tool_message;
 mod transport;
@@ -37,6 +39,8 @@ actions!(
 );
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    shell_owner::run_if_requested();
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .with_quit_mode(QuitMode::LastWindowClosed)

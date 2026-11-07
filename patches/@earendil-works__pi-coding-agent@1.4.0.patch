@@ -1,0 +1,19 @@
+diff --git a/dist/core/tools/bash.js b/dist/core/tools/bash.js
+index e52c9d779bdb50667083810d946e11da6c7e29ba..7ea468b21bbd8ab512af30d3930c21db1c747773 100644
+--- a/dist/core/tools/bash.js
++++ b/dist/core/tools/bash.js
+@@ -60,7 +60,13 @@ export function createLocalShellOperations(shellName, resolveShellConfig) {
+                 throw new Error(`Working directory does not exist: ${cwd}\nCannot execute ${shellName} commands.`);
+             }
+             const commandFromStdin = shellConfig.commandTransport === "stdin";
+-            const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
++            // Hive's macOS desktop watches the Node owner even if Node is SIGKILLed.
++            // Preserve Pi's detached group, streaming, cancellation and timeout behavior.
++            const owner = process.platform === "darwin" ? process.env.HIVE_DESKTOP_SHELL_OWNER : undefined;
++            const shellArgs = commandFromStdin ? shellConfig.args : [...shellConfig.args, command];
++            const child = spawn(owner || shellConfig.shell, owner
++                ? ["--hive-owned-shell", String(process.pid), shellConfig.shell, ...shellArgs]
++                : shellArgs, {
+                 cwd,
+                 detached: process.platform !== "win32",
+                 env: env ?? getShellEnv(),

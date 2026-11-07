@@ -59,6 +59,8 @@ impl Runtime {
             std::env::var_os("HIVE_DESKTOP_NODE"),
         )?;
         let mut command = Command::new(location.node);
+        #[cfg(target_os = "macos")]
+        command.env("HIVE_DESKTOP_SHELL_OWNER", &executable);
         command
             .arg(location.entry)
             .current_dir(location.cwd)
