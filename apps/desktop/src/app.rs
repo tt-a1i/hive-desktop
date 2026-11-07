@@ -21,6 +21,7 @@ use std::{
 pub enum SettingsSection {
     Appearance,
     PiAccounts,
+    Models,
     Team,
     Notifications,
     Programs,
@@ -112,6 +113,7 @@ pub struct HiveApp {
     pub preferences_return_focus: Option<FocusHandle>,
     pub settings_section: SettingsSection,
     pub pi_accounts: crate::settings::pi_accounts::PiAccounts,
+    pub pi_models: crate::settings::pi_models::PiModels,
     pub settings_loading: bool,
     pub executable_picker_generation: u64,
     pub settings_message: Option<String>,
@@ -356,6 +358,7 @@ impl HiveApp {
             preferences_return_focus: None,
             settings_section: SettingsSection::Appearance,
             pi_accounts: crate::settings::pi_accounts::PiAccounts::new(window, cx),
+            pi_models: crate::settings::pi_models::PiModels::new(window, cx),
             settings_loading: false,
             executable_picker_generation: 0,
             settings_message: None,

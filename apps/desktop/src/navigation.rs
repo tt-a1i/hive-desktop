@@ -167,6 +167,12 @@ impl HiveApp {
                         SettingsSection::PiAccounts,
                     ),
                     (
+                        "settings-models-tab",
+                        "模型与接口",
+                        Glyph::Cpu,
+                        SettingsSection::Models,
+                    ),
+                    (
                         "settings-team-tab",
                         "团队",
                         Glyph::Network,
@@ -198,6 +204,9 @@ impl HiveApp {
                         .selected(self.settings_panel && self.settings_section == section)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.settings_section = section;
+                            if section == SettingsSection::Models {
+                                this.load_pi_models(cx);
+                            }
                             if section == SettingsSection::PiAccounts {
                                 this.load_pi_accounts(window.window_handle(), cx);
                             }

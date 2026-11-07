@@ -79,7 +79,7 @@ impl HiveApp {
             .when(accounts.providers.is_none(), |view| view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(if accounts.loading { "正在读取 Pi 账号…" } else { "点击刷新读取可连接的账号。" })))
             .when(accounts.providers.is_some() && matching.is_empty(), |view| view.child(div().py_6().text_sm().text_color(Color::Secondary.get(cx)).child("没有匹配的提供商。可以换个名称搜索，或清除搜索查看全部。")))
             .children(matching.into_iter().map(|provider| self.render_pi_provider(provider, cx)))
-            .child(div().pt_2().text_xs().text_color(Color::Muted.get(cx)).child("本机保存的配置与 Pi 共用；环境变量等配置仍可生效。保存状态不代表已连接服务端。自定义模型可在配置目录中编辑。"))
+            .child(div().pt_2().text_xs().text_color(Color::Muted.get(cx)).child("本机保存的配置与 Pi 共用；环境变量等配置仍可生效。保存状态不代表已连接服务端。自定义模型可在“模型与接口”中编辑。"))
     }
 }
 
@@ -173,12 +173,13 @@ impl HiveApp {
                             }))
                     }))
                     .when(provider.methods.is_empty(), |row| {
-                        row.child(
-                            div()
-                                .text_xs()
-                                .text_color(Color::Muted.get(cx))
-                                .child("沿用 Pi 的现有配置"),
-                        )
+                        row.child(div().text_xs().text_color(Color::Muted.get(cx)).child(
+                            if provider.registered {
+                                "沿用 Pi 的现有配置"
+                            } else {
+                                "未安装此提供商，可移除保存的登录信息"
+                            },
+                        ))
                     })
                     .when(provider.stored_type.is_some(), |row| {
                         row.child(

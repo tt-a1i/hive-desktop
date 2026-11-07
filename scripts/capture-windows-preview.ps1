@@ -174,6 +174,16 @@ Invoke-Action '清除搜索'
 Wait-EditorText '搜索 Pi 提供商' ''
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-pi-accounts.png')
 Write-Host 'Read the embedded Pi account catalog without starting a login.'
+Invoke-Action '模型与接口'
+Invoke-Action '添加提供商'
+$providerId = Wait-Action '提供商 ID'
+$providerId.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('windows-provider-draft')
+Invoke-Action '外观'
+Invoke-Action '模型与接口'
+Wait-EditorText '提供商 ID' 'windows-provider-draft'
+Invoke-Action '关闭表单'
+Invoke-Action '放弃修改'
+[void](Wait-Action '添加提供商')
 Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')

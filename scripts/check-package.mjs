@@ -76,6 +76,14 @@ try {
   assert.ok(accounts.providers.find(provider => provider.id === 'anthropic').methods.some(method => method.type === 'api_key'));
   assert.ok(accounts.providers.every(provider => provider.storedType === null));
   assert.equal(await request('pi.auth.status'), null);
+  const customConfig = await request('pi.models.get');
+  assert.deepEqual(customConfig.providers, []);
+  const configured = await request('pi.models.change', { revision: customConfig.revision, change: {
+    action: 'provider', id: 'package-custom', name: 'Package fixture', baseUrl: 'https://example.test/v1', api: 'openai-responses', firstModelId: 'gpt-6.1-terra',
+  } });
+  assert.equal(configured.conflict, false);
+  assert.equal(configured.snapshot.providers[0].models[0].id, 'gpt-6.1-terra');
+  assert.ok((await request('pi.auth.providers')).providers.some(provider => provider.id === 'package-custom'));
   await assert.rejects(request('pi.auth.start', { providerId: 'invalid-provider' }));
   assert.deepEqual(await request('hive.request', { method: 'GET', path: '/api/workspaces' }), []);
   progress('Creating workspace without orchestrator');

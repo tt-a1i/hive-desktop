@@ -103,6 +103,7 @@ impl HiveApp {
                             RuntimeEvent::Failed(error) => {
                                 this.connected = false;
                                 this.reset_pi_accounts(settings_window, cx);
+                                this.pi_models.reset_connection();
                                 this.terminal_disconnected(cx);
                                 this.loading = false;
                                 this.interactions.sessions.clear();
@@ -165,6 +166,7 @@ impl HiveApp {
         self.refreshing_models = false;
         self.settings_loading = false;
         self.reset_pi_accounts(window.window_handle(), cx);
+        self.pi_models.reset_connection();
         if self.notification_loading {
             self.notification_message =
                 Some("连接已中断，地址草稿已保留，请重新读取以核对保存结果。".into());

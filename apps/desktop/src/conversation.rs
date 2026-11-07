@@ -189,10 +189,36 @@ impl HiveApp {
                 this.refreshing_models = false;
                 match result {
                     Ok(models) => {
+                        let selected = this
+                            .model
+                            .as_ref()
+                            .or(this.unavailable_model.as_ref())
+                            .cloned();
+                        if let Some(selected) = selected {
+                            if let Some(current) = models.iter().find(|model| {
+                                model.available
+                                    && model.provider == selected.provider
+                                    && model.id == selected.id
+                            }) {
+                                this.model = Some(ModelIdentity {
+                                    provider: current.provider.clone(),
+                                    id: current.id.clone(),
+                                });
+                                this.unavailable_model = None;
+                            } else {
+                                this.unavailable_model = Some(selected);
+                                this.model = None;
+                            }
+                        }
                         this.choosing_model = models.iter().any(|m| m.available);
                         this.models = models;
                     }
-                    Err(e) => this.error = Some(format!("刷新 Pi 模型失败：{e}")),
+                    Err(e) => {
+                        if let Some(selected) = this.model.take() {
+                            this.unavailable_model = Some(selected);
+                        }
+                        this.error = Some(format!("刷新 Pi 模型失败：{e}"));
+                    }
                 }
                 cx.notify();
             });

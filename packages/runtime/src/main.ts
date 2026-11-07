@@ -37,6 +37,8 @@ function text(params: Record<string, unknown>, name: string): string {
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
+    case 'pi.models.get': return runtime.piModels.get();
+    case 'pi.models.change': return runtime.piModels.change(params.revision, params.change);
     case 'pi.auth.providers': return piAuth.providers();
     case 'pi.auth.start': return piAuth.start(text(params, 'providerId'), params.authType);
     case 'pi.auth.status': return piAuth.status();

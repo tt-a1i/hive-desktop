@@ -14,6 +14,7 @@
     "dev": "tsx src/main.ts",
     "check:claude": "tsx checks/claude-native-init.ts && tsx checks/claude-session.ts && tsx checks/claude-session-lifecycle.ts && tsx checks/claude-history-synthetic.ts && tsx checks/claude-team-callback.ts && tsx checks/claude-context-placeholder.ts && tsx checks/claude-placeholder-resume.ts && tsx checks/claude-runtime.ts && pnpm check:claude-interactions",
     "check:claude-interactions": "tsx checks/claude-interactions-sdk.ts && tsx checks/claude-interactions-hive.ts",
+    "check:pi-models": "pnpm build && tsx checks/pi-model-config.ts && tsx checks/pi-model-reload.ts",
     "check:pi-auth": "pnpm build && tsx checks/pi-auth.ts && tsx checks/pi-provider-config.ts && tsx checks/pi-auth-wire.ts",
     "check:notification-settings": "tsx checks/notification-settings.ts",
     "check:external-pi-interactions": "tsx checks/external-pi-interactions-transport.ts && tsx checks/external-pi-interactions-native.ts",
@@ -27,6 +28,7 @@
     "@seydx/win-job": "0.1.0",
     "@tt-a1i/hive": "2.2.1",
     "cross-spawn": "7.0.6",
+    "jsonc-parser": "3.3.1",
     "typebox": "1.3.27",
     "ws": "8.22.1",
     "zod": "4.6.7"

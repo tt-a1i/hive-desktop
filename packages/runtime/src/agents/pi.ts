@@ -227,8 +227,13 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     },
     async refreshModels() {
       await session.modelRuntime.refresh({ allowNetwork: false });
+      const selected = session.model;
+      const current = selected && session.modelRuntime.getModel(selected.provider, selected.id);
+      const available = current && session.modelRuntime.getAvailableSnapshot().some(model => model.provider === current.provider && model.id === current.id);
+      savedModelUnavailable = !!selected && !isUnsetPiModel(selected) && !available;
       const configError = session.modelRuntime.getError();
       if (configError) throw new Error(configError);
+      if (current && available) await session.setModel(current, { persist: false });
     },
     listModels() {
       const available = new Set(session.modelRuntime.getAvailableSnapshot().map(model => `${model.provider}\0${model.id}`));

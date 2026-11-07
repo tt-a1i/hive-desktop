@@ -14,6 +14,7 @@ use serde_json::json;
 mod appearance;
 mod notification;
 pub mod pi_accounts;
+pub mod pi_models;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -196,6 +197,9 @@ impl HiveApp {
             self.settings_request(false, window, cx);
         }
         self.load_pi_accounts(window, cx);
+        if self.settings_section == SettingsSection::Models {
+            self.load_pi_models(cx);
+        }
         self.team_autostaff_request(None, cx);
         if !self.notification_loaded {
             self.notification_request(None, window, cx);
@@ -357,10 +361,11 @@ impl HiveApp {
             self.render_roles(cx).into_any_element()
         } else {
             v_flex().flex_1().w_full().max_w(px(960.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.pl_5().pr_6().py_7()).gap_5()
-                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Appearance => "外观", SettingsSection::PiAccounts => "内置 Pi", SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Programs => "外部程序" }))
+                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Appearance => "外观", SettingsSection::PiAccounts => "内置 Pi", SettingsSection::Models => "模型与接口", SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Programs => "外部程序" }))
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
+                        SettingsSection::Models => content.id("settings-model-config-content").child(self.render_pi_models(cx)),
                         SettingsSection::PiAccounts => content.id("settings-pi-accounts").overflow_y_scroll().track_scroll(&self.pi_accounts.scroll).child(self.render_pi_accounts(cx)),
                         SettingsSection::Appearance => content.id("settings-appearance-content").overflow_y_scroll().child(self.render_appearance_settings(cx)),
                         SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()

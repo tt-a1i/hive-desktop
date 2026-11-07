@@ -15,6 +15,7 @@ struct Provider {
     name: String,
     methods: Vec<AuthMethod>,
     stored_type: Option<String>,
+    registered: bool,
 }
 #[derive(Clone, Deserialize)]
 struct AuthMethod {
@@ -112,6 +113,9 @@ impl PiAccounts {
             _input_subscription: subscription,
             _search_subscription: search_subscription,
         }
+    }
+    pub fn invalidate_catalog(&mut self) {
+        self.providers = None;
     }
     pub fn reset_connection(&mut self) {
         self.generation += 1;

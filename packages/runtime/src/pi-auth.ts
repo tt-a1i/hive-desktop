@@ -29,25 +29,34 @@ export class PiAuth {
   constructor(private readonly createModels = () => ModelRuntime.create({ refreshOnCreate: false })) {}
   private async runtime() {
     if (this.closing) throw new Error('Pi authentication is closing');
-    this.models ??= this.createModels().catch(error => { delete this.models; throw error; });
+    if (!this.models) {
+      const pending = this.createModels().catch(error => { if (this.models === pending) delete this.models; throw error; });
+      this.models = pending;
+    }
     const models = await this.models;
     if (this.closing) throw new Error('Pi authentication is closing');
     return models;
   }
   async providers() {
+    // Account metadata must reflect models.json edits; active login keeps its own runtime reference.
+    delete this.models;
     const models = await this.runtime();
     return this.catalog(models);
   }
   private async catalog(models: ModelRuntime) {
     const stored = new Map((await models.listCredentials()).map(info => [info.providerId, info.type]));
-    return { agentDir: getAgentDir(), login: this.status(), providers: models.getProviders().map(provider => ({
+    const providers = models.getProviders().map(provider => ({
       id: provider.id, name: provider.name,
       methods: [
         ...(provider.auth.oauth ? [{ type: 'oauth' as const, label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name }] : []),
         ...(provider.auth.apiKey?.login ? [{ type: 'api_key' as const, label: provider.auth.apiKey.name }] : []),
       ],
-      storedType: stored.get(provider.id) ?? null,
-    })).sort((a, b) => Number(!!b.storedType) - Number(!!a.storedType) || a.name.localeCompare(b.name)) };
+      storedType: stored.get(provider.id) ?? null, registered: true,
+    }));
+    for (const [id, type] of stored) {
+      if (!models.getProvider(id)) providers.push({ id, name: id, methods: [], storedType: type, registered: false });
+    }
+    return { agentDir: getAgentDir(), login: this.status(), providers: providers.sort((a, b) => Number(!!b.storedType) - Number(!!a.storedType) || a.name.localeCompare(b.name)) };
   }
   status(): PiLoginState | null { return this.login ? structuredClone(this.login.view) : null; }
   async start(providerId: string, authType: unknown = 'oauth'): Promise<PiLoginState> {
@@ -132,7 +141,8 @@ export class PiAuth {
   async logout(providerId: string) {
     const models = await this.runtime();
     this.assertIdle();
-    if (!models.getProvider(providerId)) throw new Error('提供商不存在');
+    if (!models.getProvider(providerId) && !(await models.listCredentials()).some(info => info.providerId === providerId)) throw new Error('提供商不存在');
+    this.assertIdle();
     this.removal = (async () => {
       let message = '已移除本机保存的凭据。环境变量等其他登录来源不受影响。';
       try { await models.logout(providerId); }

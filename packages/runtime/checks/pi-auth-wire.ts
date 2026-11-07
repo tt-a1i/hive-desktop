@@ -76,6 +76,21 @@ try {
   assert.equal(removed.error, undefined);
   assert.equal(removed.result.login, null);
   assert.equal(removed.result.providers.find((provider: any) => provider.id === 'anthropic').storedType, null);
+  const modelConfig = (await rpc('pi.models.get')).result;
+  assert.deepEqual(modelConfig.providers, []);
+  const custom = await rpc('pi.models.change', { revision: modelConfig.revision, change: {
+    action: 'provider', id: 'wire-custom', name: '本地接口', baseUrl: 'https://example.test/v1', api: 'openai-responses', firstModelId: 'gpt-6.1-terra',
+  } });
+  assert.equal(custom.error, undefined);
+  assert.equal(custom.result.conflict, false);
+  assert.equal(custom.result.snapshot.providers[0].models[0].id, 'gpt-6.1-terra');
+  assert.equal((await rpc('pi.auth.providers')).result.providers.find((provider: any) => provider.id === 'wire-custom').registered, true);
+  const stale = await rpc('pi.models.change', { revision: modelConfig.revision, change: { action: 'removeProvider', id: 'wire-custom' } });
+  assert.equal(stale.result.conflict, true);
+  const deleted = await rpc('pi.models.change', { revision: custom.result.snapshot.revision, change: { action: 'removeProvider', id: 'wire-custom' } });
+  assert.equal(deleted.result.conflict, false);
+  assert.deepEqual(deleted.result.snapshot.providers, []);
+  assert.equal((await rpc('pi.auth.providers')).result.providers.find((provider: any) => provider.id === 'wire-custom'), undefined);
   assert.equal(await readFile(join(agentDir, 'settings.json'), 'utf8'), settings);
   assert.equal((await rpc('shutdown')).result.ok, true);
   await exited;
