@@ -28,3 +28,9 @@ macOS GPUI 原生夹具分别通过浅色、深色、760px 窗口的 exercise/re
 ## 未完成的验收
 
 原始 Codex/Claude 厂商用量通知的真实模型回合、Windows GUI 与物理输入仍待验收。Pi OAuth 的真实模型验证仍受账号 grant 失效影响；不修改用户凭据，也不换模型绕过。整体 UI/UX 尚未达到 Cindy 完整体验，本功能通过不表示整项目完成。
+
+## 本轮开发包
+
+生产二进制已恢复（不含原生夹具入口），冻结依赖构建并生成 `.artifacts/hive-desktop-macos-arm64-usage.zip`，SHA256 `ebdb321ad6b27615b90671665b919166c7c748ad5e16f0aa91154a0010da3a35`，代码 `e4fef31`。解压后 Node/真实 PTY/Hive HTTP/SQLite/退出及原生窗口恢复检查通过；包内新增统计模块与源构建产物逐一校验一致。这是未签名、未公证的开发包。
+
+Windows CI `42444376147` 三个 job 均为零步骤：GitHub annotation 明确指出付款失败或支出限额；不能作为构建代码失败，也不能代替 Windows 实际运行验收。
