@@ -7,6 +7,10 @@ export type CodexTurn = { id: string; status: string; error?: { message: string 
 export type CodexThread = { reasoningEffort?: string | null; model?: string; id: string; path: string | null; historyMode: 'legacy' | 'paginated'; turns: CodexTurn[] };
 export type CodexThreadResponse = { thread: CodexThread; model: string; modelProvider: string };
 
+export function isCodexToolItem(item: CodexItem): boolean {
+  return !['userMessage', 'agentMessage', 'reasoning', 'plan', 'hiveProjectionNotice'].includes(item.type);
+}
+
 export function toolName(item: CodexItem): string {
   return typeof item.tool === 'string' ? item.tool : item.type;
 }

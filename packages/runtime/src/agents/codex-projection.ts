@@ -42,7 +42,12 @@ export class CodexProjection {
     for (const turn of turns) {
       const cached = this.entries.filter(entry => entry.turnId === turn.id);
       if (cached.length > 0) {
-        next.push(...cached);
+        const recovered = cached.map(entry => {
+          if (!nativeItems || entry.item.status !== 'inProgress' || entry.item.hiveInterrupted === true) return entry;
+          const current = turn.items.find(item => item.id === entry.item.id);
+          return current ? { turnId: turn.id, item: current } : entry;
+        });
+        next.push(...recovered);
         if (!this.completedTurns.includes(turn.id) && turn.status !== 'inProgress'
           && !cached.some(entry => entry.item.id === `${turn.id}:display-gap`)) {
           next.push({ turnId: turn.id, item: { id: `${turn.id}:display-gap`, type: 'hiveProjectionNotice',

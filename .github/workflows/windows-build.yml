@@ -52,6 +52,9 @@ jobs:
         run: pnpm --filter @hive-desktop/runtime check
       - name: Build runtime
         run: pnpm build:runtime
+      - name: Check Codex history and tool lifecycle without vendor requests
+        timeout-minutes: 3
+        run: pnpm --filter @hive-desktop/runtime check:codex
       - name: Check Pi authentication without vendor requests
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:pi-auth

@@ -11,26 +11,27 @@ await writeFile(join(directory,'package.json'),'{"type":"commonjs"}');
 await writeFile(join(directory,'app-server'),String.raw`
 const {createInterface}=require('node:readline');const fs=require('node:fs');
 let thread=fs.existsSync('thread.json')?JSON.parse(fs.readFileSync('thread.json','utf8')):{id:'interrupted-tool-thread',path:null,historyMode:'legacy',turns:[]};
-const save=()=>fs.writeFileSync('thread.json',JSON.stringify(thread));const send=v=>process.stdout.write(JSON.stringify(v)+'\n');const notify=(method,params)=>send({method,params:{threadId:thread.id,...params}});
+let finishBackground;const save=()=>fs.writeFileSync('thread.json',JSON.stringify(thread));const send=v=>process.stdout.write(JSON.stringify(v)+'\n');const notify=(method,params)=>send({method,params:{threadId:thread.id,...params}});
 (async()=>{for await(const line of createInterface({input:process.stdin})){
  const q=JSON.parse(line);if(!q.method)continue;const answer=result=>send({id:q.id,result});
  if(q.method==='initialize')answer({});
  else if(q.method==='model/list')answer({data:[{id:'terra',model:'gpt-6.1-terra',displayName:'Terra',hidden:false}],nextCursor:null});
  else if(q.method==='thread/start'||q.method==='thread/resume')answer({thread,model:'gpt-6.1-terra',modelProvider:'openai'});
- else if(q.method==='thread/read')answer({thread});
+ else if(q.method==='thread/read'){answer({thread});if(fs.existsSync('release-background')&&finishBackground){const finish=finishBackground;finishBackground=undefined;finish();}}
  else if(q.method==='turn/start'){
   const turn={id:'turn-'+thread.turns.length,status:'inProgress',items:[]};thread.turns.push(turn);answer({turn});notify('turn/started',{turn});
-  const declined=q.params.input.some(i=>i.text==='decline');const failed=q.params.input.some(i=>i.text==='fail');
+  const declined=q.params.input.some(i=>i.text==='decline');const failed=q.params.input.some(i=>i.text==='fail');const background=q.params.input.some(i=>i.text==='background');
   const item={id:'command-'+turn.id,type:'commandExecution',status:declined?'declined':'inProgress',command:'fixture command',cwd:process.cwd(),aggregatedOutput:''};turn.items.push(item);notify('item/started',{turnId:turn.id,item});
   if(declined){notify('item/completed',{turnId:turn.id,item});turn.status='completed';save();notify('turn/completed',{turn});}
-  else{for(const delta of ['FIRST_PARTIAL\n','SECOND_PARTIAL 🐝\n']){item.aggregatedOutput+=delta;notify('item/commandExecution/outputDelta',{turnId:turn.id,itemId:item.id,delta});}if(failed){turn.status='failed';turn.error={message:'Synthetic terminal failure'};}save();if(failed)notify('turn/completed',{turn});}
+  else{for(const delta of ['FIRST_PARTIAL\n','SECOND_PARTIAL 🐝\n']){item.aggregatedOutput+=delta;notify('item/commandExecution/outputDelta',{turnId:turn.id,itemId:item.id,delta});}if(failed){turn.status='failed';turn.error={message:'Synthetic terminal failure'};}if(background){turn.status='completed';const message={type:'agentMessage',id:'background-answer',text:'Background still running'};turn.items.push(message);notify('item/completed',{turnId:turn.id,item:message});}save();if(failed||background)notify('turn/completed',{turn});if(background)finishBackground=()=>{item.aggregatedOutput+='LATE_OUTPUT\n';notify('item/commandExecution/outputDelta',{turnId:turn.id,itemId:item.id,delta:'LATE_OUTPUT\n'});item.status='completed';save();notify('item/completed',{turnId:turn.id,item});};}
  }else if(q.method==='turn/interrupt'){const turn=thread.turns.at(-1);turn.status='interrupted';save();answer({});notify('turn/completed',{turn});}
 }})().catch(e=>{console.error(e);process.exit(1)});
 `);
 const events:PiEvent[]=[];
+let late!:()=>void;const lateTool=new Promise<void>(resolve=>{late=resolve;});
 let ready!:()=>void;
 const outputReady=new Promise<void>(resolve=>{ready=resolve;});
-const options={cwd:directory,sessionDir:directory,command:process.execPath,model:{provider:'openai',id:'gpt-6.1-terra'},onEvent(event:PiEvent){events.push(event);if(event.type==='tool_update'&&JSON.stringify(event.result).includes('SECOND_PARTIAL'))ready();}};
+const options={cwd:directory,sessionDir:directory,command:process.execPath,model:{provider:'openai',id:'gpt-6.1-terra'},onEvent(event:PiEvent){events.push(event);if(event.type==='tool_end'&&JSON.stringify(event.result).includes('LATE_OUTPUT'))late();if(event.type==='tool_update'&&JSON.stringify(event.result).includes('SECOND_PARTIAL'))ready();}};
 let session:Awaited<ReturnType<typeof createCodexSession>>|undefined;
 try {
  session=await createCodexSession(options);
@@ -57,6 +58,18 @@ try {
  const failedTool=session.snapshot().history.find((m:any)=>m.toolCallId==='command-turn-2') as any;
  assert.equal(failedTool.toolStatus,'interrupted');assert.deepEqual(failedTool.content,full);
  assert.deepEqual(session.completedDeliveryIds(),[]);
+ await session.prompt('background');
+ const background=session.snapshot().history.find((m:any)=>m.toolCallId==='command-turn-3') as any;
+ assert.equal(background.toolStatus,'inProgress');assert.deepEqual(background.content,full);
+ const order=session.snapshot().history as any[];const answerIndex=order.findIndex(m=>m.rawBackendItem?.id==='background-answer');assert.ok(answerIndex>=0);assert.ok(order.findIndex(m=>m.toolCallId==='command-turn-3')<answerIndex);
+ await writeFile(join(directory,'release-background'),'ready');await session.reasoning!();
+ let lateTimer:ReturnType<typeof setTimeout>|undefined;
+ try{await Promise.race([lateTool,new Promise((_,reject)=>{lateTimer=setTimeout(()=>reject(new Error('Late background tool completion missing')),5000);})]);}finally{clearTimeout(lateTimer);}
+ const completedBackground=session.snapshot().history.find((m:any)=>m.toolCallId==='command-turn-3') as any;
+ assert.equal(completedBackground.toolStatus,'completed');
+ assert.deepEqual(completedBackground.content,[{type:'text',text:'FIRST_PARTIAL\nSECOND_PARTIAL 🐝\nLATE_OUTPUT\n'}]);
+ const lateUpdate=events.filter(e=>e.type==='tool_update').at(-1) as Extract<PiEvent,{type:'tool_update'}>;
+ assert.deepEqual(lateUpdate.result,{content:completedBackground.content});
  const native=JSON.parse(await readFile(join(directory,'thread.json'),'utf8'));
  assert.equal(native.turns[0].items[0].status,'inProgress');assert.equal(native.turns[0].items[0].hiveInterrupted,undefined);
  console.log('CODEX_TOOL_STATUS_HISTORY '+JSON.stringify({pending,stopped,refused}));

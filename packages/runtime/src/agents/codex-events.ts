@@ -1,5 +1,5 @@
 import type { PiEvent } from './types.js';
-import { codexToolInput, normalizeCodexItem, toolName, type CodexDelivery, type CodexItem } from './codex-history.js';
+import { codexToolInput, isCodexToolItem, normalizeCodexItem, toolName, type CodexDelivery, type CodexItem } from './codex-history.js';
 
 export class CodexEvents {
   private readonly items = new Map<string, { item: CodexItem; turnId: string }>();
@@ -12,7 +12,10 @@ export class CodexEvents {
     this.items.clear();
     this.running.clear();
     this.tools.clear();
-    for (const entry of items) this.items.set(entry.item.id, entry);
+    for (const entry of items) {
+      this.items.set(entry.item.id, entry);
+      if (entry.item.status === 'inProgress' && entry.item.hiveInterrupted !== true) this.tools.set(entry.item.id, entry);
+    }
   }
   snapshot() {
     const entries = [...this.items.values()];
@@ -24,7 +27,7 @@ export class CodexEvents {
     const message = normalizeCodexItem(item, this.delivery(turnId));
     if (['agentMessage', 'reasoning', 'plan'].includes(item.type) && !completed) {
       this.running.set(item.id, { messageId: item.id, message });
-    } else if (!['userMessage', 'agentMessage', 'reasoning', 'plan'].includes(item.type)) {
+    } else if (isCodexToolItem(item)) {
       if (!completed) {
         this.tools.set(item.id, { item, turnId });
         this.items.set(item.id, { item, turnId });
@@ -40,9 +43,11 @@ export class CodexEvents {
       this.emit({ type: 'message_end', sessionId: this.sessionId, messageId: item.id, message });
     }
   }
+  unfinishedTools(turnId: string): CodexItem[] {
+    return [...this.tools.values()].filter(entry => entry.turnId === turnId).map(entry => entry.item);
+  }
   interruptedItems(turnId: string): CodexItem[] {
-    const tools = [...this.tools.values()].filter(entry => entry.turnId === turnId)
-      .map(({ item }) => ({ ...item, hiveInterrupted: true }));
+    const tools = this.unfinishedTools(turnId).map(item => ({ ...item, hiveInterrupted: true }));
     return [...tools, ...[...this.running.values()].map(({ messageId, message }) => {
       const content = (message as { content: { text?: string; thinking?: string }[] }).content[0];
       return content?.thinking !== undefined

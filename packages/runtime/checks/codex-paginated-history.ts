@@ -16,8 +16,10 @@ for await(const line of createInterface({input:process.stdin})) {
  let result;
  if(q.method==='initialize')result={};
  else if(q.method==='model/list')result={data:[],nextCursor:null};
+ else if(q.method==='thread/start'){if(q.params.historyMode==='legacy')throw Error('Client forced legacy history');mode='fresh';result={thread:{id:'fresh-native',path:null,historyMode:'paginated',turns:[]},model:'gpt-6.1-terra',modelProvider:'openai'};}
  else if(q.method==='thread/resume'){mode=q.params.threadId;result={thread:{id:mode,path:null,historyMode:'paginated',turns:[]},model:'gpt-6.1-terra',modelProvider:'openai'};}
  else if(q.method==='thread/turns/list'){
+  if(mode==='fresh')throw Error('History requested before materialization');
   if(q.params.itemsView!=='full'||q.params.sortDirection!=='asc')throw Error('Wrong history request');
   const n=q.params.cursor===null?0:q.params.cursor==='second'?1:-1;if(n<0)throw Error('Wrong cursor');
   result={data:[{...turns[n],itemsView:mode==='partial'?'summary':'full'}],nextCursor:n===0?'second':null};
@@ -39,4 +41,6 @@ for(let n=0;n<2;n++) {
  }finally{await session.dispose();}
 }
 await assert.rejects(createCodexSession({...options,threadId:'partial'}));
+const fresh=await createCodexSession({...options,threadId:undefined});
+try{assert.equal(fresh.materialized,false);assert.deepEqual(fresh.snapshot().history,[]);}finally{await fresh.dispose();}
 console.log('Codex paginated history: two full pages in native order, native item IDs, restart parity; partial summary refused. Synthetic peer.');

@@ -86,5 +86,9 @@ try {
  const importedItem=normalizeCodexItem(imported.current()[0]!.item);
  assert.equal(importedItem.toolStatus,'interrupted');assert.deepEqual(importedItem.content,[{type:'text',text:'native partial'}]);
  assert.equal(nativePending.status,'inProgress');
+ const background=new CodexProjection(state,'background');background.put(nativePending,'background-turn');background.complete('background-turn');
+ const nativeCompleted={...nativePending,status:'completed',aggregatedOutput:'native final'};
+ background.recover([{id:'background-turn',status:'completed',items:[nativeCompleted]}],true);
+ assert.deepEqual(background.current()[0]!.item,nativeCompleted);
 }finally{await rm(state,{recursive:true,force:true});}
 console.log('Codex partial output and interrupted-tool projection/restart checks passed. No model calls.');

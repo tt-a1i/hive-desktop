@@ -10,6 +10,7 @@ import { CodexProjection } from './codex-projection.js';
 import { CodexEvents } from './codex-events.js';
 import { readCodexMetadata, writeCodexMetadata } from './codex-metadata.js';
 import type { CodexDelivery, CodexItem, CodexMetadata, CodexThreadResponse, CodexTurn } from './codex-history.js';
+import { isCodexToolItem } from './codex-history.js';
 import type { PiEvent, PiSessionHandle } from './types.js';
 
 export interface CodexTool {
@@ -132,7 +133,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           const turnId = String(params.turnId);
           if (active?.turnId === turnId && !active.terminalComplete) interactions.item(turnId, params.item);
           rememberDelivery(turnId);
-          if (notification.method === 'item/completed') projection?.put(params.item as CodexItem, turnId);
+          if (notification.method === 'item/completed' || isCodexToolItem(params.item as CodexItem)) projection?.put(params.item as CodexItem, turnId);
           events?.item(params.item as CodexItem, turnId, notification.method === 'item/completed');
         } else if (notification.method === 'turn/completed' && active) {
           const turn = params.turn as CodexTurn;
@@ -144,6 +145,9 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
                 projection?.put(item, turn.id);
                 events?.item(item, turn.id, true);
               }
+            } else if (turn.status === 'completed') {
+              // A model turn may finish while a native background command remains active.
+              for (const item of events?.unfinishedTools(turn.id) ?? []) projection?.put(item, turn.id);
             }
             projection?.complete(turn.id);
             active.resolve(turn);
@@ -190,7 +194,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     } while (cursor);
     const modelParams = options.model ? { model: options.model.id, modelProvider: options.model.provider } : {};
     if (options.threadId) await resume(modelParams);
-    else response = await transport.sendRequest<CodexThreadResponse>('thread/start', { cwd: options.cwd, historyMode: 'legacy', allowProviderModelFallback: false, ...modelParams,
+    else response = await transport.sendRequest<CodexThreadResponse>('thread/start', { cwd: options.cwd, allowProviderModelFallback: false, ...modelParams,
       dynamicTools: options.customTools?.map(tool => ({ type: 'function', name: tool.name, description: tool.description, inputSchema: tool.parameters })) ?? [] });
     if (options.model && (response!.model !== options.model.id || response!.modelProvider !== options.model.provider)) throw new Error('Codex did not select the requested model/provider');
     threadId = response!.thread.id;
@@ -198,7 +202,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     mkdirSync(options.sessionDir, { recursive: true, mode: 0o700 });
     projection = new CodexProjection(options.sessionDir, threadId);
     events = new CodexEvents(threadId, emit, id => metadata.deliveries.find(entry => entry.turnId === id));
-    await recoverHistory(response!.thread);
+    if (materialized) await recoverHistory(response!.thread);
+    else if (!['legacy', 'paginated'].includes(response!.thread.historyMode)) throw new Error('Unsupported Codex history contract');
     events.restore(projection.current());
   } catch (error) { await transport.close(); throw error; }
   const notifyMaterialized = async () => {
