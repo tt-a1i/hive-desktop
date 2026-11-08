@@ -41,7 +41,7 @@ export interface CodexSessionHandle extends PiSessionHandle {
   dispose(): Promise<void>;
 }
 type Model = { id: string; model: string; displayName: string; hidden: boolean; supportedReasoningEfforts?: {reasoningEffort:string;description:string}[] };
-type Run = { tools: Set<Promise<unknown>>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: { id: string; presentation: DeliveryPresentation };
+type Run = { tools: Set<Promise<unknown>>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: { id: string; presentation: DeliveryPresentation };
   terminal: Promise<CodexTurn>; resolve: (turn: CodexTurn) => void; reject: (error: Error) => void; done: Promise<void>; error?: Error };
 
 /** Codex 0.166 app-server public JSON-RPC; no terminal scraping or Pi model intermediary. */
@@ -71,12 +71,30 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   };
   let transport!: CodexTransport;
   const interactions = new CodexInteractions(() => threadId, emit, id => transport?.cancelServerRequest(id));
+  const interrupt = async (run: Run) => {
+    if (!run.turnId || run.terminalComplete) return;
+    return run.interrupting ??= (async () => {
+      try { await transport.sendRequest('turn/interrupt', { threadId, turnId: run.turnId }); }
+      catch (error) {
+        // A real terminal notification can win the race with an RPC rejection.
+        if (run.terminalComplete && !run.error) return;
+        run.error ??= asError(error);
+        run.controller.abort();
+        // No native terminal was confirmed. Release the owned connection and
+        // prompt before allowing another session to replace this one.
+        try { await transport.close(); }
+        finally { run.terminalComplete = true; run.reject(run.error); }
+        throw run.error;
+      }
+    })();
+  };
   transport = await CodexTransport.start({ cwd: options.cwd,
     ...(options.command && { command: options.command }),
     onClose(info) {
       interactions.clear('disconnected');
-      if (active) { active.controller.abort(); active.terminalComplete = true; active.reject(info.error); }
-      if (initialized && !disposed) options.onUnexpectedExit?.(info.error);
+      const error = active?.error ?? info.error;
+      if (active) { active.error = error; active.controller.abort(); active.terminalComplete = true; active.reject(error); }
+      if (initialized && !disposed) options.onUnexpectedExit?.(error);
     },
     async onRequest(request) {
       const params = request.params as Record<string, unknown>;
@@ -105,7 +123,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
         catch (error) {
           active.error = asError(error);
           active.controller.abort();
-          void transport.sendRequest('turn/interrupt', { threadId, turnId: active.turnId }).catch(active.reject);
+          void interrupt(active).catch(active.reject);
           throw error;
         }
       }
@@ -115,7 +133,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       if (active) {
         active.error = error;
         active.controller.abort();
-        if (active.turnId) void transport.sendRequest('turn/interrupt', { threadId, turnId: active.turnId }).catch(active.reject);
+        if (active.turnId) void interrupt(active).catch(active.reject);
       }
       throw error;
     },
@@ -157,7 +175,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
         if (active) {
           active.error = asError(error); active.controller.abort();
           if (active.terminalComplete) active.reject(active.error);
-          else if (active.turnId) void transport.sendRequest('turn/interrupt', { threadId, turnId: active.turnId }).catch(active.reject);
+          else if (active.turnId) void interrupt(active).catch(active.reject);
         }
       }
     },
@@ -265,7 +283,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           materialized = true;
           await notifyMaterialized();
           rememberDelivery(run.turnId);
-          if ((run.cancelled || run.error) && !run.terminalComplete) await transport.sendRequest('turn/interrupt', { threadId, turnId: run.turnId });
+          if ((run.cancelled || run.error) && !run.terminalComplete) await interrupt(run);
           const turn = await run.terminal;
           await hydrate();
           if (run.error) throw run.error;
@@ -278,7 +296,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
         } catch (error) {
           if (!run.terminalComplete && run.turnId) {
             run.controller.abort();
-            await transport.sendRequest('turn/interrupt', { threadId, turnId: run.turnId });
+            await interrupt(run);
             await run.terminal.catch(() => {});
           }
           if (!run.cancelled) emit({ type: 'error', sessionId: threadId, message: asError(error).message });
@@ -297,8 +315,9 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       const run = active;
       if (!run) return;
       run.cancelled = true; run.controller.abort();
-      if (run.turnId && !run.terminalComplete) await transport.sendRequest('turn/interrupt', { threadId, turnId: run.turnId });
-      await run.done.catch(() => {});
+      try { await interrupt(run); }
+      finally { await run.done.catch(() => {}); }
+      if (run.error) throw run.error;
     },
     dispose() {
       if (active) throw new Error('Abort and await the active Codex prompt before disposal');

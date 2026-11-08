@@ -204,3 +204,7 @@ Codex 工具日志改为累计投影，执行中工具进入快照；中断或�
 ## 2026-11-08 附件体验开发包同步
 
 Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限高滚动，全部 runtime 文件及二进制从当前构建刷新并在新 ZIP 解压后逐一校验。包内真实 PTY/Hive/SQLite、Codex 生命周期/分页、生产窗口导航恢复，以及原始 Codex 已有 Terra 会话只读恢复通过。Mac 锁屏阻止本轮系统界面逐项操作，待用户解锁；Windows 最新 CI 仍因账户账单/额度无步骤。详见 [开发包记录](validation/2026-11-08-attachment-package.md)，仍为未签名开发包。
+
+## 2026-11-08 Codex 中断错误清理
+
+真实 JSONL 对端复现中断 RPC 被拒绝后 prompt 未结算。共享中断入口现在合并同回合请求、区分实际原生终态与断连，并在拒绝后关闭连接、等待 prompt 清理；未确认投递不丢失。真实 Hive HTTP/SQLite 验证运行/token 撤销、同 ID 投递在重开及完整 runtime 重启后保留；原始 Codex 无模型生命周期和定向回归通过，旧开发包被新增包内行为 gate 拒绝。详见 [中断错误验证](validation/2026-11-08-codex-interrupt-rejection.md)。
