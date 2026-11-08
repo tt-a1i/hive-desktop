@@ -22,7 +22,7 @@ import { createTeamTool, createTeamCommand } from './team-tool.js';
 
 interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
-  failure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
+  failure?: Error; reasoningFailure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; completedReportId?: string };
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
@@ -172,7 +172,7 @@ export class Chats implements StructuredSessionPort {
     if (!workspace) throw new Error('Workspace not found');
     return workspace;
   }
-  private async load(record: ChatRecord): Promise<LiveChat> {
+  private async load(record: ChatRecord, recoveryFailure?: Error): Promise<LiveChat> {
     const workspace = await this.workspace(record.workspaceId);
     const sessionFile = record.sessionFile;
     if (sessionFile && !existsSync(sessionFile)) {
@@ -220,6 +220,25 @@ export class Chats implements StructuredSessionPort {
         customTools: [createTeamTool(binding)], onEvent });
     try {
       if (earlyFailure) throw earlyFailure;
+      let reasoningFailure = recoveryFailure;
+      if (!recoveryFailure && record.reasoning && handle.reasoning && handle.setReasoning) {
+        let applying = false;
+        try {
+          const state = await handle.reasoning();
+          const model = handle.currentModel();
+          if (model && model.provider === record.reasoning.provider && model.id === record.reasoning.modelId) {
+            if (!state.levels.includes(record.reasoning.level)) throw new Error('保存的推理档位已不在当前原生模型能力中，请重新选择。');
+            applying = true;
+            await handle.setReasoning(record.reasoning.level);
+          }
+        } catch (error) {
+          reasoningFailure = error instanceof Error ? error : new Error(String(error));
+          if (applying) {
+            await handle.dispose();
+            return this.load(record, reasoningFailure);
+          }
+        }
+      }
       if (!handle.hasContext('hive-context') && record.startupContext) await handle.addContext(record.startupContext);
       if (!handle.hasContext('hive-desktop')) {
         await handle.addContext(toolGuidance, 'hive-desktop');
@@ -249,7 +268,7 @@ export class Chats implements StructuredSessionPort {
         },
       });
       if (earlyFailure) throw earlyFailure;
-      chat = { handle, queue, aborted: false };
+      chat = { handle, queue, aborted: false, ...(reasoningFailure && {reasoningFailure}) };
       this.live.set(record.id, chat);
       return chat;
     } catch (error) { await handle.dispose(); throw error; }
@@ -420,6 +439,7 @@ export class Chats implements StructuredSessionPort {
     const inputText = encodeImageInput(text, ids);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       const opened = await this.require(id);
+      if (opened.reasoningFailure) throw new Error(`原推理设置未能恢复，请重新选择强度后发送：${opened.reasoningFailure.message}`);
       if (this.index.get(id).backend === 'pi' && !opened.handle.currentModel()) {
         throw new Error('请先为内置 Pi 选择可用模型，再发送消息。');
       }
@@ -483,17 +503,29 @@ export class Chats implements StructuredSessionPort {
   }
   async reasoning(id: string, level?: unknown) {
     const record = this.index.get(id);
-    if (record.backend !== 'pi' && record.backend !== 'pi-rpc') throw new Error('此后端尚未接入推理强度设置。');
     const workspaceId = record.workspaceId;
     this.assertWorkspaceAvailable(workspaceId);
     if (level !== undefined && typeof level !== 'string') throw new TypeError('推理强度必须是文本。');
     return this.withWorkspace(workspaceId, async () => {
       const chat = await this.require(id);
       if (!chat.handle.reasoning || !chat.handle.setReasoning) throw new Error('此后端尚未接入推理强度设置。');
-      if (level === undefined) return chat.handle.reasoning();
+      const decorate = (state: Awaited<ReturnType<NonNullable<PiSessionHandle['reasoning']>>>) => ({...state,
+        ...(chat.handle.currentModel() && {model:chat.handle.currentModel()}),
+        ...(chat.reasoningFailure && {description:`原设置未能恢复：${chat.reasoningFailure.message} 请选择当前可用档位。`})});
+      if (level === undefined) return decorate(await chat.handle.reasoning());
       if (chat.queue.busy) throw new Error('请在当前回复结束后调整推理强度。');
       if (!(await chat.handle.reasoning()).levels.includes(level as string)) throw new TypeError('当前模型不支持此推理强度。');
-      return this.changeNativeSettings(id, chat, () => chat.handle.setReasoning!(level as string));
+      if (chat.queue.busy) throw new Error('请在当前回复结束后调整推理强度。');
+      return this.changeNativeSettings(id, chat, async () => {
+        const state = await chat.handle.setReasoning!(level as string);
+        if (record.backend === 'codex' || record.backend === 'claude') {
+          const model = chat.handle.currentModel();
+          if (!model) throw new Error('原生会话未提供可保存推理设置的模型身份。');
+          this.index.save({...this.index.get(id),model,reasoning:{provider:model.provider,modelId:model.id,level:level as string}});
+        }
+        delete chat.reasoningFailure;
+        return decorate(state);
+      });
     });
   }
   private async changeNativeSettings<T>(id: string, chat: LiveChat, change: () => T | Promise<T>): Promise<T> {
@@ -501,7 +533,10 @@ export class Chats implements StructuredSessionPort {
     catch (error) {
       // Native setters may advance memory/branch pointers before a failed write.
       // Reuse the existing pause/dispose path so retry reloads durable state.
-      this.failLive(id, chat, error instanceof Error ? error : new Error(String(error)));
+      console.error('[hive-desktop] native session settings failed', error);
+      // The configuration RPC owns this error. Do not also place a duplicate
+      // raw filesystem/backend failure in the conversation's agent stream.
+      this.failLive(id, chat, error instanceof Error ? error : new Error(String(error)), false);
       await chat.cleanup;
       throw new Error('无法保存原生会话设置，会话已暂停；修复问题后可重新读取并重试。', { cause: error });
     }
@@ -511,11 +546,15 @@ export class Chats implements StructuredSessionPort {
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       const chat = await this.require(id);
       if (chat.queue.busy) throw new Error('Stop the current response before changing model');
+      const previous = chat.handle.currentModel();
+      if (previous?.provider === provider && previous.id === modelId) return {ok:true};
       return this.changeNativeSettings(id, chat, async () => {
         await chat.handle.setModel(provider, modelId);
         const model = chat.handle.currentModel();
         const record = { ...this.index.get(id), ...(model ? { model } : {}), updatedAt: Date.now() };
+        delete record.reasoning;
         this.index.save(record);
+        delete chat.reasoningFailure;
         if (record.agentId) this.runtime.configureAgentLaunch(record.workspaceId, record.agentId, this.launchConfig(record));
         return { ok: true };
       });
@@ -587,10 +626,10 @@ export class Chats implements StructuredSessionPort {
         { workspaceId, workspaceRemoved, removedSessionIds: workspaceRemoved === true ? sessionIds : [], stage: progress.stage, localIndexCleaned: false }, { cause: error });
     } finally { this.removing.delete(workspaceId); }
   }
-  private failLive(id: string, chat: LiveChat, error: Error): void {
+  private failLive(id: string, chat: LiveChat, error: Error, notify = true): void {
     if (chat.cleanup) return;
     chat.failure = error;
-    this.event(id, { type: 'error', sessionId: id, message: error.message });
+    if (notify) this.event(id, { type: 'error', sessionId: id, message: error.message });
     const paused = chat.queue.pause();
     chat.cleanup = (async () => {
       const cleanup = await Promise.allSettled([chat.handle.abort(), paused]);

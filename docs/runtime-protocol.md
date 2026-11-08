@@ -56,6 +56,10 @@ Agent 通知为 `{event:"agent",data:{type,sessionId,sequence,...}}`。事件包
 
 Agent assistant_delta 的 kind 为 thinking 时，Rust 使用 messageId/contentIndex 维护独立思考段；message_end 与快照中的原生 content 提供最终内容。此处复用既有通知，并未添加 reasoning 请求或修改模型行为。未公开的 redacted_thinking 数据不显示，思考结束或取消不替代 Hive 汇报结算。见 [展示验证](validation/2026-11-08-thinking-display.md)。
 
-## Pi 会话推理设置
+## 会话推理设置
 
-`chat.reasoning {sessionId}` 和 `chat.setReasoning {sessionId,level}` 返回原生 `{level,levels}`，目前仅内置/外部 Pi 支持。档位从原生能力读取，setter 拒绝未知档位及生成中的修改，只保存到原生会话。配置写入失败复用已有暂停/释放生命周期，后续请求重新加载持久记录；不新增桌面偏好副本，也不声称跨文件事务。见 [验证](validation/2026-11-08-pi-reasoning.md)。
+`chat.reasoning {sessionId}` 和 `chat.setReasoning {sessionId,level}` 返回原生 `{level,levels,description?,model?}`，支持内置 Pi、外部 Pi、Codex 和 Claude。档位来自当前原生模型，setter 拒绝未知档位及生成中的修改，返回原生实际生效值。`native` 表示原生未明确给出档位，不是可选择的重置指令。
+
+Pi 仅保存原生会话记录；Codex/Claude 的显式选择保存在现有 ChatIndex 可选字段 `reasoning:{provider,modelId,level}`，仅向匹配模型重放。实际切换模型清除该选择，重选同模型不重置原生设置。恢复失败保留会话读取，发送前要求重新选择有效档位。原生 setter 失败会释放原句柄并有界重开，避免继续使用部分修改状态。
+
+配置写入失败复用暂停/释放生命周期，由配置 RPC 返回友好错误，不重复注入聊天 Agent 错误；原始错误保留后台诊断。上述不是原生记录与桌面索引的跨文件事务。见 [Pi 验证](validation/2026-11-08-pi-reasoning.md) 和 [外部验证](validation/2026-11-08-external-reasoning.md)。

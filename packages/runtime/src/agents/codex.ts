@@ -38,7 +38,7 @@ export interface CodexSessionHandle extends PiSessionHandle {
   hasContext(customType: string): boolean;
   dispose(): Promise<void>;
 }
-type Model = { id: string; model: string; displayName: string; hidden: boolean };
+type Model = { id: string; model: string; displayName: string; hidden: boolean; supportedReasoningEfforts?: {reasoningEffort:string;description:string}[] };
 type Run = { tools: Set<Promise<unknown>>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: { id: string; presentation: DeliveryPresentation };
   terminal: Promise<CodexTurn>; resolve: (turn: CodexTurn) => void; reject: (error: Error) => void; done: Promise<void>; error?: Error };
 
@@ -158,10 +158,24 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   const resume = async (extra: Record<string, unknown> = {}) => {
     response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, ...extra });
   };
+  const recoverHistory = async (thread: CodexThreadResponse['thread']) => {
+    if (thread.historyMode === 'legacy') { projection!.recover(thread.turns); return; }
+    if (thread.historyMode !== 'paginated') throw new Error('Unsupported Codex history contract');
+    const turns: CodexTurn[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: {data: (CodexTurn & {itemsView?: string})[]; nextCursor?: string | null} = await transport.sendRequest('thread/turns/list', {threadId, cursor, sortDirection: 'asc', itemsView: 'full', limit: 100});
+      if (page.data.some(turn => turn.itemsView !== 'full')) throw new Error('Codex did not return complete turn items');
+      turns.push(...page.data); cursor = page.nextCursor ?? null;
+    } while (cursor);
+    projection!.recover(turns, true);
+  };
   const hydrate = async () => {
-    const read = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: true });
-    if (read.thread.historyMode !== 'legacy') throw new Error('Codex paginated history is unsupported by this installed app-server');
-    projection!.recover(read.thread.turns);
+    const read = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: false });
+    if (read.thread.historyMode === 'legacy') {
+      const full = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: true });
+      await recoverHistory(full.thread);
+    } else await recoverHistory(read.thread);
     events!.restore(projection!.current());
   };
   const models: Model[] = [];
@@ -181,8 +195,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     mkdirSync(options.sessionDir, { recursive: true, mode: 0o700 });
     projection = new CodexProjection(options.sessionDir, threadId);
     events = new CodexEvents(threadId, emit, id => metadata.deliveries.find(entry => entry.turnId === id));
-    if (response!.thread.historyMode !== 'legacy') throw new Error('Codex paginated history is unsupported by this installed app-server');
-    projection.recover(response!.thread.turns);
+    await recoverHistory(response!.thread);
     events.restore(projection.current());
   } catch (error) { await transport.close(); throw error; }
   const notifyMaterialized = async () => {
@@ -196,6 +209,14 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     if (active) throw new Error('Codex session is already processing a prompt');
   };
   initialized = true;
+  const reasoning = async () => {
+    if (disposed) throw new Error('Codex session is disposed');
+    const read = await transport.sendRequest<{thread:{model?:string;reasoningEffort?:string|null}}>('thread/read', {threadId,includeTurns:false});
+    const level = read.thread.reasoningEffort;
+    if (level !== null && level !== undefined && typeof level !== 'string') throw new Error('Codex 未返回有效的推理强度。');
+    const model = models.find(model => model.model === (read.thread.model ?? response.model));
+    return {level:level ?? 'native',levels:model?.supportedReasoningEfforts?.map(option=>option.reasoningEffort) ?? [],description:'从原生 Codex 线程读取；档位由当前模型提供。'};
+  };
   return {
     sessionId: threadId, threadId,
     get materialized() { return materialized; },
@@ -275,6 +296,14 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       interactions.clear('disposed');
       disposed = true;
       return transport.close();
+    },
+    reasoning,
+    async setReasoning(level) {
+      ensureIdle();
+      if (!(await reasoning()).levels.includes(level)) throw new TypeError('当前 Codex 模型不支持此推理强度。');
+      ensureIdle();
+      await transport.sendRequest('thread/settings/update',{threadId,effort:level});
+      return reasoning();
     },
     currentModel: () => ({ provider: response.modelProvider, id: response.model,
       name: models.find(model => model.model === response.model)?.displayName ?? response.model }),

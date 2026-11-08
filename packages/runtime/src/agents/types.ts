@@ -40,7 +40,7 @@ export interface PiSessionOptions {
   customTools?: ToolDefinition[];
 }
 
-export interface ReasoningState { level: string; levels: string[] }
+export interface ReasoningState { level: string; levels: string[]; description?: string }
 
 export interface PiSessionHandle {
   sessionId: string;

@@ -53,6 +53,6 @@ pnpm --filter @hive-desktop/runtime check:team
 
 聊天已展示后端实际返回的思考过程，默认折叠，可展开、选择和复制，并支持历史恢复与会话内容查找；验证范围见 [思考展示](docs/validation/2026-11-08-thinking-display.md)。
 
-内置/外部 Pi 可在输入框旁读取与调整会话推理强度，沿用原生会话持久化，不改全局默认；写盘失败会暂停并释放原生会话，修复后重读和重试。Codex/Claude 的推理控制尚未接入，见 [设置验证](docs/validation/2026-11-08-pi-reasoning.md)。
+四种后端可在输入框旁读取与调整原生会话推理强度，不改全局默认；Pi 沿用原生记录，Codex/Claude 的显式选择另按模型保存并恢复，显示原生实际生效值。写盘失败会暂停并释放原会话。Codex 已支持原生分页历史恢复；验证范围与 Claude SDK 接口边界见 [外部推理设置](docs/validation/2026-11-08-external-reasoning.md)。
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。

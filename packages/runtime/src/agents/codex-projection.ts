@@ -37,7 +37,7 @@ export class CodexProjection {
     this.completedTurns = [...new Set([...previous, turnId])];
     try { this.save(this.entries); } catch (error) { this.completedTurns = previous; throw error; }
   }
-  recover(turns: CodexTurn[]): void {
+  recover(turns: CodexTurn[], nativeItems = false): void {
     const next: CodexDisplayEntry[] = [];
     for (const turn of turns) {
       const cached = this.entries.filter(entry => entry.turnId === turn.id);
@@ -48,6 +48,9 @@ export class CodexProjection {
           next.push({ turnId: turn.id, item: { id: `${turn.id}:display-gap`, type: 'hiveProjectionNotice',
             text: 'This turn ended before its display journal was finalized. Some message or tool details may be missing.' } });
         }
+      } else if (nativeItems) {
+        next.push(...turn.items.map(item => ({turnId: turn.id, item})));
+        if (turn.status !== 'inProgress') this.completedTurns = [...new Set([...this.completedTurns, turn.id])];
       } else {
         // Explicit legacy import, never claim its synthetic IDs match live items.
         next.push(...turn.items.map(item => ({ turnId: turn.id, item: { ...item, id: `${turn.id}:legacy:${item.id}` } })));

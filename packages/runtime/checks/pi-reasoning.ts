@@ -50,9 +50,9 @@ try {
   await runtime.close();runtime=await createDesktopRuntime(stateDir,()=>{});
   assert.equal((await runtime.chats.reasoning(id)).level,'medium',`${backend}: native transcript must restore the selected level`);
   assert.equal(await readFile(join(agentDir,'settings.json'),'utf8'),settings);
-  const unsupported=await runtime.chats.createRecord(workspace.id,'codex');
-  await assert.rejects(runtime.chats.reasoning(unsupported.id));
-  assert.equal(runtime.chats.list(workspace.id).find(chat=>chat.id===unsupported.id)?.codexThreadId,undefined);
+  await assert.rejects(runtime.chats.reasoning('missing-session'));
+  await runtime.chats.setModel(id,'reasoning-local','gpt-6.1-terra');
+  assert.equal((await runtime.chats.reasoning(id)).level,'medium','Re-selecting the current Pi model must preserve its reasoning level');
   let ready!:()=>void;const called=new Promise<void>(resolve=>{ready=resolve;});arrived=ready;
   await runtime.chats.prompt(id,'仅用于本机繁忙状态验证，请勿调用工具');
   let timeout:ReturnType<typeof setTimeout>|undefined;

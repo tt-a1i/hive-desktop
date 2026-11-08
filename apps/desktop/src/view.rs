@@ -616,7 +616,7 @@ impl Render for HiveApp {
                     .child(Button::new("attach-images").ghost().compact().icon(Glyph::Plus).label("图片").accessibility_label("添加图片").disabled(!self.connected || self.workspace.is_none() || self.loading || running || !self.attachments.ready(self.draft_target.as_ref())).on_click(cx.listener(|this,_,_,cx|this.choose_images(cx))))
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(self.model_picker(window, running, cx)))
-                    .when(self.session.as_ref().is_some_and(|session|matches!(session.backend,crate::protocol::Backend::Pi|crate::protocol::Backend::PiRpc)), |row|row.child(self.render_reasoning_picker(running,cx)))
+                    .when(self.session.is_some(), |row|row.child(self.render_reasoning_picker(running,cx)))
                     .when(self.session.is_some(), |row| row.child(if running {
                         Button::new("stop").rounded_full().icon(Glyph::Square).tooltip("停止回复").accessibility_label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {

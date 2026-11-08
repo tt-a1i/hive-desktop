@@ -1,10 +1,11 @@
+import { readClaudeReasoning } from './claude-reasoning.js';
 import { promptImages } from '../prompt-images.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID, type UUID } from 'node:crypto';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, extname, isAbsolute, join, resolve } from 'node:path';
 import { getSessionMessages, query, type CanUseTool, type ModelInfo, type OnElicitation, type OnUserDialog,
-  type Query, type SDKResultMessage, type SessionMessage } from '@anthropic-ai/claude-agent-sdk';
+  type Query, type EffortLevel, type SDKResultMessage, type SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
 import { ClaudeInteractions } from './claude-interactions.js';
 import { ClaudeInput, claudeDeadline } from './claude-input.js';
@@ -147,6 +148,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     catalogs = { commands: init.commands.map(command => command.name), models: models.map(model => model.value), mcpServers: servers.map(server => ({ name: server.name, status: server.status })) };
     await refresh(); check(); ready = true;
   } catch (error) { await close(); throw error; }
+  const reasoning = async () => {check();const {modelId,...state} = await readClaudeReasoning(running,models);currentModel=modelId;return state;};
   return {
     sessionId, teamToolName: team.toolName, get processId() { return child?.pid; }, sessionFile: undefined,
     catalog: () => structuredClone(catalogs), history: () => projection.snapshot().history,
@@ -213,6 +215,14 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     async dispose() { if (active) throw new Error('Abort and await the active Claude prompt before disposal'); await close(); },
     currentModel: () => currentModel ? { provider: 'claude', id: currentModel, name: models.find(model => model.value === currentModel || model.resolvedModel === currentModel)?.displayName ?? currentModel } : undefined,
     listModels: () => models.map(model => ({ provider: 'claude', id: model.value, name: model.displayName, available: true })),
+    reasoning,
+    async setReasoning(level) {
+      check();if(active) throw new Error('Claude session is already processing a prompt');
+      if (!(await reasoning()).levels.includes(level)) throw new TypeError('当前 Claude 模型不支持此推理强度。');
+      check();if(active) throw new Error('Claude session is already processing a prompt');
+      await claudeDeadline(running.applyFlagSettings({effortLevel:level as EffortLevel}),'set reasoning');
+      return reasoning();
+    },
     async setModel(provider, id) { check(); if (active) throw new Error('Claude session is already processing a prompt'); if (provider !== 'claude') throw new Error('Unsupported Claude model provider'); await claudeDeadline(running.setModel(id), 'set model'); currentModel = id; },
   };
 }
