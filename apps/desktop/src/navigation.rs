@@ -15,6 +15,7 @@ use gpui_kit::{
 
 impl HiveApp {
     pub(crate) fn show_team(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_workflows();
         self.close_memory();
         self.close_settings();
         self.close_collaboration();
@@ -35,7 +36,8 @@ impl HiveApp {
             || self.memory.visible
             || self.roles.visible
             || self.settings_panel
-            || self.collaboration.visible)
+            || self.collaboration.visible
+            || self.workflows.visible)
     }
 
     pub fn render_navigation_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -92,6 +94,7 @@ impl HiveApp {
                             this.close_settings();
                             this.close_roles();
                             this.close_collaboration();
+                            this.close_workflows();
                             this.member_panel = false;
                             if window.viewport_size().width < px(820.) {
                                 this.sidebar_open = false;
@@ -105,6 +108,8 @@ impl HiveApp {
     pub fn render_settings_tabs(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let back = if self.terminal.visible {
             "返回工作区终端"
+        } else if self.workflows.visible {
+            "返回工作流"
         } else if self.memory.visible {
             "返回工作区记忆"
         } else if self.collaboration.visible && self.collaboration.selected.is_some() {
@@ -419,6 +424,10 @@ impl HiveApp {
                                 cx.notify();
                             })),
                     )
+                    .child(Button::new("open-workflows").h(px(32.)).rounded_full().ghost().icon(Glyph::Workflow).justify_start().w_full().accessibility_label("工作流")
+                        .child(div().flex_1().font_weight(FontWeight::NORMAL).child("工作流"))
+                        .selected(self.workflows.visible).disabled(self.workspace.is_none())
+                        .on_click(cx.listener(|this,_,window,cx|this.show_workflows(window,cx))))
                     .child(
                         Button::new("open-memory")
                             .h(px(32.))

@@ -69,6 +69,7 @@ pub struct Collaboration {
     pub list_generation: u64,
     pub selected: Option<Dispatch>,
     pub chat_origin: Option<String>,
+    pub workflow_origin: bool,
     pub detail_scroll: ScrollHandle,
     pub detail_error: Option<String>,
     detail_generation: u64,
@@ -104,6 +105,7 @@ impl Collaboration {
             list_generation: 0,
             selected: None,
             chat_origin: None,
+            workflow_origin: false,
             detail_scroll: ScrollHandle::new(),
             detail_error: None,
             detail_generation: 0,
@@ -134,6 +136,7 @@ impl HiveApp {
         self.collaboration.message_generation += 1;
     }
     pub fn open_collaboration(&mut self, cx: &mut Context<Self>) {
+        self.close_workflows();
         self.close_memory();
         self.close_roles();
         self.close_settings();
@@ -142,6 +145,7 @@ impl HiveApp {
         self.reload_collaboration(cx);
     }
     pub fn reload_collaboration(&mut self, cx: &mut Context<Self>) {
+        self.collaboration.workflow_origin = false;
         self.collaboration.chat_origin = None;
         self.collaboration.offset = 0;
         self.collaboration.selected = None;

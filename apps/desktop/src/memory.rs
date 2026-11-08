@@ -156,6 +156,7 @@ impl HiveApp {
         self.memory.acting = false;
     }
     pub fn open_memory(&mut self, cx: &mut Context<Self>) {
+        self.close_workflows();
         self.close_roles();
         self.close_settings();
         self.close_collaboration();

@@ -22,6 +22,7 @@ impl HiveApp {
                         {
                             return;
                         }
+                        if this.workflows.visible { this.refresh_workflows(cx); }
                         if !this.member_loading
                             && !this.member_form_open
                             && this.editing_member.is_none()

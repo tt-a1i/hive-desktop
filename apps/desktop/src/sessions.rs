@@ -194,6 +194,7 @@ impl HiveApp {
         }
         self.refresh_sessions(cx);
         self.refresh_members(cx);
+        if self.workflows.visible { self.refresh_workflows(cx); }
         if self.member_panel {
             self.load_roles(cx);
         }
@@ -254,6 +255,7 @@ impl HiveApp {
         .detach();
     }
     pub(crate) fn reset_workspace_view(&mut self) {
+        self.reset_workflows_workspace();
         self.conversation_sources.clear();
         self.session = None;
         self.conversation_ready = false;
@@ -360,6 +362,7 @@ impl HiveApp {
                                             .into();
                                         }
                                         if !this.memory.visible
+                                            && !this.workflows.visible
                                             && !this.member_panel
                                             && !this.collaboration.visible
                                             && !this.settings_panel
@@ -549,6 +552,9 @@ impl HiveApp {
             self.conversation_sources
                 .push(ConversationSource::Dispatch(dispatch.id.clone()));
             self.close_collaboration();
+        } else if self.workflows.visible {
+            self.conversation_sources.clear();
+            self.conversation_sources.push(ConversationSource::Workflow);
         } else if self.member_panel {
             self.conversation_sources.clear();
             self.conversation_sources.push(ConversationSource::Team);
@@ -563,6 +569,7 @@ impl HiveApp {
     }
 
     pub(crate) fn show_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.close_workflows();
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
             return;
         }

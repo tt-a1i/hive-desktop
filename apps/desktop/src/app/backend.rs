@@ -186,6 +186,7 @@ impl HiveApp {
         self.team_autostaff_loading = false;
         self.reset_memory_connection();
         self.reset_collaboration_connection();
+        self.invalidate_workflows();
         let roles_visible = self.roles.visible;
         self.close_roles();
         self.roles.visible = roles_visible;
@@ -245,6 +246,7 @@ impl HiveApp {
         }
         self.refresh_sessions(cx);
         self.refresh_members(cx);
+        if self.workflows.visible { self.refresh_workflows(cx); }
         if self.collaboration.visible {
             if self.collaboration.selected.is_some() {
                 self.refresh_dispatch(cx);

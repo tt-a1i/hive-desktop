@@ -64,6 +64,7 @@ impl WorkspaceTerminal {
 }
 impl HiveApp {
     pub fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_workflows();
         self.close_memory();
         self.close_roles();
         self.close_settings();

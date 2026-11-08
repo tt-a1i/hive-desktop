@@ -78,6 +78,7 @@ pub struct NavigationSelection {
 #[derive(Clone, PartialEq)]
 pub enum ConversationSource {
     Team,
+    Workflow,
     Dispatch(String),
     Session(String),
 }
@@ -145,6 +146,7 @@ pub struct HiveApp {
     pub team_autostaff_loading: bool,
     pub team_autostaff_message: Option<String>,
     pub collaboration: crate::collaboration::Collaboration,
+    pub workflows: crate::workflows::Workflows,
     pub memory: crate::memory::Memory,
     pub members: Vec<Member>,
     pub member_role: &'static str,
@@ -437,6 +439,7 @@ impl HiveApp {
             team_autostaff_loading: false,
             team_autostaff_message: None,
             collaboration: crate::collaboration::Collaboration::new(cx),
+            workflows: Default::default(),
             memory: crate::memory::Memory::new(window, cx),
             members: vec![],
             member_role: "coder",

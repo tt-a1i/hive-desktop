@@ -177,6 +177,7 @@ impl HiveApp {
                 }
                 ("返回派单详情".to_owned(), ConversationSource::Dispatch(id))
             }
+            Some(ConversationSource::Workflow) => ("返回工作流".to_owned(), ConversationSource::Workflow),
             Some(ConversationSource::Team) => ("返回团队成员".to_owned(), ConversationSource::Team),
             Some(ConversationSource::Session(id)) => {
                 let previous = self.sessions.iter().find(|s| s.id == id)?;
@@ -220,6 +221,7 @@ impl HiveApp {
                                 this.load_dispatch_messages(after, cx);
                             }
                         }
+                        ConversationSource::Workflow => this.show_workflows(window, cx),
                         ConversationSource::Team => this.show_team(window, cx),
                         ConversationSource::Session(id) => this.show_session(id.clone(), cx),
                     }
@@ -384,9 +386,11 @@ impl Render for HiveApp {
             .when(!preferences && self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
             .when(preferences || !narrow || !self.sidebar_open, |view| view.child(if preferences { self.render_preferences(compact_settings, cx).into_any_element()
             } else if self.memory.visible { self.render_memory(cx).into_any_element()
+            } else if self.workflows.visible { self.render_workflows(cx)
             } else if self.collaboration.visible { v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
                 .child(h_flex().gap_2().items_center()
-                    .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").ghost().icon(Glyph::ArrowLeft).label(if self.collaboration.chat_origin.is_some() { "返回来源会话" } else { "返回派单列表" }).on_click(cx.listener(|this, _, _, cx| {
+                    .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").ghost().icon(Glyph::ArrowLeft).label(if self.collaboration.workflow_origin { "返回工作流" } else if self.collaboration.chat_origin.is_some() { "返回来源会话" } else { "返回派单列表" }).on_click(cx.listener(|this, _, window, cx| {
+                        if this.collaboration.workflow_origin { this.close_collaboration(); this.show_workflows(window, cx); return; }
                         let c = &mut this.collaboration;
                         if let Some(id) = c.chat_origin.take() {
                             c.selected = None;

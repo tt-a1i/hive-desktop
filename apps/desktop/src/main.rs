@@ -3,6 +3,7 @@ mod appearance;
 mod artifacts;
 mod attachments;
 mod collaboration;
+mod workflows;
 mod composer;
 mod queued_inputs;
 mod command_picker;
