@@ -92,6 +92,9 @@ jobs:
       - name: Smoke extracted runtime and PTY
         timeout-minutes: 5
         run: node scripts/check-package.mjs --bundle target/portable-windows-extracted
+      - name: Check extracted Codex lifecycle without vendor requests
+        timeout-minutes: 3
+        run: node scripts/check-packaged-codex.mjs --bundle target/portable-windows-extracted
       - name: Smoke extracted Windows terminal bridge
         timeout-minutes: 5
         shell: pwsh

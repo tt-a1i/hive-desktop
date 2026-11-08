@@ -1,11 +1,12 @@
 /** Real JSONL process, synthetic two-page native history. No vendor/model request. */
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCodexSession } from '../src/agents/codex.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'hive-codex-pages-'));
+try {
 await writeFile(join(directory, 'app-server'), `
 const {createInterface}=require('node:readline');
 (async()=>{
@@ -44,3 +45,5 @@ await assert.rejects(createCodexSession({...options,threadId:'partial'}));
 const fresh=await createCodexSession({...options,threadId:undefined});
 try{assert.equal(fresh.materialized,false);assert.deepEqual(fresh.snapshot().history,[]);}finally{await fresh.dispose();}
 console.log('Codex paginated history: two full pages in native order, native item IDs, restart parity; partial summary refused. Synthetic peer.');
+
+} finally { await rm(directory, { recursive: true, force: true }); }
