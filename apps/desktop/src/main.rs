@@ -3,6 +3,7 @@ mod appearance;
 mod artifacts;
 mod attachments;
 mod collaboration;
+mod composer;
 mod conversation;
 mod conversation_find;
 mod conversation_list;
@@ -57,6 +58,7 @@ fn main() {
         .run(|cx| {
             gpui_kit::init(cx);
             cx.set_global(appearance::Appearance::default());
+            cx.set_global(composer::ComposerPreferences::default());
             appearance::apply(None, cx);
             cx.bind_keys([
                 KeyBinding::new(

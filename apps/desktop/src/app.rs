@@ -20,6 +20,7 @@ use std::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
     Appearance,
+    Chat,
     PiAccounts,
     Models,
     Team,
@@ -85,6 +86,7 @@ pub struct HiveApp {
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
     pub composer_can_submit: bool,
+    pub composer_submit_on_enter: bool,
     pub composer_has_text: bool,
     pub connected: bool,
     pub interactions: crate::interactions::Interactions,
@@ -314,7 +316,12 @@ impl HiveApp {
                 InputEvent::PressEnter {
                     secondary: false,
                     shift: false,
-                } if this.composer_can_submit => this.send(window, cx),
+                } if this.composer_can_submit
+                    && cx.global::<crate::composer::ComposerPreferences>().mode
+                        == crate::composer::SendMode::Enter =>
+                {
+                    this.submit_composer_key(window, cx)
+                }
                 InputEvent::Change => {
                     this.schedule_draft_save(cx);
                     let has_text = !input.read(cx).value().trim().is_empty();
@@ -334,6 +341,7 @@ impl HiveApp {
             terminal: crate::terminal::WorkspaceTerminal::new(cx),
             input,
             composer_can_submit: false,
+            composer_submit_on_enter: true,
             composer_has_text: false,
             _composer_subscription: composer_subscription,
             draft_store: None,

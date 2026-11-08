@@ -162,6 +162,12 @@ impl HiveApp {
                         SettingsSection::Appearance,
                     ),
                     (
+                        "settings-chat-tab",
+                        "聊天",
+                        Glyph::MessageSquare,
+                        SettingsSection::Chat,
+                    ),
+                    (
                         "settings-pi-accounts-tab",
                         "内置 Pi",
                         Glyph::Bot,

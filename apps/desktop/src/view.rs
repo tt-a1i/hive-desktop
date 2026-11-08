@@ -324,10 +324,15 @@ impl Render for HiveApp {
             && !self.loading
             && pending == 0
             && !self.closing;
-        if can_submit != self.composer_can_submit {
-            self.composer_can_submit = can_submit;
-            self.input
-                .update(cx, |input, cx| input.set_submit_on_enter(can_submit, cx));
+        self.composer_can_submit = can_submit;
+        let submit_on_enter = can_submit
+            && cx.global::<crate::composer::ComposerPreferences>().mode
+                == crate::composer::SendMode::Enter;
+        if submit_on_enter != self.composer_submit_on_enter {
+            self.composer_submit_on_enter = submit_on_enter;
+            self.input.update(cx, |input, cx| {
+                input.set_submit_on_enter(submit_on_enter, cx)
+            });
         }
         self.sync_conversation_list(cx);
         let has_text = !self.input.read(cx).value().trim().is_empty()
@@ -609,7 +614,7 @@ impl Render for HiveApp {
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child("选择本地项目文件夹，开始与 Agent 协作。")))
 
                 .child(self.render_input_attachments(cx))
-                .when(self.workspace.is_some(), |v| v.child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息").on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) })))
+                .when(self.workspace.is_some(), |v| v.child(div().capture_action(cx.listener(Self::composer_enter)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息").on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) }))))
                 .child(h_flex().min_w_0().gap_2().items_center()
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
                         self.new_chat_menu("home-agent", "选择 Agent", None, cx).into_any_element()
@@ -621,7 +626,7 @@ impl Render for HiveApp {
                     .when(self.session.is_some(), |row| row.child(if running {
                         Button::new("stop").rounded_full().icon(Glyph::Square).tooltip("停止回复").accessibility_label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {
-                        Button::new("send").primary().icon(Glyph::ArrowUp).rounded(px(20.)).accessibility_label("发送消息").tooltip("Enter 发送，Shift+Enter 换行").disabled(!can_submit || !has_text).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+                        Button::new("send").primary().icon(Glyph::ArrowUp).rounded(px(20.)).accessibility_label("发送消息").tooltip(cx.global::<crate::composer::ComposerPreferences>().mode.hint()).disabled(!can_submit || !has_text).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
                     })))
                 .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { "后台暂不可用 · 可在窗口顶部重新启动后台" } else if running { "Agent 正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "" }))))
                 .when(needs_pi_model && self.connected, |surface| surface.child(
