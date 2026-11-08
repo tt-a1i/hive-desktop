@@ -9,8 +9,14 @@ pub(crate) enum ImageSource {
     Clipboard(Image),
 }
 
+#[derive(Debug)]
+pub(crate) enum PrepareError { ClipboardTooLarge, UnsupportedFormat, EncodedTooLarge, Decode(String) }
+impl From<String> for PrepareError {
+    fn from(error: String) -> Self { Self::Decode(error) }
+}
+
 impl ImageSource {
-    pub fn prepare(self) -> Result<(&'static str, Value), String> {
+    pub fn prepare(self) -> Result<(&'static str, Value), PrepareError> {
         match self {
             Self::File(path) => Ok(("chat.attachments.add", json!({"path":path}))),
             Self::Clipboard(image) => {
@@ -22,7 +28,7 @@ impl ImageSource {
                     }
                     ImageFormat::Bmp | ImageFormat::Tiff => {
                         if image.bytes.len() > 64 * 1024 * 1024 {
-                            return Err("剪贴板图片过大，请先缩小图片。".into());
+                            return Err(PrepareError::ClipboardTooLarge);
                         }
                         let decoded = crate::attachments::decode_image(&image.bytes)?;
                         let mut png = Cursor::new(Vec::new());
@@ -32,13 +38,11 @@ impl ImageSource {
                         (png.into_inner(), "image/png")
                     }
                     _ => {
-                        return Err(
-                            "暂不支持该剪贴板图片格式，请粘贴 PNG、JPEG、GIF 或 WebP。".into()
-                        );
+                        return Err(PrepareError::UnsupportedFormat);
                     }
                 };
                 if bytes.len() > 3_750_000 {
-                    return Err("图片过大，编码后不能超过 5 MB。".into());
+                    return Err(PrepareError::EncodedTooLarge);
                 }
                 Ok((
                     "chat.attachments.clipboard",
@@ -84,7 +88,7 @@ impl HiveApp {
 
 #[cfg(test)]
 mod tests {
-    use super::ImageSource;
+    use super::{ImageSource,PrepareError};
     use base64::Engine;
     use gpui_kit::{Image, ImageFormat};
     use std::io::Cursor;
@@ -131,15 +135,7 @@ mod tests {
             .prepare()
             .is_err()
         );
-        assert!(
-            ImageSource::Clipboard(Image::from_bytes(ImageFormat::Png, vec![0; 3_750_001]))
-                .prepare()
-                .is_err()
-        );
-        assert!(
-            ImageSource::Clipboard(Image::from_bytes(ImageFormat::Svg, b"<svg/>".to_vec()))
-                .prepare()
-                .is_err()
-        );
+        assert!(matches!(ImageSource::Clipboard(Image::from_bytes(ImageFormat::Png,vec![0;3_750_001])).prepare(),Err(PrepareError::EncodedTooLarge)));
+        assert!(matches!(ImageSource::Clipboard(Image::from_bytes(ImageFormat::Svg,b"<svg/>".to_vec())).prepare(),Err(PrepareError::UnsupportedFormat)));
     }
 }

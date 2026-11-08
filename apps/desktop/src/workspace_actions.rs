@@ -132,16 +132,16 @@ impl HiveApp {
             return;
         };
         let detail = format!(
-            "{}\n{}\n\n将关闭团队与会话，并删除 Hive 中的协作记录和上传文件。项目文件夹与 Agent 原生会话记录保留。此操作无法撤销。",
-            workspace.name, workspace.path
+            "{}\n{}\n\n{}",workspace.name,workspace.path,
+            tr("将关闭团队与会话，并删除 Hive 中的协作记录和上传文件。项目文件夹与 Agent 原生会话记录保留。此操作无法撤销。")
         );
         let answer = window.prompt(
             PromptLevel::Warning,
-            "移除此工作区？",
+            tr("移除此工作区？"),
             Some(&detail),
             &[
-                PromptButton::cancel("取消"),
-                PromptButton::new("移除工作区"),
+                PromptButton::cancel(tr("取消")),
+                PromptButton::new(tr("移除工作区")),
             ],
             cx,
         );

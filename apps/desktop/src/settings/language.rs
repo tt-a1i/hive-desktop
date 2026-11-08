@@ -60,6 +60,7 @@ impl HiveApp {
         self.pi_accounts.localize_placeholders(window, cx);
         self.pi_models.localize_placeholders(window, cx);
         self.interactions.localize_placeholders(window, cx);
+        self.localize_find_placeholder(window, cx);
         for (input, label) in [
             (&self.settings_search, "搜索设置，如模型、通知、快捷键…"),
             (&self.session_name, "会话名称"),

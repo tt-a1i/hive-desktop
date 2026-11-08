@@ -77,7 +77,7 @@ impl HiveApp {
                                     self.pending_reports
                                         .iter()
                                         .find(|report| report.delivery_id == message.id)
-                                        .map(|report| report.status())
+                                        .map(|report| tr(report.status()))
                                         .unwrap_or(tr("已进入会话"))
                                 };
                                 row.child(
@@ -343,7 +343,7 @@ impl HiveApp {
                                         div()
                                             .text_xs()
                                             .text_color(Color::Muted.get(cx))
-                                            .child(report.status()),
+                                            .child(tr(report.status())),
                                     )
                                     .when_some(
                                         self.dispatch_link(

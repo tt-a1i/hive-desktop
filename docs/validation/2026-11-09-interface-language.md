@@ -231,3 +231,23 @@
 - 新原生源码带英文偏好启动恢复与SQLite导航保存通过。仅用硬链接/资源软链接，脚本SIGTERM结束自有探针；退出后目录lsof为空且无fixture进程，只清理本轮native-bundle，保留日志。不等于正常用户退出或实际UI语言切换。
 
 CUA再次明确报告Mac锁屏，未实际观察聊天/错误/模型浮层的英文布局、切换/滚动/复制/重试/窄窗或输入法，也未取得完整Cindy对标验收。无模型请求、无新ZIP，旧运行应用和候选/current包保留。完整#17和产品目标继续开放。阶段收据`.artifacts/language/context-chat-receipt.json`。
+
+
+## 会话查找、移除确认与剪贴板提示
+
+第十五批累计1046条英文目录（新增19条），补齐会话查找的输入提示/计数/上下一条/关闭快捷键，工作区移除的标题/按钮/完整数据保留与不可撤销说明，待处理汇报状态，以及动态key“设置已保存”。确认框仍按原按钮索引判断，取消默认和移除分支不变；工作区名/路径原样。待处理汇报仅在显示处翻译status()的静态值，协议模块不依赖locale，processing布尔值不改。
+
+查找输入接入已有locale更新入口，只set_placeholder；不改query/hits/selected/返回焦点或滚动，搜索正文、思考/工具、原始投递与诊断的规则和键盘行为不变。未将源码候选等同缺陷：本轮保留已有双语fallback、语言自名“中文”、搜索中文关键词及原始技术诊断。
+
+Diff内部changes函数接收打开时捕获的english_labels，合成“改动片段”及多片段标题可显示英文。数据模块仍不读取全局locale；原生patch、真实路径前缀、old/new文本保持原样，只有本机合成片段标签按打开语言生成；已打开文档的合成标题随该次内容固定，外围控件仍按当前locale显示。所有内部调用显式传入该值，没有为测试增加生产fallback。
+
+剪贴板prepare以ClipboardTooLarge/UnsupportedFormat/EncodedTooLarge/原始解码错误返回，显示层才转为静态Message或原Raw；格式列表、64MiB源限制、3,750,000字节编码前限制、PNG原字节保留及BMP/TIFF转换不变，没有把App/locale依赖引入错误类型本身。
+
+验证：
+
+- 现有image_input::tests 1条通过，真实PNG/BMP/TIFF像素/原字节与损坏/超限/不支持格式；将两个笼统is_err断言改成类型匹配。
+- 现有Diff数据2条通过，补英文合成标题、保留中文真实路径、原生patch逐字不变和原中文模式断言。现有语言偏好1条通过。共4条，未新增/删除测试文件或测试。
+- image-attachments-wire.ts生产JSONL与真实Hive上传/SQLite检查通过，无模型请求。
+- Mac默认构建、Windows MSVC类型检查、git diff --check通过。未跑全量测试：本批为UI文案与本地图片错误/合成标签表示，未改runtime或持久化协议；没有重复其他无关集成检查。
+
+本轮没有重跑原生启动探针或生成新ZIP。CUA再次明确报告Mac锁屏，未实际点击查找/确认框或验证语言切换中的查询/输入法/焦点、真实Windows剪贴板和Diff窗口布局。原生/系统原诊断及少数源记录fallback仍按原值保留，完整语言覆盖与Cindy体验尚未验收。旧运行应用与包保留，.artifacts约3.8GiB。阶段收据`.artifacts/language/find-clipboard-receipt.json`。

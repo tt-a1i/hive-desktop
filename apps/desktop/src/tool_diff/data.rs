@@ -48,11 +48,11 @@ pub(crate) fn available(name: &str, args: &Value, patch: Option<&str>) -> bool {
         .unwrap_or_else(|| pair(args))
 }
 
-pub(crate) fn changes(name: &str, args: &Value, patch: Option<&str>) -> Vec<Change> {
+pub(crate) fn changes(name: &str, args: &Value, patch: Option<&str>, english_labels: bool) -> Vec<Change> {
     let path = args["file_path"]
         .as_str()
         .or_else(|| args["path"].as_str())
-        .unwrap_or("改动片段");
+        .unwrap_or(if english_labels { "Change excerpt" } else { "改动片段" });
     if let Some(patch) = patch.filter(|v| !v.is_empty()) {
         return vec![Change {
             original_path: Some(path.into()),
@@ -104,7 +104,7 @@ pub(crate) fn changes(name: &str, args: &Value, patch: Option<&str>) -> Vec<Chan
             let old = e["oldText"].as_str().or_else(|| e["old_string"].as_str())?;
             let new = e["newText"].as_str().or_else(|| e["new_string"].as_str())?;
             let path = if multiple {
-                format!("{path}（片段 {}）", i + 1)
+                if english_labels {format!("{path} (excerpt {})",i+1)} else {format!("{path}（片段 {}）",i+1)}
             } else {
                 path.into()
             };
@@ -177,15 +177,24 @@ mod tests {
     fn preserves_native_patches_and_builds_requested_snippets_without_disk() {
         let patch = "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n";
         let input = json!({"path":"a.txt","oldText":"wrong","newText":"wrong"});
-        let d = build(changes("edit", &input, Some(patch)));
+        let d = build(changes("edit", &input, Some(patch), false));
         assert_eq!(d.raw, patch);
+        let english_patch = build(changes("edit",&input,Some(patch),true));
+        assert_eq!(english_patch.raw,patch);
+        let english_excerpt = changes("edit",&json!({"oldText":"原文","newText":"新文"}),None,true);
+        assert_eq!(english_excerpt[0].original_path.as_deref(),Some("Change excerpt"));
+        let edits=json!({"path":"原路径.txt","edits":[{"oldText":"a","newText":"b"},{"oldText":"c","newText":"d"}]});
+        let english_edits=changes("edit",&edits,None,true);
+        assert_eq!(english_edits[0].original_path.as_deref(),Some("原路径.txt (excerpt 1)"));
+        assert_eq!(english_edits[1].modified_path.as_deref(),Some("原路径.txt (excerpt 2)"));
+        let original_edits=changes("edit",&edits,None,false);
+        assert_eq!(original_edits[0].original_path.as_deref(),Some("原路径.txt（片段 1）"));
         assert!(d.error.is_none());
         assert_eq!((d.files[0].additions(), d.files[0].deletions()), (1, 1));
         let d = build(changes(
             "MultiEdit",
             &json!({"file_path":"目录/空 格\t\".rs","edits":[{"old_string":"a\n","new_string":"b\n"},{"old_string":"","new_string":"尾巴 🐝"}]}),
-            None,
-        ));
+            None, false));
         assert!(d.error.is_none(), "{:?}", d.error);
         assert_eq!(d.files.len(), 2);
         assert_eq!(d.files[0].path().as_ref(), "目录/空 格\t\".rs（片段 1）");
@@ -194,11 +203,10 @@ mod tests {
         let d = build(changes(
             "edit",
             &json!({"path":"a","edits":[{"oldText":"unchanged\n","newText":"unchanged\n"}]}),
-            None,
-        ));
+            None, false));
         assert!(d.files.is_empty());
         assert!(d.error.is_none());
-        assert!(changes("bash", &json!({"oldText":"a","newText":"b"}), None).is_empty());
+        assert!(changes("bash", &json!({"oldText":"a","newText":"b"}), None, false).is_empty());
     }
     #[test]
     fn codex_add_delete_update_and_malformed_patch_remain_distinct() {
@@ -209,8 +217,7 @@ mod tests {
                 {"path":"gone.txt","kind":{"type":"delete"},"diff":"gone\n"},
                 {"path":"old.txt","kind":{"type":"update","move_path":"moved.txt"},"diff":"@@ -1 +1 @@\n-before\n+after\n"}
             ]}),
-            None,
-        ));
+            None, false));
         assert!(d.error.is_none(), "{:?}", d.error);
         assert_eq!(d.files.len(), 3);
         assert_eq!((d.files[0].additions(), d.files[0].deletions()), (1, 0));
@@ -229,8 +236,7 @@ mod tests {
         let empty = build(changes(
             "fileChange",
             &json!({"changes":[{"path":"empty.txt","kind":{"type":"add"},"diff":""}]}),
-            None,
-        ));
+            None, false));
         assert!(empty.error.is_none());
         assert_eq!(empty.files.len(), 1);
         assert_eq!(

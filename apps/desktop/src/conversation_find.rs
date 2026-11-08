@@ -1,3 +1,4 @@
+use crate::language::{english,tr};
 use crate::{
     app::{HiveApp, Message},
     palette::Color,
@@ -47,6 +48,11 @@ fn matches(message: &Message, input: Option<&serde_json::Value>, query: &str) ->
 }
 
 impl HiveApp {
+    pub(crate) fn localize_find_placeholder(&self, window: &mut Window, cx: &mut App) {
+        if let Some(find) = &self.conversation_find {
+            find.input.update(cx,|input,cx|input.set_placeholder(tr("查找已加载消息、思考和工具…"),window,cx));
+        }
+    }
     pub fn open_conversation_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.viewing_conversation()
             || self.session.is_none()
@@ -58,7 +64,7 @@ impl HiveApp {
         }
         if self.conversation_find.is_none() {
             let input =
-                cx.new(|cx| InputState::new(window, cx).placeholder("查找已加载消息、思考和工具…"));
+                cx.new(|cx| InputState::new(window, cx).placeholder(tr("查找已加载消息、思考和工具…")));
             let subscription =
                 cx.subscribe_in(&input, window, |this, _, event, window, cx| match event {
                     InputEvent::Change => this.change_conversation_find(window, cx),
@@ -234,15 +240,15 @@ impl HiveApp {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(Input::new(&find.input).aria_label("查找当前会话的消息和工具")),
+                    .child(Input::new(&find.input).aria_label(tr("查找当前会话的消息和工具"))),
             )
             .child(div().text_xs().text_color(Color::Muted.get(cx)).child(
                 if find.query.is_empty() {
-                    "输入关键词".into()
+                    tr("输入关键词").into()
                 } else if find.hits.is_empty() {
-                    "没有匹配".into()
+                    tr("没有匹配").into()
                 } else {
-                    format!("{position}/{} 条消息", find.hits.len())
+                    if english() {format!("{position}/{} messages",find.hits.len())} else {format!("{position}/{} 条消息",find.hits.len())}
                 },
             ))
             .child(
@@ -250,8 +256,8 @@ impl HiveApp {
                     .ghost()
                     .compact()
                     .icon(Glyph::ArrowUp)
-                    .accessibility_label("上一条匹配消息")
-                    .tooltip("上一条 · Shift+Enter")
+                    .accessibility_label(tr("上一条匹配消息"))
+                    .tooltip(tr("上一条 · Shift+Enter"))
                     .disabled(find.hits.is_empty())
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.move_conversation_find(true, window, cx)
@@ -262,8 +268,8 @@ impl HiveApp {
                     .ghost()
                     .compact()
                     .icon(Glyph::ArrowDown)
-                    .accessibility_label("下一条匹配消息")
-                    .tooltip("下一条 · Enter")
+                    .accessibility_label(tr("下一条匹配消息"))
+                    .tooltip(tr("下一条 · Enter"))
                     .disabled(find.hits.is_empty())
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.move_conversation_find(false, window, cx)
@@ -274,8 +280,8 @@ impl HiveApp {
                     .ghost()
                     .compact()
                     .icon(Glyph::X)
-                    .accessibility_label("关闭会话查找")
-                    .tooltip("关闭 · Escape")
+                    .accessibility_label(tr("关闭会话查找"))
+                    .tooltip(tr("关闭 · Escape"))
                     .on_click(
                         cx.listener(|this, _, window, cx| this.close_conversation_find(window, cx)),
                     ),

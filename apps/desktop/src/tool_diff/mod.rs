@@ -1,5 +1,5 @@
 pub(crate) mod data;
-use crate::{app::HiveApp, palette::Color, language::tr};
+use crate::{app::HiveApp, palette::Color, language::{english,tr}};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -51,6 +51,7 @@ impl HiveApp {
         } else {
             "工具请求的改动片段；行号从片段起点计算，不代表编辑已成功"
         };
+        let english_labels = english();
         let viewer = cx.new(|cx: &mut Context<ToolDiff>| {
             let state = cx.new(|cx| DiffState::new([], cx));
             let view = ToolDiff {
@@ -65,7 +66,7 @@ impl HiveApp {
             };
             cx.spawn(async move |this, cx| {
                 let document = smol::unblock(move || {
-                    data::build(data::changes(&name, &args, patch.as_deref()))
+                    data::build(data::changes(&name, &args, patch.as_deref(), english_labels))
                 })
                 .await;
                 let _ = this.update(cx, |this, cx| {

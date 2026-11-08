@@ -47,3 +47,15 @@ impl ErrorNotice {
         }
     }
 }
+
+impl From<crate::image_input::PrepareError> for ErrorNotice {
+    fn from(error: crate::image_input::PrepareError) -> Self {
+        use crate::image_input::PrepareError;
+        match error {
+            PrepareError::ClipboardTooLarge => Self::Message("剪贴板图片过大，请先缩小图片。"),
+            PrepareError::UnsupportedFormat => Self::Message("暂不支持该剪贴板图片格式，请粘贴 PNG、JPEG、GIF 或 WebP。"),
+            PrepareError::EncodedTooLarge => Self::Message("图片过大，编码后不能超过 5 MB。"),
+            PrepareError::Decode(error) => Self::Raw(error),
+        }
+    }
+}
