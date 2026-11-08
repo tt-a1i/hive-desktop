@@ -26,9 +26,17 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   else answer({});
  }else if(x.type==='user'){persist(x);if(x.shouldQuery!==false){active=x.uuid;log({event:'query',model,content:x.message.content});
    let c={};try{c=JSON.parse(fs.readFileSync(control,'utf8'));}catch{}
+   if(c.exitOnQuery)process.exit(2);
    if(c.completeQueries){
     active=undefined;const uuid=crypto.randomUUID();const assistant={type:'assistant',uuid,session_id:sid,parent_tool_use_id:null,message:{id:'msg_'+uuid,type:'message',role:'assistant',model,content:[{type:'text',text:'Synthetic queued completion'}],stop_reason:'end_turn',stop_sequence:null,usage:{input_tokens:0,output_tokens:0}}};
     persist(assistant);send(assistant);send({type:'result',subtype:'success',is_error:false,uuid:crypto.randomUUID(),session_id:sid,user_message_uuid:x.uuid,terminal_reason:'completed',result:'Synthetic queued completion',duration_ms:0,duration_api_ms:0,num_turns:1,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0},modelUsage:{},permission_denials:[]});
+    if(c.writesLost){
+     // Official contract: once, after the last result, while exiting. A global
+     // config or another session's loss does not revoke this durable result.
+     const transcript=c.writesLost!=='global';
+     const loss={type:'system',subtype:'session_writes_lost',error_code:'ENOSPC',lost:[transcript?'transcript':'global_config'],...(transcript&&{transcript_session_ids:[c.writesLost==='current'?sid:crypto.randomUUID()]}),uuid:crypto.randomUUID(),session_id:sid};
+     log({event:'writes-lost',...loss});process.stdout.write(JSON.stringify(loss)+'\n',()=>process.exit(0));
+    }
    }
 }}
 });

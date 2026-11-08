@@ -38,7 +38,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
   const sessionId = options.sessionId ?? randomUUID();
   let metadata = readClaudeMetadata(options.sessionDir, sessionId);
   let closeTask: Promise<void> | undefined;
-  let disposed = false; let ready = false; let failure: Error | undefined;
+  let disposed = false; let ready = false; let failure: Error | undefined; let failureNotified = false;
   let active: Run | undefined;
   let nativeUsage:unknown;
   let child: ChildProcessWithoutNullStreams | undefined;
@@ -54,10 +54,17 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
   const emit = (event: PiEvent) => options.onEvent(event);
   const interactions = new ClaudeInteractions(sessionId, () => active && ({ id: active.uuid, signal: active.controller.signal }), emit);
   const persist = (next: ClaudeMetadata) => { writeClaudeMetadata(options.sessionDir, sessionId, next); metadata = next; };
+  const notifyFailure = () => {
+    // A result may already be received while its durable completion is being
+    // recorded. Owner cleanup aborts active prompts, so notify after settlement.
+    if (ready && failure && !active && !disposed && !failureNotified) {
+      failureNotified = true; options.onUnexpectedExit?.(failure);
+    }
+  };
   const fail = (error: Error) => {
     if (disposed || failure) return;
     failure = error; interactions.clear('disconnected'); active?.controller.abort(); active?.reject(error);
-    if (ready) options.onUnexpectedExit?.(error);
+    notifyFailure();
   };
   const check = () => { if (disposed || failure) throw failure ?? new Error('Claude session is disposed'); };
   const present = (message: Parameters<typeof projectClaudeMessage>[0], notify: boolean) => {
@@ -123,7 +130,15 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
           else { nativeUsage={usage:structuredClone(message.usage),modelUsage:structuredClone(message.modelUsage)}; interactions.clear(active.cancelled ? 'aborted' : 'turn-ended', active.uuid); active.resolve(message); }
         } else if (message.type === 'system' && message.subtype === 'init') currentModel = message.model;
         else if (message.type === 'system' && message.subtype === 'session_writes_lost') {
-          const error = new Error('Claude could not persist the session transcript'); if (active) { active.error = error; active.reject(error); }
+          const currentTranscript = message.lost.includes('transcript') && message.transcript_session_ids?.includes(sessionId);
+          const error = new Error(currentTranscript
+            ? `Claude 无法保存当前会话记录（${message.error_code}）`
+            : `Claude 报告其他写入丢失（${message.error_code}，${message.lost.join('、')}）；当前会话未报告记录丢失。`);
+          emit({ type: 'error', sessionId, message: error.message });
+          if (currentTranscript && active) { active.error = error; active.reject(error); }
+          // This notification is sent while the native CLI exits. Retire it now
+          // so the queue cannot submit its next item before the exit event arrives.
+          fail(error);
         }
       }
       if (!disposed) fail(new Error('Claude SDK output ended unexpectedly'));
@@ -204,6 +219,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
           interactions.clear(run.cancelled ? 'aborted' : 'turn-ended', run.uuid);
           run.controller.abort(); await Promise.allSettled([...run.tools]);
           active = undefined; projection.endStream(); emit({ type: 'settled', sessionId, aborted: run.cancelled });
+          notifyFailure();
         }
       });
       return run.done;
