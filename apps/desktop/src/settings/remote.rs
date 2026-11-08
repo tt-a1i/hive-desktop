@@ -57,8 +57,23 @@ pub struct Remote {
     pub valid: bool,
     pub details_valid: bool,
     pub error: Option<String>,
-    pub message: Option<String>,
+    message: Option<Notice>,
     pub scroll: ScrollHandle,
+}
+enum Notice {
+    TicketError(String),
+    Submitted,
+    ActionError(String),
+}
+impl Notice {
+    fn text(&self) -> String {
+        use crate::language::tr;
+        match self {
+            Self::TicketError(error) => format!("{}: {error}", tr("配对信息无法读取")),
+            Self::Submitted => tr("操作已提交，正在重新读取实际状态。").to_owned(),
+            Self::ActionError(error) => format!("{}: {error}", tr("操作失败")),
+        }
+    }
 }
 pub fn now() -> u64 {
     std::time::SystemTime::now()
@@ -164,9 +179,7 @@ impl HiveApp {
                     Err(error) => {
                         remote.valid = false;
                         remote.details_valid = false;
-                        remote.error = Some(format!(
-                            "远程接入读取失败：{error}。显示上次读取的内容，操作已暂停。"
-                        ));
+                        remote.error = Some(error);
                     }
                 }
                 cx.notify();
@@ -215,17 +228,17 @@ impl HiveApp {
                             match serde_json::from_value(value) {
                                 Ok(ticket) => this.remote.ticket = Some(ticket),
                                 Err(error) => {
-                                    this.remote.message = Some(format!("配对信息无法读取：{error}"))
+                                    this.remote.message = Some(Notice::TicketError(error.to_string()))
                                 }
                             }
                         } else {
                             this.remote.ticket = None;
                             this.remote.revoking = None;
-                            this.remote.message = Some("操作已提交，正在重新读取实际状态。".into());
+                            this.remote.message = Some(Notice::Submitted);
                         }
                     }
                     Err(error) => {
-                        this.remote.message = Some(format!("操作失败：{error}"));
+                        this.remote.message = Some(Notice::ActionError(error));
                     }
                 }
                 this.remote.valid = false;

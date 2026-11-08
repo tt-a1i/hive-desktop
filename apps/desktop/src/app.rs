@@ -143,7 +143,7 @@ pub struct HiveApp {
     pub notification_loaded: bool,
     pub notification_loading: bool,
     pub notification_generation: u64,
-    pub notification_message: Option<String>,
+    pub notification_message: Option<&'static str>,
     pub team_autostaff: Option<bool>,
     pub team_autostaff_loading: bool,
     pub team_autostaff_message: Option<String>,

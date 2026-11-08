@@ -30,3 +30,18 @@
 新语言功能未纳入current或候选ZIP；候选仍为d9e061b，SHA256 74c1b29371010de375e058460ecdd751a98e0f1539ffd7f8eb2858f1ac841935不变。实际Windows语言/输入和两个平台完整体验待验收。
 
 收据`.artifacts/language/receipt.json`明确区分偏好检查、启动证据和未观察的UI；日志native-startup-en.log。gate结束且lsof无引用、无自有probe/sidecar后，移除轻量fixture，保留两个旧owned进程21544/54534和其现场。.artifacts仍约3.8GiB。完整目标保持active，后续按#17原始全量要求继续迁移，不缩小到本批范围。
+
+
+## 远程、聊天与通知设置文案补齐
+
+第二批累计193条英文目录（本批新增79条）。已迁移远程页状态、登录命令说明、配对与安全短码确认、设备撤销、审计标题/结果、时间/倒计时/字节数等动态说明及全局待配对提示；同时迁移聊天发送快捷键页/输入提示、通知URL设置及其静态通知。
+
+异步提示不预先保存翻译结果：远程和聊天偏好用本模块的提示类型保存状态/原始错误，在render时决定语言；通知当前全部是应用拥有的静态提示，存为静态key并在render时翻译。因此旧提示随语言切换更新，不改后端或用户数据。设备名、ID、安全短码、复制的命令、审计action/endpoint/preview和原始诊断仍保留原值；只映射已知结果的显示标签，未知结果原样显示。中文/英文时间都由同一实际时间戳计算；配对倒计时按整秒向上取整，与Web一致，避免最后不足一秒时提前标成已过期。
+
+只改Rust界面和英语目录，未改PI审批、发送按键逻辑、通知URL字段、远程协议/守卫、原有配置文件格式或生产runtime。没有删除、修改或增加测试用例；沿用现有定向检查：
+
+- language::tests 1、composer::tests 1、settings::notification::tests 1，均通过。
+- Mac cargo check/build、现有LLVM PATH下Windows MSVC cargo check、git diff --check通过。
+- 真实Node后台notification-settings的HTTP/SQLite保存重开，以及remote-settings的配对、加密HTTP/PTY、UTF-8、坏流隔离、实时撤销和断网重开补发均通过。这是后台回归，不声称穿透了本批Rust按钮操作。
+
+未重复全量测试：本批为UI文案及提示表示迁移。当前原生工具仍明确报Mac锁屏；真实切换、旧提示刷新、草稿/输入法保留、英文长文排版及两个平台UI尚未验收。其他页面与动态/错误文案仍待按#17原始范围全面迁移，#17不关闭。新语言功能仍未纳入候选/current ZIP，也没有本轮重新打包。收据`.artifacts/language/settings-receipt.json`区分上述证据范围。
