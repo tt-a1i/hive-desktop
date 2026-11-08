@@ -44,6 +44,10 @@ enum FileSource {
         root: PathBuf,
         reported: String,
     },
+    Resource {
+        root: PathBuf,
+        reported: String,
+    },
     Attachment {
         runtime: Arc<crate::transport::Runtime>,
         item: crate::attachments::AttachmentRef,
@@ -52,7 +56,7 @@ enum FileSource {
 impl FileSource {
     async fn path(self) -> Result<PathBuf, String> {
         match self {
-            Self::Workspace { root, reported } => {
+            Self::Workspace { root, reported } | Self::Resource { root, reported } => {
                 smol::unblock(move || crate::artifacts::artifact_path(&root, &reported)).await
             }
             Self::Attachment { runtime, item } => {
@@ -72,7 +76,9 @@ impl FileSource {
     }
     fn label(&self) -> String {
         match self {
-            Self::Workspace { root, reported } => root.join(reported).display().to_string(),
+            Self::Workspace { root, reported } | Self::Resource { root, reported } => {
+                root.join(reported).display().to_string()
+            }
             Self::Attachment { item, .. } => {
                 format!("{} · {} · 上传副本", item.name, item.size_label())
             }
@@ -81,6 +87,7 @@ impl FileSource {
     fn description(&self) -> &'static str {
         match self {
             Self::Workspace { .. } => "只读预览 · 当前磁盘内容，不代表工具调用时的版本",
+            Self::Resource { .. } => "原生资源 · 当前磁盘内容；会话加载的版本可能不同",
             Self::Attachment { .. } => "只读预览 · Hive 保存的附件副本，独立于原始文件",
         }
     }
@@ -113,6 +120,38 @@ impl HiveApp {
             .unwrap_or(&reported)
             .to_owned();
         open_viewer(title, FileSource::Workspace { root, reported }, window, cx);
+    }
+    // Native catalog paths are explicitly chosen by the user and can be outside the workspace.
+    // Use the existing bounded reader; ordinary report previews retain their workspace boundary.
+    pub(crate) fn open_resource_preview(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let file = PathBuf::from(&path);
+        if !file.is_absolute()
+            || path.starts_with("//")
+            || path.starts_with(r"\\")
+            || path.chars().any(char::is_control)
+        {
+            return;
+        }
+        let (Some(parent), Some(name)) = (
+            file.parent(),
+            file.file_name().and_then(|name| name.to_str()),
+        ) else {
+            return;
+        };
+        open_viewer(
+            name.to_owned(),
+            FileSource::Resource {
+                root: parent.to_owned(),
+                reported: name.to_owned(),
+            },
+            window,
+            cx,
+        );
     }
     pub(crate) fn open_attachment_preview(
         &mut self,

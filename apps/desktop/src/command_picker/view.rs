@@ -40,6 +40,11 @@ impl HiveApp {
                             .child("原生命令"),
                     )
                     .child(
+                        Button::new("browse-session-resources").ghost().compact().label("浏览资源")
+                            .accessibility_label("浏览当前会话的技能、模板与扩展来源")
+                            .on_click(cx.listener(|this,_,window,cx|this.open_session_resources(window,cx))),
+                    )
+                    .child(
                         Button::new("refresh-native-commands")
                             .ghost()
                             .compact()

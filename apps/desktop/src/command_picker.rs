@@ -1,4 +1,5 @@
 mod view;
+mod resources;
 use crate::{app::HiveApp, protocol::Backend};
 use gpui_kit::{
     component::{

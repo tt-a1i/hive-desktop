@@ -53,6 +53,8 @@ pnpm --filter @hive-desktop/runtime check:team
 
 Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令处理，协作派单、汇报及恢复文本保持原有非交互投递。原始输入、实际后端消息及来源分开保留，见 [Pi 输入验证](docs/validation/2026-11-08-pi-user-input.md)。输入 `/` 或使用输入区命令按钮可筛选当前原生会话实际加载的技能、模板和扩展命令，选择只补入草稿，见 [命令选择验证](docs/validation/2026-11-08-pi-command-picker.md)。上述开发 ZIP 已纳入原生输入、选择器和历史/持久化修复；Windows 与正式发行边界单列。
 
+会话命令选择器的“浏览资源”可搜索实际加载技能、提示模板和扩展的完整说明，查看范围与来源文件，并保留参数补入草稿；验证及平台边界见 [会话资源](docs/validation/2026-11-09-session-resources.md)。
+
 会话菜单增加归档/恢复，默认导航与置顶隐藏归档，独立入口可搜索分页；历史、草稿和成员身份保留，实际新消息自动恢复。当前验证范围见 [会话归档](docs/validation/2026-11-08-session-archives.md)。
 
 回复期间可继续输入并排队补充消息，查看待处理原文和附件名；停止保留后续输入，暂停队列需显式继续，见 [排队输入验证](docs/validation/2026-11-08-queued-user-inputs.md)。
