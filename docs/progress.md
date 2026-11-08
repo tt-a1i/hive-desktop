@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 总验收与候选包（2026-11-09）
+
+确认当前UI验证被Mac锁屏阻断，已请求手动解锁；不将此前超时认作应用死锁。候选66ef8f9纳入清理/导出源码，108个runtime及29,970个未改条目匹配，包内Node/PTY/Hive/SQLite gate通过；current仍为1acd805，候选未推广，临时解压已清理，.artifacts约3.8GiB。按原目标审计，补列Web已有语言与远程配置两个原生遗漏项为#17/#18，不用现有功能缩小完整范围。见[验收总表](acceptance-status.md)。
+
 ## Pi认证与窗口现场复核（2026-11-09）
 
 Pi认证记录存在且没有models.json自定义OpenAI覆盖，但实际Terra图片请求仍在原生OAuth刷新时返回400 invalid_grant；错误与原消息先保留，检查显式abort后清理，零工具。已请求重登。导出对照窗口可读到控件树，但点击后捕捉/布局仍异常，用户窗口状态反馈待补；未据此假定应用死锁或添加生产兜底。两个owned进程现场保留，没有重复依赖树。详见[图片复核](validation/2026-11-09-codex-image-live.md#pi-原生认证复核2026-11-09)及[窗口复核](validation/2026-11-09-conversation-export.md#后续窗口复核2026-11-09)。
