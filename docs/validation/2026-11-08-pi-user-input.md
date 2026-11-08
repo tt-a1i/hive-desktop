@@ -1,6 +1,6 @@
 # Pi 原生输入、来源与确认
 
-日期：2026-11-08。对应 [#3](https://github.com/tt-a1i/hive-desktop/issues/3)，当前为调用语义修复，命令目录/选择 UI 尚未实现，票据保持开放。
+日期：2026-11-08。对应 [#3](https://github.com/tt-a1i/hive-desktop/issues/3)，当前为调用语义修复，命令目录/选择 UI 后续已实现并有独立 [验证记录](2026-11-08-pi-command-picker.md)；故障注入和平台验收未齐，票据保持开放。
 
 ## 实际行为
 
@@ -37,4 +37,4 @@ Hive 附加提醒及文件引用独立保存为隐藏应用上下文，原始用
 
 初始外部 Pi 对照没有实际加载项目资源；同一 agentDir 不代表 SDK 与 CLI 的项目信任策略相同。新检查只在自建 agentDir 设 defaultProjectTrust=always，让自建 Skill/模板实际加载。生产不改变用户配置、不绕过外部 CLI 信任策略，也不增加内置 Pi 审批。旧实验的校准见 [原始调研](../research/2026-11-08-pi-command-parity.md)。
 
-仍未验证/交付：本会话原生命令目录与选择 UI、持久化失败的定向故障注入、compaction 后来源映射的专项检查、Windows 原生体验及正式签名安装。最新 Mac 开发 ZIP 仍为中断清理版本，不包含本次修改。上述本地协议成功不作为真实 Terra 推理质量或 Claude 账号可用性的证明。
+后续已实现本会话原生命令目录与选择 UI，见独立验证页。仍未验证/交付：持久化失败的定向故障注入、compaction 后来源映射的专项检查、Windows 原生体验及正式签名安装。最新 Mac 开发 ZIP 仍为中断清理版本，不包含本次修改。上述本地协议成功不作为真实 Terra 推理质量或 Claude 账号可用性的证明。

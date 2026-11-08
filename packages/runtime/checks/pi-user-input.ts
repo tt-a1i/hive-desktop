@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -72,6 +72,14 @@ try {
   for (const backend of ['pi', 'pi-rpc'] as const) {
     const chat = await runtime.chats.create(workspace.id, backend);
     await runtime.chats.setModel(chat.id, 'native-input', 'gpt-6.1-terra');
+    const catalog = await runtime.chats.commands(chat.id);
+    for (const [name, source, path] of [['skill:native-input', 'skill', '.pi/skills/native-input/SKILL.md'], ['native-template', 'prompt', '.pi/prompts/native-template.md'], ['local-input', 'extension', '.pi/extensions/native-input.ts']] as const) {
+      const entry = catalog.commands.find(command => command.name === name);
+      assert.ok(entry, `Native ${backend} catalogue must expose loaded ${name}`);
+      assert.equal(entry.source, source);
+      assert.equal(await realpath(entry.sourceInfo.path), await realpath(join(project, path)));
+    }
+    assert.equal(catalog.commands.some(command => command.name.startsWith('hive-desktop-')), false, 'Private transport command is not a user command');
     const attachment = await runtime.chats.attachments.addClipboard(workspace.id, image);
     for (const [name, text, token, local] of [
       ['skill', '/skill:native-input skill-argument', skill, false],
@@ -149,10 +157,22 @@ try {
     assert.equal(after.pending, 0);
     assert.equal(after.completedDeliveryIds.includes(row.presentation.deliveryId), false);
   }
+  const otherProject = join(directory, 'other-project');
+  await mkdir(otherProject);
+  const otherWorkspace = await runtime.hive.request('POST', '/api/workspaces', { path: otherProject, name: 'No project commands', autostart_orchestrator: false }) as {id:string};
+  for (const backend of ['pi', 'pi-rpc'] as const) {
+    const other = await runtime.chats.create(otherWorkspace.id, backend);
+    const catalog = await runtime.chats.commands(other.id);
+    assert.equal(catalog.commands.some(command => ['skill:native-input','native-template','local-input'].includes(command.name)), false, 'Another workspace must not inherit the first project command catalogue');
+  }
   await runtime.close();
   runtime = await createDesktopRuntime(join(directory, 'state'), () => {}, options);
   for (const record of saved) {
     const state = await runtime.chats.open(record.chatId);
+    if (record.text.startsWith('/skill:')) {
+      const catalog = await runtime.chats.commands(record.chatId);
+      assert.ok(catalog.commands.some(command => command.name === 'skill:native-input'));
+    }
     const index = state.historyMessageIds.indexOf(record.snapshotId);
     assert.ok(index >= 0, 'Native/application input ID must survive cold runtime restart');
     const row = state.history[index] as any;

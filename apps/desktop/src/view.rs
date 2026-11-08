@@ -603,7 +603,7 @@ impl Render for HiveApp {
                         .child(self.session.as_ref().map(|s| s.backend.label()).unwrap_or("Hive")))
                     .when(self.status != "后台已连接" || running, |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
                         .child(if running { "正在回复…".to_string() } else { self.status.clone() })))))
-                .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
+                .child(v_flex().relative().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
                 .when(self.usage.visible,|view|view.child(self.render_usage(running,cx)))
                 .child(self.render_session_failure(running,cx))
@@ -627,13 +627,15 @@ impl Render for HiveApp {
                 }))))
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child("选择本地项目文件夹，开始与 Agent 协作。")))
 
+                .when(self.command_picker.open, |view| view.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window().offset(point(px(11.),px(-8.))).child(self.render_commands(window,cx))).with_priority(1)))
                 .child(self.render_input_attachments(cx))
-                .when(self.workspace.is_some(), |v| v.child(div().capture_action(cx.listener(Self::composer_enter)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息").on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) }))))
+                .when(self.workspace.is_some(), |v| v.child(div().capture_action(cx.listener(Self::composer_enter)).capture_action(cx.listener(Self::command_up)).capture_action(cx.listener(Self::command_down)).capture_action(cx.listener(Self::command_escape)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label("聊天消息").on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) }))))
                 .child(h_flex().min_w_0().gap_2().items_center()
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
                         self.new_chat_menu("home-agent", "选择 Agent", None, cx).into_any_element()
                     } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
                     .child(Button::new("attach-images").ghost().compact().icon(Glyph::Plus).label("附件").accessibility_label("添加文件或图片").disabled(!self.connected || self.workspace.is_none() || self.loading || running || !self.attachments.ready(self.draft_target.as_ref())).on_click(cx.listener(|this,_,_,cx|this.choose_images(cx))))
+                    .when(self.pi_commands_available(), |row|row.child(self.command_button(cx)))
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(self.model_picker(window, running, cx)))
                     .when(self.session.is_some(), |row|row.child(self.render_reasoning_picker(running,cx)))

@@ -83,6 +83,13 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !action.secondary && !action.shift && self.command_picker.open {
+            if self.accept_selected_command(window, cx) {
+                cx.stop_propagation();
+                return;
+            }
+            self.command_picker.open = false;
+        }
         // Capture only the composer's modified Enter, before the text component
         // would insert a newline in ModifierEnter mode. Other fields keep their keys.
         if action.secondary && !action.shift {

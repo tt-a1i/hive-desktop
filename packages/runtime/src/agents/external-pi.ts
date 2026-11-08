@@ -236,6 +236,11 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     currentModel: () => state?.model && ({ provider: state.model.provider, id: state.model.id, name: state.model.name }),
     listModels: () => models.map(model => ({ provider: model.provider, id: model.id, name: model.name, available: true })),
     async usage(){ensureOpen();return piUsage(await transport.request("get_session_stats"),"外部 Pi 原生会话");},
+    async commands() {
+      ensureOpen();
+      const result = await transport.request<{commands: import('./types.js').NativeCommand[]}>('get_commands');
+      return result.commands.filter(command => command.name !== transport.bridgeCommand);
+    },
     reasoning,
     async setReasoning(level) {
       ensureOpen();

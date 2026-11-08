@@ -40,6 +40,8 @@ export interface PiSessionOptions {
   customTools?: ToolDefinition[];
 }
 
+export interface NativeCommand { name: string; description?: string; source: 'extension' | 'prompt' | 'skill'; sourceInfo: import('@earendil-works/pi-coding-agent').SourceInfo }
+
 export interface ReasoningState { level: string; levels: string[]; description?: string }
 
 export interface PiSessionHandle {
@@ -61,6 +63,7 @@ export interface PiSessionHandle {
   listModels(): { provider: string; id: string; name: string; available: boolean }[];
   setModel(provider: string, id: string): Promise<void>;
   usage?(): import("../agent-usage.js").UsageSnapshot | Promise<import("../agent-usage.js").UsageSnapshot>;
+  commands?(): NativeCommand[] | Promise<NativeCommand[]>;
   reasoning?(): ReasoningState | Promise<ReasoningState>;
   setReasoning?(level: string): ReasoningState | Promise<ReasoningState>;
 }

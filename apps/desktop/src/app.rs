@@ -197,6 +197,7 @@ pub struct HiveApp {
     pub pending_events: Vec<PiEvent>,
     pub choosing_model: bool,
     pub usage: crate::usage::Usage,
+    pub command_picker: crate::command_picker::CommandPicker,
     pub reasoning_picker: crate::reasoning_picker::ReasoningPicker,
     pub closing: bool,
     pub restarting: bool,
@@ -340,6 +341,7 @@ impl HiveApp {
                 }
                 InputEvent::Change => {
                     this.schedule_draft_save(cx);
+                    this.composer_commands_changed(cx);
                     let has_text = !input.read(cx).value().trim().is_empty();
                     if this.composer_has_text != has_text {
                         cx.notify();
@@ -480,6 +482,7 @@ impl HiveApp {
             choosing_model: false,
             usage: Default::default(),
             reasoning_picker: Default::default(),
+            command_picker: Default::default(),
             closing: false,
             restarting: false,
             backend_initialized: false,

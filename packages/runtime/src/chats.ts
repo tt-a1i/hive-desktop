@@ -518,6 +518,12 @@ export class Chats implements StructuredSessionPort {
       return chat.handle.listModels();
     });
   }
+  async commands(id: string) {
+    const record = this.index.get(id);
+    this.assertWorkspaceAvailable(record.workspaceId);
+    const chat = await this.require(id);
+    return {supported: !!chat.handle.commands, commands: chat.handle.commands ? await chat.handle.commands() : []};
+  }
   async usage(id:string) {
     const record=this.index.get(id);this.assertWorkspaceAvailable(record.workspaceId);
     const chat=await this.require(id);

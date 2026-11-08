@@ -51,7 +51,7 @@ pnpm --filter @hive-desktop/runtime check:team
 
 当前 Mac 开发包及其验证边界见 [中断清理开发包](docs/validation/2026-11-08-codex-interrupt-rejection.md#已更新的开发包)。普通文件草稿使用紧凑文件行，草稿和历史中的文本附件可直接只读预览、复制、重新读取，见 [附件阅读](docs/validation/2026-11-08-attachment-preview.md)。普通文件和图片可选择/粘贴文件/拖放、混合或单独发送，并保留草稿和历史；普通文件通过 Hive 上传副本路径交给 Agent 按需读取。原始 Codex Terra 已实际读取删除源文件后的副本，并在桌面恢复工具记录和文件卡片，见 [文件验证](docs/validation/2026-11-08-file-attachments.md)。图片的原图查看、复制/保存已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。真实 Terra 识图本轮因 OpenAI OAuth grant 失效未通过，系统保存对话框、长图片历史性能和 Windows 原生体验仍待验收，见 [图片输入验证](docs/validation/2026-11-08-image-input.md)。
 
-Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令处理，协作派单、汇报及恢复文本保持原有非交互投递。原始输入、实际后端消息及来源分开保留，见 [Pi 输入验证](docs/validation/2026-11-08-pi-user-input.md)。命令目录/选择 UI 仍待实现，本次源码尚未纳入上述开发 ZIP。
+Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令处理，协作派单、汇报及恢复文本保持原有非交互投递。原始输入、实际后端消息及来源分开保留，见 [Pi 输入验证](docs/validation/2026-11-08-pi-user-input.md)。输入 `/` 或使用输入区命令按钮可筛选当前原生会话实际加载的技能、模板和扩展命令，选择只补入草稿，见 [命令选择验证](docs/validation/2026-11-08-pi-command-picker.md)。本次源码尚未纳入上述开发 ZIP。
 
 会话菜单增加归档/恢复，默认导航与置顶隐藏归档，独立入口可搜索分页；历史、草稿和成员身份保留，实际新消息自动恢复。当前验证范围见 [会话归档](docs/validation/2026-11-08-session-archives.md)。
 

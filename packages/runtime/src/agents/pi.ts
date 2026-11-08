@@ -305,6 +305,11 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
         name: model.name, available: available.has(`${model.provider}\0${model.id}`) }));
     },
     usage: () => piUsage(session.getSessionStats(),"内置 Pi 原生会话"),
+    commands: () => [
+      ...session.extensionRunner.getRegisteredCommands().map(command => ({ name: command.invocationName, ...(command.description !== undefined && {description: command.description}), source: 'extension' as const, sourceInfo: command.sourceInfo })),
+      ...session.promptTemplates.map(template => ({name: template.name, description: template.description, source: 'prompt' as const, sourceInfo: template.sourceInfo})),
+      ...session.resourceLoader.getSkills().skills.map(skill => ({name: `skill:${skill.name}`, description: skill.description, source: 'skill' as const, sourceInfo: skill.sourceInfo})),
+    ],
     reasoning: () => ({ level: session.thinkingLevel, levels: !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [] }),
     setReasoning(level) {
       if (disposed) throw new Error('Pi session is disposed');
