@@ -360,3 +360,8 @@ Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限�
 ## 2026-11-09 远程配置候选包补验
 
 fresh frozen deploy更新Hive依赖后重新制作Mac候选ZIP（生产源码d9e061b），独立解压核对112个runtime文件和28,863个包内条目。包内PTY/HTTP/SQLite/关闭、真实回环加密配对/配置边界/坏帧恢复/撤销重开补发、实际原生启动项目及会话选择恢复通过；旧设置包被新gate拒绝。原生启动probe采用SIGTERM清理，不冒认正常退出。CUA仍报锁屏，完整点击和真实网关/Windows未验收，current未推广。移除无引用的部署与解压副本，仅留一个新候选和证据，.artifacts保持约3.8GiB。见[包内记录](validation/2026-11-09-remote-settings.md#mac候选包补验)。
+
+
+## 2026-11-09 加密终端与撤销补验
+
+对同一原生远程链路补真实PTY IO/control：远程shell执行与返回结果、二进制中文/emoji落盘、坏WS流重置后其他HTTP/IO继续、设备撤销活跃流Reset及旧密钥后续输入拒绝均通过。Node26、Node22和未改候选ZIP包内均通过，没有生产代码变化或新ZIP。首轮回显被误当执行完成导致ENOENT，改为独立输出行+文件实证，未加产品兜底。移除无引用的解压副本，保持3.8GiB；Windows/实体手机/原生UI和长流量重连继续开放。见[终端补验](validation/2026-11-09-remote-settings.md#加密终端与实时撤销补验)。

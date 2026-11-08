@@ -25,7 +25,7 @@
 
 本轮fresh frozen deploy并重新打包，独立解压核对112个runtime文件、28,863个包内条目及29个内部链接。包内Node的PTY/HTTP/SQLite和关闭、完整远程回环配对/SAS与加密配置边界、坏帧恢复和撤销503/重开补发通过；实际原生程序启动与已删除会话选择恢复也通过。脚本SIGTERM清理自有启动probe，不视作正常用户退出。详见[包内记录](validation/2026-11-09-remote-settings.md#mac候选包补验)。
 
-current ZIP哈希f7174572fb16248b3a3f40e467a1322951a9ac4a26bd5c728ce0e52aceb57cf6未变，候选没有推广。gate退出且lsof无引用后删除本轮部署/整包/解压副本；只保留一个新候选ZIP和证据，.artifacts约3.8GiB。旧66ef8f9候选由此替换，旧收据留在`.artifacts/remote-settings/superseded-candidate-receipt.json`；当前收据在`.artifacts/current-package/candidate-receipt.json`及`.artifacts/remote-settings/receipt.json`。CUA界面走查、真实网关和Windows仍未通过。
+current ZIP哈希f7174572fb16248b3a3f40e467a1322951a9ac4a26bd5c728ce0e52aceb57cf6未变，候选没有推广。gate退出且lsof无引用后删除本轮部署/整包/解压副本；只保留一个新候选ZIP和证据，.artifacts约3.8GiB。旧66ef8f9候选由此替换，旧收据留在`.artifacts/remote-settings/superseded-candidate-receipt.json`；当前收据在`.artifacts/current-package/candidate-receipt.json`及`.artifacts/remote-settings/receipt.json`。同一原ZIP另通过真实加密PTY输入/输出、二进制UTF-8、坏WS流隔离及活跃设备撤销；[范围](validation/2026-11-09-remote-settings.md#加密终端与实时撤销补验)明确为macOS回环对端。CUA界面走查、真实网关和Windows仍未通过。
 
 ## 当前阻断与仍可推进的工作
 

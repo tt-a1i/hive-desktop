@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, access, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -148,6 +148,21 @@ try {
   }
   sendEncrypted(protocol.FrameKind.Data, 0, protocol.encodeHello({ ...ids, role: 'device' }));
   let nextStream = 1;
+  const received = new Map<number, { kind: number; payload: Uint8Array }[]>();
+  function drain(stream: number) {
+    for (const frame of binaryFrames.splice(0)) {
+      const headerBytes = frame.subarray(0, protocol.HEADER_BYTES);
+      const header = protocol.decodeHeader(headerBytes);
+      if (header.streamId === protocol.CONN_SALT_STREAM_ID) continue;
+      const payload = cryptoPeer.openNext(opener, { key: keys.d2p, streamId: header.streamId, headerBytes, ciphertext: frame.subarray(protocol.HEADER_BYTES), seq: header.seq });
+      const queue = received.get(header.streamId) ?? [];
+      queue.push({ kind: header.kind, payload });
+      received.set(header.streamId, queue);
+    }
+    const queue = received.get(stream) ?? [];
+    received.delete(stream);
+    return queue;
+  }
   async function encryptedHttp(method: string, path: string, body?: unknown, malformed = false) {
     const stream = nextStream;
     nextStream += 2;
@@ -162,24 +177,19 @@ try {
     const parts: Uint8Array[] = [];
     let ended = false;
     await waitFor(() => {
-      for (const frame of binaryFrames.splice(0)) {
-        const headerBytes = frame.subarray(0, protocol.HEADER_BYTES);
-        const header = protocol.decodeHeader(headerBytes);
-        if (header.streamId === protocol.CONN_SALT_STREAM_ID) continue;
-        const plaintext = cryptoPeer.openNext(opener, { key: keys.d2p, streamId: header.streamId, headerBytes, ciphertext: frame.subarray(protocol.HEADER_BYTES), seq: header.seq });
-        if (header.streamId !== stream) continue;
-        if (header.kind === protocol.FrameKind.Reset) {
+      for (const frame of drain(stream)) {
+        if (frame.kind === protocol.FrameKind.Reset) {
           assert.ok(malformed, 'Real tunnel rejected a valid test stream');
-          resetCode = protocol.decodeResetPayload(plaintext);
+          resetCode = protocol.decodeResetPayload(frame.payload);
           ended = true;
           continue;
         }
-        if (header.kind === protocol.FrameKind.Data) {
-          const part = protocol.decodeHttpData(plaintext);
+        if (frame.kind === protocol.FrameKind.Data) {
+          const part = protocol.decodeHttpData(frame.payload);
           if (part.kind === 'head') statusCode = part.head.status;
           else parts.push(part.data);
         }
-        if (header.kind === protocol.FrameKind.End) ended = true;
+        if (frame.kind === protocol.FrameKind.End) ended = true;
       }
       return ended;
     });
@@ -199,7 +209,91 @@ try {
     const deniedWrite = await encryptedHttp('PUT', `/api/settings/app-state/${key}`, { value: 'forbidden' });
     assert.equal(deniedWrite.status, 403);
   }
+  assert.equal((await encryptedHttp('PUT', '/api/remote/enabled', { enabled: true })).status, 403);
+  let terminal: { stream: number; marker: string; runId: string; workspaceId: string } | undefined;
+  if (process.platform !== 'win32') {
+    const project = join(root, 'terminal-project');
+    await mkdir(project);
+    const workspace = await host.request('POST', '/api/workspaces', { path: project, name: 'Owned remote terminal', autostart_orchestrator: false }) as { id: string };
+    const shell = await host.request('POST', `/api/workspaces/${workspace.id}/shell/start`) as { run_id: string };
+    const client = crypto.randomUUID();
+    function openWs(channel: string) {
+      const stream = nextStream;
+      nextStream += 2;
+      sendEncrypted(protocol.FrameKind.Open, stream, protocol.encodeOpenPayload({ transport: protocol.StreamTransport.Ws, ws: { path: `/ws/terminal/${shell.run_id}/${channel}`, query: [['clientId', client], ['cols', '120'], ['rows', '40']] } }));
+      return stream;
+    }
+    const io = openWs('io');
+    const control = openWs('control');
+    let restored = false;
+    await waitFor(() => {
+      for (const frame of drain(control)) {
+        assert.notEqual(frame.kind, protocol.FrameKind.Reset);
+        if (frame.kind === protocol.FrameKind.Data) {
+          const message = protocol.decodeWsMessage(frame.payload);
+          if (JSON.parse(Buffer.from(message.data).toString()).type === 'restore') restored = true;
+        }
+      }
+      return restored;
+    });
+    const sendWs = (stream: number, text: string) => sendEncrypted(protocol.FrameKind.Data, stream, protocol.encodeWsMessage(new TextEncoder().encode(text), true));
+    sendWs(control, JSON.stringify({ type: 'restore_complete' }));
+    const quote = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
+    const marker = join(project, 'remote-input.txt');
+    const value = `REMOTE_EXEC_${crypto.randomUUID()}`;
+    sendWs(io, `stty -echo; printf %s ${quote(value)} > ${quote(marker)}; printf '\\n%s\\n' ${quote(value)}\n`);
+    let output = '';
+    async function waitOutput(expected: string) {
+      await waitFor(() => {
+        for (const frame of drain(io)) {
+          assert.notEqual(frame.kind, protocol.FrameKind.Reset);
+          if (frame.kind === protocol.FrameKind.Data) output += Buffer.from(protocol.decodeWsMessage(frame.payload).data).toString();
+        }
+        return output.split(/\r?\n/).includes(expected);
+      });
+    }
+    await waitOutput(value);
+    assert.equal(await readFile(marker, 'utf8'), value);
+    const unicode = `中文 🐝 ${crypto.randomUUID()}`;
+    const binarySignal = `BINARY_UTF8_${crypto.randomUUID()}`;
+    const binaryInput = new TextEncoder().encode(`printf %s ${quote(unicode)} > ${quote(marker)}; printf '\\n%s\\n' ${quote(binarySignal)}\n`);
+    sendEncrypted(protocol.FrameKind.Data, io, protocol.encodeWsMessage(binaryInput, false));
+    await waitOutput(binarySignal);
+    assert.equal(await readFile(marker, 'utf8'), unicode);
+    // A bad WS envelope must reset only its control stream, not the live PTY
+    // or the device's other HTTP and IO streams on the same encrypted channel.
+    sendEncrypted(protocol.FrameKind.Data, control, new Uint8Array([255]));
+    let reset: number | undefined;
+    await waitFor(() => {
+      for (const frame of drain(control)) if (frame.kind === protocol.FrameKind.Reset) reset = protocol.decodeResetPayload(frame.payload);
+      return reset !== undefined;
+    });
+    assert.equal(reset, protocol.ResetCode.ProtocolError);
+    assert.equal((await encryptedHttp('GET', '/api/remote/devices')).status, 200);
+    const after = `AFTER_BAD_WS_${crypto.randomUUID()}`;
+    sendWs(io, `printf %s ${quote(after)} > ${quote(marker)}; printf '\\n%s\\n' ${quote(after)}\n`);
+    await waitOutput(after);
+    assert.equal(await readFile(marker, 'utf8'), after);
+    terminal = { stream: io, marker, runId: shell.run_id, workspaceId: workspace.id };
+  } else {
+    console.error('Encrypted POSIX terminal probe not executed on Windows; Windows native terminal acceptance remains open.');
+  }
   await host.request('POST', `/api/remote/devices/${ack.deviceId}/revoke`, {});
+  if (terminal) {
+    let revoked = false;
+    await waitFor(() => {
+      for (const frame of drain(terminal!.stream)) if (frame.kind === protocol.FrameKind.Reset) revoked = true;
+      return revoked;
+    });
+    const before = await readFile(terminal.marker, 'utf8');
+    const rejects = async () => ((await host!.request('GET', '/api/remote/audit')) as { action: string; reject_reason: string }[]).filter(row => row.action === 'reject' && ['open_failed', 'no_session'].includes(row.reject_reason)).length;
+    const count = await rejects();
+    sendEncrypted(protocol.FrameKind.Data, terminal.stream, protocol.encodeWsMessage(new TextEncoder().encode(`printf REVOKED > '${terminal.marker}'\n`), true));
+    await waitFor(async () => await rejects() > count);
+    assert.equal(await readFile(terminal.marker, 'utf8'), before);
+    await host.request('DELETE', `/api/workspaces/${terminal.workspaceId}/shell/${terminal.runId}`);
+    console.error('Encrypted POSIX PTY passed: executed input/output, binary UTF-8, malformed WS stream isolation, live-stream revocation and rejected post-revoke input.');
+  }
   devices = await host.request('GET', '/api/remote/devices') as typeof devices;
   assert.deepEqual(devices, []);
   await waitFor(() => confirmations.some(body => body.deviceId === ack.deviceId && !body.boundJti));

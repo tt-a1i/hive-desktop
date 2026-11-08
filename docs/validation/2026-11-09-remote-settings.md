@@ -60,3 +60,20 @@ npm最新仍为2.2.1；其实际发布文件缺少本地Hive 5d87d4ba10d9d66cfca
 candidate已用新依赖包替换旧66ef8f9候选，旧收据另存`.artifacts/remote-settings/superseded-candidate-receipt.json`。current ZIP仍为1acd805，SHA256 f7174572fb16248b3a3f40e467a1322951a9ac4a26bd5c728ce0e52aceb57cf6不变；没有推广为current。所有gate句柄均已确认exit0，lsof无引用后移除本轮部署、中间整包和解压副本，只留一个候选ZIP及证据；.artifacts仍约3.8GiB。原owned进程21544、54534保留。收据/清单/日志在`.artifacts/remote-settings/`，当前候选收据同步到`.artifacts/current-package/candidate-receipt.json`。
 
 本轮只添加包内行为检查及文档，没有修改生产逻辑或删除既有测试。实际运行上述风险对应gate及`node --check scripts/check-packaged-remote.mjs`、`git diff --check`；未重复全量测试，未声称Mac交互、Windows或完整发行通过。
+
+
+## 加密终端与实时撤销补验
+
+生产代码和候选ZIP未变（仍为d9e061b，ZIP SHA256 74c1b29371010de375e058460ecdd751a98e0f1539ffd7f8eb2858f1ac841935）。扩展同一个真实remote-settings检查，用原有加密连接建立终端IO/control两个WebSocket流、真实Hive工作区和原生PTY：
+
+- 收到真实终端restore，输入shell命令写自有临时文件并返回完整结果行；读取文件确认执行，不能只凭终端回显判成功。
+- 二进制WS输入带中文和emoji，落盘UTF-8内容逐字相等，返回独立执行完成标记。
+- 向control发送非法WS envelope，收到ProtocolError Reset；同一设备连接的HTTP请求仍200，原IO仍可再次执行并改写文件，说明只销毁故障流。
+- 通过原有HTTP撤销设备，活跃IO收到Reset；用旧连接密钥再送输入后，观察到真实拒绝审计且原文件未变，随后显式停止自有shell。
+- 远程设备即使已连接，调用PUT remote/enabled=true仍403。
+
+测试对端增加按stream分发的接收队列，避免等待HTTP时丢弃终端帧。首轮曾将命令回显中的标记当作执行完成，立即读文件得到ENOENT；改为必须出现独立完整输出行并核对文件，没有改生产代码或加等待兜底。此后Node26、Node22及原ZIP再次解压后的包内Node检查全部exit0。
+
+本轮只改`packages/runtime/checks/remote-settings.ts`及证据文档；复用现有`check-packaged-remote.mjs`绑定原ZIP。没有再次制作ZIP，没有模型或生产网关请求。Windows分支明确不运行POSIX shell语法，不据此声称Windows终端验收。并发多设备、完整手机浏览器流程和终端长流量/重连仍未由本轮证明。
+
+收据为`.artifacts/remote-settings/terminal-receipt.json`，包内日志`terminal-packaged.log`；在gate确认exit0、lsof无打开文件后删掉本次解压副本，.artifacts仍约3.8GiB。当前候选收据增加明确范围的encryptedTerminalVerified，current未推广，#18继续开放。未跑全量测试：生产代码未变，运行的是真实链路检查及包内同一检查，外加`git diff --check`；未删改已有其他测试。
