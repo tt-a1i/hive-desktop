@@ -23,6 +23,13 @@ enum SaveOutcome {
     },
 }
 
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SavedTaskDraft {
+    pub input: String,
+    pub base: String,
+    pub conflicting_content: Option<String>,
+}
+
 pub(crate) struct TaskDraft {
     input: Entity<TextareaState>,
     base: String,
@@ -40,29 +47,93 @@ impl HiveApp {
             .is_some_and(|draft| draft.saving)
     }
 
-    fn edit_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn task_draft_snapshots(
+        &self,
+        cx: &App,
+    ) -> std::collections::HashMap<String, SavedTaskDraft> {
+        let mut saved = self.collaboration.recovered_task_drafts.clone();
+        for (id, draft) in &self.collaboration.task_drafts {
+            saved.insert(
+                id.clone(),
+                SavedTaskDraft {
+                    input: draft.input.read(cx).value().to_string(),
+                    base: draft.base.clone(),
+                    conflicting_content: draft.conflicting_content.as_ref().map(|s| s.to_string()),
+                },
+            );
+        }
+        saved
+    }
+
+    pub(crate) fn restore_task_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.collaboration.visible {
+            return;
+        }
         let Some(workspace) = self.workspace.clone() else {
             return;
         };
-        let base = self.collaboration.task_text.clone();
+        if self.collaboration.task_drafts.contains_key(&workspace) {
+            return;
+        }
+        if let Some(saved) = self.collaboration.recovered_task_drafts.remove(&workspace) {
+            self.create_task_editor(workspace, saved, window, cx);
+        }
+    }
+
+    fn create_task_editor(
+        &mut self,
+        workspace: String,
+        saved: SavedTaskDraft,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let input = cx.new(|cx| {
             let mut input = TextareaState::new(window, cx)
                 .auto_grow(8, 22)
                 .placeholder("使用 Markdown 编写任务文档…");
-            input.set_value(base.clone(), window, cx);
+            input.set_value(saved.input, window, cx);
             input
         });
+        cx.subscribe(
+            &input,
+            |this, _, event: &gpui_kit::component::input::InputEvent, cx| {
+                if matches!(event, gpui_kit::component::input::InputEvent::Change) {
+                    this.schedule_draft_save(cx);
+                }
+            },
+        )
+        .detach();
+        self.collaboration.task_generation += 1;
+        self.collaboration.task_loading = false;
         self.collaboration.task_drafts.insert(
             workspace,
             TaskDraft {
                 input,
-                base,
-                conflicting_content: None,
+                base: saved.base,
+                conflicting_content: saved.conflicting_content.map(Into::into),
                 saving: false,
                 operation: 0,
                 error: None,
             },
         );
+    }
+
+    fn edit_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.clone() else {
+            return;
+        };
+        let base = self.collaboration.task_text.clone();
+        self.create_task_editor(
+            workspace,
+            SavedTaskDraft {
+                input: base.clone(),
+                base,
+                conflicting_content: None,
+            },
+            window,
+            cx,
+        );
+        self.schedule_draft_save(cx);
         cx.notify();
     }
 
@@ -70,8 +141,17 @@ impl HiveApp {
         if self.tasks_saving() {
             return;
         }
-        if let Some(workspace) = &self.workspace {
-            self.collaboration.task_drafts.remove(workspace);
+        let Some(workspace) = self.workspace.clone() else {
+            return;
+        };
+        let removed = self.collaboration.task_drafts.remove(&workspace);
+        if let Err(error) = self.flush_drafts(cx) {
+            if let Some(mut draft) = removed {
+                draft.error = Some(format!("无法清理本地草稿，改动仍保留：{error}"));
+                self.collaboration.task_drafts.insert(workspace, draft);
+            }
+            cx.notify();
+            return;
         }
         self.load_tasks(cx);
         cx.notify();
@@ -85,6 +165,13 @@ impl HiveApp {
         else {
             return;
         };
+        if let Err(error) = self.flush_drafts(cx) {
+            if let Some(draft) = self.collaboration.task_drafts.get_mut(&workspace) {
+                draft.error = Some(format!("无法保存本地草稿，任务文档尚未更新：{error}"));
+            }
+            cx.notify();
+            return;
+        }
         let Some(draft) = self.collaboration.task_drafts.get_mut(&workspace) else {
             return;
         };
@@ -150,6 +237,11 @@ impl HiveApp {
                             draft.error = Some(error);
                         }
                     }
+                }
+                if let Err(error) = this.flush_drafts(cx) {
+                    this.error = Some(format!(
+                        "任务保存结果已返回，但本地草稿未能同步；请重试退出或复制内容：{error}"
+                    ));
                 }
                 cx.notify();
             });
@@ -241,6 +333,12 @@ impl HiveApp {
                     )
                     .child(div().text_sm().child("你的草稿 · 对照上方版本编辑后保存"))
                 })
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
+                        .child("草稿保留在本机；点击“保存任务”后才会更新团队文档。"),
+                )
                 .child(
                     Textarea::new(&draft.input)
                         .aria_label("任务文档 Markdown")

@@ -305,6 +305,7 @@ impl HiveApp {
         self.expanded_projects.remove(workspace);
         self.project_sessions.remove(workspace);
         self.collaboration.task_drafts.remove(workspace);
+        self.collaboration.recovered_task_drafts.remove(workspace);
         self.forget_workspace_memory(workspace);
         if self.workspace.as_deref() == Some(workspace) {
             self.close_memory();

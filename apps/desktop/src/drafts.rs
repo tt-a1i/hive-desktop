@@ -17,12 +17,15 @@ struct Draft {
     failed: Vec<String>,
     #[serde(default)]
     attachments: Vec<crate::attachments::AttachmentRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task: Option<crate::collaboration::SavedTaskDraft>,
 }
 
 impl Draft {
     fn filename(&self) -> io::Result<String> {
         let (scope, id) = self.key.split_once(':').unwrap_or_default();
-        if !matches!(scope, "session" | "workspace")
+        if !matches!(scope, "session" | "workspace" | "tasks")
+            || (scope == "tasks") != self.task.is_some()
             || id.is_empty()
             || !id
                 .bytes()
@@ -66,6 +69,7 @@ impl DraftStore {
         inputs: &HashMap<String, String>,
         failed: &HashMap<String, Vec<String>>,
         images: &HashMap<String, Vec<crate::attachments::AttachmentRef>>,
+        tasks: &HashMap<String, crate::collaboration::SavedTaskDraft>,
     ) -> io::Result<()> {
         let mut next = HashMap::new();
         for (key, text) in inputs.iter().filter(|(_, text)| !text.is_empty()) {
@@ -76,6 +80,7 @@ impl DraftStore {
                     input: text.clone(),
                     failed: Vec::new(),
                     attachments: Vec::new(),
+                    task: None,
                 },
             );
         }
@@ -87,6 +92,7 @@ impl DraftStore {
                     input: String::new(),
                     failed: Vec::new(),
                     attachments: Vec::new(),
+                    task: None,
                 })
                 .failed
                 .clone_from(messages);
@@ -98,9 +104,23 @@ impl DraftStore {
                     input: String::new(),
                     failed: Vec::new(),
                     attachments: Vec::new(),
+                    task: None,
                 })
                 .attachments
                 .clone_from(items);
+        }
+        for (id, task) in tasks {
+            let key = format!("tasks:{id}");
+            next.insert(
+                key.clone(),
+                Draft {
+                    key,
+                    input: String::new(),
+                    failed: Vec::new(),
+                    attachments: Vec::new(),
+                    task: Some(task.clone()),
+                },
+            );
         }
         for (key, draft) in &next {
             if self.saved.get(key) == Some(draft) {
@@ -134,6 +154,17 @@ impl HiveApp {
     pub(crate) fn restore_drafts(&mut self, root: &Path) -> io::Result<()> {
         let store = DraftStore::open(root)?;
         for draft in store.saved.values() {
+            if let Some(task) = &draft.task {
+                self.collaboration.recovered_task_drafts.insert(
+                    draft
+                        .key
+                        .strip_prefix("tasks:")
+                        .expect("validated task scope")
+                        .to_owned(),
+                    task.clone(),
+                );
+                continue;
+            }
             if !draft.attachments.is_empty() {
                 self.attachments
                     .drafts
@@ -169,6 +200,12 @@ impl HiveApp {
 
     pub(crate) fn flush_drafts(&mut self, cx: &Context<Self>) -> io::Result<()> {
         self.capture_editor(cx);
+        let tasks = self.task_draft_snapshots(cx);
+        if !tasks.is_empty() && self.draft_store.is_none() {
+            return Err(io::Error::other(
+                "本地草稿存储尚未可用，请复制任务草稿或丢弃改动后退出",
+            ));
+        }
         if let Some(store) = &mut self.draft_store {
             let mut inputs = self.drafts.clone();
             for (id, text) in &self.inflight_inputs {
@@ -182,7 +219,12 @@ impl HiveApp {
                     inputs.entry(key).or_insert_with(|| text.clone());
                 }
             }
-            store.save(&inputs, &self.failed_drafts, &self.attachments.drafts)?;
+            store.save(
+                &inputs,
+                &self.failed_drafts,
+                &self.attachments.drafts,
+                &tasks,
+            )?;
         }
         Ok(())
     }
@@ -208,6 +250,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn task_drafts_preserve_empty_edits_and_conflict_base_and_remove_only_after_disk_success() {
+        use crate::collaboration::SavedTaskDraft;
+        let root = tempfile::tempdir().unwrap();
+        let mut store = DraftStore::open(root.path()).unwrap();
+        let task = SavedTaskDraft {
+            input: String::new(),
+            base: "original task document".into(),
+            conflicting_content: Some("someone else's update".into()),
+        };
+        let tasks = HashMap::from([("alpha".into(), task.clone())]);
+        store
+            .save(&HashMap::new(), &HashMap::new(), &HashMap::new(), &tasks)
+            .unwrap();
+        let reopened = DraftStore::open(root.path()).unwrap();
+        let restored = reopened.saved["tasks:alpha"].task.as_ref().unwrap();
+        assert_eq!(restored.input, "");
+        assert_eq!(restored.base, task.base);
+        assert_eq!(restored.conflicting_content, task.conflicting_content);
+        let file = root.path().join("desktop-drafts/tasks-alpha.json");
+        let held = root.path().join("held.json");
+        fs::rename(&file, &held).unwrap();
+        fs::create_dir(&file).unwrap();
+        assert!(
+            store
+                .save(
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &HashMap::new()
+                )
+                .is_err()
+        );
+        assert!(store.saved.contains_key("tasks:alpha"));
+        fs::remove_dir(&file).unwrap();
+        fs::rename(&held, &file).unwrap();
+        store
+            .save(
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .unwrap();
+        assert!(!file.exists());
+        assert!(DraftStore::open(root.path()).unwrap().saved.is_empty());
+    }
+
+    #[test]
     fn image_only_draft_preserves_upload_identity_and_legacy_records() {
         let root = tempfile::tempdir().unwrap();
         let key = "session:images".to_owned();
@@ -221,7 +311,7 @@ mod tests {
         let images = HashMap::from([(key.clone(), refs.clone())]);
         let mut store = DraftStore::open(root.path()).unwrap();
         store
-            .save(&HashMap::new(), &HashMap::new(), &images)
+            .save(&HashMap::new(), &HashMap::new(), &images, &HashMap::new())
             .unwrap();
         assert!(
             root.path()
@@ -240,7 +330,12 @@ mod tests {
         assert_eq!(legacy.saved["session:legacy"].input, "原有草稿");
         assert!(legacy.saved["session:legacy"].attachments.is_empty());
         store
-            .save(&HashMap::new(), &HashMap::new(), &HashMap::new())
+            .save(
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            )
             .unwrap();
         assert!(
             !root
@@ -257,10 +352,13 @@ mod tests {
         let mut other = DraftStore::open(root.path()).unwrap();
         let inputs = HashMap::from([("session:alpha".into(), "请检查\n第二行".into())]);
         let failed = HashMap::from([("alpha".into(), vec!["第一次".into()])]);
-        first.save(&inputs, &failed, &HashMap::new()).unwrap();
+        first
+            .save(&inputs, &failed, &HashMap::new(), &HashMap::new())
+            .unwrap();
         other
             .save(
                 &HashMap::from([("workspace:beta".into(), "下一步".into())]),
+                &HashMap::new(),
                 &HashMap::new(),
                 &HashMap::new(),
             )
@@ -269,7 +367,12 @@ mod tests {
         assert_eq!(store.saved["session:alpha"].input, "请检查\n第二行");
         assert_eq!(store.saved["session:alpha"].failed, ["第一次"]);
         first
-            .save(&HashMap::new(), &HashMap::new(), &HashMap::new())
+            .save(
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            )
             .unwrap();
         let store = DraftStore::open(root.path()).unwrap();
         assert_eq!(store.saved.len(), 1);

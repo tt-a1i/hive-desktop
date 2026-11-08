@@ -1,4 +1,5 @@
 mod tasks;
+pub(crate) use tasks::SavedTaskDraft;
 
 use crate::app::HiveApp;
 use gpui_kit::{component::text::TextViewState, *};
@@ -55,6 +56,7 @@ pub struct Collaboration {
     pub task_error: Option<String>,
     pub task_generation: u64,
     pub task_drafts: HashMap<String, tasks::TaskDraft>,
+    pub recovered_task_drafts: HashMap<String, SavedTaskDraft>,
     pub filter: &'static str,
     pub offset: usize,
     pub dispatches: Vec<Dispatch>,
@@ -84,6 +86,7 @@ impl Collaboration {
             task_error: None,
             task_generation: 0,
             task_drafts: HashMap::new(),
+            recovered_task_drafts: HashMap::new(),
             filter: "all",
             offset: 0,
             dispatches: vec![],
@@ -139,7 +142,9 @@ impl HiveApp {
         };
         let c = &mut self.collaboration;
         c.task_generation += 1;
-        if c.task_drafts.contains_key(&workspace) {
+        if c.task_drafts.contains_key(&workspace)
+            || c.recovered_task_drafts.contains_key(&workspace)
+        {
             c.task_loading = false;
             cx.notify();
             return;

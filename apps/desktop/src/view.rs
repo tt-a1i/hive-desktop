@@ -262,6 +262,7 @@ impl HiveApp {
 
 impl Render for HiveApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.restore_task_editor(window, cx);
         if self.draft_target != self.draft_owner {
             let text = self
                 .draft_target
