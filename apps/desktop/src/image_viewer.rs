@@ -1,3 +1,4 @@
+use crate::file_save::save_file as save_original;
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
     component::{
@@ -7,11 +8,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
-use std::{
-    io::{Cursor, Write},
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{io::Cursor, path::PathBuf, sync::Arc};
 
 struct ImageViewer {
     original: Arc<Image>,
@@ -87,14 +84,6 @@ impl HiveApp {
             dialog.title(name.clone()).w(width).child(viewer.clone())
         });
     }
-}
-
-fn save_original(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = path.parent().ok_or("保存路径无效")?;
-    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
-    file.write_all(bytes).map_err(|error| error.to_string())?;
-    file.persist(path).map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 impl ImageViewer {

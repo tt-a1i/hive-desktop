@@ -9,6 +9,8 @@ mod queued_inputs;
 mod command_picker;
 mod conversation;
 mod conversation_find;
+mod conversation_export;
+mod file_save;
 mod conversation_list;
 mod drafts;
 mod failures;

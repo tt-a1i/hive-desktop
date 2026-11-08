@@ -571,7 +571,7 @@ impl Render for HiveApp {
                             .disabled(!self.connected || self.session_name_loading || !self.workspace_writes_allowed()).on_click(cx.listener(|this, _, window, cx| this.begin_session_rename(window, cx)))))
                 .when(!welcome && self.conversation_ready && self.session.is_some() && !self.loading, |header| header.child(
                     Button::new("find-in-conversation").ghost().compact().icon(Glyph::Search).accessibility_label("查找当前会话").tooltip(if cfg!(target_os = "macos") { "查找会话内容 · ⌘F" } else { "查找会话内容 · Ctrl+F" }).on_click(cx.listener(|this, _, window, cx| this.open_conversation_find(window, cx)))
-                ))
+                ).child(Button::new("export-conversation").ghost().compact().icon(Glyph::FileDown).accessibility_label("导出当前对话").tooltip("导出对话为 Markdown").disabled(self.messages.is_empty()).on_click(cx.listener(|this, _, window, cx| this.open_conversation_export(window,cx)))))
                 .when(welcome && self.workspace.is_some(), |header| header.child(
                     Button::new("home-team").ghost().rounded_full().icon(Glyph::Network)
                         .label("团队成员").on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx)))
