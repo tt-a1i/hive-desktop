@@ -129,10 +129,11 @@ impl Runtime {
                     }
                     if let Some(reply) = p.lock().unwrap().remove(&id) {
                         let result = if value.get("error").is_some() {
-                            Err(format!(
-                                "{}：{}",
-                                value["error"]["code"], value["error"]["message"]
-                            ))
+                            Err(value["error"]["message"]
+                                .as_str()
+                                .filter(|message| !message.trim().is_empty())
+                                .unwrap_or("后台请求失败，请查看后台日志。")
+                                .to_owned())
                         } else {
                             Ok(value["result"].clone())
                         };
