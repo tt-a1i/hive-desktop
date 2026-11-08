@@ -179,14 +179,24 @@ impl Render for FileViewer {
                     ),
             )
             .when_some(self.error.clone(), |view, error| {
-                view.child(div().text_sm().text_color(Color::Error.get(cx)).child(
-                    if self.text.is_some() {
-                        format!("重新读取失败，保留上次内容：{error}")
-                    } else {
-                        error
-                    },
-                ))
+                view.child(
+                    div()
+                        .text_sm()
+                        .text_color(Color::Error.get(cx))
+                        .child(error),
+                )
             })
+            .when(
+                self.text.is_some() && (self.loading || self.error.is_some()),
+                |view| {
+                    view.child(
+                        div()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child("仍显示上次成功读取的内容。"),
+                    )
+                },
+            )
             .when_some(self.text.as_ref(), |view, text| {
                 view.child(
                     crate::text_reading::region(
