@@ -35,6 +35,8 @@
     "check:delivery-failures": "pnpm build && tsx checks/delivery-failures.ts",
     "check:files": "pnpm build && tsx checks/file-attachments.ts && tsx checks/file-attachments-wire.ts",
     "check:files-claude-peer": "tsx checks/file-attachments-claude-peer.ts",
+    "check:queued-inputs-peers": "pnpm build && tsx checks/queued-user-inputs-peers.ts",
+    "check:queued-inputs-external-pi": "pnpm build && tsx checks/queued-user-inputs-external-pi.ts",
     "check:queued-inputs": "pnpm build && tsx checks/queued-user-inputs.ts",
     "check:usage": "pnpm build && tsx checks/agent-usage.ts && tsx checks/agent-usage-peers.ts && tsx checks/agent-usage-wire.ts"
   },

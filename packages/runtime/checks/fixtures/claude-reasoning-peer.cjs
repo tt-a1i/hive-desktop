@@ -24,5 +24,11 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   }else if(sub==='set_model'){model=x.request.model;answer({});}
   else if(sub==='interrupt'){answer({});if(active){const user=active;active=undefined;send({type:'result',subtype:'error_during_execution',is_error:true,uuid:crypto.randomUUID(),session_id:sid,user_message_uuid:user,terminal_reason:'aborted',errors:['Synthetic abort'],duration_ms:0,duration_api_ms:0,num_turns:0,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0},modelUsage:{},permission_denials:[]});}}
   else answer({});
- }else if(x.type==='user'){persist(x);if(x.shouldQuery!==false){active=x.uuid;log({event:'query',model,content:x.message.content});}}
+ }else if(x.type==='user'){persist(x);if(x.shouldQuery!==false){active=x.uuid;log({event:'query',model,content:x.message.content});
+   let c={};try{c=JSON.parse(fs.readFileSync(control,'utf8'));}catch{}
+   if(c.completeQueries){
+    active=undefined;const uuid=crypto.randomUUID();const assistant={type:'assistant',uuid,session_id:sid,parent_tool_use_id:null,message:{id:'msg_'+uuid,type:'message',role:'assistant',model,content:[{type:'text',text:'Synthetic queued completion'}],stop_reason:'end_turn',stop_sequence:null,usage:{input_tokens:0,output_tokens:0}}};
+    persist(assistant);send(assistant);send({type:'result',subtype:'success',is_error:false,uuid:crypto.randomUUID(),session_id:sid,user_message_uuid:x.uuid,terminal_reason:'completed',result:'Synthetic queued completion',duration_ms:0,duration_api_ms:0,num_turns:1,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0},modelUsage:{},permission_denials:[]});
+   }
+}}
 });
