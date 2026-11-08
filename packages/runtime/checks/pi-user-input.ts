@@ -182,7 +182,7 @@ try {
     assert.deepEqual(row.source, record.source);
   }
   assert.ok(requests.every(request => request.body.model === 'gpt-6.1-terra'));
-  const proof = fileURLToPath(new URL('../../../.artifacts/pi-user-input/', import.meta.url));
+  const proof = process.env.HIVE_PI_INPUT_PROOF_DIR ?? fileURLToPath(new URL('../../../.artifacts/pi-user-input/', import.meta.url));
   await mkdir(proof, { recursive: true });
   await writeFile(join(proof, 'input-contract-receipt.json'), JSON.stringify({ directory, pass: true, originalExternalPi: options.executableEnvironment.HIVE_PI_COMMAND, vendorInference: false, model: 'gpt-6.1-terra', requests: requests.length, saved, testProjectTrustOnly: true }, null, 2));
   console.log(`PI_USER_INPUT_OK: real SDK/original RPC + Hive HTTP/SQLite; skills/templates/images, input handlers and local errors, automatic-source isolation, cancellation, native roles and cold ID recovery. Loopback only. ${directory}`);

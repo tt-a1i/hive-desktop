@@ -16,7 +16,7 @@ export function externalPiBranch(entries: readonly SessionEntry[], leafId: strin
   }
   return branch.reverse();
 }
-export function externalPiMessage(entry: SessionEntry, input?: PiUserInput): Record<string, unknown> | undefined {
+export function externalPiMessage(entry: SessionEntry, input?: PiUserInput, backend: 'pi' | 'pi-rpc' = 'pi-rpc'): Record<string, unknown> | undefined {
   let message: Record<string, unknown>;
   if (entry.type === 'message') message = { ...entry.message };
   else if (entry.type === 'custom_message') message = { role: 'custom', customType: entry.customType, content: entry.content,
@@ -25,7 +25,7 @@ export function externalPiMessage(entry: SessionEntry, input?: PiUserInput): Rec
   if (message.role === 'custom' && message.customType === 'hive-delivery' && isDeliveryPresentation(message.details)
     && 'deliveryId' in message.details && typeof message.details.deliveryId === 'string') message.presentation = message.details;
   if (message.role === 'user' && input) message.presentation = input;
-  return { ...message, rawBackendItem: entry, source: { backend: 'pi-rpc', entryId: entry.id } };
+  return { ...message, rawBackendItem: entry, source: { backend, entryId: entry.id } };
 }
 
 /** Pi RPC updates omit cumulative SDK messages; reconstruct only the current content block. */

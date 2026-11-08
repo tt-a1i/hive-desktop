@@ -58,6 +58,17 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
       ? item.message.toolCallId : liveIds.get(item.entry.id) ?? item.entry.id);
   };
   const ensureOpen = () => { if (disposed || failure) throw failure ?? new Error('External Pi session is disposed'); };
+  const bridge = async (payload: Record<string, unknown>) => {
+    try { return await transport.bridge(payload); }
+    catch (cause) {
+      // A private bridge mutation may already have changed native memory before
+      // its JSONL write failed. Never retry on that potentially divergent host.
+      failure = asError(cause);
+      if (!active && initialized) options.onUnexpectedExit?.(failure);
+      throw cause;
+    }
+  };
+
   const onEvent = (event: ExternalPiRecord) => {
     if (!state) return;
     const sessionId = state.sessionId;
@@ -147,7 +158,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
       && isObject(entry.data) && typeof entry.data.id === 'string' ? [entry.data.id] : []),
     async addContext(text, customType = 'hive-context') {
       ensureOpen(); if (active) throw new Error('External Pi session is already processing a prompt');
-      await transport.bridge({ action: 'context', text, customType });
+      await bridge({ action: 'context', text, customType });
       await eventWork; await refresh();
     },
     prompt(text, promptOptions) {
@@ -163,7 +174,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
       active = run;
       run.done = Promise.resolve().then(async () => {
         try {
-          await transport.bridge({ action: 'bind', binding: options.teamBinding?.() ?? null });
+          await bridge({ action: 'bind', binding: options.teamBinding?.() ?? null });
           if (run.cancelled) return;
           const before = new Set(branch.map(entry => entry.id));
           let handledUser = false;
@@ -172,7 +183,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
             if (presentation.origin === 'user') {
               const input: PiUserInput = { ...presentation, deliveryId: promptOptions.deliveryId, rawText: text };
               const native = piUserPrompt(input);
-              await transport.bridge({ action: 'begin-user-input', input });
+              await bridge({ action: 'begin-user-input', input });
               await refresh();
               const note = history.find(message => isObject(message.presentation) && message.presentation.deliveryId === input.deliveryId);
               if (note) emit({ type: 'message_end', sessionId: state!.sessionId, messageId: input.deliveryId, message: note });
@@ -184,13 +195,13 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
                 disposition = result.disposition;
                 handledUser = disposition === 'handled' && !run.started;
                 if (!handledUser) await terminal;
-              } finally { await transport.bridge({ action: 'end-user-input', deliveryId: input.deliveryId, disposition }); }
+              } finally { await bridge({ action: 'end-user-input', deliveryId: input.deliveryId, disposition }); }
             } else {
-              await transport.bridge({ action: 'delivery', text, ...(images.length && {images}), details: { ...presentation, deliveryId: promptOptions.deliveryId } });
+              await bridge({ action: 'delivery', text, ...(images.length && {images}), details: { ...presentation, deliveryId: promptOptions.deliveryId } });
               await terminal;
             }
           } else if (promptOptions?.automated) {
-            await transport.bridge({ action: 'user', text, ...(images.length && {images}) }); await terminal;
+            await bridge({ action: 'user', text, ...(images.length && {images}) }); await terminal;
           } else {
             const disposition = await transport.request<{ disposition: string }>('prompt', { message: text, ...(images.length && {images}) });
             if (disposition.disposition !== 'handled' || run.started) await terminal;
@@ -200,13 +211,13 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
           if (run.error) throw run.error;
           if (run.lastAssistant?.stopReason === 'error') throw new Error(String(run.lastAssistant.errorMessage ?? 'External Pi request failed'));
           if (promptOptions?.deliveryId && handledUser) {
-            await transport.bridge({ action: 'complete-user-input', deliveryId: promptOptions.deliveryId });
+            await bridge({ action: 'complete-user-input', deliveryId: promptOptions.deliveryId });
             await refresh();
           } else if (promptOptions?.deliveryId) {
             const terminalEntry = branch.findLast(entry => !before.has(entry.id) && entry.type === 'message' && entry.message.role === 'assistant');
             if (!terminalEntry || terminalEntry.type !== 'message' || !run.lastAssistant || !sameMessage(terminalEntry.message as unknown as Record<string, unknown>, run.lastAssistant)) throw new Error('External Pi delivery terminal assistant is missing');
             assertExternalPiCompletion(branch, promptOptions.deliveryId, terminalEntry.id);
-            await transport.bridge({ action: 'complete', deliveryId: promptOptions.deliveryId, assistantEntryId: terminalEntry.id });
+            await bridge({ action: 'complete', deliveryId: promptOptions.deliveryId, assistantEntryId: terminalEntry.id });
             await refresh();
           }
         } catch (error) {
@@ -216,6 +227,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
           interactions.clear('turn-ended'); transport.clearUiRequests();
           active = undefined; activeMessage = undefined;
           emit({ type: 'settled', sessionId: state!.sessionId, aborted: run.cancelled || run.aborted });
+          if (failure) options.onUnexpectedExit?.(failure);
         }
       });
       return run.done;

@@ -217,7 +217,7 @@ export class Chats implements StructuredSessionPort {
         ...(sessionFile && { sessionFile }), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
       : await createPiSession({ cwd: workspace.path, sessionDir: this.sessionDir,
         ...(sessionFile && { sessionFile }), ...(model && { model }),
-        customTools: [createTeamTool(binding)], onEvent });
+        customTools: [createTeamTool(binding)], onEvent, onUnexpectedExit });
     try {
       if (earlyFailure) throw earlyFailure;
       let reasoningFailure = recoveryFailure;

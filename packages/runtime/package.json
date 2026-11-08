@@ -11,6 +11,8 @@
     "check:attachments": "pnpm build && tsx checks/image-attachments.ts && tsx checks/image-attachments-wire.ts",
     "check:images": "pnpm build && tsx checks/prompt-images.ts && tsx checks/prompt-images-peers.ts && tsx checks/prompt-images-pi.ts",
     "check:images-native-pi": "pnpm build && tsx checks/prompt-images-pi.ts --external",
+    "check:pi-persistence": "pnpm build && tsx checks/pi-persistence.ts && tsx checks/pi-external-persistence.ts",
+    "check:pi-history": "pnpm build && tsx checks/pi-history.ts",
     "check:pi-user-input": "pnpm build && tsx checks/pi-user-input.ts",
     "check:pi-reasoning": "pnpm build && tsx checks/pi-reasoning.ts && tsx checks/pi-reasoning-wire.ts",
     "check:session-archives": "pnpm build && tsx checks/session-archives.ts && tsx checks/session-archives-wire.ts",

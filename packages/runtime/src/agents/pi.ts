@@ -1,4 +1,5 @@
 import { PI_USER_INPUT, PI_USER_INPUT_RESULT, piUserInputSources, piUserInputNote, piUserPrompt, type PiUserInput } from './pi-user-input.js';
+import { externalPiMessage } from './external-pi-history.js';
 import { piUsage } from '../agent-usage.js';
 import { promptImages, imageMessage } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
@@ -40,6 +41,26 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     ...(options.customTools !== undefined && { customTools: options.customTools }),
   });
   const sessionId = manager.getSessionId();
+  // Native SessionManager appends to memory before its disk write. A failed
+  // state write must never be treated as a durable acknowledgement or reused.
+  const completed = new Set(manager.getEntries().flatMap(entry => {
+    if (entry.type !== 'custom' || entry.customType !== 'hive-delivery-completed') return [];
+    const data = entry.data;
+    return typeof data === 'object' && data !== null && 'id' in data && typeof data.id === 'string' ? [data.id] : [];
+  }));
+  let persistenceFailure: Error | undefined;
+  const appendState = (customType: string, data: unknown) => {
+    if (persistenceFailure) throw persistenceFailure;
+    try { return manager.appendCustomEntry(customType, data); }
+    catch (cause) {
+      const error = new Error(`无法写入 Pi 会话，请修复磁盘问题后重试：${cause instanceof Error ? cause.message : String(cause)}`, {cause});
+      persistenceFailure = error;
+      // Let prompt.finally settle before the owner aborts/disposes this handle.
+      queueMicrotask(() => options.onUnexpectedExit?.(error));
+      throw error;
+    }
+  };
+
   let messageId: string | undefined;
   let activeMessage: { messageId: string; message: unknown } | undefined;
   let activeHistoryIndex: number | undefined;
@@ -174,52 +195,55 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       } else if (current && streaming?.role === 'assistant') {
         current = { messageId: current.messageId, message: streaming };
       }
-      const sources = piUserInputSources(manager.getBranch());
-      let index = 0;
+      // Chat history is the active persisted branch, not the compacted model
+      // context. Compression and context edits must not erase the user's chat.
+      const branch = manager.getBranch();
+      const sources = piUserInputSources(branch);
       const displayed: unknown[] = [];
       const displayIds: string[] = [];
-      for (const projected of manager.buildSessionProjection().entries) {
-        const note = sources.notes.get(projected.sourceEntry.id);
+      for (const entry of branch) {
+        const note = sources.notes.get(entry.id);
         if (note && !(active?.nativeInput?.deliveryId === note.deliveryId && active.deliveryReceived)) {
-          displayed.push(piUserInputNote(projected.sourceEntry, note, 'pi'));
+          displayed.push(piUserInputNote(entry, note, 'pi'));
           displayIds.push(note.deliveryId);
         }
-        for (const projectedMessage of projected.messages) {
-          const original = history[index++] ?? projectedMessage;
-          const input = sources.users.get(projected.sourceEntry.id);
-          if (input && original.role === 'user') {
-            userInputs.set(original, input);
-            displayed.push({ ...original, presentation: input, rawBackendItem: projected.sourceEntry,
-              source: { backend: 'pi', entryId: projected.sourceEntry.id } });
-          } else displayed.push(presentedMessage(original));
-          displayIds.push(idForMessage(original));
+        const input = sources.users.get(entry.id);
+        const message = externalPiMessage(entry, input, 'pi');
+        if (!message) continue;
+        if (entry.type === 'message') {
+          if (input && entry.message.role === 'user') userInputs.set(entry.message, input);
+          if (!messageIds.has(entry.message)) messageIds.set(entry.message, entry.id);
         }
+        displayed.push(message);
+        displayIds.push(entry.type === 'message' ? idForMessage(entry.message) : deliveryMetadata(message)?.deliveryId ?? entry.id);
       }
-      for (const original of history.slice(index)) {
+      // The public SDK message_end event precedes native persistence. Preserve
+      // only that in-flight tail, without copying compacted context into chat.
+      const persistedContextCount = manager.buildSessionProjection().messages.length;
+      for (const original of history.slice(persistedContextCount)) {
+        if (original.role !== 'user' && original.role !== 'assistant' && original.role !== 'toolResult' && original.role !== 'custom') continue;
+        const id = idForMessage(original);
+        if (displayIds.includes(id)) continue;
         const input = userInputs.get(original);
         displayed.push(input ? { ...original, presentation: input } : presentedMessage(original));
-        displayIds.push(idForMessage(original));
+        displayIds.push(id);
       }
       return { history: displayed, historyMessageIds: displayIds,
         ...(current !== undefined && { activeMessage: current }) };
     },
     async addContext(text, customType = 'hive-context') {
       if (disposed) throw new Error('Pi session is disposed');
+      if (persistenceFailure) throw persistenceFailure;
       if (active) throw new Error('Pi session is already processing a prompt');
       await session.sendCustomMessage({ customType, content: text, display: false }, { triggerTurn: false });
     },
-    completedDeliveryIds() {
-      return manager.getEntries().flatMap((entry) => {
-        if (entry.type !== 'custom' || entry.customType !== 'hive-delivery-completed') return [];
-        const data = entry.data;
-        return typeof data === 'object' && data !== null && 'id' in data && typeof data.id === 'string' ? [data.id] : [];
-      });
-    },
+    completedDeliveryIds: () => [...completed],
     prompt(text, promptOptions) {
       let images: ReturnType<typeof promptImages>;
       try { images = promptImages(promptOptions?.images); } catch (error) { return Promise.reject(error); }
       if (images.length && !session.model?.input.includes('image')) return Promise.reject(new Error('当前 Pi 模型不支持图片输入。'));
       if (disposed) return Promise.reject(new Error('Pi session is disposed'));
+      if (persistenceFailure) return Promise.reject(persistenceFailure);
       if (savedModelUnavailable) return Promise.reject(new Error('原先的 Pi 模型不可用，请重新选择。'));
       if (active) return Promise.reject(new Error('Pi session is already processing a prompt'));
       const run = { nativeInput: undefined as PiUserInput | undefined, handled: false, cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, deliveryId: promptOptions?.deliveryId, deliveryReceived: false };
@@ -232,7 +256,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
             if (presentation.origin === 'user') {
               const input: PiUserInput = { ...presentation, deliveryId: promptOptions.deliveryId, rawText: text };
               const native = piUserPrompt(input);
-              const entryId = manager.appendCustomEntry(PI_USER_INPUT, input);
+              const entryId = appendState(PI_USER_INPUT, input);
               run.nativeInput = input;
               const entry = manager.getEntry(entryId)!;
               options.onEvent({ type: 'message_end', sessionId, messageId: input.deliveryId, message: piUserInputNote(entry, input, 'pi') });
@@ -244,7 +268,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
                   disposition = value;
                   run.handled = value === 'handled';
                 } });
-              } finally { manager.appendCustomEntry(PI_USER_INPUT_RESULT, { deliveryId: input.deliveryId, disposition }); }
+              } finally { appendState(PI_USER_INPUT_RESULT, { deliveryId: input.deliveryId, disposition }); }
             } else {
               await session.sendCustomMessage({ customType: 'hive-delivery', content: imageMessage(text,images), display: false,
                 details: { ...presentation, deliveryId: promptOptions.deliveryId } }, { triggerTurn: true });
@@ -256,7 +280,8 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
             if (run.cancelled || run.sdkAborted) throw new Error('Pi delivery was aborted');
             if (run.finalError) throw new Error(run.finalError);
             if (!run.deliveryReceived && !run.handled) throw new Error('Pi delivery was not added to the conversation');
-            manager.appendCustomEntry('hive-delivery-completed', { id: promptOptions.deliveryId });
+            appendState('hive-delivery-completed', { id: promptOptions.deliveryId });
+            completed.add(promptOptions.deliveryId);
           }
         } catch (error) {
           if (!run.cancelled) options.onEvent({ type: 'error', sessionId, message: error instanceof Error ? error.message : String(error) });
@@ -313,6 +338,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     reasoning: () => ({ level: session.thinkingLevel, levels: !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [] }),
     setReasoning(level) {
       if (disposed) throw new Error('Pi session is disposed');
+      if (persistenceFailure) throw persistenceFailure;
       if (active) throw new Error('Pi session is already processing a prompt');
       const levels = !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [];
       const selected = levels.find(candidate => candidate === level);

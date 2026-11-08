@@ -38,6 +38,7 @@ export interface PiSessionOptions {
   model?: { provider: string; id: string };
   onEvent: (event: PiEvent) => void;
   customTools?: ToolDefinition[];
+  onUnexpectedExit?: (error: Error) => void;
 }
 
 export interface NativeCommand { name: string; description?: string; source: 'extension' | 'prompt' | 'skill'; sourceInfo: import('@earendil-works/pi-coding-agent').SourceInfo }

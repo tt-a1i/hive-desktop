@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import { mkdtemp,mkdir,writeFile,chmod,stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SessionManager } from '@earendil-works/pi-coding-agent';
+import { createDesktopRuntime } from '../src/desktop-runtime.js';
+const directory=await mkdtemp(join(tmpdir(),'hive-pi-rpc-persistence-'));
+const project=join(directory,'project'),agent=join(directory,'agent'),flag=join(directory,'armed-once');
+await mkdir(agent);await mkdir(join(project,'.pi','extensions'),{recursive:true});
+await writeFile(join(project,'.pi','extensions','local.ts'),`import{existsSync,writeFileSync,chmodSync}from'node:fs';export default function(pi){pi.registerCommand('arm-file',{description:'Owned file failure probe',handler(_args,ctx){if(!existsSync(${JSON.stringify(flag)})){writeFileSync(${JSON.stringify(flag)},'armed');chmodSync(ctx.sessionManager.getSessionFile(),0o400);}}})}`);
+await writeFile(join(agent,'settings.json'),JSON.stringify({defaultProvider:'local-save',defaultModel:'gpt-6.1-terra',defaultProjectTrust:'always',retry:{enabled:false}}));
+await writeFile(join(agent,'models.json'),JSON.stringify({providers:{'local-save':{api:'openai-responses',apiKey:'local-only',baseUrl:'http://127.0.0.1:9/v1',models:[{id:'gpt-6.1-terra',name:'Terra local save'}]}}}));
+process.env.PI_CODING_AGENT_DIR=agent;process.env.PI_OFFLINE='1';
+const options={executableEnvironment:{HIVE_PI_COMMAND:process.env.HIVE_PI_COMMAND??'pi'}};
+let runtime=await createDesktopRuntime(join(directory,'state'),()=>{},options);let path='';
+try{
+ const workspace=await runtime.hive.request('POST','/api/workspaces',{path:project,name:'External save failure',autostart_orchestrator:false}) as {id:string};
+ const chat=await runtime.chats.create(workspace.id,'pi-rpc');await runtime.chats.setModel(chat.id,'local-save','gpt-6.1-terra');
+ const live=(runtime.chats as any).live.get(chat.id);path=live.handle.sessionFile;
+ await runtime.chats.prompt(chat.id,'/arm-file');await live.queue.idle();
+ assert.equal((await stat(path)).mode&0o222,0);
+ const id=live.queue.pending[0].id;assert.equal(live.handle.completedDeliveryIds().includes(id),false);
+ await chmod(path,0o600);
+ const failed=await runtime.chats.open(chat.id);assert.equal(failed.pending,1);assert.equal(failed.completedDeliveryIds.includes(id),false);assert.equal(failed.runId,null);
+ await runtime.chats.resume(chat.id);const retried=(runtime.chats as any).live.get(chat.id);await retried.queue.idle();
+ const complete=await runtime.chats.open(chat.id);assert.ok(complete.completedDeliveryIds.includes(id));assert.equal(retried.queue.pending.some((item:any)=>item.id===id),false);
+ const entries=SessionManager.open(path).getEntries();const ids=new Set(entries.map(entry=>entry.id));
+ assert.ok(entries.every(entry=>entry.parentId===null||ids.has(entry.parentId)),'Retry must not attach to the external SDK memory entry whose disk append failed');
+ assert.notEqual(retried.handle,live.handle,'Failed native writer must be disposed before retry');
+ await runtime.close();runtime=await createDesktopRuntime(join(directory,'state'),()=>{},options);
+ const cold=await runtime.chats.open(chat.id);assert.ok(cold.completedDeliveryIds.includes(id));assert.equal(cold.pending,complete.pending);
+ console.log(`PI_EXTERNAL_PERSISTENCE_OK: original RPC + real read-only JSONL failure; same delivery safely retried without missing native parents and recovered cold. Automatic recovery may fail at loopback port 9; no vendor inference. ${directory}`);
+}finally{if(path)await chmod(path,0o600);await runtime.close();}
