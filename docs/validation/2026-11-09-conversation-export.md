@@ -38,3 +38,8 @@
 原owned进程54534持续存活。为保留现场，另建独立bundle标识的 `Hive Export Compare.app`，使用当前构建文件的硬链接及独立合成数据，没有复制Node/依赖树；进程21544。该窗口可读到导出控件树，也曾显示真实快照，但按钮后的树会延迟，捕捉多次返回缩放动画帧，坐标操作返回noWindowsAvailable。应用菜单可打开/取消，仍不足以证明复制、关闭快照或窄窗完成。
 
 Cindy窗口能返回控件树，Finder定位又返回cgWindowNotFound；不能将这些现象归因为全部应用锁死。系统会话元数据只报告loginComplete/onConsole，屏幕锁定字段未提供，不宣称已确认解锁。没有为绕过现象加入生产等待、模拟成功或更换实现。已请求用户查看Dock中的验证窗口是否能正常操作，两个owned进程及二进制现场继续保留。
+
+
+## 后续候选包状态
+
+d9e061b的fresh-deploy候选已包含本功能，替换先前66ef8f9候选；112个runtime文件、包内PTY/HTTP/SQLite、原生启动选择恢复通过，current仍未推广。详见[远程候选包补验](2026-11-09-remote-settings.md#mac候选包补验)。导出复制/窄窗/正常退出仍需系统走查，不能由包内启动检查代替。旧候选收据保留supersededBy与zipPresent=false，历史哈希不当作现存候选。
