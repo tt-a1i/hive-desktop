@@ -476,12 +476,17 @@ impl HiveApp {
     ) {
         self.upsert(id.clone(), "toolResult", output, false, cx);
         if let Some(message) = self.messages.iter_mut().find(|m| m.id == id) {
-            let expanded = message.tool.as_ref().is_some_and(|tool| tool.expanded);
-            message.tool = Some(ToolPresentation {
-                name,
-                status,
-                expanded,
-            });
+            if let Some(tool) = &mut message.tool {
+                tool.name = name;
+                tool.status = status;
+            } else {
+                message.tool = Some(ToolPresentation {
+                    name,
+                    status,
+                    expanded: false,
+                    details_scroll: ScrollHandle::new(),
+                });
+            }
         }
         self.refresh_conversation_find(&id);
     }

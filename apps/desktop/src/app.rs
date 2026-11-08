@@ -32,6 +32,7 @@ pub struct ToolPresentation {
     pub name: String,
     pub status: &'static str,
     pub expanded: bool,
+    pub details_scroll: ScrollHandle,
 }
 pub struct DeliveryCard {
     pub dispatch_id: Option<String>,

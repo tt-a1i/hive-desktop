@@ -4,6 +4,7 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -101,6 +102,7 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let id = message.id.clone();
+        let toggle_id = id.clone();
         let action = if tool.expanded { "收起" } else { "展开" };
         let input = self.tool_inputs.get(&id).filter(|args| !args.is_null());
         let summary = input.and_then(input_summary);
@@ -153,7 +155,7 @@ impl HiveApp {
                         if let Some(tool) = this
                             .messages
                             .iter_mut()
-                            .find(|msg| msg.id == id)
+                            .find(|msg| msg.id == toggle_id)
                             .and_then(|msg| msg.tool.as_mut())
                         {
                             tool.expanded = !tool.expanded;
@@ -173,27 +175,104 @@ impl HiveApp {
                 };
                 view.child(
                     v_flex()
+                        .tab_group()
                         .gap_2()
                         .p_3()
                         .rounded_lg()
                         .bg(Color::Inset.get(cx))
-                        .when_some(args, |card, input| {
-                            card.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child("输入参数"),
-                            )
-                            .child(div().text_sm().child(input))
-                        })
-                        .when(!text.is_empty(), |card| {
-                            card.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child("输出"),
-                            )
-                            .child(div().min_w_0().text_sm().child(text))
+                        .child({
+                            let scroll = tool.details_scroll.clone();
+                            v_flex()
+                                .id(SharedString::from(format!("tool-details-body-{id}")))
+                                .min_w_0()
+                                .max_h(px(320.))
+                                .overflow_y_scroll()
+                                .track_scroll(&tool.details_scroll)
+                                .relative()
+                                .vertical_scrollbar(&tool.details_scroll)
+                                .tab_index(0)
+                                .border_1()
+                                .border_color(Color::Divider.get(cx))
+                                .rounded_md()
+                                .p_2()
+                                .focus(|style| style.border_color(Color::Secondary.get(cx)))
+                                .role(Role::Region)
+                                .aria_label(format!(
+                                    "{} 工具输入与输出，可用方向键或翻页键滚动",
+                                    tool.name
+                                ))
+                                .gap_2()
+                                .on_key_down(move |event, window, cx| {
+                                    let modifiers = event.keystroke.modifiers;
+                                    if modifiers.control
+                                        || modifiers.platform
+                                        || modifiers.alt
+                                        || modifiers.shift
+                                    {
+                                        return;
+                                    }
+                                    let offset = scroll.offset();
+                                    let page = (scroll.bounds().size.height - px(24.)).max(px(24.));
+                                    match event.keystroke.key.as_str() {
+                                        "up" => scroll.set_offset(point(
+                                            offset.x,
+                                            (offset.y + px(24.)).min(px(0.)),
+                                        )),
+                                        "down" => {
+                                            scroll.set_offset(point(offset.x, offset.y - px(24.)))
+                                        }
+                                        "pageup" => scroll.set_offset(point(
+                                            offset.x,
+                                            (offset.y + page).min(px(0.)),
+                                        )),
+                                        "pagedown" => {
+                                            scroll.set_offset(point(offset.x, offset.y - page))
+                                        }
+                                        "home" => scroll.set_offset(point(offset.x, px(0.))),
+                                        "end" => scroll.scroll_to_bottom(),
+                                        _ => return,
+                                    }
+                                    window.refresh();
+                                    cx.stop_propagation();
+                                })
+                                .when_some(args, |card, input| {
+                                    card.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(Color::Muted.get(cx))
+                                            .child("输入参数"),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .font_family(Theme::global(cx).mono_font_family.clone())
+                                            .text_size(px(12.))
+                                            .line_height(px(19.))
+                                            .child(gpui_kit::base::SelectableText::new(
+                                                SharedString::from(format!("tool-input-{id}")),
+                                                input,
+                                            )),
+                                    )
+                                })
+                                .when(!text.is_empty(), |card| {
+                                    card.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(Color::Muted.get(cx))
+                                            .child("输出"),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .font_family(Theme::global(cx).mono_font_family.clone())
+                                            .text_size(px(12.))
+                                            .line_height(px(19.))
+                                            .child(gpui_kit::base::SelectableText::new(
+                                                SharedString::from(format!("tool-output-{id}")),
+                                                text,
+                                            )),
+                                    )
+                                })
                         })
                         .child(
                             h_flex().justify_end().child(
