@@ -287,3 +287,8 @@ Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限�
 ## 2026-11-08 任务监听启动取消
 
 真实Chokidar连续3次复现关闭后ready仍等满15秒才拒绝，固定Hive2.2.1还会重置closed。通过现有pnpm补丁主动结算取消、清理订阅/超时并保持关闭终态；真实直接/原子文件事件、stop/restart、错误及团队/队列回归通过。开发依赖已更新，开发包必须重新部署依赖。见 [生命周期证据](validation/2026-11-08-tasks-watcher-lifecycle.md)。Windows及完整目标继续开放。
+
+
+## 2026-11-08 任务监听开发包补验
+
+新Mac ZIP纳入62f906b，重新部署整个生产依赖树而非沿用旧Hive。108个runtime及watcher哈希匹配，1094个依赖链接均为包内目标；任务监听真实生命周期、Codex、内外Pi队列、PTY/Hive/SQLite和启动恢复通过。旧包被关闭后仍创建监听的行为断言拒绝。#8源码及Mac包内范围完成；系统输入未重复，Windows及完整体验验收继续保留。见 [开发包证据](validation/2026-11-08-tasks-watcher-lifecycle.md#mac-开发包)。
