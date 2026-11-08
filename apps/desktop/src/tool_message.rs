@@ -4,7 +4,6 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
-        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -73,6 +72,7 @@ impl HiveApp {
                         .child(if expanded { "▾" } else { "▸" }),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    this.prepare_conversation_expansion(&key);
                     if expanded {
                         this.expanded_tool_groups.remove(&key);
                         // The stream may have grown between drawing and clicking.
@@ -152,6 +152,7 @@ impl HiveApp {
                             ),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        this.prepare_conversation_expansion(&toggle_id);
                         if let Some(tool) = this
                             .messages
                             .iter_mut()
@@ -181,98 +182,84 @@ impl HiveApp {
                         .rounded_lg()
                         .bg(Color::Inset.get(cx))
                         .child({
-                            let scroll = tool.details_scroll.clone();
-                            v_flex()
-                                .id(SharedString::from(format!("tool-details-body-{id}")))
-                                .min_w_0()
-                                .max_h(px(320.))
-                                .overflow_y_scroll()
-                                .track_scroll(&tool.details_scroll)
-                                .relative()
-                                .vertical_scrollbar(&tool.details_scroll)
-                                .tab_index(0)
-                                .border_1()
-                                .border_color(Color::Divider.get(cx))
-                                .rounded_md()
-                                .p_2()
-                                .focus(|style| style.border_color(Color::Secondary.get(cx)))
-                                .role(Role::Region)
-                                .aria_label(format!(
-                                    "{} 工具输入与输出，可用方向键或翻页键滚动",
-                                    tool.name
-                                ))
-                                .gap_2()
-                                .on_key_down(move |event, window, cx| {
-                                    let modifiers = event.keystroke.modifiers;
-                                    if modifiers.control
-                                        || modifiers.platform
-                                        || modifiers.alt
-                                        || modifiers.shift
-                                    {
-                                        return;
-                                    }
-                                    let offset = scroll.offset();
-                                    let page = (scroll.bounds().size.height - px(24.)).max(px(24.));
-                                    match event.keystroke.key.as_str() {
-                                        "up" => scroll.set_offset(point(
-                                            offset.x,
-                                            (offset.y + px(24.)).min(px(0.)),
+                            crate::text_reading::region(
+                                format!("tool-details-body-{id}"),
+                                format!("{} 工具输入与输出，可用方向键或翻页键滚动", tool.name),
+                                &tool.details_scroll,
+                                px(320.),
+                                cx,
+                            )
+                            .gap_2()
+                            .when_some(input, |card, value| {
+                                card.child(
+                                    h_flex().flex_wrap().gap_2().children(
+                                        crate::file_viewer::tool_paths(&tool.name, value)
+                                            .into_iter()
+                                            .enumerate()
+                                            .map(|(i, path)| {
+                                                let file = path.clone();
+                                                Button::new(SharedString::from(format!(
+                                                    "tool-file-{id}-{i}"
+                                                )))
+                                                .ghost()
+                                                .compact()
+                                                .max_w(px(360.))
+                                                .min_w_0()
+                                                .icon(Glyph::FileText)
+                                                .label(path.clone())
+                                                .accessibility_label(format!("预览文件：{path}"))
+                                                .tooltip(format!("预览当前磁盘内容：{path}"))
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.open_file_preview(
+                                                            file.clone(),
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    },
+                                                ))
+                                            }),
+                                    ),
+                                )
+                            })
+                            .when_some(args, |card, input| {
+                                card.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(Color::Muted.get(cx))
+                                        .child("输入参数"),
+                                )
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                        .text_size(px(12.))
+                                        .line_height(px(19.))
+                                        .child(gpui_kit::base::SelectableText::new(
+                                            SharedString::from(format!("tool-input-{id}")),
+                                            input,
                                         )),
-                                        "down" => {
-                                            scroll.set_offset(point(offset.x, offset.y - px(24.)))
-                                        }
-                                        "pageup" => scroll.set_offset(point(
-                                            offset.x,
-                                            (offset.y + page).min(px(0.)),
+                                )
+                            })
+                            .when(!text.is_empty(), |card| {
+                                card.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(Color::Muted.get(cx))
+                                        .child("输出"),
+                                )
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                        .text_size(px(12.))
+                                        .line_height(px(19.))
+                                        .child(gpui_kit::base::SelectableText::new(
+                                            SharedString::from(format!("tool-output-{id}")),
+                                            text,
                                         )),
-                                        "pagedown" => {
-                                            scroll.set_offset(point(offset.x, offset.y - page))
-                                        }
-                                        "home" => scroll.set_offset(point(offset.x, px(0.))),
-                                        "end" => scroll.scroll_to_bottom(),
-                                        _ => return,
-                                    }
-                                    window.refresh();
-                                    cx.stop_propagation();
-                                })
-                                .when_some(args, |card, input| {
-                                    card.child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child("输入参数"),
-                                    )
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .font_family(Theme::global(cx).mono_font_family.clone())
-                                            .text_size(px(12.))
-                                            .line_height(px(19.))
-                                            .child(gpui_kit::base::SelectableText::new(
-                                                SharedString::from(format!("tool-input-{id}")),
-                                                input,
-                                            )),
-                                    )
-                                })
-                                .when(!text.is_empty(), |card| {
-                                    card.child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child("输出"),
-                                    )
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .font_family(Theme::global(cx).mono_font_family.clone())
-                                            .text_size(px(12.))
-                                            .line_height(px(19.))
-                                            .child(gpui_kit::base::SelectableText::new(
-                                                SharedString::from(format!("tool-output-{id}")),
-                                                text,
-                                            )),
-                                    )
-                                })
+                                )
+                            })
                         })
                         .child(
                             h_flex().justify_end().child(

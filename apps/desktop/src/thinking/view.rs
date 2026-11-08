@@ -76,6 +76,7 @@ impl HiveApp {
                             }),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        this.prepare_conversation_expansion(&id);
                         if let Some(message) =
                             this.messages.iter_mut().find(|message| message.id == id)
                         {

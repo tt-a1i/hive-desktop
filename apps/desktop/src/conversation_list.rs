@@ -194,13 +194,38 @@ impl HiveApp {
         }
     }
 
+    pub(crate) fn prepare_conversation_expansion(&mut self, id: &str) {
+        let list = &mut self.conversation_list;
+        list.state.pause_following_tail();
+        // Tail-following can retain an end sentinel rather than a visible row.
+        // Anchor the clicked row when there is no concrete reading position.
+        if list.anchor().is_none() {
+            let key = list
+                .rows
+                .iter()
+                .find(|row| matches!(&row.key, RowKey::Message(key) if key == id))
+                .or_else(|| {
+                    list.rows
+                        .iter()
+                        .find(|row| matches!(&row.key, RowKey::Group(key) if key == id))
+                })
+                .map(|row| row.key.clone());
+            if let Some(key) = key {
+                list.pending_anchor = Some(ReadingAnchor {
+                    key,
+                    offset: px(0.),
+                });
+            }
+        }
+    }
+
     pub(crate) fn scroll_to_conversation_message(&mut self, id: &str, cx: &App) {
         self.sync_conversation_list(cx);
         if let Some(index) = self
             .conversation_list
             .rows
             .iter()
-            .position(|row| row.key == RowKey::Message(id.to_owned()))
+            .position(|row| matches!(&row.key, RowKey::Message(key) if key == id))
         {
             self.conversation_list.state.scroll_to(ListOffset {
                 item_ix: index,

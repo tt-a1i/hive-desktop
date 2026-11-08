@@ -53,6 +53,8 @@ pnpm --filter @hive-desktop/runtime check:team
 
 聊天已展示后端实际返回的思考过程，默认折叠，可展开、选择和复制，并支持历史恢复与会话内容查找；验证范围见 [思考展示](docs/validation/2026-11-08-thinking-display.md)。
 
+工具详情支持文本选择和键盘滚动；显式文件路径及汇报产物可打开只读文本预览、重新读取及定位文件。预览显示当前磁盘内容，与历史工具结果分别保留；文件类型、大小及平台边界见 [文件预览验证](docs/validation/2026-11-08-file-preview.md)。
+
 四种后端可在输入框旁读取与调整原生会话推理强度，不改全局默认；Pi 沿用原生记录，Codex/Claude 的显式选择另按模型保存并恢复，显示原生实际生效值。写盘失败会暂停并释放原会话。Codex 已支持原生分页历史恢复；验证范围与 Claude SDK 接口边界见 [外部推理设置](docs/validation/2026-11-08-external-reasoning.md)。
 
 输入区“用量”可读取后端原生 Token 统计；Pi 另显示原生估算的当前上下文，缺失数据不显示成零。各后端统计范围不同，见 [用量验证](docs/validation/2026-11-08-agent-usage.md)。

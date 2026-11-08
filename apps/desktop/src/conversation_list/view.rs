@@ -132,6 +132,7 @@ impl HiveApp {
                                     .on_click({
                                         let id = message.id.clone();
                                         cx.listener(move |this, _, _, cx| {
+                                            this.prepare_conversation_expansion(&id);
                                             if let Some(delivery) = this
                                                 .messages
                                                 .iter_mut()

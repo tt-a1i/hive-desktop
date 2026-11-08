@@ -109,6 +109,7 @@ impl HiveApp {
                             })
                             .accessibility_label("查看历史回复错误详情")
                             .on_click(cx.listener(move |this, _, _, cx| {
+                                this.prepare_conversation_expansion(&id);
                                 if let Some(message) = this.messages.iter_mut().find(|m| m.id == id)
                                 {
                                     if let Some(failure) = message.failure.as_mut() {
