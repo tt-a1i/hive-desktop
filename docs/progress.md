@@ -272,3 +272,8 @@ Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限�
 ## 2026-11-08 排队输入开发包及系统操作
 
 新 Mac arm64 ZIP 纳入 f768324，独立解压的程序/106个runtime哈希匹配，包内内置Pi与原始外部Pi的真实队列检查、PTY/Hive/SQLite及启动恢复通过，旧覆盖包被新增行为检查拒绝。实际系统输入完成回复中排队、Stop保留、完整退出重开暂停和明确继续，补充历史仅一条，两进程正常退出。验证副本仅改应用身份与目录名避免CUA缓存，原ZIP/程序/runtime不变；一次lookup失败的旧owned进程SIGTERM单列。见 [开发包证据](validation/2026-11-08-queued-user-inputs.md#mac-排队输入开发包)。#6保留原始Codex/Claude和Windows边界，推理读回异常见#7。
+
+
+## 2026-11-08 Codex 设置应用确认与真实排队
+
+直接原始RPC复现接受更新后读回旧值，确认需等待实际settings/updated；推理强度与模型切换共用应用确认，同值无通知走no-op，失败/退出正常清理。旧代码被新增真实JSONL延迟应用断言拒绝，原始CLI8进程48次更新及既有推理/冷恢复/错误回归通过。原始Terra实际工具期间排队附件、Stop、冷恢复、继续读取上传副本和唯一历史通过；另保留一次Hive任务监听超时。详见 [证据及边界](validation/2026-11-08-codex-settings-applied.md)。新修复尚未纳入开发包，Windows和Claude真实模型继续开放。

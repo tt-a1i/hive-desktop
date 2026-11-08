@@ -18,7 +18,7 @@
     "check:session-archives": "pnpm build && tsx checks/session-archives.ts && tsx checks/session-archives-wire.ts",
     "check:session-pins": "pnpm build && tsx checks/session-pins.ts",
     "check:team": "tsx checks/delivery-queue.ts && tsx checks/pi-delivery.ts && tsx checks/structured-runtime.ts && tsx checks/team-tool.ts && tsx checks/team-runtime.ts && tsx checks/session-titles.ts && tsx checks/session-search.ts",
-    "check:codex": "tsx checks/codex-transport-fixture.ts && tsx checks/codex-session-normalization.ts && tsx checks/codex-interrupted-tools.ts && tsx checks/codex-session-failures.ts && tsx checks/codex-interrupt-rejection.ts && tsx checks/codex-interactions.ts && tsx checks/codex-paginated-history.ts",
+    "check:codex": "tsx checks/codex-settings.ts && tsx checks/codex-transport-fixture.ts && tsx checks/codex-session-normalization.ts && tsx checks/codex-interrupted-tools.ts && tsx checks/codex-session-failures.ts && tsx checks/codex-interrupt-rejection.ts && tsx checks/codex-interactions.ts && tsx checks/codex-paginated-history.ts",
     "check:external-pi": "tsx checks/external-pi-transport.ts && tsx checks/external-pi-completion.ts && tsx checks/external-pi-session.ts && tsx checks/external-pi-session-lifecycle.ts && tsx checks/external-pi-runtime.ts && tsx checks/external-pi-runtime-lifecycle.ts",
     "dev": "tsx src/main.ts",
     "check:claude": "tsx checks/claude-native-init.ts && tsx checks/claude-session.ts && tsx checks/claude-session-lifecycle.ts && tsx checks/claude-history-synthetic.ts && tsx checks/claude-team-callback.ts && tsx checks/claude-context-placeholder.ts && tsx checks/claude-placeholder-resume.ts && tsx checks/claude-runtime.ts && pnpm check:claude-interactions",

@@ -4,6 +4,7 @@ import type { TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
 import { CodexTransport, type CodexServerRequest } from './codex-transport.js';
+import { updateCodexSettings } from './codex-settings.js';
 import { mkdirSync } from 'node:fs';
 import { CodexInteractions } from './codex-interactions.js';
 import { CodexProjection } from './codex-projection.js';
@@ -47,6 +48,7 @@ type Run = { tools: Set<Promise<unknown>>; interrupting?: Promise<void>; termina
 /** Codex 0.166 app-server public JSON-RPC; no terminal scraping or Pi model intermediary. */
 export async function createCodexSession(options: CodexSessionOptions): Promise<CodexSessionHandle> {
   let active: Run | undefined;
+  const lifetime = new AbortController();
   let nativeUsage:unknown;
   let disposed = false;
   let initialized = false;
@@ -91,6 +93,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   transport = await CodexTransport.start({ cwd: options.cwd,
     ...(options.command && { command: options.command }),
     onClose(info) {
+      lifetime.abort(info.error);
       interactions.clear('disconnected');
       const error = active?.error ?? info.error;
       if (active) { active.error = error; active.controller.abort(); active.terminalComplete = true; active.reject(error); }
@@ -323,14 +326,17 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       if (active) throw new Error('Abort and await the active Codex prompt before disposal');
       interactions.clear('disposed');
       disposed = true;
+      lifetime.abort(new Error('Codex session is disposed'));
       return transport.close();
     },
     reasoning,
     async setReasoning(level) {
       ensureIdle();
-      if (!(await reasoning()).levels.includes(level)) throw new TypeError('当前 Codex 模型不支持此推理强度。');
+      const current = await reasoning();
+      if (!current.levels.includes(level)) throw new TypeError('当前 Codex 模型不支持此推理强度。');
       ensureIdle();
-      await transport.sendRequest('thread/settings/update',{threadId,effort:level});
+      if (current.level === level) return current;
+      await updateCodexSettings(transport, threadId, { effort: level }, lifetime.signal);
       return reasoning();
     },
     currentModel: () => ({ provider: response.modelProvider, id: response.model,
@@ -340,7 +346,9 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       ensureIdle();
       if (provider !== response.modelProvider) throw new Error(`Codex provider switching is unsupported: ${provider}`);
       if (!models.some(model => model.model === id)) throw new Error(`Unknown Codex model: ${id}`);
-      await transport.sendRequest('thread/settings/update', { threadId, model: id });
+      if (response.model === id) return;
+      const applied = await updateCodexSettings(transport, threadId, { model: id }, lifetime.signal);
+      if (applied.model !== id) throw new Error('Codex did not select the requested model');
       response = { ...response, model: id };
     },
   };
