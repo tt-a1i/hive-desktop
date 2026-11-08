@@ -277,3 +277,8 @@ Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限�
 ## 2026-11-08 Codex 设置应用确认与真实排队
 
 直接原始RPC复现接受更新后读回旧值，确认需等待实际settings/updated；推理强度与模型切换共用应用确认，同值无通知走no-op，失败/退出正常清理。旧代码被新增真实JSONL延迟应用断言拒绝，原始CLI8进程48次更新及既有推理/冷恢复/错误回归通过。原始Terra实际工具期间排队附件、Stop、冷恢复、继续读取上传副本和唯一历史通过；另保留一次Hive任务监听超时。详见 [证据及边界](validation/2026-11-08-codex-settings-applied.md)。新修复尚未纳入开发包，Windows和Claude真实模型继续开放。
+
+
+## 2026-11-08 Codex 设置开发包补验
+
+新Mac开发ZIP纳入23164d7，独立解压108个runtime文件及未变的原生程序哈希匹配；包内Codex设置应用/历史/中断、内外Pi队列、真实PTY/Hive/SQLite及原始Codex生产JSONL设置冷恢复通过。旧排队包被延迟应用检查拒绝，不重复冒认系统输入。#7源码与包内范围完成，任务监听异常#8、Claude真实模型及Windows等继续推进。见 [开发包记录](validation/2026-11-08-codex-settings-applied.md#mac-开发包补验)。

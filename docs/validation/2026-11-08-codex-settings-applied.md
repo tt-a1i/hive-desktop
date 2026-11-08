@@ -28,3 +28,12 @@ checks/queued-user-inputs-native-codex.ts --live 明确执行真实原始CLI/厂
 收据 .artifacts/queued-inputs-native-codex/receipt.json：chat ecb4c2e8-891c-4269-b0d0-8c0b084bc54f，thread 01a1baf7-7063-7f81-94e5-c7ae99fe9655，delivery da2cfd11-167d-4105-b2ff-ab0aa7548d61；实际工具记录2条。不是新包或物理GUI的Codex验收，Claude真实模型与Windows继续开放。
 
 此过程中另记录一次Hive任务文件watcher ready 15000ms超时；不影响本次聊天/上传断言，但不能认定任务文件监听正常。保留日志并单列核查，不通过增加固定等待掩盖。其余安全收据及日志 .artifacts/codex-reasoning-readback/。
+
+
+## Mac 开发包补验
+
+开发ZIP `.artifacts/hive-desktop-macos-arm64-codex-settings.zip`，源23164d73e78f15864d39d2d7f35820b0137400d7。ZIP SHA256 `c3891204c250ca28cff9036eb0e0549928114f3c9b4b77460ce767a9d1199f17`。复用已核验的冻结依赖，刷新全部108个runtime文件并独立解压逐文件比对。原生二进制与上一排队包相同，SHA256 `54307c9c3338a0d10f3d6bbefbfcc9cb3e44bc1100237eb5183e74517cf98bfc`。
+
+包内Node/runtime的Codex gate含延迟设置应用、分页历史及中断清理，通过；旧排队包在模型应用尚未完成导致推理模型不匹配处被拒绝。包内内置/原始外部Pi队列、真实PTY/Hive/SQLite smoke通过。生产JSONL设置/冷启动检查显式绑定本包runtime和Node，原始Codex0.166.0与Claude官方SDK合成对端通过，不执行厂商推理。生产窗口启动与缺失会话选择恢复亦通过。
+
+未重复系统鼠标输入；原生界面二进制不变，前包系统操作证据不冒作本包新验收。未签名/未公证，Mac arm64开发包，Windows未验收。收据和日志 `.artifacts/codex-settings-package/`。#7的已复现设置应用问题已修复；#8任务监听、#6剩余后端/平台与完整产品目标继续开放。
