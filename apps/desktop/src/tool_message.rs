@@ -282,10 +282,31 @@ impl HiveApp {
                                             )))
                                             .ghost()
                                             .compact()
-                                            .label("查看改动")
+                                            .label(
+                                                if self.conversation_find_patch_match(
+                                                    &id,
+                                                    tool.patch.as_deref(),
+                                                ) {
+                                                    "查看改动 · 匹配"
+                                                } else {
+                                                    "查看改动"
+                                                },
+                                            )
+                                            .selected(self.conversation_find_patch_match(
+                                                &id,
+                                                tool.patch.as_deref(),
+                                            ))
                                             .accessibility_label(format!(
-                                                "查看 {} 记录的改动",
-                                                tool.name
+                                                "查看 {} 记录的改动{}",
+                                                tool.name,
+                                                if self.conversation_find_patch_match(
+                                                    &id,
+                                                    tool.patch.as_deref()
+                                                ) {
+                                                    "，包含查找匹配"
+                                                } else {
+                                                    ""
+                                                }
                                             ))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 this.open_tool_diff(

@@ -64,16 +64,15 @@ impl HiveApp {
     // Explicit delivery IDs relate a current failed turn to the pending spool.
     // No parsing or matching backend error strings, and native history is retained.
     pub(crate) fn hidden_current_failure(&self, index: usize) -> bool {
-        self.messages
-            .get(index)
-            .is_some_and(|message| message.failure.is_some())
-            && self.delivery_failure.as_ref().is_some_and(|failure| {
-                self.messages[..index]
-                    .iter()
-                    .rev()
-                    .find(|m| m.explicit_user || m.delivery.is_some())
-                    .is_some_and(|m| m.id == failure.delivery_id)
-            })
+        self.messages.get(index).is_some_and(|message| {
+            message.failure.is_some() && !self.conversation_find_matches(&message.id)
+        }) && self.delivery_failure.as_ref().is_some_and(|failure| {
+            self.messages[..index]
+                .iter()
+                .rev()
+                .find(|m| m.explicit_user || m.delivery.is_some())
+                .is_some_and(|m| m.id == failure.delivery_id)
+        })
     }
     pub(crate) fn render_reply_failure(&self, index: usize, cx: &Context<Self>) -> AnyElement {
         let Some(failure) = self.messages[index].failure.as_ref() else {

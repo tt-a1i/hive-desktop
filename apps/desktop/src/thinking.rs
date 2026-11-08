@@ -64,7 +64,7 @@ impl HiveApp {
                 .collect();
             message.layout_revision += 1;
         }
-        self.refresh_conversation_find(id);
+        self.refresh_conversation_find(id, cx);
     }
 
     pub(crate) fn append_thinking(
@@ -106,7 +106,7 @@ impl HiveApp {
             message.thinking.sort_by_key(|block| block.index);
         }
         message.layout_revision += 1;
-        self.refresh_conversation_find(&id);
+        self.refresh_conversation_find(&id, cx);
     }
 
     pub(crate) fn finish_thinking_before(&mut self, id: &str, index: usize) {

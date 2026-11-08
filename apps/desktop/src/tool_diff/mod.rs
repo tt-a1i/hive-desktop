@@ -22,7 +22,7 @@ struct ToolDiff {
     raw_focus: FocusHandle,
 }
 impl HiveApp {
-    pub(crate) fn retain_tool_patch(&mut self, id: &str, result: &Value) {
+    pub(crate) fn retain_tool_patch(&mut self, id: &str, result: &Value, cx: &App) {
         if let Some(patch) = result["details"]["patch"].as_str() {
             if let Some(tool) = self
                 .messages
@@ -32,6 +32,7 @@ impl HiveApp {
             {
                 tool.patch = Some(patch.into());
             }
+            self.refresh_conversation_find(id, cx);
         }
     }
     pub(crate) fn open_tool_diff(

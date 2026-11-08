@@ -439,7 +439,7 @@ impl HiveApp {
                 text,
                 cx,
             );
-            self.retain_tool_patch(message["toolCallId"].as_str().unwrap_or(&id), message);
+            self.retain_tool_patch(message["toolCallId"].as_str().unwrap_or(&id), message, cx);
         } else {
             self.upsert(id.clone(), role, text, false, cx);
             if role == "assistant" {
@@ -465,7 +465,7 @@ impl HiveApp {
             }
             self.load_message_images(id.clone(), message, cx);
         }
-        self.refresh_conversation_find(&id);
+        self.refresh_conversation_find(&id, cx);
     }
     pub(crate) fn upsert_tool(
         &mut self,
@@ -490,7 +490,7 @@ impl HiveApp {
                 });
             }
         }
-        self.refresh_conversation_find(&id);
+        self.refresh_conversation_find(&id, cx);
     }
     pub(crate) fn upsert(
         &mut self,
@@ -509,7 +509,7 @@ impl HiveApp {
                 .any(|message| message.id == id && !message.thinking.is_empty())
         {
             self.messages.retain(|message| message.id != id);
-            self.refresh_conversation_find(&id);
+            self.refresh_conversation_find(&id, cx);
             return;
         }
         if let Some(message) = self.messages.iter_mut().find(|m| m.id == id) {
@@ -525,7 +525,7 @@ impl HiveApp {
         } else {
             self.push_message(id.clone(), role.into(), text, cx);
         }
-        self.refresh_conversation_find(&id);
+        self.refresh_conversation_find(&id, cx);
     }
     pub(crate) fn agent_event(&mut self, event: PiEvent, cx: &mut Context<Self>) {
         if self.removed_sessions.contains(event.session_id()) {
@@ -659,7 +659,7 @@ impl HiveApp {
                     message_text(&result),
                     cx,
                 );
-                self.retain_tool_patch(&call_id, &result);
+                self.retain_tool_patch(&call_id, &result, cx);
             }
             PiEvent::Settled { aborted, .. } => {
                 self.load_usage(cx);

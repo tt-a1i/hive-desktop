@@ -28,10 +28,17 @@ fn matches(message: &Message, input: Option<&serde_json::Value>, query: &str) ->
                 .thinking
                 .iter()
                 .any(|block| block.text.to_lowercase().contains(query))
+            || message.tool.as_ref().is_some_and(|tool| {
+                tool.name.to_lowercase().contains(query)
+                    || tool
+                        .patch
+                        .as_ref()
+                        .is_some_and(|patch| patch.to_lowercase().contains(query))
+            })
             || message
-                .tool
+                .failure
                 .as_ref()
-                .is_some_and(|tool| tool.name.to_lowercase().contains(query))
+                .is_some_and(|failure| failure.message.to_lowercase().contains(query))
             || message
                 .delivery
                 .as_ref()
@@ -91,7 +98,7 @@ impl HiveApp {
         }
     }
 
-    fn change_conversation_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn change_conversation_find(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(find) = &mut self.conversation_find else {
             return;
         };
@@ -103,14 +110,14 @@ impl HiveApp {
             .map(|m| m.id.clone())
             .collect();
         find.selected = find.hits.first().cloned();
-        self.reveal_conversation_match(window, cx);
+        self.reveal_conversation_match(cx);
         cx.notify();
     }
 
     pub fn move_conversation_find(
         &mut self,
         previous: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(find) = &mut self.conversation_find else {
@@ -129,11 +136,11 @@ impl HiveApp {
             None => 0,
         };
         find.selected = Some(find.hits[index].clone());
-        self.reveal_conversation_match(window, cx);
+        self.reveal_conversation_match(cx);
         cx.notify();
     }
 
-    fn reveal_conversation_match(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn reveal_conversation_match(&mut self, cx: &App) {
         let Some(find) = &self.conversation_find else {
             return;
         };
@@ -144,6 +151,12 @@ impl HiveApp {
             for block in &mut message.thinking {
                 if block.text.to_lowercase().contains(&find.query) && !block.expanded {
                     block.expanded = true;
+                    message.layout_revision += 1;
+                }
+            }
+            if let Some(failure) = &mut message.failure {
+                if failure.message.to_lowercase().contains(&find.query) && !failure.expanded {
+                    failure.expanded = true;
                     message.layout_revision += 1;
                 }
             }
@@ -160,10 +173,11 @@ impl HiveApp {
 
     /// Only inspect the changed message while streaming. Rebuild the full set
     /// when the query changes, rather than scanning all text for every delta.
-    pub(crate) fn refresh_conversation_find(&mut self, id: &str) {
+    pub(crate) fn refresh_conversation_find(&mut self, id: &str, cx: &App) {
         let Some(find) = &mut self.conversation_find else {
             return;
         };
+        let previous_selection = find.selected.clone();
         let matched = self
             .messages
             .iter()
@@ -184,6 +198,17 @@ impl HiveApp {
         {
             find.selected = find.hits.first().cloned();
         }
+        if find.selected != previous_selection {
+            self.reveal_conversation_match(cx);
+        }
+    }
+
+    pub(crate) fn conversation_find_patch_match(&self, id: &str, patch: Option<&str>) -> bool {
+        self.conversation_find.as_ref().is_some_and(|find| {
+            find.selected.as_deref() == Some(id)
+                && !find.query.is_empty()
+                && patch.is_some_and(|p| p.to_lowercase().contains(&find.query))
+        })
     }
 
     pub(crate) fn conversation_find_matches(&self, id: &str) -> bool {
