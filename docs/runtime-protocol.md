@@ -63,3 +63,7 @@ Agent assistant_delta 的 kind 为 thinking 时，Rust 使用 messageId/contentI
 Pi 仅保存原生会话记录；Codex/Claude 的显式选择保存在现有 ChatIndex 可选字段 `reasoning:{provider,modelId,level}`，仅向匹配模型重放。实际切换模型清除该选择，重选同模型不重置原生设置。恢复失败保留会话读取，发送前要求重新选择有效档位。原生 setter 失败会释放原句柄并有界重开，避免继续使用部分修改状态。
 
 配置写入失败复用暂停/释放生命周期，由配置 RPC 返回友好错误，不重复注入聊天 Agent 错误；原始错误保留后台诊断。上述不是原生记录与桌面索引的跨文件事务。见 [Pi 验证](validation/2026-11-08-pi-reasoning.md) 和 [外部验证](validation/2026-11-08-external-reasoning.md)。
+
+## 外部程序版本检查
+
+`desktop.settings.probe {backend,command}` 检查当前输入，command 为 null 时对应留空/PATH；环境覆盖优先。返回 `{backend,command,source,status,version?,message,verifiedVersion}`，不写设置；source 为 env/app/path/draft，status 为 available/not_found/failed/timeout/cancelled。`available` 仅是成功读取版本，不验证协议或认证。5 秒/64 KiB 有界检查复用 CLI 所有权，shutdown 取消并等待活动检查。见 [验证](validation/2026-11-08-executable-check.md)。

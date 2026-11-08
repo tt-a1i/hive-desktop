@@ -126,6 +126,7 @@ pub struct HiveApp {
     pub executable_picker_generation: u64,
     pub settings_message: Option<String>,
     pub executable_settings: Option<crate::settings::ExecutableSettings>,
+    pub program_checks: HashMap<&'static str, crate::settings::programs::ProgramCheck>,
     pub notification_url: Entity<InputState>,
     pub notification_loaded: bool,
     pub notification_loading: bool,
@@ -376,6 +377,7 @@ impl HiveApp {
             executable_picker_generation: 0,
             settings_message: None,
             executable_settings: None,
+            program_checks: Default::default(),
             notification_url: cx.new(|cx| {
                 let mut input = InputState::new(window, cx).placeholder("https://…");
                 input.set_masked(true, window, cx);

@@ -171,6 +171,7 @@ impl HiveApp {
         self.pinned_sessions.dirty = false;
         self.refreshing_models = false;
         self.settings_loading = false;
+        self.program_checks.clear();
         self.reset_pi_accounts(window.window_handle(), cx);
         self.pi_models.reset_connection();
         if self.notification_loading {

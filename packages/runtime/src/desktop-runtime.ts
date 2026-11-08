@@ -40,7 +40,11 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return hive.request(method, path, body);
     },
     close: () => closing ??= (async () => {
-      try { await piModels.close(); await piAuth.close(); await terminal.close(); await agentModels.close(); } finally { try { await hive.close(); } finally { await chats.close(); } }
+      try { await settings.close(); }
+      finally {
+        try { await piModels.close(); await piAuth.close(); await terminal.close(); await agentModels.close(); }
+        finally { try { await hive.close(); } finally { await chats.close(); } }
+      }
     })(),
   };
 }

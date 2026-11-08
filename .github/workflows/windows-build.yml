@@ -166,6 +166,9 @@ jobs:
           pnpm --filter @hive-desktop/runtime exec tsx checks/windows-native-clis.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:HIVE_PI_COMMAND = Join-Path $env:HIVE_WINDOWS_NATIVE_CLI_PREFIX 'pi.cmd'
+          $env:HIVE_CODEX_COMMAND = Join-Path $env:HIVE_WINDOWS_NATIVE_CLI_PREFIX 'codex.cmd'
+          pnpm --filter @hive-desktop/runtime check:programs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @hive-desktop/runtime check:pi-reasoning
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload external CLI check receipt
@@ -173,5 +176,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-native-cli-receipt
-          path: .artifacts/windows-native-clis.json
+          path: |
+            .artifacts/windows-native-clis.json
+            .artifacts/program-check/*.json
           if-no-files-found: warn

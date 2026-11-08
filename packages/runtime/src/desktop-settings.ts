@@ -1,3 +1,4 @@
+import { probeExecutable, type ExecutableProbeResult } from './executable-probe.js';
 import type { HiveHost } from './hive-host.js';
 
 export interface DesktopExecutables { piCommand: string | null; codexCommand: string | null; claudeCommand: string | null }
@@ -28,6 +29,8 @@ function executables(value: unknown): DesktopExecutables {
 
 /** App-local settings use Hive's existing atomic SQLite app-state row. No cache or agent-global writes. */
 export class DesktopSettings {
+  private readonly probeAbort = new AbortController();
+  private readonly probes = new Set<Promise<ExecutableProbeResult>>();
   constructor(private readonly hive: Pick<HiveHost, 'request'>,
     private readonly environment: DesktopExecutableEnvironment = process.env) {}
   private snapshot(saved: DesktopExecutables): DesktopSettingsSnapshot {
@@ -42,6 +45,25 @@ export class DesktopSettings {
       codex: effective(this.environment.HIVE_CODEX_COMMAND, saved.codexCommand, 'codex'),
       claude: effective(this.environment.HIVE_CLAUDE_COMMAND, saved.claudeCommand, 'claude'),
     } };
+  }
+  async probe(backend: unknown, draft: unknown) {
+    if (backend !== 'pi' && backend !== 'codex' && backend !== 'claude') throw new DesktopSettingsValidationError('Unknown external program');
+    const candidate = command(draft, 'command');
+    const saved = await this.get();
+    if (this.probeAbort.signal.aborted) throw new Error('Desktop settings are closing');
+    const key = {pi:'piCommand',codex:'codexCommand',claude:'claudeCommand'}[backend] as keyof DesktopExecutables;
+    const effective = this.snapshot({...saved,[key]:candidate}).effective[backend];
+    const task = probeExecutable(effective.command, this.probeAbort.signal);
+    this.probes.add(task);
+    try {
+      return {backend,...effective,source:effective.source === 'app' && candidate !== saved[key] ? 'draft' : effective.source,...await task,verifiedVersion:{pi:'1.4.0',codex:'0.166.0',claude:'2.1.317'}[backend]};
+    } finally { this.probes.delete(task); }
+  }
+  async close(): Promise<void> {
+    this.probeAbort.abort();
+    const results = await Promise.allSettled([...this.probes]);
+    const failed = results.find(result => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
   }
   async get(): Promise<DesktopSettingsSnapshot> {
     const stored = await this.hive.request('GET', path) as { value: string | null };

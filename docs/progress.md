@@ -122,3 +122,5 @@ Claude 工具许可和 AskUserQuestion 已接入统一聊天。官方 SDK + 合�
 2026-11-08：Codex/Claude 接入共用会话推理强度入口，读取原生能力和实际生效值；显式选择按模型保存，重开恢复、同模型重选保留，失败释放原句柄后可修复。真实 Codex、原始 Claude 的无请求配置控制、官方 SDK 合成对端、HTTP/SQLite 和浅/深色及窄窗 GPUI 检查通过；Claude high 被合成钳制到 medium 时显示实际 medium，不冒充真实 Claude 推理。实际已有 Terra 线程暴露分页历史不被支持，现按原生 full 分页恢复，6 条历史及消息身份重开一致；两页合成检查另覆盖完整顺序/拒绝摘要。Pi、Claude 交互和团队投递定向回归、18 项 Rust 检查、Windows 默认功能类型检查、冻结依赖 Mac ZIP 解压后的真实运行/原生启动与新 JSONL 配置检查通过。没有新厂商推理；Windows GUI、错误文案细节、真实大型分页及完整 UI/UX 继续推进。详见 [外部推理设置](validation/2026-11-08-external-reasoning.md)。
 
 2026-11-08：原生窄窗复核发现配置错误仍带 JSON 引号和内部代码；已在共用 RPC 入口提取纯文本错误，深色/窄窗各跨两次进程验证真实失败、重读/重试与草稿恢复。`3d57853` 的最新 Windows CI 三个 job 未启动，annotation 仍为账号付款/支出限额；不能将本机 MSVC 类型检查视作 Windows 运行。
+
+2026-11-08：外部程序页增加每个 CLI 的“检查程序”，检查未保存输入并显示实际命令/来源、版本和已验证版本差异，保留环境覆盖及跨页草稿。后台只运行有界 `--version`，复用 Windows CLI Job/shim，runtime 关闭取消并等待活动进程。真实 HTTP/SQLite/原始 CLI/生产 JSONL，以及浅色、深色与 760px GPUI 检查通过，包含错误重试、实际旧 Codex 版本、保存及检查中退出后进程清理；无模型请求。Mac/Windows 类型与定向设置/团队回归通过，Windows 新原生检查已接线但尚未执行。完整产品继续推进，见 [程序检查](validation/2026-11-08-executable-check.md)。

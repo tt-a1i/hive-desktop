@@ -3,7 +3,7 @@ use crate::palette::Color;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
-        input::{Input, InputState},
+        input::InputState,
         *,
     },
     prelude::FluentBuilder,
@@ -15,6 +15,7 @@ mod appearance;
 mod notification;
 pub mod pi_accounts;
 pub mod pi_models;
+pub mod programs;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,72 +37,18 @@ pub struct EffectiveCommand {
     pub source: String,
 }
 impl EffectiveCommand {
-    pub fn label(&self) -> String {
+    pub fn label(&self, prefix: &str) -> String {
         let source = match self.source.as_str() {
             "env" => "环境变量（覆盖应用设置）",
             "app" => "应用设置",
+            "draft" => "输入路径",
             "path" => "PATH",
             _ => "未知来源",
         };
-        format!("当前使用：{} · {}", self.command, source)
+        format!("{prefix}：{} · {}", self.command, source)
     }
 }
 impl HiveApp {
-    pub(crate) fn executable_field(
-        &self,
-        label: &'static str,
-        input: &Entity<InputState>,
-        effective: Option<&EffectiveCommand>,
-        cx: &Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let disabled =
-            !self.connected || self.settings_loading || self.executable_settings.is_none();
-        let target = input.clone();
-        v_flex()
-            .min_w_0()
-            .gap_2()
-            .py_3()
-            .border_b_1()
-            .border_color(Color::Divider.get(cx))
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(label),
-            )
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        div().flex_1().min_w_0().child(
-                            Input::new(input)
-                                .rounded_full()
-                                .aria_label(format!("{label} 可执行文件路径"))
-                                .disabled(disabled),
-                        ),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("browse-{label}")))
-                            .rounded_full()
-                            .label("浏览…")
-                            .accessibility_label(format!("选择 {label} 可执行文件"))
-                            .disabled(disabled)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.browse_executable(label, target.clone(), window, cx)
-                            })),
-                    ),
-            )
-            .when_some(effective, |row, value| {
-                row.child(
-                    div()
-                        .text_xs()
-                        .text_color(Color::Muted.get(cx))
-                        .child(value.label()),
-                )
-            })
-    }
-
     fn browse_executable(
         &mut self,
         label: &'static str,
@@ -381,11 +328,11 @@ impl HiveApp {
                     .when_some(self.team_autostaff_message.clone(), |view, message| view.child(div().text_sm().child(message))),
                         SettingsSection::Notifications => content.id("settings-notification-content").overflow_y_scroll().child(self.render_notification_settings(cx)),
                         SettingsSection::Programs => content.id("settings-programs-content").overflow_y_scroll()
-                    .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("路径留空时使用 PATH 查找。环境变量优先，修改在下次启动对应 Agent 时生效。"))
+                    .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；检查只读取程序版本。修改在下次启动对应 Agent 时生效。"))
                     .when_some(self.settings_message.clone(), |view, message| view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
-                    .child(self.executable_field("外部 Pi", &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
-                    .child(self.executable_field("Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
-                    .child(self.executable_field("Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
+                    .child(self.executable_field("pi", "外部 Pi", &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
+                    .child(self.executable_field("codex", "Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
+                    .child(self.executable_field("claude", "Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
                     .child(h_flex().items_center().gap_2()
                         .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || !self.executable_paths_changed(cx)).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window.window_handle(), cx))))
                         .child(Button::new("reload-executable-settings").rounded_full().label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window.window_handle(), cx))))
