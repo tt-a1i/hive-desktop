@@ -24,6 +24,19 @@
 
 ## 边界
 
-GPUI 检查是复制当前源码的显式帧驱动，没有冒认系统输入法/物理鼠标验收。开发 ZIP 尚未刷新到本次源码；最近已交付包仍为 d4fc9f1 文档记录中的 05e0dbf 包。Windows 原生与 ACL、完整配置的高级字段图形编辑、正式发行继续开放。依用户要求不处理 CI。
+GPUI 检查是复制当前源码的显式帧驱动，没有冒认系统输入法/物理鼠标验收。新 Mac 开发 ZIP 与尚未完成的系统操作见下文；构建和包内行为检查不代替这部分验收。Windows 原生与 ACL、完整配置的高级字段图形编辑、正式发行继续开放。依用户要求不处理 CI。
 
 本次未改 Hive 协作协议或 schema，不跑无关全量 runtime 测试。配置服务及桌面字段有改动，因此验证集中于实际 SDK、生产 JSONL、原生窗口、草稿与团队回归。
+
+
+## Mac 开发包与系统操作进度
+
+开发 ZIP：`.artifacts/hive-desktop-macos-arm64-model-overrides.zip`，源 `e6a48ca54527b7c98f9ff398a5bae891cf9ad991`（实现 f21d0f9 加包内检查）。ZIP SHA256：`9b793cdeb719713a7d9992dc3d7b9cadaf46754ae7a185ea3653ffeb614bf9b2`；程序 SHA256：`3a4dd4644c4c3bb37537cb488f69aa250de2bf78e2d9ad8f2048ebdf9eaf3c66`。仍未签名/未公证，Windows 未验收。
+
+复用已核验的同平台冻结依赖包前检查 lockfile/patch/workspace 与依赖元数据，完整刷新 runtime 与原生程序。新 ZIP 独立解压后全部 106 个 runtime 文件和程序与本轮构建匹配；相对前包只有 pi-model-config.js 及 map 改变。
+
+新增 `scripts/check-packaged-models.mjs --bundle <解压包>`，把既有四项实际 SDK/JSONC/覆盖配置/生产 JSONL/常驻刷新检查绑定到包内模块、SDK 和 Node；wire 子进程从包内 runtime 目录启动 dist/main.js。旧 05e0dbf 包通过既有配置检查，但被覆盖枚举的 0 != 2 断言拒绝；新包四项均通过。真实 PTY/Hive HTTP/SQLite smoke 与生产窗口启动恢复也通过。无厂商推理或用户认证变更。
+
+系统界面从新包打开隔离配置，进入模型覆盖编辑页，确认原生按钮的“思考能力：继承内置”和“图片输入：继承内置”均选中、保存按钮禁用。开始输入时系统报告 Mac 锁屏且无法自动解锁，本轮没有完成编辑、退出重开、保存、恢复继承或删除的系统操作。已向用户请求解锁，保留这一个 owned 应用及其独立状态等待接续，不因观察超时重启。原生 GPUI 前轮检查已覆盖这些功能，不能混作本次系统操作完成。
+
+收据、逐文件哈希、旧包负向与新包检查日志：`.artifacts/pi-model-overrides-package/`。系统操作完成前 #5 保持开放；完整产品目标不受该单一验证等待阻塞。
