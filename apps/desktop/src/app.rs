@@ -156,6 +156,7 @@ pub struct HiveApp {
     pub member_generation: u64,
     pub member_stopping: Option<String>,
     pub editing_member: Option<String>,
+    pub member_details_open: HashSet<String>,
     pub deleting_member: Option<String>,
     pub runtime: Option<Arc<Runtime>>,
     pub workspaces: Vec<Workspace>,
@@ -312,7 +313,7 @@ impl HiveApp {
                 }
             });
         let member_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("搜索成员、角色或 Agent…"));
+            cx.new(|cx| InputState::new(window, cx).placeholder("搜索成员、职责、角色或 Agent…"));
         let member_search_subscription =
             cx.subscribe_in(&member_search, window, |_, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -447,6 +448,7 @@ impl HiveApp {
             member_generation: 0,
             member_stopping: None,
             editing_member: None,
+            member_details_open: HashSet::new(),
             deleting_member: None,
             _model_search_subscription: model_search_subscription,
             _member_model_search_subscription: member_model_search_subscription,

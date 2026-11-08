@@ -342,7 +342,7 @@ impl Render for HiveApp {
         let member_search = self.member_search.read(cx).value().trim().to_lowercase();
         let matching_members: Vec<_> = self.members.iter().enumerate().filter(|(_, member)| {
             (self.member_status_filter == "all" || member.status == self.member_status_filter)
-                && (member_search.is_empty() || format!("{} {} {} {}", member.name, member.role, member.role_label(), member.backend_label()).to_lowercase().contains(&member_search))
+                && (member_search.is_empty() || format!("{} {} {} {} {}", member.name, member.role, member.role_label(), member.backend_label(), member.description).to_lowercase().contains(&member_search))
         }).collect();
         let member_browsing = !member_search.is_empty() || self.member_status_filter != "all";
         let member_query = self
@@ -483,7 +483,7 @@ impl Render for HiveApp {
                             .on_click(cx.listener(|this, _, window, cx| { this.member_form_open = true; this.member_name.update(cx, |input, cx| input.focus(window, cx)); cx.notify(); })))))
                     .when(!self.members.is_empty() && matching_members.is_empty(), |view|view.child(v_flex().items_center().gap_2().py_6()
                         .child(div().text_sm().child("没有匹配的成员"))
-                        .child(div().text_xs().text_color(Color::Muted.get(cx)).child("尝试其他名称、角色或 Agent，或清除筛选。"))))
+                        .child(div().text_xs().text_color(Color::Muted.get(cx)).child("尝试其他名称、职责、角色或 Agent，或清除筛选。"))))
                     .children(matching_members.into_iter().map(|(i, member)| {
                         let id = member.id.clone();
                         let workspace = self.workspace.clone().unwrap_or_default();
@@ -511,6 +511,7 @@ impl Render for HiveApp {
                                 .when_some(session_id, |view, session_id| view.child(Button::new(("member-chat", i)).ghost().compact().icon(Glyph::MessagesSquare).label("会话").tooltip("打开会话").accessibility_label(format!("打开 {} 的成员会话", member.name)).on_click(cx.listener(move |this, _, _, cx| this.open_member_session(session_id.clone(), cx)))))
                                 .child(Button::new(("member-start-stop", i)).ghost().compact().label(if stopping { "正在停止…" } else if running { "停止" } else { "启动" }).disabled(!self.connected || self.member_loading || (!running && !member_model_ready)).on_click(cx.listener(move |this, _, _, cx| { if running { this.stop_member(start_id.clone(), cx); } else { this.member_action("POST", format!("/api/workspaces/{start_workspace}/agents/{start_id}/start"), None, cx); } })))
                                 .child(self.member_menu(member, cx)))
+                            .child(self.render_member_description(member, cx))
                             .when(!running && backend.is_some(), |view| view.child(h_flex().child(Button::new(("choose-member-model", i)).ghost().compact()
                                 .label(if picker_open { "收起模型列表".into() } else { chosen.map(|m| format!("{} / {} ▾", m.provider, m.id)).unwrap_or_else(|| "选择启动模型 ▾".into()) })
                                 .disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, window, cx| {

@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 成员职责（2026-11-08）
+
+桌面补回现有 Hive description 字段，成员卡片支持摘要、展开/收起、原文复制及职责正文搜索。真实 Hive/SQLite 数据与 Mac 系统操作验证宽窄窗口、空职责、刷新及成员会话往返；粘贴后的草稿逐字匹配原文，最终进程正常零退出。已校准系统自动化滚动方向并撤销多余布局尝试。cargo check/build 通过，没有后端/测试改动。见 [成员职责验证](validation/2026-11-08-member-responsibilities.md)。新源码尚未进入开发 ZIP，Windows 与完整目标继续开放。
+
 ## Pi 会话推理设置（2026-11-08）
 
 内置与外部 Pi 已接入原生会话推理强度的读取/选择，保留全局默认；不支持的 Codex/Claude 控制仍待接入。真实写盘失败复现了 SDK 内存分支推进后不能直接重试的问题，现与切模型共用 pause/dispose/持久恢复路径。两种后端的真实 HTTP/SQLite、SDK/RPC、繁忙拒绝、错误重试、重开与 JSONL 检查通过，浅/深色及窄窗口各完成两次进程流程，见 [推理设置验证](validation/2026-11-08-pi-reasoning.md)。

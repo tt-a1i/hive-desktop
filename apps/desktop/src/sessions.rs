@@ -270,6 +270,7 @@ impl HiveApp {
         self.event_sequence = 0;
         self.sessions.clear();
         self.members.clear();
+        self.member_details_open.clear();
         self.member_catalog_generation += 1;
         self.member_catalog_loading = false;
         self.member_catalog.clear();

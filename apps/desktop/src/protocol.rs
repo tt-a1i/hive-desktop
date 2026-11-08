@@ -55,6 +55,8 @@ impl Backend {
 #[derive(Clone, Deserialize)]
 pub struct Member {
     pub id: String,
+    #[serde(default)]
+    pub description: String,
     pub name: String,
     pub role: String,
     pub status: String,

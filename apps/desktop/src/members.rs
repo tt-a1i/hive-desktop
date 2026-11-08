@@ -1,3 +1,4 @@
+mod description;
 use crate::{
     app::HiveApp,
     protocol::{Member, MemberRun, Model},
