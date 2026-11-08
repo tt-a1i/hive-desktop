@@ -35,6 +35,7 @@ impl HiveApp {
             .when_some(state.error.clone(),|view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
             .child(div().id(SharedString::from(state.selected.as_ref().map(|id|format!("workflow-scroll-{id}")).unwrap_or_else(||"workflows-list-scroll".into())))
                 .flex_1().min_h_0().min_w_0().overflow_y_scroll()
+                .track_scroll(if state.selected.is_some() { &state.detail_scroll } else { &state.list_scroll })
                 .child(v_flex().w_full().flex_shrink_0().gap_4()
                     .child(self.render_workflow_settings(cx))
                     .when(state.enabled==Some(false),|view|view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child("实验功能当前关闭；已有运行和计划仍可查看。")))

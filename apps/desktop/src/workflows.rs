@@ -26,6 +26,8 @@ pub struct Workflows {
     pub dispatches: Vec<Dispatch>,
     pub logs: Vec<Log>,
     pub filter: &'static str,
+    pub list_scroll: ScrollHandle,
+    pub detail_scroll: ScrollHandle,
     pub deleting: Option<String>,
 }
 impl Default for Workflows {
@@ -48,6 +50,8 @@ impl Default for Workflows {
             dispatches: vec![],
             logs: vec![],
             filter: "all",
+            list_scroll: ScrollHandle::new(),
+            detail_scroll: ScrollHandle::new(),
             deleting: None,
         }
     }
@@ -93,6 +97,8 @@ impl HiveApp {
         state.logs.clear();
         state.deleting = None;
         state.filter = "all";
+        state.list_scroll = ScrollHandle::new();
+        state.detail_scroll = ScrollHandle::new();
         state.error = None;
         state.action_error = None;
     }
@@ -114,6 +120,7 @@ impl HiveApp {
         self.invalidate_workflows();
         let state = &mut self.workflows;
         state.selected = id;
+        state.detail_scroll = ScrollHandle::new();
         state.detail = None;
         state.dispatches.clear();
         state.logs.clear();

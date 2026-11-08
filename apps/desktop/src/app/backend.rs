@@ -235,6 +235,7 @@ impl HiveApp {
                 self.roles.visible,
                 self.settings_panel,
                 self.member_panel,
+                self.workflows.visible,
             );
             self.show_session(id, cx);
             (
@@ -242,6 +243,7 @@ impl HiveApp {
                 self.roles.visible,
                 self.settings_panel,
                 self.member_panel,
+                self.workflows.visible,
             ) = views;
         }
         self.refresh_sessions(cx);

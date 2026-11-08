@@ -23,6 +23,10 @@ impl HiveApp {
             .unwrap_or_else(|| {
                 if id.ends_with(":orchestrator") {
                     "主控".into()
+                } else if id.ends_with(":__workflow__") {
+                    "工作流".into()
+                } else if let Some(session) = self.sessions.iter().find(|session| session.agent_id.as_deref() == Some(id)) {
+                    format!("{} · 历史会话", self.session_title(session))
                 } else {
                     id.into()
                 }

@@ -26,6 +26,24 @@
 
 CUA 曾遇锁屏、ScreenCaptureKit -3811、noWindowsAvailable 和滞后画面，重新绑定/键盘激活后继续。停止操作同时核对 AX 控件和后台持久状态，不能用旧截图单独证明停止结果。
 
+## 追加：非空派单、阅读位置与故障恢复
+
+真实 `agent()` 工作流通过自定义角色模板的 `default_command: hive:pi` 与明确的 `openai/gpt-6.1-terra` 启动成员，产生实际 workflow-run/dispatch 关联。驱动以真实成员 token 读取 messages/required_seen_seq，再通过正式 report API 提交明确标注为驱动生成的结果和真实文件路径。awaiter 收到汇报，工作流状态 completed、派单 reported，临时成员清理后保留会话。`dispatch-receipt.json` 保存实际回读。没有模型推理或伪造模型回复；不可达回环地址的通知尝试仍不代表模型验证。
+
+首次尝试修改内置 pi CLI 预设返回 409（只读），没有绕过约束或改数据库预设；改用 Hive 已有自定义角色模板，验证后通过 API 删除该 owned 模板。普通 canonical CLI 的 PTY 路径不因此被重定向或宣称兼容。
+
+原生验证了工作流 → 派单详情 → 成员会话 → 派单详情 → 原工作流，以及工作流直接进入已经选中的同一成员会话再返回。产物预览读取真实文件，结果复制到未发送成员草稿后与原文一致，应用正常退出重开后草稿仍一致。
+
+发现返回详情会跳到顶部，给列表与当前详情分别接上现有 ScrollHandle，切换工作区/选择其他运行才重置；重编译后返回保持日志/派单阅读位置。已退出的成员从真实历史会话显示名称，workflow pseudo-agent 显示“工作流”，不再把这两类身份直接显示成 UUID。
+
+通过仅作用于 owned SQLite 的 BEFORE UPDATE 触发器拒绝 `workflow.cli-policy` 写入，原生保存返回 500、原配置保持 codex、pi 草稿保留；成功读取/轮询后失败提示仍在。移除触发器后同一按钮重试成功，清除错误并结束未保存状态；再恢复 codex。故障触发器已不存在，见 `policy-write-fault-receipt.json`。首个草稿回读脚本误用 text 字段，改读实际 input 字段后核对成功，未改产品格式。
+
+终止 owned 原生应用的唯一 Node sidecar（核对父 PID、可执行文件），页面明确断开并禁用写操作，保留旧数据。首次重启暴露共享恢复入口漏恢复 workflows.visible，导致被聊天页替换；沿现有视图恢复 tuple 补上后，第二轮同样断开/原生“重新启动后台”保留原工作流详情并重新读取。两轮原生正常退出。不是模拟 RPC 成功。
+
+另暂时移除已完整备份、无关联派单的 owned completed 行，使真实详情接口返回 404；原生显示“保留上次结果”并继续展示原结果。随后逐字段精确恢复同一行、SQLite quick_check=ok，自动刷新清除读取错误。此故障仅作用于验收数据，不修改生产协议或加入测试 fallback。
+
+[派单与成员往返后位置](assets/workflows/dispatch-roundtrip.png) · [写盘失败保留草稿](assets/workflows/policy-write-failure.png) · [读取失败保留结果](assets/workflows/read-failure.png)
+
 ## 尚未验收
 
-#13 保持开放：实际非空工作流派单、产物预览与成员会话/派单详情返回的完整往返，操作/读取失败时的物理 UI、重连和在途切换精确时序，删除最终按钮、剪贴板内容回读、大历史性能及 Windows 原生仍需验证。父目标 #1、Cindy 完整体验对标和正式签名发行没有完成。允许列表来自 Hive，不代表八种 CLI 都已获得桌面结构化会话或工作流兼容性验收。
+#13 保持开放：删除最终按钮、跨连接在途操作的精确时序、大历史性能及 Windows 原生仍需验证；新的 Mac 开发包尚待更新。父目标 #1、Cindy 完整体验对标和正式签名发行没有完成。允许列表来自 Hive，不代表八种 CLI 都已获得桌面结构化会话或工作流兼容性验收。
