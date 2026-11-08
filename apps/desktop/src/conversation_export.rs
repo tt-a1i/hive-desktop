@@ -1,6 +1,6 @@
 mod snapshot;
 mod view;
-use crate::app::HiveApp;
+use crate::{app::HiveApp, language::{english,tr}};
 use gpui_kit::{component::*, *};
 use snapshot::Snapshot;
 use std::path::PathBuf;
@@ -13,8 +13,18 @@ struct ConversationExport {
     text: String,
     scroll: ScrollHandle,
     saving: bool,
-    notice: Option<String>,
-    error: Option<String>,
+    notice: Option<ExportNotice>,
+    error: Option<(&'static str, String)>,
+}
+enum ExportNotice { Saved(PathBuf), Cancelled, Copied }
+impl ExportNotice {
+    fn text(&self) -> String {
+        match self {
+            Self::Saved(path) => format!("{}: {}",tr("已保存"),path.display()),
+            Self::Cancelled => tr("已取消保存，快照仍保留。").to_owned(),
+            Self::Copied => tr("已复制完整快照").to_owned(),
+        }
+    }
 }
 impl HiveApp {
     pub(crate) fn open_conversation_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -51,7 +61,7 @@ impl HiveApp {
         });
         let width = (window.viewport_size().width - px(48.)).min(px(900.));
         window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title("导出对话").w(width).child(export.clone())
+            dialog.title(tr("导出对话")).w(width).child(export.clone())
         });
     }
 }
@@ -79,16 +89,16 @@ impl ConversationExport {
                     crate::file_save::save_file(&path, text.as_bytes()).map(|_| path)
                 })
                 .await
-                .map(Some),
+                .map(Some).map_err(|error| ("保存失败，快照仍保留", error)),
                 Ok(Ok(None)) => Ok(None),
-                error => Err(format!("无法选择保存位置：{error:?}")),
+                error => Err(("无法选择保存位置",format!("{error:?}"))),
             };
             let _ = this.update(cx, |this, cx| {
                 this.saving = false;
                 match result {
-                    Ok(Some(path)) => this.notice = Some(format!("已保存：{}", path.display())),
-                    Ok(None) => this.notice = Some("已取消保存，快照仍保留。".into()),
-                    Err(error) => this.error = Some(format!("保存失败，快照仍保留：{error}")),
+                    Ok(Some(path)) => this.notice = Some(ExportNotice::Saved(path)),
+                    Ok(None) => this.notice = Some(ExportNotice::Cancelled),
+                    Err(error) => this.error = Some(error),
                 }
                 cx.notify();
             });

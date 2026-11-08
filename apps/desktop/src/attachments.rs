@@ -1,3 +1,4 @@
+use crate::language::{english,tr};
 mod files;
 use crate::{app::HiveApp, palette::Color};
 use base64::Engine;
@@ -147,7 +148,7 @@ impl HiveApp {
             files: true,
             directories: false,
             multiple: true,
-            prompt: Some("选择图片、文档或其他文件".into()),
+            prompt: Some(tr("选择图片、文档或其他文件").into()),
         });
         cx.spawn(async move |this, cx| match receiver.await {
             Ok(Ok(Some(paths))) => {
@@ -376,7 +377,7 @@ impl HiveApp {
                         div()
                             .text_xs()
                             .text_color(Color::Muted.get(cx))
-                            .child("正在保存附件…"),
+                            .child(tr("正在保存附件…")),
                     )
                 },
             )
@@ -406,7 +407,7 @@ impl HiveApp {
                                 .ghost()
                                 .w(px(112.))
                                 .h(px(84.))
-                                .accessibility_label(format!("查看图片 {}", item.name))
+                                .accessibility_label(format!("{}: {}",tr("查看图片"),item.name))
                                 .child(
                                     img(image.render)
                                         .w(px(112.))
@@ -428,9 +429,9 @@ impl HiveApp {
                         |card| {
                             card.child(div().text_xs().child(
                                 if self.attachments.failed.contains_key(&item.id) {
-                                    "预览失败"
+                                    tr("预览失败")
                                 } else {
-                                    "读取图片…"
+                                    tr("读取图片…")
                                 },
                             ))
                         },
@@ -447,7 +448,7 @@ impl HiveApp {
                             Button::new(SharedString::from(format!("reload-image-{}", item.id)))
                                 .ghost()
                                 .compact()
-                                .label("重新读取")
+                                .label(tr("重新读取"))
                                 .tooltip(error.clone())
                                 .on_click(cx.listener({
                                     let id = id.clone();
@@ -463,11 +464,7 @@ impl HiveApp {
                             .ghost()
                             .compact()
                             .icon(Glyph::X)
-                            .accessibility_label(format!(
-                                "移除{} {}",
-                                if item.is_image() { "图片" } else { "附件" },
-                                item.name
-                            ))
+                            .accessibility_label(if english() {format!("Remove {}: {}",if item.is_image() {tr("图片")} else {tr("附件")},item.name)} else {format!("移除{} {}",if item.is_image() {tr("图片")} else {tr("附件")},item.name)})
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(key) = &key {
@@ -492,7 +489,7 @@ impl HiveApp {
         }
         crate::text_reading::region(
             "draft-attachments".into(),
-            "草稿附件，可用方向键或翻页键滚动".into(),
+            tr("草稿附件，可用方向键或翻页键滚动").into(),
             &self.attachments.scroll,
             px(192.),
             cx,

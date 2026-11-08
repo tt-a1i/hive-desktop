@@ -1,5 +1,5 @@
 pub(crate) mod data;
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color, language::tr};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -82,7 +82,7 @@ impl HiveApp {
         });
         let width = (window.viewport_size().width - px(48.)).min(px(1120.));
         window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title("工具改动").w(width).child(viewer.clone())
+            dialog.title(tr("工具改动")).w(width).child(viewer.clone())
         });
     }
 }
@@ -108,13 +108,13 @@ impl Render for ToolDiff {
                 div()
                     .text_sm()
                     .text_color(Color::Secondary.get(cx))
-                    .child(format!("{} · {}", self.provenance, self.status)),
+                    .child(format!("{} · {}", tr(self.provenance), tr(self.status))),
             )
             .child(
                 div()
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
-                    .child("只读历史记录，与当前磁盘文件可能不同；不会应用或撤销改动。"),
+                    .child(tr("只读历史记录，与当前磁盘文件可能不同；不会应用或撤销改动。")),
             )
             .child(
                 h_flex()
@@ -124,7 +124,7 @@ impl Render for ToolDiff {
                         Button::new("diff-unified")
                             .ghost()
                             .compact()
-                            .label("合并视图")
+                            .label(tr("合并视图"))
                             .selected(!self.raw && self.state.read(cx).mode() == DiffMode::Unified)
                             .disabled(!has_files)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -139,7 +139,7 @@ impl Render for ToolDiff {
                         Button::new("diff-split")
                             .ghost()
                             .compact()
-                            .label("并排视图")
+                            .label(tr("并排视图"))
                             .selected(!self.raw && self.state.read(cx).mode() == DiffMode::Split)
                             .disabled(!has_files)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -154,7 +154,7 @@ impl Render for ToolDiff {
                         Button::new("diff-previous")
                             .ghost()
                             .compact()
-                            .label("上一处")
+                            .label(tr("上一处"))
                             .disabled(!has_files || self.raw)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.state.update(cx, |s, cx| s.previous_change(cx))
@@ -164,7 +164,7 @@ impl Render for ToolDiff {
                         Button::new("diff-next")
                             .ghost()
                             .compact()
-                            .label("下一处")
+                            .label(tr("下一处"))
                             .disabled(!has_files || self.raw)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.state.update(cx, |s, cx| s.next_change(cx))
@@ -174,7 +174,7 @@ impl Render for ToolDiff {
                         Button::new("diff-raw")
                             .ghost()
                             .compact()
-                            .label("原始补丁")
+                            .label(tr("原始补丁"))
                             .selected(self.raw)
                             .disabled(self.loading)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -187,7 +187,7 @@ impl Render for ToolDiff {
                         Button::new("diff-copy")
                             .ghost()
                             .compact()
-                            .label("复制补丁")
+                            .label(tr("复制补丁"))
                             .disabled(self.document.as_ref().is_none_or(|d| d.raw.is_empty()))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(d) = &this.document {
@@ -197,7 +197,7 @@ impl Render for ToolDiff {
                     ),
             )
             .when(self.loading, |view| {
-                view.child(div().text_sm().child("正在准备改动…"))
+                view.child(div().text_sm().child(tr("正在准备改动…")))
             })
             .when_some(
                 self.document.as_ref().and_then(|d| d.error.clone()),
@@ -214,7 +214,7 @@ impl Render for ToolDiff {
                 !self.loading
                     && !has_files
                     && self.document.as_ref().is_some_and(|d| d.error.is_none()),
-                |view| view.child(div().text_sm().child("这段记录没有文本差异。")),
+                |view| view.child(div().text_sm().child(tr("这段记录没有文本差异。"))),
             )
             .when(!self.raw && has_files, |view| {
                 view.child(
@@ -228,7 +228,7 @@ impl Render for ToolDiff {
                 view.child(
                     crate::text_reading::region(
                         "tool-diff-raw".into(),
-                        "原始补丁，可用方向键或翻页键滚动".into(),
+                        tr("原始补丁，可用方向键或翻页键滚动").into(),
                         &self.scroll,
                         height,
                         cx,

@@ -1,5 +1,6 @@
 use crate::app::{HiveApp, Message, ToolPresentation};
 use crate::palette::Color;
+use crate::language::{english,tr};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -66,21 +67,18 @@ impl HiveApp {
             Button::new(("tool-group", start))
                 .ghost()
                 .w_full()
-                .accessibility_label(format!(
-                    "{}工作过程，{count} 项工具已完成",
-                    if expanded { "收起" } else { "展开" }
-                ))
+                .accessibility_label(if english() { format!("{} work activity, {count} tools completed", if expanded {tr("收起")} else {tr("展开")}) } else { format!("{}工作过程，{count} 项工具已完成", if expanded {tr("收起")} else {tr("展开")}) })
                 .child(
                     h_flex()
                         .flex_1()
                         .gap_2()
-                        .child(div().text_sm().child("工作过程"))
+                        .child(div().text_sm().child(tr("工作过程")))
                         .child(
                             div()
                                 .flex_1()
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
-                                .child(format!("{count} 项已完成")),
+                                .child(if english() {format!("{count} completed")} else {format!("{count} 项已完成")}),
                         )
                         .child(if expanded { "▾" } else { "▸" }),
                 )
@@ -116,7 +114,7 @@ impl HiveApp {
     ) -> impl IntoElement {
         let id = message.id.clone();
         let toggle_id = id.clone();
-        let action = if tool.expanded { "收起" } else { "展开" };
+        let action = if tool.expanded { tr("收起") } else { tr("展开") };
         let input = self.tool_inputs.get(&id).filter(|args| !args.is_null());
         let summary = input.and_then(input_summary);
         let failed = tool.status == "失败";
@@ -131,12 +129,7 @@ impl HiveApp {
                 Button::new(("tool-details", index))
                     .ghost()
                     .w_full()
-                    .accessibility_label(format!(
-                        "{action} {} 工具详情，{} {}",
-                        tool.name,
-                        tool.status,
-                        summary.as_deref().unwrap_or("")
-                    ))
+                    .accessibility_label(if english() { format!("{action} {} tool details · {} {}",tool.name,tr(tool.status),summary.as_deref().unwrap_or("")) } else {format!("{action} {} 工具详情，{} {}",tool.name,tr(tool.status),summary.as_deref().unwrap_or(""))})
                     .child(
                         h_flex()
                             .flex_1()
@@ -161,7 +154,7 @@ impl HiveApp {
                                     } else {
                                         Color::Secondary.get(cx)
                                     })
-                                    .child(tool.status),
+                                    .child(tr(tool.status)),
                             ),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -183,7 +176,7 @@ impl HiveApp {
                 });
                 let text = message.text.clone();
                 let details = match &args {
-                    Some(input) if !text.is_empty() => format!("输入参数\n{input}\n\n输出\n{text}"),
+                    Some(input) if !text.is_empty() => format!("{}\n{input}\n\n{}\n{text}",tr("输入参数"),tr("输出")),
                     Some(input) => input.clone(),
                     None => text.clone(),
                 };
@@ -197,7 +190,7 @@ impl HiveApp {
                         .child({
                             crate::text_reading::region(
                                 format!("tool-details-body-{id}"),
-                                format!("{} 工具输入与输出，可用方向键或翻页键滚动", tool.name),
+                                if english() { format!("{} tool input and output; scroll with arrow or page keys",tool.name) } else {format!("{} 工具输入与输出，可用方向键或翻页键滚动",tool.name)},
                                 &tool.details_scroll,
                                 px(320.),
                                 cx,
@@ -220,8 +213,8 @@ impl HiveApp {
                                                 .min_w_0()
                                                 .icon(Glyph::FileText)
                                                 .label(path.clone())
-                                                .accessibility_label(format!("预览文件：{path}"))
-                                                .tooltip(format!("预览当前磁盘内容：{path}"))
+                                                .accessibility_label(format!("{}: {path}",tr("预览文件")))
+                                                .tooltip(format!("{}: {path}",tr("预览当前磁盘内容")))
                                                 .on_click(cx.listener(
                                                     move |this, _, window, cx| {
                                                         this.open_file_preview(
@@ -240,7 +233,7 @@ impl HiveApp {
                                     div()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
-                                        .child("输入参数"),
+                                        .child(tr("输入参数")),
                                 )
                                 .child(
                                     div()
@@ -259,7 +252,7 @@ impl HiveApp {
                                     div()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
-                                        .child("输出"),
+                                        .child(tr("输出")),
                                 )
                                 .child(
                                     div()
@@ -300,9 +293,9 @@ impl HiveApp {
                                                     &id,
                                                     tool.patch.as_deref(),
                                                 ) {
-                                                    "查看改动 · 匹配"
+                                                    tr("查看改动 · 匹配")
                                                 } else {
-                                                    "查看改动"
+                                                    tr("查看改动")
                                                 },
                                             )
                                             .selected(self.conversation_find_patch_match(
@@ -310,13 +303,13 @@ impl HiveApp {
                                                 tool.patch.as_deref(),
                                             ))
                                             .accessibility_label(format!(
-                                                "查看 {} 记录的改动{}",
+                                                "{}: {}{}",tr("查看改动"),
                                                 tool.name,
                                                 if self.conversation_find_patch_match(
                                                     &id,
                                                     tool.patch.as_deref()
                                                 ) {
-                                                    "，包含查找匹配"
+                                                    if english() { ", includes search matches" } else { "，包含查找匹配" }
                                                 } else {
                                                     ""
                                                 }
@@ -340,8 +333,8 @@ impl HiveApp {
                                         .compact()
                                         .icon(Glyph::Copy)
                                         .disabled(details.is_empty())
-                                        .tooltip("复制详情")
-                                        .accessibility_label(format!("复制 {} 工具详情", tool.name))
+                                        .tooltip(tr("复制详情"))
+                                        .accessibility_label(if english() {format!("Copy {} tool details",tool.name)} else {format!("复制 {} 工具详情",tool.name)})
                                         .on_click(cx.listener(move |_, _, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
                                                 details.clone(),

@@ -1,3 +1,4 @@
+use crate::language::tr;
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
     component::{
@@ -80,15 +81,15 @@ impl FileSource {
                 root.join(reported).display().to_string()
             }
             Self::Attachment { item, .. } => {
-                format!("{} · {} · 上传副本", item.name, item.size_label())
+                format!("{} · {} · {}",item.name,item.size_label(),tr("上传副本"))
             }
         }
     }
     fn description(&self) -> &'static str {
         match self {
-            Self::Workspace { .. } => "只读预览 · 当前磁盘内容，不代表工具调用时的版本",
-            Self::Resource { .. } => "原生资源 · 当前磁盘内容；会话加载的版本可能不同",
-            Self::Attachment { .. } => "只读预览 · Hive 保存的附件副本，独立于原始文件",
+            Self::Workspace { .. } => tr("只读预览 · 当前磁盘内容，不代表工具调用时的版本"),
+            Self::Resource { .. } => tr("原生资源 · 当前磁盘内容；会话加载的版本可能不同"),
+            Self::Attachment { .. } => tr("只读预览 · Hive 保存的附件副本，独立于原始文件"),
         }
     }
 }
@@ -246,9 +247,9 @@ impl Render for FileViewer {
                             .ghost()
                             .compact()
                             .label(if self.loading {
-                                "读取中…"
+                                tr("读取中…")
                             } else {
-                                "重新读取"
+                                tr("重新读取")
                             })
                             .disabled(self.loading)
                             .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
@@ -257,7 +258,7 @@ impl Render for FileViewer {
                         Button::new("copy-file-preview")
                             .ghost()
                             .compact()
-                            .label("复制全文")
+                            .label(tr("复制全文"))
                             .disabled(self.text.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(text) = &this.text {
@@ -269,7 +270,7 @@ impl Render for FileViewer {
                         Button::new("reveal-file-preview")
                             .ghost()
                             .compact()
-                            .label("在文件管理器中显示")
+                            .label(tr("在文件管理器中显示"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let source = this.source.clone();
                                 cx.spawn(async move |this, cx| {
@@ -301,7 +302,7 @@ impl Render for FileViewer {
                         div()
                             .text_xs()
                             .text_color(Color::Muted.get(cx))
-                            .child("仍显示上次成功读取的内容。"),
+                            .child(tr("仍显示上次成功读取的内容。")),
                     )
                 },
             )
@@ -309,7 +310,7 @@ impl Render for FileViewer {
                 view.child(
                     crate::text_reading::region(
                         "file-preview-text".into(),
-                        "文件内容，可用方向键或翻页键滚动".into(),
+                        tr("文件内容，可用方向键或翻页键滚动").into(),
                         &self.scroll,
                         (window.viewport_size().height - px(300.))
                             .max(px(120.))
@@ -324,7 +325,7 @@ impl Render for FileViewer {
                             div()
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
-                                .child("文件为空"),
+                                .child(tr("文件为空")),
                         )
                     })
                     .child(gpui_kit::base::SelectableText::new(

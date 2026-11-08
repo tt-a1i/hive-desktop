@@ -1,5 +1,5 @@
 use crate::file_save::save_file as save_original;
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color, language::tr};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -18,7 +18,7 @@ struct ImageViewer {
     dimensions: (u32, u32),
     fit: bool,
     saving: bool,
-    notice: Option<String>,
+    notice: Option<&'static str>,
     error: Option<String>,
 }
 
@@ -137,9 +137,9 @@ impl Render for ImageViewer {
                         Button::new("image-fit")
                             .ghost()
                             .label(if self.fit {
-                                "原尺寸"
+                                tr("原尺寸")
                             } else {
-                                "适应窗口"
+                                tr("适应窗口")
                             })
                             .disabled(self.rendered.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -150,10 +150,10 @@ impl Render for ImageViewer {
                     .child(
                         Button::new("copy-original-image")
                             .ghost()
-                            .label("复制原图")
+                            .label(tr("复制原图"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_image(&this.original));
-                                this.notice = Some("已复制原图".into());
+                                this.notice = Some("已复制原图");
                                 cx.notify();
                             })),
                     )
@@ -161,9 +161,9 @@ impl Render for ImageViewer {
                         Button::new("save-original-image")
                             .ghost()
                             .label(if self.saving {
-                                "正在保存…"
+                                tr("正在保存…")
                             } else {
-                                "另存为…"
+                                tr("另存为…")
                             })
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
@@ -200,10 +200,10 @@ impl Render for ImageViewer {
                         })
                     })
                     .when(self.rendered.is_none() && self.error.is_none(), |view| {
-                        view.child(div().p_4().child("正在读取原图…"))
+                        view.child(div().p_4().child(tr("正在读取原图…")))
                     }),
             )
-            .when_some(self.notice.clone(), |view, text| {
+            .when_some(self.notice.map(tr), |view, text| {
                 view.child(div().text_xs().child(text))
             })
             .when_some(self.error.clone(), |view, text| {

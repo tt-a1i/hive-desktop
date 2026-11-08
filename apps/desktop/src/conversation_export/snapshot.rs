@@ -1,3 +1,4 @@
+use crate::language::{english,tr};
 use crate::{
     app::HiveApp,
     protocol::{Session, Workspace},
@@ -9,6 +10,7 @@ pub(super) struct Snapshot {
     backend: String,
     session: String,
     running: bool,
+    english: bool,
     entries: Vec<Entry>,
 }
 struct Entry {
@@ -27,23 +29,24 @@ impl Snapshot {
             title: app.session_title(session).to_owned(),
             workspace: workspace
                 .map(|item| item.name.clone())
-                .unwrap_or_else(|| "未提供".into()),
-            backend: session.backend.label().into(),
+                .unwrap_or_else(|| tr("未提供").into()),
+            backend: tr(session.backend.label()).into(),
             session: session.id.clone(),
             running: app.busy.contains(&session.id),
+            english: english(),
             entries: app
                 .messages
                 .iter()
                 .map(|message| Entry {
                     heading: if let Some(tool) = &message.tool {
-                        format!("工具 · {} · {}", tool.name, tool.status)
+                        format!("{} · {} · {}",tr("工具"),tool.name,tr(tool.status))
                     } else if let Some(delivery) = &message.delivery {
                         delivery.heading.clone()
                     } else {
                         match message.role.as_str() {
-                            "user" => "用户",
+                            "user" => tr("用户"),
                             "assistant" => "Agent",
-                            "system" => "会话说明",
+                            "system" => tr("会话说明"),
                             _ => &message.role,
                         }
                         .to_owned()
@@ -54,11 +57,11 @@ impl Snapshot {
                         .iter()
                         .map(|block| {
                             if block.redacted {
-                                "[原生后端未提供此段思考正文]".into()
+                                format!("[{}]",tr("原生后端未提供此段思考正文"))
                             } else if block.interrupted {
-                                format!("[已中断]\n{}", block.text)
+                                format!("[{}]\n{}",tr("已中断"),block.text)
                             } else if block.running {
-                                format!("[进行中]\n{}", block.text)
+                                format!("[{}]\n{}",tr("进行中"),block.text)
                             } else {
                                 block.text.clone()
                             }
@@ -78,10 +81,10 @@ impl Snapshot {
                             .iter()
                             .map(|file| {
                                 format!(
-                                    "{} · {} · {} · 附件编号 {}",
+                                    "{} · {} · {} · {} {}",
                                     file.name,
                                     file.mime_type,
-                                    file.size_label(),
+                                    file.size_label(),tr("附件编号"),
                                     file.id
                                 )
                             })
@@ -91,18 +94,16 @@ impl Snapshot {
                                 delivery
                                     .artifacts
                                     .iter()
-                                    .map(|path| format!("汇报产物：{path}")),
+                                    .map(|path| format!("{}: {path}",tr("汇报产物"))),
                             );
                         }
                         let images = message.image_sources.len().max(message.images.len());
                         if images > 0 {
-                            files.push(format!(
-                                "原生图片 {images} 张 · 此聊天投影未提供文件名 · 不含图片本体"
-                            ));
+                            files.push(if english() {format!("{images} native images · filenames unavailable in this chat projection · image data excluded")} else {format!("原生图片 {images} 张 · 此聊天投影未提供文件名 · 不含图片本体")});
                         } else if message.images_loading {
-                            files.push("原生图片预览读取中 · 不含图片本体".into());
+                            files.push(tr("原生图片预览读取中 · 不含图片本体").into());
                         } else if message.images_error.is_some() {
-                            files.push("原生图片预览不可用 · 不含图片本体".into());
+                            files.push(tr("原生图片预览不可用 · 不含图片本体").into());
                         }
                         files
                     },
@@ -125,18 +126,22 @@ impl Snapshot {
         let title = title
             .trim()
             .trim_end_matches(|c: char| c == '.' || c.is_whitespace());
-        format!("Hive-{}.md", if title.is_empty() { "对话" } else { title })
+        format!("Hive-{}.md", if title.is_empty() { if self.english { "conversation" } else { "对话" } } else { title })
     }
     pub fn count(&self) -> usize {
         self.entries.len()
     }
     pub fn markdown(&self, thinking: bool, tools: bool) -> String {
-        let mut out = format!(
+        let mut out = if self.english {
+            format!("# {}\n\nWorkspace: {}\n\nBackend: {}\n\nSession ID: {}\n\n> Snapshot of the loaded branch when the export window opened. Attachments include names and metadata; images include available counts. File data, unsent drafts and hidden system context are excluded.\n",self.title,self.workspace,self.backend,self.session)
+        } else {
+            format!(
             "# {}\n\n工作区：{}\n\n后端：{}\n\n会话编号：{}\n\n> 打开导出窗口时的已加载分支快照。普通附件仅记录名称与元数据，图片仅记录可用的数量，不含文件本体；未发送草稿和隐藏系统上下文不在此文档中。\n",
             self.title, self.workspace, self.backend, self.session
-        );
+        )
+        };
         if self.running {
-            out.push_str("\n> 捕获时 Agent 正在回复，当前回合可能尚未完整。\n");
+            out.push_str(if self.english {"\n> The Agent was responding when captured. The current turn may be incomplete.\n"} else {"\n> 捕获时 Agent 正在回复，当前回合可能尚未完整。\n"});
         }
         for entry in &self.entries {
             if entry.tool && !tools {
@@ -153,19 +158,19 @@ impl Snapshot {
             out.push_str(&format!("\n---\n\n## {}\n\n", entry.heading));
             if thinking {
                 for text in &entry.thinking {
-                    out.push_str("### 思考过程\n\n");
+                    out.push_str(if self.english {"### Thinking\n\n"} else {"### 思考过程\n\n"});
                     fenced(&mut out, text, "text");
                 }
             }
             if entry.tool {
                 if let Some(input) = &entry.input {
-                    out.push_str("### 输入\n\n");
+                    out.push_str(if self.english {"### Input\n\n"} else {"### 输入\n\n"});
                     fenced(&mut out, input, "json");
                 }
-                out.push_str("### 结果\n\n");
+                out.push_str(if self.english {"### Result\n\n"} else {"### 结果\n\n"});
                 fenced(&mut out, &entry.body, "text");
                 if let Some(patch) = &entry.patch {
-                    out.push_str("### 补丁\n\n");
+                    out.push_str(if self.english {"### Patch\n\n"} else {"### 补丁\n\n"});
                     fenced(&mut out, patch, "diff");
                 }
             } else {
@@ -173,13 +178,13 @@ impl Snapshot {
                 out.push_str("\n\n");
             }
             if !entry.files.is_empty() {
-                out.push_str("### 附件\n\n");
+                out.push_str(if self.english {"### Attachments\n\n"} else {"### 附件\n\n"});
                 for file in &entry.files {
                     fenced(&mut out, file, "text");
                 }
             }
             if let Some(failure) = &entry.failure {
-                out.push_str("### 诊断\n\n");
+                out.push_str(if self.english {"### Diagnostics\n\n"} else {"### 诊断\n\n"});
                 fenced(&mut out, failure, "text");
             }
         }
@@ -208,6 +213,7 @@ mod tests {
             backend: "Pi".into(),
             session: "actual-session".into(),
             running: true,
+            english: false,
             entries: vec![
                 Entry {
                     heading: "用户".into(),
@@ -250,10 +256,21 @@ mod tests {
         assert!(full.contains("-old\n+new"));
         assert!(full.contains("实际失败"));
         assert_eq!(snapshot.filename(), "Hive-讨论_中文.md");
+        let english_snapshot = Snapshot { english: true, ..snapshot };
+        let english_full = english_snapshot.markdown(true,true);
+        assert!(english_full.contains("Workspace: 项目"));
+        assert!(english_full.contains("### Input\n\n"));
+        assert!(english_full.contains("### Thinking\n\n"));
+        assert!(english_full.contains("The Agent was responding when captured"));
+        assert!(english_full.contains("第一行\n第二行"));
+        assert!(english_full.contains("实际命令"));
+        assert!(english_full.contains("````text\nresult\n```\nend\n````"));
+        assert!(english_full.contains("-old\n+new"));
+        assert!(english_full.contains("实际失败"));
         let reserved = Snapshot {
             title: "CON. .  ".into(),
             entries: vec![],
-            ..snapshot
+            ..english_snapshot
         };
         assert_eq!(reserved.filename(), "Hive-CON.md");
     }

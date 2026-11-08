@@ -1,3 +1,4 @@
+use crate::language::tr;
 use crate::app::HiveApp;
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -51,9 +52,9 @@ impl HiveApp {
         let workspace = self.workspace.clone();
         let unavailable = root.is_none();
         let label = if cfg!(target_os = "macos") {
-            "在访达中显示"
+            tr("在访达中显示")
         } else {
-            "在文件资源管理器中显示"
+            tr("在文件资源管理器中显示")
         };
         h_flex()
             .w_full()
@@ -99,8 +100,8 @@ impl HiveApp {
                 )))
                 .ghost()
                 .compact()
-                .label("预览")
-                .accessibility_label(format!("预览文件：{path}"))
+                .label(tr("预览"))
+                .accessibility_label(format!("{}: {path}",tr("预览文件")))
                 .disabled(unavailable)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.open_file_preview(preview.clone(), window, cx)

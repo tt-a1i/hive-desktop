@@ -1,3 +1,4 @@
+use crate::language::tr;
 use super::AttachmentRef;
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
@@ -35,7 +36,7 @@ impl HiveApp {
                     .ghost()
                     .compact()
                     .icon(Glyph::X)
-                    .accessibility_label(format!("移除附件 {}", item.name))
+                    .accessibility_label(format!("{}: {}",tr("移除附件"),item.name))
                     .disabled(busy)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(items) = key
@@ -66,8 +67,8 @@ impl HiveApp {
             .max_w_full()
             .justify_start()
             .child(div().min_w_0().truncate().child(label))
-            .tooltip(format!("预览附件副本：{}", item.name))
-            .accessibility_label(format!("预览附件副本 {}", item.name))
+            .tooltip(format!("{}: {}",tr("预览附件副本"),item.name))
+            .accessibility_label(format!("{}: {}",tr("预览附件副本"),item.name))
             .disabled(!self.connected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_attachment_preview(item.clone(), window, cx);
