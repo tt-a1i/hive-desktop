@@ -1,3 +1,4 @@
+use crate::language::{english, tr};
 mod description;
 use crate::{
     app::HiveApp,
@@ -15,6 +16,30 @@ use gpui_kit::{
     *,
 };
 use serde_json::{Value, json};
+
+impl Member {
+    pub fn role_label(&self) -> &str {
+        crate::roles::role_label(&self.role)
+    }
+    pub fn status_label(&self) -> &str {
+        match self.status.as_str() {
+            "idle" => tr("待命"),
+            "working" => tr("工作中"),
+            "stopped" => tr("已停止"),
+            other => other,
+        }
+    }
+    pub fn backend_label(&self) -> &str {
+        match self.configured_command.as_deref() {
+            Some("hive:pi") => "Pi",
+            Some("hive:codex") => "Codex",
+            Some("hive:pi-rpc") => tr("外部 Pi"),
+            Some("hive:claude") => "Claude",
+            Some(_) => tr("其他后端"),
+            None => tr("未配置后端"),
+        }
+    }
+}
 
 #[derive(serde::Deserialize)]
 struct ModelCatalog {
@@ -43,8 +68,8 @@ impl HiveApp {
             .ghost()
             .compact()
             .icon(Glyph::Ellipsis)
-            .tooltip("成员操作")
-            .accessibility_label(format!("{} 的成员操作", member.name))
+            .tooltip(tr("成员操作"))
+            .accessibility_label(if english() { format!("Member actions: {}", member.name) } else { format!("{} 的成员操作", member.name) })
             .disabled(!self.connected || self.member_loading)
             .dropdown_menu(move |menu, _, _| {
                 let rename = weak.clone();
@@ -53,7 +78,7 @@ impl HiveApp {
                 let delete = weak.clone();
                 let delete_id = id.clone();
                 menu.item(
-                    PopupMenuItem::new("修改名称…").on_click(move |_, window, cx| {
+                    PopupMenuItem::new(tr("修改名称…")).on_click(move |_, window, cx| {
                         let _ = rename.update(cx, |this, cx| {
                             this.deleting_member = None;
                             this.editing_member = Some(rename_id.clone());
@@ -66,7 +91,7 @@ impl HiveApp {
                     }),
                 )
                 .separator()
-                .item(PopupMenuItem::new("删除成员…").on_click(move |_, _, cx| {
+                .item(PopupMenuItem::new(tr("删除成员…")).on_click(move |_, _, cx| {
                     let _ = delete.update(cx, |this, cx| {
                         this.editing_member = None;
                         this.deleting_member = Some(delete_id.clone());
@@ -129,7 +154,7 @@ impl HiveApp {
                         }
                         Err(error) => {
                             this.member_catalog_error =
-                                Some(format!("读取 {backend} 模型失败：{error}"))
+                                Some((backend.to_owned(), error))
                         }
                     }
                     cx.notify();
@@ -170,11 +195,11 @@ impl HiveApp {
                                 this.sync_pinned_project();
                             }
                             Err(error) => {
-                                this.member_error = Some(format!("成员状态未能更新：{error}"))
+                                this.member_error = Some(error.to_string())
                             }
                         },
                         Err(error) => {
-                            this.member_error = Some(format!("成员状态未能更新：{error}"))
+                            this.member_error = Some(error.to_string())
                         }
                     }
                     cx.notify();
@@ -248,7 +273,7 @@ impl HiveApp {
         };
         let name = self.member_name.read(cx).value().trim().to_string();
         if name.is_empty() {
-            self.error = Some("请输入成员名称".into());
+            self.error = Some(tr("请输入成员名称").into());
             cx.notify();
             return;
         }
@@ -342,7 +367,7 @@ impl HiveApp {
     ) -> impl IntoElement {
         v_flex()
             .gap_2()
-            .child(Input::new(&self.member_search).aria_label("搜索团队成员"))
+            .child(Input::new(&self.member_search).aria_label(tr("搜索团队成员")))
             .child(
                 h_flex()
                     .flex_wrap()
@@ -350,10 +375,10 @@ impl HiveApp {
                     .gap_1()
                     .children(
                         [
-                            ("all", "全部"),
-                            ("working", "工作中"),
-                            ("idle", "待命"),
-                            ("stopped", "已停止"),
+                            ("all", tr("全部")),
+                            ("working", tr("工作中")),
+                            ("idle", tr("待命")),
+                            ("stopped", tr("已停止")),
                         ]
                         .into_iter()
                         .enumerate()
@@ -367,7 +392,7 @@ impl HiveApp {
                                 .ghost()
                                 .compact()
                                 .label(format!("{label} {count}"))
-                                .accessibility_label(format!("筛选成员：{label}"))
+                                .accessibility_label(if english() { format!("Filter members: {label}") } else { format!("筛选成员：{label}") })
                                 .selected(self.member_status_filter == status)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.member_status_filter = status;
@@ -380,7 +405,7 @@ impl HiveApp {
                             Button::new("clear-member-filters")
                                 .ghost()
                                 .compact()
-                                .label("清除筛选")
+                                .label(tr("清除筛选"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.member_status_filter = "all";
                                     this.member_search
@@ -394,14 +419,14 @@ impl HiveApp {
                 div()
                     .text_xs()
                     .text_color(crate::palette::Color::Muted.get(cx))
-                    .child("工作中表示有未完成派单；待命表示当前没有派单。"),
+                    .child(tr("工作中表示有未完成派单；待命表示当前没有派单。")),
             )
             .when(filtering, |view| {
                 view.child(
                     div()
                         .text_xs()
                         .text_color(crate::palette::Color::Muted.get(cx))
-                        .child(format!("显示 {count} / {} 位成员", self.members.len())),
+                        .child(if english() { format!("Showing {count} of {} members", self.members.len()) } else { format!("显示 {count} / {} 位成员", self.members.len()) }),
                 )
             })
     }

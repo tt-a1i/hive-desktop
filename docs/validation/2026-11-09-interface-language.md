@@ -61,3 +61,19 @@
 - 当前原生构建以--language en重新跑启动恢复；轻量硬链接/资源链接fixture并非便携包。实际新程序启动并恢复项目/会话选择，probe exit0后SIGTERM清理；不是正常用户退出、英文文字或搜索窗口的系统操作证据。
 
 原有owned进程21544/54534仍在，原生工具再次明确报告Mac锁屏；未强杀这些现场。当前对话弹窗的英文/中文切换、选中项与查询/草稿保留、重命名验证、菜单点击、长英文和窄窗均未验收。没有删除或修改现有测试、生产Node后台/协议/模型选择与Pi审批未改，未跑全量测试，未重打ZIP。收据conversations-receipt.json及conversations-startup-en.log在.artifacts/language；fixture已在gate退出、lsof无引用且无自有probe/sidecar后移除。完整#17范围及完整产品目标保持开放。
+
+
+## 成员、职责与角色模板文案
+
+第四批累计379条英文目录（新增39条），覆盖成员角色/状态/后端标签、搜索筛选、职责展开与复制、角色模板的列表/编辑/删除/选择及其提示。角色模板名称、职责正文、命令/参数/环境、成员名称和原始诊断保持原值；筛选仍使用原状态码。模板通知和成员刷新/模型读取错误在渲染时本地化，保留原诊断。部分创建/停止成员的全局错误快照仍待迁移。
+
+将成员显示helper移出协议模块，复用角色模板的角色映射。验证无GUI的process-supervisor-check入口时，发现现有protocol.rs依赖UI模块中的AttachmentRef与DeliveryFailure，原HEAD同样存在，导致该入口不能编译。两个纯数据结构移回protocol.rs，原UI模块重导出同一类型；不改变字段、serde命名或运行路径，不引入GUI替身。新增一条实际JSON编解码回归，验证队列附件、中文原文、投递失败的camelCase字段及错误命名拒绝。
+
+本批验证：
+
+- `cargo test --locked --manifest-path apps/desktop/Cargo.toml --no-default-features --features process-supervisor-check --bin process-supervisor-check`：13通过，1个既有子进程fixture入口按设计忽略，主测试实际启动该入口。包含真实进程树/并发关闭/Node启动与协议回归。
+- `cargo test --locked --manifest-path apps/desktop/Cargo.toml language::tests`：1通过。
+- Mac默认构建、Windows MSVC默认及无GUI监督器入口类型检查通过。Windows是交叉类型检查，不是Windows真机运行。
+- `git diff --check`通过。未跑无差别全量测试；本批UI文案与纯数据结构归属调整使用上述定向检查，未改动/删除既有测试。没有模型请求。
+
+用户回复解锁后再次选择仍运行的原生应用，工具依然明确报告Mac锁屏；实际英文排版、切换、草稿/输入法及窄窗未验收。未重启或删除运行中的验证应用，未制作新ZIP，完整语言覆盖和#17均未完成。收据`.artifacts/language/members-receipt.json`。

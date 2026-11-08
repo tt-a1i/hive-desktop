@@ -10,7 +10,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
@@ -19,15 +19,7 @@ use std::{
     sync::Arc,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct AttachmentRef {
-    pub id: String,
-    pub workspace_id: String,
-    pub name: String,
-    pub mime_type: String,
-    pub size: u64,
-}
+pub(crate) use crate::protocol::AttachmentRef;
 impl AttachmentRef {
     pub fn is_image(&self) -> bool {
         matches!(

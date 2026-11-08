@@ -1,3 +1,4 @@
+use crate::language::{english, tr};
 use crate::{app::HiveApp, palette::Color, protocol::Member};
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -22,7 +23,7 @@ impl HiveApp {
         let summary = text
             .lines()
             .find(|line| !line.trim().is_empty())
-            .unwrap_or("未设置职责说明")
+            .unwrap_or(tr("未设置职责说明"))
             .to_string();
         v_flex()
             .min_w_0()
@@ -43,13 +44,9 @@ impl HiveApp {
                         } else {
                             Glyph::ChevronRight
                         })
-                        .label("职责说明")
+                        .label(tr("职责说明"))
                         .toggled(expanded)
-                        .accessibility_label(format!(
-                            "{} {} 的职责说明",
-                            if expanded { "收起" } else { "展开" },
-                            member.name
-                        ))
+                        .accessibility_label(if english() { format!("{} {}’s responsibilities", if expanded { tr("收起") } else { tr("展开") }, member.name) } else { format!("{} {} 的职责说明", if expanded { tr("收起") } else { tr("展开") }, member.name) })
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if !this.member_details_open.remove(&id) {
                                 this.member_details_open.insert(id.clone());
@@ -77,8 +74,8 @@ impl HiveApp {
                             .ghost()
                             .compact()
                             .icon(Glyph::Copy)
-                            .label("复制")
-                            .accessibility_label(format!("复制 {} 的完整职责说明", member.name))
+                            .label(tr("复制"))
+                            .accessibility_label(if english() { format!("Copy {}’s full responsibilities", member.name) } else { format!("复制 {} 的完整职责说明", member.name) })
                             .on_click({
                                 let text = text.clone();
                                 cx.listener(move |_, _, _, cx| {
@@ -104,7 +101,7 @@ impl HiveApp {
                         .bg(Color::Inset.get(cx))
                         .text_sm()
                         .child(if empty {
-                            "未设置职责说明".to_owned()
+                            tr("未设置职责说明").to_owned()
                         } else {
                             text
                         }),

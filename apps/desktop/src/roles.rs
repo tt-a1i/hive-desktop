@@ -1,3 +1,4 @@
+use crate::language::{english, tr};
 use crate::app::HiveApp;
 use crate::palette::Color;
 use gpui_kit::component::*;
@@ -27,12 +28,22 @@ pub struct Roles {
     pub visible: bool,
     items: Vec<RoleTemplate>,
     loading: bool,
-    error: Option<String>,
-    notice: Option<String>,
+    error: Option<RoleError>,
+    notice: Option<&'static str>,
     generation: u64,
     editing: Option<RoleTemplate>,
     deleting: Option<String>,
     role_type: &'static str,
+}
+enum RoleError { Message(&'static str), Load(String), Mutation(String) }
+impl RoleError {
+    fn text(&self) -> String {
+        match self {
+            Self::Message(key) => tr(key).to_owned(),
+            Self::Load(error) => format!("{}: {error}", tr("读取角色模板失败")),
+            Self::Mutation(error) => format!("{}: {error}", tr("角色模板操作失败")),
+        }
+    }
 }
 impl Roles {
     pub fn new() -> Self {
@@ -49,13 +60,13 @@ impl Roles {
         }
     }
 }
-fn role_label(role: &str) -> &str {
+pub(crate) fn role_label(role: &str) -> &str {
     match role {
-        "coder" => "开发",
-        "reviewer" => "审查",
-        "tester" => "测试",
-        "custom" => "自定义",
-        "orchestrator" => "主控",
+        "coder" => tr("开发"),
+        "reviewer" => tr("审查"),
+        "tester" => tr("测试"),
+        "custom" => tr("自定义"),
+        "orchestrator" => tr("主控"),
         _ => role,
     }
 }
@@ -81,7 +92,7 @@ impl HiveApp {
     }
     pub fn load_roles(&mut self, cx: &mut Context<Self>) {
         let Some(runtime) = self.runtime.clone() else {
-            self.roles.error = Some("后台尚未连接".into());
+            self.roles.error = Some(RoleError::Message("后台尚未连接"));
             cx.notify();
             return;
         };
@@ -114,7 +125,7 @@ impl HiveApp {
                     serde_json::from_value::<Vec<RoleTemplate>>(value).map_err(|e| e.to_string())
                 }) {
                     Ok(items) => this.roles.items = items,
-                    Err(e) => this.roles.error = Some(format!("读取角色模板失败：{e}")),
+                    Err(e) => this.roles.error = Some(RoleError::Load(e)),
                 }
                 cx.notify();
             });
@@ -128,7 +139,7 @@ impl HiveApp {
         let name = self.role_name.read(cx).value().trim().to_string();
         let description = self.role_description.read(cx).value().to_string();
         if name.is_empty() {
-            self.roles.error = Some("请输入模板名称".into());
+            self.roles.error = Some(RoleError::Message("请输入模板名称"));
             cx.notify();
             return;
         }
@@ -153,7 +164,7 @@ impl HiveApp {
             return;
         }
         let Some(runtime) = self.runtime.clone() else {
-            self.roles.error = Some("后台尚未连接".into());
+            self.roles.error = Some(RoleError::Message("后台尚未连接"));
             cx.notify();
             return;
         };
@@ -207,7 +218,7 @@ impl HiveApp {
                             );
                             this.load_roles(cx);
                         }
-                        Err(e) => this.roles.error = Some(format!("保存角色模板失败：{e}")),
+                        Err(e) => this.roles.error = Some(RoleError::Mutation(e)),
                     }
                     cx.notify();
                 });
@@ -216,28 +227,28 @@ impl HiveApp {
     }
     pub fn render_roles(&self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
-            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("角色模板"))
-            .child(div().text_sm().child("保存常用职责。创建成员时可选择模板，仍需确认后创建。"))
-            .when_some(self.roles.error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
-            .when_some(self.roles.notice.clone(), |view, notice| view.child(div().text_sm().child(notice)))
+            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(tr("角色模板")))
+            .child(div().text_sm().child(tr("保存常用职责。创建成员时可选择模板，仍需确认后创建。")))
+            .when_some(self.roles.error.as_ref().map(|error| error.text()), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
+            .when_some(self.roles.notice, |view, notice| view.child(div().text_sm().child(tr(notice))))
             .child(div().id("roles-scroll").flex_1().min_h_0().overflow_y_scroll().child(v_flex().w_full().flex_shrink_0().gap_3()
-                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.editing.is_some() { "编辑模板" } else { "新建模板" }))
-                .child(Input::new(&self.role_name).aria_label("角色模板名称"))
-                .child(Textarea::new(&self.role_description).aria_label("角色模板职责说明"))
-                .child(h_flex().gap_1().children([("orchestrator", "主控"), ("coder", "开发"), ("reviewer", "审查"), ("tester", "测试"), ("custom", "自定义")].into_iter().enumerate().map(|(i, (role, label))| Button::new(("role-type", i)).label(label).selected(self.roles.role_type == role).on_click(cx.listener(move |this, _, _, cx| { this.roles.role_type = role; cx.notify(); })))))
-                .child(h_flex().gap_2().child(Button::new("save-role").label(if self.roles.editing.is_some() { "保存修改" } else { "创建模板" }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.save_role(cx))))
-                    .child(Button::new("new-role-form").label("新建空白模板").disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, window, cx| { this.roles.editing = None; this.roles.role_type = "custom"; this.role_name.update(cx, |state, cx| state.set_value("", window, cx)); this.role_description.update(cx, |state, cx| state.set_value("", window, cx)); cx.notify(); }))))
-                .child(h_flex().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.loading { "正在读取或保存…" } else { "已有模板" })).child(Button::new("refresh-roles").label("刷新").disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.load_roles(cx)))))
-                .when(!self.roles.loading && self.roles.items.is_empty(), |view| view.child(div().text_sm().child("暂无模板")))
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.editing.is_some() { tr("编辑模板") } else { tr("新建模板") }))
+                .child(Input::new(&self.role_name).aria_label(tr("角色模板名称")))
+                .child(Textarea::new(&self.role_description).aria_label(tr("角色模板职责说明")))
+                .child(h_flex().gap_1().children([("orchestrator", tr("主控")), ("coder", tr("开发")), ("reviewer", tr("审查")), ("tester", tr("测试")), ("custom", tr("自定义"))].into_iter().enumerate().map(|(i, (role, label))| Button::new(("role-type", i)).label(label).selected(self.roles.role_type == role).on_click(cx.listener(move |this, _, _, cx| { this.roles.role_type = role; cx.notify(); })))))
+                .child(h_flex().gap_2().child(Button::new("save-role").label(if self.roles.editing.is_some() { tr("保存修改") } else { tr("创建模板") }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.save_role(cx))))
+                    .child(Button::new("new-role-form").label(tr("新建空白模板")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, window, cx| { this.roles.editing = None; this.roles.role_type = "custom"; this.role_name.update(cx, |state, cx| state.set_value("", window, cx)); this.role_description.update(cx, |state, cx| state.set_value("", window, cx)); cx.notify(); }))))
+                .child(h_flex().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.loading { tr("正在读取或保存…") } else { tr("已有模板") })).child(Button::new("refresh-roles").label(tr("刷新")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.load_roles(cx)))))
+                .when(!self.roles.loading && self.roles.items.is_empty(), |view| view.child(div().text_sm().child(tr("暂无模板"))))
                 .children(self.roles.items.iter().enumerate().map(|(i, template)| {
                     let item = template.clone(); let delete = template.id.clone(); let deleting = self.roles.deleting.as_ref() == Some(&template.id);
                     v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
-                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{} · {}{}", template.name, role_label(&template.role_type), if template.is_builtin { " · 内置" } else { "" })))
+                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{} · {}{}", template.name, role_label(&template.role_type), if template.is_builtin { if english() { " · Built-in" } else { " · 内置" } } else { "" })))
                         .child(div().text_sm().child(template.description.clone()))
                         .when(!template.is_builtin, |view| view.child(h_flex().gap_2()
-                            .child(Button::new(("edit-role", i)).label("编辑").disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, window, cx| { this.roles.role_type = role_key(&item.role_type); this.role_name.update(cx, |state, cx| state.set_value(item.name.clone(), window, cx)); this.role_description.update(cx, |state, cx| state.set_value(item.description.clone(), window, cx)); this.roles.editing = Some(item.clone()); this.roles.deleting = None; cx.notify(); })))
-                            .child(Button::new(("delete-role", i)).label(if deleting { format!("确认删除「{}」", template.name) } else { "删除".into() }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, _, cx| { if this.roles.deleting.as_ref() == Some(&delete) { this.role_mutation("DELETE", format!("/api/settings/role-templates/{delete}"), None, cx); } else { this.roles.deleting = Some(delete.clone()); cx.notify(); } })))
-                            .when(deleting, |view| view.child(Button::new(("cancel-delete-role", i)).label("取消").accessibility_label(format!("取消删除角色模板 {}", template.name)).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| { this.roles.deleting = None; cx.notify(); }))))))
+                            .child(Button::new(("edit-role", i)).label(tr("编辑")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, window, cx| { this.roles.role_type = role_key(&item.role_type); this.role_name.update(cx, |state, cx| state.set_value(item.name.clone(), window, cx)); this.role_description.update(cx, |state, cx| state.set_value(item.description.clone(), window, cx)); this.roles.editing = Some(item.clone()); this.roles.deleting = None; cx.notify(); })))
+                            .child(Button::new(("delete-role", i)).label(if deleting { if english() { format!("Confirm deletion of “{}”", template.name) } else { format!("确认删除「{}」", template.name) } } else { tr("删除").into() }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, _, cx| { if this.roles.deleting.as_ref() == Some(&delete) { this.role_mutation("DELETE", format!("/api/settings/role-templates/{delete}"), None, cx); } else { this.roles.deleting = Some(delete.clone()); cx.notify(); } })))
+                            .when(deleting, |view| view.child(Button::new(("cancel-delete-role", i)).label(tr("取消")).accessibility_label(if english() { format!("Cancel deletion of role template {}", template.name) } else { format!("取消删除角色模板 {}", template.name) }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| { this.roles.deleting = None; cx.notify(); }))))))
                 }))))
     }
     pub fn render_member_templates(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -246,9 +257,9 @@ impl HiveApp {
             .child(
                 Button::new("toggle-member-templates")
                     .label(if self.member_templates_open {
-                        "收起角色模板"
+                        tr("收起角色模板")
                     } else {
-                        "选择角色模板"
+                        tr("选择角色模板")
                     })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.member_templates_open = !this.member_templates_open;
@@ -256,12 +267,12 @@ impl HiveApp {
                     })),
             )
             .when(self.member_templates_open, |view| {
-                view.child(div().text_xs().child("选择模板后可继续编辑职责"))
+                view.child(div().text_xs().child(tr("选择模板后可继续编辑职责")))
             })
             .when(self.roles.loading, |view| {
-                view.child(div().text_xs().child("正在读取模板…"))
+                view.child(div().text_xs().child(tr("正在读取模板…")))
             })
-            .when_some(self.roles.error.clone(), |view, error| {
+            .when_some(self.roles.error.as_ref().map(|error| error.text()), |view, error| {
                 view.child(
                     div()
                         .text_xs()
@@ -270,7 +281,7 @@ impl HiveApp {
                 )
                 .child(
                     Button::new("retry-member-roles")
-                        .label("重试读取模板")
+                        .label(tr("重试读取模板"))
                         .on_click(cx.listener(|this, _, _, cx| this.load_roles(cx))),
                 )
             })

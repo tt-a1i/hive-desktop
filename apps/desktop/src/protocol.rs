@@ -1,5 +1,21 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AttachmentRef {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size: u64,
+}
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeliveryFailure {
+    pub delivery_id: String,
+    pub message: String,
+}
 
 #[derive(Clone, Deserialize)]
 pub struct Workspace {
@@ -64,35 +80,7 @@ pub struct Member {
     pub configured_command: Option<String>,
     pub desktop_model: Option<ModelIdentity>,
 }
-impl Member {
-    pub fn role_label(&self) -> &str {
-        match self.role.as_str() {
-            "coder" => "开发",
-            "reviewer" => "审查",
-            "tester" => "测试",
-            "custom" => "自定义",
-            other => other,
-        }
-    }
-    pub fn status_label(&self) -> &str {
-        match self.status.as_str() {
-            "idle" => "待命",
-            "working" => "工作中",
-            "stopped" => "已停止",
-            other => other,
-        }
-    }
-    pub fn backend_label(&self) -> &str {
-        match self.configured_command.as_deref() {
-            Some("hive:pi") => "Pi",
-            Some("hive:codex") => "Codex",
-            Some("hive:pi-rpc") => "外部 Pi",
-            Some("hive:claude") => "Claude",
-            Some(_) => "其他后端",
-            None => "未配置后端",
-        }
-    }
-}
+
 #[derive(Deserialize)]
 pub struct MemberRun {
     pub agent_id: String,
@@ -132,7 +120,7 @@ pub struct PendingUserInput {
     pub delivery_id: String,
     pub text: String,
     #[serde(default)]
-    pub attachments: Vec<crate::attachments::AttachmentRef>,
+    pub attachments: Vec<AttachmentRef>,
     pub processing: bool,
 }
 #[derive(Deserialize)]
@@ -151,7 +139,7 @@ pub struct OpenSession {
     pub pending_reports: Vec<PendingReport>,
     #[serde(default)]
     pub pending_user_inputs: Vec<PendingUserInput>,
-    pub delivery_failure: Option<crate::failures::DeliveryFailure>,
+    pub delivery_failure: Option<DeliveryFailure>,
     #[serde(default)]
     pub completed_delivery_ids: Vec<String>,
     #[serde(flatten)]
@@ -242,7 +230,7 @@ pub enum PiEvent {
         #[serde(default)]
         pending_user_inputs: Vec<PendingUserInput>,
         completed_report_id: Option<String>,
-        delivery_failure: Option<crate::failures::DeliveryFailure>,
+        delivery_failure: Option<DeliveryFailure>,
     },
     #[serde(rename_all = "camelCase")]
     AssistantDelta {
@@ -372,4 +360,37 @@ pub enum TerminalFrame {
     Closed {
         reason: String,
     },
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn queued_attachment_and_failure_wire_fields_preserve_original_data() {
+        let attachment = json!({"id":"upload-1","workspaceId":"workspace-1","name":"角色模板.txt","mimeType":"text/plain","size":23});
+        let snapshot: OpenSession = serde_json::from_value(json!({
+            "id":"chat-1","workspaceId":"workspace-1","title":"成员职责","backend":"pi-rpc",
+            "historyMessageIds":[],"activeMessage":null,"eventSequence":17,"pending":1,
+            "pendingUserInputs":[{"deliveryId":"delivery-1","text":"原始输入","attachments":[attachment.clone()],"processing":false}],
+            "deliveryFailure":{"deliveryId":"delivery-1","message":"原生诊断：原文保留"},
+            "model":{"provider":"openai","id":"gpt-6.1-terra"},"unavailableModel":null
+        })).unwrap();
+        assert_eq!(snapshot.session.title, "成员职责");
+        assert!(matches!(snapshot.session.backend, Backend::PiRpc));
+        assert_eq!(snapshot.event_sequence, 17);
+        assert_eq!(snapshot.pending_user_inputs.len(), 1);
+        let input = &snapshot.pending_user_inputs[0];
+        assert_eq!(input.delivery_id, "delivery-1");
+        assert_eq!(input.text, "原始输入");
+        assert!(!input.processing);
+        assert_eq!(input.attachments.len(), 1);
+        assert_eq!(serde_json::to_value(&input.attachments[0]).unwrap(), attachment);
+        let failure = snapshot.delivery_failure.unwrap();
+        assert_eq!(failure.delivery_id, "delivery-1");
+        assert_eq!(failure.message, "原生诊断：原文保留");
+        assert!(serde_json::from_value::<DeliveryFailure>(json!({"delivery_id":"wrong-case","message":"diagnostic"})).is_err());
+    }
 }

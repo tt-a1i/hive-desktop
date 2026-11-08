@@ -122,7 +122,7 @@ pub struct HiveApp {
     pub member_catalog_backend: Option<String>,
     pub member_catalog: Vec<Model>,
     pub member_catalog_loading: bool,
-    pub member_catalog_error: Option<String>,
+    pub member_catalog_error: Option<(String, String)>,
     pub member_catalog_generation: u64,
     pub pi_command: Entity<InputState>,
     pub codex_command: Entity<InputState>,

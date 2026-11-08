@@ -8,12 +8,7 @@ use gpui_kit::{
     *,
 };
 
-#[derive(Clone, serde::Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DeliveryFailure {
-    pub delivery_id: String,
-    pub message: String,
-}
+pub use crate::protocol::DeliveryFailure;
 pub struct Diagnostic {
     pub message: String,
     pub expanded: bool,

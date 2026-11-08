@@ -483,7 +483,7 @@ impl Render for HiveApp {
                     .child(Button::new("toggle-member-form").ghost().icon(Glyph::Plus).label(if self.member_form_open { tr("收起表单") } else { tr("添加成员") }).on_click(cx.listener(|this, _, _, cx| { this.member_form_open = !this.member_form_open; cx.notify(); }))))
                 .child(self.render_member_filters(matching_members.len(), member_browsing, cx))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
-                .when_some(self.member_error.clone(), |view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
+                .when_some(self.member_error.clone(), |view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(format!("{}: {error}", tr("成员状态未能更新")))))
                 .child(v_flex().id("members-panel").flex_1().min_h_0().min_w_0().overflow_y_scroll().gap_2()
                     .when(self.member_form_open, |list| list.child(v_flex().gap_2().p_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("新建成员")))
@@ -544,7 +544,7 @@ impl Render for HiveApp {
                             .when(picker_open, |view| view.child(v_flex().gap_2()
                                 .child(Input::new(&self.member_model_search).aria_label(tr("搜索此成员的可用模型")))
                                 .when(self.member_catalog_loading, |view| view.child(div().text_sm().child(tr("正在读取可用模型…"))))
-                                .when_some(self.member_catalog_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
+                                .when_some(self.member_catalog_error.clone(), |view, (backend,error)| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(if english() { format!("Could not load {backend} models: {error}") } else { format!("读取 {backend} 模型失败：{error}") })))
                                 .when(!self.member_catalog_loading && self.member_catalog_error.is_none() && matching_member_models.is_empty(), |view| view.child(div().text_sm().child(tr("没有匹配的可用模型"))))
                                 .child(v_flex().id(("member-model-list", i)).h(px(168.)).min_h_0().overflow_y_scroll().gap_1()
                                     .children(matching_member_models.iter().cloned().enumerate().map(|(j, model)| {
