@@ -18,3 +18,5 @@
 - cargo check、生产 cargo build 和 git diff --check 通过。纯 UI 与现有字段反序列化补齐，不新增测试，不改/删现有测试，也不运行无关 runtime 全量检查。没有厂商推理请求；隔离模型配置仅 Terra。
 
 日志、复制校验与最终收据位于 `.artifacts/member-responsibilities/`。本次验证为 Mac 源码原生应用，不冒认已更新开发 ZIP、Windows 原生或完整产品目标验收。
+
+最新批次已纳入 [当前 Mac 开发包](2026-11-08-current-package.md)，包内验收与源码系统走查分别记录。

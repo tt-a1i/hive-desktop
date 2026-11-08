@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包（2026-11-08）
+
+固定 current ZIP 纳入 8a61711 的职责展示和字号/历史重测。独立解压核对程序、108个runtime及29970个未变归档条目，真实PTY/Hive/SQLite、生产启动恢复及包内系统操作通过。临时解压副本已在退出后清理，ZIP仅保留当前+两份回退，.artifacts维持约3.4GiB；会话与旧聊天工作目录保留。见 [当前开发包](validation/2026-11-08-current-package.md)。Windows及完整体验继续实施。
+
 ## 界面字号（2026-11-08）
 
 对照 Cindy 外观页增加 12–20 px 界面字号、恢复默认及阅读预览，使用原生 Theme 字体尺度，兼容旧主题文件。Mac 系统操作验证上下限、主题切换、约642逻辑像素窄窗、设置搜索、真实写入失败保留原值及完整退出冷恢复。cargo check/build、两项偏好文件检查通过；未运行无关 runtime 全量测试。见 [字号验证](validation/2026-11-08-interface-font-size.md)。开发 ZIP 与 Windows 状态单列。
