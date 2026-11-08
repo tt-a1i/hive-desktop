@@ -28,9 +28,9 @@ impl HiveApp {
         window.open_alert_dialog(cx, move |dialog, _, _| {
             let weak = weak.clone();
             let id = provider_id.clone();
-            dialog.title(format!("移除 {name} 的登录信息？"))
-                .description("Hive 和共用配置的 Pi 将停止使用这份已保存的登录信息。会话记录保留；环境变量等其他登录来源不受影响。")
-                .show_cancel(true).ok_text("移除登录信息").cancel_text("取消")
+            dialog.title(if english() { format!("Remove login information for {name}?") } else { format!("移除 {name} 的登录信息？") })
+                .description(tr("Hive 和共用配置的 Pi 将停止使用这份已保存的登录信息。会话记录保留；环境变量等其他登录来源不受影响。"))
+                .show_cancel(true).ok_text(tr("移除登录信息")).cancel_text(tr("取消"))
                 .on_ok(move |_, window, cx| {
                     weak.update(cx, |this, cx| {
                         if this.connection_generation == connection {

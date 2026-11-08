@@ -115,3 +115,22 @@
 验证：language::tests 1通过，Mac构建、Windows MSVC类型检查、git diff --check通过。既有executable-probe-wire.ts跑编译后JSONL后台，验证实际进程版本/未保存路径、输入校验、关闭期间取消和子进程退出；team-autostaff-settings.ts跑真实HTTP/SQLite持久化，两项均通过，无模型请求。测试文件无增删改，未跑全量测试；本批只改显示与提示表示。
 
 再次原生选择现有仍运行应用，工具明确报告Mac锁屏，未观察新英文界面/文件选择/语言切换/草稿与输入法保留；不重启已有工作应用。#17仍需Pi账号/模型配置、文件/工具/导出内部及更多动态错误文字和实际布局验收。没有新ZIP。阶段收据`.artifacts/language/programs-receipt.json`。
+
+
+## Pi账号、模型配置与草稿语言
+
+第九批累计670条英文目录（新增116条），覆盖Pi账号/提供商搜索、登录/配置/移除确认、模型/接口/能力覆盖表单、校验/保存/冲突/草稿恢复提示和无障碍标签。账号运行时的17条明确归属Hive的固定提示做精确匹配后显示译文；未识别消息、SDK授权说明/输入选项/placeholder、设备码、URL、原始错误和用户数据保留。模型草稿底层io错误的内层诊断仍为原文，不宣称所有错误完全本地化。
+
+账号本地操作失败/断连和模型静态通知/失败的显示按render取语言。既有locale更新入口只set_placeholder到账号搜索、当前登录输入和模型编辑器；不清空凭据、不改masked/focus、不重启登录或发请求，不改value/selection/初始值、配置revision、冲突base或已保存草稿。保留既有“新prompt才清空输入”的处理和断连清理逻辑。模型名称/ID、URL/API码、Token数、继承三态、配置路径和高级字段保持实际值。
+
+另将模型能力覆盖按钮和程序浏览按钮的id改为能力值/后端固定码，避免显示文字翻译时控件id跟着变化。原先覆盖按钮id包含中文label；程序浏览id包含可能本地化的外部Pi标签。未改变按钮动作或权限。
+
+本批验证：
+
+- language::tests 1通过；现有settings::pi_models::draft::tests 3通过，涵盖原冲突base/其他配置草稿保留、不可读文件不覆盖/丢弃、原子写入失败保留旧表单。
+- Mac默认构建和Windows MSVC类型检查通过，无编译警告；git diff --check通过。
+- 既有pi-auth.ts：真实Pi SDK/隔离凭据文件，合成OAuth provider，无厂商请求。覆盖重开、状态脱敏、prompt回调时序、重复/过期输入、取消/关闭和写入后目录同步失败。
+- 既有pi-auth-wire.ts：编译生产JSONL、真实Hive与隔离Pi配置，验证API配置/移除、非法/过期/空输入、默认模型保持和退出，无厂商API请求。
+- 既有pi-model-config.ts与pi-model-overrides-wire.ts：真实SDK/JSONC文件、生产JSONL和HTTP/SQLite，覆盖高级字段/BOM/CRLF保留、过期/并发写入/只读/符号链接及继承/重置/移除/冲突/默认值保留；无模型请求。
+
+没有新增、删除或修改测试；未跑全量测试，本批改动为UI显示/输入提示/控件id，认证与模型后台、协议及配置文件格式未改。测试通过不证明语言切换时凭据/草稿/selection/输入法保留，也不证明实际英文表单/移除对话框和窄窗可用；这些需要原生操作。再次选择现有仍运行应用，工具明确报告Mac锁屏，尚未观察当前界面。没有重启或删除已有验证应用，没有新ZIP。完整#17仍开放，工具/文件/导出内部、其他动态错误及最终GUI验收继续推进。阶段收据`.artifacts/language/pi-settings-receipt.json`。

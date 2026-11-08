@@ -123,7 +123,7 @@ impl HiveApp {
                     .disabled(disabled || loading).on_click(cx.listener(move |this,_,_,cx|this.check_program(backend,probe_input.clone(),cx)))))
             .child(h_flex().w_full().gap_2()
                 .child(div().flex_1().min_w_0().child(Input::new(input).rounded_full().aria_label(if english() { format!("{label} executable path") } else { format!("{label} 可执行文件路径") }).disabled(disabled)))
-                .child(Button::new(SharedString::from(format!("browse-{label}"))).rounded_full().label(tr("浏览…")).accessibility_label(if english() { format!("Select {label} executable") } else { format!("选择 {label} 可执行文件") }).disabled(disabled)
+                .child(Button::new(SharedString::from(format!("browse-{backend}"))).rounded_full().label(tr("浏览…")).accessibility_label(if english() { format!("Select {label} executable") } else { format!("选择 {label} 可执行文件") }).disabled(disabled)
                     .on_click(cx.listener(move |this,_,window,cx|this.browse_executable(label,target.clone(),window,cx)))))
             .when_some(effective,|row,value|row.child(div().text_xs().text_color(Color::Muted.get(cx)).child(value.label(tr("当前使用")))))
             .when(changed, |row|row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("输入已更改，请重新检查。"))))

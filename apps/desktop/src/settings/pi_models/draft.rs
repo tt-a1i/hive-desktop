@@ -101,7 +101,7 @@ impl HiveApp {
                 file.drafts.remove(&path)
             }
             Err(error) => {
-                self.pi_models.message = Some(format!("无法恢复模型草稿，原文件已保留：{error}"));
+                self.pi_models.message = Some(ModelNotice::Error("无法恢复模型草稿，原文件已保留", error.to_string()));
                 return;
             }
         };

@@ -1,4 +1,4 @@
-use crate::app::HiveApp;
+use crate::{app::HiveApp, language::{english,tr}};
 use gpui_kit::{
     component::{
         WindowExt,
@@ -81,15 +81,32 @@ pub struct PiModels {
     vision: Option<bool>,
     loading: bool,
     generation: u64,
-    message: Option<String>,
+    message: Option<ModelNotice>,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
+enum ModelNotice { Message(&'static str), Error(&'static str, String) }
+impl From<&'static str> for ModelNotice {
+    fn from(key: &'static str) -> Self { Self::Message(key) }
+}
+impl ModelNotice {
+    fn text(&self) -> String {
+        match self {
+            Self::Message(key) => tr(key).to_owned(),
+            Self::Error(key,error) => format!("{}: {error}",tr(key)),
+        }
+    }
+}
 impl PiModels {
+    pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
+        for (input,key) in [(&self.id,"例如 my-provider 或模型 ID"),(&self.name,"显示名称，可留空"),(&self.first,"例如 gpt-6.1-terra"),(&self.context,"留空使用 Pi 默认值"),(&self.output,"留空使用 Pi 默认值")] {
+            input.update(cx, |input,cx|input.set_placeholder(tr(key),window,cx));
+        }
+    }
     pub fn new(window: &mut Window, cx: &mut Context<HiveApp>) -> Self {
         let mut subscriptions = vec![];
         let mut input = |placeholder: &'static str, cx: &mut Context<HiveApp>| {
-            let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder(tr(placeholder)));
             subscriptions.push(cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.schedule_draft_save(cx);
@@ -222,7 +239,7 @@ impl HiveApp {
                         if save && !conflict {
                             if let Err(error) = this.pi_models.clear_draft() {
                                 this.pi_models.message =
-                                    Some(format!("配置已保存，但旧草稿未能清除：{error}"));
+                                    Some(ModelNotice::Error("配置已保存，但旧草稿未能清除", error.to_string()));
                             }
                             this.pi_models.target = None;
                             this.pi_accounts.invalidate_catalog();
@@ -231,7 +248,7 @@ impl HiveApp {
                     });
                     let succeeded = result.is_ok();
                     if let Err(error) = result {
-                        this.pi_models.message = Some(format!("模型配置操作失败：{error}"));
+                        this.pi_models.message = Some(ModelNotice::Error("模型配置操作失败", error.to_string()));
                     }
                     if succeeded && !save && this.pi_models.snapshot.is_some() {
                         this.restore_pi_model_draft(window, cx);
@@ -257,11 +274,11 @@ impl HiveApp {
                 let target = target.clone();
                 let weak = weak.clone();
                 dialog
-                    .title("放弃当前表单修改？")
-                    .description("尚未保存的修改会被替换。")
+                    .title(tr("放弃当前表单修改？"))
+                    .description(tr("尚未保存的修改会被替换。"))
                     .show_cancel(true)
-                    .ok_text("放弃修改")
-                    .cancel_text("继续编辑")
+                    .ok_text(tr("放弃修改"))
+                    .cancel_text(tr("继续编辑"))
                     .on_ok(move |_, window, cx| {
                         weak.update(cx, |this, cx| {
                             this.begin_pi_model_form(target.clone(), window, cx)
@@ -327,7 +344,7 @@ impl HiveApp {
         let revision = snapshot.revision.clone();
         let path = snapshot.path.clone();
         if let Err(error) = self.pi_models.clear_draft() {
-            self.pi_models.message = Some(format!("无法丢弃本地草稿，表单已保留：{error}"));
+            self.pi_models.message = Some(ModelNotice::Error("无法丢弃本地草稿，表单已保留", error.to_string()));
             cx.notify();
             return;
         }
@@ -426,10 +443,8 @@ impl HiveApp {
         let revision = snapshot.revision.clone();
         let weak = cx.weak_entity();
         let connection = self.connection_generation;
-        let title = format!(
-            "移除 {} 的自定义配置？",
-            model.as_deref().unwrap_or(&provider)
-        );
+        let name = model.as_deref().unwrap_or(&provider);
+        let title = if english() { format!("Remove custom configuration for {name}?") } else { format!("移除 {name} 的自定义配置？") };
         let change = match model {
             Some(model) => json!({"action":"removeModel","id":provider,"modelId":model}),
             None => json!({"action":"removeProvider","id":provider}),
@@ -441,11 +456,11 @@ impl HiveApp {
             dialog
                 .title(title.clone())
                 .description(
-                    "不会删除账号凭据或历史会话。模型覆盖会恢复默认，自定义模型会从目录移除；没有其他设置的空提供商覆盖也会清除。",
+                    tr("不会删除账号凭据或历史会话。模型覆盖会恢复默认，自定义模型会从目录移除；没有其他设置的空提供商覆盖也会清除。"),
                 )
                 .show_cancel(true)
-                .ok_text("移除配置")
-                .cancel_text("取消")
+                .ok_text(tr("移除配置"))
+                .cancel_text(tr("取消"))
                 .on_ok(move |_, _, cx| {
                     weak.update(cx, |this, cx| {
                         if this.connection_generation == connection {

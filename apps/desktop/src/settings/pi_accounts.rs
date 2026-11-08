@@ -1,4 +1,4 @@
-use crate::app::HiveApp;
+use crate::{app::HiveApp, language::{english,tr}};
 use gpui_kit::{
     component::input::{InputEvent, InputState},
     *,
@@ -67,7 +67,7 @@ pub struct PiAccounts {
     agent_dir: Option<String>,
     login: Option<Login>,
     loading: bool,
-    message: Option<String>,
+    message: Option<AccountNotice>,
     input: Entity<InputState>,
     search: Entity<InputState>,
     generation: u64,
@@ -75,11 +75,53 @@ pub struct PiAccounts {
     _input_subscription: Subscription,
     _search_subscription: Subscription,
 }
+fn runtime_message(message: &str) -> String {
+    [
+        "不支持的认证方式",
+        "该提供商不支持此配置方式",
+        "配置超时，请重新开始",
+        "登录超时，请重新开始",
+        "配置已保存。可返回会话刷新模型列表并选择模型。",
+        "凭据已保存，但模型列表更新失败。请返回会话刷新模型；若仍失败，请检查 Pi 配置。",
+        "登录已取消",
+        "登录步骤已结束，请刷新后继续",
+        "请输入登录信息",
+        "无效的登录选项",
+        "登录已结束",
+        "配置已取消",
+        "请先完成或取消当前账号操作",
+        "提供商不存在",
+        "已移除本机保存的凭据。环境变量等其他登录来源不受影响。",
+        "凭据已移除，但模型列表更新失败。请返回会话刷新模型。",
+        "后台已关闭，登录已取消",
+    ].into_iter().find(|key| *key == message).map(|key| tr(key).to_owned()).unwrap_or_else(|| message.to_owned())
+}
+enum AccountNotice { Disconnected, Runtime(String), Failed(String) }
+impl AccountNotice {
+    fn text(&self) -> String {
+        match self {
+            Self::Disconnected => tr("后台连接已断开，请重新开始登录。").to_owned(),
+            Self::Runtime(message) => runtime_message(message),
+            Self::Failed(error) => format!("{}: {}", tr("账号操作失败"), runtime_message(error)),
+        }
+    }
+}
+fn input_placeholder(prompt: Option<&Prompt>) -> String {
+    prompt.and_then(|prompt| prompt.placeholder.clone()).unwrap_or_else(|| tr(match prompt.map(|prompt| prompt.kind.as_str()) {
+        Some("secret") => "输入或粘贴凭据",
+        Some("manual_code") => "粘贴授权码或回调地址",
+        _ => "按上方提示输入",
+    }).to_owned())
+}
 impl PiAccounts {
+    pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
+        self.search.update(cx, |input,cx| input.set_placeholder(tr("搜索提供商，如 OpenAI、Anthropic…"),window,cx));
+        self.input.update(cx, |input,cx| input.set_placeholder(input_placeholder(self.login.as_ref().and_then(|login| login.prompt.as_ref())),window,cx));
+    }
     pub fn new(window: &mut Window, cx: &mut Context<HiveApp>) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("粘贴授权码或回调地址"));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder(input_placeholder(None)));
         let search = cx
-            .new(|cx| InputState::new(window, cx).placeholder("搜索提供商，如 OpenAI、Anthropic…"));
+            .new(|cx| InputState::new(window, cx).placeholder(tr("搜索提供商，如 OpenAI、Anthropic…")));
         let search_subscription = cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -127,7 +169,7 @@ impl PiAccounts {
             .as_ref()
             .is_some_and(|login| login.state == "running")
         {
-            self.message = Some("后台连接已断开，请重新开始登录。".into());
+            self.message = Some(AccountNotice::Disconnected);
         }
         self.login = None;
     }
@@ -239,7 +281,7 @@ impl HiveApp {
                         this.pi_accounts.providers = Some(catalog.providers);
                         this.pi_accounts.agent_dir = Some(catalog.agent_dir);
                         this.pi_accounts.login = catalog.login;
-                        this.pi_accounts.message = catalog.message;
+                        this.pi_accounts.message = catalog.message.map(AccountNotice::Runtime);
                     } else {
                         this.pi_accounts.login =
                             serde_json::from_value(value).map_err(|error| error.to_string())?;
@@ -247,7 +289,7 @@ impl HiveApp {
                     Ok(())
                 });
                 if let Err(error) = result {
-                    this.pi_accounts.message = Some(format!("账号操作失败：{error}"));
+                    this.pi_accounts.message = Some(AccountNotice::Failed(error));
                 }
                 let prompt = this
                     .pi_accounts
@@ -260,16 +302,7 @@ impl HiveApp {
                     let masked = prompt.is_some_and(|prompt| {
                         matches!(prompt.kind.as_str(), "secret" | "manual_code")
                     });
-                    let placeholder = prompt
-                        .and_then(|prompt| prompt.placeholder.clone())
-                        .unwrap_or_else(|| {
-                            match prompt.map(|prompt| prompt.kind.as_str()) {
-                                Some("secret") => "输入或粘贴凭据",
-                                Some("manual_code") => "粘贴授权码或回调地址",
-                                _ => "按上方提示输入",
-                            }
-                            .into()
-                        });
+                    let placeholder = input_placeholder(prompt);
                     let input = this.pi_accounts.input.clone();
                     let fallback = this.preferences_focus.clone();
                     let focus = this.settings_panel
