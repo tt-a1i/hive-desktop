@@ -19,7 +19,7 @@ struct ImageViewer {
     fit: bool,
     saving: bool,
     notice: Option<&'static str>,
-    error: Option<String>,
+    error: Option<(&'static str,String)>,
 }
 
 impl HiveApp {
@@ -61,7 +61,7 @@ impl HiveApp {
                             this.rendered = Some(image);
                             this.dimensions = dimensions;
                         }
-                        Err(error) => this.error = Some(error),
+                        Err(error) => this.error = Some(("无法读取原图",error)),
                     }
                     cx.notify();
                 });
@@ -100,17 +100,17 @@ impl ImageViewer {
         cx.spawn(async move |this, cx| {
             let result = match receiver.await {
                 Ok(Ok(Some(path))) => {
-                    smol::unblock(move || save_original(&path, &original.bytes).map(|_| true)).await
+                    smol::unblock(move || save_original(&path, &original.bytes).map(|_| true)).await.map_err(|error|("保存失败",error))
                 }
                 Ok(Ok(None)) => Ok(false),
-                error => Err(format!("无法选择保存位置：{error:?}")),
+                error => Err(("无法选择保存位置",format!("{error:?}"))),
             };
             let _ = this.update(cx, |this, cx| {
                 this.saving = false;
                 match result {
                     Ok(true) => this.notice = Some("已保存原图".into()),
                     Ok(false) => {}
-                    Err(error) => this.error = Some(format!("保存失败：{error}")),
+                    Err(error) => this.error = Some(error),
                 }
                 cx.notify();
             });
@@ -206,7 +206,7 @@ impl Render for ImageViewer {
             .when_some(self.notice.map(tr), |view, text| {
                 view.child(div().text_xs().child(text))
             })
-            .when_some(self.error.clone(), |view, text| {
+            .when_some(self.error.as_ref().map(|(key,error)|format!("{}: {error}",tr(key))), |view, text| {
                 view.child(div().text_xs().text_color(Color::Error.get(cx)).child(text))
             })
     }

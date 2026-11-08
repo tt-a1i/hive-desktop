@@ -66,19 +66,19 @@ impl HiveApp {
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(if questions {
-                        "Codex 需要你的回答"
+                        tr("Codex 需要你的回答")
                     } else if files {
-                        "Codex 请求修改文件"
+                        tr("Codex 请求修改文件")
                     } else {
-                        "Codex 请求执行命令"
+                        tr("Codex 请求执行命令")
                     }),
             )
             .when(!waiting && card.raw.has_native_identity(), |view| {
                 view.child(div().text_sm().child(
                     if card.submitting && card.raw.state != "responding" {
-                        "正在提交…"
+                        tr("正在提交…")
                     } else {
-                        "已提交，等待 Codex 确认…"
+                        tr("已提交，等待 Codex 确认…")
                     },
                 ))
             })
@@ -92,14 +92,14 @@ impl HiveApp {
                 )
             })
             .when_some(params["cwd"].as_str(), |view, cwd| {
-                view.child(div().text_sm().child(format!("工作目录：{cwd}")))
+                view.child(div().text_sm().child(format!("{}: {cwd}",tr("工作目录"))))
             })
             .when_some(params["reason"].as_str(), |view, reason| {
-                view.child(div().text_sm().child(format!("理由：{reason}")))
+                view.child(div().text_sm().child(format!("{}: {reason}",tr("理由"))))
             })
             .when_some(
                 params["networkApprovalContext"]["host"].as_str(),
-                |view, host| view.child(div().text_sm().child(format!("网络主机：{host}"))),
+                |view, host| view.child(div().text_sm().child(format!("{}: {host}",tr("网络主机")))),
             )
             .when_some(
                 params
@@ -113,7 +113,7 @@ impl HiveApp {
                                 div()
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child("本次请求的额外权限"),
+                                    .child(tr("本次请求的额外权限")),
                             )
                             .child(
                                 div().text_sm().child(
@@ -125,14 +125,14 @@ impl HiveApp {
                 },
             )
             .when_some(params["grantRoot"].as_str(), |view, root| {
-                view.child(div().text_sm().child(format!("请求写入目录：{root}")))
+                view.child(div().text_sm().child(format!("{}: {root}",tr("请求写入目录"))))
             })
             .when(files, |view| {
                 view.when(!card.has_diff(), |view| {
                     view.child(
                         div()
                             .text_sm()
-                            .child("尚未收到 Codex 提供的原生文件差异，收到后才能批准。"),
+                            .child(tr("尚未收到 Codex 提供的原生文件差异，收到后才能批准。")),
                     )
                 })
                 .children(
@@ -150,17 +150,17 @@ impl HiveApp {
                                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
                                     format!(
                                         "{} · {}",
-                                        change["path"].as_str().unwrap_or("未提供路径"),
+                                        change["path"].as_str().unwrap_or(tr("未提供路径")),
                                         match change["kind"]["type"].as_str() {
-                                            Some("add") => "新增",
-                                            Some("delete") => "删除",
-                                            Some("update") => "修改",
-                                            _ => "变更",
+                                            Some("add") => tr("新增"),
+                                            Some("delete") => tr("删除"),
+                                            Some("update") => tr("修改"),
+                                            _ => tr("变更"),
                                         }
                                     ),
                                 ))
                                 .when_some(change["kind"]["move_path"].as_str(), |view, path| {
-                                    view.child(div().text_sm().child(format!("移动至：{path}")))
+                                    view.child(div().text_sm().child(format!("{}: {path}",tr("移动至"))))
                                 })
                                 .child(
                                     div()
@@ -173,7 +173,7 @@ impl HiveApp {
                                         .child(
                                             change["diff"]
                                                 .as_str()
-                                                .unwrap_or("Codex 未提供此文件的差异文本")
+                                                .unwrap_or(tr("Codex 未提供此文件的差异文本"))
                                                 .to_string(),
                                         ),
                                 )
@@ -185,7 +185,7 @@ impl HiveApp {
                     self.render_interaction_question(i, j, &session, &id, draft, disabled, cx)
                 }))
             })
-            .when_some(card.error.clone(), |view, error| {
+            .when_some(card.error.as_ref().map(|error|error.text()), |view, error| {
                 view.child(
                     div()
                         .text_sm()
@@ -200,7 +200,7 @@ impl HiveApp {
                         .gap_2()
                         .child(
                             Button::new(("submit-interaction-answers", i))
-                                .label("提交回答")
+                                .label(tr("提交回答"))
                                 .disabled(disabled || card.questions.is_empty())
                                 .on_click({
                                     let session = session.clone();
@@ -217,7 +217,7 @@ impl HiveApp {
                         )
                         .child(
                             Button::new(("cancel-interaction-questions", i))
-                                .label("取消本轮")
+                                .label(tr("取消本轮"))
                                 .disabled(disabled)
                                 .on_click({
                                     let session = session.clone();
@@ -243,7 +243,7 @@ impl HiveApp {
                                 let session = session.clone();
                                 let id = id.clone();
                                 Button::new(("interaction-decision", i * 3 + j))
-                                    .label(label)
+                                    .label(tr(label))
                                     .disabled(
                                         disabled
                                             || (files && decision == "accept" && !card.has_diff()),
@@ -263,7 +263,7 @@ impl HiveApp {
                     view.child(
                         div()
                             .text_sm()
-                            .child("Codex 未提供可用的单次决定。可使用输入区的停止按钮结束本轮。"),
+                            .child(tr("Codex 未提供可用的单次决定。可使用输入区的停止按钮结束本轮。")),
                     )
                 })
             })

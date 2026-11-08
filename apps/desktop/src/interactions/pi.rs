@@ -18,7 +18,7 @@ impl InteractionCard {
         self.initialized = true;
         let placeholder = self.raw.params["placeholder"]
             .as_str()
-            .unwrap_or("输入回答…")
+            .unwrap_or(tr("输入回答…"))
             .to_string();
         match self.raw.method.as_str() {
             "input" => {
@@ -66,10 +66,10 @@ impl HiveApp {
                     .map(|option| (option.to_string(), json!({"value":option}))),
             );
         } else if card.raw.method == "confirm" {
-            actions.push(("确认".into(), json!({"confirmed":true})));
-            actions.push(("否".into(), json!({"confirmed":false})));
+            actions.push((tr("确认").into(), json!({"confirmed":true})));
+            actions.push((tr("否").into(), json!({"confirmed":false})));
         }
-        actions.push(("取消请求".into(), json!({"cancelled":true})));
+        actions.push((tr("取消请求").into(), json!({"cancelled":true})));
         v_flex()
             .id(("pi-interaction-card", i))
             .w_full()
@@ -82,7 +82,7 @@ impl HiveApp {
                 div()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("外部 Pi 需要你的回应"),
+                    .child(tr("外部 Pi 需要你的回应")),
             )
             .when_some(card.raw.params["title"].as_str(), |view, title| {
                 view.child(
@@ -96,23 +96,23 @@ impl HiveApp {
                 view.child(div().text_sm().child(message.to_string()))
             })
             .when(!card.waiting(), |view| {
-                view.child(div().text_sm().child("正在发送回应…"))
+                view.child(div().text_sm().child(tr("正在发送回应…")))
             })
             .when_some(card.pi_input.as_ref(), |view, input| {
                 view.child(
                     Input::new(input)
-                        .aria_label("外部 Pi 回答")
+                        .aria_label(tr("外部 Pi 回答"))
                         .disabled(disabled),
                 )
             })
             .when_some(card.pi_editor.as_ref(), |view, input| {
                 view.child(
                     Textarea::new(input)
-                        .aria_label("外部 Pi 编辑内容")
+                        .aria_label(tr("外部 Pi 编辑内容"))
                         .disabled(disabled),
                 )
             })
-            .when_some(card.error.clone(), |view, error| {
+            .when_some(card.error.as_ref().map(|error|error.text()), |view, error| {
                 view.child(
                     div()
                         .text_sm()
@@ -123,7 +123,7 @@ impl HiveApp {
             .when(text_entry, |view| {
                 view.child(
                     Button::new(("pi-submit", i))
-                        .label("提交回答")
+                        .label(tr("提交回答"))
                         .disabled(disabled)
                         .on_click({
                             let session = session.clone();

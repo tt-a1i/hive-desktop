@@ -151,3 +151,24 @@
 - Mac默认构建、Windows MSVC类型检查和git diff --check通过。未跑全量测试：本批为UI显示和导出产物格式语言，使用上述定向路径/解析/保存/序列化回归。没有模型请求。
 
 再次选择仍运行的原生应用，工具明确报告Mac锁屏；实际英文长文本/Diff并排/窄窗、切换中滚动/查找/快照固定、导出复制/保存对话框与正常退出仍待原生验收。没有重启或删除旧验证应用，没有新ZIP，.artifacts仍约3.8GiB。完整语言和产品目标继续开放。阶段收据`.artifacts/language/reading-receipt.json`。
+
+
+## 预览错误与外部Agent交互语言
+
+第十一批累计811条英文目录（新增65条），补齐文件预览的普通文件/大小/二进制/编码/附件路径提示及读取错误前缀、图片加载/选择位置/保存失败前缀；静态原因保存为类型，渲染时取语言。原始io/路径/SDK诊断仍保留；artifact_path生成的部分动态中文原诊断尚未全面迁移。读取逻辑、1MiB边界、UTF-8/NUL校验、工作区及符号链接边界和原图字节保存不变。
+
+接入Codex/Claude/外部Pi交互卡片、单次批准/拒绝/取消、问题/多选/其他回答/秘密回答说明、Diff与权限详情、提交/重试提示。静态错误和缺失原生身份提示在render取语言，未改变has_native_identity、availableDecisions、没有原生Diff不能批准、提交代次、默认拒绝和秘密输入不回显原provider错误的规则。按钮id、请求方法、决定码、confirmed/cancelled与回答原值不变。内置Pi没有新增审批。
+
+已有交互输入切换locale时只set_placeholder：保留外部Pi给出的placeholder原文，否则用桌面当前语言；不改输入/多选/其他回答、masked/focus、editor预填、超时/请求或提交。SDK/Agent问题、选项、工具输入、路径/命令与解释原文不翻译。主状态栏的部分交互摘要仍为发生时原中文，完整覆盖继续开放。
+
+验证：
+
+- 现有文件读取1条、图片保存1条、路径边界1条、语言偏好1条通过；将既有文件测试中二进制/编码/超限三个笼统is_err断言细化为错误类型匹配，其他行为断言保留。未新增/删除测试或测试文件。
+- Mac默认构建、Windows MSVC类型检查、git diff --check及本批显式key目录核对通过；未跑全量测试，本批为显示和错误表示，读取/交互后台协议不变。
+- codex-interactions.ts：真实子进程JSONL+Hive HTTP/SQLite，对端为合成协议server，无原生模型/批准执行验证，退出0。
+- external-pi-interactions-transport.ts：真实子进程与合成对端，验证人类等待不计prompt deadline、其他操作有界、重复关闭与无迟到写入，退出0。
+- claude-interactions-sdk.ts：官方SDK+合成CLI对端，7项canUseTool/manager场景，未用原始Claude CLI或Hive HTTP，退出0。
+
+后两项首轮启动失败，生成fixture的shebang直接包含当前process.execPath，指向名称含空格的缓存app路径（peer存在但spawn返回ENOENT）。没有修改测试或生产fallback；将同一Node22.23.3硬链接到不含空格的临时路径，验证execPath、同device/inode后原命令重跑通过。临时入口为`/var/folders/v1/6vx82zzx32q7y_s1w4sx84j00000gp/T/hive-i18n-node-dgjo9hza/node`，没有复制Node/依赖/安装包。旧运行应用仍使用原路径；lsof按共享inode也会列出临时别名，保留两者，不据此重启进程或删除来源。成功与首轮失败边界均记入收据。
+
+再次原生选择仍运行应用，工具明确报告Mac锁屏。交互卡片实际英文布局/键盘/秘密输入/多选/语言切换、文件失败重试与原图保存对话框未验收；合成协议和构建通过不代替这些验收。无模型或厂商登录请求，未打新包，.artifacts仍约3.8GiB。完整#17和产品目标继续开放。收据`.artifacts/language/interaction-errors-receipt.json`。

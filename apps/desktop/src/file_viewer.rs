@@ -14,30 +14,48 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+#[derive(Debug)]
+enum PreviewError {
+    NotFile, TooLarge, Binary, Encoding, InvalidAttachmentPath,
+    Source(String), Io(&'static str, String),
+}
+impl PreviewError {
+    fn text(&self) -> String {
+        match self {
+            Self::NotFile => tr("只能预览普通文本文件。").to_owned(),
+            Self::TooLarge => tr("文件超过 1 MiB，暂不在窗口中预览；可在文件管理器中查看。").to_owned(),
+            Self::Binary => tr("文件包含二进制内容，无法作为文本预览。").to_owned(),
+            Self::Encoding => tr("文件不是 UTF-8 文本，暂不支持此编码的预览。").to_owned(),
+            Self::InvalidAttachmentPath => tr("附件没有返回有效的本地路径。").to_owned(),
+            Self::Source(error) => error.clone(),
+            Self::Io(key,error) => format!("{}: {error}",tr(key)),
+        }
+    }
+}
 const LIMIT: u64 = 1024 * 1024;
 #[cfg(test)]
-fn read_file(root: &Path, reported: &str) -> Result<String, String> {
-    read_text(&crate::artifacts::artifact_path(root, reported)?)
+fn read_file(root: &Path, reported: &str) -> Result<String, PreviewError> {
+    read_text(&crate::artifacts::artifact_path(root, reported).map_err(PreviewError::Source)?)
 }
-fn read_text(path: &Path) -> Result<String, String> {
+fn read_text(path: &Path) -> Result<String, PreviewError> {
     if !std::fs::metadata(&path)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| PreviewError::Io("无法读取文件信息",e.to_string()))?
         .is_file()
     {
-        return Err("只能预览普通文本文件。".into());
+        return Err(PreviewError::NotFile);
     }
-    let file = File::open(&path).map_err(|e| format!("无法读取文件：{e}"))?;
+    let file = File::open(&path).map_err(|e| PreviewError::Io("无法读取文件",e.to_string()))?;
     let mut bytes = Vec::new();
     file.take(LIMIT + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("读取失败：{e}"))?;
+        .map_err(|e| PreviewError::Io("读取失败",e.to_string()))?;
     if bytes.len() as u64 > LIMIT {
-        return Err("文件超过 1 MiB，暂不在窗口中预览；可在文件管理器中查看。".into());
+        return Err(PreviewError::TooLarge);
     }
     if bytes.contains(&0) {
-        return Err("文件包含二进制内容，无法作为文本预览。".into());
+        return Err(PreviewError::Binary);
     }
-    String::from_utf8(bytes).map_err(|_| "文件不是 UTF-8 文本，暂不支持此编码的预览。".into())
+    String::from_utf8(bytes).map_err(|_| PreviewError::Encoding)
 }
 #[derive(Clone)]
 enum FileSource {
@@ -55,10 +73,10 @@ enum FileSource {
     },
 }
 impl FileSource {
-    async fn path(self) -> Result<PathBuf, String> {
+    async fn path(self) -> Result<PathBuf, PreviewError> {
         match self {
             Self::Workspace { root, reported } | Self::Resource { root, reported } => {
-                smol::unblock(move || crate::artifacts::artifact_path(&root, &reported)).await
+                smol::unblock(move || crate::artifacts::artifact_path(&root, &reported)).await.map_err(PreviewError::Source)
             }
             Self::Attachment { runtime, item } => {
                 let value = runtime
@@ -66,12 +84,12 @@ impl FileSource {
                         "chat.attachments.path",
                         serde_json::json!({"workspaceId":item.workspace_id,"id":item.id}),
                     )
-                    .await?;
+                    .await.map_err(PreviewError::Source)?;
                 value["path"]
                     .as_str()
                     .map(PathBuf::from)
                     .filter(|path| path.is_absolute())
-                    .ok_or_else(|| "附件没有返回有效的本地路径。".into())
+                    .ok_or(PreviewError::InvalidAttachmentPath)
             }
         }
     }
@@ -96,7 +114,7 @@ impl FileSource {
 struct FileViewer {
     source: FileSource,
     text: Option<String>,
-    error: Option<String>,
+    error: Option<PreviewError>,
     loading: bool,
     scroll: ScrollHandle,
 }
@@ -287,7 +305,7 @@ impl Render for FileViewer {
                             })),
                     ),
             )
-            .when_some(self.error.clone(), |view, error| {
+            .when_some(self.error.as_ref().map(|error|error.text()), |view, error| {
                 view.child(
                     div()
                         .text_sm()
@@ -367,7 +385,7 @@ pub(crate) fn tool_paths(name: &str, args: &serde_json::Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LIMIT, read_file};
+    use super::{LIMIT, read_file, PreviewError};
     #[test]
     fn reads_exact_utf8_and_refuses_missing_binary_directories_and_large_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -393,11 +411,11 @@ mod tests {
         assert!(read_file(root, "missing.txt").is_err());
         assert!(read_file(root, ".").is_err());
         std::fs::write(root.join("binary"), [0, 1, 2]).unwrap();
-        assert!(read_file(root, "binary").is_err());
+        assert!(matches!(read_file(root,"binary"),Err(PreviewError::Binary)));
         std::fs::write(root.join("encoding"), [255, 254, 255]).unwrap();
-        assert!(read_file(root, "encoding").is_err());
+        assert!(matches!(read_file(root,"encoding"),Err(PreviewError::Encoding)));
         std::fs::write(root.join("large"), vec![b'x'; LIMIT as usize + 1]).unwrap();
-        assert!(read_file(root, "large").is_err());
+        assert!(matches!(read_file(root,"large"),Err(PreviewError::TooLarge)));
         std::fs::write(root.join("limit"), vec![b'x'; LIMIT as usize]).unwrap();
         assert_eq!(
             read_file(root, "limit").unwrap(),

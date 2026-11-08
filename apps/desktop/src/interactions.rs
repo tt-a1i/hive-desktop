@@ -4,6 +4,7 @@ mod questions;
 mod response;
 mod view;
 
+use crate::language::{english,tr};
 use crate::{
     app::HiveApp,
     protocol::{AgentInteraction, PiEvent},
@@ -27,7 +28,7 @@ pub struct InteractionCard {
     initialized: bool,
     submitting: bool,
     generation: u64,
-    error: Option<String>,
+    error: Option<InteractionError>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,17 +61,40 @@ struct QuestionDraft {
     other: bool,
     _subscription: Subscription,
 }
+enum InteractionError { Message(&'static str), MissingIdentity(&'static str) }
+impl From<&'static str> for InteractionError {
+    fn from(key: &'static str) -> Self { Self::Message(key) }
+}
+impl InteractionError {
+    fn text(&self) -> String {
+        match self {
+            Self::Message(key) => tr(key).to_owned(),
+            Self::MissingIdentity(backend) => if english() {
+                format!("Invalid {backend} interaction: native identity fields are missing. Use Stop in the input area to end this turn.")
+            } else { format!("{backend} 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。") },
+        }
+    }
+}
+impl Interactions {
+    pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
+        for card in self.sessions.values().flatten() {
+            if card.is_pi() {
+                let label = card.raw.params["placeholder"].as_str().unwrap_or(tr("输入回答…"));
+                if let Some(input) = &card.pi_input { input.update(cx, |input,cx|input.set_placeholder(label,window,cx)); }
+                if let Some(input) = &card.pi_editor { input.update(cx, |input,cx|input.set_placeholder(label,window,cx)); }
+            } else {
+                for draft in &card.questions {
+                    let label = if card.is_claude() {tr("其他回答…")} else if draft.question.is_secret {tr("输入回答（隐藏内容）")} else {tr("输入回答…")};
+                    draft.input.update(cx, |input,cx|input.set_placeholder(label,window,cx));
+                }
+            }
+        }
+    }
+}
 impl InteractionCard {
     fn new(raw: AgentInteraction) -> Self {
         let error = (!raw.has_native_identity()).then(|| {
-            format!(
-                "{} 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。",
-                if raw.backend == "claude" {
-                    "Claude"
-                } else {
-                    "Codex"
-                }
-            )
+            InteractionError::MissingIdentity(if raw.backend == "claude" { "Claude" } else { "Codex" })
         });
         Self {
             raw,
@@ -221,14 +245,7 @@ impl HiveApp {
                 card.error = None;
             }
             if !raw.has_native_identity() {
-                card.error = Some(format!(
-                    "{} 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。",
-                    if raw.backend == "claude" {
-                        "Claude"
-                    } else {
-                        "Codex"
-                    }
-                ));
+                card.error = Some(InteractionError::MissingIdentity(if raw.backend == "claude" { "Claude" } else { "Codex" }));
             }
             card.raw = raw;
         } else {
@@ -324,9 +341,9 @@ impl HiveApp {
                             InputState::new(window, cx)
                                 .masked(question.is_secret)
                                 .placeholder(if question.is_secret {
-                                    "输入回答（隐藏内容）"
+                                    tr("输入回答（隐藏内容）")
                                 } else {
-                                    "输入回答…"
+                                    tr("输入回答…")
                                 })
                         });
                         let subscription =

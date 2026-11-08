@@ -31,7 +31,7 @@ impl InteractionCard {
                     question.id = question.question.clone();
                     question.is_other = true;
                     question.is_secret = false;
-                    let input = cx.new(|cx| InputState::new(window, cx).placeholder("其他回答…"));
+                    let input = cx.new(|cx| InputState::new(window, cx).placeholder(tr("其他回答…")));
                     let subscription =
                         cx.subscribe_in(&input, window, |_, _, event: &InputEvent, _, cx| {
                             if matches!(event, InputEvent::Change) {
@@ -109,18 +109,18 @@ impl HiveApp {
         let id = card.raw.id.clone();
         let params = &card.raw.params;
         let actions = if questions {
-            vec![("cancel", "取消请求")]
+            vec![("cancel", tr("取消请求"))]
         } else if params["defaultToNo"] == true {
             vec![
-                ("decline", "拒绝本次"),
-                ("accept", "仅允许本次"),
-                ("cancel", "取消请求"),
+                ("decline", tr("拒绝本次")),
+                ("accept", tr("仅允许本次")),
+                ("cancel", tr("取消请求")),
             ]
         } else {
             vec![
-                ("accept", "仅允许本次"),
-                ("decline", "拒绝本次"),
-                ("cancel", "取消请求"),
+                ("accept", tr("仅允许本次")),
+                ("decline", tr("拒绝本次")),
+                ("cancel", tr("取消请求")),
             ]
         };
         v_flex()
@@ -136,19 +136,19 @@ impl HiveApp {
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(if questions {
-                        "Claude 需要你的回答"
+                        tr("Claude 需要你的回答")
                     } else {
-                        "Claude 请求使用工具"
+                        tr("Claude 请求使用工具")
                     }),
             )
             .children(
                 [
-                    ("title", "标题"),
-                    ("displayName", "名称"),
-                    ("description", "说明"),
-                    ("toolName", "工具"),
-                    ("decisionReason", "请求原因"),
-                    ("blockedPath", "受限路径"),
+                    ("title", tr("标题")),
+                    ("displayName", tr("名称")),
+                    ("description", tr("说明")),
+                    ("toolName", tr("工具")),
+                    ("decisionReason", tr("请求原因")),
+                    ("blockedPath", tr("受限路径")),
                 ]
                 .into_iter()
                 .filter_map(|(key, label)| {
@@ -168,18 +168,18 @@ impl HiveApp {
                 view.child(
                     div()
                         .text_sm()
-                        .child("Claude 建议默认拒绝；请明确决定，本界面不会自动批准。"),
+                        .child(tr("Claude 建议默认拒绝；请明确决定，本界面不会自动批准。")),
                 )
             })
             .when(!card.waiting() && card.raw.has_native_identity(), |view| {
-                view.child(div().text_sm().child("正在提交回应…"))
+                view.child(div().text_sm().child(tr("正在提交回应…")))
             })
             .when(!questions, |view| {
                 view.child(
                     v_flex()
                         .min_w_0()
                         .gap_2()
-                        .child(div().text_sm().child("原生工具输入（完整原文）"))
+                        .child(div().text_sm().child(tr("原生工具输入（完整原文）")))
                         .children(
                             params["input"]
                                 .as_object()
@@ -229,7 +229,7 @@ impl HiveApp {
                     self.render_interaction_question(i, j, &session, &id, draft, disabled, cx)
                 }))
             })
-            .when_some(card.error.clone(), |view, error| {
+            .when_some(card.error.as_ref().map(|error|error.text()), |view, error| {
                 view.child(
                     div()
                         .text_sm()
@@ -240,7 +240,7 @@ impl HiveApp {
             .when(questions, |view| {
                 view.child(
                     Button::new(("claude-answer", i))
-                        .label("提交回答")
+                        .label(tr("提交回答"))
                         .disabled(disabled || card.questions.is_empty())
                         .on_click({
                             let session = session.clone();
@@ -263,7 +263,7 @@ impl HiveApp {
                                 let session = session.clone();
                                 let id = id.clone();
                                 Button::new(("claude-decision", i * 3 + j))
-                                    .label(label)
+                                    .label(tr(label))
                                     .disabled(disabled)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.submit_interaction(

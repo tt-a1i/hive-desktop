@@ -32,7 +32,7 @@ impl HiveApp {
             )
             .child(div().text_sm().child(question.question.clone()))
             .when(question.multi_select, |view| {
-                view.child(div().text_xs().child("可选择多项，也可补充其他回答。"))
+                view.child(div().text_xs().child(tr("可选择多项，也可补充其他回答。")))
             })
             .children(
                 question
@@ -117,7 +117,7 @@ impl HiveApp {
                                         .p_2()
                                         .bg(Color::Card.get(cx))
                                         .text_xs()
-                                        .child(format!("预览（原文，不执行）\n{preview}")),
+                                        .child(format!("{}\n{preview}",tr("预览（原文，不执行）"))),
                                 )
                             })
                     }),
@@ -132,7 +132,7 @@ impl HiveApp {
                 |view| {
                     view.child(
                         Button::new(("question-other", field))
-                            .label("其他回答")
+                            .label(tr("其他回答"))
                             .selected(draft.other)
                             .disabled(disabled)
                             .on_click({
@@ -177,7 +177,7 @@ impl HiveApp {
                 view.child(
                     Input::new(&draft.input)
                         .aria_label(if question.is_secret {
-                            format!("{}，秘密回答", question.header)
+                            if english() { format!("{}, secret answer",question.header) } else { format!("{}，秘密回答", question.header) }
                         } else {
                             question.header.clone()
                         })
@@ -188,7 +188,7 @@ impl HiveApp {
                 view.child(
                     div()
                         .text_xs()
-                        .child("秘密回答将提交给 Codex，不另存为 Hive 聊天消息。"),
+                        .child(tr("秘密回答将提交给 Codex，不另存为 Hive 聊天消息。")),
                 )
             })
     }
