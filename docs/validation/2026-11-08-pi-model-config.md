@@ -29,7 +29,7 @@
 ## 尚未完成
 
 - Windows 原生窗口/运行验收、真实账号或兼容厂商接口调用、物理操作走查。
-- override-only 内置模型条目，以及 cost、headers、sampling 和高级协议选项的完整图形编辑；原文件中的这些字段保留，可外部编辑。
+- override-only 条目已在后续支持，见 [覆盖配置验证](2026-11-08-pi-model-overrides.md)。cost、headers、sampling 和高级协议选项的完整图形编辑仍未完成；原字段保留，可外部编辑。
 - 表单退出恢复已在后续补齐，见 [草稿与开发包验证](2026-11-08-pi-model-drafts.md)。
 - 版本检查是乐观并发保护，不是对任意外部写入进程的 OS 级 CAS；未验证断电持久性或 SIGKILL 临时文件回收。
 - Windows CI 最近受账单限制无法启动，交叉检查不替代 exe 链接、运行和体验验收。完整 Cindy 体验、安装发行与总目标仍开放。

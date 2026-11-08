@@ -8,7 +8,7 @@ const name = z.string().trim().max(256).nullable();
 const id = z.string().min(1).max(512).refine(value => !!value.trim() && !/[\u0000-\u001f]/.test(value), 'ID 不能为空或包含控制字符');
 const provider = z.object({ action: z.literal('provider'), id, name, baseUrl: z.string().trim().max(4096).nullable(), api: name, firstModelId: id.nullable() }).strict();
 const model = z.object({ action: z.literal('model'), id, modelId: id, name,
-  contextWindow: z.number().int().positive().nullable(), maxTokens: z.number().int().positive().nullable(), reasoning: z.boolean(), vision: z.boolean() }).strict();
+  contextWindow: z.number().int().positive().nullable(), maxTokens: z.number().int().positive().nullable(), reasoning: z.boolean().nullable(), vision: z.boolean().nullable() }).strict();
 const removeProvider = z.object({ action: z.literal('removeProvider'), id }).strict();
 const removeModel = z.object({ action: z.literal('removeModel'), id, modelId: id }).strict();
 const changeSchema = z.discriminatedUnion('action', [provider, model, removeProvider, removeModel]);
@@ -41,10 +41,16 @@ export class PiModelConfig {
     const state = readConfig(this.path);
     return { path: this.path, revision: state.revision, apis: [...apis], providers: Object.entries(object(state.config.providers)).map(([id, value]) => {
       const provider = object(value);
-      return { id, name: string(provider.name), baseUrl: string(provider.baseUrl), api: string(provider.api), models: models(provider).map(raw => {
-        const model = { ...raw, ...modelOverride(provider, String(raw.id)) };
-        return { id: String(raw.id), name: string(model.name), contextWindow: number(model.contextWindow), maxTokens: number(model.maxTokens),
-          reasoning: model.reasoning === true, vision: Array.isArray(model.input) && model.input.includes('image') };
+      const entries = models(provider);
+      const overrides = provider.modelOverrides === undefined ? {} : object(provider.modelOverrides);
+      const ids = [...new Set([...entries.map(model => String(model.id)), ...Object.keys(overrides)])];
+      return { id, name: string(provider.name), baseUrl: string(provider.baseUrl), api: string(provider.api), models: ids.map(modelId => {
+        const raw = entries.find(model => model.id === modelId);
+        const explicit = { ...raw, ...modelOverride(provider, modelId) };
+        return { id: modelId, name: string(explicit.name), contextWindow: number(explicit.contextWindow), maxTokens: number(explicit.maxTokens),
+          reasoning: !raw && explicit.reasoning === undefined ? null : explicit.reasoning === true,
+          vision: !raw && explicit.input === undefined ? null : Array.isArray(explicit.input) && explicit.input.includes('image'),
+          overrideOnly: !raw };
       }) };
     }).sort((a, b) => a.id.localeCompare(b.id)) };
   }
@@ -81,23 +87,30 @@ export class PiModelConfig {
           const entries = models(existing);
           const modelId = input.modelId;
           const index = entries.findIndex(model => model.id === modelId);
+          const overrideOnly = index < 0 && !!existing.modelOverrides && Object.hasOwn(object(existing.modelOverrides), modelId);
           if (input.action === 'removeModel') {
-            if (index < 0) throw new PiModelConfigError('模型配置已不存在，请重新读取');
-            set(['models', index], undefined);
+            if (index < 0 && !overrideOnly) throw new PiModelConfigError('模型配置已不存在，请重新读取');
+            if (index >= 0) set(['models', index], undefined);
             if (existing.modelOverrides && Object.hasOwn(object(existing.modelOverrides), modelId)) set(['modelOverrides', modelId], undefined);
+            // Pi 1.4 rejects a provider containing only an empty models/override map.
+            const remainingModels = entries.length - (index >= 0 ? 1 : 0);
+            const remainingOverrides = Object.keys(object(existing.modelOverrides ?? {})).filter(id => id !== modelId).length;
+            if (!remainingModels && !remainingOverrides && !existing.baseUrl && !existing.headers && !existing.compat
+              && !existing.apiKey && !existing.oauth && existing.authHeader === undefined) set([], undefined);
           } else {
             const position = index < 0 ? entries.length : index;
             const override = modelOverride(existing, input.modelId);
             const field = (key: string, value: unknown) => {
+              if (overrideOnly) { set(['modelOverrides', modelId, key], value); return; }
               set(['models', position, key], value);
               if (Object.hasOwn(override, key)) set(['modelOverrides', input.modelId, key], value);
             };
-            if (index < 0) set(['models', -1], { id: input.modelId });
+            if (index < 0 && !overrideOnly) set(['models', -1], { id: input.modelId });
             for (const key of ['name', 'contextWindow', 'maxTokens'] as const) field(key, input[key] === null || input[key] === '' ? undefined : input[key]);
-            if (input.reasoning || entries[index]?.reasoning !== undefined || override.reasoning !== undefined) field('reasoning', input.reasoning);
+            if (overrideOnly || input.reasoning === true || entries[index]?.reasoning !== undefined || override.reasoning !== undefined) field('reasoning', input.reasoning ?? undefined);
             // Preserve any other SDK input modalities while changing the image checkbox.
             const prior = override.input ?? entries[index]?.input;
-            if (input.vision || prior !== undefined) field('input', [...new Set([...(Array.isArray(prior) ? prior.filter(value => value !== 'image') : ['text']), ...(input.vision ? ['image'] : [])])]);
+            if (overrideOnly || input.vision === true || prior !== undefined) field('input', input.vision === null ? undefined : [...new Set([...(Array.isArray(prior) ? prior.filter(value => value !== 'image') : ['text']), ...(input.vision ? ['image'] : [])])]);
           }
         }
       }

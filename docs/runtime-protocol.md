@@ -78,3 +78,7 @@ Pi 仅保存原生会话记录；Codex/Claude 的显式选择保存在现有 Cha
 ## `chat.usage`
 
 参数 `{sessionId}`，只读原生会话统计。返回 `{source,reports:[{label,counters:[{key,label,tokens}]}],context?,notice?}`；context 为 `{tokens:number|null,window:number,percent:number|null,estimated:boolean}`。计数必须为非负安全整数；没有报告时 reports 为空并说明边界，不补零、不发模型请求、不合并厂商计费口径。Pi 使用原生 SDK/RPC，Codex 接收当前线程 tokenUsage 通知，Claude 使用关联回合的最新 result。详情见 [验证](validation/2026-11-08-agent-usage.md)。
+
+## Pi 模型配置
+
+`pi.models.get {}` 返回 `{path,revision,apis,providers}`；提供商只暴露公共编辑字段，模型包含 `overrideOnly`。仅存在 modelOverrides 的条目以 `reasoning/vision: boolean|null` 区分显式能力与继承；不表示模型一定可用于当前会话。`pi.models.change {revision,change}` 复用 provider/model/removeProvider/removeModel 操作，返回 `{conflict,snapshot}`。model 的 reasoning/vision 可以为 null，表示移除相应显式配置，保留 Pi 原生继承语义；普通自定义模型的既有布尔请求仍有效。编辑覆盖项不新增 models，删除最后一项会清理无其他有效设置的空提供商覆盖。高级字段/凭据不跨此接口返回，保存保持原文件中的未编辑内容，详见 [验证](validation/2026-11-08-pi-model-overrides.md)。

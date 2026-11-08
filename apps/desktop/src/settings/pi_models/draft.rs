@@ -143,8 +143,9 @@ mod tests {
             },
             value: Values {
                 context: "unfinished-number".into(),
-                reasoning: true,
-                vision: true,
+                override_only: true,
+                reasoning: None,
+                vision: Some(false),
                 ..Values::default()
             },
             revision: "original-revision".into(),

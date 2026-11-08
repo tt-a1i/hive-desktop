@@ -34,9 +34,9 @@ impl HiveApp {
                     .children(provider.models.iter().map(|model|{
                         let provider_id=provider.id.clone();let model_id=model.id.clone();let remove_provider=provider.id.clone();let remove_model=model.id.clone();
                         h_flex().gap_2().items_center().flex_wrap().pl_3()
-                            .child(v_flex().flex_1().min_w_0().gap_1().child(div().text_sm().child(model.name.clone().unwrap_or(model.id.clone()))).child(div().text_xs().text_color(Color::Muted.get(cx)).child(model.id.clone())))
+                            .child(v_flex().flex_1().min_w_0().gap_1().child(div().text_sm().child(model.name.clone().unwrap_or(model.id.clone()))).child(div().text_xs().text_color(Color::Muted.get(cx)).child(model.id.clone())).when(model.override_only,|view|view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child("模型覆盖"))))
                             .child(Button::new(SharedString::from(format!("edit-pi-model-{provider_id}-{model_id}"))).ghost().compact().label("模型设置").accessibility_label(format!("编辑 {provider_id}/{model_id} 模型")).disabled(disabled).on_click(cx.listener(move|this,_,window,cx|this.edit_pi_model_config(Some(Target{provider:provider_id.clone(),model:Some(model_id.clone()),is_model:true,creating:false}),window,cx))))
-                            .child(Button::new(SharedString::from(format!("remove-pi-model-{remove_provider}-{remove_model}"))).ghost().compact().label("移除模型").accessibility_label(format!("移除 {remove_provider}/{remove_model} 模型配置")).disabled(disabled || state.target.is_some()).on_click(cx.listener(move|this,_,window,cx|this.remove_pi_model_config(remove_provider.clone(),Some(remove_model.clone()),window,cx))))
+                            .child(Button::new(SharedString::from(format!("remove-pi-model-{remove_provider}-{remove_model}"))).ghost().compact().label(if model.override_only {"移除覆盖"} else {"移除模型"}).accessibility_label(format!("移除 {remove_provider}/{remove_model} 模型配置")).disabled(disabled || state.target.is_some()).on_click(cx.listener(move|this,_,window,cx|this.remove_pi_model_config(remove_provider.clone(),Some(remove_model.clone()),window,cx))))
                     }))
                     .child(h_flex().child(Button::new(SharedString::from(format!("add-pi-model-{add}"))).ghost().compact().label("添加模型").accessibility_label(format!("为 {add} 添加模型")).disabled(disabled).on_click(cx.listener(move|this,_,window,cx|this.edit_pi_model_config(Some(Target{provider:add.clone(),model:None,is_model:true,creating:true}),window,cx)))))
             }))
@@ -63,16 +63,61 @@ impl HiveApp {
                 .when(!state.api.is_empty(),|form|form.child(div().text_xs().text_color(Color::Muted.get(cx)).child(state.api.clone())))
                 .when(target.creating,|form|form.child(field("首个模型 ID（新接口必填，内置覆盖可留空）",&state.first,false))))
             .when(target.is_model,|form|form
+                .when(state.override_only,|form|form.child(div().text_xs().text_color(Color::Secondary.get(cx)).child("仅修改模型覆盖；继承内置表示不固定此能力。模型是否可用以会话原生目录为准。")))
                 .child(field("上下文 Token 数（可留空）",&state.context,false))
                 .child(field("最大输出 Token 数（可留空）",&state.output,false))
-                .child(h_flex().gap_3().items_center().child(div().flex_1().text_sm().child("支持思考"))
-                    .child(Switch::new("pi-model-reasoning").accessibility_label("模型支持思考").checked(state.reasoning).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.reasoning=*value;this.schedule_draft_save(cx);cx.notify();}))))
+                .when(!state.override_only,|form|form.child(h_flex().gap_3().items_center().child(div().flex_1().text_sm().child("支持思考"))
+                    .child(Switch::new("pi-model-reasoning").accessibility_label("模型支持思考").checked(state.reasoning.unwrap_or(false)).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.reasoning=Some(*value);this.schedule_draft_save(cx);cx.notify();}))))
                 .child(h_flex().gap_3().items_center().child(div().flex_1().text_sm().child("支持图片输入"))
-                    .child(Switch::new("pi-model-vision").accessibility_label("模型支持图片输入").checked(state.vision).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.vision=*value;this.schedule_draft_save(cx);cx.notify();})))))
+                    .child(Switch::new("pi-model-vision").accessibility_label("模型支持图片输入").checked(state.vision.unwrap_or(false)).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.vision=Some(*value);this.schedule_draft_save(cx);cx.notify();})))))
+                .when(state.override_only,|form|form.child(self.override_capability("思考能力",true,state.reasoning,disabled,cx)).child(self.override_capability("图片输入",false,state.vision,disabled,cx))))
             .child(div().text_xs().text_color(Color::Muted.get(cx)).child("保存到 Pi 的 models.json，高级字段和其他提供商保持原样。仅保存配置，不验证服务端认证。"))
             .child(h_flex().gap_2().items_center().flex_wrap()
                 .child(Button::new("save-pi-model-form").primary().rounded_full().label("保存配置").disabled(disabled || !state.dirty(cx)).on_click(cx.listener(|this,_,_,cx|this.save_pi_model_form(cx))))
                 .child(Button::new("cancel-pi-model-form").rounded_full().label("关闭表单").disabled(state.loading).on_click(cx.listener(|this,_,window,cx|this.edit_pi_model_config(None,window,cx))))
                 .when(state.dirty(cx),|row|row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child("有未保存的修改"))))
+    }
+    fn override_capability(
+        &self,
+        label: &'static str,
+        reasoning: bool,
+        selected: Option<bool>,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .items_center()
+            .flex_wrap()
+            .child(div().flex_1().text_sm().child(label))
+            .children(
+                [
+                    (None, "继承内置"),
+                    (Some(true), "支持"),
+                    (Some(false), "不支持"),
+                ]
+                .into_iter()
+                .map(|(value, text)| {
+                    Button::new(SharedString::from(format!(
+                        "pi-override-{reasoning}-{text}"
+                    )))
+                    .rounded_full()
+                    .compact()
+                    .label(text)
+                    .accessibility_label(format!("{label}：{text}"))
+                    .selected(selected == value)
+                    .toggled(selected == value)
+                    .disabled(disabled)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if reasoning {
+                            this.pi_models.reasoning = value;
+                        } else {
+                            this.pi_models.vision = value;
+                        }
+                        this.schedule_draft_save(cx);
+                        cx.notify();
+                    }))
+                }),
+            )
     }
 }

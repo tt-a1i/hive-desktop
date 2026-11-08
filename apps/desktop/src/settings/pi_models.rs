@@ -33,8 +33,10 @@ struct Model {
     name: Option<String>,
     context_window: Option<u64>,
     max_tokens: Option<u64>,
-    reasoning: bool,
-    vision: bool,
+    reasoning: Option<bool>,
+    vision: Option<bool>,
+    #[serde(default)]
+    override_only: bool,
 }
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 struct Target {
@@ -45,6 +47,8 @@ struct Target {
 }
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 struct Values {
+    #[serde(default)]
+    override_only: bool,
     id: String,
     name: String,
     url: String,
@@ -52,8 +56,8 @@ struct Values {
     context: String,
     output: String,
     api: String,
-    reasoning: bool,
-    vision: bool,
+    reasoning: Option<bool>,
+    vision: Option<bool>,
 }
 
 pub struct PiModels {
@@ -72,8 +76,9 @@ pub struct PiModels {
     context: Entity<InputState>,
     output: Entity<InputState>,
     api: String,
-    reasoning: bool,
-    vision: bool,
+    override_only: bool,
+    reasoning: Option<bool>,
+    vision: Option<bool>,
     loading: bool,
     generation: u64,
     message: Option<String>,
@@ -115,8 +120,9 @@ impl PiModels {
             context,
             output,
             api: String::new(),
-            reasoning: false,
-            vision: false,
+            override_only: false,
+            reasoning: Some(false),
+            vision: Some(false),
             loading: false,
             generation: 0,
             message: None,
@@ -126,6 +132,7 @@ impl PiModels {
     }
     fn values(&self, cx: &App) -> Values {
         Values {
+            override_only: self.override_only,
             id: self.id.read(cx).value().to_string(),
             name: self.name.read(cx).value().trim().to_string(),
             url: self.url.read(cx).value().trim().to_string(),
@@ -278,6 +285,8 @@ impl HiveApp {
         let mut value = Values::default();
         if let Some(target) = &target {
             if target.is_model {
+                value.reasoning = Some(false);
+                value.vision = Some(false);
                 if !target.creating {
                     let Some(model) = snapshot
                         .providers
@@ -298,6 +307,7 @@ impl HiveApp {
                         .map(|n| n.to_string())
                         .unwrap_or_default();
                     value.output = model.max_tokens.map(|n| n.to_string()).unwrap_or_default();
+                    value.override_only = model.override_only;
                     value.reasoning = model.reasoning;
                     value.vision = model.vision;
                 }
@@ -340,6 +350,7 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.pi_models.override_only = value.override_only;
         self.pi_models.api = value.api;
         self.pi_models.reasoning = value.reasoning;
         self.pi_models.vision = value.vision;
@@ -430,7 +441,7 @@ impl HiveApp {
             dialog
                 .title(title.clone())
                 .description(
-                    "不会删除账号凭据或历史会话。内置项会恢复默认；仅自定义的项将从目录移除。",
+                    "不会删除账号凭据或历史会话。模型覆盖会恢复默认，自定义模型会从目录移除；没有其他设置的空提供商覆盖也会清除。",
                 )
                 .show_cancel(true)
                 .ok_text("移除配置")
