@@ -1,3 +1,4 @@
+use crate::language::{english,tr};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -80,11 +81,11 @@ pub struct Logs {
 
 pub fn status(value: &str) -> &str {
     match value {
-        "running" => "运行中",
-        "completed" => "已完成",
-        "failed" => "失败",
-        "stopped" => "已停止",
-        "interrupted" => "已中断",
+        "running" => tr("运行中"),
+        "completed" => tr("已完成"),
+        "failed" => tr("失败"),
+        "stopped" => tr("已停止"),
+        "interrupted" => tr("已中断"),
         other => other,
     }
 }
@@ -92,7 +93,7 @@ pub fn json(value: &Value) -> String {
     if let Value::String(text) = value {
         text.clone()
     } else if value.is_null() {
-        "无".into()
+        tr("无").into()
     } else {
         serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
     }
@@ -107,6 +108,13 @@ pub fn relative_time(time: i64) -> String {
         .as_millis() as i64;
     let seconds = time.saturating_sub(now) / 1000;
     let count = seconds.unsigned_abs();
+    if english() {
+        let age = if count < 60 { format!("{count}s") }
+            else if count < 3600 { format!("{}m",count / 60) }
+            else if count < 86400 { format!("{}h",count / 3600) }
+            else { format!("{}d",count / 86400) };
+        return if seconds > 0 { format!("in {age}") } else { format!("{age} ago") };
+    }
     let age = if count < 60 {
         format!("{count} 秒")
     } else if count < 3600 {

@@ -2,7 +2,7 @@ mod details;
 mod settings;
 mod types;
 mod view;
-use crate::app::HiveApp;
+use crate::{app::HiveApp, language::tr};
 use gpui_kit::*;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -13,8 +13,8 @@ pub struct Workflows {
     pub loading: bool,
     pub acting: bool,
     pub generation: u64,
-    pub error: Option<String>,
-    pub action_error: Option<String>,
+    pub error: Option<WorkflowError>,
+    pub action_error: Option<WorkflowError>,
     pub enabled: Option<bool>,
     pub policy: Option<Policy>,
     pub policy_dirty: bool,
@@ -29,6 +29,16 @@ pub struct Workflows {
     pub list_scroll: ScrollHandle,
     pub detail_scroll: ScrollHandle,
     pub deleting: Option<String>,
+}
+pub enum WorkflowError { Refresh(String), Action(String), Unconfirmed }
+impl WorkflowError {
+    fn text(&self) -> String {
+        match self {
+            Self::Refresh(error) => format!("{}: {error}", tr("工作流未能更新，保留上次结果")),
+            Self::Action(error) => format!("{}: {error}", tr("工作流操作失败，请刷新核对")),
+            Self::Unconfirmed => tr("操作结果尚未确认，请刷新后核对；执行器草稿已保留。").to_owned(),
+        }
+    }
 }
 impl Default for Workflows {
     fn default() -> Self {
@@ -82,7 +92,7 @@ impl HiveApp {
         state.generation += 1;
         state.loading = false;
         if state.acting {
-            state.action_error = Some("操作结果尚未确认，请刷新后核对；执行器草稿已保留。".into());
+            state.action_error = Some(WorkflowError::Unconfirmed);
         }
         state.acting = false;
     }
@@ -208,7 +218,7 @@ impl HiveApp {
                         state.error = None;
                     }
                     Err(error) => {
-                        state.error = Some(format!("工作流未能更新，保留上次结果：{error}"))
+                        state.error = Some(WorkflowError::Refresh(error))
                     }
                 }
                 cx.notify();
@@ -262,7 +272,7 @@ impl HiveApp {
                     }
                     Err(error) => {
                         this.workflows.action_error =
-                            Some(format!("工作流操作失败，请刷新核对：{error}"))
+                            Some(WorkflowError::Action(error))
                     }
                 }
                 cx.notify();

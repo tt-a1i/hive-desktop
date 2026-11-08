@@ -1,4 +1,4 @@
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color, language::tr};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -14,21 +14,21 @@ impl HiveApp {
         let disabled = !self.connected || state.acting || !self.workspace_writes_allowed();
         v_flex().gap_3().p_4().rounded_lg().border_1().border_color(Color::Divider.get(cx))
             .child(h_flex().flex_wrap().gap_2().items_center()
-                .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child("工作流 · 实验功能"))
+                .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("工作流 · 实验功能")))
                 .when_some(state.enabled,|row,enabled|row.child(Button::new("workflow-feature-toggle")
-                    .label(if enabled {"关闭工作流"}else{"开启工作流"}).toggled(enabled).disabled(disabled)
+                    .label(if enabled {tr("关闭工作流")}else{tr("开启工作流")}).toggled(enabled).disabled(disabled)
                     .on_click(cx.listener(move|this,_,_,cx|this.workflow_action("PUT","/api/settings/workflow-feature".into(),Some(json!({"enabled":!enabled})),false,cx))))))
-            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("由主控编写和启动，沿用 Hive 的实验开关；运行中的任务请使用“停止运行”。"))
-            .child(Button::new("workflow-settings-toggle").ghost().label(if state.settings_open {"收起执行器设置"}else{"执行器设置…"})
+            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("由主控编写和启动，沿用 Hive 的实验开关；运行中的任务请使用“停止运行”。")))
+            .child(Button::new("workflow-settings-toggle").ghost().label(if state.settings_open {tr("收起执行器设置")}else{tr("执行器设置…")})
                 .toggled(state.settings_open).on_click(cx.listener(|this,_,_,cx|{this.workflows.settings_open=!this.workflows.settings_open;cx.notify();})))
             .when(state.settings_open,|view|view.when_some(state.policy.as_ref(),|view,policy| {
-                view.child(div().text_sm().child("工作流未指定 CLI 时使用默认项；允许列表沿用 Hive，实际接入能力以各 Agent 为准。"))
+                view.child(div().text_sm().child(tr("工作流未指定 CLI 时使用默认项；允许列表沿用 Hive，实际接入能力以各 Agent 为准。")))
                     .children(policy.supported.iter().enumerate().map(|(index,cli)| {
                         let allowed=policy.allowed.contains(cli);let selected=policy.default==*cli;
                         let toggle=cli.clone();let pick=cli.clone();
                         h_flex().gap_2().flex_wrap()
                             .child(Button::new(("workflow-cli-allowed",index)).ghost().label(cli.clone()).toggled(allowed).selected(allowed)
-                                .accessibility_label(format!("允许工作流使用 {cli}")).disabled(disabled)
+                                .accessibility_label(format!("{}: {cli}", tr("允许工作流使用"))).disabled(disabled)
                                 .on_click(cx.listener(move|this,_,_,cx| {
                                     if let Some(policy)=this.workflows.policy.as_mut() {
                                         if policy.allowed.contains(&toggle) {
@@ -39,8 +39,8 @@ impl HiveApp {
                                     }
                                     cx.notify();
                                 })))
-                            .child(Button::new(("workflow-cli-default",index)).label(if selected {"默认"}else{"设为默认"}).selected(selected)
-                                .accessibility_label(format!("工作流默认执行器：{cli}")).disabled(disabled || selected)
+                            .child(Button::new(("workflow-cli-default",index)).label(if selected {tr("默认")}else{tr("设为默认")}).selected(selected)
+                                .accessibility_label(format!("{}: {cli}", tr("工作流默认执行器"))).disabled(disabled || selected)
                                 .on_click(cx.listener(move|this,_,_,cx| {
                                     if let Some(policy)=this.workflows.policy.as_mut() {
                                         policy.default=pick.clone();if !policy.allowed.contains(&pick){policy.allowed.push(pick.clone());}
@@ -50,7 +50,7 @@ impl HiveApp {
                                 })))
                     }))
                     .child(h_flex().gap_2().flex_wrap()
-                        .child(Button::new("workflow-policy-save").label("保存执行器设置")
+                        .child(Button::new("workflow-policy-save").label(tr("保存执行器设置"))
                             .disabled(disabled || !state.policy_dirty || policy.allowed.is_empty() || !policy.allowed.contains(&policy.default))
                             .on_click(cx.listener(|this,_,_,cx| {
                                 if let Some(policy)=&this.workflows.policy {
@@ -58,10 +58,10 @@ impl HiveApp {
                                     this.workflow_action("PUT","/api/settings/workflow-cli-policy".into(),Some(body),true,cx);
                                 }
                             })))
-                        .child(Button::new("workflow-policy-reload").ghost().label("放弃修改并重新读取")
+                        .child(Button::new("workflow-policy-reload").ghost().label(tr("放弃修改并重新读取"))
                             .disabled(disabled || state.loading || !state.policy_dirty)
                             .on_click(cx.listener(|this,_,_,cx|{this.workflows.policy_dirty=false;this.workflows.policy=None;this.refresh_workflows(cx);cx.notify();}))))
-                    .when(state.policy_dirty,|view|view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child("执行器设置尚未保存")))
+                    .when(state.policy_dirty,|view|view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("执行器设置尚未保存"))))
             }))
             .into_any_element()
     }

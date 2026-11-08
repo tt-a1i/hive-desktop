@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color, language::{english,tr}};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -14,9 +14,9 @@ impl HiveApp {
             return div()
                 .text_sm()
                 .child(if self.workflows.loading {
-                    "正在读取运行详情…"
+                    tr("正在读取运行详情…")
                 } else {
-                    "运行详情尚未读取，请刷新重试。"
+                    tr("运行详情尚未读取，请刷新重试。")
                 })
                 .into_any_element();
         };
@@ -49,9 +49,9 @@ impl HiveApp {
                     .when(run.status == "running", |row| {
                         row.child(
                             Button::new("workflow-stop")
-                                .label("停止运行")
+                                .label(tr("停止运行"))
                                 .disabled(disabled)
-                                .accessibility_label(format!("停止工作流 {}", run.name))
+                                .accessibility_label(format!("{}: {}", tr("停止工作流"), run.name))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.workflow_action(
                                         "POST",
@@ -68,35 +68,31 @@ impl HiveApp {
                 div()
                     .text_xs()
                     .text_color(Color::Secondary.get(cx))
-                    .child(format!(
-                        "{} 开始 · {} 位执行成员",
-                        relative_time(run.started_at),
-                        run.agent_count
-                    )),
+                    .child(if english() { format!("Started {} · {} agents", relative_time(run.started_at), run.agent_count) } else { format!("{} 开始 · {} 位执行成员", relative_time(run.started_at), run.agent_count) }),
             )
             .when_some(run.finished_at, |view, time| {
                 view.child(
                     div()
                         .text_xs()
                         .text_color(Color::Secondary.get(cx))
-                        .child(format!("结束于 {}", relative_time(time))),
+                        .child(format!("{}: {}",tr("结束于"),relative_time(time))),
                 )
             })
             .when_some(run.phase.clone(), |view, phase| {
-                view.child(div().text_sm().child(format!("当前阶段：{phase}")))
+                view.child(div().text_sm().child(format!("{}: {phase}",tr("当前阶段"))))
             })
-            .child(div().text_sm().child(format!("来源：{}", run.script_path)))
+            .child(div().text_sm().child(format!("{}: {}",tr("来源"),run.script_path)))
             .child(
                 div()
                     .text_xs()
                     .text_color(Color::Secondary.get(cx))
                     .child(format!(
-                        "源校验：{}",
-                        run.script_hash.as_deref().unwrap_or("旧记录未提供")
+                        "{}: {}", tr("源校验"),
+                        run.script_hash.as_deref().unwrap_or(tr("旧记录未提供"))
                     )),
             )
             .when(!run.args.is_null(), |view| {
-                view.child(div().text_sm().child(format!("参数：{}", json(&run.args))))
+                view.child(div().text_sm().child(format!("{}: {}",tr("参数"),json(&run.args))))
             })
             .when(run.error.is_some() || !run.result.is_null(), |view| {
                 view.child(
@@ -114,17 +110,17 @@ impl HiveApp {
                                         .text_sm()
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .child(if run.error.is_some() {
-                                            "运行错误"
+                                            tr("运行错误")
                                         } else {
-                                            "运行结果"
+                                            tr("运行结果")
                                         }),
                                 )
                                 .child(
                                     Button::new("workflow-copy-result")
                                         .ghost()
                                         .compact()
-                                        .label("复制")
-                                        .accessibility_label("复制工作流结果或错误")
+                                        .label(tr("复制"))
+                                        .accessibility_label(tr("复制工作流结果或错误"))
                                         .on_click(cx.listener({
                                             let result = result.clone();
                                             move |_, _, _, cx| {
@@ -149,14 +145,14 @@ impl HiveApp {
                 div()
                     .text_lg()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(format!("关联派单 · {}", self.workflows.dispatches.len())),
+                    .child(format!("{} · {}",tr("关联派单"),self.workflows.dispatches.len())),
             )
             .when(self.workflows.dispatches.is_empty(), |view| {
                 view.child(
                     div()
                         .text_sm()
                         .text_color(Color::Secondary.get(cx))
-                        .child("此运行还没有成员派单。"),
+                        .child(tr("此运行还没有成员派单。")),
                 )
             })
             .children(
@@ -174,13 +170,13 @@ impl HiveApp {
                             .flex_1()
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("运行日志 · {}", self.workflows.logs.len())),
+                            .child(format!("{} · {}",tr("运行日志"),self.workflows.logs.len())),
                     )
                     .child(
                         Button::new("workflow-copy-logs")
                             .ghost()
                             .compact()
-                            .label("复制日志")
+                            .label(tr("复制日志"))
                             .disabled(log_text.is_empty())
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(log_text.clone()))
@@ -192,7 +188,7 @@ impl HiveApp {
                     div()
                         .text_sm()
                         .text_color(Color::Secondary.get(cx))
-                        .child("还没有运行日志。"),
+                        .child(tr("还没有运行日志。")),
                 )
             })
             .children(self.workflows.logs.iter().map(|log| {
@@ -245,7 +241,7 @@ impl HiveApp {
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(dispatch.label.clone().unwrap_or_else(|| {
-                                format!("步骤 {}", dispatch.step_index.unwrap_or_default())
+                                format!("{} {}",tr("步骤"),dispatch.step_index.unwrap_or_default())
                             })),
                     )
                     .child(
@@ -261,18 +257,18 @@ impl HiveApp {
                     .child(self.agent_name(&dispatch.to_agent_id)),
             )
             .when_some(dispatch.phase.clone(), |view, phase| {
-                view.child(div().text_xs().child(format!("阶段：{phase}")))
+                view.child(div().text_xs().child(format!("{}: {phase}",tr("阶段"))))
             })
             .child(div().text_sm().child(dispatch.text.clone()))
             .when_some(dispatch.report_text.clone(), |view, text| {
-                view.child(div().text_sm().child(format!("汇报：{text}")))
+                view.child(div().text_sm().child(format!("{}: {text}",tr("汇报"))))
             })
             .when_some(dispatch.last_pty_line.clone(), |view, text| {
                 view.child(
                     div()
                         .text_xs()
                         .text_color(Color::Secondary.get(cx))
-                        .child(format!("终端：{text}")),
+                        .child(format!("{}: {text}",tr("终端"))),
                 )
             })
             .children(
@@ -293,9 +289,9 @@ impl HiveApp {
                         )))
                         .ghost()
                         .compact()
-                        .label("派单详情")
+                        .label(tr("派单详情"))
                         .accessibility_label(format!(
-                            "查看工作流派单 {}",
+                            "{}: {}", tr("查看工作流派单"),
                             dispatch
                                 .label
                                 .clone()
@@ -315,7 +311,7 @@ impl HiveApp {
                             )))
                             .ghost()
                             .compact()
-                            .label("成员会话")
+                            .label(tr("成员会话"))
                             .on_click(cx.listener(
                                 move |this, _, _, cx| this.open_member_session(session.clone(), cx),
                             )),
