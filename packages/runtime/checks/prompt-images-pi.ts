@@ -28,7 +28,7 @@ try{
   await assert.rejects(handle.prompt('invalid',{images:[{...image,data:'bad'}]}));assert.equal(requests.length,start);assert.equal(handle.history().length,before);
   let failed!: (error:Error)=>void;const failure=new Promise<Error>(resolve=>{failed=resolve;});
   const queue=new DeliveryQueue({directory:join(directory,'deliveries'),sessionId:backend,startPaused:true,completedIds:()=>handle!.completedDeliveryIds(),execute:item=>handle!.prompt(item.text,{...(item.images && {images:item.images}),automated:true,deliveryId:item.id,...(item.presentation && {presentation:item.presentation})}),onError:failed});
-  await queue.enqueue('Describe original image',true,{version:1,origin:'user',displayText:'原图'},[image]);
+  await queue.enqueue('Describe original image',true,{version:1,origin:'user',displayText:'Describe original image'},[image]);
   const deliveryId=queue.pending[0]!.id;queue.resume();
   let timer:ReturnType<typeof setTimeout>|undefined;
   try{await Promise.race([failure,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Loopback image turn timed out')),10000);})]);}finally{if(timer)clearTimeout(timer);}
@@ -36,19 +36,20 @@ try{
   assert.equal(requests.length,start+1,'Use one synthetic HTTP request, never vendor inference');
   const blocks=requests[start].input.flatMap((item:any)=>item.content??[]);
   assert.ok(blocks.some((part:any)=>part.type==='input_image'&&part.image_url===`data:${image.mimeType};base64,${image.data}`),'Real Pi provider must receive original image bytes');
-  const record=handle.history().find((message:any)=>message.customType==='hive-delivery') as {content:unknown};
+  const record=handle.snapshot().history.find((message:any)=>message.presentation?.deliveryId===deliveryId) as {content:unknown};
+  assert.equal((record as any).role,'user');
   assert.deepEqual(record.content,[{type:'text',text:'Describe original image'},image]);
   assert.equal(handle.completedDeliveryIds().includes(deliveryId),false,'Rejected provider turn must stay retryable');
   const file=handle.sessionFile!;assert.ok(file);await handle.dispose();handle=undefined;
   if(backend==='pi'){
    handle=await createPiSession({...options,sessionFile:file});
-   assert.deepEqual((handle.history().find((message:any)=>message.customType==='hive-delivery') as {content:unknown}).content,record.content);
+   assert.deepEqual((handle.snapshot().history.find((message:any)=>message.presentation?.deliveryId===deliveryId) as {content:unknown}).content,record.content);
    config.providers['hive-images'].models[0]!.input=['text'];await writeFile(join(agentDir,'models.json'),JSON.stringify(config));await handle.refreshModels!();
    const count=handle.history().length;await assert.rejects(handle.prompt('No vision',{images:[image]}));assert.equal(handle.history().length,count);assert.equal(requests.length,start+1);
    config.providers['hive-images'].models[0]!.input=['text','image'];await writeFile(join(agentDir,'models.json'),JSON.stringify(config));
   }else{
    const {createExternalPiSession}=await import('../src/agents/external-pi.js');handle=await createExternalPiSession({...options,sessionFile:file,command:process.env.HIVE_PI_COMMAND??'/Users/tsk/Library/pnpm/pi'});
-   assert.deepEqual((handle.history().find((message:any)=>message.customType==='hive-delivery') as {content:unknown}).content,record.content);
+   assert.deepEqual((handle.snapshot().history.find((message:any)=>message.presentation?.deliveryId===deliveryId) as {content:unknown}).content,record.content);
   }
   await handle.dispose();handle=undefined;assert.equal(await readFile(join(agentDir,'settings.json'),'utf8'),settings);
  }
@@ -70,7 +71,7 @@ try{
    const record=runtime.chats.list(workspace.id).find(record=>record.agentId===member.id)!;
    const snapshot=await runtime.chats.open(record.id);
    assert.equal(snapshot.pending,1);assert.equal(requests.length,prior+1);
-   const user=snapshot.history.find((message:any)=>message.customType==='hive-delivery') as {content:unknown};
+   const user=snapshot.history.find((message:any)=>message.role==='user'&&message.presentation?.origin==='user') as {content:unknown};
    assert.deepEqual(user.content,[{type:'text',text:'Port image'},image]);
    await assert.rejects(port.deliver('invalid context',{triggerTurn:false,images:[image]}));
   }finally{await port.stop();}

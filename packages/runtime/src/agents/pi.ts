@@ -1,3 +1,4 @@
+import { PI_USER_INPUT, PI_USER_INPUT_RESULT, piUserInputSources, piUserInputNote, piUserPrompt, type PiUserInput } from './pi-user-input.js';
 import { piUsage } from '../agent-usage.js';
 import { promptImages, imageMessage } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
@@ -45,7 +46,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const messageIds = new WeakMap<object, string>();
   const idForMessage = (message: (typeof session.messages)[number]): string => {
     if (message.role === 'toolResult') return message.toolCallId;
-    const delivery = deliveryMetadata(message);
+    const delivery = userInputs.get(message) ?? deliveryMetadata(message);
     if (delivery) return delivery.deliveryId;
     let id = messageIds.get(message);
     if (!id) {
@@ -54,7 +55,8 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     }
     return id;
   };
-  let active: { cancelled: boolean; done: Promise<void>; finalError: string | undefined; sdkAborted: boolean; deliveryId: string | undefined; deliveryReceived: boolean } | undefined;
+  const userInputs = new WeakMap<object, PiUserInput>();
+  let active: { nativeInput: PiUserInput | undefined; handled: boolean; cancelled: boolean; done: Promise<void>; finalError: string | undefined; sdkAborted: boolean; deliveryId: string | undefined; deliveryReceived: boolean } | undefined;
   let disposed = false;
   const unsubscribe = session.subscribe((event) => {
     switch (event.type) {
@@ -86,9 +88,13 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       }
       case 'message_end':
         if (event.message.role === 'user' || (event.message.role === 'custom' && event.message.customType === 'hive-delivery')) {
-          const delivery = deliveryMetadata(event.message);
+          if (event.message.role === 'user' && active?.nativeInput && !active.deliveryReceived) {
+            userInputs.set(event.message, active.nativeInput);
+            active.deliveryReceived = true;
+          }
+          const delivery = userInputs.get(event.message) ?? deliveryMetadata(event.message);
           if (active && delivery && delivery.deliveryId === active.deliveryId) active.deliveryReceived = true;
-          options.onEvent({ type: 'message_end', sessionId, messageId: idForMessage(event.message), message: presentedMessage(event.message) });
+          options.onEvent({ type: 'message_end', sessionId, messageId: idForMessage(event.message), message: userInputs.has(event.message) ? { ...event.message, presentation: userInputs.get(event.message) } : presentedMessage(event.message) });
         }
         if (event.message.role === 'assistant') {
           const finalId = messageId ?? idForMessage(event.message);
@@ -117,6 +123,10 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
         break;
     }
   });
+  const unsubscribeErrors = session.extensionRunner.onError(error => {
+    if (active) active.finalError = error.error;
+    options.onEvent({ type: 'error', sessionId, message: error.error });
+  });
   let savedModelUnavailable = false;
   const setModel = async (provider: string, id: string) => {
     const model = session.modelRuntime.getModel(provider, id);
@@ -137,6 +147,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     }
   } catch (error) {
     unsubscribe();
+    unsubscribeErrors();
     session.dispose();
     throw error;
   }
@@ -163,7 +174,33 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       } else if (current && streaming?.role === 'assistant') {
         current = { messageId: current.messageId, message: streaming };
       }
-      return { history: history.map(presentedMessage), historyMessageIds: history.map(idForMessage),
+      const sources = piUserInputSources(manager.getBranch());
+      let index = 0;
+      const displayed: unknown[] = [];
+      const displayIds: string[] = [];
+      for (const projected of manager.buildSessionProjection().entries) {
+        const note = sources.notes.get(projected.sourceEntry.id);
+        if (note && !(active?.nativeInput?.deliveryId === note.deliveryId && active.deliveryReceived)) {
+          displayed.push(piUserInputNote(projected.sourceEntry, note, 'pi'));
+          displayIds.push(note.deliveryId);
+        }
+        for (const projectedMessage of projected.messages) {
+          const original = history[index++] ?? projectedMessage;
+          const input = sources.users.get(projected.sourceEntry.id);
+          if (input && original.role === 'user') {
+            userInputs.set(original, input);
+            displayed.push({ ...original, presentation: input, rawBackendItem: projected.sourceEntry,
+              source: { backend: 'pi', entryId: projected.sourceEntry.id } });
+          } else displayed.push(presentedMessage(original));
+          displayIds.push(idForMessage(original));
+        }
+      }
+      for (const original of history.slice(index)) {
+        const input = userInputs.get(original);
+        displayed.push(input ? { ...original, presentation: input } : presentedMessage(original));
+        displayIds.push(idForMessage(original));
+      }
+      return { history: displayed, historyMessageIds: displayIds,
         ...(current !== undefined && { activeMessage: current }) };
     },
     async addContext(text, customType = 'hive-context') {
@@ -185,22 +222,40 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       if (disposed) return Promise.reject(new Error('Pi session is disposed'));
       if (savedModelUnavailable) return Promise.reject(new Error('原先的 Pi 模型不可用，请重新选择。'));
       if (active) return Promise.reject(new Error('Pi session is already processing a prompt'));
-      const run = { cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, deliveryId: promptOptions?.deliveryId, deliveryReceived: false };
+      const run = { nativeInput: undefined as PiUserInput | undefined, handled: false, cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, deliveryId: promptOptions?.deliveryId, deliveryReceived: false };
       active = run;
       run.done = Promise.resolve().then(async () => {
         try {
           if (promptOptions?.deliveryId) {
             const presentation: DeliveryPresentation = isDeliveryPresentation(promptOptions.presentation)
               ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text };
-            await session.sendCustomMessage({ customType: 'hive-delivery', content: imageMessage(text,images), display: false,
-              details: { ...presentation, deliveryId: promptOptions.deliveryId } }, { triggerTurn: true });
+            if (presentation.origin === 'user') {
+              const input: PiUserInput = { ...presentation, deliveryId: promptOptions.deliveryId, rawText: text };
+              const native = piUserPrompt(input);
+              const entryId = manager.appendCustomEntry(PI_USER_INPUT, input);
+              run.nativeInput = input;
+              const entry = manager.getEntry(entryId)!;
+              options.onEvent({ type: 'message_end', sessionId, messageId: input.deliveryId, message: piUserInputNote(entry, input, 'pi') });
+              let disposition: string = 'failed';
+              try {
+                if (native.context.trim()) await session.sendCustomMessage({ customType: 'hive-user-input-context', content: native.context,
+                  display: false, details: { deliveryId: input.deliveryId } }, { triggerTurn: false });
+                await session.prompt(native.text, { images, source: 'interactive', preflightResult(value) {
+                  disposition = value;
+                  run.handled = value === 'handled';
+                } });
+              } finally { manager.appendCustomEntry(PI_USER_INPUT_RESULT, { deliveryId: input.deliveryId, disposition }); }
+            } else {
+              await session.sendCustomMessage({ customType: 'hive-delivery', content: imageMessage(text,images), display: false,
+                details: { ...presentation, deliveryId: promptOptions.deliveryId } }, { triggerTurn: true });
+            }
           } else if (promptOptions?.automated) await session.sendUserMessage(imageMessage(text,images));
           else await session.prompt(text, {images});
           if (run.finalError && !run.cancelled && !promptOptions?.deliveryId) options.onEvent({ type: 'error', sessionId, message: run.finalError });
           if (promptOptions?.deliveryId) {
             if (run.cancelled || run.sdkAborted) throw new Error('Pi delivery was aborted');
             if (run.finalError) throw new Error(run.finalError);
-            if (!run.deliveryReceived) throw new Error('Pi delivery was not added to the conversation');
+            if (!run.deliveryReceived && !run.handled) throw new Error('Pi delivery was not added to the conversation');
             manager.appendCustomEntry('hive-delivery-completed', { id: promptOptions.deliveryId });
           }
         } catch (error) {
@@ -226,6 +281,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       if (disposed) return;
       disposed = true;
       unsubscribe();
+      unsubscribeErrors();
       session.dispose();
     },
     currentModel() {

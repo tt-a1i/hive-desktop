@@ -1,9 +1,10 @@
+import { piUserInputSources, piUserInputNote, piUserPrompt, type PiUserInput } from './pi-user-input.js';
 import { piUsage } from '../agent-usage.js';
 import { promptImages } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
-import { isDeliveryPresentation } from '../delivery-presentation.js';
+import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
 import { assertExternalPiCompletion } from './external-pi-completion.js';
 import { applyExternalPiUpdate, externalPiBranch, externalPiMessage } from './external-pi-history.js';
 import { ExternalPiInteractions } from './external-pi-interactions.js';
@@ -47,7 +48,12 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
   const refresh = async () => {
     const result = await transport.request<{ entries: SessionEntry[]; leafId: string | null }>('get_entries');
     branch = externalPiBranch(result.entries, result.leafId);
-    const presented = branch.flatMap(entry => { const message = externalPiMessage(entry); return message ? [{ entry, message }] : []; });
+    const sources = piUserInputSources(branch);
+    const presented = branch.flatMap(entry => {
+      const note = sources.notes.get(entry.id);
+      const message: Record<string, unknown> | undefined = note ? piUserInputNote(entry, note, 'pi-rpc') : externalPiMessage(entry, sources.users.get(entry.id));
+      return message ? [{ entry, message }] : [];
+    });
     history = presented.map(item => item.message); ids = presented.map(item => item.message.role === 'toolResult' && typeof item.message.toolCallId === 'string'
       ? item.message.toolCallId : liveIds.get(item.entry.id) ?? item.entry.id);
   };
@@ -160,10 +166,29 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
           await transport.bridge({ action: 'bind', binding: options.teamBinding?.() ?? null });
           if (run.cancelled) return;
           const before = new Set(branch.map(entry => entry.id));
+          let handledUser = false;
           if (promptOptions?.deliveryId) {
-            const presentation = isDeliveryPresentation(promptOptions.presentation) ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text };
-            await transport.bridge({ action: 'delivery', text, ...(images.length && {images}), details: { ...presentation, deliveryId: promptOptions.deliveryId } });
-            await terminal;
+            const presentation: DeliveryPresentation = isDeliveryPresentation(promptOptions.presentation) ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text };
+            if (presentation.origin === 'user') {
+              const input: PiUserInput = { ...presentation, deliveryId: promptOptions.deliveryId, rawText: text };
+              const native = piUserPrompt(input);
+              await transport.bridge({ action: 'begin-user-input', input });
+              await refresh();
+              const note = history.find(message => isObject(message.presentation) && message.presentation.deliveryId === input.deliveryId);
+              if (note) emit({ type: 'message_end', sessionId: state!.sessionId, messageId: input.deliveryId, message: note });
+              let disposition = 'failed';
+              try {
+                if (run.cancelled) throw new Error('External Pi delivery was aborted');
+                if (run.error) throw run.error;
+                const result = await transport.request<{disposition:string}>('prompt', { message: native.text, ...(images.length && {images}) });
+                disposition = result.disposition;
+                handledUser = disposition === 'handled' && !run.started;
+                if (!handledUser) await terminal;
+              } finally { await transport.bridge({ action: 'end-user-input', deliveryId: input.deliveryId, disposition }); }
+            } else {
+              await transport.bridge({ action: 'delivery', text, ...(images.length && {images}), details: { ...presentation, deliveryId: promptOptions.deliveryId } });
+              await terminal;
+            }
           } else if (promptOptions?.automated) {
             await transport.bridge({ action: 'user', text, ...(images.length && {images}) }); await terminal;
           } else {
@@ -174,7 +199,10 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
           if (run.cancelled || run.aborted) { if (promptOptions?.deliveryId) throw new Error('External Pi delivery was aborted'); return; }
           if (run.error) throw run.error;
           if (run.lastAssistant?.stopReason === 'error') throw new Error(String(run.lastAssistant.errorMessage ?? 'External Pi request failed'));
-          if (promptOptions?.deliveryId) {
+          if (promptOptions?.deliveryId && handledUser) {
+            await transport.bridge({ action: 'complete-user-input', deliveryId: promptOptions.deliveryId });
+            await refresh();
+          } else if (promptOptions?.deliveryId) {
             const terminalEntry = branch.findLast(entry => !before.has(entry.id) && entry.type === 'message' && entry.message.role === 'assistant');
             if (!terminalEntry || terminalEntry.type !== 'message' || !run.lastAssistant || !sameMessage(terminalEntry.message as unknown as Record<string, unknown>, run.lastAssistant)) throw new Error('External Pi delivery terminal assistant is missing');
             assertExternalPiCompletion(branch, promptOptions.deliveryId, terminalEntry.id);

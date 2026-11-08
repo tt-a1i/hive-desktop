@@ -353,7 +353,9 @@ impl HiveApp {
             self.sync_thinking(&id, message, false, cx);
         }
         let text = message_text(message);
-        if role == "custom" && message["customType"] == "hive-delivery" {
+        if (role == "custom" && message["customType"] == "hive-delivery")
+            || (role == "user" && delivery_presentation(message).is_some())
+        {
             let presentation = delivery_presentation(message);
             id = presentation
                 .as_ref()

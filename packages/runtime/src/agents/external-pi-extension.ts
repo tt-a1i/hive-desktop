@@ -1,3 +1,4 @@
+import { PI_USER_INPUT, PI_USER_INPUT_RESULT, piUserInput, piUserPrompt, assertPiUserInputHandled } from './pi-user-input.js';
 import { promptImages, imageMessage } from '../prompt-images.js';
 import { existsSync, writeFileSync } from 'node:fs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -30,6 +31,21 @@ export default function hiveDesktopBridge(pi: ExtensionAPI): void {
           if (!(key in candidate) || typeof candidate[key as keyof typeof candidate] !== 'string' || !candidate[key as keyof typeof candidate]) throw new Error('Invalid Hive team binding');
         }
         binding = candidate as typeof binding;
+      } else if (value.action === 'begin-user-input') {
+        const input = piUserInput('input' in value ? value.input : undefined);
+        if (!input) throw new Error('Invalid native user input metadata');
+        const native = piUserPrompt(input);
+        pi.appendEntry(PI_USER_INPUT, input);
+        if (native.context.trim()) pi.sendMessage({ customType: 'hive-user-input-context', content: native.context,
+          display: false, details: { deliveryId: input.deliveryId } }, { triggerTurn: false });
+      } else if (value.action === 'end-user-input') {
+        if (!('deliveryId' in value) || typeof value.deliveryId !== 'string' || !('disposition' in value)
+          || !['started', 'queued', 'handled', 'failed'].includes(String(value.disposition))) throw new Error('Invalid native input result');
+        pi.appendEntry(PI_USER_INPUT_RESULT, { deliveryId: value.deliveryId, disposition: value.disposition });
+      } else if (value.action === 'complete-user-input') {
+        if (!('deliveryId' in value) || typeof value.deliveryId !== 'string') throw new Error('Missing native input ID');
+        assertPiUserInputHandled(ctx.sessionManager.getBranch(), value.deliveryId);
+        pi.appendEntry('hive-delivery-completed', { id: value.deliveryId });
       } else if (value.action === 'user') {
         if (!('text' in value) || typeof value.text !== 'string') throw new Error('Hive user message must be a string');
         pi.sendUserMessage(imageMessage(value.text,promptImages('images' in value?value.images:undefined)), { expandPromptTemplates: false });
