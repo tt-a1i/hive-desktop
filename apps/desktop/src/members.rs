@@ -163,11 +163,16 @@ impl HiveApp {
                         Ok(value) => match serde_json::from_value::<Vec<Member>>(value) {
                             Ok(members) => {
                                 this.members = members;
+                                this.member_error = None;
                                 this.sync_pinned_project();
                             }
-                            Err(error) => this.error = Some(format!("成员列表格式错误：{error}")),
+                            Err(error) => {
+                                this.member_error = Some(format!("成员状态未能更新：{error}"))
+                            }
                         },
-                        Err(error) => this.error = Some(format!("读取成员失败：{error}")),
+                        Err(error) => {
+                            this.member_error = Some(format!("成员状态未能更新：{error}"))
+                        }
                     }
                     cx.notify();
                 }

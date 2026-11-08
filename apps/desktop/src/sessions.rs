@@ -274,6 +274,7 @@ impl HiveApp {
         self.member_generation += 1;
         self.member_stopping = None;
         self.member_loading = false;
+        self.member_error = None;
         self.editing_member = None;
         self.deleting_member = None;
         self.models.clear();

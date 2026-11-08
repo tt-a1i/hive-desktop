@@ -1,3 +1,4 @@
+mod live;
 mod tasks;
 pub(crate) use tasks::SavedTaskDraft;
 
@@ -53,6 +54,7 @@ pub struct Collaboration {
     pub tasks: Entity<TextViewState>,
     pub task_text: String,
     pub task_loading: bool,
+    pub task_refreshing: bool,
     pub task_error: Option<String>,
     pub task_generation: u64,
     pub task_drafts: HashMap<String, tasks::TaskDraft>,
@@ -61,6 +63,7 @@ pub struct Collaboration {
     pub offset: usize,
     pub dispatches: Vec<Dispatch>,
     pub list_loading: bool,
+    pub list_refreshing: bool,
     pub list_error: Option<String>,
     pub list_generation: u64,
     pub selected: Option<Dispatch>,
@@ -68,10 +71,13 @@ pub struct Collaboration {
     pub detail_scroll: ScrollHandle,
     pub detail_error: Option<String>,
     detail_generation: u64,
+    pub detail_loading: bool,
     pub messages: Vec<DispatchMessage>,
     pub responsibilities: Vec<Responsibility>,
     pub next_message: Option<String>,
     pub message_loading: bool,
+    pub message_refreshing: bool,
+    pub message_refresh_failed: bool,
     pub requested_after: Option<String>,
     pub message_error: Option<String>,
     pub message_generation: u64,
@@ -83,6 +89,7 @@ impl Collaboration {
             tasks: cx.new(|cx| TextViewState::markdown("", cx)),
             task_text: String::new(),
             task_loading: false,
+            task_refreshing: false,
             task_error: None,
             task_generation: 0,
             task_drafts: HashMap::new(),
@@ -91,6 +98,7 @@ impl Collaboration {
             offset: 0,
             dispatches: vec![],
             list_loading: false,
+            list_refreshing: false,
             list_error: None,
             list_generation: 0,
             selected: None,
@@ -98,10 +106,13 @@ impl Collaboration {
             detail_scroll: ScrollHandle::new(),
             detail_error: None,
             detail_generation: 0,
+            detail_loading: false,
             messages: vec![],
             responsibilities: vec![],
             next_message: None,
             message_loading: false,
+            message_refreshing: false,
+            message_refresh_failed: false,
             requested_after: None,
             message_error: None,
             message_generation: 0,
@@ -113,6 +124,11 @@ impl HiveApp {
         self.collaboration.visible = false;
         self.collaboration.task_generation += 1;
         self.collaboration.task_loading = false;
+        self.collaboration.task_refreshing = false;
+        self.collaboration.list_refreshing = false;
+        self.collaboration.message_refreshing = false;
+        self.collaboration.detail_loading = false;
+        self.collaboration.detail_generation += 1;
         self.collaboration.list_generation += 1;
         self.collaboration.message_generation += 1;
     }
@@ -142,6 +158,7 @@ impl HiveApp {
         };
         let c = &mut self.collaboration;
         c.task_generation += 1;
+        c.task_refreshing = false;
         if c.task_drafts.contains_key(&workspace)
             || c.recovered_task_drafts.contains_key(&workspace)
         {
@@ -151,6 +168,7 @@ impl HiveApp {
         }
         let generation = c.task_generation;
         c.task_loading = true;
+        c.task_refreshing = false;
         c.task_error = None;
         c.task_text.clear();
         c.tasks.update(cx, |state, cx| state.set_text("", cx));
@@ -199,6 +217,7 @@ impl HiveApp {
         let offset = c.offset;
         let filter = c.filter;
         c.list_loading = true;
+        c.list_refreshing = false;
         c.list_error = None;
         c.dispatches.clear();
         c.selected = None;
@@ -272,14 +291,17 @@ impl HiveApp {
         c.detail_scroll = ScrollHandle::new();
         c.detail_error = None;
         c.selected = Some(item);
+        c.detail_loading = false;
         c.messages.clear();
         c.responsibilities.clear();
         c.next_message = None;
         self.load_dispatch_messages(None, cx);
     }
     pub fn refresh_dispatch(&mut self, cx: &mut Context<Self>) {
-        self.load_dispatch_record(cx);
-        self.load_dispatch_messages(None, cx);
+        if !self.collaboration.detail_loading {
+            self.load_dispatch_record(cx);
+        }
+        self.refresh_dispatch_messages(cx);
     }
     pub fn load_dispatch_record(&mut self, cx: &mut Context<Self>) {
         let (Some(workspace), Some(runtime), Some(id)) = (
@@ -294,6 +316,7 @@ impl HiveApp {
         };
         self.collaboration.detail_generation += 1;
         let generation = self.collaboration.detail_generation;
+        self.collaboration.detail_loading = true;
         self.collaboration.detail_error = None;
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
@@ -309,6 +332,7 @@ impl HiveApp {
                 {
                     return;
                 }
+                c.detail_loading = false;
                 match result {
                     Ok(record) => {
                         if let Some(row) = c.dispatches.iter_mut().find(|row| row.id == id) {
@@ -335,6 +359,8 @@ impl HiveApp {
         c.message_generation += 1;
         let generation = c.message_generation;
         c.message_loading = true;
+        c.message_refreshing = false;
+        c.message_refresh_failed = false;
         c.requested_after = after.clone();
         c.message_error = None;
         cx.notify();
@@ -431,8 +457,12 @@ impl HiveApp {
         c.message_generation += 1;
         c.detail_generation += 1;
         c.task_loading = false;
+        c.task_refreshing = false;
         c.list_loading = false;
+        c.list_refreshing = false;
+        c.detail_loading = false;
         c.message_loading = false;
+        c.message_refreshing = false;
         for draft in c.task_drafts.values_mut() {
             draft.saving = false;
         }

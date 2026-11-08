@@ -147,6 +147,7 @@ pub struct HiveApp {
     pub member_panel: bool,
     pub member_form_open: bool,
     pub member_loading: bool,
+    pub member_error: Option<String>,
     pub member_generation: u64,
     pub member_stopping: Option<String>,
     pub editing_member: Option<String>,
@@ -204,6 +205,7 @@ pub struct HiveApp {
     pub conversation_list: crate::conversation_list::ConversationList,
     pub collaboration_scroll: ScrollHandle,
     events: Task<()>,
+    pub(crate) workspace_updates: Task<()>,
     _quit: Subscription,
     _composer_subscription: Subscription,
     _model_search_subscription: Subscription,
@@ -412,6 +414,7 @@ impl HiveApp {
             member_panel: false,
             member_form_open: false,
             member_loading: false,
+            member_error: None,
             member_generation: 0,
             member_stopping: None,
             editing_member: None,
@@ -471,6 +474,7 @@ impl HiveApp {
             conversation_list: crate::conversation_list::ConversationList::new(cx.focus_handle()),
             collaboration_scroll: ScrollHandle::new(),
             events: Task::ready(()),
+            workspace_updates: Task::ready(()),
             _quit: cx.on_app_quit(|this: &mut Self, cx| {
                 if let Err(error) = this.flush_drafts(cx) {
                     eprintln!("无法保存本地草稿：{error}");
@@ -487,6 +491,7 @@ impl HiveApp {
             .state
             .set_scroll_handler(cx.listener(|_, _, _, cx| cx.notify()));
         app.start_backend(window.window_handle(), cx);
+        app.start_workspace_updates(cx);
         app
     }
     pub fn exit(&mut self, cx: &mut Context<Self>) {

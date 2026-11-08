@@ -105,6 +105,7 @@ impl HiveApp {
         .detach();
         self.collaboration.task_generation += 1;
         self.collaboration.task_loading = false;
+        self.collaboration.task_refreshing = false;
         self.collaboration.task_drafts.insert(
             workspace,
             TaskDraft {
