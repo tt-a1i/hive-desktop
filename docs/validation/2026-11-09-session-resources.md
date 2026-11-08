@@ -29,4 +29,4 @@
 
 `cargo build --manifest-path apps/desktop/Cargo.toml`、`cargo check --manifest-path apps/desktop/Cargo.toml` 和 `git diff --check` 通过。现有 `cargo test --manifest-path apps/desktop/Cargo.toml file_viewer -- --nocapture`：1通过、28过滤；没有新增 UI 镜像测试，没有修改 runtime、Hive 协议/schema 或删除既有测试。纯原生 UI 和已有只读器复用未跑无关全量运行时测试。
 
-Windows 原生、正常连接下 RPC 读失败保留目录、键盘/输入法完整矩阵及文件管理器定位的逐项操作仍未验收；连接失效已实际验证，不用它替代所有读取错误。当前源码验证使用有界复用的小应用槽，不是完整安装包；现有 current ZIP 仍为 c18617d，尚不含本改动。#14 保持开放，完整 Hive Desktop 目标继续推进。
+Windows 原生、正常连接下 RPC 读失败保留目录、键盘/输入法完整矩阵及文件管理器定位的逐项操作仍未验收；连接失效已实际验证，不用它替代所有读取错误。较完整源码验证使用有界复用的小应用槽；随后 current ZIP 已纳入1acd805，包内实际目录、来源预览、原草稿及正常退出通过，见[当前开发包](2026-11-08-current-package.md)。#14 保持开放，完整 Hive Desktop 目标继续推进。
