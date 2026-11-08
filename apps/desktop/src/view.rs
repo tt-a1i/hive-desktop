@@ -587,7 +587,8 @@ impl Render for HiveApp {
                         .child(if running { "正在回复…".to_string() } else { self.status.clone() })))))
                 .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
-                .when(pending > 0, |view| view.child(h_flex().gap_3()
+                .child(self.render_session_failure(running,cx))
+                .when(pending > 0 && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some()), |view| view.child(h_flex().gap_3()
                     .child(div().text_sm().child(format!("待处理消息：{pending}")))
                     .when(!running, |view| view.child(Button::new("resume").label("继续处理").disabled(!self.connected || !self.conversation_ready || self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
                 .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {

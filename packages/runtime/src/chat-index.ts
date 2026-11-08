@@ -9,6 +9,8 @@ export function isUnsetPiModel(model: { provider: string; id: string } | undefin
   return model?.provider === 'unknown' && model.id === 'unknown';
 }
 
+export interface DeliveryFailure {deliveryId:string;message:string}
+
 export interface ChatRecord {
   backend: ChatBackend;
   codexThreadId?: string;
@@ -19,6 +21,7 @@ export interface ChatRecord {
   customTitle?: boolean;
   pinned?: boolean;
   archived?: boolean;
+  lastDeliveryFailure?: DeliveryFailure;
   reasoning?: {provider:string;modelId:string;level:string};
   sessionFile: string | null;
   agentId?: string;
@@ -48,8 +51,9 @@ export class ChatIndex {
   list(workspaceId: string): ChatRecord[] {
     return this.records.filter(record => record.workspaceId === workspaceId).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
   }
+  peek(id:string):ChatRecord|undefined {return this.records.find(record=>record.id===id);}
   get(id: string): ChatRecord {
-    const record = this.records.find(record => record.id === id);
+    const record = this.peek(id);
     if (!record) throw new Error('Conversation not found');
     return record;
   }
@@ -90,6 +94,10 @@ function isChatRecord(value: unknown): value is ChatRecord {
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
   if (record.pinned !== undefined && typeof record.pinned !== 'boolean') return false;
   if (record.archived !== undefined && typeof record.archived !== 'boolean') return false;
+  if (record.lastDeliveryFailure !== undefined) {
+    const failure=record.lastDeliveryFailure as Record<string,unknown>|null;
+    if (!failure || typeof failure!=='object' || Array.isArray(failure) || typeof failure.deliveryId!=='string' || !failure.deliveryId || typeof failure.message!=='string') return false;
+  }
   if (record.reasoning !== undefined) {
     const setting = record.reasoning as Record<string,unknown> | null;
     if (!setting || typeof setting !== 'object' || Array.isArray(setting) || !['provider','modelId','level'].every(key=>typeof setting[key]==='string' && (setting[key] as string).length>0)) return false;

@@ -28,7 +28,7 @@ export type PiEvent =
   | { type: 'tool_update'; sessionId: string; toolCallId: string; toolName: string; result: unknown }
   | { type: 'tool_end'; sessionId: string; toolCallId: string; toolName: string; result: unknown; isError: boolean }
   | { type: 'settled'; sessionId: string; aborted: boolean }
-  | { type: 'error'; sessionId: string; message: string };
+  | { type: 'error'; sessionId: string; message: string; diagnosticWriteFailed?: boolean };
 
 export interface PiSessionOptions {
   cwd: string;

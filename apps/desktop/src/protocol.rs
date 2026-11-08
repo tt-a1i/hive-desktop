@@ -138,6 +138,7 @@ pub struct OpenSession {
     pub pending: usize,
     #[serde(default)]
     pub pending_reports: Vec<PendingReport>,
+    pub delivery_failure: Option<crate::failures::DeliveryFailure>,
     #[serde(default)]
     pub completed_delivery_ids: Vec<String>,
     #[serde(flatten)]
@@ -226,6 +227,7 @@ pub enum PiEvent {
         #[serde(default)]
         pending_reports: Vec<PendingReport>,
         completed_report_id: Option<String>,
+        delivery_failure: Option<crate::failures::DeliveryFailure>,
     },
     #[serde(rename_all = "camelCase")]
     AssistantDelta {
@@ -279,6 +281,8 @@ pub enum PiEvent {
         session_id: String,
         sequence: u64,
         message: String,
+        #[serde(default)]
+        diagnostic_write_failed: bool,
     },
 }
 impl PiEvent {

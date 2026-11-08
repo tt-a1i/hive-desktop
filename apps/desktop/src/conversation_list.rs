@@ -99,6 +99,14 @@ impl HiveApp {
             }
             if !grouped || expanded {
                 for (index, message) in group.iter().enumerate() {
+                    if self.hidden_current_failure(offset + index)
+                        && message.text.is_empty()
+                        && message.thinking.is_empty()
+                        && message.images.is_empty()
+                        && message.files.is_empty()
+                    {
+                        continue;
+                    }
                     rows.push(Row {
                         key: RowKey::Message(message.id.clone()),
                         kind: Kind::Message {

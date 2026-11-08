@@ -136,10 +136,24 @@ impl HiveApp {
                 pending,
                 pending_reports,
                 completed_report_id,
+                delivery_failure,
                 ..
             } => {
                 if self.session.as_ref().is_some_and(|s| s.id == id) {
                     self.pending_reports.clone_from(pending_reports);
+                    let was_busy = self.busy.contains(&id);
+                    if (*busy && !was_busy)
+                        || (!*busy
+                            && was_busy
+                            && delivery_failure.is_some()
+                            && !self
+                                .agent_diagnostic
+                                .as_ref()
+                                .is_some_and(|d| d.diagnostic_write_failed))
+                    {
+                        self.agent_diagnostic = None;
+                    }
+                    self.set_delivery_failure(delivery_failure.clone());
                     if let Some(id) = completed_report_id {
                         self.completed_deliveries.insert(id.clone());
                     }
@@ -308,6 +322,7 @@ impl HiveApp {
             thinking: vec![],
             delivery: None,
             explicit_user: false,
+            failure: None,
             images: vec![],
             files: vec![],
             image_sources: vec![],
@@ -425,6 +440,27 @@ impl HiveApp {
             );
         } else {
             self.upsert(id.clone(), role, text, false, cx);
+            if role == "assistant" {
+                let failure = (message["stopReason"] == "error").then(|| {
+                    message["errorMessage"]
+                        .as_str()
+                        .unwrap_or("Agent 回复未完成。")
+                        .to_owned()
+                });
+                if failure.is_some() && !self.messages.iter().any(|m| m.id == id) {
+                    self.push_message(id.clone(), role.into(), String::new(), cx);
+                }
+                if let Some(rendered) = self.messages.iter_mut().find(|m| m.id == id) {
+                    if rendered.failure.as_ref().map(|f| &f.message) != failure.as_ref() {
+                        rendered.failure = failure.map(|message| crate::failures::Diagnostic {
+                            message,
+                            expanded: false,
+                            diagnostic_write_failed: false,
+                        });
+                        rendered.layout_revision += 1;
+                    }
+                }
+            }
             self.load_message_images(id.clone(), message, cx);
         }
         self.refresh_conversation_find(&id);
@@ -621,7 +657,17 @@ impl HiveApp {
                     self.status = "已停止当前回复".into();
                 }
             }
-            PiEvent::Error { message, .. } => self.error = Some(message),
+            PiEvent::Error {
+                message,
+                diagnostic_write_failed,
+                ..
+            } => {
+                self.agent_diagnostic = Some(crate::failures::Diagnostic {
+                    message,
+                    expanded: false,
+                    diagnostic_write_failed,
+                })
+            }
         }
         if follow {
             self.conversation_list
@@ -631,7 +677,7 @@ impl HiveApp {
     }
 }
 pub(crate) fn message_text(message: &Value) -> String {
-    let mut text = if let Some(text) = message["content"].as_str() {
+    let text = if let Some(text) = message["content"].as_str() {
         text.to_owned()
     } else {
         message["content"]
@@ -653,15 +699,6 @@ pub(crate) fn message_text(message: &Value) -> String {
             })
             .unwrap_or_else(|| message.to_string())
     };
-    if message["role"] == "assistant"
-        && message["stopReason"] == "error"
-        && let Some(error) = message["errorMessage"].as_str()
-    {
-        if !text.is_empty() {
-            text.push_str("\n\n");
-        }
-        text.push_str(&format!("回复失败：{error}"));
-    }
     text
 }
 

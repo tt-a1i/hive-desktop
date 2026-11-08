@@ -260,6 +260,7 @@ impl HiveApp {
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();
         self.pending_reports.clear();
+        self.reset_reply_failures();
         self.completed_deliveries.clear();
         self.pending_events.clear();
         self.event_sequence = 0;
@@ -578,6 +579,7 @@ impl HiveApp {
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();
         self.pending_reports.clear();
+        self.reset_reply_failures();
         self.completed_deliveries.clear();
         self.pending_events.clear();
         self.event_sequence = 0;
@@ -618,6 +620,7 @@ impl HiveApp {
                         this.sync_interactions(&id, open.interactions);
                         this.pending.insert(id.clone(), open.pending);
                         this.pending_reports = open.pending_reports;
+                        this.set_delivery_failure(open.delivery_failure);
                         this.completed_deliveries =
                             open.completed_delivery_ids.into_iter().collect();
                         this.background_sequences

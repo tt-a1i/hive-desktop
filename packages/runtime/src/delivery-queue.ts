@@ -64,6 +64,7 @@ export class DeliveryQueue {
  }
 
  get pending(): readonly DeliveryItem[] { return structuredClone(this.items); }
+ get headId():string|undefined {return this.items[0]?.id;}
  get pendingCount(): number { return this.items.length; }
  get pendingReports() {
   return this.items.flatMap((item, index) => {

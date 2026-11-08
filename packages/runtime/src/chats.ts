@@ -24,7 +24,7 @@ interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
   failure?: Error; reasoningFailure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
-type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; completedReportId?: string };
+type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string };
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
 export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & { sequence: number };
 const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
@@ -260,9 +260,9 @@ export class Chats implements StructuredSessionPort {
         directory: this.queueDir, sessionId: record.id, startPaused: true,
         completedIds: () => handle.completedDeliveryIds(),
         execute: item => item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.images && {images:item.images}), ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text),
-        onError: error => { if (!chat?.aborted) this.event(record.id, { type: 'error', sessionId: record.id, message: error.message }); },
+        onError: error => { if (!chat?.aborted) this.recordDeliveryFailure(record.id, queue, chat?.failure ?? error); },
         onState: (busy, completedReportId) => {
-          this.event(record.id, { type: 'state', sessionId: record.id, busy, pending: queue.pendingCount, pendingReports: queue.pendingReports, ...(completedReportId && { completedReportId }) });
+          this.event(record.id, { type: 'state', sessionId: record.id, busy, pending: queue.pendingCount, pendingReports: queue.pendingReports, deliveryFailure:this.deliveryFailure(record.id,queue), ...(completedReportId && { completedReportId }) });
           if (wasBusy && !busy) this.event(record.id, { type: 'settled', sessionId: record.id, aborted: chat?.aborted ?? false });
           wasBusy = busy;
         },
@@ -273,6 +273,21 @@ export class Chats implements StructuredSessionPort {
       return chat;
     } catch (error) { await handle.dispose(); throw error; }
   }
+  private deliveryFailure(id:string,queue:DeliveryQueue) {
+    const failure=this.index.peek(id)?.lastDeliveryFailure;
+    return failure?.deliveryId===queue.headId ? failure : undefined;
+  }
+  private recordDeliveryFailure(id:string,queue:DeliveryQueue,error:Error):void {
+    const record=this.index.peek(id);const deliveryId=queue.headId;
+    if (!record || !deliveryId) return;
+    try { this.index.save({...record,lastDeliveryFailure:{deliveryId,message:error.message}}); }
+    catch (writeError) {
+      // The delivery spool is still authoritative and retained. Surface both
+      // failures, without throwing from a queue notification callback.
+      const detail=writeError instanceof Error ? writeError.message : String(writeError);
+      this.event(id,{type:'error',sessionId:id,diagnosticWriteFailed:true,message:`处理失败：${error.message}\n失败原因无法保存；原消息仍在待处理队列。${detail}`});
+    }
+  }
   private snapshot(id: string, chat: LiveChat) {
     const record = this.index.get(id);
     const snapshot = chat.handle.snapshot();
@@ -282,7 +297,7 @@ export class Chats implements StructuredSessionPort {
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
     return {
       ...record, ...(record.backend === 'pi' && { model, unavailableModel: model ? undefined : record.model }), ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
-      busy: chat.queue.busy, pending: chat.queue.pendingCount, pendingReports: chat.queue.pendingReports,
+      busy: chat.queue.busy, pending: chat.queue.pendingCount, pendingReports: chat.queue.pendingReports, deliveryFailure:this.deliveryFailure(id,chat.queue),
       completedDeliveryIds: chat.handle.completedDeliveryIds(),
       runId: record.agentId ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId)?.runId ?? null : null,
       eventSequence: this.sequences.get(id) ?? 0,

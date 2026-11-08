@@ -7,6 +7,7 @@ mod conversation;
 mod conversation_find;
 mod conversation_list;
 mod drafts;
+mod failures;
 mod image_input;
 mod image_viewer;
 mod interactions;

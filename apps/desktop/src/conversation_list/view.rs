@@ -147,6 +147,10 @@ impl HiveApp {
                         }),
                 )
             })
+            .when(
+                message.failure.is_some() && !self.hidden_current_failure(i),
+                |view| view.child(self.render_reply_failure(i, cx)),
+            )
             .children(
                 message
                     .thinking

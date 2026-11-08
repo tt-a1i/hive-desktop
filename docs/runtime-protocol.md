@@ -34,6 +34,9 @@ Hive 2.2.1 通过可重现 pnpm 补丁开放执行器 factory 与派生成员后
 
 Agent 通知为 `{event:"agent",data:{type,sessionId,sequence,...}}`。事件包括文本增量、用户/助手消息结束、工具开始/更新/结束、错误、`state {busy,pending}` 和 settled。state 表示真实队列状态，包括暂停时新增投递和取消后移除消息；settled 在队列从运行转为空闲时发出。重试中的错误不等于调用结束；模型回合结束不等于 Hive 任务完成。
 
+`chat.open` 快照与 `state` 可带 `deliveryFailure: {deliveryId,message}`。仅当既有聊天索引的最后失败记录匹配当前投递队列头时返回；成功或取消移除队列头后不再返回。它是投递诊断，不是任务状态，也不改变原生会话历史。`chat.resume` 沿用原有队列及 deliveryId，Pi 的原生历史可以保留多次执行尝试，桌面按相同投递 ID 展示一条用户输入。若保存诊断失败，`error` 带 `diagnosticWriteFailed:true`，原队列仍保留；该临时告警不能被当作诊断已持久保存。原始错误只在详情中展示和复制。
+
+
 快照包含 `history`、对齐的 `historyMessageIds`、可选 `activeMessage`、`eventSequence`、`busy`、`pending`、`runId`、模型列表与会话信息。恢复视图先应用快照，再应用水位之后的排队事件，避免重复或丢失已生成文本。序号属于当前运行中的桌面会话流，不承诺跨进程连续。
 
 桌面 index.json 保存导航、成员绑定、Pi 会话引用和空会话启动上下文。Hive 保存工作区及团队账本，Pi 保存对话。独立的投递文件仅保存已接受但尚未完成的输入；先落盘再确认，串行交给 SDK，成功后在 Pi transcript 中记完成 ID 再移除投递。失败保留消息并暂停，用户明确继续；关闭后台保留未完成投递。模型完成与完成标记写入之间仍有崩溃窗口，不承诺工具副作用 exactly-once。空 Pi 会话尚未落盘时，桌面会话 ID 与启动上下文仍可恢复。

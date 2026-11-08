@@ -170,6 +170,7 @@ jobs:
           pnpm --filter @hive-desktop/runtime check:programs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @hive-desktop/runtime check:files
+          pnpm --filter @hive-desktop/runtime check:delivery-failures
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @hive-desktop/runtime check:pi-reasoning
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
