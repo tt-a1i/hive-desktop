@@ -1,4 +1,4 @@
-use crate::language::tr;
+use crate::language::{english,tr};
 use crate::app::{HiveApp, SettingsSection};
 use crate::palette::Color;
 use gpui_kit::{
@@ -21,6 +21,15 @@ pub mod pi_accounts;
 pub mod pi_models;
 pub mod programs;
 
+pub enum SettingsNotice { Message(&'static str), Error(&'static str, String) }
+impl SettingsNotice {
+    fn text(&self) -> String {
+        match self {
+            Self::Message(key) => tr(key).to_owned(),
+            Self::Error(key, error) => format!("{}: {error}", tr(key)),
+        }
+    }
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutableSettings {
@@ -43,13 +52,13 @@ pub struct EffectiveCommand {
 impl EffectiveCommand {
     pub fn label(&self, prefix: &str) -> String {
         let source = match self.source.as_str() {
-            "env" => "环境变量（覆盖应用设置）",
-            "app" => "应用设置",
-            "draft" => "输入路径",
+            "env" => tr("环境变量（覆盖应用设置）"),
+            "app" => tr("应用设置"),
+            "draft" => tr("输入路径"),
             "path" => "PATH",
-            _ => "未知来源",
+            _ => tr("未知来源"),
         };
-        format!("{prefix}：{} · {}", self.command, source)
+        format!("{prefix}: {} · {}", self.command, source)
     }
 }
 impl HiveApp {
@@ -64,7 +73,7 @@ impl HiveApp {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some(format!("选择 {label} 可执行文件").into()),
+            prompt: Some((if english() { format!("Select {label} executable") } else { format!("选择 {label} 可执行文件") }).into()),
         });
         let window = window.window_handle();
         let generation = self.executable_picker_generation;
@@ -99,7 +108,7 @@ impl HiveApp {
                         }
                         Ok(None) => return,
                         Err(error) => {
-                            this.settings_message = Some(format!("选择文件失败：{error}"))
+                            this.settings_message = Some(SettingsNotice::Error("选择文件失败", error))
                         }
                     }
                     cx.notify();
@@ -162,7 +171,7 @@ impl HiveApp {
             return;
         }
         let Some(runtime) = self.runtime.clone() else {
-            self.team_autostaff_message = Some("后台尚未连接".into());
+            self.team_autostaff_message = Some(SettingsNotice::Message("后台尚未连接"));
             cx.notify();
             return;
         };
@@ -184,12 +193,12 @@ impl HiveApp {
                         Some(enabled) => {
                             this.team_autostaff = Some(enabled);
                             if save.is_some() {
-                                this.team_autostaff_message = Some("设置已保存".into());
+                                this.team_autostaff_message = Some(SettingsNotice::Message("设置已保存"));
                             }
                         }
-                        None => this.team_autostaff_message = Some("自动组队设置响应格式错误".into()),
+                        None => this.team_autostaff_message = Some(SettingsNotice::Message("自动组队设置响应格式错误")),
                     },
-                    Err(error) => this.team_autostaff_message = Some(format!("{}自动组队设置失败：{error}", if save.is_some() { "保存" } else { "读取" })),
+                    Err(error) => this.team_autostaff_message = Some(SettingsNotice::Error(if save.is_some() { "保存自动组队设置失败" } else { "读取自动组队设置失败" }, error)),
                 }
                 cx.notify();
             });
@@ -217,7 +226,7 @@ impl HiveApp {
             return;
         }
         let Some(runtime) = self.runtime.clone() else {
-            self.settings_message = Some("后台尚未连接".into());
+            self.settings_message = Some(SettingsNotice::Message("后台尚未连接"));
             cx.notify();
             return;
         };
@@ -273,18 +282,15 @@ impl HiveApp {
                             this.executable_settings = Some(settings);
                             if save {
                                 this.settings_message =
-                                    Some("设置已保存。新启动的外部进程将使用更新后的配置。".into());
+                                    Some(SettingsNotice::Message("设置已保存。新启动的外部进程将使用更新后的配置。"));
                             }
                         }
                         Err(error) => {
-                            this.settings_message = Some(format!("设置响应格式错误：{error}"))
+                            this.settings_message = Some(SettingsNotice::Error("设置响应格式错误", error.to_string()))
                         }
                     },
                     Err(error) => {
-                        this.settings_message = Some(format!(
-                            "{}设置失败：{error}",
-                            if save { "保存" } else { "读取" }
-                        ))
+                        this.settings_message = Some(SettingsNotice::Error(if save { "保存设置失败" } else { "读取设置失败" }, error))
                     }
                 }
                 cx.notify();
@@ -335,11 +341,11 @@ impl HiveApp {
                             .on_change(cx.listener(|this, enabled, _, cx| this.team_autostaff_request(Some(*enabled), cx))))))
                     .when(self.team_autostaff_loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("正在同步设置…"))))
                     .when(!self.team_autostaff_loading, |view| view.child(h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label(tr("重新读取")).disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx))))))
-                    .when_some(self.team_autostaff_message.clone(), |view, message| view.child(div().text_sm().child(message))),
+                    .when_some(self.team_autostaff_message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().text_sm().child(message))),
                         SettingsSection::Notifications => content.id("settings-notification-content").overflow_y_scroll().child(self.render_notification_settings(cx)),
                         SettingsSection::Programs => content.id("settings-programs-content").overflow_y_scroll()
                     .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；检查只读取程序版本。修改在下次启动对应 Agent 时生效。")))
-                    .when_some(self.settings_message.clone(), |view, message| view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
+                    .when_some(self.settings_message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
                     .child(self.executable_field("pi", tr("外部 Pi"), &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
                     .child(self.executable_field("codex", "Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
                     .child(self.executable_field("claude", "Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
