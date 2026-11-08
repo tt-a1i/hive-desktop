@@ -321,9 +321,9 @@ impl Render for HiveApp {
             && !needs_pi_model
             && self.workspace_writes_allowed()
             && self.connected
-            && !running
+            && self.session.as_ref().is_none_or(|session| !self.inflight_inputs.contains_key(&session.id))
             && !self.loading
-            && pending == 0
+            && (pending == 0 || running)
             && !self.closing;
         self.composer_can_submit = can_submit;
         let submit_on_enter = can_submit
@@ -607,7 +607,8 @@ impl Render for HiveApp {
 
                 .when(self.usage.visible,|view|view.child(self.render_usage(running,cx)))
                 .child(self.render_session_failure(running,cx))
-                .when(pending > 0 && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some()), |view| view.child(h_flex().gap_3()
+                .child(self.render_pending_user_inputs(cx))
+                .when(!running && pending > 0 && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some()), |view| view.child(h_flex().gap_3()
                     .child(div().text_sm().child(format!("待处理消息：{pending}")))
                     .when(!running, |view| view.child(Button::new("resume").label("继续处理").disabled(!self.connected || !self.conversation_ready || self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
                 .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {
@@ -634,18 +635,20 @@ impl Render for HiveApp {
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
                         self.new_chat_menu("home-agent", "选择 Agent", None, cx).into_any_element()
                     } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
-                    .child(Button::new("attach-images").ghost().compact().icon(Glyph::Plus).label("附件").accessibility_label("添加文件或图片").disabled(!self.connected || self.workspace.is_none() || self.loading || running || !self.attachments.ready(self.draft_target.as_ref())).on_click(cx.listener(|this,_,_,cx|this.choose_images(cx))))
+                    .child(Button::new("attach-images").ghost().compact().icon(Glyph::Plus).label("附件").accessibility_label("添加文件或图片").disabled(!self.connected || self.workspace.is_none() || self.loading || self.session.as_ref().is_some_and(|session|self.inflight_inputs.contains_key(&session.id)) || !self.attachments.ready(self.draft_target.as_ref())).on_click(cx.listener(|this,_,_,cx|this.choose_images(cx))))
                     .when(self.pi_commands_available(), |row|row.child(self.command_button(cx)))
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(self.model_picker(window, running, cx)))
                     .when(self.session.is_some(), |row|row.child(self.render_reasoning_picker(running,cx)))
                     .when(self.session.is_some(), |row|row.child(self.usage_button(cx)))
-                    .when(self.session.is_some(), |row| row.child(if running {
-                        Button::new("stop").rounded_full().icon(Glyph::Square).tooltip("停止回复").accessibility_label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
-                    } else {
-                        Button::new("send").primary().icon(Glyph::ArrowUp).rounded(px(20.)).accessibility_label("发送消息").tooltip(cx.global::<crate::composer::ComposerPreferences>().mode.hint()).disabled(!can_submit || !has_text).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
-                    })))
-                .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { "后台暂不可用 · 可在窗口顶部重新启动后台" } else if running { "Agent 正在处理 · 可随时停止" } else if pending > 0 { "有待处理消息，请先继续" } else { "" }))))
+                    .when(self.session.is_some(), |row| row
+                        .when(running,|row|row.child(Button::new("stop").rounded_full().icon(Glyph::Square).tooltip("停止回复").accessibility_label("停止").disabled(!self.connected).on_click(cx.listener(|this,_,_,cx|this.abort(cx)))))
+                        .child(Button::new("send").primary().icon(Glyph::ArrowUp).rounded(px(20.))
+                            .when(running,|button|button.label("排队"))
+                            .accessibility_label(if running {"加入消息队列"} else {"发送消息"})
+                            .tooltip(if running {"加入队列，当前回复结束后按顺序处理"} else {cx.global::<crate::composer::ComposerPreferences>().mode.hint()})
+                            .disabled(!can_submit || !has_text).on_click(cx.listener(|this,_,window,cx|this.send(window,cx))))))
+                .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { "后台暂不可用 · 可在窗口顶部重新启动后台" } else if running { "Agent 正在处理 · 新消息会按顺序排队" } else if pending > 0 { "有待处理消息，请先继续" } else { "" }))))
                 .when(needs_pi_model && self.connected, |surface| surface.child(
                     h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().min_w_0().flex_wrap().items_center().gap_2()
                         .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model {

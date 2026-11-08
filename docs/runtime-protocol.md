@@ -82,3 +82,7 @@ Pi 仅保存原生会话记录；Codex/Claude 的显式选择保存在现有 Cha
 ## Pi 模型配置
 
 `pi.models.get {}` 返回 `{path,revision,apis,providers}`；提供商只暴露公共编辑字段，模型包含 `overrideOnly`。仅存在 modelOverrides 的条目以 `reasoning/vision: boolean|null` 区分显式能力与继承；不表示模型一定可用于当前会话。`pi.models.change {revision,change}` 复用 provider/model/removeProvider/removeModel 操作，返回 `{conflict,snapshot}`。model 的 reasoning/vision 可以为 null，表示移除相应显式配置，保留 Pi 原生继承语义；普通自定义模型的既有布尔请求仍有效。编辑覆盖项不新增 models，删除最后一项会清理无其他有效设置的空提供商覆盖。高级字段/凭据不跨此接口返回，保存保持原文件中的未编辑内容，详见 [验证](validation/2026-11-08-pi-model-overrides.md)。
+
+## 待处理用户输入
+
+`chat.open` 和 state 增加 `pendingUserInputs:[{deliveryId,text,attachments,processing}]`，只从既有 spool 中 origin=user 的展示元数据生成；不新增持久队列。attachments 是原上传公共 metadata，text 是已归一化的用户原文，不返回隐藏上下文。UI 过滤当前处理/已在历史出现的条目，标明等待；沿既有 chat.prompt 排队，chat.abort 仅取消当前回合，暂停队列仍由 chat.resume 显式继续。旧响应缺失字段时，Rust 按空列表读取。详见 [验证](validation/2026-11-08-queued-user-inputs.md)。

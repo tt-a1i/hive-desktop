@@ -73,6 +73,13 @@ export class DeliveryQueue {
     workerName: report.workerName, ...(report.workerId && { workerId: report.workerId }), artifacts: [...(report.artifacts ?? [])], processing: index === 0 && this.busy && !this.paused }] : [];
   });
  }
+ get pendingUserInputs() {
+  return this.items.flatMap((item, index) => item.presentation?.origin === 'user' ? [{
+   deliveryId: item.id, text: item.presentation.displayText,
+   attachments: structuredClone(item.presentation.attachments ?? []),
+   processing: index === 0 && this.busy && !this.paused,
+  }] : []);
+ }
  get busy(): boolean { return this.running !== undefined; }
 
  /** Resolves after atomic persistence, without waiting for model execution. */

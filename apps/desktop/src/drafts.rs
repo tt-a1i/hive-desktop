@@ -212,14 +212,7 @@ impl HiveApp {
             let mut inputs = self.drafts.clone();
             for (id, text) in &self.inflight_inputs {
                 let key = format!("session:{id}");
-                if self
-                    .attachments
-                    .drafts
-                    .get(&key)
-                    .is_some_and(|items| !items.is_empty())
-                {
-                    inputs.entry(key).or_insert_with(|| text.clone());
-                }
+                inputs.entry(key).or_insert_with(|| text.clone());
             }
             store.save(
                 &inputs,

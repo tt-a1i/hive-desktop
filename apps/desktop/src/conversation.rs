@@ -17,8 +17,8 @@ impl HiveApp {
         let refs = self.attachments.refs(Some(&attachment_key));
         if (text.trim().is_empty() && refs.is_empty())
             || !self.attachments.ready(Some(&attachment_key))
-            || self.busy.contains(&id)
-            || self.pending.get(&id).copied().unwrap_or(0) > 0
+            || self.inflight_inputs.contains_key(&id)
+            || (!self.busy.contains(&id) && self.pending.get(&id).copied().unwrap_or(0) > 0)
             || self.loading
             || !self.connected
         {
@@ -30,6 +30,7 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
+        let was_busy = self.busy.contains(&id);
         self.busy.insert(id.clone());
         self.inflight_inputs.insert(id.clone(), text.clone());
         self.drafts.remove(&format!("session:{id}"));
@@ -57,7 +58,7 @@ impl HiveApp {
                 }
                 match result {
                     Err(error) => {
-                        this.busy.remove(&id);
+                        if !was_busy { this.busy.remove(&id); }
                         if this.session.as_ref().is_some_and(|s| s.id == id)
                             && this.input.read(cx).value().is_empty()
                         {
@@ -135,12 +136,14 @@ impl HiveApp {
                 busy,
                 pending,
                 pending_reports,
+                pending_user_inputs,
                 completed_report_id,
                 delivery_failure,
                 ..
             } => {
                 if self.session.as_ref().is_some_and(|s| s.id == id) {
                     self.pending_reports.clone_from(pending_reports);
+                    self.pending_user_inputs.clone_from(pending_user_inputs);
                     let was_busy = self.busy.contains(&id);
                     if (*busy && !was_busy)
                         || (!*busy

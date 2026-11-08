@@ -124,6 +124,15 @@ impl PendingReport {
         }
     }
 }
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingUserInput {
+    pub delivery_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<crate::attachments::AttachmentRef>,
+    pub processing: bool,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
@@ -138,6 +147,8 @@ pub struct OpenSession {
     pub pending: usize,
     #[serde(default)]
     pub pending_reports: Vec<PendingReport>,
+    #[serde(default)]
+    pub pending_user_inputs: Vec<PendingUserInput>,
     pub delivery_failure: Option<crate::failures::DeliveryFailure>,
     #[serde(default)]
     pub completed_delivery_ids: Vec<String>,
@@ -226,6 +237,8 @@ pub enum PiEvent {
         pending: usize,
         #[serde(default)]
         pending_reports: Vec<PendingReport>,
+        #[serde(default)]
+        pending_user_inputs: Vec<PendingUserInput>,
         completed_report_id: Option<String>,
         delivery_failure: Option<crate::failures::DeliveryFailure>,
     },

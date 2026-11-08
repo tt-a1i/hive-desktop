@@ -211,7 +211,7 @@ impl HiveApp {
             || self
                 .session
                 .as_ref()
-                .is_some_and(|session| self.busy.contains(&session.id))
+                .is_some_and(|session| self.inflight_inputs.contains_key(&session.id))
             || self.attachments.loading.contains(&key)
         {
             self.error = Some("当前会话暂不能添加附件，请稍后再试。".into());
@@ -367,7 +367,7 @@ impl HiveApp {
         let busy = self
             .session
             .as_ref()
-            .is_some_and(|session| self.busy.contains(&session.id));
+            .is_some_and(|session| self.inflight_inputs.contains_key(&session.id));
         let empty = refs.is_empty();
         let content = h_flex()
             .flex_shrink_0()

@@ -4,6 +4,7 @@ mod artifacts;
 mod attachments;
 mod collaboration;
 mod composer;
+mod queued_inputs;
 mod command_picker;
 mod conversation;
 mod conversation_find;
