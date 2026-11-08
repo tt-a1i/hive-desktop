@@ -25,3 +25,13 @@
 将新检查加入包内 Codex gate，绑定包内适配器及 desktop runtime；上一份实际附件 ZIP 的解压 runtime 被新行为断言拒绝，证据 `.artifacts/codex-interrupt-rejection/old-package-negative.log`。其余日志在同目录。
 
 没有修改 SQLite schema、Hive 协议、模型或权限规则；不跑无关全量检查，不重复 Rust 构建。此页记录后端源码验证，原始模型中的拒绝频率未知，Windows 原生验收仍未完成。
+
+## 已更新的开发包
+
+`.artifacts/hive-desktop-macos-arm64-interrupt-cleanup.zip` 纳入源码 `45b67fb776d4e07c437b3f320816ea17c09addba`，保留之前的附件预览和输入区修复。新 ZIP SHA256 为 `ba070e7a1426d03fb192dab58b9f31e40098845dd9891aa0ec152845fbb83398`。
+
+在核对依赖/lock/workspace/patch/Cargo metadata 无变化、仅 runtime package 的开发脚本变化后，复用上一份已校验的冻结 Mac 依赖及 Node。完整替换当前 runtime dist，104 个文件及原生二进制与当前构建逐一校验；从新 ZIP 单独解压后重新校验全部文件。
+
+新解压包的 `check-package.mjs`、扩展后的 `check-packaged-codex.mjs` 和 `check-desktop-startup.mjs` 均通过。新增拒绝/断连/开始响应前取消/冷重启投递检查实际运行在包内 Node、适配器和 desktop runtime 上，旧包反向检查失败，新包正向通过。打包收据及日志在 `.artifacts/codex-interrupt-rejection/`。
+
+仍是未签名/未公证的 macOS arm64 开发包，未完成 Windows 原生或正式安装验收。系统界面走查仍待用户解锁；此前用于附件系统点验的另一份临时应用保留，本次新建打包临时目录在 ZIP 与解压运行验证完成后清理。

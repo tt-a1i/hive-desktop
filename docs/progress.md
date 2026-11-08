@@ -208,3 +208,5 @@ Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限�
 ## 2026-11-08 Codex 中断错误清理
 
 真实 JSONL 对端复现中断 RPC 被拒绝后 prompt 未结算。共享中断入口现在合并同回合请求、区分实际原生终态与断连，并在拒绝后关闭连接、等待 prompt 清理；未确认投递不丢失。真实 Hive HTTP/SQLite 验证运行/token 撤销、同 ID 投递在重开及完整 runtime 重启后保留；原始 Codex 无模型生命周期和定向回归通过，旧开发包被新增包内行为 gate 拒绝。详见 [中断错误验证](validation/2026-11-08-codex-interrupt-rejection.md)。
+
+同批更新 Mac arm64 中断清理开发 ZIP，完整 runtime/二进制与当前构建校验，新 ZIP 解压后运行包内新增中断/冷重启检查、真实 PTY/Hive/SQLite 与生产窗口恢复均通过。旧包会被新增行为 gate 拒绝，新包正向通过；仍未签名，Windows 原生与系统界面点验边界保持明确。
