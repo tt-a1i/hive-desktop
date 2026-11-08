@@ -12,6 +12,7 @@ use gpui_kit::{
 use serde::Deserialize;
 use serde_json::json;
 mod appearance;
+mod search;
 mod notification;
 pub mod pi_accounts;
 pub mod pi_models;
@@ -291,6 +292,7 @@ impl HiveApp {
 
 impl HiveApp {
     pub fn leave_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_search.update(cx, |input, cx| input.set_value("", window, cx));
         self.close_settings();
         self.close_roles();
         if let Some(focus) = self.preferences_return_focus.take() {
@@ -304,7 +306,9 @@ impl HiveApp {
         compact_settings: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let content = if self.roles.visible {
+        let content = if !self.settings_search.read(cx).value().trim().is_empty() {
+            self.render_settings_results(cx).into_any_element()
+        } else if self.roles.visible {
             self.render_roles(cx).into_any_element()
         } else {
             v_flex().flex_1().w_full().max_w(px(960.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.pl_5().pr_6().py_7()).gap_5()
@@ -355,6 +359,6 @@ impl HiveApp {
             .min_w_0()
             .h_full()
             .child(self.render_settings_tabs(compact_settings, cx))
-            .child(content)
+            .child(v_flex().flex_1().min_w_0().min_h_0().child(self.render_settings_search(cx)).child(content))
     }
 }

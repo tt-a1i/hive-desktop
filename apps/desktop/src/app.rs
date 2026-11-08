@@ -128,6 +128,7 @@ pub struct HiveApp {
     pub preferences_focus: FocusHandle,
     pub preferences_return_focus: Option<FocusHandle>,
     pub settings_section: SettingsSection,
+    pub settings_search: Entity<InputState>,
     pub pi_accounts: crate::settings::pi_accounts::PiAccounts,
     pub pi_models: crate::settings::pi_models::PiModels,
     pub settings_loading: bool,
@@ -294,6 +295,14 @@ impl HiveApp {
             }
         })
         .detach();
+        let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索设置，如模型、通知、快捷键…"));
+        cx.subscribe_in(&settings_search, window, |this, _, event: &InputEvent, window, cx| {
+            match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter { secondary: false, shift: false } => this.open_first_settings_match(window, cx),
+                _ => {}
+            }
+        }).detach();
         let model_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索模型、提供商…"));
         let model_search_subscription =
@@ -406,6 +415,7 @@ impl HiveApp {
             preferences_focus: cx.focus_handle(),
             preferences_return_focus: None,
             settings_section: SettingsSection::Appearance,
+            settings_search,
             pi_accounts: crate::settings::pi_accounts::PiAccounts::new(window, cx),
             pi_models: crate::settings::pi_models::PiModels::new(window, cx),
             settings_loading: false,

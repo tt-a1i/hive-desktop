@@ -210,17 +210,7 @@ impl HiveApp {
                         .child(div().when(!compact, |text| text.flex_1()).child(label))
                         .selected(self.settings_panel && self.settings_section == section)
                         .on_click(cx.listener(move |this, _, window, cx| {
-                            this.settings_section = section;
-                            if section == SettingsSection::Models {
-                                this.load_pi_models(cx);
-                            }
-                            if section == SettingsSection::PiAccounts {
-                                this.load_pi_accounts(window.window_handle(), cx);
-                            }
-                            if !this.settings_panel {
-                                this.open_settings(window, cx);
-                            }
-                            cx.notify();
+                            this.select_settings_section(section, window, cx);
                         }))
                 }),
             )
@@ -234,7 +224,8 @@ impl HiveApp {
                     .accessibility_label("角色模板")
                     .child(div().when(!compact, |text| text.flex_1()).child("角色模板"))
                     .selected(self.roles.visible)
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.settings_search.update(cx, |input, cx| input.set_value("", window, cx));
                         if !this.roles.visible {
                             this.open_roles(cx);
                         }
