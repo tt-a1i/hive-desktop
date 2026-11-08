@@ -210,3 +210,7 @@ Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限�
 真实 JSONL 对端复现中断 RPC 被拒绝后 prompt 未结算。共享中断入口现在合并同回合请求、区分实际原生终态与断连，并在拒绝后关闭连接、等待 prompt 清理；未确认投递不丢失。真实 Hive HTTP/SQLite 验证运行/token 撤销、同 ID 投递在重开及完整 runtime 重启后保留；原始 Codex 无模型生命周期和定向回归通过，旧开发包被新增包内行为 gate 拒绝。详见 [中断错误验证](validation/2026-11-08-codex-interrupt-rejection.md)。
 
 同批更新 Mac arm64 中断清理开发 ZIP，完整 runtime/二进制与当前构建校验，新 ZIP 解压后运行包内新增中断/冷重启检查、真实 PTY/Hive/SQLite 与生产窗口恢复均通过。旧包会被新增行为 gate 拒绝，新包正向通过；仍未签名，Windows 原生与系统界面点验边界保持明确。
+
+## 2026-11-08 原生 Pi 技能/模板输入差距确认
+
+对照同一隔离项目、SDK 配置与本地 HTTP，原生 Pi 会展开 Skill/提示模板正文；真实 Hive HTTP/SQLite 接入的内置 Pi 及原样外部 Pi 1.4.0 均绕过此输入管线。六条实际请求确认正文缺失但参数仍保留，无厂商模型执行。定位为 custom delivery 与原生输入语义的接线差距，已建主目标原生子任务 [#3](https://github.com/tt-a1i/hive-desktop/issues/3)，记录见 [对照证据](research/2026-11-08-pi-command-parity.md)。修复及命令选择体验尚待实施，不以当前包已能展开技能/模板作承诺。
