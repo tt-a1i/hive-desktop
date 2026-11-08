@@ -1,3 +1,4 @@
+use crate::language::{english, tr};
 use super::*;
 
 impl HiveApp {
@@ -28,12 +29,12 @@ impl HiveApp {
             .as_deref()
             .map(|agent| {
                 if agent.ends_with(":orchestrator") {
-                    "主控"
+                    tr("主控")
                 } else {
-                    "成员"
+                    tr("成员")
                 }
             })
-            .unwrap_or("会话");
+            .unwrap_or(tr("会话"));
         let activity = self
             .session_activity(&id)
             .map(|label| format!(" · {label}"))
@@ -61,12 +62,12 @@ impl HiveApp {
             .h(px(28.))
             .w(px(28.))
             .icon(Glyph::Ellipsis)
-            .tooltip("会话操作")
+            .tooltip(tr("会话操作"))
             .accessibility_label(
                 project_name
                     .as_ref()
-                    .map(|name| format!("{title} · {name} 的置顶会话操作"))
-                    .unwrap_or_else(|| format!("{title} 的会话操作")),
+                    .map(|name| if english() { format!("Pinned conversation actions: {title} · {name}") } else { format!("{title} · {name} 的置顶会话操作") })
+                    .unwrap_or_else(|| if english() { format!("Conversation actions: {title}") } else { format!("{title} 的会话操作") }),
             )
             .disabled(
                 !self.connected || pinning || self.workspace_removing.as_ref() == Some(&project),
@@ -78,9 +79,9 @@ impl HiveApp {
                 let archive_app = weak.clone();
                 menu.item(
                     PopupMenuItem::new(if session.pinned {
-                        "取消置顶"
+                        tr("取消置顶")
                     } else {
-                        "置顶会话"
+                        tr("置顶会话")
                     })
                     .on_click(move |_, _, cx| {
                         let _ = weak.update(cx, |this, cx| {
@@ -90,11 +91,11 @@ impl HiveApp {
                 )
                 .item(
                     PopupMenuItem::new(if archive_session.archived {
-                        "恢复会话"
+                        tr("恢复会话")
                     } else if archive_blocked {
-                        "归档会话（需先处理当前任务）"
+                        tr("归档会话（需先处理当前任务）")
                     } else {
-                        "归档会话"
+                        tr("归档会话")
                     })
                     .disabled(!archive_session.archived && archive_blocked)
                     .on_click(move |_, _, cx| {
@@ -125,11 +126,11 @@ impl HiveApp {
                             "{}{} · {} · {role}{activity}{}",
                             project_name
                                 .as_ref()
-                                .map(|name| format!("置顶 · {name} · "))
+                                .map(|name| format!("{} · {name} · ", tr("置顶")))
                                 .unwrap_or_default(),
-                            session.backend.label(),
+                            tr(session.backend.label()),
                             title,
-                            if session.pinned { " · 已置顶" } else { "" }
+                            if session.pinned { if english() { " · Pinned" } else { " · 已置顶" } } else { "" }
                         ))
                         .w_full()
                         .min_w_0()
@@ -155,7 +156,7 @@ impl HiveApp {
                                 div()
                                     .text_xs()
                                     .text_color(Color::Muted.get(cx))
-                                    .child("置顶"),
+                                    .child(tr("置顶")),
                             )
                         })
                         .when(!activity.is_empty(), |row| {
@@ -169,7 +170,7 @@ impl HiveApp {
                         .tooltip(format!(
                             "{} · {role} · {}{project_tooltip}",
                             title,
-                            session.backend.label()
+                            tr(session.backend.label())
                         ))
                         .disabled(self.workspace_removing.as_ref() == Some(&project))
                         .selected(
@@ -211,12 +212,12 @@ impl HiveApp {
                                     } else {
                                         Glyph::ChevronDown
                                     })
-                                    .label("置顶")
+                                    .label(tr("置顶"))
                                     .toggled(!state.collapsed)
                                     .accessibility_label(if state.collapsed {
-                                        "展开置顶会话"
+                                        tr("展开置顶会话")
                                     } else {
-                                        "收起置顶会话"
+                                        tr("收起置顶会话")
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.pinned_sessions.collapsed =
@@ -229,8 +230,8 @@ impl HiveApp {
                                     .ghost()
                                     .compact()
                                     .icon(Glyph::RefreshCw)
-                                    .tooltip("刷新置顶会话")
-                                    .accessibility_label("刷新置顶会话")
+                                    .tooltip(tr("刷新置顶会话"))
+                                    .accessibility_label(tr("刷新置顶会话"))
                                     .disabled(!self.connected || state.loading)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.refresh_pinned_sessions(cx);
@@ -246,7 +247,7 @@ impl HiveApp {
                                         .px_2()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
-                                        .child("正在更新置顶会话…"),
+                                        .child(tr("正在更新置顶会话…")),
                                 )
                             })
                             .when_some(state.error.as_ref(), |section, error| {
@@ -255,7 +256,7 @@ impl HiveApp {
                                         .px_2()
                                         .text_xs()
                                         .text_color(Color::Error.get(cx))
-                                        .child(format!("读取置顶失败：{error}")),
+                                        .child(format!("{}: {error}", tr("读取置顶失败"))),
                                 )
                             })
                             .children(state.records.iter().map(|hit| {

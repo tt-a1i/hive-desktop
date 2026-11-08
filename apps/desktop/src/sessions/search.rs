@@ -1,3 +1,4 @@
+use crate::language::{english, tr};
 use crate::{app::HiveApp, palette::Color, transport::Runtime};
 use gpui_kit::{
     component::{
@@ -26,10 +27,21 @@ struct SessionSearch {
     query: Entity<InputState>,
     page: Page,
     loading: bool,
-    error: Option<String>,
+    error: Option<SearchError>,
+    placeholder_locale: Option<crate::language::Locale>,
     generation: u64,
     selected: usize,
     scroll: ScrollHandle,
+}
+
+enum SearchError { Request(String), WorkspaceMissing }
+impl SearchError {
+    fn text(&self) -> String {
+        match self {
+            Self::Request(error) => format!("{}: {error}", tr("搜索失败")),
+            Self::WorkspaceMissing => tr("工作区正在移除或已不存在，请重新搜索。").to_owned(),
+        }
+    }
 }
 
 impl HiveApp {
@@ -55,9 +67,9 @@ impl HiveApp {
         let search = cx.new(|cx| {
             let query = cx.new(|cx| {
                 InputState::new(window, cx).placeholder(if archived {
-                    "搜索已归档会话、项目或 Agent…"
+                    tr("搜索已归档会话、项目或 Agent…")
                 } else {
-                    "搜索会话名称、项目或 Agent…"
+                    tr("搜索会话名称、项目或 Agent…")
                 })
             });
             cx.subscribe_in(
@@ -82,6 +94,7 @@ impl HiveApp {
                 page: Page::default(),
                 loading: false,
                 error: None,
+                placeholder_locale: None,
                 generation: 0,
                 selected: 0,
                 scroll: ScrollHandle::new(),
@@ -93,9 +106,9 @@ impl HiveApp {
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
                 .title(if archived {
-                    "已归档会话"
+                    tr("已归档会话")
                 } else {
-                    "搜索会话"
+                    tr("搜索会话")
                 })
                 .w(px(660.))
                 // Input's Enter propagates to the dialog before PressEnter is
@@ -161,7 +174,7 @@ impl SessionSearch {
                         }
                         this.page = page;
                     }
-                    Err(error) => this.error = Some(format!("搜索失败：{error}")),
+                    Err(error) => this.error = Some(SearchError::Request(error)),
                 }
                 cx.notify();
             });
@@ -194,7 +207,7 @@ impl SessionSearch {
         if opened {
             window.close_dialog(cx);
         } else {
-            self.error = Some("工作区正在移除或已不存在，请重新搜索。".into());
+            self.error = Some(SearchError::WorkspaceMissing);
             cx.notify();
         }
     }
@@ -202,6 +215,12 @@ impl SessionSearch {
 
 impl Render for SessionSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let locale = cx.global::<crate::language::Language>().locale;
+        if self.placeholder_locale != Some(locale) {
+            let label = if self.archived { tr("搜索已归档会话、项目或 Agent…") } else { tr("搜索会话名称、项目或 Agent…") };
+            self.query.update(cx, |query, cx| query.set_placeholder(label, window, cx));
+            self.placeholder_locale = Some(locale);
+        }
         let results_height = px((self.page.matches.len().max(1) * 64) as f32)
             .min(px(360.))
             .min(window.viewport_size().height * 0.55);
@@ -216,7 +235,7 @@ impl Render for SessionSearch {
                     this.move_selection(-1, cx)
                 }),
             )
-            .child(Input::new(&self.query).aria_label("搜索会话名称、项目或 Agent"))
+            .child(Input::new(&self.query).aria_label(tr("搜索会话名称、项目或 Agent")))
             .child(
                 div()
                     .id("session-search-results")
@@ -230,10 +249,10 @@ impl Render for SessionSearch {
                                 .p_3()
                                 .text_sm()
                                 .text_color(Color::Muted.get(cx))
-                                .child("正在搜索…"),
+                                .child(tr("正在搜索…")),
                         )
                     })
-                    .when_some(self.error.clone(), |list, error| {
+                    .when_some(self.error.as_ref().map(|error| error.text()), |list, error| {
                         list.child(
                             v_flex()
                                 .gap_2()
@@ -245,7 +264,7 @@ impl Render for SessionSearch {
                                 )
                                 .child(
                                     Button::new("retry-session-search")
-                                        .label("重新搜索")
+                                        .label(tr("重新搜索"))
                                         .on_click(
                                             cx.listener(|this, _, _, cx| this.load(false, cx)),
                                         ),
@@ -260,7 +279,7 @@ impl Render for SessionSearch {
                                     .p_3()
                                     .text_sm()
                                     .text_color(Color::Muted.get(cx))
-                                    .child("没有匹配的会话"),
+                                    .child(tr("没有匹配的会话")),
                             )
                         },
                     )
@@ -272,12 +291,7 @@ impl Render for SessionSearch {
                             .py_2()
                             .justify_start()
                             .selected(i == self.selected)
-                            .accessibility_label(format!(
-                                "打开 {} · {} · {}",
-                                hit.title,
-                                hit.workspace_name,
-                                hit.session.backend.label()
-                            ))
+                            .accessibility_label(if english() { format!("Open {} · {} · {}", hit.title, hit.workspace_name, tr(hit.session.backend.label())) } else { format!("打开 {} · {} · {}", hit.title, hit.workspace_name, tr(hit.session.backend.label())) })
                             .child(
                                 v_flex()
                                     .flex_1()
@@ -299,7 +313,7 @@ impl Render for SessionSearch {
                                             .child(format!(
                                                 "{} · {}",
                                                 hit.workspace_name,
-                                                hit.session.backend.label()
+                                                tr(hit.session.backend.label())
                                             )),
                                     ),
                             )
@@ -317,24 +331,19 @@ impl Render for SessionSearch {
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
                     .child(if self.page.total == 0 {
-                        "0 个会话".into()
+                        tr("0 个会话").into()
                     } else {
-                        format!(
-                            "第 {}–{} 个，共 {} 个",
-                            self.offset + 1,
-                            self.offset + self.page.matches.len(),
-                            self.page.total
-                        )
+                        if english() { format!("{}–{} of {} conversations", self.offset + 1, self.offset + self.page.matches.len(), self.page.total) } else { format!("第 {}–{} 个，共 {} 个", self.offset + 1, self.offset + self.page.matches.len(), self.page.total) }
                     })
                     .child(
                         Button::new("refresh-session-search")
                             .ghost()
                             .compact()
-                            .label("刷新")
+                            .label(tr("刷新"))
                             .disabled(self.loading)
                             .on_click(cx.listener(|this, _, _, cx| this.load(false, cx))),
                     )
-                    .child("↑↓ 选择 · Enter 打开 · Esc 返回"),
+                    .child(tr("↑↓ 选择 · Enter 打开 · Esc 返回")),
             )
             .when(
                 self.offset > 0 || self.offset + self.page.matches.len() < self.page.total,
@@ -345,7 +354,7 @@ impl Render for SessionSearch {
                             .child(
                                 Button::new("session-search-previous")
                                     .ghost()
-                                    .label("上一页")
+                                    .label(tr("上一页"))
                                     .disabled(self.loading || self.offset == 0)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.offset = this.offset.saturating_sub(100);
@@ -355,7 +364,7 @@ impl Render for SessionSearch {
                             .child(
                                 Button::new("session-search-next")
                                     .ghost()
-                                    .label("下一页")
+                                    .label(tr("下一页"))
                                     .disabled(
                                         self.loading
                                             || self.offset + self.page.matches.len()
@@ -374,7 +383,7 @@ impl Render for SessionSearch {
                     div()
                         .text_xs()
                         .text_color(Color::Muted.get(cx))
-                        .child("历史和草稿均保留。打开会话后可恢复或继续发送。"),
+                        .child(tr("历史和草稿均保留。打开会话后可恢复或继续发送。")),
                 )
             })
     }

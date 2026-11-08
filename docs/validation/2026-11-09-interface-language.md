@@ -45,3 +45,19 @@
 - 真实Node后台notification-settings的HTTP/SQLite保存重开，以及remote-settings的配对、加密HTTP/PTY、UTF-8、坏流隔离、实时撤销和断网重开补发均通过。这是后台回归，不声称穿透了本批Rust按钮操作。
 
 未重复全量测试：本批为UI文案及提示表示迁移。当前原生工具仍明确报Mac锁屏；真实切换、旧提示刷新、草稿/输入法保留、英文长文排版及两个平台UI尚未验收。其他页面与动态/错误文案仍待按#17原始范围全面迁移，#17不关闭。新语言功能仍未纳入候选/current ZIP，也没有本轮重新打包。收据`.artifacts/language/settings-receipt.json`区分上述证据范围。
+
+
+## 会话入口与聊天常用控件迁移
+
+第三批累计340条英文目录（本批新增147条），覆盖会话行的角色/置顶/归档操作、置顶区、搜索和归档窗口、聊天工具栏、复制/引用/导出/重命名/停止/排队/继续、部分成员与协作通用控件、欢迎页内置示例。动态的会话/项目/成员名称、消息原文、ID和模型名保持原值；只翻译外围标签。默认状态的内部字符串比较保留原值，不把翻译后的文案用于控制判断。
+
+搜索错误保存Request原诊断或WorkspaceMissing状态，显示时取当前语言；搜索框切换语言只更新placeholder，不改查询值、selection、分页和请求代次。内置欢迎示例只在用户点击时按语言创建新输入，已有草稿原文只原样拼接，原始消息、用户模板和已保存会话标题不翻译。部分全局错误快照、成员角色/状态细节、协作/工具内部文字仍待后续迁移，不能把本批当全界面完成。
+
+验证：
+
+- 现有language::tests 1通过，实际locale/目录和偏好文件路径；未新增UI测试。
+- Mac cargo check/build、现有LLVM PATH下Windows MSVC cargo check、git diff --check通过。
+- 真实session-search、session-pins和session-titles回归通过：HTTP/SQLite、四后端记录、JSONL、原始标题、排序/分页、完整重开及写盘失败回滚；没有启动Agent或模型请求。它们验证后台，不证明Rust按钮已实测。
+- 当前原生构建以--language en重新跑启动恢复；轻量硬链接/资源链接fixture并非便携包。实际新程序启动并恢复项目/会话选择，probe exit0后SIGTERM清理；不是正常用户退出、英文文字或搜索窗口的系统操作证据。
+
+原有owned进程21544/54534仍在，原生工具再次明确报告Mac锁屏；未强杀这些现场。当前对话弹窗的英文/中文切换、选中项与查询/草稿保留、重命名验证、菜单点击、长英文和窄窗均未验收。没有删除或修改现有测试、生产Node后台/协议/模型选择与Pi审批未改，未跑全量测试，未重打ZIP。收据conversations-receipt.json及conversations-startup-en.log在.artifacts/language；fixture已在gate退出、lsof无引用且无自有probe/sidecar后移除。完整#17范围及完整产品目标保持开放。
