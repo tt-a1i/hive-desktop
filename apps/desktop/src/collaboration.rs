@@ -3,7 +3,7 @@ mod live;
 mod tasks;
 pub(crate) use tasks::SavedTaskDraft;
 
-use crate::app::HiveApp;
+use crate::{app::HiveApp, language::tr};
 use gpui_kit::{component::text::TextViewState, *};
 use serde::Deserialize;
 use serde_json::json;
@@ -56,7 +56,7 @@ pub struct Collaboration {
     pub task_text: String,
     pub task_loading: bool,
     pub task_refreshing: bool,
-    pub task_error: Option<String>,
+    pub task_error: Option<(&'static str, String)>,
     pub task_generation: u64,
     pub task_drafts: HashMap<String, tasks::TaskDraft>,
     pub recovered_task_drafts: HashMap<String, SavedTaskDraft>,
@@ -65,13 +65,13 @@ pub struct Collaboration {
     pub dispatches: Vec<Dispatch>,
     pub list_loading: bool,
     pub list_refreshing: bool,
-    pub list_error: Option<String>,
+    pub list_error: Option<(&'static str, String)>,
     pub list_generation: u64,
     pub selected: Option<Dispatch>,
     pub chat_origin: Option<String>,
     pub workflow_origin: bool,
     pub detail_scroll: ScrollHandle,
-    pub detail_error: Option<String>,
+    pub detail_error: Option<(&'static str, String)>,
     detail_generation: u64,
     pub detail_loading: bool,
     pub messages: Vec<DispatchMessage>,
@@ -81,7 +81,7 @@ pub struct Collaboration {
     pub message_refreshing: bool,
     pub message_refresh_failed: bool,
     pub requested_after: Option<String>,
-    pub message_error: Option<String>,
+    pub message_error: Option<(&'static str, String)>,
     pub message_generation: u64,
 }
 impl Collaboration {
@@ -203,7 +203,7 @@ impl HiveApp {
                             c.tasks
                                 .update(cx, |state, cx| state.set_text(&c.task_text, cx));
                         }
-                        Err(e) => c.task_error = Some(format!("读取任务失败：{e}")),
+                        Err(e) => c.task_error = Some(("读取任务失败", e)),
                     }
                     cx.notify();
                 }
@@ -241,7 +241,7 @@ impl HiveApp {
                 let c = &mut this.collaboration;
                 if c.visible && this.workspace.as_ref() == Some(&workspace) && c.list_generation == generation {
                     c.list_loading = false;
-                    match result.and_then(|v| serde_json::from_value::<Vec<Dispatch>>(v).map_err(|e| e.to_string())) { Ok(items) => c.dispatches = items, Err(e) => c.list_error = Some(format!("读取派单失败：{e}")) }
+                    match result.and_then(|v| serde_json::from_value::<Vec<Dispatch>>(v).map_err(|e| e.to_string())) { Ok(items) => c.dispatches = items, Err(e) => c.list_error = Some(("读取派单失败", e)) }
                     cx.notify();
                 }
             });
@@ -280,7 +280,7 @@ impl HiveApp {
                         c.visible = true;
                         this.show_dispatch(record, cx);
                     }
-                    Err(error) => this.error = Some(format!("无法打开派单：{error}")),
+                    Err(error) => this.error = Some(format!("{}: {error}", tr("无法打开派单"))),
                 }
                 cx.notify();
             });
@@ -345,7 +345,7 @@ impl HiveApp {
                         }
                         c.selected = Some(record);
                     }
-                    Err(error) => c.detail_error = Some(format!("未能更新派单详情：{error}")),
+                    Err(error) => c.detail_error = Some(("未能更新派单详情", error)),
                 }
                 cx.notify();
             });
@@ -405,7 +405,7 @@ impl HiveApp {
                             c.responsibilities = page.related_dispatches;
                             c.next_message = page.next_after_message_id;
                         }
-                        Err(e) => c.message_error = Some(format!("读取消息失败：{e}")),
+                        Err(e) => c.message_error = Some(("读取消息失败", e)),
                     }
                     cx.notify();
                 }
@@ -427,29 +427,29 @@ async fn read_dispatch(
 }
 pub fn dispatch_state(value: &str) -> &str {
     match value {
-        "queued" => "排队中",
-        "submitted" => "已提交",
-        "reported" => "已汇报",
-        "cancelled" => "已取消",
+        "queued" => tr("排队中"),
+        "submitted" => tr("已提交"),
+        "reported" => tr("已汇报"),
+        "cancelled" => tr("已取消"),
         _ => value,
     }
 }
 pub fn message_kind(value: &str) -> &str {
     match value {
-        "note" => "说明",
-        "question" => "问题",
-        "answer" => "回答",
-        "progress" => "进展",
+        "note" => tr("说明"),
+        "question" => tr("问题"),
+        "answer" => tr("回答"),
+        "progress" => tr("进展"),
         _ => value,
     }
 }
 pub fn delivery_state(value: &str) -> &str {
     match value {
-        "recorded" => "已记录",
-        "queued" => "待投递",
-        "delivering" => "投递中",
-        "delivered" => "已投递",
-        "cancelled" => "投递取消",
+        "recorded" => tr("已记录"),
+        "queued" => tr("待投递"),
+        "delivering" => tr("投递中"),
+        "delivered" => tr("已投递"),
+        "cancelled" => tr("投递取消"),
         _ => value,
     }
 }

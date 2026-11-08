@@ -74,7 +74,7 @@ impl HiveApp {
                 c.list_refreshing=false;
                 match result.and_then(|v|serde_json::from_value::<Vec<Dispatch>>(v).map_err(|e|e.to_string())){
                     Ok(items)=>{c.dispatches=items;c.list_error=None;},
-                    Err(error)=>c.list_error=Some(format!("派单列表未能更新，保留上次结果：{error}")),
+                    Err(error)=>c.list_error=Some(("派单列表未能更新，保留上次结果", error)),
                 }
                 cx.notify();
             });
@@ -128,7 +128,7 @@ impl HiveApp {
                         c.task_error = None;
                     }
                     Err(error) => {
-                        c.task_error = Some(format!("任务文档未能更新，保留上次结果：{error}"))
+                        c.task_error = Some(("任务文档未能更新，保留上次结果", error))
                     }
                 }
                 cx.notify();
@@ -173,7 +173,7 @@ impl HiveApp {
                 c.message_refreshing=false;
                 match result{
                     Ok((messages,responsibilities,cursor))=>{c.messages=messages;c.responsibilities=responsibilities;c.next_message=cursor;c.message_error=None;c.message_refresh_failed=false;},
-                    Err(error)=>{c.message_refresh_failed=true;c.message_error=Some(format!("协作消息未能更新，保留上次结果：{error}"));},
+                    Err(error)=>{c.message_refresh_failed=true;c.message_error=Some(("协作消息未能更新，保留上次结果", error));},
                 }
                 cx.notify();
             });

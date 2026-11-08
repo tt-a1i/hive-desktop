@@ -86,3 +86,12 @@
 现有language::tests 1通过，Mac构建、Windows MSVC类型检查及git diff --check通过；现有`checks/workspace-memory.ts`在包内Node22下跑真实Hive HTTP/SQLite回归成功（合成隔离记忆，无模型请求），收据`.artifacts/workspace-memory-xdsD8j/receipt.json`。没有新增或删除UI测试，未跑全量测试，本批改动限UI与错误显示；未改后台语义。新增目录项也供共用标签复用，但不据此宣称其他页面迁移完成。
 
 本批原生语言/草稿/输入法/长英文排版及两个平台GUI仍待验收，继承上文工具明确报告的锁屏阻断；没有新ZIP或完整界面交付结论。阶段收据`.artifacts/language/memory-receipt.json`。
+
+
+## 协作状态、派单卡片与任务编辑语言
+
+第六批累计465条英文目录（新增39条），接入派单/消息/投递状态、派单卡片负责人/产物数/无障碍标签，以及任务编辑、冲突版本、复制/取消/保存和空/加载提示。加载/刷新错误保存静态提示key与原始诊断，render时取当前语言；刷新失败继续保留上次结果。任务草稿写盘失败提示同样按渲染取语言。全局打开派单/草稿同步错误仍是发生时快照，不把本批描述为所有错误都能动态刷新。
+
+任务编辑器在既有locale更新入口只set_placeholder，遍历已有各项目草稿；不改input/base/conflicting_content/selection、不触发保存、刷新或冲突裁决。派单/消息正文、负责人、来源、产物路径、任务Markdown及冲突原文保持原值；状态helper只映射已知码，调用处仅用于显示，没有以翻译结果控制行为。
+
+验证：现有language::tests 1通过，Mac默认构建与Windows MSVC类型检查通过，git diff --check通过。未新增/修改/删除测试，未跑全量测试；本批没有后台、存储或协议改动，定向检查覆盖现有偏好行为，未把类型检查当交互证明。任务冲突编辑、复制及语言切换中的中文草稿/输入法保留、英文窄窗仍需原生验收，当前锁屏阻断没有解除。未请求模型、未生成新ZIP。阶段收据`.artifacts/language/collaboration-receipt.json`。

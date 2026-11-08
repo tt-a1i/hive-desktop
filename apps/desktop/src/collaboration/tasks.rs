@@ -1,5 +1,5 @@
 use super::Tasks;
-use crate::app::HiveApp;
+use crate::{app::HiveApp, language::tr};
 use crate::palette::Color;
 use gpui_kit::{
     component::{
@@ -36,10 +36,16 @@ pub(crate) struct TaskDraft {
     conflicting_content: Option<SharedString>,
     pub saving: bool,
     operation: u64,
-    error: Option<String>,
+    error: Option<(&'static str, String)>,
 }
 
 impl HiveApp {
+    pub(crate) fn localize_task_placeholders(&self, window: &mut Window, cx: &mut App) {
+        for draft in self.collaboration.task_drafts.values() {
+            draft.input.update(cx, |input, cx| input.set_placeholder(tr("使用 Markdown 编写任务文档…"), window, cx));
+        }
+    }
+
     pub fn tasks_saving(&self) -> bool {
         self.workspace
             .as_ref()
@@ -90,7 +96,7 @@ impl HiveApp {
         let input = cx.new(|cx| {
             let mut input = TextareaState::new(window, cx)
                 .auto_grow(8, 22)
-                .placeholder("使用 Markdown 编写任务文档…");
+                .placeholder(tr("使用 Markdown 编写任务文档…"));
             input.set_value(saved.input, window, cx);
             input
         });
@@ -148,7 +154,7 @@ impl HiveApp {
         let removed = self.collaboration.task_drafts.remove(&workspace);
         if let Err(error) = self.flush_drafts(cx) {
             if let Some(mut draft) = removed {
-                draft.error = Some(format!("无法清理本地草稿，改动仍保留：{error}"));
+                draft.error = Some(("无法清理本地草稿，改动仍保留", error.to_string()));
                 self.collaboration.task_drafts.insert(workspace, draft);
             }
             cx.notify();
@@ -168,7 +174,7 @@ impl HiveApp {
         };
         if let Err(error) = self.flush_drafts(cx) {
             if let Some(draft) = self.collaboration.task_drafts.get_mut(&workspace) {
-                draft.error = Some(format!("无法保存本地草稿，任务文档尚未更新：{error}"));
+                draft.error = Some(("无法保存本地草稿，任务文档尚未更新", error.to_string()));
             }
             cx.notify();
             return;
@@ -235,14 +241,12 @@ impl HiveApp {
                     Err(error) => {
                         if let Some(draft) = c.task_drafts.get_mut(&workspace) {
                             draft.saving = false;
-                            draft.error = Some(error);
+                            draft.error = Some(("保存任务失败", error));
                         }
                     }
                 }
                 if let Err(error) = this.flush_drafts(cx) {
-                    this.error = Some(format!(
-                        "任务保存结果已返回，但本地草稿未能同步；请重试退出或复制内容：{error}"
-                    ));
+                    this.error = Some(format!("{}: {error}", tr("任务保存结果已返回，但本地草稿未能同步；请重试退出或复制内容")));
                 }
                 cx.notify();
             });
@@ -265,15 +269,15 @@ impl HiveApp {
                     .justify_between()
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
                         if draft.is_some() {
-                            "任务 · 编辑 Markdown"
+                            tr("任务 · 编辑 Markdown")
                         } else {
-                            "任务"
+                            tr("任务")
                         },
                     ))
                     .when(draft.is_none(), |view| {
                         view.child(
                             Button::new("edit-tasks")
-                                .label("编辑任务")
+                                .label(tr("编辑任务"))
                                 .disabled(
                                     self.workspace.is_none()
                                         || self.collaboration.task_loading
@@ -304,13 +308,13 @@ impl HiveApp {
                                         div()
                                             .text_sm()
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .child("其他人已更新任务文档"),
+                                            .child(tr("其他人已更新任务文档")),
                                     )
                                     .child(
                                         Button::new("copy-latest-tasks")
                                             .ghost()
                                             .compact()
-                                            .label("复制最新版")
+                                            .label(tr("复制最新版"))
                                             .on_click(cx.listener(move |_, _, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     copy.to_string(),
@@ -326,26 +330,26 @@ impl HiveApp {
                                     .overflow_y_scroll()
                                     .text_sm()
                                     .child(if latest.is_empty() {
-                                        SharedString::from("（文档为空）")
+                                        SharedString::from(tr("（文档为空）"))
                                     } else {
                                         latest
                                     }),
                             ),
                     )
-                    .child(div().text_sm().child("你的草稿 · 对照上方版本编辑后保存"))
+                    .child(div().text_sm().child(tr("你的草稿 · 对照上方版本编辑后保存")))
                 })
                 .child(
                     div()
                         .text_xs()
                         .text_color(Color::Muted.get(cx))
-                        .child("草稿保留在本机；点击“保存任务”后才会更新团队文档。"),
+                        .child(tr("草稿保留在本机；点击“保存任务”后才会更新团队文档。")),
                 )
                 .child(
                     Textarea::new(&draft.input)
-                        .aria_label("任务文档 Markdown")
+                        .aria_label(tr("任务文档 Markdown"))
                         .disabled(draft.saving),
                 )
-                .when_some(draft.error.clone(), |view, error| {
+                .when_some(draft.error.as_ref().map(|(key,error)| format!("{}: {error}", tr(key))), |view, error| {
                     view.child(
                         div()
                             .text_sm()
@@ -361,16 +365,16 @@ impl HiveApp {
                             Button::new("save-tasks")
                                 .primary()
                                 .label(if draft.saving {
-                                    "正在保存…"
+                                    tr("正在保存…")
                                 } else if draft.conflicting_content.is_some() {
-                                    "用当前草稿更新文档"
+                                    tr("用当前草稿更新文档")
                                 } else {
-                                    "保存任务"
+                                    tr("保存任务")
                                 })
                                 .disabled(!self.connected || draft.saving)
                                 .on_click(cx.listener(|this, _, _, cx| this.save_tasks(cx))),
                         )
-                        .child(Button::new("copy-task-draft").label("复制草稿").on_click(
+                        .child(Button::new("copy-task-draft").label(tr("复制草稿")).on_click(
                             cx.listener(move |_, _, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     input.read(cx).value().to_string(),
@@ -379,7 +383,7 @@ impl HiveApp {
                         ))
                         .child(
                             Button::new("cancel-task-edit")
-                                .label("取消编辑（丢弃改动）")
+                                .label(tr("取消编辑（丢弃改动）"))
                                 .disabled(draft.saving)
                                 .on_click(
                                     cx.listener(|this, _, _, cx| this.discard_task_draft(cx)),
@@ -389,9 +393,9 @@ impl HiveApp {
             })
             .when(draft.is_none(), |view| {
                 view.when(self.collaboration.task_loading, |view| {
-                    view.child(div().text_sm().child("正在读取任务…"))
+                    view.child(div().text_sm().child(tr("正在读取任务…")))
                 })
-                .when_some(self.collaboration.task_error.clone(), |view, error| {
+                .when_some(self.collaboration.task_error.as_ref().map(|(key,error)| format!("{}: {error}", tr(key))), |view, error| {
                     view.child(
                         div()
                             .text_sm()
@@ -403,7 +407,7 @@ impl HiveApp {
                     !self.collaboration.task_loading
                         && self.collaboration.task_error.is_none()
                         && self.collaboration.task_text.is_empty(),
-                    |view| view.child(div().text_sm().child("任务文档为空")),
+                    |view| view.child(div().text_sm().child(tr("任务文档为空"))),
                 )
                 .when(!self.collaboration.task_text.is_empty(), |view| {
                     view.child(

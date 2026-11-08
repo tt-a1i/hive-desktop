@@ -1,5 +1,5 @@
 use super::Dispatch;
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color, language::{english,tr}};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -41,10 +41,7 @@ impl HiveApp {
             .border_1()
             .border_color(Color::Divider.get(cx))
             .justify_start()
-            .accessibility_label(format!(
-                "打开派单：{state} · {owner} · {}",
-                text.chars().take(160).collect::<String>()
-            ))
+            .accessibility_label(format!("{}: {state} · {owner} · {}", tr("打开派单"), text.chars().take(160).collect::<String>()))
             .child(
                 v_flex()
                     .w_full()
@@ -74,7 +71,7 @@ impl HiveApp {
                                     .truncate()
                                     .text_xs()
                                     .text_color(Color::Secondary.get(cx))
-                                    .child(format!("负责人 · {owner}")),
+                                    .child(format!("{} · {owner}", tr("负责人"))),
                             )
                             .when(!dispatch.artifacts.is_empty(), |row| {
                                 row.child(
@@ -82,7 +79,7 @@ impl HiveApp {
                                         .flex_shrink_0()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
-                                        .child(format!("{} 项产物", dispatch.artifacts.len())),
+                                        .child(if english() { format!("{} artifacts", dispatch.artifacts.len()) } else { format!("{} 项产物", dispatch.artifacts.len()) }),
                                 )
                             }),
                     )
@@ -113,9 +110,9 @@ impl HiveApp {
                                     .child(format!(
                                         "{} · {}",
                                         if dispatch.state == "cancelled" {
-                                            "取消原因"
+                                            tr("取消原因")
                                         } else {
-                                            "汇报"
+                                            tr("汇报")
                                         },
                                         excerpt(report)
                                     )),
