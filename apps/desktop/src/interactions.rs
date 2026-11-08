@@ -6,7 +6,7 @@ mod view;
 
 use crate::language::{english,tr};
 use crate::{
-    app::HiveApp,
+    app::{HiveApp,Status},
     protocol::{AgentInteraction, PiEvent},
 };
 use gpui_kit::{
@@ -210,20 +210,15 @@ impl HiveApp {
             .find(|card| card.waiting())
             .unwrap_or(&cards[0]);
         if !card.raw.has_native_identity() {
-            self.status = format!("{} 交互格式错误，可停止本轮", card.backend_label());
+            self.status = Status::InvalidInteraction(card.backend_label());
             return true;
         }
-        self.status = format!(
-            "{} {}",
-            card.backend_label(),
-            if card.waiting() {
-                "等待你的回应"
-            } else if card.is_pi() || card.is_claude() {
-                "正在发送回应"
-            } else {
-                "正在处理回应"
-            }
-        );
+        self.status = Status::Interaction {
+            backend: card.backend_label(),
+            phase: if card.waiting() { "等待你的回应" }
+                else if card.is_pi() || card.is_claude() { "正在发送回应" }
+                else { "正在处理回应" },
+        };
         true
     }
     fn upsert_interaction(&mut self, session: &str, raw: AgentInteraction) {

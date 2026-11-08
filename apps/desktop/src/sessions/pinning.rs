@@ -71,7 +71,7 @@ impl HiveApp {
                             }
                         }
                     }
-                    Err(error) => this.error = Some(format!("保存会话置顶失败：{error}")),
+                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("保存会话置顶失败",error.to_string())),
                 }
                 cx.notify();
             });

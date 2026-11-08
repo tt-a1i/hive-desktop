@@ -100,7 +100,7 @@ impl HiveApp {
                     if this.connection_generation != connection {
                         return;
                     }
-                    this.error = Some(format!("保存会话位置失败：{error}"));
+                    this.error = Some(crate::app::ErrorNotice::Detail("保存会话位置失败",error.to_string()));
                     cx.notify();
                 });
             }
@@ -138,7 +138,7 @@ impl HiveApp {
                         }
                     }
                 }
-                Err(error) => this.error = Some(format!("工作区响应格式错误：{error}")),
+                Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("工作区响应格式错误",error.to_string())),
             },
         );
     }
@@ -165,7 +165,7 @@ impl HiveApp {
                         let _ = window.update(cx, |_, window, cx| folder.update(cx, |state, cx| state.set_value("", window, cx)));
                     }
                     let id = workspace.id.clone(); this.workspaces.push(workspace); this.select_workspace(id, cx); },
-                Err(error) => this.error = Some(format!("添加工作区响应错误：{error}")),
+                Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("添加工作区响应错误",error.to_string())),
             }
         });
     }
@@ -246,7 +246,7 @@ impl HiveApp {
                     }
                     Err(error) => {
                         this.expanded_projects.remove(&id);
-                        this.error = Some(error);
+                        this.error = Some(error.into());
                     }
                 }
                 cx.notify();
@@ -386,14 +386,14 @@ impl HiveApp {
                                     if this.session.is_none() {
                                         this.loading = false;
                                     }
-                                    this.error = Some(format!("会话列表格式错误：{error}"));
+                                    this.error = Some(crate::app::ErrorNotice::Detail("会话列表格式错误",error.to_string()));
                                 }
                             },
                             Err(error) => {
                                 if this.session.is_none() {
                                     this.loading = false;
                                 }
-                                this.error = Some(error);
+                                this.error = Some(error.into());
                             }
                         }
                     }
@@ -488,9 +488,9 @@ impl HiveApp {
                                 }
                             }
                         }
-                        Err(error) => this.error = Some(format!("创建会话响应错误：{error}")),
+                        Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("创建会话响应错误",error.to_string())),
                     },
-                    Err(error) => this.error = Some(format!("创建 {backend} 会话失败：{error}")),
+                    Err(error) => this.error = Some(format!("创建 {backend} 会话失败：{error}").into()),
                 }
                 cx.notify();
             });
@@ -667,7 +667,7 @@ impl HiveApp {
                         }
                         this.restore_conversation_position(&id);
                     }
-                    Err(error) => this.error = Some(format!("打开会话响应错误：{error}")),
+                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("打开会话响应错误",error.to_string())),
                 }
             },
         );

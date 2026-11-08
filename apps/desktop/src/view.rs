@@ -253,7 +253,7 @@ impl HiveApp {
                     .overflow_y_scroll()
                     .text_sm()
                     .whitespace_normal()
-                    .child(self.error.clone().unwrap_or_default()),
+                    .child(self.error.as_ref().map(|error|error.text()).unwrap_or_default()),
             )
             .child(
                 Button::new("dismiss-error")
@@ -556,7 +556,7 @@ impl Render for HiveApp {
                                 .child(div().text_sm().child(if english() { format!("Delete member {}?", member.name) } else { format!("删除成员 {}？", member.name) }))
                                 .child(Button::new(("confirm-delete", i)).label(tr("确认删除")).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| this.member_action("DELETE", format!("/api/workspaces/{delete_workspace}/workers/{delete_id}"), None, cx))))
                                 .child(Button::new(("cancel-delete", i)).ghost().label(tr("取消")).on_click(cx.listener(|this, _, _, cx| { this.deleting_member = None; cx.notify(); })))))
-                            .when(editing, |view| view.child(h_flex().w_full().gap_2().items_center().child(div().flex_1().min_w_0().child(Input::new(&self.member_rename).aria_label(tr("成员名称")))).child(Button::new(("member-save", i)).label(tr("保存名称")).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| { let name = this.member_rename.read(cx).value().trim().to_string(); if name.is_empty() { this.error = Some(tr("请输入成员名称").into()); cx.notify(); } else { this.member_action("PATCH", format!("/api/workspaces/{save_workspace}/workers/{save_id}"), Some(serde_json::json!({"name":name})), cx); } }))).child(Button::new(("cancel-rename", i)).ghost().label(tr("取消")).on_click(cx.listener(|this, _, _, cx| { this.editing_member = None; cx.notify(); })))))
+                            .when(editing, |view| view.child(h_flex().w_full().gap_2().items_center().child(div().flex_1().min_w_0().child(Input::new(&self.member_rename).aria_label(tr("成员名称")))).child(Button::new(("member-save", i)).label(tr("保存名称")).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| { let name = this.member_rename.read(cx).value().trim().to_string(); if name.is_empty() { this.error = Some("请输入成员名称".into()); cx.notify(); } else { this.member_action("PATCH", format!("/api/workspaces/{save_workspace}/workers/{save_id}"), Some(serde_json::json!({"name":name})), cx); } }))).child(Button::new(("cancel-rename", i)).ghost().label(tr("取消")).on_click(cx.listener(|this, _, _, cx| { this.editing_member = None; cx.notify(); })))))
                     })))
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
@@ -620,8 +620,8 @@ impl Render for HiveApp {
                 .when(!welcome, |dock| dock.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().font_weight(FontWeight::SEMIBOLD)
                         .child(self.session.as_ref().map(|s| tr(s.backend.label())).unwrap_or("Hive")))
-                    .when(self.status != "后台已连接" || running, |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
-                        .child(if running { tr("正在回复…").to_string() } else { self.status.clone() })))))
+                    .when(!self.status.is_background_connected() || running, |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
+                        .child(if running { tr("正在回复…").to_string() } else { self.status.text() })))))
                 .child(v_flex().relative().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
                 .when(self.usage.visible,|view|view.child(self.render_usage(running,cx)))

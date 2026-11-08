@@ -85,7 +85,7 @@ impl HiveApp {
                                 match result {
                                     Ok(path) => cx.reveal_path(&path),
                                     Err(error) => {
-                                        this.error = Some(error);
+                                        this.error = Some(error.into());
                                         cx.notify();
                                     }
                                 }

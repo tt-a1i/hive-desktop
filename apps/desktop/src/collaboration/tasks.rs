@@ -246,7 +246,7 @@ impl HiveApp {
                     }
                 }
                 if let Err(error) = this.flush_drafts(cx) {
-                    this.error = Some(format!("{}: {error}", tr("任务保存结果已返回，但本地草稿未能同步；请重试退出或复制内容")));
+                    this.error = Some(crate::app::ErrorNotice::Detail("任务保存结果已返回，但本地草稿未能同步；请重试退出或复制内容",error.to_string()));
                 }
                 cx.notify();
             });

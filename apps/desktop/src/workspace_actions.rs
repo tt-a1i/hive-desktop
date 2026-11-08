@@ -68,7 +68,7 @@ impl HiveApp {
                     if this.connection_generation != connection {
                         return;
                     }
-                    this.error = Some(format!("选择文件夹失败：{error}"));
+                    this.error = Some(crate::app::ErrorNotice::Detail("选择文件夹失败",error.to_string()));
                     cx.notify();
                 });
             }
@@ -77,7 +77,7 @@ impl HiveApp {
                     if this.connection_generation != connection {
                         return;
                     }
-                    this.error = Some(format!("文件夹选择器已关闭：{error}"));
+                    this.error = Some(crate::app::ErrorNotice::Detail("文件夹选择器已关闭",error.to_string()));
                     cx.notify();
                 });
             }
@@ -103,7 +103,7 @@ impl HiveApp {
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) {
-                    if let Err(error) = result { this.error = Some(format!("无法通过 {target} 打开项目，请确认目标应用已安装：{error}")); }
+                    if let Err(error) = result { this.error = Some(format!("无法通过 {target} 打开项目，请确认目标应用已安装：{error}").into()); }
                     cx.notify();
                 }
             });
@@ -250,7 +250,7 @@ impl HiveApp {
                         this.status = "工作区已移除".into();
                     }
                     this.refresh_pinned_sessions(cx);
-                    this.error = error;
+                    this.error = error.map(Into::into);
                     cx.notify();
                 });
             });

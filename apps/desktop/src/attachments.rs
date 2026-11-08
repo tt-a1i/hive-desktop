@@ -164,7 +164,7 @@ impl HiveApp {
             Ok(Ok(None)) => {}
             error => {
                 let _ = this.update(cx, |this, cx| {
-                    this.error = Some(format!("选择文件失败：{error:?}"));
+                    this.error = Some(format!("选择文件失败：{error:?}").into());
                     cx.notify();
                 });
             }
@@ -283,7 +283,7 @@ impl HiveApp {
                     }
                 }
                 if !errors.is_empty() {
-                    this.error = Some(errors.join("\n"));
+                    this.error = Some(errors.join("\n").into());
                 }
                 this.schedule_draft_save(cx);
                 cx.notify();

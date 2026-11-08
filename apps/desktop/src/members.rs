@@ -252,7 +252,7 @@ impl HiveApp {
                             this.refresh_members(cx);
                             this.refresh_sessions(cx);
                         }
-                        Err(error) => this.error = Some(format!("成员操作失败：{error}")),
+                        Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("成员操作失败",error.to_string())),
                     }
                     cx.notify();
                 }
@@ -273,7 +273,7 @@ impl HiveApp {
         };
         let name = self.member_name.read(cx).value().trim().to_string();
         if name.is_empty() {
-            self.error = Some(tr("请输入成员名称").into());
+            self.error = Some("请输入成员名称".into());
             cx.notify();
             return;
         }
@@ -299,7 +299,7 @@ impl HiveApp {
                 if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {
                     this.member_loading = false;
-                    if let Err(error) = result { this.error = Some(format!("添加成员：{error}")); } else { this.member_form_open = false; }
+                    if let Err(error) = result { this.error = Some(crate::app::ErrorNotice::Detail("添加成员",error.to_string())); } else { this.member_form_open = false; }
                     this.refresh_members(cx);
                     this.refresh_sessions(cx);
                     cx.notify();
@@ -348,7 +348,7 @@ impl HiveApp {
                 if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {
                     this.member_loading = false;
                     this.member_stopping = None;
-                    if let Err(error) = result { this.error = Some(format!("停止成员未确认：{error}")); }
+                    if let Err(error) = result { this.error = Some(crate::app::ErrorNotice::Detail("停止成员未确认",error.to_string())); }
                     this.refresh_members(cx);
                     this.refresh_sessions(cx);
                     cx.notify();

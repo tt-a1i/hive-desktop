@@ -67,7 +67,7 @@ impl HiveApp {
                             this.session_name_target = None;
                         }
                     }
-                    Err(error) => this.error = Some(format!("保存会话名称失败：{error}")),
+                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("保存会话名称失败",error.to_string())),
                 }
                 cx.notify();
             });

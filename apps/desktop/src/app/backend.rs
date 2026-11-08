@@ -13,7 +13,7 @@ impl HiveApp {
                         }
                         this.loading = false;
                         this.restarting = false;
-                        this.error = Some(error);
+                        this.error = Some(error.into());
                         if this.closing {
                             cx.quit();
                         }
@@ -68,7 +68,7 @@ impl HiveApp {
                             match serde_json::from_str(value) {
                                 Ok(selection) => this.navigation = selection,
                                 Err(error) => {
-                                    this.error = Some(format!("无法恢复上次的会话位置：{error}"))
+                                    this.error = Some(crate::app::ErrorNotice::Detail("无法恢复上次的会话位置",error.to_string()))
                                 }
                             }
                         }
@@ -77,7 +77,7 @@ impl HiveApp {
                             && let Err(error) = this.restore_drafts(std::path::Path::new(root))
                         {
                             this.error =
-                                Some(format!("无法读取本地草稿，本次编辑仅在窗口中保留：{error}"));
+                                Some(crate::app::ErrorNotice::Detail("无法读取本地草稿，本次编辑仅在窗口中保留",error.to_string()));
                         }
                         let recovering = this.backend_initialized;
                         this.backend_initialized = true;
@@ -91,7 +91,7 @@ impl HiveApp {
                             this.load_preferences(settings_window, cx);
                         }
                     }
-                    Err(error) => this.error = Some(error),
+                    Err(error) => this.error = Some(error.into()),
                 }
                 cx.notify();
             });
@@ -111,7 +111,7 @@ impl HiveApp {
                                 this.loading = false;
                                 this.interactions.sessions.clear();
                                 this.status = "后台连接已断开".into();
-                                this.error = Some(error);
+                                this.error = Some(error.into());
                                 this.busy.clear();
                             }
                             RuntimeEvent::Agent(event) => this.agent_event(event, cx),
@@ -142,7 +142,7 @@ impl HiveApp {
         }
         if let Err(error) = self.flush_drafts(cx) {
             self.failed_drafts = previous_failed;
-            self.error = Some(format!("无法保存草稿，请复制内容后重试：{error}"));
+            self.error = Some(crate::app::ErrorNotice::Detail("无法保存草稿，请复制内容后重试",error.to_string()));
             cx.notify();
             return;
         }
@@ -217,9 +217,7 @@ impl HiveApp {
                     Err(error) => {
                         this.restarting = false;
                         this.loading = false;
-                        this.error = Some(format!(
-                            "旧后台清理未确认，尚未启动替代进程，请重试：{error}"
-                        ));
+                        this.error = Some(crate::app::ErrorNotice::Detail("旧后台清理未确认，尚未启动替代进程，请重试",error.to_string()));
                     }
                 }
                 cx.notify();

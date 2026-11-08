@@ -232,7 +232,7 @@ impl HiveApp {
             smol::Timer::after(Duration::from_millis(450)).await;
             let _ = this.update(cx, |this, cx| {
                 if let Err(error) = this.flush_drafts(cx) {
-                    this.error = Some(format!("无法保存本地草稿：{error}"));
+                    this.error = Some(crate::app::ErrorNotice::Detail("无法保存本地草稿",error.to_string()));
                     cx.notify();
                 }
             });

@@ -123,10 +123,25 @@ mod tests {
     #[test]
     fn language_preferences_reopen_and_preserve_invalid_or_failed_targets() {
         let previous = component::locale().to_string();
+        let connected = crate::app::Status::from("后台已连接");
+        let disconnected = crate::app::Status::from("后台连接已断开");
+        let notice = crate::app::ErrorNotice::from("后台尚未连接");
+        let original = "native diagnostic: 中文\nC:\\work\\file";
+        let raw = crate::app::ErrorNotice::from(original.to_owned());
         component::set_locale(Locale::En.component_locale());
         assert_eq!(tr("设置"), "Settings");
+        assert_eq!(connected.text(), "Backend connected");
+        assert_eq!(notice.text(), "Backend not connected");
+        assert!(connected.is_background_connected());
+        assert!(!disconnected.is_background_connected());
+        assert_eq!(raw.text(), original);
         component::set_locale(Locale::Zh.component_locale());
         assert_eq!(tr("设置"), "设置");
+        assert_eq!(connected.text(), "后台已连接");
+        assert_eq!(notice.text(), "后台尚未连接");
+        assert!(connected.is_background_connected());
+        assert!(!disconnected.is_background_connected());
+        assert_eq!(raw.text(), original);
         component::set_locale(&previous);
         let root = tempfile::tempdir().unwrap();
         assert_eq!(load(root.path()).unwrap(), Locale::Zh);

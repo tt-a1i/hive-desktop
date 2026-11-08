@@ -42,7 +42,7 @@ impl HiveApp {
                 }
                 this.session_archive_loading.remove(&id);
                 match result {
-                    Err(error) => this.error = Some(format!("更新会话归档失败：{error}")),
+                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("更新会话归档失败",error.to_string())),
                     Ok(saved)
                         if saved.session.id != id
                             || saved.session.workspace_id != workspace

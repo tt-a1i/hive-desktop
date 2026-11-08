@@ -280,7 +280,7 @@ impl HiveApp {
                         c.visible = true;
                         this.show_dispatch(record, cx);
                     }
-                    Err(error) => this.error = Some(format!("{}: {error}", tr("无法打开派单"))),
+                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("无法打开派单",error.to_string())),
                 }
                 cx.notify();
             });

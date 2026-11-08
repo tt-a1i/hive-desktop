@@ -1,4 +1,6 @@
 mod backend;
+mod status;
+pub(crate) use status::{Status,ErrorNotice};
 use crate::{
     protocol::*,
     transport::{Runtime, RuntimeEvent},
@@ -212,8 +214,8 @@ pub struct HiveApp {
     pub backend_initialized: bool,
     pub connection_generation: u64,
     pub inflight_inputs: HashMap<String, String>,
-    pub status: String,
-    pub error: Option<String>,
+    pub status: Status,
+    pub error: Option<ErrorNotice>,
     pub loading: bool,
     pub positions: HashMap<String, ConversationPosition>,
     pub conversation_list: crate::conversation_list::ConversationList,
@@ -542,7 +544,7 @@ impl HiveApp {
             return;
         }
         if let Err(error) = self.flush_drafts(cx) {
-            self.error = Some(format!("无法保存草稿，请复制内容或重试退出：{error}"));
+            self.error = Some(crate::app::ErrorNotice::Detail("无法保存草稿，请复制内容或重试退出",error.to_string()));
             cx.notify();
             return;
         }
@@ -566,7 +568,7 @@ impl HiveApp {
                             this.runtime = Some(runtime);
                             this.closing = false;
                             this.status = "后台进程清理未确认，已保留窗口".into();
-                            this.error = Some(format!("未能确认后台进程已退出：{error}。请重试退出；当前不会启动新的后台。"));
+                            this.error = Some(format!("未能确认后台进程已退出：{error}。请重试退出；当前不会启动新的后台。").into());
                             cx.notify();
                         });
                     }
@@ -619,7 +621,7 @@ impl HiveApp {
                     Err(error) => {
                         if this.open_request == open_request {
                             this.loading = false;
-                            this.error = Some(error);
+                            this.error = Some(error.into());
                         }
                     }
                 }

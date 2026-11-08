@@ -87,7 +87,7 @@ impl HiveApp {
                                 .push(text.clone());
                         }
                         this.schedule_draft_save(cx);
-                        this.error = Some(error);
+                        this.error = Some(error.into());
                     }
                     Ok(value) => {
                         match serde_json::from_value::<Session>(value["session"].clone()) {
@@ -102,7 +102,7 @@ impl HiveApp {
                                 }
                             }
                             Ok(_) => this.error = Some("发送响应中的会话身份不匹配".into()),
-                            Err(error) => this.error = Some(format!("发送响应格式错误：{error}")),
+                            Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("发送响应格式错误",error.to_string())),
                         }
                     }
                 }
@@ -242,7 +242,7 @@ impl HiveApp {
                         if let Some(selected) = this.model.take() {
                             this.unavailable_model = Some(selected);
                         }
-                        this.error = Some(format!("刷新 Pi 模型失败：{e}"));
+                        this.error = Some(crate::app::ErrorNotice::Detail("刷新 Pi 模型失败",e.to_string()));
                     }
                 }
                 cx.notify();
