@@ -10,6 +10,19 @@ use gpui_kit::{
     *,
 };
 
+pub(crate) fn result_status(result: &serde_json::Value, is_error: bool) -> &'static str {
+    match result["toolStatus"].as_str() {
+        Some("declined") => "已拒绝",
+        Some("interrupted") => "已中断",
+        Some("cancelled" | "canceled") => "已取消",
+        Some("failed") => "失败",
+        _ if is_error || result["isError"] == true => "失败",
+        Some("inProgress") => "执行中",
+        Some("completed") | None => "完成",
+        Some(_) => "状态未知",
+    }
+}
+
 fn input_summary(args: &serde_json::Value) -> Option<String> {
     let line = ["command", "file_path", "path", "query", "pattern"]
         .iter()
@@ -353,5 +366,31 @@ impl HiveApp {
 impl Message {
     pub(crate) fn completed_tool(&self) -> bool {
         self.tool.as_ref().is_some_and(|tool| tool.status == "完成")
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::result_status;
+    use serde_json::json;
+    #[test]
+    fn terminal_statuses_do_not_turn_rejections_or_interruptions_into_success() {
+        for (native, label) in [
+            ("declined", "已拒绝"),
+            ("interrupted", "已中断"),
+            ("cancelled", "已取消"),
+            ("failed", "失败"),
+            ("inProgress", "执行中"),
+            ("completed", "完成"),
+            ("future-status", "状态未知"),
+        ] {
+            assert_eq!(result_status(&json!({"toolStatus":native}), false), label);
+        }
+        assert_eq!(
+            result_status(&json!({"toolStatus":"completed"}), true),
+            "失败"
+        );
+        assert_eq!(result_status(&json!({"isError":true}), false), "失败");
+        assert_eq!(result_status(&json!({"content":[]}), false), "完成");
     }
 }

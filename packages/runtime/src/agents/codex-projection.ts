@@ -59,7 +59,9 @@ export class CodexProjection {
         this.completedTurns = [...new Set([...this.completedTurns, turn.id])];
       }
     }
-    this.save(next);
+    const terminal = new Set(turns.filter(turn => turn.status === 'interrupted' || turn.status === 'failed').map(turn => turn.id));
+    this.save(next.map(entry => terminal.has(entry.turnId) && entry.item.status === 'inProgress'
+      ? { ...entry, item: { ...entry.item, hiveInterrupted: true } } : entry));
   }
   private save(entries: CodexDisplayEntry[]): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;

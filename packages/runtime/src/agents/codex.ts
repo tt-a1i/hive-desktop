@@ -139,8 +139,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           if (!active.turnId || active.turnId === turn.id) {
             active.terminalComplete = true;
             interactions.endTurn(turn.id, turn.status === 'interrupted' ? 'aborted' : 'turn-ended');
-            if (turn.status === 'interrupted') {
-              for (const item of events?.interruptedItems() ?? []) {
+            if (turn.status === 'interrupted' || turn.status === 'failed') {
+              for (const item of events?.interruptedItems(turn.id) ?? []) {
                 projection?.put(item, turn.id);
                 events?.item(item, turn.id, true);
               }

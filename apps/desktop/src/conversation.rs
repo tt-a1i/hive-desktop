@@ -430,12 +430,7 @@ impl HiveApp {
             self.upsert_tool(
                 message["toolCallId"].as_str().unwrap_or(&id).into(),
                 message["toolName"].as_str().unwrap_or("工具").into(),
-                match message["toolStatus"].as_str() {
-                    Some("declined") => "已拒绝",
-                    Some("inProgress") => "执行中",
-                    _ if message["isError"] == true => "失败",
-                    _ => "完成",
-                },
+                crate::tool_message::result_status(message, message["isError"] == true),
                 text,
                 cx,
             );
@@ -655,7 +650,7 @@ impl HiveApp {
                 self.upsert_tool(
                     tool_call_id,
                     tool_name,
-                    if is_error { "失败" } else { "完成" },
+                    crate::tool_message::result_status(&result, is_error),
                     message_text(&result),
                     cx,
                 );

@@ -56,7 +56,7 @@ export function normalizeCodexItem(item: CodexItem, delivery?: CodexDelivery): R
         [...(Array.isArray(item.summary) ? item.summary : []), ...(Array.isArray(item.content) ? item.content : [])].join('\n') }], timestamp, rawBackendItem };
     default:
       return { role: 'toolResult', toolCallId: item.id, toolName: toolName(item), toolInput: codexToolInput(item),
-        toolStatus: item.status, content: [{ type: 'text', text: toolOutput(item) }],
+        toolStatus: item.hiveInterrupted === true ? 'interrupted' : item.status, content: [{ type: 'text', text: toolOutput(item) }],
         isError: item.status === 'failed' || item.success === false, timestamp, rawBackendItem };
   }
 }

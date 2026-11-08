@@ -46,3 +46,45 @@ const result = normalizeCodexItem({ type: 'dynamicToolCall', tool: 'team', id: '
   arguments: { args: ['list'] }, contentItems: [{ type: 'inputText', text: 'worker ready' }] });
 assert.deepEqual(result.toolInput, { args: ['list'] });
 assert.deepEqual(result.content, [{ type: 'text', text: 'worker ready' }]);
+
+// Partial output and interruption must survive a UI snapshot and real projection restart.
+const partialEvents: PiEvent[] = [];
+const partial = new CodexEvents('thread', event => partialEvents.push(event), () => undefined);
+const nativePending = {...command,id:'pending',status:'inProgress'};
+partial.item(nativePending,'cancelled-turn',false);
+partial.delta('item/commandExecution/outputDelta',{itemId:'pending',delta:'first\n'});
+partial.delta('item/commandExecution/outputDelta',{itemId:'pending',delta:'second 🐝\n'});
+const updates=partialEvents.filter(event=>event.type==='tool_update');
+assert.deepEqual(updates.map(e=>e.result),[
+  {content:[{type:'text',text:'first\n'}]}, {content:[{type:'text',text:'first\nsecond 🐝\n'}]},
+]);
+assert.deepEqual((partial.snapshot().history[0] as Record<string,unknown>).content,[{type:'text',text:'first\nsecond 🐝\n'}]);
+partial.item({...command,id:'already-done',status:'inProgress'},'cancelled-turn',false);
+partial.item({...command,id:'already-done',status:'completed',aggregatedOutput:'done'},'cancelled-turn',true);
+assert.equal(partial.interruptedItems('other-turn').length,0);
+const interrupted=partial.interruptedItems('cancelled-turn');
+assert.equal(interrupted.length,1);
+assert.equal(nativePending.status,'inProgress');
+assert.equal('hiveInterrupted' in nativePending,false);
+partial.item(interrupted[0]!,'cancelled-turn',true);
+const interruptedMessage=partial.snapshot().history[0] as Record<string,unknown>;
+assert.equal(interruptedMessage.toolStatus,'interrupted');
+assert.deepEqual(interruptedMessage.content,[{type:'text',text:'first\nsecond 🐝\n'}]);
+assert.equal(partial.interruptedItems('cancelled-turn').length,0);
+partial.delta('item/commandExecution/outputDelta',{itemId:'pending',delta:'late'});
+assert.deepEqual((partial.snapshot().history[0] as Record<string,unknown>).content,interruptedMessage.content);
+const {mkdtemp,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+const {CodexProjection}=await import('../src/agents/codex-projection.js');
+const state=await mkdtemp(join(tmpdir(),'hive-codex-partial-'));
+try {
+ const projection=new CodexProjection(state,'thread');projection.put(interrupted[0]!,'cancelled-turn');projection.complete('cancelled-turn');
+ const recovered=new CodexProjection(state,'thread');recovered.recover([{id:'cancelled-turn',status:'interrupted',items:[nativePending]}],true);
+ const restored=new CodexEvents('thread',()=>{},()=>undefined);restored.restore(recovered.current());
+ assert.deepEqual(restored.snapshot().history[0],interruptedMessage);
+ const imported=new CodexProjection(state,'imported');
+ imported.recover([{id:'native-turn',status:'interrupted',items:[{...nativePending,aggregatedOutput:'native partial'}]}],true);
+ const importedItem=normalizeCodexItem(imported.current()[0]!.item);
+ assert.equal(importedItem.toolStatus,'interrupted');assert.deepEqual(importedItem.content,[{type:'text',text:'native partial'}]);
+ assert.equal(nativePending.status,'inProgress');
+}finally{await rm(state,{recursive:true,force:true});}
+console.log('Codex partial output and interrupted-tool projection/restart checks passed. No model calls.');
