@@ -490,7 +490,7 @@ impl HiveApp {
                         }
                         Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("创建会话响应错误",error.to_string())),
                     },
-                    Err(error) => this.error = Some(format!("创建 {backend} 会话失败：{error}").into()),
+                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("创建会话失败",format!("{backend}: {error}"))),
                 }
                 cx.notify();
             });

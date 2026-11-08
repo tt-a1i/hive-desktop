@@ -1,4 +1,4 @@
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color,language::{english,tr}};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -24,18 +24,18 @@ impl HiveApp {
         let heading = message
             .delivery
             .as_ref()
-            .map(|delivery| delivery.heading.clone())
+            .map(|delivery| delivery.heading_text())
             .unwrap_or_else(|| {
                 match message.role.as_str() {
-                    "user" if message.explicit_user => "你",
-                    "user" => "对话输入",
+                    "user" if message.explicit_user => tr("你"),
+                    "user" => tr("对话输入"),
                     "assistant" => self
                         .session
                         .as_ref()
-                        .map(|s| s.backend.label())
-                        .unwrap_or("助手"),
-                    "notice" => "会话通知",
-                    _ => "工具",
+                        .map(|s| tr(s.backend.label()))
+                        .unwrap_or(tr("助手")),
+                    "notice" => tr("会话通知"),
+                    _ => tr("工具"),
                 }
                 .into()
             });
@@ -72,13 +72,13 @@ impl HiveApp {
                             message.delivery.as_ref().is_some_and(|card| card.report),
                             |row| {
                                 let state = if self.completed_deliveries.contains(&message.id) {
-                                    "处理回合已完成"
+                                    tr("处理回合已完成")
                                 } else {
                                     self.pending_reports
                                         .iter()
                                         .find(|report| report.delivery_id == message.id)
                                         .map(|report| report.status())
-                                        .unwrap_or("已进入会话")
+                                        .unwrap_or(tr("已进入会话"))
                                 };
                                 row.child(
                                     div()
@@ -106,7 +106,7 @@ impl HiveApp {
                                     .delivery
                                     .as_ref()
                                     .and_then(|card| card.worker_id.as_deref()),
-                                "成员会话",
+                                tr("成员会话"),
                                 cx,
                             ),
                             |row, link| row.child(link),
@@ -114,19 +114,12 @@ impl HiveApp {
                         .when(message.delivery.is_some(), |view| {
                             view.child(
                                 Button::new(("expand-delivery", i))
-                                    .accessibility_label(format!(
-                                        "{}消息原文",
-                                        if message.delivery.as_ref().is_some_and(|d| d.expanded) {
-                                            "收起"
-                                        } else {
-                                            "查看"
-                                        }
-                                    ))
+                                    .accessibility_label(format!("{} {}",if message.delivery.as_ref().is_some_and(|d|d.expanded) {tr("收起")} else {tr("查看")},tr("消息原文")))
                                     .label(
                                         if message.delivery.as_ref().is_some_and(|d| d.expanded) {
-                                            "收起原文"
+                                            tr("收起原文")
                                         } else {
-                                            "查看原文"
+                                            tr("查看原文")
                                         },
                                     )
                                     .on_click({
@@ -189,14 +182,14 @@ impl HiveApp {
                 },
             )
             .when(message.images_loading, |view| {
-                view.child(div().text_xs().child("读取图片…"))
+                view.child(div().text_xs().child(tr("读取图片…")))
             })
             .when_some(message.images_error.as_ref(), |view, error| {
                 view.child(
                     div()
                         .text_xs()
                         .text_color(Color::Error.get(cx))
-                        .child(format!("图片预览失败：{error}")),
+                        .child(format!("{}: {error}",tr("图片预览失败"))),
                 )
             })
             .when(!message.images.is_empty(), |view| {
@@ -210,12 +203,12 @@ impl HiveApp {
                             .map(|(index, image)| {
                                 let original = message.image_sources[index].clone();
                                 let name =
-                                    format!("图片-{}.{}", index + 1, original.format.extension());
+                                    format!("{}-{}.{}",if english() {"Image"} else {"图片"},index+1,original.format.extension());
                                 Button::new(SharedString::from(format!("view-image-{i}-{index}")))
                                     .ghost()
                                     .w(px(144.))
                                     .h(px(112.))
-                                    .accessibility_label(format!("查看图片 {}", index + 1))
+                                    .accessibility_label(format!("{} {}",tr("查看图片"),index+1))
                                     .child(
                                         img(image)
                                             .w(px(144.))
@@ -304,15 +297,15 @@ impl HiveApp {
                 |view| {
                     view.child(div().py_8().text_color(Color::Muted.get(cx)).child(
                         if self.loading {
-                            "正在读取…"
+                            tr("正在读取…")
                         } else if !self.connected {
-                            "后台连接已断开，当前草稿仍保留。可在窗口顶部重新启动后台。"
+                            tr("后台连接已断开，当前草稿仍保留。可在窗口顶部重新启动后台。")
                         } else if running {
-                            "正在等待 Agent 回复…"
+                            tr("正在等待 Agent 回复…")
                         } else if needs_pi_model {
-                            "还没有消息。"
+                            tr("还没有消息。")
                         } else {
-                            "会话已就绪。发送第一条消息开始工作。"
+                            tr("会话已就绪。发送第一条消息开始工作。")
                         },
                     ))
                 },
@@ -342,8 +335,8 @@ impl HiveApp {
                                             .text_xs()
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(format!(
-                                                "{} · 成员汇报",
-                                                report.worker_name.as_deref().unwrap_or("Worker")
+                                                "{} · {}",
+                                                report.worker_name.as_deref().unwrap_or("Worker"),tr("成员汇报")
                                             )),
                                     )
                                     .child(
@@ -364,7 +357,7 @@ impl HiveApp {
                                         self.member_session_link(
                                             &report.delivery_id,
                                             report.worker_id.as_deref(),
-                                            "成员会话",
+                                            tr("成员会话"),
                                             cx,
                                         ),
                                         |row, link| row.child(link),

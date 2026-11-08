@@ -128,10 +128,17 @@ mod tests {
         let notice = crate::app::ErrorNotice::from("后台尚未连接");
         let original = "native diagnostic: 中文\nC:\\work\\file";
         let raw = crate::app::ErrorNotice::from(original.to_owned());
+        let explained = crate::app::ErrorNotice::Context("未能确认后台进程已退出",Box::new(original.to_owned().into()),"请重试退出；当前不会启动新的后台。");
+        let batch = crate::app::ErrorNotice::Batch(vec!["后台尚未连接".into(),original.to_owned().into()]);
+        let report = crate::app::DeliveryCard { dispatch_id:None,report:true,worker_id:None,artifacts:vec![],heading:"成员汇报",worker_name:Some("成员汇报".to_owned()),raw:original.to_owned(),expanded:false };
         component::set_locale(Locale::En.component_locale());
         assert_eq!(tr("设置"), "Settings");
         assert_eq!(connected.text(), "Backend connected");
         assert_eq!(notice.text(), "Backend not connected");
+        assert_eq!(explained.text(),format!("Could not confirm the runtime exited: {original}\nRetry quitting. No new runtime will be started while cleanup is unconfirmed."));
+        assert_eq!(batch.text(),format!("Backend not connected\n{original}"));
+        assert_eq!(report.heading_text(), "成员汇报 · Worker report");
+        assert_eq!(report.raw, original);
         assert!(connected.is_background_connected());
         assert!(!disconnected.is_background_connected());
         assert_eq!(raw.text(), original);
@@ -139,6 +146,10 @@ mod tests {
         assert_eq!(tr("设置"), "设置");
         assert_eq!(connected.text(), "后台已连接");
         assert_eq!(notice.text(), "后台尚未连接");
+        assert_eq!(explained.text(),format!("未能确认后台进程已退出: {original}\n请重试退出；当前不会启动新的后台。"));
+        assert_eq!(batch.text(),format!("后台尚未连接\n{original}"));
+        assert_eq!(report.heading_text(), "成员汇报 · 成员汇报");
+        assert_eq!(report.raw, original);
         assert!(connected.is_background_connected());
         assert!(!disconnected.is_background_connected());
         assert_eq!(raw.text(), original);

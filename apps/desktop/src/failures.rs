@@ -1,4 +1,4 @@
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color,language::tr};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -36,8 +36,8 @@ fn details(owner: &str, message: &str, cx: &Context<HiveApp>) -> AnyElement {
             Button::new(SharedString::from(format!("copy-failure-{owner}")))
                 .ghost()
                 .compact()
-                .label("复制错误详情")
-                .accessibility_label("复制错误详情")
+                .label(tr("复制错误详情"))
+                .accessibility_label(tr("复制错误详情"))
                 .on_click(move |_, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
                 }),
@@ -90,18 +90,18 @@ impl HiveApp {
                             .flex_1()
                             .text_sm()
                             .text_color(Color::Error.get(cx))
-                            .child("这次回复未完成"),
+                            .child(tr("这次回复未完成")),
                     )
                     .child(
                         Button::new(("reply-failure", index))
                             .ghost()
                             .compact()
                             .label(if failure.expanded {
-                                "收起详情"
+                                tr("收起详情")
                             } else {
-                                "错误详情"
+                                tr("错误详情")
                             })
-                            .accessibility_label("查看历史回复错误详情")
+                            .accessibility_label(tr("查看历史回复错误详情"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.prepare_conversation_expansion(&id);
                                 if let Some(message) = this.messages.iter_mut().find(|m| m.id == id)
@@ -140,9 +140,9 @@ impl HiveApp {
                                 .text_sm()
                                 .text_color(Color::Error.get(cx))
                                 .child(if failure.diagnostic_write_failed {
-                                    "失败详情未能保存，原消息仍保留"
+                                    tr("失败详情未能保存，原消息仍保留")
                                 } else {
-                                    "Agent 报告了错误"
+                                    tr("Agent 报告了错误")
                                 }),
                         )
                         .child(
@@ -150,11 +150,11 @@ impl HiveApp {
                                 .ghost()
                                 .compact()
                                 .label(if failure.expanded {
-                                    "收起详情"
+                                    tr("收起详情")
                                 } else {
-                                    "错误详情"
+                                    tr("错误详情")
                                 })
-                                .accessibility_label("查看 Agent 错误详情")
+                                .accessibility_label(tr("查看 Agent 错误详情"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     if let Some(failure) = &mut this.agent_diagnostic {
                                         failure.expanded = !failure.expanded;
@@ -166,7 +166,7 @@ impl HiveApp {
                             Button::new("dismiss-agent-diagnostic")
                                 .ghost()
                                 .compact()
-                                .label("关闭")
+                                .label(tr("关闭"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.agent_diagnostic = None;
                                     cx.notify();
@@ -203,9 +203,9 @@ impl HiveApp {
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(if running {
-                                "正在重新处理原消息…"
+                                tr("正在重新处理原消息…")
                             } else {
-                                "消息处理未完成"
+                                tr("消息处理未完成")
                             }),
                     )
                     .child(
@@ -213,11 +213,11 @@ impl HiveApp {
                             .ghost()
                             .compact()
                             .label(if self.delivery_failure_expanded {
-                                "收起详情"
+                                tr("收起详情")
                             } else {
-                                "错误详情"
+                                tr("错误详情")
                             })
-                            .accessibility_label("查看消息处理错误详情")
+                            .accessibility_label(tr("查看消息处理错误详情"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.delivery_failure_expanded = !this.delivery_failure_expanded;
                                 cx.notify();
@@ -226,8 +226,8 @@ impl HiveApp {
                     .child(
                         Button::new("retry-delivery-failure")
                             .rounded_full()
-                            .label("重试原消息")
-                            .accessibility_label("重试原消息及附件")
+                            .label(tr("重试原消息"))
+                            .accessibility_label(tr("重试原消息及附件"))
                             .disabled(disabled)
                             .on_click(cx.listener(|this, _, _, cx| this.resume(cx))),
                     ),
@@ -236,7 +236,7 @@ impl HiveApp {
                 div()
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
-                    .child("待处理消息与附件已保留，重试将继续处理原来的内容。"),
+                    .child(tr("待处理消息与附件已保留，重试将继续处理原来的内容。")),
             )
             .when(self.delivery_failure_expanded, |view| {
                 view.child(details("delivery", &failure.message, cx))

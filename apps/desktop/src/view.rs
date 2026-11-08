@@ -157,7 +157,7 @@ impl HiveApp {
                 .compact()
                 .label(label)
                 .accessibility_label(format!(
-                    "打开 {} 的成员会话",
+                    "{}: {}",tr("打开成员会话"),
                     self.session_title(member_chat)
                 ))
                 .on_click(

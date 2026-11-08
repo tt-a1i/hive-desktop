@@ -11,10 +11,12 @@ pub(crate) enum Source {
     Patch(String),
     Pair { old: String, new: String },
 }
+#[derive(Debug)]
+pub(crate) enum ParseFailure { NoFiles, Invalid(String) }
 pub(crate) struct Document {
     pub files: Vec<DiffFile>,
     pub raw: String,
-    pub error: Option<String>,
+    pub error: Option<ParseFailure>,
 }
 
 pub(crate) fn available(name: &str, args: &Value, patch: Option<&str>) -> bool {
@@ -156,8 +158,8 @@ pub(crate) fn build(changes: Vec<Change>) -> Document {
         }
         match DiffFile::parse(&patch) {
             Ok(files) if !files.is_empty() => document.files.extend(files),
-            Ok(_) => document.error = Some("补丁未包含可显示的文件；下方保留原始内容。".into()),
-            Err(e) => document.error = Some(format!("无法解析补丁，保留原始内容：{e}")),
+            Ok(_) => document.error = Some(ParseFailure::NoFiles),
+            Err(e) => document.error = Some(ParseFailure::Invalid(e.to_string())),
         }
         if !document.raw.is_empty() {
             document.raw.push('\n');
@@ -240,7 +242,7 @@ mod tests {
             modified_path: Some("bad".into()),
             source: Source::Patch("not a patch".into()),
         }]);
-        assert!(d.error.is_some());
+        assert!(matches!(d.error,Some(ParseFailure::Invalid(_))));
         assert_eq!(d.raw, "not a patch");
     }
 }

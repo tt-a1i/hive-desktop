@@ -209,3 +209,25 @@
 - 当前新原生程序带英文偏好启动并连接源码runtime，恢复项目/失效会话选择，SQLite导航保存得到确认。使用本轮新硬链接/资源软链接fixture，未复制依赖。脚本SIGTERM收尾，不是正常用户退出；退出后lsof目录为空、无残留fixture进程，已只删除本轮链接目录并保留日志。
 
 未跑全量测试：本批跨UI模块的类型/显示迁移，保留原操作与诊断，采用上述语言/真实生命周期及原生启动检查。没有模型请求、后台协议/存储改动或新ZIP。CUA再次明确报告Mac锁屏；未实际点击语言切换、失败重试、错误关闭/滚动或正常退出，完整桌面/跨平台体验未交付。收据`.artifacts/language/main-status-receipt.json`。
+
+
+## 带说明的错误、批量提示与聊天残项
+
+第十四批累计1027条英文目录（新增58条）。ErrorNotice增加本地Context（标题/原错误/操作说明）和Batch（按原顺序的条目）；退出清理失败、工作区移除部分失败和附件批量错误不再在发生时拼接译文。操作结果判断、workspace_removed/缺失身份/刷新失败分支、错误正文、条目顺序、附件名/计数/20MB限制及退出时保留owner/窗口规则不变。系统/provider原错误仍作为Raw；本地静态失败和下一步说明在render选语言。项目启动/会话创建提示保留实际目标/后端及原诊断。
+
+同时补齐历史/当前/待处理失败卡片和原消息重试操作、Diff解析失败提示、模型选择器、排队消息与聊天角色/空/加载/原文按钮。Diff解析只保存NoFiles或原解析错误，到渲染才选语言，原补丁和raw视图条件不变；没有把App/locale依赖引入解析模块。模型ID/名称/搜索、队列过滤/投递、复制正文、预览图字节、消息原文和原生错误均保留。原生无文件名图片的默认保存名按打开时语言生成，真实附件名不改。
+
+成员汇报标题从缓存的整段String拆为静态heading key与原worker_name，render才拼接；原成员名即便与文案key同名也不翻译。DeliveryOrigin/角色/派单与报告身份规则不变。导出capture调用当前heading_text后冻结为原有Snapshot条目，之后仍使用捕获语言；此前“已有投递标题无法随语言更新”的缺口在该结构化路径已修复。缺失来源的原始fallback正文及部分原生/文件诊断仍可能中文，完整覆盖仍未证明。
+
+本轮对源码中文literal做启发式候选扫描，由此发现并修复模型选择器入口与动态scope的“项目”英文目录遗漏。候选包括中文fallback分支、原生正文和诊断，不是缺陷数量、自动覆盖率或验收结果；原候选收据`.artifacts/language/source-literal-candidates.json`保留以供后续人工分类。
+
+验证：
+
+- 扩展既有language::tests，逐字验证zh/en的Context/Batch保留原诊断/换行/顺序及操作说明，汇报成员名与key同为“成员汇报”时仍保留原名；1通过。Diff原有2条通过，细化坏补丁错误类型断言；导出原有1条通过。共4条，未新增/删除测试文件或测试，修改的是既有真实格式/数据检查。
+- Mac默认构建、Windows MSVC类型检查、git diff --check和本批显式文案key目录核对通过；未跑全量测试，本批为显示表示与UI元数据，不改后台协议或持久化格式。
+- 既有file-attachments-wire.ts生产JSONL上传/解析/路径、删除源文件后副本字节、跨工作区与非法ID及正常关闭回归通过。
+- 既有workspace-removal.ts真实HTTP/SQLite、原样Pi进程、实际工作流/目录lease、原进程退出、其他项目继续可用、SQL回滚/部分失败/转录与待处理spool保留通过，无模型回合。其首轮在空隔离Pi目录因Unknown model失败，补目录后又因No API key失败；两次均保留失败记录，不称产品回归通过。最后使用本轮一次性正常models.json登记openai/gpt-6.1-terra，端点为127.0.0.1:9，凭据为明确的合成占位值，原检查重跑通过。该配置只用于注册/切换/启动上下文，不是Terra能力/规格/真实认证或推理验证，没有请求厂商。未改测试代码、断言或生产校验/fallback。
+- 配置准备中曾因SDK已创建auth.json触发“文件不应存在”的保护断言；没有覆盖该文件。实际生效的是models.json中的合成apiKey，已确认其值；随后检查退出0。夹具路径`/var/folders/v1/6vx82zzx32q7y_s1w4sx84j00000gp/T/hive-removal-locale-agent-2jirdu34`，成功业务收据另存`.artifacts/language/context-workspace-removal-receipt.json`。
+- 新原生源码带英文偏好启动恢复与SQLite导航保存通过。仅用硬链接/资源软链接，脚本SIGTERM结束自有探针；退出后目录lsof为空且无fixture进程，只清理本轮native-bundle，保留日志。不等于正常用户退出或实际UI语言切换。
+
+CUA再次明确报告Mac锁屏，未实际观察聊天/错误/模型浮层的英文布局、切换/滚动/复制/重试/窄窗或输入法，也未取得完整Cindy对标验收。无模型请求、无新ZIP，旧运行应用和候选/current包保留。完整#17和产品目标继续开放。阶段收据`.artifacts/language/context-chat-receipt.json`。

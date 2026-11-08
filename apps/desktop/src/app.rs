@@ -43,9 +43,16 @@ pub struct DeliveryCard {
     pub report: bool,
     pub worker_id: Option<String>,
     pub artifacts: Vec<String>,
-    pub heading: String,
+    pub heading: &'static str,
+    pub worker_name: Option<String>,
     pub raw: String,
     pub expanded: bool,
+}
+impl DeliveryCard {
+    pub(crate) fn heading_text(&self) -> String {
+        let label = crate::language::tr(self.heading);
+        match &self.worker_name { Some(name)=>format!("{name} · {label}"),None=>label.to_owned() }
+    }
 }
 pub struct Message {
     pub layout_revision: u64,
@@ -568,7 +575,7 @@ impl HiveApp {
                             this.runtime = Some(runtime);
                             this.closing = false;
                             this.status = "后台进程清理未确认，已保留窗口".into();
-                            this.error = Some(format!("未能确认后台进程已退出：{error}。请重试退出；当前不会启动新的后台。").into());
+                            this.error = Some(ErrorNotice::Context("未能确认后台进程已退出",Box::new(error.into()),"请重试退出；当前不会启动新的后台。"));
                             cx.notify();
                         });
                     }

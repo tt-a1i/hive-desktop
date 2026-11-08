@@ -1,4 +1,4 @@
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color,language::tr};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -27,17 +27,17 @@ impl HiveApp {
             .filter(|model| !model.name.trim().is_empty())
             .map(|model| model.name.clone())
             .or_else(|| current.map(|model| model.id.clone()))
-            .unwrap_or_else(|| "选择模型".into());
+            .unwrap_or_else(|| tr("选择模型").into());
         let identity = current
             .map(|model| format!("{} / {}", model.provider, model.id))
-            .unwrap_or_else(|| "选择会话模型".into());
+            .unwrap_or_else(|| tr("选择会话模型").into());
         let unavailable = !self.connected
             || !self.conversation_ready
             || running
             || self.loading
             || self.reasoning_picker.loading;
         let trigger = Button::new("choose-model")
-            .accessibility_label("选择会话模型")
+            .accessibility_label(tr("选择会话模型"))
             .ghost()
             .compact()
             .min_w_0()
@@ -90,7 +90,7 @@ impl HiveApp {
                     v_flex()
                         .min_w_0()
                         .gap_2()
-                        .child(Input::new(&self.model_search).aria_label("搜索会话模型"))
+                        .child(Input::new(&self.model_search).aria_label(tr("搜索会话模型")))
                         .child(
                             v_flex()
                                 .id("model-list")
@@ -103,7 +103,7 @@ impl HiveApp {
                                             .p_3()
                                             .text_sm()
                                             .text_color(Color::Muted.get(cx))
-                                            .child("没有匹配的可用模型"),
+                                            .child(tr("没有匹配的可用模型")),
                                     )
                                 })
                                 .children(matching.into_iter().enumerate().map(|(i, model)| {

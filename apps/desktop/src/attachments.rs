@@ -164,7 +164,7 @@ impl HiveApp {
             Ok(Ok(None)) => {}
             error => {
                 let _ = this.update(cx, |this, cx| {
-                    this.error = Some(format!("选择文件失败：{error:?}").into());
+                    this.error = Some(crate::app::ErrorNotice::Detail("选择文件失败",format!("{error:?}")));
                     cx.notify();
                 });
             }
@@ -222,12 +222,12 @@ impl HiveApp {
         cx.notify();
         cx.spawn(async move |this, cx| {
             let mut ready = Vec::new();
-            let mut errors = Vec::new();
+            let mut errors: Vec<crate::app::ErrorNotice> = Vec::new();
             for source in sources {
                 let (method, mut params) = match smol::unblock(move || source.prepare()).await {
                     Ok(prepared) => prepared,
                     Err(error) => {
-                        errors.push(error);
+                        errors.push(error.into());
                         continue;
                     }
                 };
@@ -247,10 +247,10 @@ impl HiveApp {
                         };
                         match image {
                             Ok(image) => ready.push((item.attachment, image)),
-                            Err(error) => errors.push(error),
+                            Err(error) => errors.push(error.into()),
                         }
                     }
-                    Err(error) => errors.push(error),
+                    Err(error) => errors.push(error.into()),
                 }
             }
             let _ = this.update(cx, |this, cx| {
@@ -283,7 +283,7 @@ impl HiveApp {
                     }
                 }
                 if !errors.is_empty() {
-                    this.error = Some(errors.join("\n").into());
+                    this.error = Some(crate::app::ErrorNotice::Batch(errors));
                 }
                 this.schedule_draft_save(cx);
                 cx.notify();

@@ -1,4 +1,4 @@
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color,language::{english,tr}};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     component::{
@@ -34,7 +34,7 @@ impl HiveApp {
                     div()
                         .text_xs()
                         .text_color(Color::Secondary.get(cx))
-                        .child(format!("待处理消息 · {}", waiting.len())),
+                        .child(format!("{} · {}",tr("待处理消息"),waiting.len())),
                 )
                 .child(
                     v_flex()
@@ -57,7 +57,7 @@ impl HiveApp {
                                         .gap_1()
                                         .child(div().text_sm().truncate().child(
                                             if input.text.is_empty() {
-                                                "附件消息".into()
+                                                tr("附件消息").into()
                                             } else {
                                                 input.text.clone()
                                             },
@@ -69,19 +69,19 @@ impl HiveApp {
                                                 .truncate()
                                                 .child(if input.attachments.is_empty() {
                                                     if running {
-                                                        "已入队，等待当前回复结束".into()
+                                                        tr("已入队，等待当前回复结束").into()
                                                     } else {
-                                                        "已入队，等待继续处理".into()
+                                                        tr("已入队，等待继续处理").into()
                                                     }
                                                 } else {
                                                     format!(
-                                                        "附件：{}",
+                                                        "{}: {}",tr("附件"),
                                                         input
                                                             .attachments
                                                             .iter()
                                                             .map(|item| item.name.as_str())
                                                             .collect::<Vec<_>>()
-                                                            .join("、")
+                                                            .join(if english() {", "} else {"、"})
                                                     )
                                                 }),
                                         ),
@@ -93,8 +93,8 @@ impl HiveApp {
                                     )))
                                     .ghost()
                                     .compact()
-                                    .label("复制")
-                                    .accessibility_label("复制待处理消息")
+                                    .label(tr("复制"))
+                                    .accessibility_label(tr("复制待处理消息"))
                                     .disabled(input.text.is_empty())
                                     .on_click(
                                         move |_, _, cx| {

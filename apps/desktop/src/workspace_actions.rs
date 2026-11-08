@@ -1,4 +1,4 @@
-use crate::app::HiveApp;
+use crate::{app::{HiveApp,ErrorNotice},language::tr};
 use gpui_kit::*;
 use serde_json::json;
 
@@ -31,7 +31,7 @@ impl HiveApp {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("选择项目文件夹".into()),
+            prompt: Some(tr("选择项目文件夹").into()),
         });
         let window = window.window_handle();
         let connection = self.connection_generation;
@@ -103,7 +103,7 @@ impl HiveApp {
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) {
-                    if let Err(error) = result { this.error = Some(format!("无法通过 {target} 打开项目，请确认目标应用已安装：{error}").into()); }
+                    if let Err(error) = result { this.error = Some(ErrorNotice::Detail("无法打开项目，请确认目标应用已安装",format!("{target}: {error}"))); }
                     cx.notify();
                 }
             });
@@ -173,12 +173,12 @@ impl HiveApp {
             let id = workspace.id;
             let result = runtime
                 .request("workspace.remove", json!({"workspaceId":id}))
-                .await;
+                .await.map_err(ErrorNotice::from);
             let outcome = result.and_then(|value| {
                 serde_json::from_value::<WorkspaceRemovalOutcome>(value)
-                    .map_err(|_| "移除响应格式错误，需重新确认工作区状态".to_string())
+                    .map_err(|_| ErrorNotice::Message("移除响应格式错误，需重新确认工作区状态"))
             });
-            let (reported_removed, mut session_ids, operation_error) = match outcome {
+            let (reported_removed, mut session_ids, operation_error): (Option<bool>,Vec<String>,Option<ErrorNotice>) = match outcome {
                 Ok(outcome) if outcome.ok => match outcome.removed_session_ids {
                     Some(ids) => (Some(true), ids, None),
                     None => (
@@ -191,7 +191,7 @@ impl HiveApp {
                     Some(error) if error.details.workspace_id == id => (
                         error.details.workspace_removed,
                         error.details.removed_session_ids,
-                        Some(error.message),
+                        Some(error.message.into()),
                     ),
                     _ => (
                         None,
@@ -227,15 +227,10 @@ impl HiveApp {
                     });
                     let removed = reported_removed == Some(true) || absent;
                     let error = match operation_error {
-                        Some(error) => Some(format!(
-                            "移除工作区未完整完成：{error}。{}",
-                            if removed {
-                                "已确认工作区记录不再存在；本地视图已更新。"
-                            } else if refreshed.is_err() {
-                                "无法确认工作区当前状态，请重新读取后再操作。"
-                            } else {
-                                "工作区仍存在，草稿已保留。"
-                            }
+                        Some(error) => Some(ErrorNotice::Context("移除工作区未完整完成",Box::new(error),
+                            if removed { "已确认工作区记录不再存在；本地视图已更新。" }
+                            else if refreshed.is_err() { "无法确认工作区当前状态，请重新读取后再操作。" }
+                            else { "工作区仍存在，草稿已保留。" }
                         )),
                         None if refreshed.is_err() => Some(
                             "工作区已移除，但刷新其他工作区失败。请重新启动后确认列表。".into(),
@@ -250,7 +245,7 @@ impl HiveApp {
                         this.status = "工作区已移除".into();
                     }
                     this.refresh_pinned_sessions(cx);
-                    this.error = error.map(Into::into);
+                    this.error = error;
                     cx.notify();
                 });
             });

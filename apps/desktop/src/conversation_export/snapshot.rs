@@ -41,7 +41,7 @@ impl Snapshot {
                     heading: if let Some(tool) = &message.tool {
                         format!("{} · {} · {}",tr("工具"),tool.name,tr(tool.status))
                     } else if let Some(delivery) = &message.delivery {
-                        delivery.heading.clone()
+                        delivery.heading_text()
                     } else {
                         match message.role.as_str() {
                             "user" => tr("用户"),

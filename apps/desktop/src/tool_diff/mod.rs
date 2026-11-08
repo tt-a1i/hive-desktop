@@ -200,7 +200,10 @@ impl Render for ToolDiff {
                 view.child(div().text_sm().child(tr("正在准备改动…")))
             })
             .when_some(
-                self.document.as_ref().and_then(|d| d.error.clone()),
+                self.document.as_ref().and_then(|document|document.error.as_ref()).map(|error| match error {
+                    data::ParseFailure::NoFiles => tr("补丁未包含可显示的文件；下方保留原始内容。").to_owned(),
+                    data::ParseFailure::Invalid(error) => format!("{}: {error}",tr("无法解析补丁，保留原始内容")),
+                }),
                 |view, error| {
                     view.child(
                         div()
