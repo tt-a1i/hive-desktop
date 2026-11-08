@@ -167,6 +167,7 @@ impl HiveApp {
         self.session_pin_loading.clear();
         self.session_archive_loading.clear();
         self.reasoning_picker = Default::default();
+        self.reset_usage();
         self.attachments.reset_connection();
         self.pinned_sessions.loading = false;
         self.pinned_sessions.dirty = false;

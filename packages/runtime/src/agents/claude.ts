@@ -1,3 +1,4 @@
+import { claudeUsage } from '../agent-usage.js';
 import { readClaudeReasoning } from './claude-reasoning.js';
 import { promptImages } from '../prompt-images.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -39,6 +40,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
   let closeTask: Promise<void> | undefined;
   let disposed = false; let ready = false; let failure: Error | undefined;
   let active: Run | undefined;
+  let nativeUsage:unknown;
   let child: ChildProcessWithoutNullStreams | undefined;
   let processClosed!: () => void;
   const exited = new Promise<void>(resolve => { processClosed = resolve; });
@@ -118,7 +120,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
         else if (message.type === 'result' && active) {
           const belongs = message.user_message_uuid === active.uuid || message.user_message_uuids?.includes(active.uuid);
           if (!belongs) active.reject(new Error('Claude terminal result cannot be correlated to the active input'));
-          else { interactions.clear(active.cancelled ? 'aborted' : 'turn-ended', active.uuid); active.resolve(message); }
+          else { nativeUsage={usage:structuredClone(message.usage),modelUsage:structuredClone(message.modelUsage)}; interactions.clear(active.cancelled ? 'aborted' : 'turn-ended', active.uuid); active.resolve(message); }
         } else if (message.type === 'system' && message.subtype === 'init') currentModel = message.model;
         else if (message.type === 'system' && message.subtype === 'session_writes_lost') {
           const error = new Error('Claude could not persist the session transcript'); if (active) { active.error = error; active.reject(error); }
@@ -154,6 +156,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     catalog: () => structuredClone(catalogs), history: () => projection.snapshot().history,
     hasContext: customType => projection.snapshot().history.some(message => message.role === 'custom' && message.customType === customType),
     snapshot: () => projection.snapshot(),
+    usage:()=>claudeUsage(nativeUsage),
     interactions: () => interactions.snapshot(),
     respondInteraction: (id, response) => { check(); interactions.respond(id, response); },
     completedDeliveryIds: () => metadata.completed.filter(entry => projection.hasNativeUuid(entry.userUuid) && projection.hasNativeUuid(entry.assistantUuid)).map(entry => entry.deliveryId),

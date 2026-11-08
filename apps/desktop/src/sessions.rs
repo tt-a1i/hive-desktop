@@ -283,6 +283,7 @@ impl HiveApp {
         self.unavailable_model = None;
         self.choosing_model = false;
         self.reasoning_picker = Default::default();
+        self.reset_usage();
         self.open_request += 1;
     }
     // Coalesce event bursts and serialize requests so older lists cannot replace newer ones.
@@ -570,6 +571,7 @@ impl HiveApp {
         self.unread.remove(&id);
         self.choosing_model = false;
         self.reasoning_picker = Default::default();
+        self.reset_usage();
         let request = self.open_request;
         if let Some(session) = self.sessions.iter().find(|s| s.id == id) {
             self.session = Some(session.clone());

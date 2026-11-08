@@ -60,6 +60,7 @@ export interface PiSessionHandle {
   refreshModels?(): Promise<void>;
   listModels(): { provider: string; id: string; name: string; available: boolean }[];
   setModel(provider: string, id: string): Promise<void>;
+  usage?(): import("../agent-usage.js").UsageSnapshot | Promise<import("../agent-usage.js").UsageSnapshot>;
   reasoning?(): ReasoningState | Promise<ReasoningState>;
   setReasoning?(level: string): ReasoningState | Promise<ReasoningState>;
 }

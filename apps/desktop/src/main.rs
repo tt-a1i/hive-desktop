@@ -30,6 +30,7 @@ mod terminal;
 mod thinking;
 mod tool_message;
 mod transport;
+mod usage;
 mod view;
 mod workspace_actions;
 

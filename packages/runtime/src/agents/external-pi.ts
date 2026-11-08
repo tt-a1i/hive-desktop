@@ -1,3 +1,4 @@
+import { piUsage } from '../agent-usage.js';
 import { promptImages } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -206,6 +207,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     supportsImages:()=>state?.model?.input?.includes('image')??false,
     currentModel: () => state?.model && ({ provider: state.model.provider, id: state.model.id, name: state.model.name }),
     listModels: () => models.map(model => ({ provider: model.provider, id: model.id, name: model.name, available: true })),
+    async usage(){ensureOpen();return piUsage(await transport.request("get_session_stats"),"外部 Pi 原生会话");},
     reasoning,
     async setReasoning(level) {
       ensureOpen();

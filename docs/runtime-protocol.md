@@ -74,3 +74,7 @@ Pi 仅保存原生会话记录；Codex/Claude 的显式选择保存在现有 Cha
 ## 普通文件附件
 
 `chat.attachments.add/get` 现在返回混合 StagedAttachment：`{attachment,image? ,filePath?}`。普通文件的 filePath 来自工作区上传记录的内部 metadata/stat getter，图片仍返回原生 image 块。`chat.attachments.path {workspaceId,id}` 验证上传存在/归属后返回 `{path}` 用于本机定位。HTTP 上传响应不增加本机路径。`chat.prompt` 的 attachmentIds 及已有版本编码不变，用户展示保留正文和附件 metadata，普通文件路径清单加入实际 Agent 输入；不自动内联文件内容或执行文件。见 [验证](validation/2026-11-08-file-attachments.md)。
+
+## `chat.usage`
+
+参数 `{sessionId}`，只读原生会话统计。返回 `{source,reports:[{label,counters:[{key,label,tokens}]}],context?,notice?}`；context 为 `{tokens:number|null,window:number,percent:number|null,estimated:boolean}`。计数必须为非负安全整数；没有报告时 reports 为空并说明边界，不补零、不发模型请求、不合并厂商计费口径。Pi 使用原生 SDK/RPC，Codex 接收当前线程 tokenUsage 通知，Claude 使用关联回合的最新 result。详情见 [验证](validation/2026-11-08-agent-usage.md)。

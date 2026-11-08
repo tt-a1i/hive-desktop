@@ -1,3 +1,4 @@
+import { codexUsage } from '../agent-usage.js';
 import { promptImages } from '../prompt-images.js';
 import type { TSchema } from 'typebox';
 import { Value } from 'typebox/value';
@@ -45,6 +46,7 @@ type Run = { tools: Set<Promise<unknown>>; terminalComplete: boolean; turnId?: s
 /** Codex 0.166 app-server public JSON-RPC; no terminal scraping or Pi model intermediary. */
 export async function createCodexSession(options: CodexSessionOptions): Promise<CodexSessionHandle> {
   let active: Run | undefined;
+  let nativeUsage:unknown;
   let disposed = false;
   let initialized = false;
   let materialized = Boolean(options.threadId);
@@ -120,6 +122,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       const params = notification.params as Record<string, unknown>;
       if (!params || params.threadId !== threadId) return;
       try {
+        if (notification.method === 'thread/tokenUsage/updated') {nativeUsage=structuredClone(params.tokenUsage);return;}
         if (notification.method === 'serverRequest/resolved') {
           if (typeof params.requestId === 'number' || typeof params.requestId === 'string') interactions.resolved(params.requestId);
           return;
@@ -223,6 +226,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     get sessionFile() { return response.thread.path ?? undefined; },
     history: () => events!.snapshot().history,
     snapshot: () => events!.snapshot(),
+    usage:()=>codexUsage(nativeUsage),
     interactions: () => interactions.snapshot(),
     respondInteraction: (id, response) => interactions.respond(id, response),
     completedDeliveryIds: () => [...metadata.completed],

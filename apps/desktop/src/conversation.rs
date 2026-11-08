@@ -261,6 +261,7 @@ impl HiveApp {
                     if this.session.as_ref().map(|s| &s.id) == Some(&id) {
                         this.choosing_model = false;
                         this.reasoning_picker = Default::default();
+                        this.reset_usage();
                         this.unavailable_model = None;
                         this.model = Some(ModelIdentity {
                             provider: model.provider,
@@ -652,6 +653,7 @@ impl HiveApp {
                 );
             }
             PiEvent::Settled { aborted, .. } => {
+                self.load_usage(cx);
                 self.finish_thinking(aborted);
                 if aborted {
                     self.status = "已停止当前回复".into();

@@ -594,6 +594,7 @@ impl Render for HiveApp {
                         .child(if running { "正在回复…".to_string() } else { self.status.clone() })))))
                 .child(v_flex().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
+                .when(self.usage.visible,|view|view.child(self.render_usage(running,cx)))
                 .child(self.render_session_failure(running,cx))
                 .when(pending > 0 && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some()), |view| view.child(h_flex().gap_3()
                     .child(div().text_sm().child(format!("待处理消息：{pending}")))
@@ -625,6 +626,7 @@ impl Render for HiveApp {
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(self.model_picker(window, running, cx)))
                     .when(self.session.is_some(), |row|row.child(self.render_reasoning_picker(running,cx)))
+                    .when(self.session.is_some(), |row|row.child(self.usage_button(cx)))
                     .when(self.session.is_some(), |row| row.child(if running {
                         Button::new("stop").rounded_full().icon(Glyph::Square).tooltip("停止回复").accessibility_label("停止").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.abort(cx)))
                     } else {

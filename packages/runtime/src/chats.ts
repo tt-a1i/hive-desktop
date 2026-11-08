@@ -518,6 +518,11 @@ export class Chats implements StructuredSessionPort {
       return chat.handle.listModels();
     });
   }
+  async usage(id:string) {
+    const record=this.index.get(id);this.assertWorkspaceAvailable(record.workspaceId);
+    const chat=await this.require(id);
+    return chat.handle.usage ? chat.handle.usage() : {source:record.backend,reports:[],notice:'该原生后端未提供用量读取接口。'};
+  }
   async reasoning(id: string, level?: unknown) {
     const record = this.index.get(id);
     const workspaceId = record.workspaceId;

@@ -1,3 +1,4 @@
+import { piUsage } from '../agent-usage.js';
 import { promptImages, imageMessage } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
 import { createAgentSession } from '@earendil-works/pi-coding-agent';
@@ -247,6 +248,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       return session.modelRuntime.getModels().map(model => ({ provider: model.provider, id: model.id,
         name: model.name, available: available.has(`${model.provider}\0${model.id}`) }));
     },
+    usage: () => piUsage(session.getSessionStats(),"内置 Pi 原生会话"),
     reasoning: () => ({ level: session.thinkingLevel, levels: !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [] }),
     setReasoning(level) {
       if (disposed) throw new Error('Pi session is disposed');
