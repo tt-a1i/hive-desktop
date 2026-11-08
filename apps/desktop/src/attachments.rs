@@ -386,6 +386,11 @@ impl HiveApp {
                 },
             )
             .children(refs.into_iter().map(|item| {
+                if !item.is_image() {
+                    return self
+                        .draft_file_attachment(item, busy, cx)
+                        .into_any_element();
+                }
                 let key = self.draft_target.clone();
                 let id = item.id.clone();
                 v_flex()
@@ -423,9 +428,6 @@ impl HiveApp {
                             )
                         },
                     )
-                    .when(!item.is_image(), |card| {
-                        card.child(self.file_attachment_link("draft", item.clone(), cx))
-                    })
                     .when(
                         item.is_image() && !self.attachments.previews.contains_key(&item.id),
                         |card| {
@@ -483,6 +485,7 @@ impl HiveApp {
                                 cx.notify();
                             })),
                     )
+                    .into_any_element()
             }))
     }
 }

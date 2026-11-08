@@ -11,10 +11,14 @@ use std::{
     fs::File,
     io::Read,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 const LIMIT: u64 = 1024 * 1024;
+#[cfg(test)]
 fn read_file(root: &Path, reported: &str) -> Result<String, String> {
-    let path = crate::artifacts::artifact_path(root, reported)?;
+    read_text(&crate::artifacts::artifact_path(root, reported)?)
+}
+fn read_text(path: &Path) -> Result<String, String> {
     if !std::fs::metadata(&path)
         .map_err(|e| e.to_string())?
         .is_file()
@@ -34,9 +38,55 @@ fn read_file(root: &Path, reported: &str) -> Result<String, String> {
     }
     String::from_utf8(bytes).map_err(|_| "文件不是 UTF-8 文本，暂不支持此编码的预览。".into())
 }
+#[derive(Clone)]
+enum FileSource {
+    Workspace {
+        root: PathBuf,
+        reported: String,
+    },
+    Attachment {
+        runtime: Arc<crate::transport::Runtime>,
+        item: crate::attachments::AttachmentRef,
+    },
+}
+impl FileSource {
+    async fn path(self) -> Result<PathBuf, String> {
+        match self {
+            Self::Workspace { root, reported } => {
+                smol::unblock(move || crate::artifacts::artifact_path(&root, &reported)).await
+            }
+            Self::Attachment { runtime, item } => {
+                let value = runtime
+                    .request(
+                        "chat.attachments.path",
+                        serde_json::json!({"workspaceId":item.workspace_id,"id":item.id}),
+                    )
+                    .await?;
+                value["path"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute())
+                    .ok_or_else(|| "附件没有返回有效的本地路径。".into())
+            }
+        }
+    }
+    fn label(&self) -> String {
+        match self {
+            Self::Workspace { root, reported } => root.join(reported).display().to_string(),
+            Self::Attachment { item, .. } => {
+                format!("{} · {} · 上传副本", item.name, item.size_label())
+            }
+        }
+    }
+    fn description(&self) -> &'static str {
+        match self {
+            Self::Workspace { .. } => "只读预览 · 当前磁盘内容，不代表工具调用时的版本",
+            Self::Attachment { .. } => "只读预览 · Hive 保存的附件副本，独立于原始文件",
+        }
+    }
+}
 struct FileViewer {
-    root: PathBuf,
-    reported: String,
+    source: FileSource,
     text: Option<String>,
     error: Option<String>,
     loading: bool,
@@ -62,23 +112,44 @@ impl HiveApp {
             .and_then(|v| v.to_str())
             .unwrap_or(&reported)
             .to_owned();
-        let viewer = cx.new(|cx| {
-            let mut v = FileViewer {
-                root,
-                reported: reported.clone(),
-                text: None,
-                error: None,
-                loading: false,
-                scroll: ScrollHandle::new(),
-            };
-            v.load(cx);
-            v
-        });
-        let width = (window.viewport_size().width - px(48.)).min(px(960.));
-        window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title(title.clone()).w(width).child(viewer.clone())
-        });
+        open_viewer(title, FileSource::Workspace { root, reported }, window, cx);
     }
+    pub(crate) fn open_attachment_preview(
+        &mut self,
+        item: crate::attachments::AttachmentRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connected || self.workspace.as_ref() != Some(&item.workspace_id) {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        open_viewer(
+            item.name.clone(),
+            FileSource::Attachment { runtime, item },
+            window,
+            cx,
+        );
+    }
+}
+fn open_viewer(title: String, source: FileSource, window: &mut Window, cx: &mut Context<HiveApp>) {
+    let viewer = cx.new(|cx| {
+        let mut viewer = FileViewer {
+            source,
+            text: None,
+            error: None,
+            loading: false,
+            scroll: ScrollHandle::new(),
+        };
+        viewer.load(cx);
+        viewer
+    });
+    let width = (window.viewport_size().width - px(48.)).min(px(960.));
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog.title(title.clone()).w(width).child(viewer.clone())
+    });
 }
 impl FileViewer {
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -87,11 +158,13 @@ impl FileViewer {
         }
         self.loading = true;
         self.error = None;
-        let root = self.root.clone();
-        let file = self.reported.clone();
+        let source = self.source.clone();
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = smol::unblock(move || read_file(&root, &file)).await;
+            let result = match source.path().await {
+                Ok(path) => smol::unblock(move || read_text(&path)).await,
+                Err(error) => Err(error),
+            };
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 match result {
@@ -117,13 +190,13 @@ impl Render for FileViewer {
                 div()
                     .text_xs()
                     .text_color(Color::Secondary.get(cx))
-                    .child("只读预览 · 当前磁盘内容，不代表工具调用时的版本"),
+                    .child(self.source.description()),
             )
             .child(
                 div()
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
-                    .child(self.root.join(&self.reported).display().to_string()),
+                    .child(self.source.label()),
             )
             .child(
                 h_flex()
@@ -159,13 +232,9 @@ impl Render for FileViewer {
                             .compact()
                             .label("在文件管理器中显示")
                             .on_click(cx.listener(|this, _, _, cx| {
-                                let root = this.root.clone();
-                                let file = this.reported.clone();
+                                let source = this.source.clone();
                                 cx.spawn(async move |this, cx| {
-                                    let result = smol::unblock(move || {
-                                        crate::artifacts::artifact_path(&root, &file)
-                                    })
-                                    .await;
+                                    let result = source.path().await;
                                     let _ = this.update(cx, |this, cx| match result {
                                         Ok(path) => cx.reveal_path(&path),
                                         Err(error) => {
