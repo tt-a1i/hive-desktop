@@ -146,6 +146,8 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));
     case 'chat.resume': return chats.resume(text(params, 'sessionId'));
     case 'chat.refreshPiModels': return chats.refreshPiModels(text(params, 'sessionId'));
+    case 'chat.reasoning': return chats.reasoning(text(params, 'sessionId'));
+    case 'chat.setReasoning': return chats.reasoning(text(params, 'sessionId'), text(params, 'level'));
     case 'chat.setModel': return chats.setModel(text(params, 'sessionId'), text(params, 'provider'), text(params, 'modelId'));
     case 'shutdown': await close(); return { ok: true };
     default: throw new Error(`Unknown desktop method: ${method}`);

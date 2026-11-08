@@ -165,6 +165,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @hive-desktop/runtime exec tsx checks/windows-native-clis.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:HIVE_PI_COMMAND = Join-Path $env:HIVE_WINDOWS_NATIVE_CLI_PREFIX 'pi.cmd'
+          pnpm --filter @hive-desktop/runtime check:pi-reasoning
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload external CLI check receipt
         if: always()
         uses: actions/upload-artifact@v4

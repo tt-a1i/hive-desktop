@@ -22,7 +22,11 @@ impl HiveApp {
             .as_ref()
             .map(|model| format!("{} / {} ▾", model.provider, model.id))
             .unwrap_or_else(|| "选择模型 ▾".into());
-        let unavailable = !self.connected || !self.conversation_ready || running || self.loading;
+        let unavailable = !self.connected
+            || !self.conversation_ready
+            || running
+            || self.loading
+            || self.reasoning_picker.loading;
         let trigger = Button::new("choose-model")
             .accessibility_label("选择会话模型")
             .ghost()

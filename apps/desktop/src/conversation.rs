@@ -246,6 +246,7 @@ impl HiveApp {
                 move |this, _, _| {
                     if this.session.as_ref().map(|s| &s.id) == Some(&id) {
                         this.choosing_model = false;
+                        this.reasoning_picker = Default::default();
                         this.unavailable_model = None;
                         this.model = Some(ModelIdentity {
                             provider: model.provider,

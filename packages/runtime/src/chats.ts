@@ -481,17 +481,44 @@ export class Chats implements StructuredSessionPort {
       return chat.handle.listModels();
     });
   }
+  async reasoning(id: string, level?: unknown) {
+    const record = this.index.get(id);
+    if (record.backend !== 'pi' && record.backend !== 'pi-rpc') throw new Error('此后端尚未接入推理强度设置。');
+    const workspaceId = record.workspaceId;
+    this.assertWorkspaceAvailable(workspaceId);
+    if (level !== undefined && typeof level !== 'string') throw new TypeError('推理强度必须是文本。');
+    return this.withWorkspace(workspaceId, async () => {
+      const chat = await this.require(id);
+      if (!chat.handle.reasoning || !chat.handle.setReasoning) throw new Error('此后端尚未接入推理强度设置。');
+      if (level === undefined) return chat.handle.reasoning();
+      if (chat.queue.busy) throw new Error('请在当前回复结束后调整推理强度。');
+      if (!(await chat.handle.reasoning()).levels.includes(level as string)) throw new TypeError('当前模型不支持此推理强度。');
+      return this.changeNativeSettings(id, chat, () => chat.handle.setReasoning!(level as string));
+    });
+  }
+  private async changeNativeSettings<T>(id: string, chat: LiveChat, change: () => T | Promise<T>): Promise<T> {
+    try { return await change(); }
+    catch (error) {
+      // Native setters may advance memory/branch pointers before a failed write.
+      // Reuse the existing pause/dispose path so retry reloads durable state.
+      this.failLive(id, chat, error instanceof Error ? error : new Error(String(error)));
+      await chat.cleanup;
+      throw new Error('无法保存原生会话设置，会话已暂停；修复问题后可重新读取并重试。', { cause: error });
+    }
+  }
   async setModel(id: string, provider: string, modelId: string) {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       const chat = await this.require(id);
       if (chat.queue.busy) throw new Error('Stop the current response before changing model');
-      await chat.handle.setModel(provider, modelId);
-      const model = chat.handle.currentModel();
-      const record = { ...this.index.get(id), ...(model ? { model } : {}), updatedAt: Date.now() };
-      this.index.save(record);
-      if (record.agentId) this.runtime.configureAgentLaunch(record.workspaceId, record.agentId, this.launchConfig(record));
-      return { ok: true };
+      return this.changeNativeSettings(id, chat, async () => {
+        await chat.handle.setModel(provider, modelId);
+        const model = chat.handle.currentModel();
+        const record = { ...this.index.get(id), ...(model ? { model } : {}), updatedAt: Date.now() };
+        this.index.save(record);
+        if (record.agentId) this.runtime.configureAgentLaunch(record.workspaceId, record.agentId, this.launchConfig(record));
+        return { ok: true };
+      });
     });
   }
   async removeWorkspace(workspaceId: string, drainWorkspaceTerminals: () => Promise<void>): Promise<{ ok: true; removedSessionIds: string[] }> {

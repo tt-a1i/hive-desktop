@@ -247,6 +247,16 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       return session.modelRuntime.getModels().map(model => ({ provider: model.provider, id: model.id,
         name: model.name, available: available.has(`${model.provider}\0${model.id}`) }));
     },
+    reasoning: () => ({ level: session.thinkingLevel, levels: !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [] }),
+    setReasoning(level) {
+      if (disposed) throw new Error('Pi session is disposed');
+      if (active) throw new Error('Pi session is already processing a prompt');
+      const levels = !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [];
+      const selected = levels.find(candidate => candidate === level);
+      if (!selected) throw new TypeError('当前模型不支持此推理强度。');
+      session.setThinkingLevel(selected, { persist: false });
+      return { level: session.thinkingLevel, levels: session.getAvailableThinkingLevels() };
+    },
     setModel,
   };
 }

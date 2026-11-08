@@ -55,3 +55,7 @@ Agent 通知为 `{event:"agent",data:{type,sessionId,sequence,...}}`。事件包
 ## 思考内容展示
 
 Agent assistant_delta 的 kind 为 thinking 时，Rust 使用 messageId/contentIndex 维护独立思考段；message_end 与快照中的原生 content 提供最终内容。此处复用既有通知，并未添加 reasoning 请求或修改模型行为。未公开的 redacted_thinking 数据不显示，思考结束或取消不替代 Hive 汇报结算。见 [展示验证](validation/2026-11-08-thinking-display.md)。
+
+## Pi 会话推理设置
+
+`chat.reasoning {sessionId}` 和 `chat.setReasoning {sessionId,level}` 返回原生 `{level,levels}`，目前仅内置/外部 Pi 支持。档位从原生能力读取，setter 拒绝未知档位及生成中的修改，只保存到原生会话。配置写入失败复用已有暂停/释放生命周期，后续请求重新加载持久记录；不新增桌面偏好副本，也不声称跨文件事务。见 [验证](validation/2026-11-08-pi-reasoning.md)。

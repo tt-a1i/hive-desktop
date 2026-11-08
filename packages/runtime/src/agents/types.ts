@@ -40,6 +40,8 @@ export interface PiSessionOptions {
   customTools?: ToolDefinition[];
 }
 
+export interface ReasoningState { level: string; levels: string[] }
+
 export interface PiSessionHandle {
   sessionId: string;
   readonly sessionFile: string | undefined;
@@ -58,4 +60,6 @@ export interface PiSessionHandle {
   refreshModels?(): Promise<void>;
   listModels(): { provider: string; id: string; name: string; available: boolean }[];
   setModel(provider: string, id: string): Promise<void>;
+  reasoning?(): ReasoningState | Promise<ReasoningState>;
+  setReasoning?(level: string): ReasoningState | Promise<ReasoningState>;
 }

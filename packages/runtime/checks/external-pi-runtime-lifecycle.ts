@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import { HiveHttpError } from '../src/hive-host.js';
 import type { Chats, ChatEvent } from '../src/chats.js';
 import type { DeliveryQueue } from '../src/delivery-queue.js';
@@ -11,6 +10,18 @@ import type { PiSessionHandle } from '../src/agents/types.js';
 
 await mkdir(resolve('../../.artifacts'), { recursive: true });
 const directory = await mkdtemp(resolve('../../.artifacts/external-pi-lifecycle-'));
+const agentDir = join(directory, 'isolated-pi');
+await mkdir(agentDir);
+await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultProvider: 'openai', defaultModel: 'gpt-6.1-terra' }));
+await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: { openai: {
+  api: 'openai-responses', apiKey: 'fixture-only', baseUrl: 'http://127.0.0.1:1/v1',
+  models: [{ id: 'gpt-6.1-terra', name: 'Terra lifecycle fixture', reasoning: true, input: ['text'] }],
+} } }));
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+const previousOffline = process.env.PI_OFFLINE;
+process.env.PI_CODING_AGENT_DIR = agentDir;
+process.env.PI_OFFLINE = '1';
+const { createDesktopRuntime } = await import('../src/desktop-runtime.js');
 const events: ChatEvent[] = [];
 const runtime = await createDesktopRuntime(join(directory, 'state'), event => events.push(event));
 const live = (chats: Chats) => (chats as unknown as {
@@ -81,6 +92,10 @@ try {
   throw error;
 } finally {
   await writeFile(join(directory, 'events.json'), JSON.stringify(events, null, 2));
-  await runtime.close();
+  try { await runtime.close(); }
+  finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    if (previousOffline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE = previousOffline;
+  }
   console.log(`Evidence retained: ${directory}`);
 }

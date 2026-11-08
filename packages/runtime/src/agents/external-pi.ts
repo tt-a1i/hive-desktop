@@ -116,10 +116,17 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
   };
   try {
     state = await transport.request<State>('get_state');
-    if (options.model) await setModel(options.model.provider, options.model.id);
+    if (options.model && (state.model?.provider !== options.model.provider || state.model?.id !== options.model.id)) await setModel(options.model.provider, options.model.id);
     models = (await transport.request<{ models: Model[] }>('get_available_models')).models;
     await refresh(); initialized = true;
   } catch (error) { disposed = true; await transport.close(); throw error; }
+  const reasoning = async () => {
+    ensureOpen();
+    const current = await transport.request<State & { thinkingLevel: string }>('get_state');
+    const { levels } = await transport.request<{ levels: string[] }>('get_available_thinking_levels');
+    if (typeof current.thinkingLevel !== 'string' || !Array.isArray(levels) || !levels.every(level => typeof level === 'string')) throw new Error('外部 Pi 未返回有效的推理强度信息。');
+    return { level: current.thinkingLevel, levels: current.model ? levels : [] };
+  };
   return {
     sessionId: state.sessionId,
     teamToolName: transport.teamToolName,
@@ -199,6 +206,15 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     supportsImages:()=>state?.model?.input?.includes('image')??false,
     currentModel: () => state?.model && ({ provider: state.model.provider, id: state.model.id, name: state.model.name }),
     listModels: () => models.map(model => ({ provider: model.provider, id: model.id, name: model.name, available: true })),
+    reasoning,
+    async setReasoning(level) {
+      ensureOpen();
+      if (active) throw new Error('External Pi session is already processing a prompt');
+      const previous = await reasoning();
+      if (!previous.levels.includes(level)) throw new TypeError('当前模型不支持此推理强度。');
+      await transport.request('set_thinking_level', { level });
+      return reasoning();
+    },
     setModel,
   };
 }

@@ -17,6 +17,7 @@ mod navigation;
 mod palette;
 mod process_supervisor;
 mod protocol;
+mod reasoning_picker;
 mod roles;
 mod runtime_location;
 mod sessions;
