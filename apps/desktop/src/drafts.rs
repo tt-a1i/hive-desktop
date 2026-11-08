@@ -152,6 +152,7 @@ impl DraftStore {
 
 impl HiveApp {
     pub(crate) fn restore_drafts(&mut self, root: &Path) -> io::Result<()> {
+        self.pi_models.set_draft_root(root);
         let store = DraftStore::open(root)?;
         for draft in store.saved.values() {
             if let Some(task) = &draft.task {
@@ -199,6 +200,7 @@ impl HiveApp {
     }
 
     pub(crate) fn flush_drafts(&mut self, cx: &Context<Self>) -> io::Result<()> {
+        self.pi_models.flush_draft(cx)?;
         self.capture_editor(cx);
         let tasks = self.task_draft_snapshots(cx);
         if !tasks.is_empty() && self.draft_store.is_none() {
@@ -230,7 +232,7 @@ impl HiveApp {
     }
 
     pub(crate) fn schedule_draft_save(&mut self, cx: &mut Context<Self>) {
-        if self.draft_store.is_none() {
+        if self.draft_store.is_none() && !self.pi_models.has_draft_root() {
             return;
         }
         self.draft_save_task = Some(cx.spawn(async move |this, cx| {

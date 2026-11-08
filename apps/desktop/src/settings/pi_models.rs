@@ -6,8 +6,9 @@ use gpui_kit::{
     },
     *,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+mod draft;
 mod view;
 
 #[derive(Clone, Deserialize)]
@@ -35,14 +36,14 @@ struct Model {
     reasoning: bool,
     vision: bool,
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 struct Target {
     provider: String,
     model: Option<String>,
     is_model: bool,
     creating: bool,
 }
-#[derive(Clone, Default, PartialEq)]
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 struct Values {
     id: String,
     name: String,
@@ -56,6 +57,10 @@ struct Values {
 }
 
 pub struct PiModels {
+    draft_root: Option<std::path::PathBuf>,
+    form_path: String,
+    draft_checked: Option<String>,
+    window: AnyWindowHandle,
     snapshot: Option<Snapshot>,
     target: Option<Target>,
     initial: Values,
@@ -80,8 +85,9 @@ impl PiModels {
         let mut subscriptions = vec![];
         let mut input = |placeholder: &'static str, cx: &mut Context<HiveApp>| {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
-            subscriptions.push(cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
+            subscriptions.push(cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.schedule_draft_save(cx);
                     cx.notify();
                 }
             }));
@@ -94,6 +100,10 @@ impl PiModels {
         let context = input("留空使用 Pi 默认值", cx);
         let output = input("留空使用 Pi 默认值", cx);
         Self {
+            draft_root: None,
+            form_path: String::new(),
+            draft_checked: None,
+            window: window.window_handle(),
             snapshot: None,
             target: None,
             initial: Values::default(),
@@ -161,6 +171,7 @@ impl HiveApp {
         self.pi_models.loading = true;
         self.pi_models.message = None;
         cx.notify();
+        let window = self.pi_models.window;
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -172,23 +183,24 @@ impl HiveApp {
                     params,
                 )
                 .await;
-            let _ = this.update(cx, |this, cx| {
-                if this.connection_generation != connection
-                    || this.pi_models.generation != generation
-                {
-                    return;
-                }
-                this.pi_models.loading = false;
-                let result = result.and_then(|value| {
-                    let conflict = save && value["conflict"] == true;
-                    let snapshot: Snapshot = serde_json::from_value(if save {
-                        value["snapshot"].clone()
-                    } else {
-                        value
-                    })
-                    .map_err(|error| error.to_string())?;
-                    this.pi_models.snapshot = Some(snapshot);
-                    this.pi_models.message = Some(
+            let _ = window.update(cx, |_, window, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection
+                        || this.pi_models.generation != generation
+                    {
+                        return;
+                    }
+                    this.pi_models.loading = false;
+                    let result = result.and_then(|value| {
+                        let conflict = save && value["conflict"] == true;
+                        let snapshot: Snapshot = serde_json::from_value(if save {
+                            value["snapshot"].clone()
+                        } else {
+                            value
+                        })
+                        .map_err(|error| error.to_string())?;
+                        this.pi_models.snapshot = Some(snapshot);
+                        this.pi_models.message = Some(
                         if conflict {
                             "配置文件已在外部更新，草稿已保留。请重新编辑此项，核对新配置后再保存。"
                         } else if save {
@@ -200,16 +212,25 @@ impl HiveApp {
                         }
                         .into(),
                     );
-                    if save && !conflict {
-                        this.pi_models.target = None;
-                        this.pi_accounts.invalidate_catalog();
+                        if save && !conflict {
+                            if let Err(error) = this.pi_models.clear_draft() {
+                                this.pi_models.message =
+                                    Some(format!("配置已保存，但旧草稿未能清除：{error}"));
+                            }
+                            this.pi_models.target = None;
+                            this.pi_accounts.invalidate_catalog();
+                        }
+                        Ok(())
+                    });
+                    let succeeded = result.is_ok();
+                    if let Err(error) = result {
+                        this.pi_models.message = Some(format!("模型配置操作失败：{error}"));
                     }
-                    Ok(())
+                    if succeeded && !save && this.pi_models.snapshot.is_some() {
+                        this.restore_pi_model_draft(window, cx);
+                    }
+                    cx.notify();
                 });
-                if let Err(error) = result {
-                    this.pi_models.message = Some(format!("模型配置操作失败：{error}"));
-                }
-                cx.notify();
             });
         })
         .detach();
@@ -293,9 +314,32 @@ impl HiveApp {
                 value.api = "openai-completions".into();
             }
         }
-        self.pi_models.revision = snapshot.revision.clone();
+        let revision = snapshot.revision.clone();
+        let path = snapshot.path.clone();
+        if let Err(error) = self.pi_models.clear_draft() {
+            self.pi_models.message = Some(format!("无法丢弃本地草稿，表单已保留：{error}"));
+            cx.notify();
+            return;
+        }
+        self.pi_models.form_path = path;
+        self.pi_models.revision = revision;
         self.pi_models.target = target;
         self.pi_models.initial = value.clone();
+        self.apply_pi_model_values(value, window, cx);
+        self.pi_models.message = None;
+        self.pi_models.scroll.set_offset(point(px(0.), px(0.)));
+        if self.pi_models.target.is_some() {
+            let focus = self.pi_models.name.read(cx).focus_handle(cx);
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        }
+        cx.notify();
+    }
+    fn apply_pi_model_values(
+        &mut self,
+        value: Values,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.pi_models.api = value.api;
         self.pi_models.reasoning = value.reasoning;
         self.pi_models.vision = value.vision;
@@ -309,18 +353,21 @@ impl HiveApp {
         ] {
             input.update(cx, |input, cx| input.set_value(text, window, cx));
         }
-        self.pi_models.message = None;
-        self.pi_models.scroll.set_offset(point(px(0.), px(0.)));
-        if self.pi_models.target.is_some() {
-            let focus = self.pi_models.name.read(cx).focus_handle(cx);
-            window.on_next_frame(move |window, cx| focus.focus(window, cx));
-        }
-        cx.notify();
     }
     fn save_pi_model_form(&mut self, cx: &mut Context<Self>) {
         let Some(target) = self.pi_models.target.clone() else {
             return;
         };
+        if self
+            .pi_models
+            .snapshot
+            .as_ref()
+            .is_none_or(|snapshot| snapshot.path != self.pi_models.form_path)
+        {
+            self.pi_models.message = Some("配置路径已改变，请重新读取并核对草稿。".into());
+            cx.notify();
+            return;
+        }
         let value = self.pi_models.values(cx);
         let optional = |value: String| if value.is_empty() { None } else { Some(value) };
         let change = if target.is_model {
