@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 界面字号（2026-11-08）
+
+对照 Cindy 外观页增加 12–20 px 界面字号、恢复默认及阅读预览，使用原生 Theme 字体尺度，兼容旧主题文件。Mac 系统操作验证上下限、主题切换、约642逻辑像素窄窗、设置搜索、真实写入失败保留原值及完整退出冷恢复。cargo check/build、两项偏好文件检查通过；未运行无关 runtime 全量测试。见 [字号验证](validation/2026-11-08-interface-font-size.md)。开发 ZIP 与 Windows 状态单列。
+
 ## 成员职责（2026-11-08）
 
 桌面补回现有 Hive description 字段，成员卡片支持摘要、展开/收起、原文复制及职责正文搜索。真实 Hive/SQLite 数据与 Mac 系统操作验证宽窄窗口、空职责、刷新及成员会话往返；粘贴后的草稿逐字匹配原文，最终进程正常零退出。已校准系统自动化滚动方向并撤销多余布局尝试。cargo check/build 通过，没有后端/测试改动。见 [成员职责验证](validation/2026-11-08-member-responsibilities.md)。新源码尚未进入开发 ZIP，Windows 与完整目标继续开放。

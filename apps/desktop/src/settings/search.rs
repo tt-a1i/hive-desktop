@@ -22,8 +22,8 @@ const ENTRIES: &[Entry] = &[
     Entry {
         section: Some(SettingsSection::Appearance),
         title: "外观",
-        description: "跟随系统、浅色与深色主题",
-        keywords: "theme appearance light dark 主题 颜色",
+        description: "主题、界面字号与阅读预览",
+        keywords: "theme appearance light dark font size text 主题 颜色 字体 字号 大小 阅读 缩放",
     },
     Entry {
         section: Some(SettingsSection::Chat),

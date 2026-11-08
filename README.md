@@ -71,6 +71,8 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 团队成员可展开、复制并按正文搜索已有职责说明，空职责单独提示；验证范围见 [成员职责](docs/validation/2026-11-08-member-responsibilities.md)。
 
+“设置 → 外观”支持界面字号、阅读预览及恢复默认，主题切换和重开保留设置；范围见 [字号验证](docs/validation/2026-11-08-interface-font-size.md)。
+
 协作概览中的任务编辑草稿会在退出后恢复，包括多项目、空文档编辑和冲突版本；恢复后保存仍检查团队文档的原基线。见 [任务草稿验证](docs/validation/2026-11-08-task-drafts.md)。
 
 “设置 → 聊天”可选择 Enter 或 Cmd/Ctrl+Enter 发送，并在重开后保留；输入法组合态不会触发键盘发送。验证边界见 [发送快捷键](docs/validation/2026-11-08-composer-shortcuts.md)。
