@@ -55,6 +55,7 @@ impl HiveApp {
             .children(language::message(cx).map(|message| div().text_sm().child(message)))
     }
     pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
+        self.memory.localize_placeholder(window, cx);
         for (input, label) in [
             (&self.settings_search, "搜索设置，如模型、通知、快捷键…"),
             (&self.session_name, "会话名称"),

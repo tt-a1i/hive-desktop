@@ -77,3 +77,12 @@
 - `git diff --check`通过。未跑无差别全量测试；本批UI文案与纯数据结构归属调整使用上述定向检查，未改动/删除既有测试。没有模型请求。
 
 用户回复解锁后再次选择仍运行的原生应用，工具依然明确报告Mac锁屏；实际英文排版、切换、草稿/输入法及窄窗未验收。未重启或删除运行中的验证应用，未制作新ZIP，完整语言覆盖和#17均未完成。收据`.artifacts/language/members-receipt.json`。
+
+
+## 记忆页语言
+
+第五批累计426条英文目录（新增47条），覆盖记忆状态/类型/来源、搜索/范围/注入设置、详情及操作、动态数量与相对时间。正文、标签、作者、来源摘录、引用标题/类型/编号、未知状态码和原始错误仍为实际原文。切换只更新query的placeholder，不改搜索值、筛选码或selection；记录的成功提示与加载/变更失败在render取语言，不增加请求或改变跨工作区操作结果归属。
+
+现有language::tests 1通过，Mac构建、Windows MSVC类型检查及git diff --check通过；现有`checks/workspace-memory.ts`在包内Node22下跑真实Hive HTTP/SQLite回归成功（合成隔离记忆，无模型请求），收据`.artifacts/workspace-memory-xdsD8j/receipt.json`。没有新增或删除UI测试，未跑全量测试，本批改动限UI与错误显示；未改后台语义。新增目录项也供共用标签复用，但不据此宣称其他页面迁移完成。
+
+本批原生语言/草稿/输入法/长英文排版及两个平台GUI仍待验收，继承上文工具明确报告的锁屏阻断；没有新ZIP或完整界面交付结论。阶段收据`.artifacts/language/memory-receipt.json`。

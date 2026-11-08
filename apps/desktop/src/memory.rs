@@ -1,6 +1,6 @@
 mod view;
 
-use crate::app::HiveApp;
+use crate::{app::HiveApp, language::{english, tr}};
 use gpui_kit::{component::input::InputState, *};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -59,18 +59,32 @@ pub struct Memory {
     enabled: Option<bool>,
     loading: bool,
     acting: bool,
-    error: Option<String>,
+    error: Option<MemoryError>,
     settings_error: Option<String>,
-    notice: Option<String>,
+    notice: Option<&'static str>,
     generation: u64,
     pending_actions: HashSet<String>,
-    action_results: HashMap<String, Result<(), String>>,
+    action_results: HashMap<String, Result<(), MemoryError>>,
+}
+#[derive(Clone)]
+enum MemoryError { Load(String), Save(String) }
+impl MemoryError {
+    fn text(&self) -> String {
+        let (key, error) = match self {
+            Self::Load(error) => ("读取记忆失败", error),
+            Self::Save(error) => ("保存记忆变更失败", error),
+        };
+        format!("{}: {error}", tr(key))
+    }
 }
 impl Memory {
+    pub(crate) fn localize_placeholder(&self, window: &mut Window, cx: &mut App) {
+        self.query.update(cx, |input, cx| input.set_placeholder(tr("搜索记忆内容…"), window, cx));
+    }
     pub fn new(window: &mut Window, cx: &mut Context<HiveApp>) -> Self {
         Self {
             visible: false,
-            query: cx.new(|cx| InputState::new(window, cx).placeholder("搜索记忆内容…")),
+            query: cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索记忆内容…"))),
             status: "active",
             scope: "workspace",
             workspace: None,
@@ -103,20 +117,20 @@ fn encoded(value: &str) -> String {
 }
 fn status_label(status: &str) -> &str {
     match status {
-        "active" => "有效",
-        "candidate" => "待审核",
-        "rejected" => "已拒绝",
-        "archived" => "已归档",
+        "active" => tr("有效"),
+        "candidate" => tr("待审核"),
+        "rejected" => tr("已拒绝"),
+        "archived" => tr("已归档"),
         _ => status,
     }
 }
 fn kind_label(kind: &str) -> &str {
     match kind {
-        "fact" => "事实",
-        "preference" => "偏好",
-        "decision" => "决策",
-        "pitfall" => "注意事项",
-        "procedure_ref" => "流程引用",
+        "fact" => tr("事实"),
+        "preference" => tr("偏好"),
+        "decision" => tr("决策"),
+        "pitfall" => tr("注意事项"),
+        "procedure_ref" => tr("流程引用"),
         _ => kind,
     }
 }
@@ -128,22 +142,22 @@ fn updated_label(timestamp: u64) -> String {
         .as_secs();
     let age = now.saturating_sub(timestamp / 1000);
     if age < 60 {
-        "刚刚".into()
+        tr("刚刚").into()
     } else if age < 3600 {
-        format!("{} 分钟前", age / 60)
+        if english() { format!("{}m ago", age / 60) } else { format!("{} 分钟前", age / 60) }
     } else if age < 86400 {
-        format!("{} 小时前", age / 3600)
+        if english() { format!("{}h ago", age / 3600) } else { format!("{} 小时前", age / 3600) }
     } else {
-        format!("{} 天前", age / 86400)
+        if english() { format!("{}d ago", age / 86400) } else { format!("{} 天前", age / 86400) }
     }
 }
 fn source_label(value: &str) -> &str {
     match value {
-        "manual" => "手动记录",
-        "message" => "消息",
-        "dispatch" => "派单",
-        "report" => "汇报",
-        "dream" => "后台整理",
+        "manual" => tr("手动记录"),
+        "message" => tr("消息"),
+        "dispatch" => tr("派单"),
+        "report" => tr("汇报"),
+        "dream" => tr("后台整理"),
         _ => value,
     }
 }
@@ -196,7 +210,7 @@ impl HiveApp {
             .action_results
             .get(&workspace)
             .filter(|result| result.is_ok())
-            .map(|_| "已保存".into());
+            .map(|_| "已保存");
         m.settings_error = None;
         m.entries.clear();
         m.enabled = None;
@@ -210,8 +224,8 @@ impl HiveApp {
                 let m = &mut this.memory;
                 if !m.visible || this.workspace.as_ref() != Some(&workspace) || m.generation != generation { return; }
                 m.loading = false;
-                match list { Ok(list) => m.entries = list.memories, Err(error) => m.error = Some(format!("读取记忆失败：{error}")) }
-                match settings { Ok(settings) => m.enabled = Some(settings.enabled), Err(error) => m.settings_error = Some(format!("读取注入设置失败：{error}")) }
+                match list { Ok(list) => m.entries = list.memories, Err(error) => m.error = Some(MemoryError::Load(error)) }
+                match settings { Ok(settings) => m.enabled = Some(settings.enabled), Err(error) => m.settings_error = Some(error) }
                 cx.notify();
             });
         }).detach();
@@ -252,7 +266,7 @@ impl HiveApp {
                     result.and_then(|value| serde_json::from_value::<MemorySettings>(value).map_err(|error| error.to_string())).map(|_| ())
                 } else {
                     result.and_then(|value| serde_json::from_value::<MemoryMutation>(value).map_err(|error| error.to_string())).map(|response| { let _ = response.memory; })
-                }.map_err(|error| format!("保存记忆变更失败：{error}"));
+                }.map_err(MemoryError::Save);
                 if !this.memory.pending_actions.remove(&workspace) { return; }
                 this.memory.action_results.insert(workspace.clone(), outcome);
                 if this.memory.visible && this.workspace.as_ref() == Some(&workspace) {
