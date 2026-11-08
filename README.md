@@ -38,7 +38,7 @@ pnpm install
 pnpm dev
 ```
 
-应用使用独立的桌面数据目录，读取 Pi 的现有模型与认证配置。“设置 → 内置 Pi”支持 SDK 原生订阅登录、API 多步配置、提供商搜索和移除本机登录信息，复用 Pi 凭据；“设置 → 模型与接口”可添加兼容接口、编辑自定义模型及能力，保留 Pi 配置中的高级字段；见 [模型配置验证](docs/validation/2026-11-08-pi-model-config.md)。已有 modelOverrides 条目支持编辑、恢复继承和移除，见 [覆盖配置](docs/validation/2026-11-08-pi-model-overrides.md)。模型配置表单支持自动保存本地草稿与重启恢复，并保留外部修改冲突检查，见 [草稿验证](docs/validation/2026-11-08-pi-model-drafts.md)。桌面内切换会话模型不会改写 Pi 的全局默认。外部程序页可先检查当前输入的版本及实际命令来源，再保存；不运行模型，版本一致也不等于完整兼容性验收。见 [程序检查](docs/validation/2026-11-08-executable-check.md)。运行方式与环境变量见 [桌面应用](apps/desktop/README.md)。
+应用使用独立的桌面数据目录，读取 Pi 的现有模型与认证配置。“设置 → 内置 Pi”支持 SDK 原生订阅登录、API 多步配置、提供商搜索和移除本机登录信息，复用 Pi 凭据；“设置 → 模型与接口”可添加兼容接口、编辑自定义模型及能力，保留 Pi 配置中的高级字段；见 [模型配置验证](docs/validation/2026-11-08-pi-model-config.md)。已有 modelOverrides 条目支持编辑、恢复继承和移除，见 [覆盖配置](docs/validation/2026-11-08-pi-model-overrides.md)。模型配置表单支持自动保存本地草稿与重启恢复，并保留外部修改冲突检查，见 [草稿验证](docs/validation/2026-11-08-pi-model-drafts.md)。桌面内切换会话模型不会改写 Pi 的全局默认。设置支持按名称与关键词搜索、Enter 打开和窄窗口导航，见 [设置搜索](docs/validation/2026-11-08-settings-search.md)。外部程序页可先检查当前输入的版本及实际命令来源，再保存；不运行模型，版本一致也不等于完整兼容性验收。见 [程序检查](docs/validation/2026-11-08-executable-check.md)。运行方式与环境变量见 [桌面应用](apps/desktop/README.md)。
 
 ```sh
 pnpm check
@@ -49,7 +49,7 @@ pnpm --filter @hive-desktop/runtime check:team
 
 这些检查使用临时数据目录，其中团队集成会运行真实 Hive HTTP / SQLite、Pi SDK 和 team CLI，但暂停模型执行。真实模型验证固定使用 Pi 原生 OpenAI / ChatGPT 接入的 `gpt-6.1-terra`，不依赖 Magpie；见 [协作验收记录](docs/validation/2026-11-07-structured-team.md)。
 
-当前 Mac 开发包及其验证边界见 [任务监听修复开发包](docs/validation/2026-11-08-tasks-watcher-lifecycle.md#mac-开发包)。普通文件草稿使用紧凑文件行，草稿和历史中的文本附件可直接只读预览、复制、重新读取，见 [附件阅读](docs/validation/2026-11-08-attachment-preview.md)。普通文件和图片可选择/粘贴文件/拖放、混合或单独发送，并保留草稿和历史；普通文件通过 Hive 上传副本路径交给 Agent 按需读取。原始 Codex Terra 已实际读取删除源文件后的副本，并在桌面恢复工具记录和文件卡片，见 [文件验证](docs/validation/2026-11-08-file-attachments.md)。图片的原图查看、复制/保存已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。真实 Terra 识图本轮因 OpenAI OAuth grant 失效未通过，系统保存对话框、长图片历史性能和 Windows 原生体验仍待验收，见 [图片输入验证](docs/validation/2026-11-08-image-input.md)。
+当前 Mac 开发包及其验证边界见 [设置搜索开发包](docs/validation/2026-11-08-settings-search.md#mac-开发包)。普通文件草稿使用紧凑文件行，草稿和历史中的文本附件可直接只读预览、复制、重新读取，见 [附件阅读](docs/validation/2026-11-08-attachment-preview.md)。普通文件和图片可选择/粘贴文件/拖放、混合或单独发送，并保留草稿和历史；普通文件通过 Hive 上传副本路径交给 Agent 按需读取。原始 Codex Terra 已实际读取删除源文件后的副本，并在桌面恢复工具记录和文件卡片，见 [文件验证](docs/validation/2026-11-08-file-attachments.md)。图片的原图查看、复制/保存已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。真实 Terra 识图本轮因 OpenAI OAuth grant 失效未通过，系统保存对话框、长图片历史性能和 Windows 原生体验仍待验收，见 [图片输入验证](docs/validation/2026-11-08-image-input.md)。
 
 Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令处理，协作派单、汇报及恢复文本保持原有非交互投递。原始输入、实际后端消息及来源分开保留，见 [Pi 输入验证](docs/validation/2026-11-08-pi-user-input.md)。输入 `/` 或使用输入区命令按钮可筛选当前原生会话实际加载的技能、模板和扩展命令，选择只补入草稿，见 [命令选择验证](docs/validation/2026-11-08-pi-command-picker.md)。上述开发 ZIP 已纳入原生输入、选择器和历史/持久化修复；Windows 与正式发行边界单列。
 

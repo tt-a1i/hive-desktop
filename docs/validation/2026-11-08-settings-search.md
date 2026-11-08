@@ -17,3 +17,12 @@
 ## 范围
 
 本次补设置查找，不复制参考应用尚未纳入目标范围的账号、语音或云功能。Mac源码与实际系统流程通过，开发包后续记录；Windows原生及完整体验目标继续开放。
+
+
+## Mac 开发包
+
+ZIP `.artifacts/hive-desktop-macos-arm64-settings-search.zip`，源1b9c59effbe7491edd0068e52223f7be19e4e852，SHA256 `fc79c057d3cc01dbc9fc2dc9ce595722999d4f418b190ed43fc15b61243ac1d7`。程序SHA256 `544a4c250ff2d06b2cd0c5626a7256d3f314407269cb7214303240caade8cc8c`。核对lock/patch/workspace及依赖元数据不变后复用上一任务监听包，更新生产原生程序；108个runtime文件未变，独立解压后逐文件和程序校验匹配。
+
+包内真实PTY/Hive/SQLite smoke、任务监听生命周期gate和生产窗口启动恢复通过。实际系统CUA用包内Node/runtime验证Codex path→Enter打开外部程序、中文粘贴快捷键→Enter打开聊天；owned进程17026正常零退出，无厂商推理。为隔离同名应用，只修改解压验证副本Info.plist标识/名称与app目录名，程序及108个runtime文件再次匹配，原ZIP不变。
+
+收据和日志 `.artifacts/settings-search-package/`。未签名/未公证的Mac arm64开发包，未声称Windows原生或完整产品验收完成。

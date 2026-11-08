@@ -297,3 +297,8 @@ Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限�
 ## 2026-11-08 设置查找
 
 对照Cindy实际设置入口补本地名称/关键词搜索，复用现有8个设置/角色页面；支持中英文多词、Enter、空结果和清除，不索引配置/凭据值。实际系统输入与约642逻辑像素窄窗口、未保存路径/模型表单保留通过，修正结果左对齐。cargo check/build通过；无后端变化。见 [验证记录](validation/2026-11-08-settings-search.md)。开发包与Windows状态单列。
+
+
+## 2026-11-08 设置搜索开发包补验
+
+新Mac ZIP纳入1b9c59e，生产程序及未变的108个runtime逐文件匹配；包内PTY/Hive/SQLite、任务监听和启动恢复通过。系统CUA用包内Node/runtime完成英文路径与中文快捷键的Enter跳页，进程正常退出。验证副本仅改应用身份/目录，程序/runtime/原ZIP不变。见 [包内证据](validation/2026-11-08-settings-search.md#mac-开发包)。#9的Mac范围完成，完整体验与Windows继续开放。
