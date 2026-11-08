@@ -29,6 +29,7 @@ pub enum SettingsSection {
 }
 
 pub struct ToolPresentation {
+    pub patch: Option<String>,
     pub name: String,
     pub status: &'static str,
     pub expanded: bool,

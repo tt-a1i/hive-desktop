@@ -439,6 +439,7 @@ impl HiveApp {
                 text,
                 cx,
             );
+            self.retain_tool_patch(message["toolCallId"].as_str().unwrap_or(&id), message);
         } else {
             self.upsert(id.clone(), role, text, false, cx);
             if role == "assistant" {
@@ -481,6 +482,7 @@ impl HiveApp {
                 tool.status = status;
             } else {
                 message.tool = Some(ToolPresentation {
+                    patch: None,
                     name,
                     status,
                     expanded: false,
@@ -649,6 +651,7 @@ impl HiveApp {
                 is_error,
                 ..
             } => {
+                let call_id = tool_call_id.clone();
                 self.upsert_tool(
                     tool_call_id,
                     tool_name,
@@ -656,6 +659,7 @@ impl HiveApp {
                     message_text(&result),
                     cx,
                 );
+                self.retain_tool_patch(&call_id, &result);
             }
             PiEvent::Settled { aborted, .. } => {
                 self.load_usage(cx);

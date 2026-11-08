@@ -262,20 +262,58 @@ impl HiveApp {
                             })
                         })
                         .child(
-                            h_flex().justify_end().child(
-                                Button::new(("copy-tool", index))
-                                    .ghost()
-                                    .compact()
-                                    .icon(Glyph::Copy)
-                                    .disabled(details.is_empty())
-                                    .tooltip("复制详情")
-                                    .accessibility_label(format!("复制 {} 工具详情", tool.name))
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            details.clone(),
-                                        ))
-                                    })),
-                            ),
+                            h_flex()
+                                .justify_end()
+                                .gap_2()
+                                .when(
+                                    crate::tool_diff::data::available(
+                                        &tool.name,
+                                        input.unwrap_or(&serde_json::Value::Null),
+                                        tool.patch.as_deref(),
+                                    ),
+                                    |row| {
+                                        let args = input.cloned().unwrap_or_default();
+                                        let name = tool.name.clone();
+                                        let patch = tool.patch.clone();
+                                        let status = tool.status;
+                                        row.child(
+                                            Button::new(SharedString::from(format!(
+                                                "tool-diff-{id}"
+                                            )))
+                                            .ghost()
+                                            .compact()
+                                            .label("查看改动")
+                                            .accessibility_label(format!(
+                                                "查看 {} 记录的改动",
+                                                tool.name
+                                            ))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.open_tool_diff(
+                                                    name.clone(),
+                                                    args.clone(),
+                                                    patch.clone(),
+                                                    status,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                        )
+                                    },
+                                )
+                                .child(
+                                    Button::new(("copy-tool", index))
+                                        .ghost()
+                                        .compact()
+                                        .icon(Glyph::Copy)
+                                        .disabled(details.is_empty())
+                                        .tooltip("复制详情")
+                                        .accessibility_label(format!("复制 {} 工具详情", tool.name))
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                details.clone(),
+                                            ))
+                                        })),
+                                ),
                         ),
                 )
             })

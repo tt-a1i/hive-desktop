@@ -29,6 +29,7 @@ mod shell_owner;
 mod terminal;
 mod thinking;
 mod tool_message;
+mod tool_diff;
 mod text_reading;
 mod file_viewer;
 mod transport;

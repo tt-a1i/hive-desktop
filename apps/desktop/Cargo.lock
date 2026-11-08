@@ -2775,6 +2775,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "similar",
  "smol",
  "tempfile",
  "url",
