@@ -339,6 +339,12 @@ impl Render for HiveApp {
         let has_text = !self.input.read(cx).value().trim().is_empty()
             || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
         self.composer_has_text = has_text;
+        let member_search = self.member_search.read(cx).value().trim().to_lowercase();
+        let matching_members: Vec<_> = self.members.iter().enumerate().filter(|(_, member)| {
+            (self.member_status_filter == "all" || member.status == self.member_status_filter)
+                && (member_search.is_empty() || format!("{} {} {} {}", member.name, member.role, member.role_label(), member.backend_label()).to_lowercase().contains(&member_search))
+        }).collect();
+        let member_browsing = !member_search.is_empty() || self.member_status_filter != "all";
         let member_query = self
             .member_model_search
             .read(cx)
@@ -456,6 +462,7 @@ impl Render for HiveApp {
                     .child(div().flex_1().text_xs().text_color(Color::Muted.get(cx)).child(if self.member_loading { "更新中".into() } else { format!("{} 位", self.members.len()) }))
                     .child(Button::new("refresh-members").ghost().compact().icon(Glyph::RefreshCw).tooltip("刷新成员").accessibility_label("刷新成员").disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_members(cx))))
                     .child(Button::new("toggle-member-form").ghost().icon(Glyph::Plus).label(if self.member_form_open { "收起表单" } else { "添加成员" }).on_click(cx.listener(|this, _, _, cx| { this.member_form_open = !this.member_form_open; cx.notify(); }))))
+                .child(self.render_member_filters(matching_members.len(), member_browsing, cx))
                 .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
                 .when_some(self.member_error.clone(), |view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
                 .child(v_flex().id("members-panel").flex_1().min_h_0().min_w_0().overflow_y_scroll().gap_2()
@@ -473,7 +480,10 @@ impl Render for HiveApp {
                         .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("还没有团队成员"))
                         .child(Button::new("first-member").rounded_full().icon(Glyph::Plus).label("添加第一位成员")
                             .on_click(cx.listener(|this, _, window, cx| { this.member_form_open = true; this.member_name.update(cx, |input, cx| input.focus(window, cx)); cx.notify(); })))))
-                    .children(self.members.iter().enumerate().map(|(i, member)| {
+                    .when(!self.members.is_empty() && matching_members.is_empty(), |view|view.child(v_flex().items_center().gap_2().py_6()
+                        .child(div().text_sm().child("没有匹配的成员"))
+                        .child(div().text_xs().text_color(Color::Muted.get(cx)).child("尝试其他名称、角色或 Agent，或清除筛选。"))))
+                    .children(matching_members.into_iter().map(|(i, member)| {
                         let id = member.id.clone();
                         let workspace = self.workspace.clone().unwrap_or_default();
                         let editing = self.editing_member.as_ref() == Some(&id);

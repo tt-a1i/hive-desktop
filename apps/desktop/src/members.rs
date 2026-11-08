@@ -4,9 +4,11 @@ use crate::{
 };
 use gpui_kit::{
     assets::IconName as Glyph,
+    prelude::FluentBuilder,
     component::{
         button::{Button, ButtonVariants},
         menu::{DropdownMenu, PopupMenuItem},
+        input::Input,
         *,
     },
     *,
@@ -327,5 +329,79 @@ impl HiveApp {
                 }
             });
         }).detach();
+    }
+}
+
+impl HiveApp {
+    pub(crate) fn render_member_filters(
+        &self,
+        count: usize,
+        filtering: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .gap_2()
+            .child(Input::new(&self.member_search).aria_label("搜索团队成员"))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_1()
+                    .children(
+                        [
+                            ("all", "全部"),
+                            ("working", "工作中"),
+                            ("idle", "待命"),
+                            ("stopped", "已停止"),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (status, label))| {
+                            let count = self
+                                .members
+                                .iter()
+                                .filter(|member| status == "all" || member.status == status)
+                                .count();
+                            Button::new(("member-status-filter", i))
+                                .ghost()
+                                .compact()
+                                .label(format!("{label} {count}"))
+                                .accessibility_label(format!("筛选成员：{label}"))
+                                .selected(self.member_status_filter == status)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.member_status_filter = status;
+                                    cx.notify();
+                                }))
+                        }),
+                    )
+                    .when(filtering, |row| {
+                        row.child(
+                            Button::new("clear-member-filters")
+                                .ghost()
+                                .compact()
+                                .label("清除筛选")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.member_status_filter = "all";
+                                    this.member_search
+                                        .update(cx, |input, cx| input.set_value("", window, cx));
+                                    cx.notify();
+                                })),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(crate::palette::Color::Muted.get(cx))
+                    .child("工作中表示有未完成派单；待命表示当前没有派单。"),
+            )
+            .when(filtering, |view| {
+                view.child(
+                    div()
+                        .text_xs()
+                        .text_color(crate::palette::Color::Muted.get(cx))
+                        .child(format!("显示 {count} / {} 位成员", self.members.len())),
+                )
+            })
     }
 }

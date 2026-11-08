@@ -111,6 +111,8 @@ pub struct HiveApp {
     pub roles: crate::roles::Roles,
     pub member_rename: Entity<InputState>,
     pub member_model_search: Entity<InputState>,
+    pub member_search: Entity<InputState>,
+    pub member_status_filter: &'static str,
     pub member_picker_target: Option<String>,
     pub member_catalog_backend: Option<String>,
     pub member_catalog: Vec<Model>,
@@ -211,6 +213,7 @@ pub struct HiveApp {
     _composer_subscription: Subscription,
     _model_search_subscription: Subscription,
     _member_model_search_subscription: Subscription,
+    _member_search_subscription: Subscription,
 }
 impl HiveApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -295,6 +298,14 @@ impl HiveApp {
                     cx.notify();
                 }
             });
+        let member_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("搜索成员、角色或 Agent…"));
+        let member_search_subscription =
+            cx.subscribe_in(&member_search, window, |_, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            });
         let member_model_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索提供商或模型"));
         let member_model_search_subscription = cx.subscribe_in(
@@ -374,6 +385,8 @@ impl HiveApp {
             roles: crate::roles::Roles::new(),
             member_rename: cx.new(|cx| InputState::new(window, cx).placeholder("新名称")),
             member_model_search,
+            member_search,
+            member_status_filter: "all",
             member_picker_target: None,
             member_catalog_backend: None,
             member_catalog: vec![],
@@ -422,6 +435,7 @@ impl HiveApp {
             deleting_member: None,
             _model_search_subscription: model_search_subscription,
             _member_model_search_subscription: member_model_search_subscription,
+            _member_search_subscription: member_search_subscription,
             runtime: None,
             workspaces: vec![],
             workspace: None,
