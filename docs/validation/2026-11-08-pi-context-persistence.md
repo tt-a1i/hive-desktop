@@ -20,3 +20,13 @@
 `check:pi-models`、`check:pi-reasoning`、`check:team` 和新增检查通过，runtime 构建通过。模型/推理相关检查均使用 gpt-6.1-terra 的本地配置或拒绝/合成回环服务，无厂商推理。没有改全局认证/模型默认，也没有新增权限审批或依赖。没有删除测试，纯 UI 未改；不重复无关全量检查或未变的 Rust/Windows 交叉构建。
 
 包内 Pi gate 纳入同一检查，POSIX 权限注入不作为 Windows ACL 验收。源码修复与最新已打包版本须分开核对，开发包记录以其源提交和收据为准。
+
+## 已刷新开发包
+
+`.artifacts/hive-desktop-macos-arm64-pi-write-guards.zip` 纳入源码 `bde9d6c80ca96df65c16d49e48de6708b5cfb377`，仍为未签名/未公证的 Mac arm64 开发 ZIP。SHA256：`b0dead1908b0c37dd64045c834631e44eab5d0b2ce16c498e13582702b5b9789`。
+
+从上一份已验证 Pi 开发包复用相同冻结依赖与 Node，校验元数据和基础 ZIP 后完整刷新 runtime。106 个 runtime 文件与源码构建及新 ZIP 独立解压文件匹配，只有 agents/pi.js 和 map 相对前包变化；生产二进制哈希相同。包内五组 Pi 检查、真实 PTY/Hive/SQLite 和实际窗口启动恢复通过。
+
+上一份 47ac3de 开发包通过前四组 Pi 检查，但被新增上下文写入检查的真实“失败后仍可复用句柄”断言拒绝；新包相同检查通过，负向日志在 `.artifacts/pi-write-guards-package/old-package-negative.log`。新包所有记录见同目录 package-receipt.json 与 gate 日志。
+
+没有重复未改的 Codex 二进制/协议或整套系统鼠标/输入法矩阵；上一包的命令选择实际系统操作记录仍单独保留，不当成新包重测。Windows 原生/ACL 和正式安装仍待完成。
