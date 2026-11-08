@@ -18,7 +18,7 @@
 
 ## 证据和校准
 
-本机 `.artifacts/workflows/` 保存 seed/runner、backend-receipt、ui-persistence-receipt、native-stop-receipt、recovery-receipt、日志及截图；不是新的依赖副本。原生用当前 `apps/desktop/target/debug/hive-desktop` 和 `packages/runtime/dist/main.js`，只复用保留的包内 Node，不使用旧包 runtime 冒充新代码。当前 ZIP 尚未纳入这批 UI。
+本机 `.artifacts/workflows/` 保存 seed/runner、backend-receipt、ui-persistence-receipt、native-stop-receipt、recovery-receipt、日志及截图；不是新的依赖副本。原生用当前 `apps/desktop/target/debug/hive-desktop` 和 `packages/runtime/dist/main.js`，只复用保留的包内 Node，不使用旧包 runtime 冒充新代码。该初轮记录之后，current ZIP 已更新到 c18617d；包内范围见[当前开发包](2026-11-08-current-package.md)。
 
 脚本与 Agent 配置均为 owned 验收数据。仅配置 `openai/gpt-6.1-terra`，提供商固定 `127.0.0.1:9`，没有访问厂商或模型推理；工作流结束通知曾尝试投递到这个不可达回环地址，产生的投递失败不作为模型协作验收。
 
@@ -46,4 +46,4 @@ CUA 曾遇锁屏、ScreenCaptureKit -3811、noWindowsAvailable 和滞后画面�
 
 ## 尚未验收
 
-#13 保持开放：删除最终按钮、跨连接在途操作的精确时序、大历史性能及 Windows 原生仍需验证；新的 Mac 开发包尚待更新。父目标 #1、Cindy 完整体验对标和正式签名发行没有完成。允许列表来自 Hive，不代表八种 CLI 都已获得桌面结构化会话或工作流兼容性验收。
+#13 保持开放：删除最终按钮、跨连接在途操作的精确时序、大历史性能及 Windows 原生仍需验证；Mac 开发包已更新且独立物理往返验证通过，见[当前开发包](2026-11-08-current-package.md)。父目标 #1、Cindy 完整体验对标和正式签名发行没有完成。允许列表来自 Hive，不代表八种 CLI 都已获得桌面结构化会话或工作流兼容性验收。
