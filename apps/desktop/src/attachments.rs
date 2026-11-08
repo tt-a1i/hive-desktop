@@ -1,3 +1,4 @@
+mod files;
 use crate::{app::HiveApp, palette::Color};
 use base64::Engine;
 use gpui_kit::{
@@ -27,6 +28,23 @@ pub(crate) struct AttachmentRef {
     pub mime_type: String,
     pub size: u64,
 }
+impl AttachmentRef {
+    pub fn is_image(&self) -> bool {
+        matches!(
+            self.mime_type.as_str(),
+            "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+        )
+    }
+    pub fn size_label(&self) -> String {
+        if self.size < 1024 {
+            format!("{} B", self.size)
+        } else if self.size < 1024 * 1024 {
+            format!("{:.1} KB", self.size as f64 / 1024.)
+        } else {
+            format!("{:.1} MB", self.size as f64 / 1048576.)
+        }
+    }
+}
 #[derive(Deserialize)]
 struct ImageWire {
     data: String,
@@ -34,7 +52,7 @@ struct ImageWire {
 #[derive(Deserialize)]
 struct StagedImage {
     attachment: AttachmentRef,
-    image: ImageWire,
+    image: Option<ImageWire>,
 }
 #[derive(Clone)]
 pub(crate) struct ImagePreview {
@@ -48,6 +66,7 @@ pub(crate) struct Attachments {
     failed: HashMap<String, String>,
     pub loading: HashSet<String>,
     preparing: HashSet<String>,
+    verified: HashSet<String>,
 }
 fn preview(data: String, renderer: SvgRenderer) -> Result<ImagePreview, String> {
     let bytes = base64::engine::general_purpose::STANDARD
@@ -98,11 +117,13 @@ impl Attachments {
             .collect::<HashSet<_>>();
         self.previews.retain(|id, _| ids.contains(id));
         self.failed.retain(|id, _| ids.contains(id));
+        self.verified.retain(|id| ids.contains(id));
     }
     pub fn reset_connection(&mut self) {
         self.loading.clear();
         self.preparing.clear();
         self.failed.clear();
+        self.verified.clear();
     }
     pub fn refs(&self, key: Option<&String>) -> Vec<AttachmentRef> {
         key.and_then(|key| self.drafts.get(key))
@@ -113,9 +134,9 @@ impl Attachments {
         key.is_none_or(|key| {
             !self.loading.contains(key)
                 && self.drafts.get(key).is_none_or(|items| {
-                    items
-                        .iter()
-                        .all(|item| self.previews.contains_key(&item.id))
+                    items.iter().all(|item| {
+                        self.previews.contains_key(&item.id) || self.verified.contains(&item.id)
+                    })
                 })
         })
     }
@@ -133,7 +154,7 @@ impl HiveApp {
             files: true,
             directories: false,
             multiple: true,
-            prompt: Some("选择 PNG、JPEG、GIF 或 WebP 图片".into()),
+            prompt: Some("选择图片、文档或其他文件".into()),
         });
         cx.spawn(async move |this, cx| match receiver.await {
             Ok(Ok(Some(paths))) => {
@@ -141,7 +162,7 @@ impl HiveApp {
                     if this.draft_target == target && this.workspace == workspace {
                         this.import_image_paths(paths, cx);
                     } else {
-                        this.error = Some("会话已变化，请在目标会话重新选择图片。".into());
+                        this.error = Some("会话已变化，请在目标会话重新选择附件。".into());
                         cx.notify();
                     }
                 });
@@ -149,7 +170,7 @@ impl HiveApp {
             Ok(Ok(None)) => {}
             error => {
                 let _ = this.update(cx, |this, cx| {
-                    this.error = Some(format!("选择图片失败：{error:?}"));
+                    this.error = Some(format!("选择文件失败：{error:?}"));
                     cx.notify();
                 });
             }
@@ -178,7 +199,7 @@ impl HiveApp {
             self.draft_target.clone(),
             self.runtime.clone(),
         ) else {
-            self.error = Some("请先选择项目，再添加图片。".into());
+            self.error = Some("请先选择项目，再添加附件。".into());
             cx.notify();
             return;
         };
@@ -192,12 +213,12 @@ impl HiveApp {
                 .is_some_and(|session| self.busy.contains(&session.id))
             || self.attachments.loading.contains(&key)
         {
-            self.error = Some("当前会话暂不能添加图片，请稍后再试。".into());
+            self.error = Some("当前会话暂不能添加附件，请稍后再试。".into());
             cx.notify();
             return;
         }
         if sources.len() + self.attachments.refs(Some(&key)).len() > 10 {
-            self.error = Some("每条消息最多添加 10 张图片。".into());
+            self.error = Some("每条消息最多添加 10 个附件。".into());
             cx.notify();
             return;
         }
@@ -221,8 +242,16 @@ impl HiveApp {
                     serde_json::from_value::<StagedImage>(value).map_err(|error| error.to_string())
                 }) {
                     Ok(item) => {
-                        let render = renderer.clone();
-                        match smol::unblock(move || preview(item.image.data, render)).await {
+                        let image = match item.image {
+                            Some(image) => {
+                                let render = renderer.clone();
+                                smol::unblock(move || preview(image.data, render))
+                                    .await
+                                    .map(Some)
+                            }
+                            None => Ok(None),
+                        };
+                        match image {
                             Ok(image) => ready.push((item.attachment, image)),
                             Err(error) => errors.push(error),
                         }
@@ -243,14 +272,19 @@ impl HiveApp {
                     if items.len() < 10 && !items.iter().any(|existing| existing.id == item.id) {
                         let total = items
                             .iter()
+                            .filter(|item| item.is_image())
                             .map(|item| ((item.size + 2) / 3) * 4)
                             .sum::<u64>()
                             + ((item.size + 2) / 3) * 4;
-                        if total > 20_000_000 {
+                        if item.is_image() && total > 20_000_000 {
                             errors.push("本条消息图片编码后合计不能超过 20 MB。".into());
                             continue;
                         }
-                        this.attachments.previews.insert(item.id.clone(), image);
+                        if let Some(image) = image {
+                            this.attachments.previews.insert(item.id.clone(), image);
+                        } else {
+                            this.attachments.verified.insert(item.id.clone());
+                        }
                         items.push(item);
                     }
                 }
@@ -275,6 +309,7 @@ impl HiveApp {
         let renderer = cx.svg_renderer();
         for item in refs {
             if self.attachments.previews.contains_key(&item.id)
+                || self.attachments.verified.contains(&item.id)
                 || self.attachments.failed.contains_key(&item.id)
                 || !self.attachments.preparing.insert(item.id.clone())
             {
@@ -294,10 +329,13 @@ impl HiveApp {
                             .map_err(|error| error.to_string())
                     }) {
                     Ok(mut images) => match images.pop() {
-                        Some(image) => {
-                            smol::unblock(move || preview(image.image.data, renderer)).await
-                        }
-                        None => Err("图片附件没有返回内容。".into()),
+                        Some(item) => match item.image {
+                            Some(image) => smol::unblock(move || preview(image.data, renderer))
+                                .await
+                                .map(Some),
+                            None => Ok(None),
+                        },
+                        None => Err("附件没有返回内容。".into()),
                     },
                     Err(error) => Err(error),
                 };
@@ -307,8 +345,11 @@ impl HiveApp {
                     }
                     this.attachments.preparing.remove(&item.id);
                     match result {
-                        Ok(image) => {
+                        Ok(Some(image)) => {
                             this.attachments.previews.insert(item.id, image);
+                        }
+                        Ok(None) => {
+                            this.attachments.verified.insert(item.id);
                         }
                         Err(error) => {
                             this.attachments.failed.insert(item.id, error);
@@ -340,7 +381,7 @@ impl HiveApp {
                         div()
                             .text_xs()
                             .text_color(Color::Muted.get(cx))
-                            .child("正在保存图片…"),
+                            .child("正在保存附件…"),
                     )
                 },
             )
@@ -382,16 +423,28 @@ impl HiveApp {
                             )
                         },
                     )
-                    .when(!self.attachments.previews.contains_key(&item.id), |card| {
-                        card.child(div().text_xs().child(
-                            if self.attachments.failed.contains_key(&item.id) {
-                                "预览失败"
-                            } else {
-                                "读取图片…"
-                            },
-                        ))
+                    .when(!item.is_image(), |card| {
+                        card.child(self.file_attachment_link("draft", item.clone(), cx))
                     })
+                    .when(
+                        item.is_image() && !self.attachments.previews.contains_key(&item.id),
+                        |card| {
+                            card.child(div().text_xs().child(
+                                if self.attachments.failed.contains_key(&item.id) {
+                                    "预览失败"
+                                } else {
+                                    "读取图片…"
+                                },
+                            ))
+                        },
+                    )
                     .child(div().text_xs().w_full().truncate().child(item.name.clone()))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(item.size_label()),
+                    )
                     .when_some(self.attachments.failed.get(&item.id), |card, error| {
                         card.child(
                             Button::new(SharedString::from(format!("reload-image-{}", item.id)))
@@ -413,7 +466,11 @@ impl HiveApp {
                             .ghost()
                             .compact()
                             .icon(Glyph::X)
-                            .accessibility_label(format!("移除图片 {}", item.name))
+                            .accessibility_label(format!(
+                                "移除{} {}",
+                                if item.is_image() { "图片" } else { "附件" },
+                                item.name
+                            ))
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(key) = &key {

@@ -15,7 +15,10 @@ export class HiveHttpError extends Error {
 
 export interface HiveUpload { record: { mimeType: string; originalName: string }; data: Buffer }
 
+export interface HiveUploadLocation {localPath:string;record:{mimeType:string;originalName:string;sizeBytes:number}}
+
 export interface HiveHost {
+    locateUpload(workspaceId:string,id:string):Promise<HiveUploadLocation | undefined>;
     readUpload(workspaceId: string, id: string): Promise<HiveUpload | null>;
     getNavigation(): string | null;
     saveNavigation(value: string): void;
@@ -85,6 +88,10 @@ export async function createHiveHost({
 	let closing: Promise<void> | undefined;
 	return {
 		port: runtime.port,
+        locateUpload: (workspaceId,id) => {
+            if (closing) throw new Error("Hive host is closed");
+            return runtime.store.locateWorkspaceUpload(workspaceId,id);
+        },
         readUpload: (workspaceId, id) => {
             if (closing) throw new Error("Hive host is closed");
             return runtime.store.readWorkspaceUpload(workspaceId, id);

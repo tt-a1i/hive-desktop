@@ -115,6 +115,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       chats.assertWorkspaceAvailable(workspace);
       return chats.attachments.add(workspace, params.path);
     }
+    case 'chat.attachments.path': {
+      const items = await chats.attachments.get(text(params, 'workspaceId'), [text(params, 'id')]);
+      if (!items[0]?.filePath) throw new Error('请使用图片查看器查看图片。');
+      return {path:items[0].filePath};
+    }
     case 'chat.attachments.get': return chats.attachments.get(text(params, 'workspaceId'), params.ids);
     case 'chat.attachments.clipboard': {
       const workspace = text(params, 'workspaceId');

@@ -67,3 +67,7 @@ Pi 仅保存原生会话记录；Codex/Claude 的显式选择保存在现有 Cha
 ## 外部程序版本检查
 
 `desktop.settings.probe {backend,command}` 检查当前输入，command 为 null 时对应留空/PATH；环境覆盖优先。返回 `{backend,command,source,status,version?,message,verifiedVersion}`，不写设置；source 为 env/app/path/draft，status 为 available/not_found/failed/timeout/cancelled。`available` 仅是成功读取版本，不验证协议或认证。5 秒/64 KiB 有界检查复用 CLI 所有权，shutdown 取消并等待活动检查。见 [验证](validation/2026-11-08-executable-check.md)。
+
+## 普通文件附件
+
+`chat.attachments.add/get` 现在返回混合 StagedAttachment：`{attachment,image? ,filePath?}`。普通文件的 filePath 来自工作区上传记录的内部 metadata/stat getter，图片仍返回原生 image 块。`chat.attachments.path {workspaceId,id}` 验证上传存在/归属后返回 `{path}` 用于本机定位。HTTP 上传响应不增加本机路径。`chat.prompt` 的 attachmentIds 及已有版本编码不变，用户展示保留正文和附件 metadata，普通文件路径清单加入实际 Agent 输入；不自动内联文件内容或执行文件。见 [验证](validation/2026-11-08-file-attachments.md)。

@@ -152,7 +152,7 @@ index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c
          getCommandPreset: (id) => store.settings.getCommandPreset(id),
          getOrchestratorLaunchConfig: () => store.peekAgentLaunchConfig(workspaceId, getOrchestratorId(workspaceId)),
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
-index 531749345d132f9a9f93f4f5ad10c8f48e368acd..ac31ab54ae3631bb6769111fb83096f2915fb212 100644
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..6576cae1f3286b5503e682784695792c081fbc9d 100644
 --- a/dist/src/server/runtime-store-contract.d.ts
 +++ b/dist/src/server/runtime-store-contract.d.ts
 @@ -55,6 +55,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
@@ -172,6 +172,17 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..ac31ab54ae3631bb6769111fb83096f2
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflowInline: (input: RunInlineWorkflowInput) => Promise<WorkflowRunRecord>;
+@@ -152,6 +155,10 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+     }>;
+     saveWorkspaceUpload: (input: SaveWorkspaceUploadInput) => Promise<WorkspaceUploadRecord>;
+     listWorkspaceUploads: (workspaceId: string, limit?: number) => WorkspaceUploadRecord[];
++    locateWorkspaceUpload: (workspaceId: string, uploadId: string) => Promise<{
++        record: WorkspaceUploadRecord;
++        localPath: string;
++    } | undefined>;
+     readWorkspaceUpload: (workspaceId: string, uploadId: string) => Promise<{
+         data: Buffer;
+         record: WorkspaceUploadRecord;
 diff --git a/dist/src/server/runtime-store-helpers.js b/dist/src/server/runtime-store-helpers.js
 index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959ccac1d890 100644
 --- a/dist/src/server/runtime-store-helpers.js
@@ -207,7 +218,7 @@ index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959c
          db,
          ledger: dispatchLedgerStore,
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..7626d5e00fe8fa9b94a6a671438646b797f67d01 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..6e23338db4d75decaa15618f2e46fffa9dc1bf59 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
 @@ -98,6 +98,7 @@ export const createRuntimeStore = (options = {}) => {
@@ -235,6 +246,14 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..7626d5e00fe8fa9b94a6a671438646b7
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
+@@ -155,6 +159,7 @@ export const createRuntimeStore = (options = {}) => {
+         })),
+         saveWorkspaceUpload: (input) => services.workspaceUploadStore.saveUpload(input),
+         listWorkspaceUploads: (workspaceId, limit) => services.workspaceUploadStore.listUploads(workspaceId, limit),
++        locateWorkspaceUpload: (workspaceId, uploadId) => services.workspaceUploadStore.locateUpload(workspaceId, uploadId),
+         readWorkspaceUpload: (workspaceId, uploadId) => services.workspaceUploadStore.readUpload(workspaceId, uploadId),
+         createWorkflowSchedule: (input) => services.workflowScheduleStore.create(input),
+         scheduleWorkflowInline: (input) => persistWorkflowSchedule({
 diff --git a/dist/src/server/team-operations.js b/dist/src/server/team-operations.js
 index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..bdf1c4adaf6ffa3611d7c87fc030f8556c5dba81 100644
 --- a/dist/src/server/team-operations.js
@@ -606,3 +625,50 @@ index 1c4e590c4b5bb16d583b08f7057ecdf9ccd5c31c..cc483ccd697c5dc9ad9894d8521f61da
 +        releaseOwnership();
      });
  });
+diff --git a/dist/src/server/workspace-upload-store.d.ts b/dist/src/server/workspace-upload-store.d.ts
+index f1bbab564e2124953bd376ccf33ff56ccf251337..d523ac7ad73fe8c3dc224253c39bdb6261695ee1 100644
+--- a/dist/src/server/workspace-upload-store.d.ts
++++ b/dist/src/server/workspace-upload-store.d.ts
+@@ -24,6 +24,10 @@ export interface StagedWorkspaceUploadsDelete {
+ export declare const createWorkspaceUploadStore: (db: Database, uploadsDir: string) => {
+     saveUpload(input: SaveWorkspaceUploadInput): Promise<WorkspaceUploadRecord>;
+     listUploads(workspaceId: string, limit?: number): WorkspaceUploadRecord[];
++    locateUpload(workspaceId: string, uploadId: string): Promise<{
++        record: WorkspaceUploadRecord;
++        localPath: string;
++    } | undefined>;
+     readUpload(workspaceId: string, uploadId: string): Promise<{
+         data: Buffer;
+         record: WorkspaceUploadRecord;
+diff --git a/dist/src/server/workspace-upload-store.js b/dist/src/server/workspace-upload-store.js
+index c78f060119ae87a3a803dfa4b6828b4b9fb88137..7235914a4d6b8235cd20d9366bcd034d19023e60 100644
+--- a/dist/src/server/workspace-upload-store.js
++++ b/dist/src/server/workspace-upload-store.js
+@@ -1,6 +1,6 @@
+ import { randomUUID } from 'node:crypto';
+ import { readdirSync, renameSync, rmdirSync, unlinkSync } from 'node:fs';
+-import { mkdir, readFile, writeFile } from 'node:fs/promises';
++import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
+ import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+ import { HttpError } from './http-errors.js';
+ const DEFAULT_UPLOAD_NAME = 'upload';
+@@ -255,6 +255,19 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+             const safeLimit = Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), 100) : 50;
+             return listUploads.all(workspaceId, safeLimit).map(mapRow);
+         },
++        // Metadata-only local access for desktop tool references; not an HTTP response.
++        async locateUpload(workspaceId, uploadId) {
++            const row = getUpload.get(workspaceId, uploadId);
++            if (!row) return undefined;
++            const localPath = resolveStoragePath(uploadsDir, row.storage_key);
++            try {
++                if (!(await stat(localPath)).isFile()) return undefined;
++            } catch (error) {
++                if (isEnoent(error)) return undefined;
++                throw new HttpError(500, 'Upload file could not be located');
++            }
++            return { record: mapRow(row), localPath };
++        },
+         async readUpload(workspaceId, uploadId) {
+             const row = getUpload.get(workspaceId, uploadId);
+             if (!row)

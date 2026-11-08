@@ -124,3 +124,5 @@ Claude 工具许可和 AskUserQuestion 已接入统一聊天。官方 SDK + 合�
 2026-11-08：原生窄窗复核发现配置错误仍带 JSON 引号和内部代码；已在共用 RPC 入口提取纯文本错误，深色/窄窗各跨两次进程验证真实失败、重读/重试与草稿恢复。`3d57853` 的最新 Windows CI 三个 job 未启动，annotation 仍为账号付款/支出限额；不能将本机 MSVC 类型检查视作 Windows 运行。
 
 2026-11-08：外部程序页增加每个 CLI 的“检查程序”，检查未保存输入并显示实际命令/来源、版本和已验证版本差异，保留环境覆盖及跨页草稿。后台只运行有界 `--version`，复用 Windows CLI Job/shim，runtime 关闭取消并等待活动进程。真实 HTTP/SQLite/原始 CLI/生产 JSONL，以及浅色、深色与 760px GPUI 检查通过，包含错误重试、实际旧 Codex 版本、保存及检查中退出后进程清理；无模型请求。Mac/Windows 类型与定向设置/团队回归通过，Windows 新原生检查已接线但尚未执行。完整产品继续推进，见 [程序检查](validation/2026-11-08-executable-check.md)。
+
+2026-11-08：普通文件接入现有 Hive 上传、user_input/队列及桌面选择/路径粘贴/拖放，可与图片混合或单独发送，保留名称、大小、草稿和历史。固定 Hive 只补内部 metadata/stat 路径查询，普通文件恢复无需重读整个文件；没有新表/store 或 HTTP 路径泄露。原始 Codex openai/gpt-6.1-terra 已在删除源文件后用真实工具读取副本并返回文件内校验值，其原生历史在桌面显示通过；内置/外部 Pi 回环与 Claude 官方 SDK 合成对端另行验证。浅/深色及 760px 窄窗跨三次进程验证混合附件、缺失副本阻止发送/修复、原生图片和历史恢复；同时修复聊天 Enter 在正文插入换行的问题，Shift+Enter 与精确正文检查通过。真实系统输入/定位、Windows GUI、原始 Claude 推理和完整 UI/UX 仍待完成。见 [文件验证](validation/2026-11-08-file-attachments.md)。

@@ -28,7 +28,9 @@
     "check:workspace-removal": "tsx checks/workflow-removal-lifecycle.ts && tsx checks/workspace-removal.ts",
     "check:terminal": "pnpm build && tsx checks/terminal-native-restore.ts && tsx checks/terminal-ack-wire.ts && tsx checks/terminal-input-bytes.ts && tsx checks/terminal-shell.ts && tsx checks/terminal-jsonl.ts",
     "check:external-reasoning": "pnpm build && tsx checks/external-reasoning.ts && tsx checks/external-reasoning-wire.ts",
-    "check:programs": "pnpm build && tsx checks/executable-probe.ts && tsx checks/executable-probe-wire.ts"
+    "check:programs": "pnpm build && tsx checks/executable-probe.ts && tsx checks/executable-probe-wire.ts",
+    "check:files": "pnpm build && tsx checks/file-attachments.ts && tsx checks/file-attachments-wire.ts",
+    "check:files-claude-peer": "tsx checks/file-attachments-claude-peer.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.317",

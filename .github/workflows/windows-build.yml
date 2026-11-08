@@ -169,6 +169,8 @@ jobs:
           $env:HIVE_CODEX_COMMAND = Join-Path $env:HIVE_WINDOWS_NATIVE_CLI_PREFIX 'codex.cmd'
           pnpm --filter @hive-desktop/runtime check:programs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @hive-desktop/runtime check:files
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @hive-desktop/runtime check:pi-reasoning
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload external CLI check receipt
@@ -179,4 +181,6 @@ jobs:
           path: |
             .artifacts/windows-native-clis.json
             .artifacts/program-check/*.json
+            .artifacts/file-attachments/core-receipt.json
+            .artifacts/file-attachments/wire-receipt.json
           if-no-files-found: warn

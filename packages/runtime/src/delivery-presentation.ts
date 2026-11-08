@@ -1,4 +1,4 @@
-import type { ImageAttachment } from './image-attachments.js';
+import type { ChatAttachment } from './image-attachments.js';
 export interface DeliveryPresentation {
   version: 1;
   origin: 'user' | 'dispatch' | 'report' | 'cancel' | 'recovery' | 'system' | 'unknown';
@@ -7,7 +7,7 @@ export interface DeliveryPresentation {
   workerName?: string;
   workerId?: string;
   artifacts?: string[];
-  attachments?: ImageAttachment[];
+  attachments?: ChatAttachment[];
   sourceText?: string;
 }
 

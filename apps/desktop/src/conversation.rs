@@ -309,6 +309,7 @@ impl HiveApp {
             delivery: None,
             explicit_user: false,
             images: vec![],
+            files: vec![],
             image_sources: vec![],
             images_loading: false,
             images_error: None,
@@ -373,6 +374,21 @@ impl HiveApp {
             self.load_message_images(id.clone(), message, cx);
             if let Some(rendered) = self.messages.iter_mut().find(|m| m.id == id) {
                 rendered.explicit_user = explicit_user;
+                let files = presentation
+                    .as_ref()
+                    .map(|p| {
+                        p.attachments
+                            .iter()
+                            .filter(|item| !item.is_image())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if rendered.files != files {
+                    rendered.files = files;
+                    rendered.layout_revision += 1;
+                }
+
                 rendered.delivery = if explicit_user {
                     None
                 } else {
@@ -685,6 +701,8 @@ struct DeliveryPresentation {
     worker_id: Option<String>,
     #[serde(default)]
     artifacts: Vec<String>,
+    #[serde(default)]
+    attachments: Vec<crate::attachments::AttachmentRef>,
 }
 fn delivery_presentation(message: &Value) -> Option<DeliveryPresentation> {
     let presentation: DeliveryPresentation =

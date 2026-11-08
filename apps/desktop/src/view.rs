@@ -613,7 +613,7 @@ impl Render for HiveApp {
                     .when(self.session.is_none(), |row| row.child(if self.workspace.is_some() {
                         self.new_chat_menu("home-agent", "选择 Agent", None, cx).into_any_element()
                     } else { Button::new("home-folder").ghost().icon(Glyph::FolderOpen).label("选择项目文件夹").disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))).into_any_element() }))
-                    .child(Button::new("attach-images").ghost().compact().icon(Glyph::Plus).label("图片").accessibility_label("添加图片").disabled(!self.connected || self.workspace.is_none() || self.loading || running || !self.attachments.ready(self.draft_target.as_ref())).on_click(cx.listener(|this,_,_,cx|this.choose_images(cx))))
+                    .child(Button::new("attach-images").ghost().compact().icon(Glyph::Plus).label("附件").accessibility_label("添加文件或图片").disabled(!self.connected || self.workspace.is_none() || self.loading || running || !self.attachments.ready(self.draft_target.as_ref())).on_click(cx.listener(|this,_,_,cx|this.choose_images(cx))))
                     .child(div().flex_1())
                     .when(self.session.is_some(), |row| row.child(self.model_picker(window, running, cx)))
                     .when(self.session.is_some(), |row|row.child(self.render_reasoning_picker(running,cx)))

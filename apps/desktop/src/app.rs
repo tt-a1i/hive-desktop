@@ -52,6 +52,7 @@ pub struct Message {
     pub thinking: Vec<crate::thinking::ThinkingBlock>,
     pub delivery: Option<DeliveryCard>,
     pub explicit_user: bool,
+    pub files: Vec<crate::attachments::AttachmentRef>,
     pub images: Vec<std::sync::Arc<RenderImage>>,
     pub image_sources: Vec<Arc<Image>>,
     pub images_loading: bool,
@@ -298,6 +299,7 @@ impl HiveApp {
         );
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
+                .submit_on_enter(true)
                 .auto_grow(2, 7)
                 .placeholder("输入消息…")
         });

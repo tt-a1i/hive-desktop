@@ -47,7 +47,7 @@ pnpm --filter @hive-desktop/runtime check:team
 
 这些检查使用临时数据目录，其中团队集成会运行真实 Hive HTTP / SQLite、Pi SDK 和 team CLI，但暂停模型执行。真实模型验证固定使用 Pi 原生 OpenAI / ChatGPT 接入的 `gpt-6.1-terra`，不依赖 Magpie；见 [协作验收记录](docs/validation/2026-11-07-structured-team.md)。
 
-图片选择/粘贴/拖放、原图查看、复制/保存、图片单独发送、附件草稿和历史恢复已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。真实 Terra 识图本轮因 OpenAI OAuth grant 失效未通过，系统保存对话框、通用文件、长图片历史性能和 Windows 原生体验仍待验收，见 [图片输入验证](docs/validation/2026-11-08-image-input.md)。
+普通文件和图片可选择/粘贴文件/拖放、混合或单独发送，并保留草稿和历史；普通文件通过 Hive 上传副本路径交给 Agent 按需读取。原始 Codex Terra 已实际读取删除源文件后的副本，并在桌面恢复工具记录和文件卡片，见 [文件验证](docs/validation/2026-11-08-file-attachments.md)。图片的原图查看、复制/保存已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。真实 Terra 识图本轮因 OpenAI OAuth grant 失效未通过，系统保存对话框、长图片历史性能和 Windows 原生体验仍待验收，见 [图片输入验证](docs/validation/2026-11-08-image-input.md)。
 
 会话菜单增加归档/恢复，默认导航与置顶隐藏归档，独立入口可搜索分页；历史、草稿和成员身份保留，实际新消息自动恢复。当前验证范围见 [会话归档](docs/validation/2026-11-08-session-archives.md)。
 

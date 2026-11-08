@@ -224,6 +224,17 @@ impl HiveApp {
                     ),
                 )
             })
+            .when(!message.files.is_empty(), |view| {
+                view.child(
+                    h_flex().w_full().min_w_0().flex_wrap().gap_2().children(
+                        message
+                            .files
+                            .iter()
+                            .cloned()
+                            .map(|item| self.file_attachment_link(&message.id, item, cx)),
+                    ),
+                )
+            })
             .when_some(message.delivery.as_ref(), |view, delivery| {
                 view.children(
                     delivery
