@@ -173,8 +173,8 @@ impl HiveApp {
                     view.child(
                         div()
                             .min_w_0()
-                            .text_size(px(15.))
-                            .line_height(px(24.))
+                            .text_size(rems(15. / 16.))
+                            .line_height(rems(1.5))
                             .when(message.role == "user", |bubble| {
                                 bubble
                                     .px_4()

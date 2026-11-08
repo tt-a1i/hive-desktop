@@ -43,6 +43,7 @@ pub struct ConversationList {
     pub pending_anchor: Option<ReadingAnchor>,
     pub tail_focus: FocusHandle,
     hint_width: Rc<Cell<Pixels>>,
+    font_size: Pixels,
 }
 impl ConversationList {
     pub fn new(tail_focus: FocusHandle) -> Self {
@@ -54,6 +55,7 @@ impl ConversationList {
             pending_anchor: None,
             tail_focus,
             hint_width: Rc::new(Cell::new(px(0.))),
+            font_size: px(0.),
         }
     }
     pub fn anchor(&self) -> Option<ReadingAnchor> {
@@ -131,13 +133,16 @@ impl HiveApp {
             expanded: false,
         });
         let list = &mut self.conversation_list;
+        let font_size = cx.global::<gpui_kit::component::Theme>().font_size;
+        let typography_changed = list.font_size != font_size;
+        list.font_size = font_size;
         let following = list.state.is_following_tail();
         let anchor = (!following).then(|| list.anchor()).flatten();
         let same_keys = rows.len() == list.rows.len()
             && rows.iter().zip(&list.rows).all(|(a, b)| a.key == b.key);
         if same_keys {
             for (index, (next, old)) in rows.iter().zip(&list.rows).enumerate() {
-                if next != old || next.kind == Kind::Tail {
+                if typography_changed || next != old || next.kind == Kind::Tail {
                     list.state.remeasure_items(index..index + 1);
                 }
             }
