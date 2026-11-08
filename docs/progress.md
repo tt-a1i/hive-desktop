@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## Pi认证与窗口现场复核（2026-11-09）
+
+Pi认证记录存在且没有models.json自定义OpenAI覆盖，但实际Terra图片请求仍在原生OAuth刷新时返回400 invalid_grant；错误与原消息先保留，检查显式abort后清理，零工具。已请求重登。导出对照窗口可读到控件树，但点击后捕捉/布局仍异常，用户窗口状态反馈待补；未据此假定应用死锁或添加生产兜底。两个owned进程现场保留，没有重复依赖树。详见[图片复核](validation/2026-11-09-codex-image-live.md#pi-原生认证复核2026-11-09)及[窗口复核](validation/2026-11-09-conversation-export.md#后续窗口复核2026-11-09)。
+
 ## 原生Codex Terra识图（2026-11-09）
 
 实际Hive上传/图片消息通过原样Codex0.166.0调用gpt-6.1-terra，正确识别左蓝右粉，零工具、pending归零。关闭整个runtime再重开后，线程及完成标记、回答、历史原图和上传副本字节保持一致，无新prompt。新增检查后端参数，pnpm check通过；不改生产runtime或重新打包，不替代Pi OAuth失败及系统UI/Windows边界。见[真实识图](validation/2026-11-09-codex-image-live.md)。

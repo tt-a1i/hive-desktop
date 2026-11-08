@@ -25,3 +25,10 @@ HIVE_CODEX_COMMAND=/Users/tsk/.npm-global/bin/codex pnpm --filter @hive-desktop/
 ## 证据边界
 
 取得的是Mac原生Codex经实际Hive图片链路的真实模型与恢复结果，不是系统鼠标/图片选择器或Windows真机验收，也不证明复杂截图、多图长历史的识别或性能。内置Pi早先OAuth失败、外部Pi实际图片推理、Claude在仅Terra模型约束下的未验收状态分别保留。该结果不替代当前导出窗口的复制、窄窗和正常退出检查。
+
+
+## Pi 原生认证复核（2026-11-09）
+
+只读检查当前Pi原生目录的认证元数据与models.json：OpenAI认证记录存在，未发现自定义OpenAI接口覆盖，没有打印密钥或令牌。随后对同一自建图片通过既有检查显式调用内置Pi的openai/gpt-6.1-terra。原生OAuth刷新再次返回HTTP400 invalid_grant，assistant stopReason=error，没有工具调用或成功识图结果。记录 `.artifacts/pi-native-image-recheck/metadata.json`、`receipt.json` 以及 `.artifacts/image-attachments/live-DNJvTQ/`。
+
+实际队列先从busy=true/pending=1变为busy=false/pending=1且带失败诊断，保留该验证消息；检查finally显式abort自己的探针后pending归零并关闭runtime，不把清理后的空队列当作推理成功。已请求用户重新登录Pi的OpenAI订阅。未更换模型、接口或认证，没有用Codex的成功替代这条Pi失败。
