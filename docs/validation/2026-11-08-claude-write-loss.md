@@ -29,3 +29,9 @@
 另用包内 Node 22 和既有生产依赖绑定新 dist 跑四组通过；该小候选运行时使用依赖链接，不是正式开发包验收。打包单列，原开发 ZIP 在更新前仍包含旧实现。
 
 证据 `.artifacts/claude-write-loss/`：基线、第一次计数校准、通知/exit 顺序失败、最终四组、包内 Node 候选、旧包失败与相关回归日志。没有真实制造原始 Claude 的磁盘满或配额满，也没有验证 Claude 厂商模型协作、Windows 原生和完整产品目标。
+
+## 当前开发包
+
+current ZIP 已纳入 ca9eeb6，仅替换 agents/claude.js 和 map，108 个 runtime 文件与生产构建匹配，29969 个未变归档条目逐一匹配，包括未变原生程序、Node、依赖及链接。新包使用自带 Node/生产 runtime 跑四范围检查通过，真实 PTY/Hive/SQLite 和生产启动恢复通过；不是只在候选目录跑过就算包内通过。
+
+ZIP SHA256：`bd6616e7d2765b9ae40cf8a6b0d1bad8a85a5a6894bab27ef1be959106b04e81`。版本、平台和保留策略见 [当前开发包](2026-11-08-current-package.md)。不重复未变原生界面的系统操作，未将背景启动检查冒认物理鼠标验收。检查结束已删除临时解压副本、小型依赖链接候选及旧包 gate 链接，保留全部日志/收据；安装 ZIP 仍为当前及两份回退，.artifacts 约 3.4 GiB。

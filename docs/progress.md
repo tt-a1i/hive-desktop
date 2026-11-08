@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## Claude 修复开发包（2026-11-08）
+
+current ZIP 纳入 ca9eeb6，源码及包内四范围通过；旧包在新增退出结算检查下失败。仅两份 Claude 编译文件变化，108个runtime及29969个未变归档条目校验匹配；包内PTY/Hive/SQLite和生产启动恢复通过。临时解压/链接候选已清理，仍只保留当前+两份回退ZIP，.artifacts约3.4GiB。不重复未变原生程序的物理输入，Claude厂商推理和Windows仍单列。见 [退出结算包内记录](validation/2026-11-08-claude-write-loss.md#当前开发包)。
+
 ## Claude 退出结算（2026-11-08）
 
 复现只丢全局配置却误判当前回合失败，以及成功结算前退出清理重入 abort。按 SDK 通知范围判断当前 transcript，收到退出通知立即停用句柄，活动回合结算后再通知 owner。真实 Hive/SQLite/官方 SDK 合成 CLI 的四范围、冷恢复与明确继续、队列/许可/提问/回调及原始 CLI 无推理死亡检查通过。见 [写入丢失验证](validation/2026-11-08-claude-write-loss.md)。开发包更新单列，Claude 厂商推理与 Windows 原生仍未验收。
