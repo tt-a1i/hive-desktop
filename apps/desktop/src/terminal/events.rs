@@ -60,16 +60,13 @@ impl HiveApp {
                 self.detach_terminal(cx);
                 self.terminal.runs.retain(|record| record.run_id != run);
                 self.terminal.run_id = None;
-                self.terminal.status = match code {
-                    Some(code) => format!("Shell 已退出（{code}）"),
-                    None => "Shell 已退出".into(),
-                };
+                self.terminal.status = TerminalStatus::Exited(code);
             }
             TerminalFrame::Error { message } => self.terminal_fault(message, cx),
             TerminalFrame::Closed { reason } => {
                 self.detach_terminal(cx);
                 self.terminal.status =
-                    format!("终端视图已断开：{reason}；请重新连接确认 Shell 状态");
+                    TerminalStatus::Detached(reason);
             }
         }
         cx.notify();

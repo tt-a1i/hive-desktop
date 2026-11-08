@@ -172,3 +172,22 @@
 后两项首轮启动失败，生成fixture的shebang直接包含当前process.execPath，指向名称含空格的缓存app路径（peer存在但spawn返回ENOENT）。没有修改测试或生产fallback；将同一Node22.23.3硬链接到不含空格的临时路径，验证execPath、同device/inode后原命令重跑通过。临时入口为`/var/folders/v1/6vx82zzx32q7y_s1w4sx84j00000gp/T/hive-i18n-node-dgjo9hza/node`，没有复制Node/依赖/安装包。旧运行应用仍使用原路径；lsof按共享inode也会列出临时别名，保留两者，不据此重启进程或删除来源。成功与首轮失败边界均记入收据。
 
 再次原生选择仍运行应用，工具明确报告Mac锁屏。交互卡片实际英文布局/键盘/秘密输入/多选/语言切换、文件失败重试与原图保存对话框未验收；合成协议和构建通过不代替这些验收。无模型或厂商登录请求，未打新包，.artifacts仍约3.8GiB。完整#17和产品目标继续开放。收据`.artifacts/language/interaction-errors-receipt.json`。
+
+
+## 资源、思考、推理、用量与终端语言
+
+第十二批累计908条英文目录（新增97条），接入命令选择/资源浏览、思考块、推理强度、原生用量及工作区终端按钮/静态状态/已知错误。命令目录/资源错误与用量解码/请求错误保存本地提示类型，render时取语言并保留原诊断。资源窗口只在locale变化时set_placeholder，不改查询/筛选/滚动；搜索保留中文分类/范围关键词并加入当前译文。实际资源名/说明/路径/命令与source_info原值、查找逻辑的原生code保持原样，不执行“补入草稿”。
+
+思考正文及复制内容、redacted/interrupted/running标志保持原值；只翻译外围提示。推理已知level的标签本地化，发出的level仍为原code，未知值/原生description保留；未动失败后读回实际状态的逻辑。用量只翻译外围文案，原生source/report/counter标签、数值、估算标志和通知保留。
+
+终端状态保存为静态Message、实际退出码Exited或原始断连原因Detached，渲染时本地化。九条桌面自有固定错误做精确匹配后显示译文，其他错误和Shell title/name/output原样，部分动态原诊断仍可能中文。序列/ACK、输入启用、身份/工作区/连接guard、detach/kill、启动/停止、重连规则与请求均未改；没有把翻译结果用于状态控制。主应用状态栏的其他动态摘要仍待迁移，不把本批当完整覆盖。
+
+验证：
+
+- language::tests 1通过；Mac默认构建、Windows MSVC类型检查、git diff --check及本批显式key目录核对通过。没有增删改测试，未跑全量测试，本批仅UI标签/提示表示与搜索显示词索引。
+- pi-reasoning.ts：真实HTTP/SQLite、SDK/外部Pi RPC，能力、转录/重启、写盘失败后退休/重试、全局默认保持通过。仅两个被阻断的本地loopback请求，无厂商推理。
+- agent-usage-wire.ts：编译生产JSONL读取实际Pi统计，缺失会话/重复读取/原生计数与全局默认保持、正常后台关闭通过，无prompt。
+- terminal-ack-wire.ts：生产TerminalConnection与真实回环WebSocket、合成Hive对端通过（不是PTY集成）；terminal-input-bytes.ts：真实Hive POSIX PTY原始字节输入通过（不是Windows运行证据）。
+- 当前新Rust原生程序通过带英文偏好的check-desktop-startup.mjs，实际连接源码runtime、恢复保存项目并修复失效聊天选择，SQLite导航写入确认。只使用本轮新fixture：可执行文件硬链接、Node/runtime目录软链接，没有复制依赖或打ZIP。探针用SIGTERM收尾，不能当正常用户退出。进程退出后lsof目录为空且没有残留fixture进程，已仅移除本轮native-bundle链接目录，保留日志。
+
+原生CUA再次明确报告Mac锁屏，未看到英文文字，也未验收资源搜索/语言切换/滚动/草稿/输入法、思考/推理/用量浮层和终端键盘/窄窗/正常退出。源码启动检查不代表上述交互已通过。旧验证应用及current/候选包保留，无模型请求，无新ZIP；.artifacts仍约3.8GiB。阶段收据`.artifacts/language/catalog-terminal-receipt.json`。

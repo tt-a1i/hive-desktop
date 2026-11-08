@@ -1,5 +1,6 @@
 mod view;
-use super::{Catalog, NativeCommand};
+use super::{Catalog, NativeCommand,CatalogNotice};
+use crate::language::{english,tr};
 use crate::{app::HiveApp, transport::Runtime};
 use gpui_kit::{
     component::{
@@ -21,8 +22,9 @@ struct Resources {
     filter: &'static str,
     commands: Vec<NativeCommand>,
     loading: bool,
-    error: Option<String>,
+    error: Option<CatalogNotice>,
     scroll: ScrollHandle,
+    locale_english: bool,
 }
 impl HiveApp {
     pub(crate) fn open_session_resources(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -44,7 +46,7 @@ impl HiveApp {
         self.command_picker.open = false;
         let resources = cx.new(|cx| {
             let query = cx.new(|cx| {
-                InputState::new(window, cx).placeholder("搜索名称、完整说明、来源或路径…")
+                InputState::new(window, cx).placeholder(tr("搜索名称、完整说明、来源或路径…"))
             });
             cx.subscribe(&query, |this: &mut Resources, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -65,6 +67,7 @@ impl HiveApp {
                 loading: false,
                 error: None,
                 scroll: ScrollHandle::new(),
+                locale_english: english(),
             };
             // The parent is still updating while this child entity is created.
             cx.defer_in(window, |resources, _, cx| resources.load(cx));
@@ -72,7 +75,7 @@ impl HiveApp {
         });
         let width = (window.viewport_size().width - px(48.)).min(px(880.));
         window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title("会话资源").w(width).child(resources.clone())
+            dialog.title(tr("会话资源")).w(width).child(resources.clone())
         });
         cx.notify();
     }
@@ -128,7 +131,7 @@ impl Resources {
                         this.error = None;
                     }
                     Ok(_) => this.error = Some("此后端未提供原生资源目录。".into()),
-                    Err(error) => this.error = Some(format!("目录读取失败，保留上次内容：{error}")),
+                    Err(error) => this.error = Some(CatalogNotice::Error("目录读取失败，保留上次内容",error)),
                 }
                 cx.notify();
             });
@@ -168,15 +171,11 @@ impl Resources {
         }
     }
 }
-fn kind(source: &str) -> &str {
-    match source {
-        "skill" => "技能",
-        "prompt" => "提示模板",
-        "extension" => "扩展命令",
-        _ => source,
-    }
+fn kind_key(source: &str) -> Option<&'static str> {
+    match source { "skill"=>Some("技能"),"prompt"=>Some("提示模板"),"extension"=>Some("扩展命令"),_=>None }
 }
-fn scope(command: &NativeCommand) -> &str {
+fn kind(source: &str) -> &str { kind_key(source).map(tr).unwrap_or(source) }
+fn scope(command: &NativeCommand) -> &'static str {
     match command.source_info["scope"].as_str() {
         Some("user") => "用户",
         Some("project") => "项目",

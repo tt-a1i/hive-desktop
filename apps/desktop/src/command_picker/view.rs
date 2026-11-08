@@ -1,3 +1,4 @@
+use crate::language::tr;
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -37,18 +38,18 @@ impl HiveApp {
                             .flex_1()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("原生命令"),
+                            .child(tr("原生命令")),
                     )
                     .child(
-                        Button::new("browse-session-resources").ghost().compact().label("浏览资源")
-                            .accessibility_label("浏览当前会话的技能、模板与扩展来源")
+                        Button::new("browse-session-resources").ghost().compact().label(tr("浏览资源"))
+                            .accessibility_label(tr("浏览当前会话的技能、模板与扩展来源"))
                             .on_click(cx.listener(|this,_,window,cx|this.open_session_resources(window,cx))),
                     )
                     .child(
                         Button::new("refresh-native-commands")
                             .ghost()
                             .compact()
-                            .label("刷新")
+                            .label(tr("刷新"))
                             .disabled(self.command_picker.loading)
                             .on_click(cx.listener(|this, _, _, cx| this.load_commands(cx))),
                     )
@@ -57,7 +58,7 @@ impl HiveApp {
                             .ghost()
                             .compact()
                             .icon(Glyph::X)
-                            .accessibility_label("关闭命令选择")
+                            .accessibility_label(tr("关闭命令选择"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.command_picker.open = false;
                                 cx.notify();
@@ -65,9 +66,9 @@ impl HiveApp {
                     ),
             )
             .when(self.command_picker.loading, |view| {
-                view.child(div().text_sm().child("正在读取会话命令…"))
+                view.child(div().text_sm().child(tr("正在读取会话命令…")))
             })
-            .when_some(self.command_picker.error.clone(), |view, error| {
+            .when_some(self.command_picker.error.as_ref().map(|error|error.text()), |view, error| {
                 view.child(
                     div()
                         .text_sm()
@@ -84,7 +85,7 @@ impl HiveApp {
                         div()
                             .text_sm()
                             .text_color(Color::Muted.get(cx))
-                            .child("没有匹配的命令；可继续输入或按 Esc 返回。"),
+                            .child(tr("没有匹配的命令；可继续输入或按 Esc 返回。")),
                     )
                 },
             )
@@ -98,9 +99,9 @@ impl HiveApp {
                     .children(commands.iter().enumerate().map(|(i, command)| {
                         let name = command.name.clone();
                         let kind = match command.source.as_str() {
-                            "skill" => "技能",
-                            "prompt" => "模板",
-                            _ => "扩展",
+                            "skill" => tr("技能"),
+                            "prompt" => tr("模板"),
+                            _ => tr("扩展"),
                         };
                         let path = command
                             .source_info
@@ -115,7 +116,7 @@ impl HiveApp {
                             .justify_start()
                             .selected(i == self.command_picker.selected)
                             .disabled(self.command_picker.loading)
-                            .accessibility_label(format!("选择命令 /{}", command.name))
+                            .accessibility_label(format!("{} /{}",tr("选择命令"),command.name))
                             .tooltip(format!(
                                 "{}\n{}",
                                 command.description.as_deref().unwrap_or(""),
@@ -162,7 +163,7 @@ impl HiveApp {
                 div()
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
-                    .child("输入 / 搜索 · ↑↓ 选择 · Enter 补入草稿 · Esc 关闭"),
+                    .child(tr("输入 / 搜索 · ↑↓ 选择 · Enter 补入草稿 · Esc 关闭")),
             )
             .into_any_element()
     }

@@ -1,3 +1,4 @@
+use crate::language::{english,tr};
 mod connection;
 mod events;
 mod view;
@@ -10,6 +11,25 @@ use gpui_kit::*;
 use hive_terminal::{TerminalConfig, TerminalEvent, TerminalView};
 use serde_json::json;
 
+enum TerminalStatus { Message(&'static str), Exited(Option<i32>), Detached(String) }
+impl From<&'static str> for TerminalStatus {
+    fn from(key: &'static str) -> Self { Self::Message(key) }
+}
+impl TerminalStatus {
+    fn text(&self) -> String {
+        match self {
+            Self::Message(key) => tr(key).to_owned(),
+            Self::Exited(code) => match code {
+                Some(code) => if english() {format!("Shell exited ({code})")} else {format!("Shell 已退出（{code}）")},
+                None => tr("Shell 已退出").to_owned(),
+            },
+            Self::Detached(reason) => if english() {format!("Terminal view disconnected: {reason}. Reconnect to confirm Shell status.")} else {format!("终端视图已断开：{reason}；请重新连接确认 Shell 状态")},
+        }
+    }
+}
+fn terminal_error_text(error: &str) -> String {
+    ["终端恢复顺序错误，请重新连接","终端快照未完整消费，未确认恢复","终端输出顺序错误，请重新连接","终端输出未完整消费，未发送确认","终端操作未获确认，请重新连接","终端连接响应身份不匹配","未能确认 Shell 已停止，请刷新后查看状态","Shell 列表格式错误","Shell 启动响应格式错误"].into_iter().find(|key|*key==error).map(|key|tr(key).to_owned()).unwrap_or_else(||error.to_owned())
+}
 pub struct WorkspaceTerminal {
     pub visible: bool,
     workspace: Option<String>,
@@ -25,7 +45,7 @@ pub struct WorkspaceTerminal {
     loading: bool,
     cols: usize,
     rows: usize,
-    status: String,
+    status: TerminalStatus,
     error: Option<String>,
     title: String,
     view: Entity<TerminalView>,

@@ -1,3 +1,4 @@
+use crate::language::tr;
 mod view;
 mod resources;
 use crate::{app::HiveApp, protocol::Backend};
@@ -31,9 +32,21 @@ pub struct CommandPicker {
     pub loading: bool,
     loaded: bool,
     commands: Vec<NativeCommand>,
-    error: Option<String>,
+    error: Option<CatalogNotice>,
     selected: usize,
     scroll: ScrollHandle,
+}
+enum CatalogNotice { Message(&'static str), Error(&'static str,String) }
+impl From<&'static str> for CatalogNotice {
+    fn from(key: &'static str) -> Self { Self::Message(key) }
+}
+impl CatalogNotice {
+    fn text(&self) -> String {
+        match self {
+            Self::Message(key) => tr(key).to_owned(),
+            Self::Error(key,error) => format!("{}: {error}",tr(key)),
+        }
+    }
 }
 impl HiveApp {
     pub(crate) fn pi_commands_available(&self) -> bool {
@@ -129,7 +142,7 @@ impl HiveApp {
                     }
                     Err(error) => {
                         this.command_picker.commands.clear();
-                        this.command_picker.error = Some(format!("读取命令失败：{error}"));
+                        this.command_picker.error = Some(CatalogNotice::Error("读取命令失败",error));
                     }
                 }
                 cx.notify();
@@ -224,8 +237,8 @@ impl HiveApp {
             .ghost()
             .compact()
             .label("/")
-            .tooltip("技能、提示模板与扩展命令")
-            .accessibility_label("选择原生命令")
+            .tooltip(tr("技能、提示模板与扩展命令"))
+            .accessibility_label(tr("选择原生命令"))
             .selected(self.command_picker.open)
             .disabled(!self.connected || !self.conversation_ready || self.loading)
             .on_click(cx.listener(|this, _, _, cx| {

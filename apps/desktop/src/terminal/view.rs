@@ -33,18 +33,18 @@ impl HiveApp {
                             .flex_1()
                             .min_w_0()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("工作区终端"),
+                            .child(tr("工作区终端")),
                     )
                     .child(
                         Button::new("terminal-refresh")
-                            .label("刷新 Shell")
+                            .label(tr("刷新 Shell"))
                             .disabled(disabled)
                             .on_click(cx.listener(|this, _, _, cx| this.load_terminals(false, cx))),
                     )
                     .child(
                         Button::new("terminal-start")
                             .primary()
-                            .label("启动 Shell")
+                            .label(tr("启动 Shell"))
                             .disabled(disabled)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.remember_terminal_focus(window, cx);
@@ -53,13 +53,13 @@ impl HiveApp {
                     )
                     .child(
                         Button::new("terminal-stop")
-                            .label("停止 Shell")
+                            .label(tr("停止 Shell"))
                             .disabled(disabled || self.terminal.run_id.is_none())
                             .on_click(cx.listener(|this, _, _, cx| this.stop_terminal(cx))),
                     )
                     .child(
                         Button::new("terminal-hide")
-                            .label("隐藏终端")
+                            .label(tr("隐藏终端"))
                             .on_click(cx.listener(|this, _, _, cx| this.hide_terminal(cx))),
                     ),
             )
@@ -73,11 +73,11 @@ impl HiveApp {
                     .text_sm()
                     .whitespace_normal()
                     .child(if self.workspace.is_none() {
-                        "先选择工作区。".to_string()
+                        tr("先选择工作区。").to_string()
                     } else if !self.workspace_writes_allowed() {
-                        "正在确认或移除工作区；终端输入已禁用".to_string()
+                        tr("正在确认或移除工作区；终端输入已禁用").to_string()
                     } else {
-                        self.terminal.status.clone()
+                        self.terminal.status.text()
                     }),
             )
             .child(
@@ -87,7 +87,7 @@ impl HiveApp {
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
                     .whitespace_normal()
-                    .child("隐藏后 Shell 继续运行；“停止 Shell”才结束进程。"),
+                    .child(tr("隐藏后 Shell 继续运行；“停止 Shell”才结束进程。")),
             )
             .when_some(self.terminal.error.as_ref(), |view, error| {
                 view.child(
@@ -101,7 +101,7 @@ impl HiveApp {
                         .bg(Color::ErrorSurface.get(cx))
                         .text_sm()
                         .whitespace_normal()
-                        .child(error.clone()),
+                        .child(terminal_error_text(error)),
                 )
             })
             .child(
@@ -115,14 +115,14 @@ impl HiveApp {
                         let current = self.terminal.run_id.as_ref() == Some(&run.run_id)
                             && self.terminal.attachment.is_some();
                         let label = if current && self.terminal.ready {
-                            format!("当前 {} · 已连接", run.name)
+                            if english() {format!("Current {} · Connected",run.name)} else {format!("当前 {} · 已连接",run.name)}
                         } else {
                             format!(
-                                "连接 {} · {}",
+                                "{} {} · {}",tr("连接"),
                                 run.name,
                                 match run.status.as_str() {
-                                    "running" => "运行中",
-                                    "starting" => "启动中",
+                                    "running" => tr("运行中"),
+                                    "starting" => tr("启动中"),
                                     _ => run.status.as_str(),
                                 }
                             )

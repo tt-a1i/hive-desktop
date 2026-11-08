@@ -1,5 +1,5 @@
 use super::ThinkingBlock;
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color, language::{english,tr}};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -21,13 +21,13 @@ impl HiveApp {
         let index = block.index;
         let expanded = block.expanded;
         let label = if block.redacted {
-            "思考过程未公开"
+            tr("思考过程未公开")
         } else if block.running {
-            "思考中…"
+            tr("思考中…")
         } else if block.interrupted {
-            "思考已中断"
+            tr("思考已中断")
         } else {
-            "思考过程"
+            tr("思考过程")
         };
         v_flex()
             .min_w_0()
@@ -38,11 +38,7 @@ impl HiveApp {
                     .compact()
                     .justify_start()
                     .w_full()
-                    .accessibility_label(format!(
-                        "{}思考过程，第 {} 段，{label}",
-                        if expanded { "收起" } else { "展开" },
-                        index + 1
-                    ))
+                    .accessibility_label(if english() {format!("{} thinking block {}: {label}",if expanded {tr("收起")} else {tr("展开")},index+1)} else {format!("{}思考过程，第 {} 段，{label}",if expanded {tr("收起")} else {tr("展开")},index+1)})
                     .disabled(block.redacted)
                     .child(
                         h_flex()
@@ -117,8 +113,8 @@ impl HiveApp {
                                 .ghost()
                                 .compact()
                                 .icon(Glyph::Copy)
-                                .accessibility_label(format!("复制思考过程，第 {} 段", index + 1))
-                                .tooltip("复制思考过程")
+                                .accessibility_label(if english() {format!("Copy thinking block {}",index+1)} else {format!("复制思考过程，第 {} 段",index+1)})
+                                .tooltip(tr("复制思考过程"))
                                 .on_click(cx.listener(
                                     move |_, _, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(

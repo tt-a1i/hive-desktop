@@ -1,4 +1,4 @@
-use crate::{app::HiveApp, palette::Color};
+use crate::{app::HiveApp, palette::Color, language::{english,tr}};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -38,9 +38,16 @@ pub struct Usage {
     pub visible: bool,
     pub loading: bool,
     pub snapshot: Option<Snapshot>,
-    pub error: Option<String>,
+    pub error: Option<UsageError>,
     generation: u64,
     dirty: bool,
+}
+pub enum UsageError { Decode(String), Request(String) }
+impl UsageError {
+    fn text(&self) -> String {
+        let (key,error)=match self { Self::Decode(error)=>("用量数据格式错误",error),Self::Request(error)=>("未能读取原生用量",error) };
+        format!("{}: {error}",tr(key))
+    }
 }
 impl HiveApp {
     pub(crate) fn reset_usage(&mut self) {
@@ -80,11 +87,8 @@ impl HiveApp {
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("chat.usage", json!({"sessionId":id}))
-                .await
-                .and_then(|value| {
-                    serde_json::from_value::<Snapshot>(value)
-                        .map_err(|e| format!("用量数据格式错误：{e}"))
-                });
+                .await.map_err(UsageError::Request)
+                .and_then(|value|serde_json::from_value::<Snapshot>(value).map_err(|error|UsageError::Decode(error.to_string())));
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection
                     || this.open_request != open
@@ -99,7 +103,7 @@ impl HiveApp {
                         this.usage.snapshot = Some(snapshot);
                         this.usage.error = None;
                     }
-                    Err(error) => this.usage.error = Some(format!("未能读取原生用量：{error}")),
+                    Err(error) => this.usage.error = Some(error),
                 }
                 let dirty = std::mem::take(&mut this.usage.dirty);
                 if dirty {
@@ -114,8 +118,8 @@ impl HiveApp {
         Button::new("session-usage")
             .ghost()
             .compact()
-            .label("用量")
-            .accessibility_label("查看原生用量和上下文")
+            .label(tr("用量"))
+            .accessibility_label(tr("查看原生用量和上下文"))
             .selected(self.usage.visible)
             .disabled(!self.connected || !self.conversation_ready || self.loading)
             .on_click(cx.listener(|this, _, _, cx| {
@@ -143,18 +147,18 @@ impl HiveApp {
                             .flex_1()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child("原生用量"),
+                            .child(tr("原生用量")),
                     )
                     .child(
                         Button::new("refresh-session-usage")
                             .ghost()
                             .compact()
                             .label(if self.usage.loading {
-                                "读取中…"
+                                tr("读取中…")
                             } else {
-                                "刷新"
+                                tr("刷新")
                             })
-                            .accessibility_label("刷新原生用量")
+                            .accessibility_label(tr("刷新原生用量"))
                             .disabled(!self.connected || self.usage.loading)
                             .on_click(cx.listener(|this, _, _, cx| this.load_usage(cx))),
                     )
@@ -162,7 +166,7 @@ impl HiveApp {
                         Button::new("close-session-usage")
                             .ghost()
                             .compact()
-                            .label("收起")
+                            .label(tr("收起"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.usage.visible = false;
                                 cx.notify();
@@ -174,7 +178,7 @@ impl HiveApp {
                     div()
                         .text_xs()
                         .text_color(Color::Muted.get(cx))
-                        .child("运行中：以 Agent 最近已报告的数据为准。"),
+                        .child(tr("运行中：以 Agent 最近已报告的数据为准。")),
                 )
             })
             .when(!self.connected, |view| {
@@ -182,10 +186,10 @@ impl HiveApp {
                     div()
                         .text_xs()
                         .text_color(Color::Error.get(cx))
-                        .child("后台未连接，当前显示上次读取结果。"),
+                        .child(tr("后台未连接，当前显示上次读取结果。")),
                 )
             })
-            .when_some(self.usage.error.clone(), |view, error| {
+            .when_some(self.usage.error.as_ref().map(|error|error.text()), |view, error| {
                 view.child(
                     div()
                         .text_sm()
@@ -205,20 +209,13 @@ impl HiveApp {
                             div()
                                 .text_xs()
                                 .text_color(Color::Secondary.get(cx))
-                                .child(format!("{} · 单位：Token", snapshot.source)),
+                                .child(format!("{} · {}: Token",snapshot.source,tr("单位"))),
                         )
                         .when_some(snapshot.context.as_ref(), |view, context| {
                             view.child(
                                 v_flex()
                                     .gap_1()
-                                    .child(div().text_sm().child(format!(
-                                        "当前上下文{}",
-                                        if context.estimated {
-                                            "（原生估算）"
-                                        } else {
-                                            ""
-                                        }
-                                    )))
+                                    .child(div().text_sm().child(format!("{}{}",tr("当前上下文"),if context.estimated {tr("（原生估算）")} else {""})))
                                     .child(div().text_sm().child(match context.tokens {
                                         Some(tokens) => format!(
                                                 "{tokens} / {} Token{}",
@@ -229,7 +226,7 @@ impl HiveApp {
                                                     .unwrap_or_default()
                                             ),
                                         None => {
-                                            format!("占用暂不可用 · 窗口 {} Token", context.window)
+                                            if english() {format!("Usage unavailable · Context window {} tokens",context.window)} else {format!("占用暂不可用 · 窗口 {} Token",context.window)}
                                         }
                                     })),
                             )
