@@ -1,4 +1,4 @@
-/** Explicit opt-in: real native OpenAI Terra, actual Hive upload and user input. */
+/** Explicit opt-in: real native Terra through Pi/Codex, actual Hive upload and user input. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
@@ -9,6 +9,10 @@ import type { ChatEvent } from '../src/chats.js';
 if (!process.argv.includes('--live')) throw new Error('Pass --live for a real gpt-6.1-terra image request');
 const input = resolve(process.argv[process.argv.indexOf('--live') + 1] ?? '');
 assert.ok(input.endsWith('.png'), 'Provide the generated blue-left/pink-right PNG');
+const backendIndex = process.argv.indexOf('--backend');
+const selectedBackend = backendIndex < 0 ? 'pi' : process.argv[backendIndex + 1];
+assert.ok(selectedBackend && ['pi', 'codex', 'pi-rpc'].includes(selectedBackend), 'Use --backend pi, codex or pi-rpc');
+const backend = selectedBackend as 'pi' | 'codex' | 'pi-rpc';
 const directory = await mkdtemp(resolve('../../.artifacts/image-attachments/live-'));
 const project = join(directory, 'project');
 await mkdir(project);
@@ -25,7 +29,7 @@ try {
     name: 'Terra image proof',
     autostart_orchestrator: false,
   })) as { id: string };
-  const chat = await runtime.chats.create(workspace.id, 'pi');
+  const chat = await runtime.chats.create(workspace.id, backend);
   chatId = chat.id;
   await runtime.chats.setModel(chat.id, 'openai', 'gpt-6.1-terra');
   const image = await runtime.chats.attachments.add(workspace.id, input);
@@ -41,8 +45,15 @@ try {
     const responses = snapshot.history.filter((message: any) => message.role === 'assistant') as any[];
     if (!snapshot.busy && responses.length) {
       const response = responses.at(-1)!;
-      assert.equal(response.model, 'gpt-6.1-terra');
-      assert.equal(response.stopReason, 'stop', response.errorMessage);
+      assert.equal(snapshot.model?.provider, 'openai');
+      assert.equal(snapshot.model?.id, 'gpt-6.1-terra');
+      if (backend !== 'codex') {
+        assert.equal(response.model, 'gpt-6.1-terra');
+        assert.equal(response.stopReason, 'stop', response.errorMessage);
+      } else {
+        assert.ok(events.some(event => event.type === 'settled' && !event.aborted), 'Codex turn must settle successfully');
+        assert.equal(snapshot.deliveryFailure, undefined);
+      }
       assert.equal(snapshot.pending, 0, 'Image delivery must complete successfully');
       const text = response.content
         .filter((part: any) => part.type === 'text')
@@ -52,9 +63,10 @@ try {
       assert.match(text, /右[^；;\n]*粉/);
       const original = await readFile(input);
       const receipt = {
-        backend: 'pi',
+        backend,
         provider: 'openai',
-        model: response.model,
+        model: snapshot.model!.id,
+        modelSelection: snapshot.model,
         vendorInference: true,
         originalSha256: createHash('sha256').update(original).digest('hex'),
         attachment: image.attachment,
@@ -63,16 +75,18 @@ try {
         pending: snapshot.pending,
         usage: response.usage,
       };
+      await writeFile(join(directory, 'snapshot.json'), JSON.stringify(snapshot, null, 2));
       await writeFile(join(directory, 'receipt.json'), JSON.stringify(receipt, null, 2));
       console.log(`IMAGE_ATTACHMENTS_LIVE_OK ${directory}\n${text}`);
       break;
     }
+    if (!snapshot.busy && snapshot.deliveryFailure) throw new Error(`Image delivery failed: ${snapshot.deliveryFailure.message}`);
     assert.ok(Date.now() < deadline, 'Real Terra image request timed out');
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 } catch (error) {
   await writeFile(join(directory, 'failure.json'), JSON.stringify({
-    provider: 'openai', model: 'gpt-6.1-terra',
+    backend, provider: 'openai', model: 'gpt-6.1-terra',
     message: error instanceof Error ? error.message : String(error),
     unexpectedTool,
   }, null, 2));

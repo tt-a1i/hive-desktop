@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 原生Codex Terra识图（2026-11-09）
+
+实际Hive上传/图片消息通过原样Codex0.166.0调用gpt-6.1-terra，正确识别左蓝右粉，零工具、pending归零。关闭整个runtime再重开后，线程及完成标记、回答、历史原图和上传副本字节保持一致，无新prompt。新增检查后端参数，pnpm check通过；不改生产runtime或重新打包，不替代Pi OAuth失败及系统UI/Windows边界。见[真实识图](validation/2026-11-09-codex-image-live.md)。
+
 ## Markdown对话快照（2026-11-09，#16进行中）
 
 增加当前已加载分支的固定快照、独立思考/工具选项、预览、复制及系统保存。Mac实际保存正文/完整版，逐项确认长正文不被预览截断、附件与汇报保留、草稿/隐藏上下文/另一会话不混入；格式、共享原子写入回归和Windows类型检查通过。CUA随后超时，复制逐字、窄窗、正常退出与Windows真机仍待验收；owned窗口现场保留，未强杀或清理活跃程序。见[导出记录](validation/2026-11-09-conversation-export.md)。

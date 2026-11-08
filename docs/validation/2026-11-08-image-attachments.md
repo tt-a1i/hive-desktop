@@ -52,3 +52,6 @@
 - 包内 image-attachments.js SHA-256：`41a18e022a07d93aeaf9e97ad784a5a79d069aab69512b85f1d38228b889d85e`。
 
 本轮没有运行不分风险的全量 Node suite；变更集中于桌面图片输入、投影和草稿，Hive 协议/schema/核心协作逻辑未改，采用上述定向真实存储/传输与适配器回归。没有删测试；既有草稿测试仅适配新增可选附件参数，新增持久化检查覆盖旧文件兼容及图片单独草稿。Windows 新工作流需独立运行，不能由 Mac 交叉类型检查代替。
+
+
+2026-11-09补充：原生Codex Terra已取得真实图片推理及完整runtime重开恢复证据，见[Codex图片实证](2026-11-09-codex-image-live.md)。本页此前Pi OAuth失败与系统UI/Windows限制按当时证据保留。
