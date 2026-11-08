@@ -15,7 +15,7 @@ use gpui_kit::{
 use crate::conversation_list::CHAT_COLUMN_WIDTH;
 
 impl HiveApp {
-    fn agent_name(&self, id: &str) -> String {
+    pub(crate) fn agent_name(&self, id: &str) -> String {
         self.members
             .iter()
             .find(|member| member.id == id)
@@ -408,15 +408,11 @@ impl Render for HiveApp {
                     .when(self.collaboration.selected.is_none(), |list| list
                     .child(self.render_tasks(cx))
                     .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("派单"))
-                    .child(h_flex().gap_1().children([("all", "全部"), ("queued", "排队中"), ("submitted", "已提交"), ("reported", "已汇报"), ("cancelled", "已取消")].into_iter().enumerate().map(|(i, (filter, label))| Button::new(("dispatch-filter", i)).label(label).selected(self.collaboration.filter == filter).on_click(cx.listener(move |this, _, _, cx| { this.collaboration.filter = filter; this.collaboration.offset = 0; this.load_dispatches(cx); })))))
+                    .child(h_flex().flex_wrap().gap_1().children([("all", "全部"), ("queued", "排队中"), ("submitted", "已提交"), ("reported", "已汇报"), ("cancelled", "已取消")].into_iter().enumerate().map(|(i, (filter, label))| Button::new(("dispatch-filter", i)).label(label).selected(self.collaboration.filter == filter).on_click(cx.listener(move |this, _, _, cx| { this.collaboration.filter = filter; this.collaboration.offset = 0; this.load_dispatches(cx); })))))
                     .when(self.collaboration.list_loading, |view| view.child(div().text_sm().child("正在读取派单…")))
                     .when_some(self.collaboration.list_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
                     .when(!self.collaboration.list_loading && self.collaboration.list_error.is_none() && self.collaboration.dispatches.is_empty(), |view| view.child(div().text_sm().child("此页没有派单")))
-                    .children(self.collaboration.dispatches.iter().enumerate().map(|(i, dispatch)| {
-                        let item = dispatch.clone();
-                        let preview: String = dispatch.text.chars().take(100).collect();
-                        Button::new(("dispatch", i)).w_full().label(format!("{} · {} · {}", crate::collaboration::dispatch_state(&dispatch.state), self.agent_name(&dispatch.to_agent_id), preview)).on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx)))
-                    }))
+                    .children(self.collaboration.dispatches.iter().enumerate().map(|(i, dispatch)| self.render_dispatch_card(i, dispatch, cx)))
                     .child(h_flex().gap_2()
                         .child(Button::new("dispatch-prev").label("上一页").disabled(!self.connected || self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(20); this.load_dispatches(cx); })))
                         .child(div().text_sm().child(format!("第 {} 页", self.collaboration.offset / 20 + 1)))
@@ -424,7 +420,6 @@ impl Render for HiveApp {
                     )
                     .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
                         .when_some(self.collaboration.detail_error.clone(), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
-                        .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(item.text.clone()))
                         .child(h_flex().items_center().flex_wrap().gap_2()
                             .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().child(crate::collaboration::dispatch_state(&item.state).to_owned()))
                             .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(format!("{} → {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| "未记录发送者".into()), self.agent_name(&item.to_agent_id))))
@@ -433,6 +428,12 @@ impl Render for HiveApp {
                             .child(Button::new("copy-dispatch-id").ghost().compact().icon(Glyph::Copy).accessibility_label("复制派单编号").tooltip(format!("复制派单编号 · {}", item.id)).on_click({
                                 let id = item.id.clone(); cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(id.clone())))
                             })))
+                        .child(h_flex().items_center().gap_2()
+                            .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child("任务"))
+                            .child(Button::new("copy-dispatch-task").ghost().compact().icon(Glyph::Copy).tooltip("复制完整任务").accessibility_label("复制派单内容").on_click({
+                                let text = item.text.clone(); cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())))
+                            })))
+                        .child(div().text_sm().child(item.text.clone()))
                         .when_some(item.report_text.clone(), |view, text| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if item.state == "cancelled" { "取消原因" } else { "汇报原文" })).child(div().text_sm().child(text)))
                         .when(!item.artifacts.is_empty(), |view| view.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("产物")).children(item.artifacts.iter().enumerate().map(|(i, path)| h_flex().child(self.artifact_link(&item.id, i, path, cx)))))
                         .when(self.collaboration.responsibilities.len() > 1, |view| view.child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child("成员分工"))
