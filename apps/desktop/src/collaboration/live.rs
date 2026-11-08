@@ -11,6 +11,7 @@ impl HiveApp {
                 smol::Timer::after(Duration::from_secs(3)).await;
                 if this
                     .update(cx, |this, cx| {
+                        this.refresh_remote(cx);
                         if !this.connected
                             || this.loading
                             || this.closing

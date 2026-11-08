@@ -58,6 +58,7 @@ impl HiveApp {
                             crate::appearance::restore(std::path::Path::new(root), cx);
                             crate::composer::restore(std::path::Path::new(root), cx);
                         }
+                        this.remote.commands = info["remoteCommands"].clone();
                         this.pi_agent_dir =
                             info["piAgentDir"].as_str().map(std::path::PathBuf::from);
                         if !this.backend_initialized
@@ -147,6 +148,7 @@ impl HiveApp {
         self.inflight_inputs.clear();
         window.close_all_dialogs(cx);
         self.connection_generation += 1;
+        self.remote = Default::default();
         self.restarting = true;
         self.loading = true;
         self.error = None;

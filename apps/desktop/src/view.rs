@@ -385,6 +385,10 @@ impl Render for HiveApp {
                     .child(div().flex_1().min_w_0().text_sm().child(if self.restarting { "正在重新启动后台，当前草稿已保留。" } else { "后台未连接，当前草稿已保留。" }))
                     .child(Button::new("restart-backend").label("重新启动后台").disabled(self.restarting)
                         .on_click(cx.listener(|this, _, window, cx| this.restart_backend(window, cx))))))
+            .when(self.connected && self.remote.valid && self.remote.pending.iter().any(|p| p.expires_at > crate::settings::remote::now()) && !(self.settings_panel && self.settings_section == crate::app::SettingsSection::Remote), |view| view.child(
+                h_flex().flex_shrink_0().items_center().gap_3().p_3().bg(Color::Attention.get(cx))
+                    .child(div().flex_1().min_w_0().text_sm().child("有新设备等待配对，请核对两端安全短码后确认。"))
+                    .child(Button::new("remote-pending-banner").label("查看配对请求").on_click(cx.listener(|this, _, window, cx| this.select_settings_section(crate::app::SettingsSection::Remote, window, cx))))))
             .when(!preferences && !self.sidebar_open, |layout| layout.child(self.render_navigation_bar(cx)))
             .child(h_flex().flex_1().min_h_0().w_full()
             .when(!preferences && self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))

@@ -12,7 +12,7 @@
 | 外部Pi作为主控/Worker | 原样CLI1.4.0真实Terra团队与恢复；[外部Pi](validation/2026-11-07-external-pi-team.md) | 新的真实图片推理、所有扩展UI和最新平台组合未完整验收；认证与内置Pi分别记录 |
 | Claude Code作为主控/Worker | 官方SDK、原样CLI无推理控制、持久化、工具回调、交互与合成对端；[Claude](validation/2026-11-07-claude-adapter.md) | 真实Claude模型团队协作未验收；保持只用Terra的用户约束，不换模型冒充成功 |
 | 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；README逐项指向实际记录 | 当前导出复制/窄窗/退出、部分在途时序、完整系统输入与可访问性矩阵未完成 |
-| 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | Web已有语言设置和远程配置没有原生对应页，分别见[#17](https://github.com/tt-a1i/hive-desktop/issues/17)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流删除最终按钮等仍待验收 |
+| 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言设置仍无原生对应页，见[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生点击、真实网关和Windows仍待验收，见[记录](validation/2026-11-09-remote-settings.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流删除最终按钮等仍待验收 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；新增Mac EPERM回归先红后绿；[恢复](validation/2026-11-08-backend-recovery.md)、[清理](validation/2026-11-09-macos-exited-group.md) | 当前两个owned验证窗口仍在，未取得其最终正常退出；不承诺恢复任意中断工具或exactly-once |
 | macOS可实际使用 | 当前已验证ZIP为1acd805，含资源浏览；[当前包](validation/2026-11-08-current-package.md) | 新候选66ef8f9仅包内静态/运行时gate通过，未做新包启动恢复/完整GUI，不作为current推广 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户允许不处理CI，不等于取消Windows目标 |
@@ -33,4 +33,4 @@ current ZIP哈希f7174572fb16248b3a3f40e467a1322951a9ac4a26bd5c728ce0e52aceb57cf
 - Pi的原生OpenAI订阅刷新仍返回400 invalid_grant，已请求重新登录；不再用相同认证重复请求，不自动更换接口、认证或模型。
 - 静态实现、Web遗漏项迁移、既有后台的定向验证和候选准备仍可独立推进，完整目标保持active。解锁后优先回到复制、窄窗、正常退出及候选原生验收，再推广包。
 
-Web遗漏项来源：本地Hive的5d87d4ba10d9d66cfca32941a16c60e7e52476b0、版本2.2.1，LanguageSetting.tsx明确有zh/en按钮，SettingsMenu.tsx包含RemoteAccessSection；两文件无本地未提交改动。桌面SettingsSection尚无这些入口。这是现有基线缺口，不是将新功能另塞进原目标。
+Web遗漏项来源：本地Hive的5d87d4ba10d9d66cfca32941a16c60e7e52476b0、版本2.2.1，LanguageSetting.tsx明确有zh/en按钮，SettingsMenu.tsx包含RemoteAccessSection；两文件无本地未提交改动。语言仍无入口；远程入口于本轮接入，证据与缺口如上。这是现有基线缺口，不是将新功能另塞进原目标。

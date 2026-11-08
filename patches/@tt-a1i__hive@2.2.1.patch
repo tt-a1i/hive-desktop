@@ -1,3 +1,223 @@
+diff --git a/dist/src/cli/hive-data-dir.js b/dist/src/cli/hive-data-dir.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..e81efd1e2c551b7cf66f8ed68d394629e2052569
+--- /dev/null
++++ b/dist/src/cli/hive-data-dir.js
+@@ -0,0 +1,42 @@
++import { existsSync } from 'node:fs';
++import { homedir } from 'node:os';
++import { join } from 'node:path';
++/**
++ * Resolve the directory where Hive persists its SQLite DB and supporting
++ * state. Platform-aware because `~/.config/hive` is a hidden dot-directory
++ * convention that Windows Explorer treats as second-class — Windows users
++ * can't navigate there from the address bar without typing the full path,
++ * and the standard roaming-profile location is `%APPDATA%\<app>` instead.
++ *
++ * Resolution order:
++ *   1. HIVE_DATA_DIR override (any platform, for tests / opinionated users).
++ *   2. Windows: %APPDATA%\hive — roaming user state, follows the user
++ *      across machines on a domain profile. APPDATA, not LOCALAPPDATA,
++ *      because Hive's DB is user data, not a machine-local cache.
++ *      Falls back to homedir()\AppData\Roaming\hive when APPDATA is
++ *      stripped from the env (some Windows Task Scheduler configs do this).
++ *   3. POSIX: $XDG_CONFIG_HOME/hive, falling back to ~/.config/hive.
++ *
++ * Migration: pre-fix Windows installs wrote to ~/.config/hive. When that
++ * legacy directory exists but the new %APPDATA%\hive does not, prefer the
++ * legacy path so an upgrade does not surface as an empty workspace list.
++ * This is a one-way ratchet — once the new location is populated, it wins.
++ *
++ * Lives in its own module so `hive remote` (and its tests) can resolve the
++ * data dir without importing the daemon entry, which would pull the entire
++ * server graph.
++ */
++export const resolveDataDir = (platform = process.platform, env = process.env, pathExists = existsSync) => {
++    const override = env.HIVE_DATA_DIR;
++    if (override)
++        return override;
++    if (platform === 'win32') {
++        const appData = env.APPDATA ?? join(homedir(), 'AppData', 'Roaming');
++        const target = join(appData, 'hive');
++        const legacy = join(homedir(), '.config', 'hive');
++        if (!pathExists(target) && pathExists(legacy))
++            return legacy;
++        return target;
++    }
++    return join(env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'hive');
++};
+diff --git a/dist/src/cli/hive-remote.js b/dist/src/cli/hive-remote.js
+index 9f9a48812e5af6194be9db8f32d394538e86ec60..121c532d6b4d8d455a3d215171ccd20bc7c3fe24 100644
+--- a/dist/src/cli/hive-remote.js
++++ b/dist/src/cli/hive-remote.js
+@@ -2,8 +2,10 @@ import { createAppStateStore } from '../server/app-state-store.js';
+ import { getMachineName } from '../server/machine-name.js';
+ import { DEFAULT_GATEWAY_URL, REMOTE_DAEMON_ID_KEY, REMOTE_DAEMON_TOKEN_KEY, REMOTE_ENABLED_KEY, REMOTE_GATEWAY_URL_KEY, } from '../server/remote-config-keys.js';
+ import { createRemoteDeviceStore } from '../server/remote-device-store.js';
++import { postPairRevoke } from '../server/remote-gateway-client.js';
++import { addPendingRevoke, getPendingRevokeGateway, removePendingRevoke, } from '../server/remote-pending-revokes.js';
+ import { openRuntimeDatabase } from '../server/runtime-database.js';
+-import { resolveDataDir } from './hive.js';
++import { resolveDataDir } from './hive-data-dir.js';
+ // Re-export so existing callers (and the CLI tests) can keep importing the keys
+ // from here; the canonical definitions live in remote-config-keys.ts, shared
+ // with the daemon-side tunnel so the on-disk contract can't drift between sides.
+@@ -42,15 +44,43 @@ export const HIVE_REMOTE_USAGE = [
+     `  --gateway <url>   Gateway base URL (default: ${DEFAULT_GATEWAY_URL}).`,
+     '  -h, --help        Print this help.',
+ ].join('\n');
++const createRemoteConfigStore = (db) => ({
++    ...createAppStateStore(db),
++    transaction: (mutation) => db.transaction(mutation)(),
++});
+ const openConfigStore = () => {
+     const db = openRuntimeDatabase(resolveDataDir());
+-    return { store: createAppStateStore(db), close: () => db.close() };
++    return { store: createRemoteConfigStore(db), close: () => db.close() };
+ };
+ const readConfig = (store, key) => store.get(key)?.value ?? null;
++// The CLI's RemoteConfigStore and the daemon's settings store are the SAME
++// app_state table; adapt the accessor names so both sides share one durable
++// revoke-queue module (remote-pending-revokes.ts).
++const asPendingRevokesStore = (config) => {
++    const transaction = config.transaction;
++    if (!transaction)
++        throw new TypeError('Remote revocation requires transactional storage');
++    return {
++        getAppState: (key) => config.get(key),
++        setAppState: (key, value) => config.set(key, value),
++        transaction: (mutation) => transaction(mutation),
++    };
++};
+ const openDeviceStore = () => {
+     const db = openRuntimeDatabase(resolveDataDir());
+     return { store: createRemoteDeviceStore(db), close: () => db.close() };
+ };
++// Both stores live in the SAME SQLite file, so `revoke` (which needs the device
++// rows AND the app_state config + revoke queue) opens ONE connection for both —
++// previously two connections were opened and only the last one closed.
++const openRemoteStores = () => {
++    const db = openRuntimeDatabase(resolveDataDir());
++    return {
++        devices: createRemoteDeviceStore(db),
++        config: createRemoteConfigStore(db),
++        close: () => db.close(),
++    };
++};
+ const trimSlash = (url) => url.replace(/\/+$/, '');
+ const postJson = async (url, body, token) => {
+     const headers = { 'content-type': 'application/json' };
+@@ -181,19 +211,41 @@ const runDevices = (store, log) => {
+     }
+     return 0;
+ };
+-const runRevoke = (deviceId, store, log, error) => {
++const runRevoke = async (deviceId, store, config, log, error) => {
+     if (!deviceId) {
+         error('Usage: hive remote revoke <deviceId>');
+         return 1;
+     }
+-    const revoked = store.revoke(deviceId);
+-    if (!revoked) {
++    const pendingRevokes = asPendingRevokesStore(config);
++    // The normal CLI path owns one SQLite connection for both stores. Commit
++    // revocation and retry obligation together, including while logged out.
++    const entry = pendingRevokes.transaction(() => {
++        if (!store.revoke(deviceId))
++            return null;
++        return addPendingRevoke(pendingRevokes, deviceId);
++    });
++    if (!entry) {
+         error(`Unknown or already-revoked device: ${deviceId}`);
+         return 1;
+     }
+-    // The daemon's provider reads live sessions fresh, so the device is refused on its
+-    // next frame. To tear down an IN-PROGRESS session immediately, revoke from
+-    // Settings → Remote access (which fires the live closed-loop disconnect).
++    const gatewayUrl = getPendingRevokeGateway(pendingRevokes);
++    const daemonToken = readConfig(config, REMOTE_DAEMON_TOKEN_KEY);
++    if (gatewayUrl && daemonToken && gatewayUrl === entry.gatewayUrl) {
++        let confirmed = false;
++        try {
++            await postPairRevoke({ gatewayUrl, daemonToken }, deviceId);
++            confirmed = true;
++        }
++        catch {
++            log('Gateway revocation was not confirmed; it remains queued for the next tunnel connection.');
++        }
++        // A DB acknowledgement failure must surface as a persistence error, not be
++        // mislabeled as a failed HTTP request. Its transaction preserves the queue.
++        if (confirmed)
++            removePendingRevoke(pendingRevokes, entry);
++    }
++    // Local E2E keys are gone immediately. Gateway row/JWT die on the POST above
++    // (or the durable retry).
+     log(`Revoked device ${deviceId}. It is refused on its next connection.`);
+     return 0;
+ };
+@@ -209,24 +261,22 @@ export const runHiveRemoteCommand = async (argv, options = {}) => {
+     const sleep = options.sleep ?? defaultSleep;
+     const log = options.log ?? console.log;
+     const error = options.error ?? console.error;
+-    // Open the config store lazily so --help / unknown subcommands don't touch
+-    // the DB, and always close an owned handle.
+-    // Annotated as a possibly-undefined holder so TS doesn't narrow it to `never`
+-    // in the finally block (the assignment happens inside resolveStore's closure,
+-    // which control-flow analysis can't see executing).
+-    const owned = {};
++    // Open stores lazily so --help / unknown subcommands don't touch the DB, and
++    // always close EVERY owned handle (previously a single `close` slot was
++    // overwritten per open, leaking all but the last connection).
++    const ownedClosers = [];
+     const resolveStore = () => {
+         if (options.config)
+             return options.config;
+         const opened = openConfigStore();
+-        owned.close = opened.close;
++        ownedClosers.push(opened.close);
+         return opened.store;
+     };
+     const resolveDeviceStore = () => {
+         if (options.deviceStore)
+             return options.deviceStore;
+         const opened = openDeviceStore();
+-        owned.close = opened.close;
++        ownedClosers.push(opened.close);
+         return opened.store;
+     };
+     try {
+@@ -239,8 +289,20 @@ export const runHiveRemoteCommand = async (argv, options = {}) => {
+                 return runLogout(resolveStore(), log);
+             case 'devices':
+                 return runDevices(resolveDeviceStore(), log);
+-            case 'revoke':
+-                return runRevoke(rest[0], resolveDeviceStore(), log, error);
++            case 'revoke': {
++                // One runtime DB connection backs both stores when neither is injected.
++                if (Boolean(options.deviceStore) !== Boolean(options.config)) {
++                    throw new TypeError('Remote revocation requires both stores from the same transactional database');
++                }
++                const stores = options.deviceStore && options.config
++                    ? { devices: options.deviceStore, config: options.config }
++                    : openRemoteStores();
++                if ('close' in stores)
++                    ownedClosers.push(stores.close);
++                // await: the finally block below closes the DB; without it the close ran
++                // while runRevoke's gateway POST was still in flight.
++                return await runRevoke(rest[0], stores.devices, stores.config, log, error);
++            }
+             default:
+                 error(`Unknown remote subcommand: ${subcommand}`);
+                 error(HIVE_REMOTE_USAGE);
+@@ -252,6 +314,7 @@ export const runHiveRemoteCommand = async (argv, options = {}) => {
+         return 1;
+     }
+     finally {
+-        owned.close?.();
++        for (const close of ownedClosers)
++            close();
+     }
+ };
 diff --git a/dist/src/cli/hive.js b/dist/src/cli/hive.js
 index 27e9ed2bafba640a2e6f710844e72e9e00548984..f6122d657edb8071464491dceeaf7c35b0627301 100644
 --- a/dist/src/cli/hive.js
@@ -32,6 +252,147 @@ index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..b9e27abce99157db799260327d5c793a
          },
      };
      pty.onData((chunk) => {
+diff --git a/dist/src/server/remote-config-keys.js b/dist/src/server/remote-config-keys.js
+index cf80f23b9ed3a2d34cf5c27de755dbc036b3490c..2b144e1aeab4dfc8f71255c3f9534d8c6db92f07 100644
+--- a/dist/src/server/remote-config-keys.js
++++ b/dist/src/server/remote-config-keys.js
+@@ -6,10 +6,20 @@
+ // stop login from reaching the tunnel).
+ //
+ // snake_case to match the existing app_state keys (active_workspace_id, …).
+-export const REMOTE_GATEWAY_URL_KEY = 'remote_gateway_url';
+-export const REMOTE_DAEMON_TOKEN_KEY = 'remote_daemon_token';
+-export const REMOTE_DAEMON_ID_KEY = 'remote_daemon_id';
+-export const REMOTE_ENABLED_KEY = 'remote_enabled';
++// Every key registered here is automatically denylisted on the HTTP app-state
++// route for tunnel-origin traffic (and remote_enabled writes from any origin).
++const remoteConfigKeys = new Set();
++const remoteConfigKey = (value) => {
++    remoteConfigKeys.add(value);
++    return value;
++};
++export const REMOTE_GATEWAY_URL_KEY = remoteConfigKey('remote_gateway_url');
++export const REMOTE_DAEMON_TOKEN_KEY = remoteConfigKey('remote_daemon_token');
++export const REMOTE_DAEMON_ID_KEY = remoteConfigKey('remote_daemon_id');
++export const REMOTE_ENABLED_KEY = remoteConfigKey('remote_enabled');
++export const REMOTE_PENDING_REVOKES_KEY = remoteConfigKey('remote_pending_revokes');
++export const isRemoteConfigKey = (key) => remoteConfigKeys.has(key);
++export const listRemoteConfigKeys = () => [...remoteConfigKeys];
+ export const DEFAULT_GATEWAY_URL = 'https://app.hivehq.dev';
+ // remote_enabled is ON only when it is exactly the string 'true'. Everything
+ // else — absent, '', 'false', '1', 'yes' — is OFF. This is invariant 4 (off ==
+diff --git a/dist/src/server/remote-frame-bridge.js b/dist/src/server/remote-frame-bridge.js
+index d1ce4c6d67fbcb8017f54d11e38fc0f613772858..12f1ea34e3212fa7afdbf3ca95a3223a254fc443 100644
+--- a/dist/src/server/remote-frame-bridge.js
++++ b/dist/src/server/remote-frame-bridge.js
+@@ -23,7 +23,7 @@ import { request as httpRequest } from 'node:http';
+ import WebSocketClient from 'ws';
+ import { classifyOpen } from '../shared/remote-bridge-routing.js';
+ import { createOpener, createSealer, generateConnSalt as defaultGenerateConnSalt, deriveConnectionKeys, openNext, REMOTE_CRYPTO_VERSION, sealNext, } from '../shared/remote-crypto.js';
+-import { CHANNEL_STREAM_ID, CONN_SALT_STREAM_ID, createFlowController, createStreamMachine, decodeConnSalt, decodeHeader, decodeHttpData, decodeOpenPayload, decodeWsMessage, encodeConnSalt, encodeHeader, encodeHttpBodyChunk, encodeHttpHead, encodeResetPayload, encodeWsMessage, FrameKind, HEADER_BYTES, isConnSaltPayload, ResetCode, } from '../shared/remote-protocol.js';
++import { CHANNEL_STREAM_ID, CONN_SALT_STREAM_ID, createFlowController, createStreamMachine, decodeConnSalt, decodeHeader, decodeHttpData, decodeOpenPayload, decodeWsMessage, encodeConnSalt, encodeHeader, encodeHttpBodyChunk, encodeHttpHead, encodeResetPayload, encodeWsMessage, FrameKind, HEADER_BYTES, isConnSaltPayload, ProtocolError, ResetCode, } from '../shared/remote-protocol.js';
+ import { DAEMON_OPEN_DIRECTION, DAEMON_SEAL_DIRECTION, } from './remote-device-session.js';
+ import { sanitizeTunnelResponseHeaders, stampLoopbackHeaders } from './remote-loopback-auth.js';
+ // ── loopback transport seam (real node:http / ws by default; stubbed in unit tests) ─────────────
+@@ -738,7 +738,16 @@ export const createFrameBridge = (ctx) => {
+                 });
+                 return;
+             }
+-            handleOpened(opened.device, header, opened.plaintext);
++            try {
++                handleOpened(opened.device, header, opened.plaintext);
++            } catch (error) {
++                // An authenticated peer can still send invalid HTTP/WS envelopes.
++                // Contain protocol failures to this stream; keep programming errors visible.
++                if (!(error instanceof ProtocolError)) throw error;
++                sendReset(opened.device, header.streamId, error.code);
++                tearDownStream(streamKey(opened.device.session.deviceId, header.streamId), 'reset');
++                audit.enqueue({ action: 'reject', result: 'rejected', deviceId: opened.device.session.deviceId, rejectReason: 'malformed_payload' });
++            }
+         },
+         resetAllStreams(reason, opts) {
+             const keepSink = opts?.keepSink ?? false;
+diff --git a/dist/src/server/remote-gateway-client.js b/dist/src/server/remote-gateway-client.js
+index 9b9a6493eff4c2b1f131ae9c16355537986c0124..80355a827a259aa65fe46d2a49349c0f4b298f2e 100644
+--- a/dist/src/server/remote-gateway-client.js
++++ b/dist/src/server/remote-gateway-client.js
+@@ -34,3 +34,22 @@ export const postPairConfirm = async (deps, body) => {
+         throw new Error(`gateway /pair/confirm failed: ${res.status}`);
+     }
+ };
++// POST /pair/revoke — daemon-token-authed. Marks the gateway device row + session jti revoked
++// so a locally revoked phone cannot keep using /pair/relay-token or /relay.
++// Only success acknowledges a revoke. A 404 can mean a different account or a
++// missing route. The gateway returns success for owned, already-revoked devices.
++export const postPairRevoke = async (deps, deviceId) => {
++    const fetchImpl = deps.fetchImpl ?? fetch;
++    const res = await fetchImpl(`${trimSlash(deps.gatewayUrl)}/pair/revoke`, {
++        method: 'POST',
++        headers: {
++            'content-type': 'application/json',
++            authorization: `Bearer ${deps.daemonToken}`,
++        },
++        body: JSON.stringify({ deviceId }),
++        signal: AbortSignal.timeout(5_000),
++    });
++    if (!res.ok) {
++        throw new Error(`gateway /pair/revoke failed: ${res.status}`);
++    }
++};
+diff --git a/dist/src/server/remote-pending-revokes.js b/dist/src/server/remote-pending-revokes.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..dc1981175c2ec7febaa99d5c77847534dca21651
+--- /dev/null
++++ b/dist/src/server/remote-pending-revokes.js
+@@ -0,0 +1,48 @@
++import { REMOTE_GATEWAY_URL_KEY, REMOTE_PENDING_REVOKES_KEY } from './remote-config-keys.js';
++export const getPendingRevokeGateway = (store) => store.getAppState(REMOTE_GATEWAY_URL_KEY)?.value?.replace(/\/+$/, '') || null;
++export const readPendingRevokes = (store) => {
++    const raw = store.getAppState(REMOTE_PENDING_REVOKES_KEY)?.value;
++    if (raw == null)
++        return [];
++    const parsed = JSON.parse(raw);
++    if (!Array.isArray(parsed)) {
++        throw new TypeError('Invalid persisted remote revocation queue');
++    }
++    return parsed.map((entry) => {
++        // Old unscoped entries remain pending: guessing their gateway after a
++        // login change could silently acknowledge another gateway's device.
++        if (typeof entry === 'string' && entry.length > 0) {
++            return { deviceId: entry, gatewayUrl: null };
++        }
++        if (entry &&
++            typeof entry === 'object' &&
++            'deviceId' in entry &&
++            typeof entry.deviceId === 'string' &&
++            entry.deviceId.length > 0 &&
++            'gatewayUrl' in entry &&
++            (entry.gatewayUrl === null ||
++                (typeof entry.gatewayUrl === 'string' && entry.gatewayUrl.length > 0))) {
++            return { deviceId: entry.deviceId, gatewayUrl: entry.gatewayUrl };
++        }
++        throw new TypeError('Invalid persisted remote revocation queue');
++    });
++};
++const writePendingRevokes = (store, entries) => {
++    store.setAppState(REMOTE_PENDING_REVOKES_KEY, entries.length > 0 ? JSON.stringify(entries) : null);
++};
++/** Fresh-read add. Throws on real store failures so the caller can surface them. */
++export const addPendingRevoke = (store, deviceId) => store.transaction(() => {
++    const pending = readPendingRevokes(store);
++    const entry = { deviceId, gatewayUrl: getPendingRevokeGateway(store) };
++    if (!pending.some((item) => item.deviceId === deviceId && item.gatewayUrl === entry.gatewayUrl)) {
++        writePendingRevokes(store, [...pending, entry]);
++    }
++    return entry;
++});
++/** Ack only this device on this gateway, preserving other origins and fresh writes. */
++export const removePendingRevoke = (store, entry) => {
++    store.transaction(() => {
++        const pending = readPendingRevokes(store);
++        writePendingRevokes(store, pending.filter((item) => item.deviceId !== entry.deviceId || item.gatewayUrl !== entry.gatewayUrl));
++    });
++};
 diff --git a/dist/src/server/report-outbox-store.js b/dist/src/server/report-outbox-store.js
 index ef0204c62bad803129ee03cbb87f97e45ec81fb8..4f9bb4e930f22294a203a4f5756d1ef02ca9ea58 100644
 --- a/dist/src/server/report-outbox-store.js
@@ -110,6 +471,51 @@ index f6b3d7f2faf8ea14b06ddedca317a3c830ca7232..806177a51ff178dda0ee24576e890095
      route('GET', '/api/ui/workspaces/:workspaceId/dispatches/:dispatchId/messages', ({ params, request, response, store }) => {
          requireUiTokenFromRequest(request, store.validateUiToken, store.authorizeRemoteTunnelRequest);
          const workspaceId = getRequiredParam(response, params, 'workspaceId', 'Workspace id is required');
+diff --git a/dist/src/server/routes-settings.js b/dist/src/server/routes-settings.js
+index 7b4a3a975555a9e88c617be360b151ad8ccb4620..759f90661a7739eecfe2d6e2ac46dfd95050a1ed 100644
+--- a/dist/src/server/routes-settings.js
++++ b/dist/src/server/routes-settings.js
+@@ -1,6 +1,7 @@
++import { isRemoteConfigKey, REMOTE_ENABLED_KEY } from './remote-config-keys.js';
+ import { isCommandAvailableOnPath } from './agent-command-resolver.js';
+ import { readFeatureFlags } from './feature-flags.js';
+-import { BadRequestError } from './http-errors.js';
++import { BadRequestError, ForbiddenError } from './http-errors.js';
+ import { getRequiredParam, readJsonBody, route, sendJson } from './route-helpers.js';
+ import { ensureProtocolFile } from './tasks-file.js';
+ import { AUTOSTAFF_ENABLED_KEY, readAutostaffEnabled, serializeAutostaffEnabled, } from './team-autostaff.js';
+@@ -79,6 +80,15 @@ const readRoleTemplateBody = async (request) => {
+         defaultEnv: body.default_env ?? {},
+     };
+ };
++const assertAppStateKeyAllowed = (ctx, key, write) => {
++    if (write && key === REMOTE_ENABLED_KEY) {
++        throw new ForbiddenError('remote_enabled can only be changed via /api/remote/enabled');
++    }
++    if (isRemoteConfigKey(key) && ctx.store.authorizeRemoteTunnelRequest(ctx.request)) {
++        throw new ForbiddenError('remote configuration is not available over the tunnel');
++    }
++};
++
+ export const settingsRoutes = [
+     route('GET', '/api/settings/command-presets', ({ request, response, store }) => {
+         requireUiTokenFromRequest(request, store.validateUiToken, store.authorizeRemoteTunnelRequest);
+@@ -143,6 +153,7 @@ export const settingsRoutes = [
+         const key = getRequiredParam(response, params, 'key', 'App state key is required');
+         if (!key)
+             return;
++        assertAppStateKeyAllowed({ request, store }, key, false);
+         sendJson(response, 200, store.settings.getAppState(key) ?? { key, value: null });
+     }),
+     route('PUT', '/api/settings/app-state/:key', async ({ params, request, response, store }) => {
+@@ -150,6 +161,7 @@ export const settingsRoutes = [
+         const key = getRequiredParam(response, params, 'key', 'App state key is required');
+         if (!key)
+             return;
++        assertAppStateKeyAllowed({ request, store }, key, true);
+         const body = await readJsonBody(request);
+         store.settings.setAppState(key, body.value);
+         response.statusCode = 204;
 diff --git a/dist/src/server/routes-tasks.js b/dist/src/server/routes-tasks.js
 index 52b93703f8dd19537a53d87f9ed47edd9d1e92db..3db2f661ab74f9c49da1d1ba33c45cb6549d480f 100644
 --- a/dist/src/server/routes-tasks.js
@@ -217,6 +623,114 @@ index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959c
      const dispatchMessageOps = createDispatchMessageOperations({
          db,
          ledger: dispatchLedgerStore,
+diff --git a/dist/src/server/runtime-store-remote.js b/dist/src/server/runtime-store-remote.js
+index c4bdd2dfcaace3dae5dbce091695f94785d036c5..d4c3fcd350d90850ca4f416da5c2fa2234ec5730 100644
+--- a/dist/src/server/runtime-store-remote.js
++++ b/dist/src/server/runtime-store-remote.js
+@@ -1,10 +1,70 @@
+-import { REMOTE_ENABLED_KEY } from './remote-config-keys.js';
++import { REMOTE_DAEMON_TOKEN_KEY, REMOTE_ENABLED_KEY } from './remote-config-keys.js';
++import { postPairRevoke } from './remote-gateway-client.js';
++import { addPendingRevoke, getPendingRevokeGateway, readPendingRevokes, removePendingRevoke, } from './remote-pending-revokes.js';
+ export const createRuntimeStoreRemoteMethods = (services) => {
+     // Remote tunnel handle (M4). bindRemoteTunnel sets it in hive.ts after the tunnel is constructed;
+     // a runtime that never builds a tunnel leaves it null and the revoke closed loop still rejects new
+     // streams via the persistent provider.
+     let remoteTunnel = null;
+     let remoteTunnelStatus = 'disabled';
++    // One flush loop at a time; triggers arriving mid-pass only re-arm a follow-up
++    // pass (see flushPendingRevokes).
++    let flushing = false;
++    let flushAgain = false;
++    const pendingRevokes = {
++        getAppState: (key) => services.settings.getAppState(key),
++        setAppState: (key, value) => services.settings.setAppState(key, value),
++        transaction: (mutation) => services.db.transaction(mutation)(),
++    };
++    const tryGatewayRevoke = async (entry) => {
++        const gatewayUrl = getPendingRevokeGateway(pendingRevokes);
++        const daemonToken = services.settings.getAppState(REMOTE_DAEMON_TOKEN_KEY)?.value;
++        if (!gatewayUrl || !daemonToken || entry.gatewayUrl !== gatewayUrl)
++            return false;
++        try {
++            await postPairRevoke({ gatewayUrl, daemonToken }, entry.deviceId);
++            return true;
++        }
++        catch {
++            return false;
++        }
++    };
++    // Serialized, fresh-read flush: each pass re-reads the queue and acks per-id
++    // (removePendingRevoke), so a pass can never overwrite a newer queued revoke
++    // with a stale snapshot — the pre-fix lost-update bug.
++    const flushPendingRevokes = () => {
++        if (services.isRuntimeClosing())
++            return;
++        if (flushing) {
++            flushAgain = true;
++            return;
++        }
++        flushing = true;
++        void (async () => {
++            try {
++                do {
++                    flushAgain = false;
++                    for (const id of readPendingRevokes(pendingRevokes)) {
++                        if (services.isRuntimeClosing())
++                            return;
++                        const delivered = await tryGatewayRevoke(id);
++                        if (services.isRuntimeClosing())
++                            return;
++                        if (delivered)
++                            removePendingRevoke(pendingRevokes, id);
++                    }
++                } while (flushAgain && !services.isRuntimeClosing());
++            }
++            catch (error) {
++                // Failed persistence leaves the queue intact. Surface the failure; an
++                // HTTP success followed by a DB error is not a transport outage.
++                console.error('[hive] remote revoke queue flush failed', error);
++            }
++            finally {
++                flushing = false;
++            }
++        })();
++    };
+     return {
+         authorizeRemoteTunnelRequest: (request) => services.uiAuth.isTunnelRequest(request),
+         getRemoteTunnelSecret: () => services.uiAuth.getTunnelSecret(),
+@@ -22,6 +82,8 @@ export const createRuntimeStoreRemoteMethods = (services) => {
+         getRemoteTunnelStatus: () => remoteTunnelStatus,
+         setRemoteTunnelStatus: (status) => {
+             remoteTunnelStatus = status;
++            if (status === 'online')
++                flushPendingRevokes();
+         },
+         bindRemoteTunnel: (tunnel) => {
+             remoteTunnel = tunnel;
+@@ -32,13 +94,19 @@ export const createRuntimeStoreRemoteMethods = (services) => {
+             remoteTunnel?.refresh();
+         },
+         revokeRemoteDevice: (deviceId) => {
+-            // (1) Persistent provider drops the session at once; (2) live streams are closed best-effort;
+-            // (3) audit one revoke row for actual state changes.
+-            const revoked = services.remoteDeviceStore.revoke(deviceId);
++            // Persist the local revoke and retry obligation together, even when
++            // credentials are temporarily absent. Unknown ids never enter the queue.
++            const revoked = pendingRevokes.transaction(() => {
++                const changed = services.remoteDeviceStore.revoke(deviceId);
++                if (changed)
++                    addPendingRevoke(pendingRevokes, deviceId);
++                return changed;
++            });
+             remoteTunnel?.closeDevice(deviceId, 'revoked');
+             if (revoked) {
+                 services.remoteAuditStore.enqueue({ action: 'revoke', deviceId, result: 'ok' });
+             }
++            flushPendingRevokes();
+             return revoked;
+         },
+     };
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
 index 9b36020983e2e585aa03922183b8d12631f59ed7..6e23338db4d75decaa15618f2e46fffa9dc1bf59 100644
 --- a/dist/src/server/runtime-store.js

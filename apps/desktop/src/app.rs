@@ -25,6 +25,7 @@ pub enum SettingsSection {
     Models,
     Team,
     Notifications,
+    Remote,
     Programs,
 }
 
@@ -146,6 +147,7 @@ pub struct HiveApp {
     pub team_autostaff_loading: bool,
     pub team_autostaff_message: Option<String>,
     pub collaboration: crate::collaboration::Collaboration,
+    pub remote: crate::settings::remote::Remote,
     pub workflows: crate::workflows::Workflows,
     pub memory: crate::memory::Memory,
     pub members: Vec<Member>,
@@ -439,6 +441,7 @@ impl HiveApp {
             team_autostaff_loading: false,
             team_autostaff_message: None,
             collaboration: crate::collaboration::Collaboration::new(cx),
+            remote: Default::default(),
             workflows: Default::default(),
             memory: crate::memory::Memory::new(window, cx),
             members: vec![],

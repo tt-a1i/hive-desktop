@@ -28,6 +28,7 @@
     "check:pi-models": "pnpm build && tsx checks/pi-model-config.ts && tsx checks/pi-model-overrides.ts && tsx checks/pi-model-overrides-wire.ts && tsx checks/pi-model-reload.ts",
     "check:pi-auth": "pnpm build && tsx checks/pi-auth.ts && tsx checks/pi-provider-config.ts && tsx checks/pi-auth-wire.ts",
     "check:notification-settings": "tsx checks/notification-settings.ts",
+    "check:remote-settings": "pnpm build && tsx checks/remote-settings.ts",
     "check:external-pi-interactions": "tsx checks/external-pi-interactions-transport.ts && tsx checks/external-pi-interactions-native.ts",
     "check:team-autostaff": "tsx checks/team-autostaff-settings.ts",
     "check:workspace-removal": "tsx checks/workflow-removal-lifecycle.ts && tsx checks/workspace-removal.ts",

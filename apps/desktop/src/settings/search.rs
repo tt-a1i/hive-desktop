@@ -50,6 +50,12 @@ const ENTRIES: &[Entry] = &[
         keywords: "team worker orchestrator autostaff 主控 成员 协作 自动组队",
     },
     Entry {
+        section: Some(SettingsSection::Remote),
+        title: "远程接入",
+        description: "账号连接、设备配对与访问记录",
+        keywords: "remote pairing device gateway audit 远程 手机 配对 设备 网关 安全短码 审计",
+    },
+    Entry {
         section: Some(SettingsSection::Notifications),
         title: "通知",
         description: "Webhook 通知地址",
@@ -82,6 +88,7 @@ impl HiveApp {
         self.settings_search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.settings_section = section;
+        if section == SettingsSection::Remote { self.refresh_remote(cx); }
         if section == SettingsSection::Models {
             self.load_pi_models(cx);
         }

@@ -9,6 +9,7 @@ import { HiveHttpError } from './hive-host.js';
 import { createDesktopRuntime } from './desktop-runtime.js';
 import { structuredCommand } from './structured-runtime.js';
 import { desktopDataDir } from './paths.js';
+import { remoteCommands } from './remote-commands.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
 // The SDK and user extensions may log at any point. Keep ordinary stdout writes
@@ -49,7 +50,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'pi.auth.cancel': return piAuth.cancel(text(params, 'loginId'));
     case 'pi.auth.logout': return piAuth.logout(text(params, 'providerId'));
     case 'initialize': {
-      return { version: '0.1.0', dataDir, piAgentDir: getAgentDir(), hivePort: hive.port, navigation: hive.getNavigation() };
+      return { version: '0.1.0', dataDir, remoteCommands: remoteCommands(dataDir), piAgentDir: getAgentDir(), hivePort: hive.port, navigation: hive.getNavigation() };
     }
     case 'desktop.navigation.save': {
       const sessions = record(params.sessions);
