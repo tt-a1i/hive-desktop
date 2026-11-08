@@ -85,6 +85,9 @@ impl HiveApp {
     fn switch_draft(&mut self, next: Option<String>, cx: &mut Context<Self>) {
         self.capture_editor(cx);
         self.schedule_draft_save(cx);
+        if self.draft_target != next {
+            self.attachments.scroll.set_offset(point(px(0.), px(0.)));
+        }
         self.draft_target = next;
     }
     pub(crate) fn save_navigation(&self, cx: &mut Context<Self>) {

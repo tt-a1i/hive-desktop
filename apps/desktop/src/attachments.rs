@@ -61,6 +61,7 @@ pub(crate) struct ImagePreview {
 }
 #[derive(Default)]
 pub(crate) struct Attachments {
+    pub scroll: ScrollHandle,
     pub drafts: HashMap<String, Vec<AttachmentRef>>,
     previews: HashMap<String, ImagePreview>,
     failed: HashMap<String, String>,
@@ -367,7 +368,9 @@ impl HiveApp {
             .session
             .as_ref()
             .is_some_and(|session| self.busy.contains(&session.id));
-        h_flex()
+        let empty = refs.is_empty();
+        let content = h_flex()
+            .flex_shrink_0()
             .w_full()
             .min_w_0()
             .flex_wrap()
@@ -486,7 +489,29 @@ impl HiveApp {
                             })),
                     )
                     .into_any_element()
-            }))
+            }));
+        if empty
+            && !self
+                .draft_target
+                .as_ref()
+                .is_some_and(|key| self.attachments.loading.contains(key))
+        {
+            return div().into_any_element();
+        }
+        crate::text_reading::region(
+            "draft-attachments".into(),
+            "草稿附件，可用方向键或翻页键滚动".into(),
+            &self.attachments.scroll,
+            px(192.),
+            cx,
+        )
+        .w_full()
+        .flex_shrink_0()
+        .border_0()
+        .rounded_none()
+        .p_0()
+        .child(content)
+        .into_any_element()
     }
 }
 
