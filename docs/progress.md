@@ -282,3 +282,8 @@ Mac arm64 新 ZIP 纳入附件预览、紧凑文件行和多图片输入区限�
 ## 2026-11-08 Codex 设置开发包补验
 
 新Mac开发ZIP纳入23164d7，独立解压108个runtime文件及未变的原生程序哈希匹配；包内Codex设置应用/历史/中断、内外Pi队列、真实PTY/Hive/SQLite及原始Codex生产JSONL设置冷恢复通过。旧排队包被延迟应用检查拒绝，不重复冒认系统输入。#7源码与包内范围完成，任务监听异常#8、Claude真实模型及Windows等继续推进。见 [开发包记录](validation/2026-11-08-codex-settings-applied.md#mac-开发包补验)。
+
+
+## 2026-11-08 任务监听启动取消
+
+真实Chokidar连续3次复现关闭后ready仍等满15秒才拒绝，固定Hive2.2.1还会重置closed。通过现有pnpm补丁主动结算取消、清理订阅/超时并保持关闭终态；真实直接/原子文件事件、stop/restart、错误及团队/队列回归通过。开发依赖已更新，开发包必须重新部署依赖。见 [生命周期证据](validation/2026-11-08-tasks-watcher-lifecycle.md)。Windows及完整目标继续开放。

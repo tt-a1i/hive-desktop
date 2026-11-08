@@ -254,6 +254,66 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..6e23338db4d75decaa15618f2e46fffa
          readWorkspaceUpload: (workspaceId, uploadId) => services.workspaceUploadStore.readUpload(workspaceId, uploadId),
          createWorkflowSchedule: (input) => services.workflowScheduleStore.create(input),
          scheduleWorkflowInline: (input) => persistWorkflowSchedule({
+diff --git a/dist/src/server/tasks-file-watcher.js b/dist/src/server/tasks-file-watcher.js
+index f74fc2d4250e25025d2f7fb327cf49df8c1277a5..c7aad08d1f2e58f4660f04a98143b948650f6e7c 100644
+--- a/dist/src/server/tasks-file-watcher.js
++++ b/dist/src/server/tasks-file-watcher.js
+@@ -106,6 +106,7 @@ export const isTasksFileEvent = (tasksPath, changedPath, platform = process.plat
+ };
+ export const createTasksFileWatcher = ({ onTasksUpdated, getWorkflowCliPolicy, getFlags, }) => {
+     const watchers = new Map();
++    const pendingReady = new Map();
+     const timers = new Map();
+     const retryTimers = new Map();
+     let closed = false;
+@@ -145,6 +146,7 @@ export const createTasksFileWatcher = ({ onTasksUpdated, getWorkflowCliPolicy, g
+         clearRetryTimer(workspaceId);
+         const watcher = watchers.get(workspaceId);
+         watchers.delete(workspaceId);
++        pendingReady.get(watcher)?.();
+         await closeWatcherWithTimeout(watcher);
+     };
+     const scheduleRetry = (workspaceId, workspacePath) => {
+@@ -159,6 +161,7 @@ export const createTasksFileWatcher = ({ onTasksUpdated, getWorkflowCliPolicy, g
+     };
+     const waitForReady = async (watcher, timeoutMs) => await new Promise((resolve, reject) => {
+         const cleanup = () => {
++            pendingReady.delete(watcher);
+             watcher.off('ready', handleReady);
+             watcher.off('error', handleError);
+             clearTimeout(timeout);
+@@ -176,19 +179,21 @@ export const createTasksFileWatcher = ({ onTasksUpdated, getWorkflowCliPolicy, g
+             reject(new Error(`Timed out waiting for tasks watcher ready after ${timeoutMs}ms`));
+         }, timeoutMs);
+         timeout.unref?.();
++        pendingReady.set(watcher, (error) => error === undefined ? handleReady() : handleError(error));
+         watcher.once('ready', handleReady);
+         watcher.once('error', handleError);
+     });
+     const start = async (workspaceId, workspacePath) => {
+-        closed = false;
++        if (closed) return;
+         await stop(workspaceId);
++        if (closed) return;
+         ensureTasksFile(workspacePath);
+         ensureProtocolFile(workspacePath, getWorkflowCliPolicy?.(), getFlags?.() ?? FEATURE_FLAGS_ALL_OFF);
+         const tasksPath = getTasksFilePath(workspacePath);
+         const watcher = chokidar.watch(dirname(tasksPath), buildTasksWatcherOptions(workspacePath));
+         const readyTimeoutMs = getTasksWatcherReadyTimeoutMs(workspacePath);
+         const scheduleEmit = (changedPath) => {
+-            if (!isTasksFileEvent(tasksPath, changedPath))
++            if (closed || !isTasksFileEvent(tasksPath, changedPath))
+                 return;
+             clearTimer(workspaceId);
+             timers.set(workspaceId, setTimeout(() => {
+@@ -200,6 +205,7 @@ export const createTasksFileWatcher = ({ onTasksUpdated, getWorkflowCliPolicy, g
+         watcher.on('change', scheduleEmit);
+         watcher.on('unlink', scheduleEmit);
+         watcher.on('error', (error) => {
++            pendingReady.get(watcher)?.(error);
+             logWatcherError(workspaceId, error);
+             void stop(workspaceId)
+                 .catch((closeError) => logWatcherError(workspaceId, closeError))
 diff --git a/dist/src/server/team-operations.js b/dist/src/server/team-operations.js
 index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..bdf1c4adaf6ffa3611d7c87fc030f8556c5dba81 100644
 --- a/dist/src/server/team-operations.js
