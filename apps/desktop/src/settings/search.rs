@@ -1,3 +1,4 @@
+use crate::language::tr;
 use crate::{
     app::{HiveApp, SettingsSection},
     palette::Color,
@@ -22,8 +23,8 @@ const ENTRIES: &[Entry] = &[
     Entry {
         section: Some(SettingsSection::Appearance),
         title: "外观",
-        description: "主题、界面字号与阅读预览",
-        keywords: "theme appearance light dark font size text 主题 颜色 字体 字号 大小 阅读 缩放",
+        description: "主题、界面字号、语言与阅读预览",
+        keywords: "theme appearance light dark font size text language locale english chinese 中文 英文 语言 主题 颜色 字体 字号 大小 阅读 缩放",
     },
     Entry {
         section: Some(SettingsSection::Chat),
@@ -75,7 +76,7 @@ const ENTRIES: &[Entry] = &[
     },
 ];
 fn matches(entry: &Entry, query: &str) -> bool {
-    let text = format!("{} {} {}", entry.title, entry.description, entry.keywords).to_lowercase();
+    let text = format!("{} {} {} {} {}", entry.title, entry.description, entry.keywords, tr(entry.title), tr(entry.description)).to_lowercase();
     query.split_whitespace().all(|word| text.contains(word))
 }
 impl HiveApp {
@@ -134,15 +135,15 @@ impl HiveApp {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(Input::new(&self.settings_search).aria_label("搜索设置")),
+                    .child(Input::new(&self.settings_search).aria_label(tr("搜索设置"))),
             )
             .when(!self.settings_search.read(cx).value().is_empty(), |row| {
                 row.child(
                     Button::new("clear-settings-search")
                         .ghost()
                         .compact()
-                        .label("清除")
-                        .accessibility_label("清除设置搜索")
+                        .label(tr("清除"))
+                        .accessibility_label(tr("清除设置搜索"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.settings_search.update(cx, |input, cx| {
                                 input.set_value("", window, cx);
@@ -173,9 +174,9 @@ impl HiveApp {
             .overflow_y_scroll()
             .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(
                 if entries.is_empty() {
-                    "没有找到设置页面".to_string()
+                    tr("没有找到设置页面").to_string()
                 } else {
-                    format!("找到 {} 个设置页面 · Enter 打开首项", entries.len())
+                    if crate::language::english() { format!("{} settings pages · Enter opens the first", entries.len()) } else { format!("找到 {} 个设置页面 · Enter 打开首项", entries.len()) }
                 },
             ))
             .when(entries.is_empty(), |view| {
@@ -184,7 +185,7 @@ impl HiveApp {
                         .py_6()
                         .text_sm()
                         .text_color(Color::Secondary.get(cx))
-                        .child("没有匹配的设置。换个关键词，或清除搜索浏览全部设置。"),
+                        .child(tr("没有匹配的设置。换个关键词，或清除搜索浏览全部设置。")),
                 )
             })
             .children(entries.into_iter().map(|(index, entry)| {
@@ -195,7 +196,7 @@ impl HiveApp {
                     .justify_start()
                     .p_4()
                     .rounded_lg()
-                    .accessibility_label(format!("打开{}：{}", entry.title, entry.description))
+                    .accessibility_label(format!("{} · {}", tr(entry.title), tr(entry.description)))
                     .child(
                         v_flex()
                             .w_full()
@@ -203,12 +204,12 @@ impl HiveApp {
                             .items_start()
                             .text_left()
                             .gap_1()
-                            .child(div().text_sm().child(entry.title))
+                            .child(div().text_sm().child(tr(entry.title)))
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(Color::Secondary.get(cx))
-                                    .child(entry.description),
+                                    .child(tr(entry.description)),
                             ),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {

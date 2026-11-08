@@ -268,6 +268,11 @@ impl HiveApp {
 
 impl Render for HiveApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let locale = cx.global::<crate::language::Language>().locale;
+        if self.interface_locale != Some(locale) {
+            self.localize_placeholders(window, cx);
+            self.interface_locale = Some(locale);
+        }
         self.restore_task_editor(window, cx);
         if self.draft_target != self.draft_owner {
             let text = self
@@ -283,8 +288,8 @@ impl Render for HiveApp {
         let placeholder = self
             .session
             .as_ref()
-            .map(|s| format!("向 {} 发送消息…", s.backend.label()))
-            .unwrap_or_else(|| "输入消息…".into());
+            .map(|s| if crate::language::english() { format!("Message {}…", crate::language::tr(s.backend.label())) } else { format!("向 {} 发送消息…", s.backend.label()) })
+            .unwrap_or_else(|| crate::language::tr("输入消息…").into());
         if self.input_placeholder != placeholder {
             self.input_placeholder = placeholder.clone();
             self.input.update(cx, |input, cx| {

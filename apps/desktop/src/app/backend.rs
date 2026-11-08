@@ -55,6 +55,7 @@ impl HiveApp {
                 match result {
                     Ok(info) => {
                         if let Some(root) = info["dataDir"].as_str() {
+                            crate::language::restore(std::path::Path::new(root), cx);
                             crate::appearance::restore(std::path::Path::new(root), cx);
                             crate::composer::restore(std::path::Path::new(root), cx);
                         }

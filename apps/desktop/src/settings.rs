@@ -1,3 +1,4 @@
+use crate::language::tr;
 use crate::app::{HiveApp, SettingsSection};
 use crate::palette::Color;
 use gpui_kit::{
@@ -12,6 +13,7 @@ use gpui_kit::{
 use serde::Deserialize;
 use serde_json::json;
 mod appearance;
+mod language;
 mod search;
 mod notification;
 pub mod remote;
@@ -314,7 +316,7 @@ impl HiveApp {
             self.render_roles(cx).into_any_element()
         } else {
             v_flex().flex_1().w_full().max_w(px(960.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.pl_5().pr_6().py_7()).gap_5()
-                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Appearance => "外观", SettingsSection::Chat => "聊天", SettingsSection::PiAccounts => "内置 Pi", SettingsSection::Models => "模型与接口", SettingsSection::Team => "团队", SettingsSection::Notifications => "通知", SettingsSection::Remote => "远程接入", SettingsSection::Programs => "外部程序" }))
+                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Appearance => tr("外观"), SettingsSection::Chat => tr("聊天"), SettingsSection::PiAccounts => tr("内置 Pi"), SettingsSection::Models => tr("模型与接口"), SettingsSection::Team => tr("团队"), SettingsSection::Notifications => tr("通知"), SettingsSection::Remote => tr("远程接入"), SettingsSection::Programs => tr("外部程序") }))
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
@@ -326,25 +328,25 @@ impl HiveApp {
                         SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()
                     .child(h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))
                         .child(v_flex().flex_1().min_w_0().gap_1()
-                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("自动组队引导"))
-                            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("在所有工作区引导主控按任务需要组建团队。")))
+                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("自动组队引导")))
+                            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("在所有工作区引导主控按任务需要组建团队。"))))
                         .when_some(self.team_autostaff, |row, enabled| row.child(gpui_kit::component::switch::Switch::new("toggle-team-autostaff")
-                            .accessibility_label("自动组队引导").checked(enabled).disabled(!self.connected || self.team_autostaff_loading)
+                            .accessibility_label(tr("自动组队引导")).checked(enabled).disabled(!self.connected || self.team_autostaff_loading)
                             .on_change(cx.listener(|this, enabled, _, cx| this.team_autostaff_request(Some(*enabled), cx))))))
-                    .when(self.team_autostaff_loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child("正在同步设置…")))
-                    .when(!self.team_autostaff_loading, |view| view.child(h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label("重新读取").disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx))))))
+                    .when(self.team_autostaff_loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("正在同步设置…"))))
+                    .when(!self.team_autostaff_loading, |view| view.child(h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label(tr("重新读取")).disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx))))))
                     .when_some(self.team_autostaff_message.clone(), |view, message| view.child(div().text_sm().child(message))),
                         SettingsSection::Notifications => content.id("settings-notification-content").overflow_y_scroll().child(self.render_notification_settings(cx)),
                         SettingsSection::Programs => content.id("settings-programs-content").overflow_y_scroll()
-                    .child(div().text_sm().text_color(Color::Secondary.get(cx)).child("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；检查只读取程序版本。修改在下次启动对应 Agent 时生效。"))
+                    .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；检查只读取程序版本。修改在下次启动对应 Agent 时生效。")))
                     .when_some(self.settings_message.clone(), |view, message| view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
-                    .child(self.executable_field("pi", "外部 Pi", &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
+                    .child(self.executable_field("pi", tr("外部 Pi"), &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
                     .child(self.executable_field("codex", "Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
                     .child(self.executable_field("claude", "Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
                     .child(h_flex().items_center().gap_2()
-                        .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { "处理中…" } else { "保存设置" }).disabled(!self.connected || self.settings_loading || !self.executable_paths_changed(cx)).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window.window_handle(), cx))))
-                        .child(Button::new("reload-executable-settings").rounded_full().label("重新读取").disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window.window_handle(), cx))))
-                        .when(!self.settings_loading && self.executable_paths_changed(cx), |row| row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child("有未保存的修改")))),
+                        .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { tr("处理中…") } else { tr("保存设置") }).disabled(!self.connected || self.settings_loading || !self.executable_paths_changed(cx)).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window.window_handle(), cx))))
+                        .child(Button::new("reload-executable-settings").rounded_full().label(tr("重新读取")).disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window.window_handle(), cx))))
+                        .when(!self.settings_loading && self.executable_paths_changed(cx), |row| row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("有未保存的修改"))))),
                     }
                 }).into_any_element()
         };

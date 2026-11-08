@@ -11,6 +11,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const flag = process.argv.indexOf('--bundle');
 assert.ok(flag >= 0 && process.argv[flag + 1], 'Pass --bundle followed by the extracted package directory');
 const bundle = resolve(process.argv[flag + 1]);
+const languageFlag = process.argv.indexOf('--language');
+const language = languageFlag < 0 ? undefined : process.argv[languageFlag + 1];
+assert.ok(languageFlag < 0 || language === 'zh' || language === 'en', 'Use --language zh or --language en');
 const mac = process.platform === 'darwin';
 const contents = join(bundle, 'Hive Desktop.app', 'Contents');
 const resources = mac ? join(contents, 'Resources') : join(bundle, 'resources');
@@ -121,6 +124,7 @@ try {
     await writeFile(workerDraft, JSON.stringify({ key: `session:${workerChat}`, input: existingDraft, failed: [] }));
   }
   const env = { ...process.env, HIVE_DESKTOP_DATA_DIR: state, HIVE_DESKTOP_TRACE_RPC: '1' };
+  if (language) await writeFile(join(state, 'desktop-language.json'), JSON.stringify(language));
   delete env.HIVE_DESKTOP_NODE;
   delete env.HIVE_DESKTOP_RUNTIME;
   child = spawn(executable, [], { env, cwd: directory, stdio: 'inherit' });

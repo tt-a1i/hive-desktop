@@ -1,3 +1,4 @@
+use crate::language::tr;
 mod session_row;
 use crate::app::{HiveApp, SettingsSection};
 use crate::palette::Color;
@@ -52,8 +53,8 @@ impl HiveApp {
                 Button::new("toggle-navigation")
                     .ghost()
                     .icon(Glyph::PanelLeft)
-                    .tooltip("打开或收起导航")
-                    .accessibility_label("打开或收起工作区与会话导航")
+                    .tooltip(tr("打开或收起导航"))
+                    .accessibility_label(tr("打开或收起工作区与会话导航"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.sidebar_open = !this.sidebar_open;
                         cx.notify();
@@ -71,7 +72,7 @@ impl HiveApp {
                             .iter()
                             .find(|workspace| Some(&workspace.id) == self.workspace.as_ref())
                             .map(|workspace| workspace.name.clone())
-                            .unwrap_or_else(|| "桌面工作台".into()),
+                            .unwrap_or_else(|| tr("桌面工作台").into()),
                     ),
             )
             .when(!self.connected && self.runtime.is_some(), |view| {
@@ -79,7 +80,7 @@ impl HiveApp {
                     div()
                         .text_xs()
                         .text_color(Color::Error.get(cx))
-                        .child("后台未连接"),
+                        .child(tr("后台未连接")),
                 )
             })
             .when(!self.viewing_conversation(), |view| {
@@ -87,7 +88,7 @@ impl HiveApp {
                     Button::new("return-chat")
                         .ghost()
                         .compact()
-                        .label("返回会话")
+                        .label(tr("返回会话"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.hide_terminal(cx);
                             this.close_memory();
@@ -107,19 +108,19 @@ impl HiveApp {
 
     pub fn render_settings_tabs(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let back = if self.terminal.visible {
-            "返回工作区终端"
+            tr("返回工作区终端")
         } else if self.workflows.visible {
-            "返回工作流"
+            tr("返回工作流")
         } else if self.memory.visible {
-            "返回工作区记忆"
+            tr("返回工作区记忆")
         } else if self.collaboration.visible && self.collaboration.selected.is_some() {
-            "返回派单详情"
+            tr("返回派单详情")
         } else if self.collaboration.visible {
-            "返回协作概览"
+            tr("返回协作概览")
         } else if self.member_panel {
-            "返回团队成员"
+            tr("返回团队成员")
         } else {
-            "返回会话"
+            tr("返回会话")
         };
         div()
             .flex()
@@ -154,7 +155,7 @@ impl HiveApp {
                             div()
                                 .text_2xl()
                                 .font_weight(FontWeight::MEDIUM)
-                                .child("设置"),
+                                .child(tr("设置")),
                         )
                     }),
             )
@@ -162,43 +163,49 @@ impl HiveApp {
                 [
                     (
                         "settings-appearance-tab",
-                        "外观",
+                        tr("外观"),
                         Glyph::Monitor,
                         SettingsSection::Appearance,
                     ),
                     (
                         "settings-chat-tab",
-                        "聊天",
+                        tr("聊天"),
                         Glyph::MessageSquare,
                         SettingsSection::Chat,
                     ),
                     (
                         "settings-pi-accounts-tab",
-                        "内置 Pi",
+                        tr("内置 Pi"),
                         Glyph::Bot,
                         SettingsSection::PiAccounts,
                     ),
                     (
                         "settings-models-tab",
-                        "模型与接口",
+                        tr("模型与接口"),
                         Glyph::Cpu,
                         SettingsSection::Models,
                     ),
                     (
                         "settings-team-tab",
-                        "团队",
+                        tr("团队"),
                         Glyph::Network,
                         SettingsSection::Team,
                     ),
                     (
+                        "settings-remote-tab",
+                        tr("远程接入"),
+                        Glyph::Network,
+                        SettingsSection::Remote,
+                    ),
+                    (
                         "settings-notifications-tab",
-                        "通知",
+                        tr("通知"),
                         Glyph::Bell,
                         SettingsSection::Notifications,
                     ),
                     (
                         "settings-programs-tab",
-                        "外部程序",
+                        tr("外部程序"),
                         Glyph::SquareTerminal,
                         SettingsSection::Programs,
                     ),
@@ -226,8 +233,8 @@ impl HiveApp {
                     .rounded_full()
                     .icon(Glyph::Bot)
                     .when(!compact, |row| row.w_full().justify_start())
-                    .accessibility_label("角色模板")
-                    .child(div().when(!compact, |text| text.flex_1()).child("角色模板"))
+                    .accessibility_label(tr("角色模板"))
+                    .child(div().when(!compact, |text| text.flex_1()).child(tr("角色模板")))
                     .selected(self.roles.visible)
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.settings_search.update(cx, |input, cx| input.set_value("", window, cx));
@@ -249,7 +256,7 @@ impl HiveApp {
         let weak = cx.weak_entity();
         let target = project.map(|workspace| workspace.id.clone());
         let project_label =
-            project.map(|workspace| format!("在 {} 中新建会话，选择 Agent 后端", workspace.name));
+            project.map(|workspace| if crate::language::english() { format!("New conversation in {}: choose an Agent", workspace.name) } else { format!("在 {} 中新建会话，选择 Agent 后端", workspace.name) });
         Button::new(
             project
                 .map(|workspace| SharedString::from(format!("new-project-chat-{}", workspace.id)))
@@ -272,13 +279,13 @@ impl HiveApp {
         .tooltip(
             project_label
                 .clone()
-                .unwrap_or_else(|| "新建会话，选择 Agent 后端".into()),
+                .unwrap_or_else(|| tr("新建会话，选择 Agent 后端").into()),
         )
         .accessibility_label(project_label.unwrap_or_else(|| {
             if id == "new-session-menu" {
-                "新建会话，选择 Agent 后端".into()
+                tr("新建会话，选择 Agent 后端").into()
             } else {
-                "选择主控 Agent".into()
+                tr("选择主控 Agent").into()
             }
         }))
         .disabled(
@@ -302,9 +309,9 @@ impl HiveApp {
         )
         .dropdown_menu(move |mut menu, _, _| {
             for (backend, label) in [
-                ("pi", "内置 Pi"),
+                ("pi", tr("内置 Pi")),
                 ("codex", "Codex"),
-                ("pi-rpc", "外部 Pi"),
+                ("pi-rpc", tr("外部 Pi")),
                 ("claude", "Claude Code"),
             ] {
                 let weak = weak.clone();
@@ -338,15 +345,15 @@ impl HiveApp {
             .p_3()
             .gap_1()
             .child(self.render_navigation_bar(cx))
-            .child(self.new_chat_menu("new-session-menu", "新建", None, cx))
+            .child(self.new_chat_menu("new-session-menu", tr("新建"), None, cx))
             .child(Button::new("search-sessions").ghost().h(px(32.)).rounded_full().icon(Glyph::Search)
-                .justify_start().w_full().accessibility_label("搜索会话")
-                .tooltip(if cfg!(target_os = "macos") { "搜索会话 (⌘K)" } else { "搜索会话 (Ctrl+K)" })
-                .child(div().flex_1().font_weight(FontWeight::NORMAL).child("搜索会话"))
+                .justify_start().w_full().accessibility_label(tr("搜索会话"))
+                .tooltip(if cfg!(target_os = "macos") { tr("搜索会话 (⌘K)") } else { tr("搜索会话 (Ctrl+K)") })
+                .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("搜索会话")))
                 .disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.open_session_search(window, cx))))
             .child(Button::new("archived-sessions").ghost().h(px(32.)).rounded_full().icon(Glyph::Archive)
-                .justify_start().w_full().accessibility_label("已归档会话")
-                .child(div().flex_1().font_weight(FontWeight::NORMAL).child("已归档"))
+                .justify_start().w_full().accessibility_label(tr("已归档会话"))
+                .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("已归档")))
                 .disabled(!self.connected).on_click(cx.listener(|this,_,window,cx|this.open_archived_sessions(window,cx))))
             .child(
                 v_flex()
@@ -360,12 +367,12 @@ impl HiveApp {
                             .icon(Glyph::SquareTerminal)
                             .justify_start()
                             .w_full()
-                            .accessibility_label("工作区终端")
+                            .accessibility_label(tr("工作区终端"))
                             .child(
                                 div()
                                     .flex_1()
                                     .font_weight(FontWeight::NORMAL)
-                                    .child("工作区终端"),
+                                    .child(tr("工作区终端")),
                             )
                             .selected(self.terminal.visible)
                             .disabled(
@@ -385,12 +392,12 @@ impl HiveApp {
                             .icon(Glyph::Bot)
                             .justify_start()
                             .w_full()
-                            .accessibility_label("团队成员")
+                            .accessibility_label(tr("团队成员"))
                             .child(
                                 div()
                                     .flex_1()
                                     .font_weight(FontWeight::NORMAL)
-                                    .child("团队成员"),
+                                    .child(tr("团队成员")),
                             )
                             .selected(self.member_panel)
                             .disabled(self.workspace.is_none())
@@ -406,12 +413,12 @@ impl HiveApp {
                             .icon(Glyph::Network)
                             .justify_start()
                             .w_full()
-                            .accessibility_label("协作概览")
+                            .accessibility_label(tr("协作概览"))
                             .child(
                                 div()
                                     .flex_1()
                                     .font_weight(FontWeight::NORMAL)
-                                    .child("协作概览"),
+                                    .child(tr("协作概览")),
                             )
                             .selected(self.collaboration.visible)
                             .disabled(self.workspace.is_none())
@@ -424,8 +431,8 @@ impl HiveApp {
                                 cx.notify();
                             })),
                     )
-                    .child(Button::new("open-workflows").h(px(32.)).rounded_full().ghost().icon(Glyph::Workflow).justify_start().w_full().accessibility_label("工作流")
-                        .child(div().flex_1().font_weight(FontWeight::NORMAL).child("工作流"))
+                    .child(Button::new("open-workflows").h(px(32.)).rounded_full().ghost().icon(Glyph::Workflow).justify_start().w_full().accessibility_label(tr("工作流"))
+                        .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("工作流")))
                         .selected(self.workflows.visible).disabled(self.workspace.is_none())
                         .on_click(cx.listener(|this,_,window,cx|this.show_workflows(window,cx))))
                     .child(
@@ -436,12 +443,12 @@ impl HiveApp {
                             .icon(Glyph::BookOpen)
                             .justify_start()
                             .w_full()
-                            .accessibility_label("工作区记忆")
+                            .accessibility_label(tr("工作区记忆"))
                             .child(
                                 div()
                                     .flex_1()
                                     .font_weight(FontWeight::NORMAL)
-                                    .child("工作区记忆"),
+                                    .child(tr("工作区记忆")),
                             )
                             .selected(self.memory.visible)
                             .disabled(self.workspace.is_none())
@@ -475,8 +482,8 @@ impl HiveApp {
                                     .child(
                                         Button::new("toggle-project-section").ghost().compact()
                                             .icon(if self.projects_collapsed { Glyph::ChevronRight } else { Glyph::ChevronDown })
-                                            .label("工作区")
-                                            .accessibility_label(if self.projects_collapsed { "展开工作区列表" } else { "收起工作区列表" })
+                                            .label(tr("工作区"))
+                                            .accessibility_label(if self.projects_collapsed { tr("展开工作区列表") } else { tr("收起工作区列表") })
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.projects_collapsed = !this.projects_collapsed;
                                                 cx.notify();
@@ -492,14 +499,14 @@ impl HiveApp {
                                                 Glyph::Plus
                                             })
                                             .accessibility_label(if self.add_workspace_open {
-                                                "收起添加工作区"
+                                                tr("收起添加工作区")
                                             } else {
-                                                "添加工作区"
+                                                tr("添加工作区")
                                             })
                                             .tooltip(if self.add_workspace_open {
-                                                "收起添加工作区"
+                                                tr("收起添加工作区")
                                             } else {
-                                                "添加工作区"
+                                                tr("添加工作区")
                                             })
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.add_workspace_open = !this.add_workspace_open;
@@ -511,11 +518,11 @@ impl HiveApp {
                                 section
                                     .child(
                                         Input::new(&self.folder)
-                                            .aria_label("工作区文件夹的绝对路径"),
+                                            .aria_label(tr("工作区文件夹的绝对路径")),
                                     )
                                     .child(
                                         Button::new("choose-workspace-folder")
-                                            .label("选择文件夹…")
+                                            .label(tr("选择文件夹…"))
                                             .disabled(!self.connected)
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.choose_workspace_folder(window, cx)
@@ -523,7 +530,7 @@ impl HiveApp {
                                     )
                                     .child(
                                         Button::new("add-workspace")
-                                            .label("添加文件夹")
+                                            .label(tr("添加文件夹"))
                                             .disabled(!self.connected || self.runtime.is_none())
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.add_workspace(window, cx)
@@ -550,11 +557,9 @@ impl HiveApp {
                                                     .compact()
                                                     .h(px(28.)).w(px(24.)).icon(if expanded { Glyph::ChevronDown } else { Glyph::ChevronRight })
                                                     .toggled(expanded)
-                                                    .accessibility_label(format!(
-                                                        "{} {} 的会话",
-                                                        if expanded { "收起" } else { "展开" },
-                                                        workspace.name
-                                                    ))
+                                                    .accessibility_label(if crate::language::english() {
+                                                        format!("{} {} conversations", if expanded { tr("收起") } else { tr("展开") }, workspace.name)
+                                                    } else { format!("{} {} 的会话", if expanded { tr("收起") } else { tr("展开") }, workspace.name) })
                                                     .on_click(cx.listener(
                                                         move |this, _, _, cx| {
                                                             this.toggle_project(
@@ -608,12 +613,12 @@ impl HiveApp {
                                                 if let Some((label, detail)) = sessions.and_then(|items| self.project_activity(items)) {
                                                     row.child(Button::new(SharedString::from(format!("project-activity-{}", workspace.id)))
                                                         .ghost().compact().h(px(28.)).label(label)
-                                                        .accessibility_label(format!("展开 {} 的会话：{detail}", workspace.name))
+                                                        .accessibility_label(if crate::language::english() { format!("Expand {} conversations: {detail}", workspace.name) } else { format!("展开 {} 的会话：{detail}", workspace.name) })
                                                         .tooltip(detail)
                                                         .on_click(cx.listener({ let id=workspace.id.clone(); move |this,_,_,cx| this.toggle_project(id.clone(),cx) })))
                                                 } else { row }
                                             })
-                                            .child(self.new_chat_menu("project-new-chat", "新建", Some(workspace), cx))
+                                            .child(self.new_chat_menu("project-new-chat", tr("新建"), Some(workspace), cx))
                                             .when(
                                                 self.workspace.as_ref() == Some(&workspace.id),
                                                 |row| {
@@ -630,7 +635,7 @@ impl HiveApp {
                                                 div()
                                                     .text_xs()
                                                     .text_color(Color::Muted.get(cx))
-                                                    .child("暂无未归档会话"),
+                                                    .child(tr("暂无未归档会话")),
                                             ),
                                             Some(items) => {
                                                 rows.children(items.iter().filter(|session|!session.archived).map(|session| {
@@ -641,7 +646,7 @@ impl HiveApp {
                                                 div()
                                                     .text_xs()
                                                     .text_color(Color::Muted.get(cx))
-                                                    .child("正在读取会话…"),
+                                                    .child(tr("正在读取会话…")),
                                             ),
                                         })
                                     })
@@ -657,8 +662,8 @@ impl HiveApp {
                         .icon(Glyph::Settings)
                         .justify_start()
                         .w_full()
-                        .tooltip(if cfg!(target_os = "macos") { "设置 (⌘,)" } else { "设置 (Ctrl+,)" }).accessibility_label("设置")
-                        .child(div().flex_1().font_weight(FontWeight::NORMAL).child("设置"))
+                        .tooltip(if cfg!(target_os = "macos") { tr("设置 (⌘,)") } else { tr("设置 (Ctrl+,)") }).accessibility_label(tr("设置"))
+                        .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("设置")))
                         .selected(self.settings_panel || self.roles.visible)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_settings(window, cx);
@@ -677,17 +682,17 @@ impl HiveApp {
             .ghost()
             .compact()
             .icon(Glyph::Ellipsis)
-            .tooltip("项目操作")
-            .accessibility_label("项目操作")
+            .tooltip(tr("项目操作"))
+            .accessibility_label(tr("项目操作"))
             .disabled(!self.connected)
             .dropdown_menu(move |mut menu, _, _| {
                 for (target, label) in [
                     (
                         "finder",
                         if cfg!(target_os = "macos") {
-                            "访达"
+                            tr("访达")
                         } else {
-                            "文件管理器"
+                            tr("文件管理器")
                         },
                     ),
                     ("vscode", "Visual Studio Code"),
@@ -706,7 +711,7 @@ impl HiveApp {
                 let weak = weak.clone();
                 menu.separator()
                     .item(
-                        PopupMenuItem::new("移除当前工作区…").on_click(move |_, window, cx| {
+                        PopupMenuItem::new(tr("移除当前工作区…")).on_click(move |_, window, cx| {
                             let _ = weak.update(cx, |this, cx| this.remove_workspace(window, cx));
                         }),
                     )
@@ -714,20 +719,20 @@ impl HiveApp {
     }
     fn session_activity(&self, id: &str) -> Option<&'static str> {
         if self.interaction_count(id) > 0 {
-            Some("待回应")
+            Some(tr("待回应"))
         } else if self.busy.contains(id) {
-            Some("处理中")
+            Some(tr("处理中"))
         } else if self.pending.get(id).copied().unwrap_or(0) > 0 {
-            Some("已暂停")
+            Some(tr("已暂停"))
         } else if self.unread.contains(id) {
-            Some("未读")
+            Some(tr("未读"))
         } else {
             None
         }
     }
 
     fn project_activity(&self, sessions: &[crate::protocol::Session]) -> Option<(String, String)> {
-        let summary: Vec<String> = ["待回应", "处理中", "已暂停", "未读"]
+        let summary: Vec<String> = [tr("待回应"), tr("处理中"), tr("已暂停"), tr("未读")]
             .into_iter()
             .filter_map(|label| {
                 let count = sessions

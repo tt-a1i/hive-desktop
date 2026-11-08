@@ -1,5 +1,6 @@
 mod app;
 mod appearance;
+mod language;
 mod artifacts;
 mod attachments;
 mod collaboration;
@@ -67,6 +68,8 @@ fn main() {
         .run(|cx| {
             gpui_kit::init(cx);
             cx.set_global(appearance::Appearance::default());
+            cx.set_global(language::Language::default());
+            component::set_locale("zh-CN");
             cx.set_global(composer::ComposerPreferences::default());
             appearance::apply(None, cx);
             cx.bind_keys([

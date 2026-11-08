@@ -40,12 +40,21 @@ impl Default for Preferences {
 #[derive(Default)]
 pub struct Appearance {
     preferences: Preferences,
-    pub message: Option<String>,
+    message: Option<Notice>,
     root: Option<PathBuf>,
 }
 impl Global for Appearance {}
+enum Notice { Saved, ReadError(String), WriteError(String) }
 
 impl Appearance {
+    pub fn message(&self) -> Option<String> {
+        use crate::language::tr;
+        self.message.as_ref().map(|message| match message {
+            Notice::Saved => tr("外观已保存").to_owned(),
+            Notice::ReadError(error) => format!("{}: {error}", tr("读取外观设置失败")),
+            Notice::WriteError(error) => format!("{}: {error}", tr("保存外观失败")),
+        })
+    }
     pub fn mode(&self) -> Mode {
         self.preferences.mode
     }
@@ -104,7 +113,7 @@ pub fn restore(root: &Path, cx: &mut App) {
     state.root = Some(root.to_path_buf());
     match result {
         Ok(preferences) => state.preferences = preferences,
-        Err(error) => state.message = Some(format!("读取外观设置失败：{error}")),
+        Err(error) => state.message = Some(Notice::ReadError(error.to_string())),
     }
     apply(None, cx);
 }
@@ -143,11 +152,11 @@ fn choose_preferences(preferences: Preferences, window: &mut Window, cx: &mut Ap
         Ok(()) => {
             let state = cx.global_mut::<Appearance>();
             state.preferences = preferences;
-            state.message = Some("外观已保存".into());
+            state.message = Some(Notice::Saved);
             apply(Some(window), cx);
         }
         Err(error) => {
-            cx.global_mut::<Appearance>().message = Some(format!("保存外观失败：{error}"))
+            cx.global_mut::<Appearance>().message = Some(Notice::WriteError(error.to_string()))
         }
     }
     cx.refresh_windows();
