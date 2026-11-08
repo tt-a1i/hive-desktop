@@ -17,7 +17,7 @@ const sdkMetadata=JSON.parse(await readFile(join(sdkRoot,'package.json'),'utf8')
 const sdkEntry=join(sdkRoot,sdkMetadata.exports['.'].import);
 const directory=await mkdtemp(join(tmpdir(),'hive-packaged-pi-'));
 try{
- const probes=['pi-history','pi-user-input',...(process.platform==='win32'?[]:['pi-persistence','pi-external-persistence'])];
+ const probes=['pi-history','pi-user-input',...(process.platform==='win32'?[]:['pi-persistence','pi-external-persistence','pi-context-persistence'])];
  if(process.platform==='win32')console.log('Windows ACL fault injection is not covered; permission checks skipped explicitly.');
  for(const name of probes){
   const source=await readFile(join(root,'packages/runtime/checks',name+'.ts'),'utf8');

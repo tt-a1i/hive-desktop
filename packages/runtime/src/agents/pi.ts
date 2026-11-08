@@ -49,16 +49,19 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     return typeof data === 'object' && data !== null && 'id' in data && typeof data.id === 'string' ? [data.id] : [];
   }));
   let persistenceFailure: Error | undefined;
+  const failPersistence = (cause: unknown): Error => {
+    if (persistenceFailure) return persistenceFailure;
+    const error = new Error(`Pi 会话变更未能保存，请修复问题后重试：${cause instanceof Error ? cause.message : String(cause)}`, {cause});
+    persistenceFailure = error;
+    // Prompt mutations notify from prompt.finally, after its state is settled.
+    // Non-turn writes (context/settings) can notify their owner immediately.
+    if (!active) queueMicrotask(() => options.onUnexpectedExit?.(error));
+    return error;
+  };
   const appendState = (customType: string, data: unknown) => {
     if (persistenceFailure) throw persistenceFailure;
     try { return manager.appendCustomEntry(customType, data); }
-    catch (cause) {
-      const error = new Error(`无法写入 Pi 会话，请修复磁盘问题后重试：${cause instanceof Error ? cause.message : String(cause)}`, {cause});
-      persistenceFailure = error;
-      // Let prompt.finally settle before the owner aborts/disposes this handle.
-      queueMicrotask(() => options.onUnexpectedExit?.(error));
-      throw error;
-    }
+    catch (cause) { throw failPersistence(cause); }
   };
 
   let messageId: string | undefined;
@@ -150,9 +153,12 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   });
   let savedModelUnavailable = false;
   const setModel = async (provider: string, id: string) => {
+    if (disposed) throw new Error('Pi session is disposed');
+    if (persistenceFailure) throw persistenceFailure;
     const model = session.modelRuntime.getModel(provider, id);
     if (!model) throw new Error(`Unknown Pi model: ${provider}/${id}`);
-    await session.setModel(model, { persist: false });
+    try { await session.setModel(model, { persist: false }); }
+    catch (cause) { throw failPersistence(cause); }
     savedModelUnavailable = false;
   };
   try {
@@ -235,7 +241,8 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       if (disposed) throw new Error('Pi session is disposed');
       if (persistenceFailure) throw persistenceFailure;
       if (active) throw new Error('Pi session is already processing a prompt');
-      await session.sendCustomMessage({ customType, content: text, display: false }, { triggerTurn: false });
+      try { await session.sendCustomMessage({ customType, content: text, display: false }, { triggerTurn: false }); }
+      catch (cause) { throw failPersistence(cause); }
     },
     completedDeliveryIds: () => [...completed],
     prompt(text, promptOptions) {
@@ -283,12 +290,20 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
             appendState('hive-delivery-completed', { id: promptOptions.deliveryId });
             completed.add(promptOptions.deliveryId);
           }
-        } catch (error) {
+        } catch (cause) {
+          // Native runs also append their own entries. Recognize an actual
+          // filesystem exception for this JSONL, without treating model or
+          // extension failures as storage failures.
+          const fileError = cause as NodeJS.ErrnoException;
+          const error = cause instanceof Error && fileError.path === manager.getSessionFile()
+            && typeof fileError.syscall === 'string' && typeof fileError.code === 'string'
+            ? failPersistence(cause) : cause;
           if (!run.cancelled) options.onEvent({ type: 'error', sessionId, message: error instanceof Error ? error.message : String(error) });
           throw error;
         } finally {
           active = undefined;
           options.onEvent({ type: 'settled', sessionId, aborted: run.cancelled || run.sdkAborted });
+          if (persistenceFailure) options.onUnexpectedExit?.(persistenceFailure);
         }
       });
       return run.done;
@@ -314,6 +329,8 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       return model && !savedModelUnavailable && !isUnsetPiModel(model) ? { provider: model.provider, id: model.id, name: model.name } : undefined;
     },
     async refreshModels() {
+      if (disposed) throw new Error('Pi session is disposed');
+      if (persistenceFailure) throw persistenceFailure;
       await session.modelRuntime.refresh({ allowNetwork: false });
       const selected = session.model;
       const current = selected && session.modelRuntime.getModel(selected.provider, selected.id);
@@ -321,7 +338,10 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       savedModelUnavailable = !!selected && !isUnsetPiModel(selected) && !available;
       const configError = session.modelRuntime.getError();
       if (configError) throw new Error(configError);
-      if (current && available) await session.setModel(current, { persist: false });
+      if (current && available) {
+        try { await session.setModel(current, { persist: false }); }
+        catch (cause) { throw failPersistence(cause); }
+      }
     },
     supportsImages: () => session.model?.input.includes('image') ?? false,
     listModels() {
@@ -343,7 +363,8 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       const levels = !savedModelUnavailable && session.model ? session.getAvailableThinkingLevels() : [];
       const selected = levels.find(candidate => candidate === level);
       if (!selected) throw new TypeError('当前模型不支持此推理强度。');
-      session.setThinkingLevel(selected, { persist: false });
+      try { session.setThinkingLevel(selected, { persist: false }); }
+      catch (cause) { throw failPersistence(cause); }
       return { level: session.thinkingLevel, levels: session.getAvailableThinkingLevels() };
     },
     setModel,
