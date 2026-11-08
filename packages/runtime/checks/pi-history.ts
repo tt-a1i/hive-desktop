@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { createDesktopSessionManager } from '../src/agents/pi-session-manager.js';
 import { createPiSession } from '../src/agents/pi.js';
 import { createExternalPiSession } from '../src/agents/external-pi.js';
-import { PI_USER_INPUT, PI_USER_INPUT_RESULT } from '../src/agents/pi-user-input.js';
+// Persisted entry names are the wire fixture contract, independent of adapter constants.
+const PI_USER_INPUT='hive-user-input', PI_USER_INPUT_RESULT='hive-user-input-result';
 
 // Real SDK-owned JSONL trees and original Pi RPC. No inference or mocked manager.
 const directory=await mkdtemp(join(tmpdir(),'hive-pi-history-'));

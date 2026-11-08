@@ -38,3 +38,5 @@ Hive 附加提醒及文件引用独立保存为隐藏应用上下文，原始用
 初始外部 Pi 对照没有实际加载项目资源；同一 agentDir 不代表 SDK 与 CLI 的项目信任策略相同。新检查只在自建 agentDir 设 defaultProjectTrust=always，让自建 Skill/模板实际加载。生产不改变用户配置、不绕过外部 CLI 信任策略，也不增加内置 Pi 审批。旧实验的校准见 [原始调研](../research/2026-11-08-pi-command-parity.md)。
 
 后续已实现本会话原生命令目录与选择 UI，见独立验证页。仍未验证/交付：持久化失败的定向故障注入、compaction 后来源映射的专项检查、Windows 原生体验及正式签名安装。最新 Mac 开发 ZIP 仍为中断清理版本，不包含本次修改。上述本地协议成功不作为真实 Terra 推理质量或 Claude 账号可用性的证明。
+
+后续已完成 Mac 范围的持久化故障、compaction 来源专项检查及新 ZIP 验证；见 [历史/持久化](2026-11-08-pi-history-persistence.md) 与 [开发包](2026-11-08-pi-native-package.md)，取代前文相应“待完成”状态。

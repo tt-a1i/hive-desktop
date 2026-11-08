@@ -28,3 +28,5 @@ Mac 原生 GPUI 夹具读取上述真实状态，通过窗口键盘/点击链路
 最终源码验证：`pnpm check`、`check:pi-user-input`、Mac `cargo build --locked`、现有 Rust 检查（24 通过/1 忽略），以及 Windows MSVC `cargo check --locked` 均通过。未改 Hive 协议/schema，也未重复无关全量运行时测试；新增核心目录检查复用已验证的真实输入链路，纯 UI 使用原生窗口走查，没有新增 UI 单测或删除现有测试。
 
 重新查询 GitHub 确认 [Windows run 42462561419](https://github.com/tt-a1i/hive-desktop/actions/runs/42462561419) 对应 a2744ca：build/native-clis/native-supervision 三个 job 都为零步骤，annotation 明确说明近期付款失败或额度需要提高。该失败不是 Windows 编译/原生运行已经执行的证据；本轮交叉类型检查不能替代这些检查。
+
+后续持久化/压缩来源检查及新开发 ZIP 的实际系统输入验收已完成对应 Mac 范围，见 [历史/持久化修复](2026-11-08-pi-history-persistence.md) 和 [Pi 开发包](2026-11-08-pi-native-package.md)。Windows 等未验收项继续保留。
