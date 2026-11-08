@@ -93,7 +93,7 @@ impl OwnedProcess {
         if !normal {
             // Preserve forced cleanup across a failed confirmation and retry.
             self.forced = true;
-            self.scope.terminate()?;
+            self.scope.terminate(&self.child)?;
         }
         // Keep the leader unreaped through every signal to its process group.
         // An unreaped leader reserves the numeric PID/PGID even after an abnormal exit.

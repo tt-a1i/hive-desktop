@@ -351,3 +351,32 @@ fn node_sidecar_boot_does_not_spawn_agents_before_initialize() {
     draining.join().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn terminating_exited_leader_confirms_empty_scope() {
+    let mut command = Command::new("/bin/sleep");
+    command
+        .arg("60")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut owned = OwnedProcess::spawn(&mut command).unwrap();
+    assert_eq!(unsafe { libc::kill(owned.id() as i32, libc::SIGTERM) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !owned.leader_exited().unwrap() {
+        assert!(Instant::now() < deadline, "Owned leader did not exit");
+        thread::yield_now();
+    }
+    // Model the real race: the leader and last descendant exit after cleanup's
+    // initial snapshot, before its group signal. Keep the leader unreaped.
+    assert!(owned.scope.descendants_gone(&owned.child).unwrap());
+    let termination = owned.scope.terminate(&owned.child);
+    let cleanup = owned.cleanup(Duration::ZERO);
+    assert!(cleanup.is_ok(), "Exited leader must be reaped: {cleanup:?}");
+    assert!(
+        termination.is_ok(),
+        "An empty owned scope is already terminated: {termination:?}"
+    );
+    assert!(!alive(owned.id()), "Owned leader was not reaped");
+}

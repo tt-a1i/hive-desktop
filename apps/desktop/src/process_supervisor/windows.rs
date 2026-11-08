@@ -109,7 +109,7 @@ impl Scope {
         }
         Ok(true)
     }
-    pub fn terminate(&mut self) -> io::Result<()> {
+    pub fn terminate(&mut self, _child: &Child) -> io::Result<()> {
         // Capture the original objects before termination removes members from
         // Job accounting. ActiveProcesses can reach zero before their process
         // handles become signaled (observed on Windows CI after leader exit).

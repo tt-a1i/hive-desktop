@@ -68,12 +68,21 @@ impl Scope {
     pub fn descendants_gone(&self, child: &Child) -> io::Result<bool> {
         Ok(self.members()?.iter().all(|pid| *pid == child.id() as i32))
     }
-    pub fn terminate(&self) -> io::Result<()> {
+    pub fn terminate(&self, child: &Child) -> io::Result<()> {
         if unsafe { libc::killpg(self.pgid, libc::SIGKILL) } == -1 {
             let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
-                return Err(error);
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
             }
+            // macOS returns EPERM when the group only contains the unreaped,
+            // exited leader. Recheck the actual scope after this signal race.
+            if error.raw_os_error() == Some(libc::EPERM)
+                && self.leader_exited(child)?
+                && self.descendants_gone(child)?
+            {
+                return Ok(());
+            }
+            return Err(error);
         }
         Ok(())
     }
