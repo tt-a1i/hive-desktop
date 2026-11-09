@@ -536,3 +536,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 窄窗设置导航收紧
 
 英文17字号窄窗九个入口原折三行，现复用gpui-kit菜单收为单行当前分区，宽窗仍侧栏，共用分区定义并抽离navigation/settings模块。实际键盘Space/方向键/Enter切换、Escape保留搜索、模型/角色往返与冷恢复草稿、中英文菜单/当前勾号及配置原字节保持通过。另修共用退出设置在窄窗留下导航遮罩，最终返回直接会话，Cmd+,/Escape后输入焦点恢复通过。三个窗口正常exit0，Mac构建/Windows类型/diff通过，无新依赖/测试/ZIP，完整主题/字号/VoiceOver/Windows仍待。见[导航记录](validation/2026-11-09-compact-settings-navigation.md)。
+
+## 2026-11-09 空会话恢复保持空闲
+
+修复仅含启动上下文的空会话重启也请求模型、产生“没有任务”答复。沿用已有恢复上下文路径，只对空/已知Hive上下文历史不另唤醒；用户/工具/系统投递/未知扩展历史和原排队任务继续保留。新增真HTTP/SQLite/Pi JSONL五分支及冷恢复检查，生产基线pending1→修复0；原始Codex0.166.0显式Terra控制链路的空会话/排队/冷恢复另通过、无模型请求。团队回归、TS/build及只读上下文持久化通过；无UI/新包/全量验收。工作流结束通知重复回复仍待解决，已核对官方steer接口与现有单回合来源元数据边界，见[恢复验证](validation/2026-11-09-empty-session-recovery.md)。

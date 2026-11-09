@@ -395,12 +395,15 @@ export class Chats implements StructuredSessionPort {
               sourceText: presentation.displayText, attachments: staged.map(item => item.attachment) };
           }
         }
-        // A cold paused queue already has work to wake the model. Supply current
-        // recovery facts before that work instead of appending a second wake-up
-        // after it has finished. An empty queue still needs normal recovery.
-        const recoveringQueuedWork = presentation?.origin === 'recovery'
-          && chat.queue.pendingCount > 0 && !chat.queue.busy;
-        if (options?.triggerTurn === false || recoveringQueuedWork) {
+        // Recovery facts precede queued work. A context-only session has never
+        // received a task: retain those facts without generating a no-task reply.
+        // Unknown/custom extension history stays conservative and still wakes.
+        const recoveringWithoutWakeup = presentation?.origin === 'recovery' && !chat.queue.busy
+          && (chat.queue.pendingCount > 0 || chat.handle.history().every(message =>
+            message !== null && typeof message === 'object' && 'role' in message && message.role === 'custom'
+            && 'customType' in message && typeof message.customType === 'string'
+            && ['hive-context', 'hive-desktop', 'hive-desktop-external', 'hive-desktop-claude'].includes(message.customType)));
+        if (options?.triggerTurn === false || recoveringWithoutWakeup) {
           if (images.length) throw new TypeError('不触发模型回合的投递暂不支持图片。');
           const startupContext = text;
           this.index.save({ ...this.index.get(id), startupContext });
