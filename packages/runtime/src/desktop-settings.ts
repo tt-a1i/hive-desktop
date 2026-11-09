@@ -56,7 +56,7 @@ export class DesktopSettings {
     const task = probeExecutable(effective.command, this.probeAbort.signal);
     this.probes.add(task);
     try {
-      return {backend,...effective,source:effective.source === 'app' && candidate !== saved[key] ? 'draft' : effective.source,...await task,verifiedVersion:{pi:'1.4.0',codex:'0.166.0',claude:'2.1.317'}[backend]};
+      return {backend,...effective,source:effective.source === 'app' && candidate !== saved[key] ? 'draft' : effective.source,...await task,verifiedVersion:{pi:'1.4.0',codex:'0.167.0',claude:'2.1.317'}[backend]};
     } finally { this.probes.delete(task); }
   }
   async close(): Promise<void> {

@@ -25,6 +25,7 @@ try{
  await runtime.settings.update({piCommand:null,codexCommand:normal,claudeCommand:null});
  const before=await runtime.settings.get();
  const available=await runtime.settings.probe('codex',normal);assert.equal(available.status,'available');assert.equal(available.version,'0.166.0');assert.equal(available.command,normal);assert.equal(available.source,'app');assert.deepEqual(JSON.parse(await readFile(marker,'utf8')),['--version']);
+ assert.equal(available.verifiedVersion,'0.167.0');
  assert.equal((await runtime.settings.probe('claude',stderr)).version,'2.1.317');
  assert.equal((await runtime.settings.probe('pi',join(dir,'missing program'))).status,process.platform==='win32'?'failed':'not_found');
  const failed=await runtime.settings.probe('pi',fail);assert.equal(failed.status,'failed');assert.ok(!JSON.stringify(failed).includes('sensitive'));const invalid=await runtime.settings.probe('pi',bad);assert.equal(invalid.status,'failed');assert.equal(invalid.version,undefined);assert.equal(invalid.source,'draft');
