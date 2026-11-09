@@ -485,6 +485,7 @@ impl HiveApp {
                                     && this.draft_owner.as_ref() == Some(&workspace_draft);
                                 let session_key = format!("session:{}", session.id);
                                 this.open_session(session.id, cx);
+                                this.focus_project_input = true;
                                 if transfer {
                                     this.attachments
                                         .transfer(&workspace_draft, session_key.clone());
@@ -577,6 +578,7 @@ impl HiveApp {
     }
 
     pub(crate) fn show_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.focus_project_input = false;
         self.close_workflows();
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
             return;
