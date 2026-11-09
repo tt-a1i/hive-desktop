@@ -1,4 +1,6 @@
 use super::*;
+use crate::focus_scroll::{Reveal, Viewport};
+use gpui_kit::component::scroll::ScrollableElement;
 
 impl HiveApp {
     fn select_preferences_target(
@@ -113,7 +115,13 @@ impl HiveApp {
             .bg(Color::Surface.get(cx))
             .when(compact, |bar| bar.flex_row().items_center().border_b_1())
             .when(!compact, |bar| {
-                bar.flex_col().w(px(260.)).pl_6().pr_4().pt_7()
+                bar.flex_col()
+                    .h_full()
+                    .min_h_0()
+                    .w(px(260.))
+                    .pl_6()
+                    .pr_4()
+                    .pt_7()
             })
             .border_color(Color::Divider.get(cx))
             .child(
@@ -178,21 +186,41 @@ impl HiveApp {
                 )
             })
             .when(!compact, |bar| {
-                bar.children(entries.into_iter().map(|(id, label, glyph, section)| {
-                    Button::new(id)
-                        .ghost()
-                        .h(px(36.))
-                        .rounded_full()
-                        .icon(glyph)
-                        .w_full()
-                        .justify_start()
-                        .accessibility_label(label)
-                        .child(div().flex_1().child(label))
-                        .selected(selected(section))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.select_preferences_target(section, window, cx)
-                        }))
-                }))
+                bar.child(Viewport::new(
+                    "settings-navigation-viewport",
+                    &self.preferences_nav_scroll,
+                    v_flex()
+                        .id("settings-navigation-list")
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .gap_1()
+                        .p_1()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.preferences_nav_scroll)
+                        .vertical_scrollbar(&self.preferences_nav_scroll)
+                        .children(entries.into_iter().map(|(id, label, glyph, section)| {
+                            Reveal::new(
+                                SharedString::from(format!("{id}-reveal")),
+                                &self.preferences_nav_scroll,
+                                Button::new(id)
+                                    .ghost()
+                                    .h(px(36.))
+                                    .flex_shrink_0()
+                                    .rounded_full()
+                                    .icon(glyph)
+                                    .w_full()
+                                    .justify_start()
+                                    .accessibility_label(label)
+                                    .tooltip(label)
+                                    .child(div().flex_1().min_w_0().truncate().child(label))
+                                    .selected(selected(section))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.select_preferences_target(section, window, cx)
+                                    })),
+                            )
+                        })),
+                ))
             })
     }
 }
