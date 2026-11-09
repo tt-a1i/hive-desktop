@@ -468,3 +468,7 @@ fresh frozen deploy更新Hive依赖后重新制作Mac候选ZIP（生产源码d9e
 ## 2026-11-09 最新候选包与包内原生验证
 
 17d8ce7原生程序纳入候选ZIP，冻结runtime/依赖保持一致。包内Node真实PTY/Hive/HTTP/SQLite及原生启动恢复通过；实际包内Node/runtime进程确认，原生中英切换/浅色标题栏/窄窗导出与系统保存/文件末尾通过，11,576字符与源码快照逐字一致。Cmd+Q、冷启动语言/主题/草稿及窗口关闭均exit0。只替换候选槽位，current不推广；lsof/进程无引用后清理本轮解压目录，.artifacts约3.9GiB。无厂商请求或产品/测试改动，完整平台/页面矩阵继续开放，见[最新候选证据](validation/2026-11-09-native-candidate.md)。
+
+## 2026-11-09 最新候选包的真实桌面协作
+
+在006a8e候选ZIP中从原生聊天框实际发送需求，原始Codex0.166.0主控创建唯一Worker，两者明确Terra；Worker写入27字节文件并显式汇报，主控在汇报后独立读取核验，原生关联派单可见。完整Cmd+Q与冷启动后两条原始线程、40条展示条目、完成回合及单派单/汇报保持，无重复任务；两次exit0、后台清理。outbox投递有值但读确认未证实，不宣称exactly-once。无产品/测试改动，无新增ZIP；lsof无引用后移除本轮解压目录，保留真实证据。完整目标继续，见[包内真实团队](validation/2026-11-09-packaged-codex-team.md)。

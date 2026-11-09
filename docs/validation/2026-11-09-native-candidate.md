@@ -29,3 +29,7 @@ Mac `cargo build --locked`通过。通过包内Node执行`check-package.mjs`：�
 正常退出后确认进程表及lsof无引用，再替换唯一候选ZIP槽位并删除本轮解压目录；不动旧聊天目录、其他应用或依赖缓存。`.artifacts`约3.9GiB，无额外候选/依赖树副本。current ZIP仍是1acd805，SHA256 `f7174572fb16248b3a3f40e467a1322951a9ac4a26bd5c728ce0e52aceb57cf6`不变。旧d9候选的收据保留supersededBy及zipPresent=false，旧哈希不代表现存文件。
 
 收据：`.artifacts/native-package/{receipt.json,runtime-process-receipt.json,export-receipt.json,ui-exit.json,ui-reopen-exit.json,cleanup.json,superseded-candidate-receipt.json}`；当前候选索引`.artifacts/current-package/candidate-receipt.json`。日志`/tmp/hive-candidate-latest-{build,package,verify,smoke,startup}.log`，原生日志在native-package目录。本轮无产品/测试代码改动，未运行无关全量测试。
+
+## 后续真实模型补验
+
+同一006a8e候选ZIP已完成原生聊天框发送→原始Codex Terra主控→唯一Worker文件执行/显式汇报→主控独立核验→完整退出/冷启动，见[包内真实团队](2026-11-09-packaged-codex-team.md)。这与上面无推理的合成历史检查分开记录；不改变其原始范围，也不推广current或完整验收结论。
