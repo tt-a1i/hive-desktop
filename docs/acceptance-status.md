@@ -64,3 +64,5 @@ Codex活跃主控的系统通知已接入同回合投递，针对上文工作流
 聊天辅助功能新增源码修复：用户/助手正文、已展开工具参数/输出及团队原文按可见状态提供文本语义。真实 Terra 主控与 Worker 历史的原生 AX 读取、通知展开/收起边界、正常退出通过，本次未运行新模型。见[聊天可读性](validation/2026-11-09-conversation-accessibility.md)。Mac 构建与 Windows 编译检查通过，完整 VoiceOver/流式/Windows 原生及候选包仍待。
 
 上述输入恢复、已接收反馈及聊天AX语义现已纳入06ee28b候选ZIP，四组包检查通过；实际包窗口向原始Terra发送冷输入，只有一个新回合/唯一回复，退出和包内独立冷读pending0。见[最新候选](validation/2026-11-09-reading-candidate.md)。前文相关“候选未纳入”由本次具体证据更新；其他配置/协作/平台仍保留原验证范围，current未推广，完整目标开放。
+
+一对多新增真实证据：原始Codex/Terra主控亲自启动Promise.all双Worker，独立输入/产物49/3及61/4，两派单显式reported、工具活动区间重叠、主控唯一final，三会话冷恢复pending0。Mac原生核对三会话/双分支结果/产物并正常退出。见[两位Worker](validation/2026-11-09-two-worker-live.md)。源码运行，不扩大为包内/Windows/混合厂商或完整产品验收。
