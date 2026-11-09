@@ -227,6 +227,7 @@ pub struct HiveApp {
     pub positions: HashMap<String, ConversationPosition>,
     pub conversation_list: crate::conversation_list::ConversationList,
     pub collaboration_scroll: ScrollHandle,
+    pub welcome_scroll: ScrollHandle,
     events: Task<()>,
     pub(crate) workspace_updates: Task<()>,
     _quit: Subscription,
@@ -525,6 +526,7 @@ impl HiveApp {
             positions: HashMap::new(),
             conversation_list: crate::conversation_list::ConversationList::new(cx.focus_handle()),
             collaboration_scroll: ScrollHandle::new(),
+            welcome_scroll: ScrollHandle::new(),
             events: Task::ready(()),
             workspace_updates: Task::ready(()),
             _quit: cx.on_app_quit(|this: &mut Self, cx| {

@@ -564,12 +564,13 @@ impl Render for HiveApp {
                     })))
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
+            } else if self.workspace.is_none() && self.session.is_none() { self.render_welcome(cx).into_any_element()
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow && welcome, |v| v.px(px(44.))).when(!welcome, |v| v.px_0().pt_0()).id("conversation-surface").on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.import_image_paths(paths.paths().to_vec(), cx))).drag_over::<ExternalPaths>(|style, _, _, cx|style.bg(Color::Attention.get(cx))).key_context("HiveConversation").on_action(cx.listener(|this, _: &crate::CloseConversationFind, window, cx| this.close_conversation_find(window, cx))).when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .when(!welcome, |header| header.max_w_full().min_h(px(54.)).px_5().border_b_1().border_color(Color::Divider.get(cx)))
                     .when_some(self.conversation_return(cx), |header, back| header.child(back))
                     .when(self.session.is_none() || self.session_name_target.as_deref() != self.session.as_ref().map(|s| s.id.as_str()), |header| header.child({
-                    let title = if welcome && self.workspace.is_none() { tr("打开项目").into() } else if welcome { "Hive".into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
+                    let title = if welcome && self.workspace.is_none() { tr("打开项目").into() } else if welcome { tr("今天想推进什么？").into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
                     div().id("session-title").font_weight(FontWeight::SEMIBOLD).flex_1().min_w_0().truncate().when(welcome, |h| h.text_size(px(40.)).line_height(px(50.)).font_weight(FontWeight::BOLD)).when(!welcome, |h| h.text_lg())
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
                         .child(title)

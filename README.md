@@ -19,7 +19,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 - 内置 Pi 和已接入的外部 Agent 均可担任 Orchestrator 或 Worker；选择外部主控时，由该 Agent 直接决策和处理汇报。
 - 首版提供统一聊天界面，包括消息流、工具执行和成员会话；终端作为辅助能力。
 - 接入层允许原生 SDK、原生 RPC 和 ACP 并存，具体后端按实际能力选型。
-- UI、配置体验以 Cindy 为主要参考，结合 Raven 和 Maka 的合适设计；组件库与工程细节由实施者选择。
+- UI、配置体验结合 T3 Code、Beluga 与 Cindy 的合适设计，以 T3 Code / Beluga 的视觉与操作体验为重点，形成 Hive 自己的风格；Raven 和 Maka 继续作为接入架构参考。
 - 桌面界面使用 Rust、GPUI 与 gpui-kit；macOS 和 Windows 均为首版目标。保留 Node 后台，避免因 UI 选型重写已验证的协作业务。
 - 在本目录独立推进桌面项目，现有 Hive 仓库作为复用来源。
 

@@ -1053,5 +1053,17 @@
   "设置已保存": "Settings saved",
   "剪贴板图片过大，请先缩小图片。": "The clipboard image is too large. Reduce its size first.",
   "暂不支持该剪贴板图片格式，请粘贴 PNG、JPEG、GIF 或 WebP。": "This clipboard image format is not supported. Paste PNG, JPEG, GIF or WebP.",
-  "图片过大，编码后不能超过 5 MB。": "The image is too large. Its encoded data cannot exceed 5 MB."
+  "图片过大，编码后不能超过 5 MB。": "The image is too large. Its encoded data cannot exceed 5 MB.",
+  "今天想推进什么？": "What would you like to work on?",
+  "你的项目，你的 Agent。一起推进。": "Your projects. Your agents. Working together.",
+  "选择熟悉的 Agent 担任主控，在同一个地方交流、查看工具过程，与团队成员协作。": "Choose your preferred lead agent. Chat, follow tools, and work with your team in one place.",
+  "打开项目文件夹": "Open project folder",
+  "先配置 Agent": "Set up an agent first",
+  "打开项目后再选择 Agent；不会自动发送消息或启动成员。": "Choose an agent after opening a project. No messages are sent or agents started automatically.",
+  "选择本地文件夹，已有项目和会话会留在侧栏。": "Choose a local folder. Your projects and conversations stay in the sidebar.",
+  "选择你的主控": "Choose your lead agent",
+  "内置 Pi、Claude Code、Codex 或外部 Pi，使用各自的模型与账号。": "Built-in Pi, Claude Code, Codex, or external Pi, with their own models and accounts.",
+  "和团队一起工作": "Work with your team",
+  "从主会话安排任务，随时查看成员的对话、执行过程与汇报。": "Delegate from the main conversation, then follow member conversations, tools, and reports.",
+  "检查外部 Agent 程序": "Check external agent programs"
 }

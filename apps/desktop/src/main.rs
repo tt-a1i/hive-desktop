@@ -43,6 +43,7 @@ mod transport;
 mod usage;
 mod view;
 mod workspace_actions;
+mod welcome;
 
 use gpui_kit::*;
 actions!(
