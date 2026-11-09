@@ -20,11 +20,12 @@ const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-dispatches-'));
 try {
   // Erase only check types. Every production import and runtime dependency is
   // resolved from the extracted package, and execution uses its actual Node.
-  for (const check of ['reported-dispatch-queue', 'codex-tool-retirement']) {
+  for (const check of ['reported-dispatch-queue', 'codex-tool-retirement', 'codex-steering', 'empty-session-recovery']) {
     const source = await readFile(join(root, `packages/runtime/checks/${check}.ts`), 'utf8');
     const bound = source.replace(/(['"])\.\.\/src\/([^'"]+)\1/g,
       (_all, _quote, module) => JSON.stringify(pathToFileURL(join(runtime, 'dist', module)).href))
-      .replace(/(['"])typebox\1/g, JSON.stringify(pathToFileURL(packagedRequire.resolve('typebox')).href));
+      .replace(/(['"])(typebox|@earendil-works\/pi-coding-agent)\1/g,
+        (_all, _quote, dependency) => JSON.stringify(pathToFileURL(packagedRequire.resolve(dependency)).href));
     const result = ts.transpileModule(bound, {
       compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 }, reportDiagnostics: true,
     });
