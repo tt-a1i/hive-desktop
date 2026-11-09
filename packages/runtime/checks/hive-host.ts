@@ -38,6 +38,22 @@ try {
 	assert.equal(created.path, path);
 	assert.equal(created.name, "Desktop host check");
 	assert.equal(created.orchestrator_start.run_id, null);
+	await assert.rejects(
+		host.request("POST", "/api/workspaces", {
+			path,
+			name: "Duplicate project",
+			autostart_orchestrator: false,
+		}),
+		(error: unknown) => {
+			assert.ok(error instanceof HiveHttpError);
+			assert.equal(error.status, 409);
+			assert.equal(typeof error.body, "object");
+			const detail = (error.body as { error: string }).error;
+			assert.equal(detail, `Workspace path already exists: ${path}`);
+			assert.equal(error.message, `Hive request failed (409): ${detail}`);
+			return true;
+		},
+	);
 	const listed = (await host.request("GET", "/api/workspaces")) as Array<{
 		id: string;
 		path: string;

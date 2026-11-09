@@ -8,7 +8,9 @@ export class HiveHttpError extends Error {
 		public readonly status: number,
 		public readonly body: unknown,
 	) {
-		super(`Hive request failed (${status})`);
+		const detail = body && typeof body === "object" && "error" in body
+			&& typeof body.error === "string" ? body.error.trim() : "";
+		super(`Hive request failed (${status})${detail ? `: ${detail}` : ""}`);
 		this.name = "HiveHttpError";
 	}
 }
