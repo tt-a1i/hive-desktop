@@ -15,7 +15,11 @@ const runtime = join(resources, 'runtime');
 const node = join(resources, 'node', process.platform === 'darwin' ? 'bin/node' : 'node.exe');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ts = createRequire(join(root, 'packages/runtime/package.json'))('typescript');
-const packagedRequire = createRequire(join(runtime, 'package.json'));
+// Resolve with the packaged Node's ESM loader: Pi SDK has import-only exports.
+const packagedImports = new Map(['typebox', '@earendil-works/pi-coding-agent'].map(dependency => [dependency,
+  execFileSync(node, ['--input-type=module', '-e', 'process.stdout.write(import.meta.resolve(process.argv[1]))', dependency],
+    {cwd: runtime, encoding: 'utf8', timeout: 10000}),
+]));
 const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-dispatches-'));
 try {
   // Erase only check types. Every production import and runtime dependency is
@@ -25,7 +29,7 @@ try {
     const bound = source.replace(/(['"])\.\.\/src\/([^'"]+)\1/g,
       (_all, _quote, module) => JSON.stringify(pathToFileURL(join(runtime, 'dist', module)).href))
       .replace(/(['"])(typebox|@earendil-works\/pi-coding-agent)\1/g,
-        (_all, _quote, dependency) => JSON.stringify(pathToFileURL(packagedRequire.resolve(dependency)).href));
+        (_all, _quote, dependency) => JSON.stringify(packagedImports.get(dependency)));
     const result = ts.transpileModule(bound, {
       compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 }, reportDiagnostics: true,
     });
