@@ -37,3 +37,5 @@ current.zip 是固定位置，按一批变更更新，不为每次小改留下�
 current仍为本页记录的1acd805。candidate现为768d085，纳入空会话恢复、Codex同回合系统通知/来源结算及近期焦点/紧凑导航/工作流详情修复。包内真实Terra主控与Worker完成47/3、同回合唯一final/冷恢复、四组包检查及实际原生工作流/产物/窄窗设置通过。候选SHA256为b792ae16d978801a3d1c479f7538604ad44fcb70cb992e4abb69f0f6516b6881，见[最新候选](2026-11-09-steered-candidate.md)。前轮[队列与远程候选](2026-11-09-settled-candidate.md)、[汇报候选](2026-11-09-report-candidate.md)、[配置候选](2026-11-09-model-candidate.md)按各自范围保留，未推广为current。
 
 最新candidate已更新为06ee28b，SHA256 `27f96972c4ded3a19b3e44fa30e327b94cbb2cdf913986fb09197fd3b7e02cb9`，171,872,618字节。纳入输入恢复、接收反馈及正文AX语义，四组包检查及包窗口实际Terra输入/唯一新回合/退出冷恢复通过，见[最新候选](2026-11-09-reading-candidate.md)。上节768d085为此前候选记录；current仍保持本页1acd805，不作推广。
+
+最新candidate为78721c7，SHA256 `50327b8bbd32ed64d1802061269df956aaf6ce84679fcfeece918ca1df526cbd`，171,876,030字节。纳入取消队列及停止展示，四组包检查、包内实际双成员停止/退出/冷恢复通过，见[最新候选](2026-11-09-terminal-candidate.md)。此前06ee28b记录按原范围保留；current未推广。
