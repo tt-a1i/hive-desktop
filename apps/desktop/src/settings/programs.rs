@@ -3,6 +3,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::{Input, InputState},
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -44,6 +45,23 @@ pub struct ProgramCheck {
     result: Option<Result<ProgramResult, String>>,
 }
 impl HiveApp {
+    pub(crate) fn render_program_settings(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let scroll = &self.program_scroll;
+        crate::focus_scroll::Viewport::new("programs-viewport", scroll,
+            v_flex().id("settings-programs-content").flex_1().min_w_0().min_h_0()
+                .overflow_y_scroll().track_scroll(scroll).vertical_scrollbar(scroll).gap_3()
+                .child(crate::text_reading::selectable_text("programs-description", tr("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；检查只读取程序版本。修改在下次启动对应 Agent 时生效。")).text_sm().text_color(Color::Secondary.get(cx)))
+                .when_some(self.settings_message.as_ref().map(|notice| notice.text()), |view, message| view.child(crate::text_reading::selectable_text("programs-save-notice", message).p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm()))
+                .child(self.executable_field("pi", tr("外部 Pi"), &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
+                .child(self.executable_field("codex", "Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
+                .child(self.executable_field("claude", "Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
+                .child(crate::focus_scroll::Reveal::new("programs-actions-reveal", scroll,
+                    h_flex().items_center().flex_wrap().gap_2()
+                        .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { tr("处理中…") } else { tr("保存设置") }).disabled(!self.connected || self.settings_loading || !self.executable_paths_changed(cx)).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window.window_handle(), cx))))
+                        .child(Button::new("reload-executable-settings").rounded_full().label(tr("重新读取")).disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window.window_handle(), cx))))
+                        .when(!self.settings_loading && self.executable_paths_changed(cx), |row| row.child(crate::text_reading::selectable_text("programs-unsaved", tr("有未保存的修改")).text_xs().text_color(Color::Secondary.get(cx)))))))
+    }
+
     fn check_program(
         &mut self,
         backend: &'static str,
@@ -115,9 +133,11 @@ impl HiveApp {
                 .is_some_and(|result| result.source == "env");
             !environment && check.input != input.read(cx).value().trim()
         });
-        v_flex().min_w_0().gap_2().py_3().border_b_1().border_color(Color::Divider.get(cx))
+        let readout = |suffix: &str, text: String| crate::text_reading::selectable_text(
+            SharedString::from(format!("program-{backend}-{suffix}")), text);
+        let field = v_flex().min_w_0().gap_2().py_3().border_b_1().border_color(Color::Divider.get(cx))
             .child(h_flex().items_center().gap_2()
-                .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(label))
+                .child(div().id(SharedString::from(format!("program-{backend}-name"))).role(Role::Label).aria_label(label).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(label))
                 .child(Button::new(SharedString::from(format!("probe-{backend}"))).ghost().compact()
                     .label(if loading {tr("检查中…")} else {tr("检查程序")}).accessibility_label(if english() { format!("Check {label} version") } else { format!("检查 {label} 程序版本") })
                     .disabled(disabled || loading).on_click(cx.listener(move |this,_,_,cx|this.check_program(backend,probe_input.clone(),cx)))))
@@ -125,14 +145,15 @@ impl HiveApp {
                 .child(div().flex_1().min_w_0().child(Input::new(input).rounded_full().aria_label(if english() { format!("{label} executable path") } else { format!("{label} 可执行文件路径") }).disabled(disabled)))
                 .child(Button::new(SharedString::from(format!("browse-{backend}"))).rounded_full().label(tr("浏览…")).accessibility_label(if english() { format!("Select {label} executable") } else { format!("选择 {label} 可执行文件") }).disabled(disabled)
                     .on_click(cx.listener(move |this,_,window,cx|this.browse_executable(label,target.clone(),window,cx)))))
-            .when_some(effective,|row,value|row.child(div().text_xs().text_color(Color::Muted.get(cx)).child(value.label(tr("当前使用")))))
-            .when(changed, |row|row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("输入已更改，请重新检查。"))))
+            .when_some(effective,|row,value|row.child(readout("effective",value.label(tr("当前使用"))).text_xs().text_color(Color::Muted.get(cx))))
+            .when(changed, |row|row.child(readout("changed",tr("输入已更改，请重新检查。").into()).text_xs().text_color(Color::Secondary.get(cx))))
             .when_some(check.filter(|_|!changed).and_then(|check|check.result.as_ref()),|row,result|match result {
-                Err(error)=>row.child(div().text_sm().text_color(Color::Error.get(cx)).child(error.clone())),
+                Err(error)=>row.child(readout("error",error.clone()).text_sm().text_color(Color::Error.get(cx))),
                 Ok(result)=>row.child(v_flex().min_w_0().gap_1()
-                    .child(div().text_sm().text_color(if result.status=="available" {Color::Text.get(cx)} else {Color::Error.get(cx)}).child(result.message()))
-                    .child(div().text_xs().text_color(Color::Muted.get(cx)).child(EffectiveCommand{command:result.command.clone(),source:result.source.clone()}.label(tr("本次检查"))))
-                    .when(result.version.as_ref().is_some_and(|version|version!=&result.verified_version),|row|row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("Client-verified version: {}. The detected version differs; compatibility has not been verified.",result.verified_version) } else { format!("客户端已验证版本：{}。检测版本不同，尚未验证兼容性。",result.verified_version) }))))
-            })
+                    .child(readout("result",result.message()).text_sm().text_color(if result.status=="available" {Color::Text.get(cx)} else {Color::Error.get(cx)}))
+                    .child(readout("checked",EffectiveCommand{command:result.command.clone(),source:result.source.clone()}.label(tr("本次检查"))).text_xs().text_color(Color::Muted.get(cx)))
+                    .when(result.version.as_ref().is_some_and(|version|version!=&result.verified_version),|row|row.child(readout("compatibility",if english() { format!("Client-verified version: {}. The detected version differs; compatibility has not been verified.",result.verified_version) } else { format!("客户端已验证版本：{}。检测版本不同，尚未验证兼容性。",result.verified_version) }).text_xs().text_color(Color::Secondary.get(cx)))))
+            });
+        crate::focus_scroll::Reveal::new(SharedString::from(format!("program-{backend}-reveal")), &self.program_scroll, field)
     }
 }

@@ -228,6 +228,7 @@ pub struct HiveApp {
     pub conversation_list: crate::conversation_list::ConversationList,
     pub collaboration_scroll: ScrollHandle,
     pub welcome_scroll: ScrollHandle,
+    pub program_scroll: ScrollHandle,
     events: Task<()>,
     pub(crate) workspace_updates: Task<()>,
     _quit: Subscription,
@@ -527,6 +528,7 @@ impl HiveApp {
             conversation_list: crate::conversation_list::ConversationList::new(cx.focus_handle()),
             collaboration_scroll: ScrollHandle::new(),
             welcome_scroll: ScrollHandle::new(),
+            program_scroll: ScrollHandle::new(),
             events: Task::ready(()),
             workspace_updates: Task::ready(()),
             _quit: cx.on_app_quit(|this: &mut Self, cx| {

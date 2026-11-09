@@ -346,16 +346,7 @@ impl HiveApp {
                     .when(!self.team_autostaff_loading, |view| view.child(h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label(tr("重新读取")).disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx))))))
                     .when_some(self.team_autostaff_message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().text_sm().child(message))),
                         SettingsSection::Notifications => content.id("settings-notification-content").overflow_y_scroll().child(self.render_notification_settings(cx)),
-                        SettingsSection::Programs => content.id("settings-programs-content").overflow_y_scroll()
-                    .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；检查只读取程序版本。修改在下次启动对应 Agent 时生效。")))
-                    .when_some(self.settings_message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
-                    .child(self.executable_field("pi", tr("外部 Pi"), &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
-                    .child(self.executable_field("codex", "Codex", &self.codex_command, self.executable_settings.as_ref().map(|s| &s.effective.codex), cx))
-                    .child(self.executable_field("claude", "Claude Code", &self.claude_command, self.executable_settings.as_ref().map(|s| &s.effective.claude), cx))
-                    .child(h_flex().items_center().gap_2()
-                        .child(Button::new("save-executable-settings").primary().rounded_full().label(if self.settings_loading { tr("处理中…") } else { tr("保存设置") }).disabled(!self.connected || self.settings_loading || !self.executable_paths_changed(cx)).on_click(cx.listener(|this, _, window, cx| this.settings_request(true, window.window_handle(), cx))))
-                        .child(Button::new("reload-executable-settings").rounded_full().label(tr("重新读取")).disabled(!self.connected || self.settings_loading).on_click(cx.listener(|this, _, window, cx| this.settings_request(false, window.window_handle(), cx))))
-                        .when(!self.settings_loading && self.executable_paths_changed(cx), |row| row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("有未保存的修改"))))),
+                        SettingsSection::Programs => content.id("settings-programs-container").child(self.render_program_settings(cx)),
                     }
                 }).into_any_element()
         };
