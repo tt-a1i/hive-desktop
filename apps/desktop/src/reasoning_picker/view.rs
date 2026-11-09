@@ -2,7 +2,6 @@ use crate::{app::HiveApp, palette::Color, language::tr};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
-        popover::Popover,
         *,
     },
     prelude::FluentBuilder,
@@ -22,19 +21,17 @@ fn label(level: &str) -> &str {
     }
 }
 impl HiveApp {
-    pub(crate) fn render_reasoning_picker(
+    pub(crate) fn reasoning_label(&self) -> Option<String> {
+        self.reasoning_picker.state.as_ref().map(|state| label(&state.level).to_owned())
+    }
+
+    pub(crate) fn render_reasoning_settings(
         &self,
         running: bool,
-        cx: &mut Context<Self>,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let disabled =
             running || self.loading || !self.conversation_ready || !self.connected || self.closing;
-        let current = self
-            .reasoning_picker
-            .state
-            .as_ref()
-            .map(|state| format!("{} · {}",tr("推理"),label(&state.level)))
-            .unwrap_or_else(|| tr("推理强度").into());
         let content = v_flex()
             .id("reasoning-picker-content")
             .role(Role::Group)
@@ -80,7 +77,7 @@ impl HiveApp {
                 })
                 .children(state.levels.iter().enumerate().map(|(i, level)| {
                     let level = level.clone();
-                    Button::new(("reasoning-option", i))
+                    crate::focus_scroll::Reveal::new(("reasoning-option-reveal", i), &self.reasoning_picker.scroll, Button::new(("reasoning-option", i))
                         .ghost()
                         .compact()
                         .w_full()
@@ -91,38 +88,17 @@ impl HiveApp {
                         .accessibility_label(format!("{}: {}",tr("推理强度"),label(&level)))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.load_reasoning(Some(level.clone()), cx)
-                        }))
+                        })))
                 }))
             })
             .child(
-                Button::new("refresh-reasoning")
+                crate::focus_scroll::Reveal::new("refresh-reasoning-reveal", &self.reasoning_picker.scroll, Button::new("refresh-reasoning")
                     .ghost()
                     .compact()
                     .label(tr("重新读取"))
-                    .disabled(self.reasoning_picker.loading)
-                    .on_click(cx.listener(|this, _, _, cx| this.load_reasoning(None, cx))),
+                    .disabled(self.reasoning_picker.loading || disabled)
+                    .on_click(cx.listener(|this, _, _, cx| this.load_reasoning(None, cx)))),
             );
-        Popover::new("reasoning-picker")
-            .anchor(Anchor::BottomRight)
-            .w(px(260.))
-            .open(self.reasoning_picker.open)
-            .trigger(
-                Button::new("choose-reasoning")
-                    .ghost()
-                    .compact()
-                    .label(current)
-                    .accessibility_label(tr("设置会话推理强度"))
-                    .disabled(disabled)
-                    .tooltip(tr("只影响当前会话，不修改 Agent 全局默认")),
-            )
-            .on_open_change(cx.listener(|this, open, _, cx| {
-                this.reasoning_picker.open = *open;
-                if *open {
-                    this.load_reasoning(None, cx);
-                }
-                cx.notify();
-            }))
-            .when(self.reasoning_picker.open, |popover| popover.child(content))
-            .into_any_element()
+        content.into_any_element()
     }
 }

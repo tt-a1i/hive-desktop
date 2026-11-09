@@ -1094,6 +1094,7 @@
   "最近一次用量不是实时上下文占用；缓存输入和推理输出分别属于输入、输出的子集。重新连接后以原生通知为准。": "Latest usage is separate from live context occupancy. Cached input and reasoning output are subsets of input and output. After reconnecting, native notifications are authoritative.",
   "本次连接尚未收到原生回合统计；历史不会被重新计为零。": "This connection has not received native turn statistics. Historical usage is not reset to zero.",
   "主循环统计不含子 Agent 和辅助调用；模型累计取最新原生结果，不逐轮相加。原生报告有自身的恢复及重置边界，不是订阅额度或账单。": "Main-loop statistics exclude subagents and auxiliary calls. Model totals use the latest native result rather than summing turns. Native reports have their own restore/reset boundaries; they are not subscription quota or billing.",
+  "选择会话模型与推理强度": "Select conversation model and reasoning effort",
   "选择 Agent 配置入口": "Choose agent setup",
   "内置 Pi 账号": "Built-in Pi accounts",
   "外部 Agent 程序": "External agent programs",

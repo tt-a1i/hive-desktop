@@ -14,7 +14,6 @@ impl HiveApp {
             .child(h_flex().flex_1().min_w_0().flex_wrap().justify_end().items_center().gap_1()
                 .when(self.session.is_some(), |row| row
                     .child(self.model_picker(window, running, cx))
-                    .child(self.render_reasoning_picker(running, cx))
                     .child(self.usage_button(window, running, cx))))
             .when(self.session.is_some(), |row| row.child(h_flex().flex_shrink_0().gap_1()
                 .when(running, |actions| actions.child(Button::new("stop").rounded_full().icon(Glyph::Square)

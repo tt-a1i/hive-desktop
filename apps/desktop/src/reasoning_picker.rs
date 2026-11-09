@@ -11,13 +11,14 @@ pub struct ReasoningState {
 }
 #[derive(Default)]
 pub struct ReasoningPicker {
-    pub open: bool,
+    pub model_scroll: ScrollHandle,
+    pub scroll: ScrollHandle,
     pub loading: bool,
     state: Option<ReasoningState>,
     error: Option<String>,
 }
 impl HiveApp {
-    fn load_reasoning(&mut self, level: Option<String>, cx: &mut Context<Self>) {
+    pub(crate) fn load_reasoning(&mut self, level: Option<String>, cx: &mut Context<Self>) {
         if self.reasoning_picker.loading
             || !self.conversation_ready
             || self.loading
