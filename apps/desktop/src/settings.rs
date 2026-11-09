@@ -324,8 +324,8 @@ impl HiveApp {
         } else if self.roles.visible {
             self.render_roles(cx).into_any_element()
         } else {
-            v_flex().flex_1().w_full().max_w(px(960.)).mx_auto().min_h_0().min_w_0().px_5().py_6().when(!compact_settings, |panel| panel.pl_5().pr_6().py_7()).gap_5()
-                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Appearance => tr("外观"), SettingsSection::Chat => tr("聊天"), SettingsSection::PiAccounts => tr("内置 Pi"), SettingsSection::Models => tr("模型与接口"), SettingsSection::Team => tr("团队"), SettingsSection::Notifications => tr("通知"), SettingsSection::Remote => tr("远程接入"), SettingsSection::Programs => tr("外部程序") }))
+            v_flex().flex_1().w_full().max_w(px(960.)).mx_auto().min_h_0().min_w_0().px_5().py_3().gap_3().when(!compact_settings, |panel| panel.pl_5().pr_6().py_7().gap_5())
+                .when(!compact_settings, |panel| panel.child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Appearance => tr("外观"), SettingsSection::Chat => tr("聊天"), SettingsSection::PiAccounts => tr("内置 Pi"), SettingsSection::Models => tr("模型与接口"), SettingsSection::Team => tr("团队"), SettingsSection::Notifications => tr("通知"), SettingsSection::Remote => tr("远程接入"), SettingsSection::Programs => tr("外部程序") })))
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {

@@ -69,6 +69,7 @@ pub struct PiModels {
     target: Option<Target>,
     initial: Values,
     revision: String,
+    search: Entity<InputState>,
     id: Entity<InputState>,
     name: Entity<InputState>,
     url: Entity<InputState>,
@@ -100,7 +101,7 @@ impl ModelNotice {
 }
 impl PiModels {
     pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
-        for (input,key) in [(&self.id,"例如 my-provider 或模型 ID"),(&self.name,"显示名称，可留空"),(&self.first,"例如 gpt-6.1-terra"),(&self.context,"留空使用 Pi 默认值"),(&self.output,"留空使用 Pi 默认值")] {
+        for (input,key) in [(&self.search,"搜索提供商、模型或接口地址…"),(&self.id,"例如 my-provider 或模型 ID"),(&self.name,"显示名称，可留空"),(&self.first,"例如 gpt-6.1-terra"),(&self.context,"留空使用 Pi 默认值"),(&self.output,"留空使用 Pi 默认值")] {
             input.update(cx, |input,cx|input.set_placeholder(tr(key),window,cx));
         }
     }
@@ -122,6 +123,12 @@ impl PiModels {
         let first = input("例如 gpt-6.1-terra", cx);
         let context = input("留空使用 Pi 默认值", cx);
         let output = input("留空使用 Pi 默认值", cx);
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索提供商、模型或接口地址…")));
+        subscriptions.push(cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
         Self {
             draft_root: None,
             form_path: String::new(),
@@ -131,6 +138,7 @@ impl PiModels {
             target: None,
             initial: Values::default(),
             revision: String::new(),
+            search,
             id,
             name,
             url,
@@ -353,8 +361,8 @@ impl HiveApp {
         self.pi_models.form_path = path;
         self.pi_models.revision = revision;
         self.pi_models.target = target;
-        self.pi_models.initial = value.clone();
         self.apply_pi_model_values(value, window, cx);
+        self.pi_models.initial = self.pi_models.values(cx);
         self.pi_models.message = None;
         self.pi_models.scroll.set_offset(point(px(0.), px(0.)));
         if self.pi_models.target.is_some() {

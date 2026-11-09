@@ -1101,5 +1101,8 @@
   "Claude Code、Codex 和外部 Pi 使用各自 CLI 的登录与配置。检测到版本不代表已登录或模型可用；请先在对应 CLI 中完成设置。": "Claude Code, Codex, and external Pi use their own CLI sign-in and configuration. Detecting a version does not verify sign-in or model availability. Complete setup in the corresponding CLI first.",
   "该原生后端未提供用量读取接口。": "This native backend does not provide a usage interface.",
   "从原生 Codex 线程读取；档位由当前模型提供。": "Read from the native Codex thread. Available levels come from the current model.",
-  "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。": "Shows the native applied effort. Environment, organization policy, or model capabilities may adjust the requested value."
+  "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。": "Shows the native applied effort. Environment, organization policy, or model capabilities may adjust the requested value.",
+  "搜索提供商、模型或接口地址…": "Search providers, models or endpoint URLs…",
+  "搜索模型配置": "Search model configuration",
+  "没有匹配的模型配置。试试提供商、模型名称、ID 或接口地址。": "No matching model configuration. Try a provider, model name, ID or endpoint URL."
 }
