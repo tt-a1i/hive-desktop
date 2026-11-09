@@ -1,5 +1,7 @@
 # 队列结算与远程界面修复进入候选包
 
+此候选已由[768d085候选](2026-11-09-steered-candidate.md)替代；本页保留0e72137的历史证据，原ZIP不另存，canonical路径现在指向新候选。
+
 2026-11-09，源提交`0e721373c860d7b829cbbc771d115908a64567db`。候选包纳入649de4f内部通知折叠、b3e4b36已汇报派单队列结算、a9b6d64远程配对信息可访问性及过期状态提示修复。
 
 - ZIP：`.artifacts/hive-desktop-macos-arm64-candidate.zip`，171,842,913字节（约164MiB）。

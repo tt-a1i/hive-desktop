@@ -34,4 +34,4 @@ current.zip 是固定位置，按一批变更更新，不为每次小改留下�
 
 ## 后续候选更新
 
-current仍为本页记录的1acd805。candidate现为0e72137，纳入汇报后队列结算、内部通知折叠、远程配对AX与状态提示修复，包内真实Terra工作流/冷恢复、队列/PTY/Hive/原生确认/远程加密终端，以及实际工作流/远程窗口通过。候选SHA256为a55599325b28049f3f519d43cf350b59c8e3d4cb79c0817027482df77997bfee，见[最新候选](2026-11-09-settled-candidate.md)。前轮[汇报候选](2026-11-09-report-candidate.md)、[配置候选](2026-11-09-model-candidate.md)、[停止候选](2026-11-09-stop-candidate.md)按各自范围保留，未推广为current。
+current仍为本页记录的1acd805。candidate现为768d085，纳入空会话恢复、Codex同回合系统通知/来源结算及近期焦点/紧凑导航/工作流详情修复。包内真实Terra主控与Worker完成47/3、同回合唯一final/冷恢复、四组包检查及实际原生工作流/产物/窄窗设置通过。候选SHA256为b792ae16d978801a3d1c479f7538604ad44fcb70cb992e4abb69f0f6516b6881，见[最新候选](2026-11-09-steered-candidate.md)。前轮[队列与远程候选](2026-11-09-settled-candidate.md)、[汇报候选](2026-11-09-report-candidate.md)、[配置候选](2026-11-09-model-candidate.md)按各自范围保留，未推广为current。

@@ -552,3 +552,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 同回合通知的原生恢复与详情阅读
 
 原始Codex无模型fork真实工作流历史到独立验收数据，Mac实际核对主控团队通知折叠/原文run47/3、唯一final、成员原生messages/report完成，以及成员→工作流阅读位置。发现详情首屏被全局配置卡占用，一处条件将配置保留列表、详情直接呈现运行/结果；新构建宽窗/1184×1000窄窗、47/3产物预览、返回列表/执行器原值无改动通过。Mac构建/Windows类型/diff通过，两窗口Cmd+Q exit0/PID消失，无模型/后台全量/新ZIP，动态流式与其他完整矩阵仍待。见[原生记录](validation/2026-11-09-steered-native-workflow.md)。
+
+## 2026-11-09 同回合通知与近期界面修复进入候选包
+
+768d085候选约164MiB，更新10个runtime JS/map、脚本元数据和原生程序；112runtime匹配、28,822未变文件/29内部链接/31,570元数据保持。包内PTY/Hive/SQLite、派单结算/工具确认/steer/空恢复、内外Pi队列及远程加密终端/撤销四组通过；新增检查器先因import-only SDK定位失败，改用包内ESM loader后通过，原依赖未改。包内原样Codex/Terra主控亲自启动workflow，Worker显式report47/3，主控独立核验后同回合唯一final/冷恢复pending0；实际包窗口结果、产物、窄窗九入口/返回通过，Cmd+Q exit0。确认无引用后清理解压、原子替换候选，.artifacts约3.9GiB、current保持。无额外产品源码/全量/Windows或完整UI结论，见[候选实证](validation/2026-11-09-steered-candidate.md)。
