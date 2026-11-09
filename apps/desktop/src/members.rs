@@ -258,7 +258,7 @@ impl HiveApp {
                     this.member_loading = false;
                     match result {
                         Ok(_) => {
-                            this.member_focus_search = this.editing_member.is_some() || this.deleting_member.is_some();
+                            this.member_focus_search |= this.editing_member.is_some() || this.deleting_member.is_some();
                             this.editing_member = None;
                             this.deleting_member = None;
                             this.refresh_members(cx);

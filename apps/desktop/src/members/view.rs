@@ -3,7 +3,7 @@ use gpui_kit::{assets::IconName as Glyph, component::{button::{Button,ButtonVari
 
 impl HiveApp {
     pub(crate) fn render_members(&mut self, window: &mut Window, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
-        if std::mem::take(&mut self.member_focus_search) {
+        if !self.member_loading && std::mem::take(&mut self.member_focus_search) {
             let focus = self.member_search.read(cx).focus_handle(cx);
             window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }
