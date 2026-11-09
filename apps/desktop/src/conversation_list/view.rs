@@ -70,6 +70,8 @@ impl HiveApp {
                                 .text_color(Color::Secondary.get(cx))
                                 .child(heading),
                         )
+                        .when(message.role == "assistant" && (!message.text.is_empty() || !message.images.is_empty() || message.delivery.is_some()),
+                            |row| row.child(self.message_actions(i, message, cx)))
                         .when(
                             message.delivery.as_ref().is_some_and(|card| card.report),
                             |row| {
@@ -275,9 +277,9 @@ impl HiveApp {
                 },
             )
             .when(
-                !message.text.is_empty()
+                message.role != "assistant" && (!message.text.is_empty()
                     || !message.images.is_empty()
-                    || message.delivery.is_some(),
+                    || message.delivery.is_some()),
                 |view| view.child(self.message_actions(i, message, cx)),
             )
             .into_any_element()

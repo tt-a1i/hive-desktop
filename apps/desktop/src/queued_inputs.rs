@@ -35,8 +35,6 @@ impl HiveApp {
                 .child(
                     v_flex()
                         .id("queued-user-inputs")
-                        .max_h(px(144.))
-                        .overflow_y_scroll()
                         .gap_2()
                         .children(undisplayed.into_iter().map(|input| {
                             let text = input.text.clone();
@@ -61,7 +59,10 @@ impl HiveApp {
                                         .collect::<Vec<_>>().join(if english() { ", " } else { "、" })
                                 )
                             };
-                            h_flex()
+                            crate::focus_scroll::Reveal::new(
+                                SharedString::from(format!("received-input-reveal-{}", input.delivery_id)),
+                                &self.composer_scroll,
+                                h_flex()
                                 .id(SharedString::from(format!("received-input-{}", input.delivery_id)))
                                 .role(Role::Group)
                                 .aria_label(format!("{label} · {detail}"))
@@ -96,7 +97,7 @@ impl HiveApp {
                                             ))
                                         },
                                     ),
-                                )
+                                ))
                         })),
                 )
             })

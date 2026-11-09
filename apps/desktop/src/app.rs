@@ -363,7 +363,7 @@ impl HiveApp {
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .submit_on_enter(true)
-                .auto_grow(2, 7)
+                .auto_grow(1, 7)
                 .placeholder("输入消息…")
         });
         let composer_subscription = cx.subscribe_in(

@@ -463,19 +463,19 @@ impl Render for HiveApp {
                     .aria_label(tr("先写下需求，再选择主控 Agent。草稿会带入新会话。"))
                     .w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().text_sm().text_color(Color::Muted.get(cx))
                     .child(tr("先写下需求，再选择主控 Agent。草稿会带入新会话。"))))
-                .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_2().when(!welcome, |dock| dock.px_5().when(!narrow, |dock| dock.px(px(44.))))
+                .child(v_flex().w_full().min_w_0().min_h_0().max_h(window.viewport_size().height * 0.65).flex_shrink_0().gap_2().when(!welcome, |dock| dock.px_5().when(!narrow, |dock| dock.px(px(44.))))
                 .when(!welcome, |dock| dock.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().font_weight(FontWeight::SEMIBOLD)
                         .child(self.session.as_ref().map(|s| tr(s.backend.label())).unwrap_or("Hive")))
                     .when(!self.status.is_background_connected() || running, |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
                         .child(if running { tr("正在回复…").to_string() } else { self.status.text() })))))
-                .child(v_flex().relative().w_full().min_w_0().min_h_0().max_w(px(CHAT_COLUMN_WIDTH)).max_h(window.viewport_size().height * 0.65).mx_auto().flex_shrink_1().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
+                .child(v_flex().relative().w_full().min_w_0().min_h_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_1().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
                 .child(crate::focus_scroll::Viewport::new("composer-body-viewport", &self.composer_scroll,
                     v_flex().id("composer-body-scroll").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.composer_scroll).vertical_scrollbar(&self.composer_scroll)
                         .child(v_flex().flex_shrink_0().min_w_0().gap_2()
                 .child(crate::focus_scroll::Reveal::new("composer-failure-reveal", &self.composer_scroll, self.render_session_failure(window,running,cx)))
-                .child(crate::focus_scroll::Reveal::new("composer-pending-reveal", &self.composer_scroll, self.render_pending_user_inputs(cx)))
+                .child(self.render_pending_user_inputs(cx))
                 .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {
                     let session_id = session_id.clone();
                     let text = draft.clone();
