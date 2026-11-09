@@ -187,7 +187,7 @@ Invoke-Action '放弃修改'
 Invoke-Action '外部程序'
 [void](Wait-Action '选择 Codex 可执行文件')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')
-if ($null -ne (Find-Action '工作区终端')) { throw 'Workspace navigation is covering preferences.' }
+if ($null -ne (Find-Action '更多工作区功能')) { throw 'Workspace navigation is covering preferences.' }
 $codexPath = 'C:\Fixture Programs\codex.exe'
 $commandInput = Wait-Action 'Codex 可执行文件路径'
 $commandInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($codexPath)

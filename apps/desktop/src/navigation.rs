@@ -195,6 +195,48 @@ impl HiveApp {
         })
     }
 
+    fn render_more_navigation(&self, cx: &Context<Self>) -> impl IntoElement {
+        let weak = cx.weak_entity();
+        let has_workspace = self.workspace.is_some();
+        let terminal_enabled = self.connected && has_workspace && self.workspace_writes_allowed();
+        let connected = self.connected;
+        let selected = [self.workflows.visible, self.memory.visible, self.terminal.visible];
+        Button::new("navigation-more").ghost().h(px(32.)).rounded_full()
+            .icon(Glyph::Ellipsis).justify_start().w_full()
+            .accessibility_label(tr("更多工作区功能"))
+            .selected(selected.into_iter().any(|active| active))
+            .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("更多")))
+            .dropdown_menu(move |mut menu, _, _| {
+                for (index, label, glyph, enabled) in [
+                    (0, tr("工作流"), Glyph::Workflow, has_workspace),
+                    (1, tr("工作区记忆"), Glyph::BookOpen, has_workspace),
+                    (2, tr("工作区终端"), Glyph::SquareTerminal, terminal_enabled),
+                    (3, tr("已归档会话"), Glyph::Archive, connected),
+                ] {
+                    if index == 3 { menu = menu.separator(); }
+                    let weak = weak.clone();
+                    let current = selected.get(index).copied().unwrap_or(false);
+                    menu = menu.item(PopupMenuItem::new(label)
+                        .icon(if current { Glyph::Check } else { glyph })
+                        .checked(current).disabled(!enabled)
+                        .on_click(move |_, window, cx| {
+                            let _ = weak.update(cx, |this, cx| match index {
+                                0 => this.show_workflows(window, cx),
+                                1 => {
+                                    this.hide_terminal(cx);
+                                    this.open_memory(cx);
+                                    if window.viewport_size().width < px(820.) { this.sidebar_open = false; }
+                                    cx.notify();
+                                }
+                                2 => this.show_terminal(window, cx),
+                                _ => this.open_archived_sessions(window, cx),
+                            });
+                        }));
+                }
+                menu
+            })
+    }
+
     pub fn render_navigation(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .when(narrow, |view| view.flex_1().min_w_0())
@@ -212,39 +254,10 @@ impl HiveApp {
                 .tooltip(if cfg!(target_os = "macos") { tr("搜索会话 (⌘K)") } else { tr("搜索会话 (Ctrl+K)") })
                 .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("搜索会话")))
                 .disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.open_session_search(window, cx))))
-            .child(Button::new("archived-sessions").ghost().h(px(32.)).rounded_full().icon(Glyph::Archive)
-                .justify_start().w_full().accessibility_label(tr("已归档会话"))
-                .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("已归档")))
-                .disabled(!self.connected).on_click(cx.listener(|this,_,window,cx|this.open_archived_sessions(window,cx))))
             .child(
                 v_flex()
                     .flex_shrink_0()
                     .gap_1()
-                    .child(
-                        Button::new("open-terminal")
-                            .h(px(32.))
-                            .rounded_full()
-                            .ghost()
-                            .icon(Glyph::SquareTerminal)
-                            .justify_start()
-                            .w_full()
-                            .accessibility_label(tr("工作区终端"))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .font_weight(FontWeight::NORMAL)
-                                    .child(tr("工作区终端")),
-                            )
-                            .selected(self.terminal.visible)
-                            .disabled(
-                                !self.connected
-                                    || self.workspace.is_none()
-                                    || !self.workspace_writes_allowed(),
-                            )
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.show_terminal(window, cx)),
-                            ),
-                    )
                     .child(
                         Button::new("toggle-members")
                             .h(px(32.))
@@ -292,36 +305,7 @@ impl HiveApp {
                                 cx.notify();
                             })),
                     )
-                    .child(Button::new("open-workflows").h(px(32.)).rounded_full().ghost().icon(Glyph::Workflow).justify_start().w_full().accessibility_label(tr("工作流"))
-                        .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("工作流")))
-                        .selected(self.workflows.visible).disabled(self.workspace.is_none())
-                        .on_click(cx.listener(|this,_,window,cx|this.show_workflows(window,cx))))
-                    .child(
-                        Button::new("open-memory")
-                            .h(px(32.))
-                            .rounded_full()
-                            .ghost()
-                            .icon(Glyph::BookOpen)
-                            .justify_start()
-                            .w_full()
-                            .accessibility_label(tr("工作区记忆"))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .font_weight(FontWeight::NORMAL)
-                                    .child(tr("工作区记忆")),
-                            )
-                            .selected(self.memory.visible)
-                            .disabled(self.workspace.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.hide_terminal(cx);
-                                this.open_memory(cx);
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                cx.notify();
-                            })),
-                    ),
+                    .child(self.render_more_navigation(cx)),
             )
             .child(
                 v_flex()
