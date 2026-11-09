@@ -15,6 +15,8 @@ impl HiveApp {
     pub fn render_pi_models(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.pi_models;
         let disabled = !self.connected || state.loading;
+        let scroll = state.scroll.clone();
+        let control_focus = state.control_focus.clone();
         let body = v_flex().flex_1().min_h_0().min_w_0().id("pi-model-config-scroll").overflow_y_scroll().track_scroll(&state.scroll).vertical_scrollbar(&state.scroll).gap_4()
             .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("管理自定义接口、模型和内置配置覆盖。保存后在“内置 Pi”设置 API Key；免认证服务可使用占位值。")))
             .child(h_flex().gap_2().flex_wrap()
@@ -42,7 +44,26 @@ impl HiveApp {
                     .child(h_flex().child(Button::new(SharedString::from(format!("add-pi-model-{add}"))).ghost().compact().label(tr("添加模型")).accessibility_label(format!("{}: {add}",tr("添加模型"))).disabled(disabled).on_click(cx.listener(move|this,_,window,cx|this.edit_pi_model_config(Some(Target{provider:add.clone(),model:None,is_model:true,creating:true}),window,cx)))))
             }));
         v_flex().flex_1().min_h_0().min_w_0().gap_3()
-            .child(body)
+            .child(div().flex().flex_1().min_h_0().min_w_0()
+                .on_children_prepainted(move |_, window, cx| {
+                    // Input requests reveal during prepaint; a plain Div does not consume it.
+                    if !control_focus.iter().any(|focus| focus.contains_focused(window, cx)) { return; }
+                    let Some(target) = window.take_autoscroll() else { return; };
+                    let viewport = scroll.bounds();
+                    let delta = if target.top() < viewport.top() {
+                        viewport.top() - target.top()
+                    } else if target.bottom() > viewport.bottom() {
+                        viewport.bottom() - target.bottom()
+                    } else { px(0.) };
+                    if delta != px(0.) {
+                        let scroll = scroll.clone();
+                        let offset = scroll.offset() + point(px(0.), delta);
+                        window.on_next_frame(move |window, _| {
+                            scroll.set_offset(offset);
+                            window.refresh();
+                        });
+                    }
+                }).child(body))
             .when(state.target.is_some(), |view| view.child(self.render_pi_model_actions(cx)))
     }
     fn render_pi_model_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -60,35 +81,51 @@ impl HiveApp {
     fn render_pi_model_form(&self, target: Target, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.pi_models;
         let disabled = !self.connected || state.loading;
-        let field = |label: &'static str, input: &Entity<InputState>, locked: bool| {
-            v_flex().gap_1().child(div().text_sm().child(label)).child(
+        let field = |index, label: &'static str, input: &Entity<InputState>, locked: bool| {
+            self.reveal_model_control(index, v_flex().gap_1().child(div().text_sm().child(label)).child(
                 Input::new(input)
                     .aria_label(label)
                     .disabled(disabled || locked),
-            )
+            ))
         };
-        v_flex().p_4().gap_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
+        v_flex().flex_shrink_0().p_4().gap_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if target.is_model {format!("{} · {}",target.provider,if target.creating {tr("添加模型")} else {tr("编辑模型")})} else if target.creating {tr("添加提供商").into()} else {format!("{} · {}",tr("编辑接口"),target.provider)}))
-            .child(field(if target.is_model {tr("模型 ID")} else {tr("提供商 ID")},&state.id,!target.creating))
-            .child(field(tr("显示名称（可留空）"),&state.name,false))
-            .when(!target.is_model,|form|form.child(field(tr("接口地址（Base URL）"),&state.url,false))
+            .child(field(3, if target.is_model {tr("模型 ID")} else {tr("提供商 ID")},&state.id,!target.creating))
+            .child(field(4, tr("显示名称（可留空）"),&state.name,false))
+            .when(!target.is_model,|form|form.child(field(5, tr("接口地址（Base URL）"),&state.url,false))
                 .child(div().text_sm().child(tr("接口类型")))
-                .child(h_flex().flex_wrap().gap_2().children([
+                .child(self.reveal_model_control(0, h_flex().flex_wrap().gap_2().children([
                     ("",tr("继承内置")),("openai-completions","Chat Completions"),("openai-responses","Responses"),("anthropic-messages","Anthropic"),("google-generative-ai","Gemini")
-                ].into_iter().map(|(api,label)|Button::new(SharedString::from(format!("pi-config-api-{api}"))).rounded_full().compact().label(label).accessibility_label(format!("{}: {label}",tr("模型接口类型"))).selected(state.api==api).toggled(state.api==api).disabled(disabled).on_click(cx.listener(move|this,_,_,cx|{this.pi_models.api=api.into();this.schedule_draft_save(cx);cx.notify();})))))
+                ].into_iter().map(|(api,label)|Button::new(SharedString::from(format!("pi-config-api-{api}"))).rounded_full().compact().label(label).accessibility_label(format!("{}: {label}",tr("模型接口类型"))).selected(state.api==api).toggled(state.api==api).disabled(disabled).on_click(cx.listener(move|this,_,_,cx|{this.pi_models.api=api.into();this.schedule_draft_save(cx);cx.notify();}))))))
                 .when(!state.api.is_empty(),|form|form.child(div().text_xs().text_color(Color::Muted.get(cx)).child(state.api.clone())))
-                .when(target.creating,|form|form.child(field(tr("首个模型 ID（新接口必填，内置覆盖可留空）"),&state.first,false))))
+                .when(target.creating,|form|form.child(field(6, tr("首个模型 ID（新接口必填，内置覆盖可留空）"),&state.first,false))))
             .when(target.is_model,|form|form
                 .when(state.override_only,|form|form.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("仅修改模型覆盖；继承内置表示不固定此能力。模型是否可用以会话原生目录为准。"))))
-                .child(field(tr("上下文 Token 数（可留空）"),&state.context,false))
-                .child(field(tr("最大输出 Token 数（可留空）"),&state.output,false))
-                .when(!state.override_only,|form|form.child(h_flex().gap_3().items_center().child(div().flex_1().text_sm().child(tr("支持思考")))
-                    .child(Switch::new("pi-model-reasoning").accessibility_label(tr("模型支持思考")).checked(state.reasoning.unwrap_or(false)).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.reasoning=Some(*value);this.schedule_draft_save(cx);cx.notify();}))))
-                .child(h_flex().gap_3().items_center().child(div().flex_1().text_sm().child(tr("支持图片输入")))
-                    .child(Switch::new("pi-model-vision").accessibility_label(tr("模型支持图片输入")).checked(state.vision.unwrap_or(false)).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.vision=Some(*value);this.schedule_draft_save(cx);cx.notify();})))))
-                .when(state.override_only,|form|form.child(self.override_capability(tr("思考能力"),true,state.reasoning,disabled,cx)).child(self.override_capability(tr("图片输入"),false,state.vision,disabled,cx))))
+                .child(field(7, tr("上下文 Token 数（可留空）"),&state.context,false))
+                .child(field(8, tr("最大输出 Token 数（可留空）"),&state.output,false))
+                .when(!state.override_only,|form|form.child(self.reveal_model_control(1, h_flex().gap_3().items_center().child(div().flex_1().text_sm().child(tr("支持思考")))
+                    .child(Switch::new("pi-model-reasoning").accessibility_label(tr("模型支持思考")).checked(state.reasoning.unwrap_or(false)).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.reasoning=Some(*value);this.schedule_draft_save(cx);cx.notify();})))))
+                .child(self.reveal_model_control(2, h_flex().gap_3().items_center().child(div().flex_1().text_sm().child(tr("支持图片输入")))
+                    .child(Switch::new("pi-model-vision").accessibility_label(tr("模型支持图片输入")).checked(state.vision.unwrap_or(false)).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.vision=Some(*value);this.schedule_draft_save(cx);cx.notify();}))))))
+                .when(state.override_only,|form|form.child(self.reveal_model_control(1, self.override_capability(tr("思考能力"),true,state.reasoning,disabled,cx))).child(self.reveal_model_control(2, self.override_capability(tr("图片输入"),false,state.vision,disabled,cx)))))
             .child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("保存到 Pi 的 models.json，高级字段和其他提供商保持原样。仅保存配置，不验证服务端认证。")))
 
+    }
+    fn reveal_model_control(&self, index: usize, control: impl IntoElement) -> impl IntoElement {
+        let focus = self.pi_models.control_focus[index].clone();
+        let last_focus = self.pi_models.control_last_focus[index].clone();
+        let scroll = self.pi_models.scroll.clone();
+        div().track_focus(&focus).tab_stop(false)
+            .on_children_prepainted(move |bounds, window, cx| {
+                let focused = window.focused(cx).filter(|_| focus.contains_focused(window, cx))
+                    .map(|focused| (focused, scroll.bounds()));
+                let changed = *last_focus.borrow() != focused;
+                let reveal = changed && focused.is_some();
+                *last_focus.borrow_mut() = focused;
+                if reveal && let Some(bounds) = bounds.first() {
+                    window.request_autoscroll(bounds.dilate(px(8.)));
+                }
+            }).child(control)
     }
     fn override_capability(
         &self,

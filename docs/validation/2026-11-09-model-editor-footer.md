@@ -26,3 +26,5 @@
 通过Mac `cargo build --locked --manifest-path apps/desktop/Cargo.toml`、Windows MSVC目标 `cargo check --locked`、`git diff --check`和上述实际文件/原生断言。纯UI变化未新增或修改测试，也未重复无关runtime全量。
 
 证据`.artifacts/settings-layout/`：原始配置、保存收据、失败构建日志、前后/重开日志、退出与最终receipt；构建日志`/tmp/hive-model-footer-{build,windows}.log`。原生操作及截图在当前聊天工具记录。当前candidate仍为dd0230a，本修复待后续统一打包，完整目标继续。
+
+后续：上述滚动与焦点证据缺口已在[配置滚动验证](2026-11-09-model-editor-scroll.md)中继续修复并补验；仅以新记录列出的路径为准，#20仍保留剩余矩阵。

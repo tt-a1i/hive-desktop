@@ -83,6 +83,8 @@ pub struct PiModels {
     generation: u64,
     message: Option<ModelNotice>,
     scroll: ScrollHandle,
+    control_focus: [FocusHandle; 9],
+    control_last_focus: [std::rc::Rc<std::cell::RefCell<Option<(FocusHandle, Bounds<Pixels>)>>>; 9],
     _subscriptions: Vec<Subscription>,
 }
 enum ModelNotice { Message(&'static str), Error(&'static str, String) }
@@ -144,6 +146,8 @@ impl PiModels {
             generation: 0,
             message: None,
             scroll: ScrollHandle::new(),
+            control_focus: std::array::from_fn(|_| cx.focus_handle()),
+            control_last_focus: std::array::from_fn(|_| Default::default()),
             _subscriptions: subscriptions,
         }
     }
