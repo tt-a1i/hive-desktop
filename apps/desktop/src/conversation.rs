@@ -181,6 +181,11 @@ impl HiveApp {
             }
             _ => {}
         }
+        // Background deliveries can start a turn while the model menu is open.
+        // Clear its controlled state before the busy trigger replaces the popover.
+        if self.session.as_ref().is_some_and(|session| self.busy.contains(&session.id)) {
+            self.choosing_model = false;
+        }
     }
     pub fn abort(&mut self, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
