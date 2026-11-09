@@ -31,6 +31,11 @@ impl HiveApp {
             }
         } else { tr("运行结果") };
         let result = run.error.clone().unwrap_or_else(|| json(&run.result));
+        let mut metadata = format!("{}: {}\n{}: {}", tr("来源"), run.script_path,
+            tr("源校验"), run.script_hash.as_deref().unwrap_or(tr("旧记录未提供")));
+        if !run.args.is_null() {
+            metadata.push_str(&format!("\n{}: {}", tr("参数"), json(&run.args)));
+        }
         let log_text = self
             .workflows
             .logs
@@ -88,19 +93,6 @@ impl HiveApp {
             })
             .when_some(run.phase.clone(), |view, phase| {
                 view.child(div().text_sm().child(format!("{}: {phase}",tr("当前阶段"))))
-            })
-            .child(div().text_sm().child(format!("{}: {}",tr("来源"),run.script_path)))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(Color::Secondary.get(cx))
-                    .child(format!(
-                        "{}: {}", tr("源校验"),
-                        run.script_hash.as_deref().unwrap_or(tr("旧记录未提供"))
-                    )),
-            )
-            .when(!run.args.is_null(), |view| {
-                view.child(div().text_sm().child(format!("{}: {}",tr("参数"),json(&run.args))))
             })
             .when(run.error.is_some() || !run.result.is_null(), |view| {
                 view.child(
@@ -213,6 +205,20 @@ impl HiveApp {
                     )
                     .child(div().text_sm().child(log.message.clone()))
             }))
+            .child(v_flex().min_w_0().gap_2().pt_3().border_t_1()
+                .border_color(Color::Divider.get(cx))
+                .child(h_flex().min_w_0().gap_2().items_center()
+                    .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::SEMIBOLD)
+                        .child(tr("来源与参数")))
+                    .child(Button::new("workflow-copy-metadata").ghost().compact()
+                        .label(tr("复制")).accessibility_label(tr("复制来源与参数"))
+                        .on_click(cx.listener({let metadata = metadata.clone(); move |_, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(metadata.clone()))
+                        }}))))
+                .child(div().id("workflow-source-metadata").role(Role::Label)
+                    .aria_label(metadata.clone()).min_w_0().whitespace_normal().text_xs()
+                    .text_color(Color::Secondary.get(cx))
+                    .child(gpui_kit::base::SelectableText::new("workflow-source-text", metadata))))
             .into_any_element()
     }
     fn render_workflow_dispatch(&self, dispatch: &Dispatch, cx: &mut Context<Self>) -> AnyElement {

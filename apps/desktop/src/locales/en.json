@@ -520,6 +520,8 @@
   "正在读取运行详情…": "Loading run details…",
   "此运行还没有成员派单。": "This run has no member dispatches yet.",
   "步骤": "Step",
+  "来源与参数": "Source and parameters",
+  "复制来源与参数": "Copy source and parameters",
   "源校验": "Source hash",
   "终端": "Terminal",
   "结束于": "Finished",
