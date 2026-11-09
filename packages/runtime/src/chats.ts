@@ -500,8 +500,15 @@ export class Chats implements StructuredSessionPort {
     await chat.handle.abort();
     await paused;
     chat.queue.discardCurrent();
-    // Explicit cancel affects this response only. Pending team deliveries stay
+    // Explicit cancel discards only this delivery. Pending team deliveries stay
     // durable and require an explicit resume, never become successful reports.
+    if (this.index.get(id).backend === 'codex') {
+      // Native turn interruption can leave yielded command sessions running.
+      // Reap this chat's owned app-server, then reopen its durable thread on
+      // demand. Other chats own separate processes and keep their connections.
+      await this.stopLive(id, chat);
+      chat.onExit?.();
+    }
     return { ok: true };
   }
   async resume(id: string) {

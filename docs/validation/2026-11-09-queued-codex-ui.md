@@ -38,3 +38,7 @@
 通过 runtime build / TypeScript check、`tsx checks/queued-user-inputs.ts`、`queued-user-inputs-external-pi.ts`、`queued-user-inputs-peers.ts`、`structured-runtime.ts`、`team-runtime.ts` 及 git diff --check。命令通过 Node22.23.3的隔离 PATH 执行；日志 `/tmp/hive-queue-recovery-{red,green,external-pi,peers,structured,team,build,types}.log`。
 
 本轮改公共恢复投递接缝及现有定向检查，未新增测试文件。风险匹配的跨后端定向检查和真实 Codex 原生闭环已执行，没有重复无关全量。Windows 原生、完整界面/混合后端矩阵及正式发行未完成；当前候选 ZIP 仍为17d8ce7，不包含本轮 runtime 修复。完整目标继续。
+
+## 后续停止修复
+
+上述停止边界已在源码单独修复并用真实CLI/原生按钮补验，见[Codex停止](2026-11-09-codex-stop.md)。原始失败记录保持；本页此前的运行结果不追溯改写为成功，候选ZIP仍未包含修复。

@@ -145,6 +145,11 @@ impl HiveApp {
                     self.pending_reports.clone_from(pending_reports);
                     self.pending_user_inputs.clone_from(pending_user_inputs);
                     let was_busy = self.busy.contains(&id);
+                    if *busy
+                        && matches!(self.status, crate::app::Status::Message("已停止当前回复"))
+                    {
+                        self.status = "后台已连接".into();
+                    }
                     if (*busy && !was_busy)
                         || (!*busy
                             && was_busy

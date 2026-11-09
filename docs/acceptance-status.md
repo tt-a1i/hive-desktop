@@ -29,7 +29,7 @@ current ZIP哈希f7174572fb16248b3a3f40e467a1322951a9ac4a26bd5c728ce0e52aceb57cf
 
 ## 当前阻断与仍可推进的工作
 
-- 真实Codex的turn中断后，sleep300原生命令仍运行到完整应用退出才消失，见[#19](https://github.com/tt-a1i/hive-desktop/issues/19)；不是已修。下一步核查原生进程控制，不能将UI“已中断”推广为工具进程已终止。证据见[真实排队](validation/2026-11-09-queued-codex-ui.md)。
+- [#19](https://github.com/tt-a1i/hive-desktop/issues/19)已在源码修复：Codex停止后关闭本聊天独占app-server，真实Mac后台命令退出、其他连接及原线程/队列保留；原生按钮和旧停止提示清理已补验，见[停止证据](validation/2026-11-09-codex-stop.md)。尚未纳入候选ZIP，Windows实际及逃逸进程不作保证。
 
 - 原生访问现已恢复，最新源码已完成部分双语/导出/退出补验，见[证据及限制](validation/2026-11-09-native-resume.md)。旧54534、21544已不在进程表，不能补记正常退出；ScreenCaptureKit仍偶发捕捉失败，按后续真实状态核对。
 - Pi的原生OpenAI订阅刷新仍返回400 invalid_grant，已请求重新登录；不再用相同认证重复请求，不自动更换接口、认证或模型。
