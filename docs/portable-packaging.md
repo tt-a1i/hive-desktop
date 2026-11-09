@@ -2,7 +2,15 @@
 
 These are unsigned development bundles, not production installers. macOS bundles are not notarized. Build and package on the target operating system and CPU architecture; this workflow does not cross-compile or establish compatibility on another platform.
 
-Install dependencies with `pnpm install --frozen-lockfile`, build the runtime with `pnpm build:runtime`, and build the native desktop executable. Then run:
+Install dependencies with `pnpm install --frozen-lockfile` and build the runtime with `pnpm build:runtime`.
+
+For a distributable candidate, build the optimized executable explicitly:
+
+```sh
+cargo build --locked --release --manifest-path apps/desktop/Cargo.toml --bin hive-desktop
+```
+
+Use `apps/desktop/target/release/hive-desktop` on macOS or `apps/desktop/target/release/hive-desktop.exe` on Windows as `--executable` below. If `CARGO_TARGET_DIR` is set, use its `release` directory instead. Debug builds remain useful for development but do not establish release performance. An optimized build still needs the extracted-package and native interaction checks; it does not provide signing or notarization.
 
 ```sh
 pnpm --filter @hive-desktop/runtime deploy --prod --frozen-lockfile --node-linker=hoisted PATH_TO_NEW_RUNTIME_DIRECTORY

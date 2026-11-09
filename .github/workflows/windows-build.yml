@@ -74,7 +74,7 @@ jobs:
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:attachments
       - name: Build desktop executable
-        run: cargo build --locked --manifest-path apps/desktop/Cargo.toml
+        run: cargo build --locked --release --manifest-path apps/desktop/Cargo.toml --bin hive-desktop
       - name: Compile runtime location tests
         run: rustc --edition 2021 --test apps/desktop/src/runtime_location.rs -o target/runtime-location-tests.exe
       - name: Run runtime location tests
@@ -84,7 +84,7 @@ jobs:
       - name: Deploy locked production runtime
         run: pnpm --filter @hive-desktop/runtime deploy --prod --frozen-lockfile --node-linker=hoisted target/deployed-runtime
       - name: Package portable desktop
-        run: node scripts/package-desktop.mjs --executable target/windows-desktop/debug/hive-desktop.exe --runtime target/deployed-runtime --output target/portable-windows
+        run: node scripts/package-desktop.mjs --executable target/windows-desktop/release/hive-desktop.exe --runtime target/deployed-runtime --output target/portable-windows
       - name: Zip portable folder
         run: Compress-Archive -Path target/portable-windows/* -DestinationPath target/hive-desktop-windows-portable.zip
       - name: Extract final zip
