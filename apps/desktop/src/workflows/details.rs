@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::{app::HiveApp, palette::Color, language::{english,tr}};
+use crate::{app::HiveApp, palette::Color, focus_scroll::Reveal, language::{english,tr}};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -46,7 +46,7 @@ impl HiveApp {
         v_flex()
             .gap_4()
             .child(
-                h_flex()
+                Reveal::new("workflow-detail-header-reveal", &self.workflows.detail_scroll, h_flex()
                     .gap_2()
                     .flex_wrap()
                     .items_center()
@@ -75,7 +75,7 @@ impl HiveApp {
                                     )
                                 })),
                         )
-                    }),
+                    })),
             )
             .child(
                 div()
@@ -102,7 +102,7 @@ impl HiveApp {
                         .rounded_lg()
                         .bg(Color::Inset.get(cx))
                         .child(
-                            h_flex()
+                            Reveal::new("workflow-result-actions-reveal", &self.workflows.detail_scroll, h_flex()
                                 .gap_2()
                                 .child(
                                     div()
@@ -125,7 +125,7 @@ impl HiveApp {
                                                 ))
                                             }
                                         })),
-                                ),
+                                )),
                         )
                         .child(
                             div()
@@ -161,7 +161,7 @@ impl HiveApp {
                     .map(|dispatch| self.render_workflow_dispatch(dispatch, cx)),
             )
             .child(
-                h_flex()
+                Reveal::new("workflow-log-actions-reveal", &self.workflows.detail_scroll, h_flex()
                     .gap_2()
                     .items_center()
                     .child(
@@ -180,7 +180,7 @@ impl HiveApp {
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(log_text.clone()))
                             })),
-                    ),
+                    )),
             )
             .when(self.workflows.logs.is_empty(), |view| {
                 view.child(
@@ -207,14 +207,14 @@ impl HiveApp {
             }))
             .child(v_flex().min_w_0().gap_2().pt_3().border_t_1()
                 .border_color(Color::Divider.get(cx))
-                .child(h_flex().min_w_0().gap_2().items_center()
+                .child(Reveal::new("workflow-metadata-actions-reveal", &self.workflows.detail_scroll, h_flex().min_w_0().gap_2().items_center()
                     .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::SEMIBOLD)
                         .child(tr("来源与参数")))
                     .child(Button::new("workflow-copy-metadata").ghost().compact()
                         .label(tr("复制")).accessibility_label(tr("复制来源与参数"))
                         .on_click(cx.listener({let metadata = metadata.clone(); move |_, _, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(metadata.clone()))
-                        }}))))
+                        }})))))
                 .child(div().id("workflow-source-metadata").role(Role::Label)
                     .aria_label(metadata.clone()).min_w_0().whitespace_normal().text_xs()
                     .text_color(Color::Secondary.get(cx))
@@ -292,10 +292,10 @@ impl HiveApp {
                     .artifacts
                     .iter()
                     .enumerate()
-                    .map(|(index, path)| self.artifact_link(&dispatch.id, index, path, cx)),
+                    .map(|(index, path)| Reveal::new(SharedString::from(format!("workflow-artifact-reveal-{}-{index}",dispatch.id)), &self.workflows.detail_scroll, self.artifact_link(&dispatch.id, index, path, cx))),
             )
             .child(
-                h_flex()
+                Reveal::new(SharedString::from(format!("workflow-dispatch-actions-reveal-{}",dispatch.id)), &self.workflows.detail_scroll, h_flex()
                     .gap_2()
                     .flex_wrap()
                     .child(
@@ -332,7 +332,7 @@ impl HiveApp {
                                 move |this, _, window, cx| this.open_member_session(session.clone(), window, cx),
                             )),
                         )
-                    }),
+                    })),
             )
             .into_any_element()
     }

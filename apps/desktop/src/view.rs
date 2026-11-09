@@ -401,7 +401,7 @@ impl Render for HiveApp {
             .when(!preferences && self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
             .when(preferences || !narrow || !self.sidebar_open, |view| view.child(if preferences { self.render_preferences(compact_settings, cx).into_any_element()
             } else if self.memory.visible { self.render_memory(cx).into_any_element()
-            } else if self.workflows.visible { self.render_workflows(cx)
+            } else if self.workflows.visible { self.render_workflows(window, cx)
             } else if self.collaboration.visible { self.render_collaboration(cx)
             } else if self.member_panel { self.render_members(window, narrow, cx)
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()

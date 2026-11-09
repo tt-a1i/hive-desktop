@@ -10,6 +10,7 @@ use types::*;
 
 pub struct Workflows {
     pub visible: bool,
+    pub focus_navigation: bool,
     pub loading: bool,
     pub acting: bool,
     pub generation: u64,
@@ -44,6 +45,7 @@ impl Default for Workflows {
     fn default() -> Self {
         Self {
             visible: false,
+            focus_navigation: false,
             loading: false,
             acting: false,
             generation: 0,
@@ -120,6 +122,7 @@ impl HiveApp {
         self.close_collaboration();
         self.member_panel = false;
         self.workflows.visible = true;
+        self.workflows.focus_navigation = true;
         if window.viewport_size().width < px(820.) {
             self.sidebar_open = false;
         }
@@ -130,6 +133,7 @@ impl HiveApp {
         self.invalidate_workflows();
         let state = &mut self.workflows;
         state.selected = id;
+        state.focus_navigation = true;
         state.detail_scroll = ScrollHandle::new();
         state.detail = None;
         state.dispatches.clear();

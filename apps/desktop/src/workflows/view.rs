@@ -1,5 +1,5 @@
 use super::types::*;
-use crate::{app::HiveApp, palette::Color, language::{english,tr}};
+use crate::{app::HiveApp, palette::Color, focus_scroll::{Reveal,Viewport}, language::{english,tr}};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -11,8 +11,13 @@ use gpui_kit::{
 };
 use serde_json::json;
 impl HiveApp {
-    pub(crate) fn render_workflows(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_workflows(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if !self.workflows.loading && std::mem::take(&mut self.workflows.focus_navigation) {
+            let focus = self.workflow_navigation_focus.clone();
+            window.on_next_frame(move |window,cx|focus.focus(window,cx));
+        }
         let state = &self.workflows;
+        let scroll = if state.selected.is_some() { &state.detail_scroll } else { &state.list_scroll };
         let disabled =
             !self.connected || state.loading || state.acting || !self.workspace_writes_allowed();
         let count = state
@@ -29,20 +34,20 @@ impl HiveApp {
                 .when(state.selected.is_some(),|row|row.child(Button::new("workflow-back").ghost().icon(Glyph::ArrowLeft).label(tr("返回运行列表"))
                     .on_click(cx.listener(|this,_,_,cx|this.select_workflow(None,cx)))))
                 .child(div().flex_1().min_w_0().text_xl().font_weight(FontWeight::SEMIBOLD).child(tr("工作流")))
-                .child(Button::new("workflow-refresh").ghost().icon(Glyph::RefreshCw).label(if state.loading {tr("更新中…")}else{tr("刷新")})
+                .child(Button::new("workflow-refresh").track_focus(&self.workflow_navigation_focus).ghost().icon(Glyph::RefreshCw).label(if state.loading {tr("更新中…")}else{tr("刷新")})
                     .disabled(disabled).on_click(cx.listener(|this,_,_,cx|this.refresh_workflows(cx)))))
-            .when_some(state.action_error.as_ref().map(|error| error.text()),|view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
-            .when_some(state.error.as_ref().map(|error| error.text()),|view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
-            .child(div().id(SharedString::from(state.selected.as_ref().map(|id|format!("workflow-scroll-{id}")).unwrap_or_else(||"workflows-list-scroll".into())))
+            .when_some(state.action_error.as_ref().map(|error| error.text()),|view,error|view.child(crate::text_reading::selectable_text("workflow-action-error",error).text_sm().text_color(Color::Error.get(cx))))
+            .when_some(state.error.as_ref().map(|error| error.text()),|view,error|view.child(crate::text_reading::selectable_text("workflow-read-error",error).text_sm().text_color(Color::Error.get(cx))))
+            .child(Viewport::new("workflow-viewport", scroll, div().id(SharedString::from(state.selected.as_ref().map(|id|format!("workflow-scroll-{id}")).unwrap_or_else(||"workflows-list-scroll".into())))
                 .flex_1().min_h_0().min_w_0().overflow_y_scroll()
-                .track_scroll(if state.selected.is_some() { &state.detail_scroll } else { &state.list_scroll })
+                .track_scroll(scroll)
                 .child(v_flex().w_full().flex_shrink_0().gap_4()
                     .when(state.selected.is_none(), |view| view.child(self.render_workflow_settings(cx)))
                     .when(state.enabled==Some(false),|view|view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("实验功能当前关闭；已有运行和计划仍可查看。"))))
                     .when(state.selected.is_some(),|view|view.child(self.render_workflow_detail(cx)))
                     .when(state.selected.is_none(),|view|view
-                        .child(h_flex().gap_2().flex_wrap().children([("all",tr("全部")),("running",tr("运行中")),("failed",tr("需关注"))].into_iter().map(|(filter,label)|Button::new(SharedString::from(format!("workflow-filter-{filter}"))).ghost().label(label).selected(state.filter==filter)
-                            .on_click(cx.listener(move|this,_,_,cx|{this.workflows.filter=filter;cx.notify();})))))
+                        .child(Reveal::new("workflow-filters-reveal", scroll, h_flex().gap_2().flex_wrap().children([("all",tr("全部")),("running",tr("运行中")),("failed",tr("需关注"))].into_iter().map(|(filter,label)|Button::new(SharedString::from(format!("workflow-filter-{filter}"))).ghost().label(label).selected(state.filter==filter)
+                            .on_click(cx.listener(move|this,_,_,cx|{this.workflows.filter=filter;cx.notify();}))))))
                         .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("Showing {count} of {} runs",state.runs.len()) } else { format!("显示 {count} / {} 条运行",state.runs.len()) }))
                         .when(state.runs.is_empty() && !state.loading,|view|view.child(v_flex().gap_2().py_4()
                             .child(div().text_sm().child(tr("还没有工作流运行")))
@@ -50,7 +55,7 @@ impl HiveApp {
                         .when(!state.runs.is_empty() && count==0,|view|view.child(div().text_sm().child(tr("没有符合筛选的运行。"))))
                         .children(state.runs.iter().filter(|run|match state.filter {"running"=>run.status=="running","failed"=>matches!(run.status.as_str(),"failed"|"stopped"|"interrupted"),_=>true}).map(|run| {
                             let id=run.id.clone();let parent=run.parent_run_id.as_ref().map(|id|state.runs.iter().find(|run|&run.id==id).map(|run|run.name.clone()).unwrap_or_else(||id.clone()));
-                            Button::new(SharedString::from(format!("workflow-run-{}",run.id))).ghost().w_full().h_auto().justify_start().p_4().rounded_lg()
+                            Reveal::new(SharedString::from(format!("workflow-run-reveal-{}",run.id)), scroll, Button::new(SharedString::from(format!("workflow-run-{}",run.id))).ghost().w_full().h_auto().justify_start().p_4().rounded_lg()
                                 .accessibility_label(format!("{}: {} · {}",tr("查看工作流"),run.name,status(&run.status)))
                                 .child(v_flex().w_full().min_w_0().items_start().text_left().gap_2()
                                     .child(h_flex().w_full().min_w_0().gap_2().flex_wrap()
@@ -60,12 +65,12 @@ impl HiveApp {
                                     .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("{} · {} agents · Started {}",basename(&run.script_path),run.agent_count,relative_time(run.started_at)) } else { format!("{} · {} 位执行成员 · {}开始",basename(&run.script_path),run.agent_count,relative_time(run.started_at)) }))
                                     .when_some(run.phase.clone(),|view,phase|view.child(div().text_sm().child(format!("{}: {phase}",tr("阶段")))))
                                     .when_some(run.error.clone(),|view,error|view.child(div().text_sm().text_color(if matches!(run.status.as_str(),"stopped"|"interrupted") {Color::Secondary.get(cx)} else {Color::Error.get(cx)}).child(error))))
-                                .on_click(cx.listener(move|this,_,_,cx|this.select_workflow(Some(id.clone()),cx)))
+                                .on_click(cx.listener(move|this,_,_,cx|this.select_workflow(Some(id.clone()),cx))))
                         }))
                         .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("定时计划")))
                         .when(state.schedules.is_empty() && !state.loading,|view|view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("还没有定时计划，由主控创建后在此管理。"))))
                         .children(state.schedules.iter().map(|schedule|self.render_workflow_schedule(schedule,disabled,cx)))
-                    )))
+                    ))))
             .into_any_element()
     }
     fn render_workflow_schedule(
@@ -85,7 +90,7 @@ impl HiveApp {
             .border_1()
             .border_color(Color::Divider.get(cx))
             .child(
-                h_flex()
+                Reveal::new(SharedString::from(format!("schedule-header-{}",schedule.id)), &self.workflows.list_scroll, h_flex()
                     .flex_wrap()
                     .gap_2()
                     .items_center()
@@ -138,7 +143,7 @@ impl HiveApp {
                             this.workflows.deleting = Some(delete_id.clone());
                             cx.notify();
                         })),
-                    ),
+                    )),
             )
             .child(
                 div()
@@ -174,7 +179,7 @@ impl HiveApp {
                 self.workflows.deleting.as_ref() == Some(&schedule.id),
                 |view| {
                     view.child(
-                        h_flex()
+                        Reveal::new(SharedString::from(format!("schedule-confirm-{}",schedule.id)), &self.workflows.list_scroll, h_flex()
                             .flex_wrap()
                             .gap_2()
                             .items_center()
@@ -199,9 +204,10 @@ impl HiveApp {
                                     .label(tr("取消"))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.workflows.deleting = None;
+                                        this.workflows.focus_navigation = true;
                                         cx.notify();
                                     })),
-                            ),
+                            )),
                     )
                 },
             )
