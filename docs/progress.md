@@ -508,3 +508,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 真实工作流暴露并修复Codex汇报回收
 
 #21：真实Terra Worker完成文件/汇报但native工具被临时成员立即回收中断。成员回收先等实际工具item/completed/turn结束或1500ms预算，直接Stop不等待，不伪造native成功。新JSONL四分支先红后绿，Codex/团队定向、生产TS和原样Terra后台Stop/另一连接/两条队列回归通过。第二轮探针非空stdout错误已校准并保留失败，第三轮全新真实workflow/dispatch/file/native report及runtime close完整exit0；持久恢复与Mac原生结果/日志/产物/成员往返另通过。无Rust/模型切换/新包或全量suite，候选2b3c07e尚未纳入修复，详见[工作流实证](validation/2026-11-09-workflow-codex-report.md)。
+
+## 2026-11-09 汇报回收修复进入候选包
+
+7c28580候选约164MiB，保留原生程序/依赖，替换4个runtime及scripts元数据；112runtime、28,829普通文件/29链接/31,570元数据核验。包内真实Terra workflow/dispatch/文件及native report确认、独立冷恢复通过；原生同UUID的report完成、结果/日志/产物预览及Cmd+Q exit0、8owned进程退出通过。PTY/Hive/SQLite、内外部Pi回环队列、JSONL确认/直接Stop/超时/断线通过。无新产品/测试或全量suite，清理解压并原子替换candidate，.artifacts约3.9GiB、current不推广。见[包内记录](validation/2026-11-09-report-candidate.md)。

@@ -1,6 +1,6 @@
 # 真实Codex工作流与汇报回收修复
 
-2026-11-09，#21，属于#13与完整目标#1。Mac源码runtime验证，未进入当前2b3c07e候选包。
+2026-11-09，#21，属于#13与完整目标#1。本页记录Mac源码runtime验证；后续已纳入7c28580候选并补包内实证，见[汇报候选](2026-11-09-report-candidate.md)。
 
 ## 发现的问题
 
@@ -34,4 +34,4 @@
 - `.artifacts/workflow-terra-confirmed/receipt.json`：校准后全新真实执行，pass/nativeReportAcknowledged/runtimeClosed均true，run.log命令exit0。
 - `.artifacts/codex-stop-live-UoCIMx/receipt.json`：本轮真实Stop回归。
 
-源码Rust未改，不重复Mac/Windows cargo构建。当前candidate仍2b3c07e，尚不包含本次runtime修复，不能据旧候选通过宣称#21包内已验收。Windows原生、其他后端模型回收、工作流删除最终按钮/跨连接时序/大历史及正式发行仍待；#13与完整目标继续。
+源码Rust未改，不重复Mac/Windows cargo构建。源码阶段的candidate为2b3c07e；后续#21包内验收以[7c28580候选记录](2026-11-09-report-candidate.md)为准，不把源码命令冒充包内执行。Windows原生、其他后端模型回收、工作流删除最终按钮/跨连接时序/大历史及正式发行仍待；#13与完整目标继续。
