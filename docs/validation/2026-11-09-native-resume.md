@@ -46,3 +46,13 @@ Mac构建、Windows默认MSVC交叉类型检查、既有appearance::tests两条�
 实际保护同一隔离文件，保存失败后原文OWNED_A11Y_ORIGINAL及immutable标志不变；解除标志后通过固定页脚重试成功。文件与此前同一会话的英文导出逐字一致：11,576字符、1200段，SHA256 `6095efbaac24b4aa75721a7e91849d498f6acccb583ba7fecbabc60377ab7a5e`。原草稿保持，SQLite messages=0、日志无chat.prompt。所有本轮验证进程均以Cmd+Q退出0，最终6551及自有后台已退出，测试保护标志清除。
 
 最终源码Mac构建、Windows默认MSVC交叉类型、既有export_preserves_selected_content一条及diff检查通过；未增删测试、未跑无关全量测试、未制作ZIP。日志`/tmp/hive-export-a11y-delivery-{build,windows,test}.log`。收据`.artifacts/native-resume/a11y-receipt.json`记录原生验证程序与最终构建两份哈希：原生走查后仅把私有类型ExportActions更名为ExportFooter并rustfmt，随后重新构建/检查。各中间版的退出与故障证据保留在a11y、a11y-footer、a11y-final、a11y-flex及a11y-fixed-status日志/收据，未将未通过的布局记为通过。
+
+## 长预览键盘阅读与文件选区复制
+
+源码75ae2b5的实际构建（SHA256 `705ab9453aa49332cf4727dc01200c48af24934cb96d898d9bd7cbb38a1ce109`）复用同一隔离应用与历史，无产品代码改动。点击导出预览后，End实际到长正文末段、Home返回标题/工作区，PageDown显示附件/Agent正文段，PageUp返回前段。截图不支持“正文被压成不可滚动”的猜测，因此未为该猜测修改共用text_reading组件。
+
+在隔离项目创建原先不存在的review.txt：BEGIN、200行编号中文、END，共202行/10,318字节。从成员汇报产物入口打开当前磁盘文件，End显示第200行与END；Home→PageDown显示第26行起，PageUp回到BEGIN。鼠标选第1行并Cmd+C，粘贴到另一空白测试会话，落盘精确等于`READING-001 · 中文文件阅读验证 · line 1`，未混入完整文件或其他文字。临时草稿清空、原草稿保持，实际Cmd+Q退出0，shutdown成功，自有原生/runtime退出；SQLite messages=0、无chat.prompt或厂商请求。
+
+滚轮仍未获可靠位移证据：CUA按页滚动画面不足以确认滚动，像素距离被工具直接拒绝（macOS只接受pages）；不记通过，也不据此归因产品bug。工具详情只查了共用组件调用，未做本轮原生走查；完整滚轮/键盘修饰键、输入法/字号/窄窗及Windows矩阵继续开放。
+
+收据`.artifacts/native-resume/{reading-receipt.json,reading-selection.json,reading-before.log,reading-before-exit.json}`。仅添加隔离验证文件与记录，未改生产代码/测试、未重复无变更构建或跑全量测试、未新增ZIP。
