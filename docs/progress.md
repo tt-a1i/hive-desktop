@@ -556,3 +556,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 同回合通知与近期界面修复进入候选包
 
 768d085候选约164MiB，更新10个runtime JS/map、脚本元数据和原生程序；112runtime匹配、28,822未变文件/29内部链接/31,570元数据保持。包内PTY/Hive/SQLite、派单结算/工具确认/steer/空恢复、内外Pi队列及远程加密终端/撤销四组通过；新增检查器先因import-only SDK定位失败，改用包内ESM loader后通过，原依赖未改。包内原样Codex/Terra主控亲自启动workflow，Worker显式report47/3，主控独立核验后同回合唯一final/冷恢复pending0；实际包窗口结果、产物、窄窗九入口/返回通过，Cmd+Q exit0。确认无引用后清理解压、原子替换候选，.artifacts约3.9GiB、current保持。无额外产品源码/全量/Windows或完整UI结论，见[候选实证](validation/2026-11-09-steered-candidate.md)。
+
+## 2026-11-09 冷恢复显式输入不抢先唤醒
+
+真HTTP/SQLite/Pi检查复现有历史冷会话直接prompt先排recovery再排user（2vs1）。只在显式输入驱动的启动HTTP期间标记意图，让恢复事实并入既有上下文，由用户投递唤醒；finally清理，手动恢复不变。新集成覆盖冷读、真实启动SQL故障后清理，team/Codex/共享厂商peer排队/外Pi生命周期/TS/build通过。原生窗口实际发送给原样Codex/Terra，只新增一个回合并回复COLD_INPUT_OK；Cmd+Q exit0/PID消失，完整冷读pending0、来源/完成/恢复上下文保持。无新ZIP/Rust/全量/Windows结论，768d085候选尚未纳入本轮，见[输入恢复](validation/2026-11-09-user-input-recovery.md)。

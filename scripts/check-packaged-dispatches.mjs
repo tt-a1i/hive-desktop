@@ -24,7 +24,7 @@ const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-dispatches-'));
 try {
   // Erase only check types. Every production import and runtime dependency is
   // resolved from the extracted package, and execution uses its actual Node.
-  for (const check of ['reported-dispatch-queue', 'codex-tool-retirement', 'codex-steering', 'empty-session-recovery']) {
+  for (const check of ['reported-dispatch-queue', 'codex-tool-retirement', 'codex-steering', 'empty-session-recovery', 'user-input-recovery']) {
     const source = await readFile(join(root, `packages/runtime/checks/${check}.ts`), 'utf8');
     const bound = source.replace(/(['"])\.\.\/src\/([^'"]+)\1/g,
       (_all, _quote, module) => JSON.stringify(pathToFileURL(join(runtime, 'dist', module)).href))

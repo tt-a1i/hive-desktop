@@ -35,6 +35,7 @@ export class Chats implements StructuredSessionPort {
   private readonly opening = new Map<string, Promise<LiveChat>>();
   private readonly sequences = new Map<string, number>();
   private readonly activating = new Map<string, Promise<void>>();
+  private readonly startingForInput = new Set<string>();
   readonly attachments: ChatAttachments;
   private readonly sessionDir: string;
   private readonly queueDir: string;
@@ -400,7 +401,7 @@ export class Chats implements StructuredSessionPort {
         // received a task: retain those facts without generating a no-task reply.
         // Unknown/custom extension history stays conservative and still wakes.
         const recoveringWithoutWakeup = presentation?.origin === 'recovery' && !chat.queue.busy
-          && (chat.queue.pendingCount > 0 || chat.handle.history().every(message =>
+          && (this.startingForInput.has(id) || chat.queue.pendingCount > 0 || chat.handle.history().every(message =>
             message !== null && typeof message === 'object' && 'role' in message && message.role === 'custom'
             && 'customType' in message && typeof message.customType === 'string'
             && ['hive-context', 'hive-desktop', 'hive-desktop-external', 'hive-desktop-claude'].includes(message.customType)));
@@ -435,7 +436,7 @@ export class Chats implements StructuredSessionPort {
     try { return await action; }
     finally { if (this.activating.get(workspaceId) === barrier) this.activating.delete(workspaceId); }
   }
-  private async activateOnce(id: string) {
+  private async activateOnce(id: string, forUserInput = false) {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);
     const agentId = record.agentId ?? `${record.workspaceId}:orchestrator`;
@@ -456,8 +457,13 @@ export class Chats implements StructuredSessionPort {
     this.assertWorkspaceAvailable(record.workspaceId);
     this.index.bind(id, agentId);
     this.runtime.configureAgentLaunch(record.workspaceId, agentId, this.launchConfig(this.index.get(id)));
-    // The Hive route performs its normal agent status transition and outbox replay.
-    await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/agents/${encodeURIComponent(agentId)}/start`);
+    // A forthcoming explicit input wakes the model itself. Keep startup facts
+    // in context, without racing an extra recovery turn ahead of that input.
+    if (forUserInput) this.startingForInput.add(id);
+    try {
+      // Hive still owns the normal status transition and outbox replay.
+      await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/agents/${encodeURIComponent(agentId)}/start`);
+    } finally { if (forUserInput) this.startingForInput.delete(id); }
   }
   async prompt(id: string, text: string, idsInput?: unknown) {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
@@ -474,7 +480,7 @@ export class Chats implements StructuredSessionPort {
         const staged=await this.attachments.get(this.index.get(id).workspaceId, ids);
         if (staged.some(item=>item.image) && opened.handle.supportsImages?.() === false) throw new Error('当前模型不支持图片，请切换模型后重试。');
       }
-      await this.activateOnce(id);
+      await this.activateOnce(id, true);
       const chat = await this.require(id);
       if (!chat.queue.pendingCount) chat.queue.resume();
       const record = this.index.get(id);
