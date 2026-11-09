@@ -24,7 +24,7 @@ impl HiveApp {
             .flatten()
             .filter(|provider| provider.matches(&query))
             .collect::<Vec<_>>();
-        v_flex().gap_4()
+        v_flex().min_w_0().p_1().gap_4()
             .child(crate::text_reading::selectable_text("pi-accounts-description", tr("连接内置 Pi 使用的账号，与 Pi CLI 共用登录信息。外部 Agent 使用各自的账号配置。")).text_sm().text_color(Color::Secondary.get(cx)))
             .child(crate::focus_scroll::Reveal::new("pi-accounts-actions-reveal", &accounts.scroll, h_flex().gap_2().flex_wrap()
                 .child(Button::new("reload-pi-accounts").ghost().compact().label(if accounts.loading { tr("处理中…") } else { tr("刷新账号状态") }).disabled(disabled)
@@ -33,7 +33,7 @@ impl HiveApp {
                     .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&dir)))))))
             .child(crate::focus_scroll::Reveal::new("pi-accounts-search-reveal", &accounts.scroll, Input::new(&accounts.search).aria_label(tr("搜索 Pi 提供商")).disabled(accounts.providers.is_none())))
             .when(accounts.providers.is_some(), |view| view.child(h_flex().items_center().justify_between().gap_2()
-                .child(crate::text_reading::selectable_text("pi-provider-count", if english() { format!("{} providers",matching.len()) } else { format!("{} 个提供商", matching.len()) }).text_xs().text_color(Color::Secondary.get(cx)))
+                .child(crate::text_reading::selectable_text("pi-provider-count", if english() { format!("{} {}", matching.len(), if matching.len() == 1 { "provider" } else { "providers" }) } else { format!("{} 个提供商", matching.len()) }).text_xs().text_color(Color::Secondary.get(cx)))
                 .when(!query.is_empty(), |row| row.child(Button::new("clear-pi-provider-search").ghost().compact().label(tr("清除搜索")).on_click(cx.listener(|this, _, window, cx| this.pi_accounts.search.update(cx, |input, cx| { input.set_value("", window, cx); input.focus_handle(cx).focus(window, cx); })))))))
             .when_some(accounts.message.as_ref().map(|notice| notice.text()), |view, message| view.child(crate::text_reading::selectable_text("pi-accounts-notice", message).p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm()))
             .when_some(accounts.login.clone(), |view, login| {
