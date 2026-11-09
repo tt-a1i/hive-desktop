@@ -93,4 +93,4 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-最新252c19c候选已改用优化release构建，并纳入此前欢迎/目录交接、默认标签、布局与具体错误原因修复。独立解压、六组包回归及优化版原生真实历史/工具/草稿冷恢复通过，见[优化候选实证](docs/validation/2026-11-10-optimized-candidate.md)。native从同源debug约112MiB减至34MiB；不据此声称内存/速度。旧ZIP与状态证据保留，current未推广，Windows原生与完整产品仍待。
+当前Mac开发包已更新为edbbae1优化release，纳入最新四Agent配置入口、异步输入保护和目标路径加载/选区交接。六组包检查、全新原生配置/项目选择、真实Codex Terra工具执行67/3及原线程/中英文草稿冷恢复通过，见[当前优化包](docs/validation/2026-11-10-current-optimized-flow.md)。首次Claude检查失败与测试握手修复有独立证据，生产代码未因此改变。旧ZIP/状态均保留；Windows原生、正式签名发行和完整产品目标仍待。

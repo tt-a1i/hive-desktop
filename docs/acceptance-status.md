@@ -38,18 +38,18 @@ Pi账号页补提供商/本机保存状态分组与AX正文，并复用焦点自
 | 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；源码Mac导出复制/失败重试/窄窗/AX提示，以及导出和文件预览Home/End/双向翻页、中文文件选区复制已取得实证，见[原生补验](validation/2026-11-09-native-resume.md) | 成员职责另已修复AX正文、首尾/翻页和选区复制，102行/3,531字符在Mac实证，见[成员阅读](validation/2026-11-09-member-responsibilities.md)；已纳入dd0230a候选并补包内首尾/翻页/窄窗验证，见[包内证据](validation/2026-11-09-stop-candidate.md)。真实Codex原生两条排队/停止/冷恢复/显式继续已补验，并修复额外恢复唤醒，见[排队恢复](validation/2026-11-09-queued-codex-ui.md)。VoiceOver播报、滚轮/完整键盘/字号、部分在途时序、系统输入与可访问性矩阵未完成；局部窄窗不推广到所有页面 |
 | 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言偏好与累计1046条主要页面/配置/聊天查找/协作/资源终端及静态和上下文错误文案已接入，模型编辑已补固定操作/提示、Tab与空格保存及冷读回，见[配置窄窗](validation/2026-11-09-model-editor-footer.md)，已纳入2b3c07e候选并补包内配置/退出恢复，见[配置候选](validation/2026-11-09-model-candidate.md)；模型/接口编辑另已补焦点与标签显露、正反Tab和实际滚动，见[滚动证据](validation/2026-11-09-model-editor-scroll.md)，新增/覆盖草稿及保存、英文17字号已补窄窗实测，完整字号/可访问性/Windows等边界仍在[#20](https://github.com/tt-a1i/hive-desktop/issues/20)；完整页面迁移、真实切换/草稿/窄窗仍未完成，见[语言记录](validation/2026-11-09-interface-language.md)、[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生设置/开关/配对码/拒绝已补包内实证，确认/撤销GUI、真实网关和Windows仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)及[最新候选](validation/2026-11-09-settled-candidate.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流删除最终按钮等仍待验收 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；Mac EPERM回归先红后绿；最新源码Cmd+Q、冷启动草稿/语言恢复、窗口关闭均exit0并清理后台，见[原生补验](validation/2026-11-09-native-resume.md) | 旧21544/54534已不在进程表，其退出原因未证实；候选包和Windows矩阵未完成，不承诺恢复任意中断工具或exactly-once |
-| macOS可实际使用 | current为1acd805；候选252c19c为优化release，六组包gate及原生真实历史/工具/草稿冷恢复通过，见[优化候选](validation/2026-11-10-optimized-candidate.md)；先前真实模型执行证据按原范围保留 | 完整页面、输入法、远程/工作流矩阵未完成；首次picker409原因待确认；候选未推广为current |
+| macOS可实际使用 | current/candidate现为edbbae1优化release；六组包gate及全新配置/项目/实际Terra执行/原线程和草稿冷恢复通过，见[当前优化包](validation/2026-11-10-current-optimized-flow.md) | 完整页面、输入法、远程/工作流等矩阵和首次picker409原因仍未完成；开发包不是完整交付 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户明确暂时无Windows机器、先继续其他实施；不处理CI不等于取消Windows目标 |
 | 完整、精美、Cindy/Maka级体验 | 已有固定源码参考与安装Cindy局部原生走查，并实施多轮聊天/配置/导航改进 | 整体对标仍未证实；还须按实际安装体验做全流程及边角检查，不能以局部截图或当前清单宣称一致 |
 | 可安装与交付 | 有冻结Node/native依赖的Mac便携开发包及实际PTY/HTTP/SQLite检查 | 未签名/未公证；正式发行、完整安装体验与两个平台最终验收未完成 |
 
-## 本轮候选包
+## 当前开发包与候选
 
-canonical candidate现为252c19c3210eabeb53a9056f0f26549bec03cabe的Mac ARM64优化release包，143,394,027字节，ZIP SHA256为6e601c1243d6884efa746bcae25f37bf146786785f1bbb1f8d37a439e8c082b9。native35,617,600字节，同源debug117,707,472字节；这只是体积比较，不是内存或速度结论。
+current已更新为edbbae16af01a342272d839a668a2fc99d676e4d的Mac ARM64优化release，143,400,169字节，SHA256 `085354108c29b318a0b6b8fd0f438fe3793dd7c62918cc7e485d59da8d91eded`。candidate指向同字节硬链接；旧current1acd805和候选252c19c已归档并核验哈希。
 
-已纳入此前欢迎/目录窗口交接、默认会话标签、主体布局和HTTP错误原因修复。冻结依赖不变；112个runtime输出、28,863个解压条目/模式和29个内部链接匹配，六组包gate通过。实际优化版恢复原始Terra历史/工具详情/中英文草稿，包内具体错误提示及两次正常退出/冷恢复通过；本轮无新推理，ff86889真实模型执行保留其原范围。见[优化候选实证](validation/2026-11-10-optimized-candidate.md)。
+最新引导/程序配置输入保护和加载选区交接已纳入。112个runtime输出、28,863个条目/模式、29个内部链接匹配；最终六组包gate通过。首次Claude gate因合成退出早于后续输入接受而失败，测试改用明确握手，源码及包内均通过，生产代码未改。全新原生配置Codex→单次项目选择→Terra/Medium实际Send→工具和67/3回复→原线程/精确草稿冷恢复通过；见[当前优化包](validation/2026-11-10-current-optimized-flow.md)。
 
-current仍1acd805且哈希未变。旧34 ZIP移入原目录归档；仅在退出和无占用核验后清理三份无用重复bundle，约1.66GiB分配字节，所有状态/项目/ZIP/证据保留。未签名/未公证，Windows原生暂无环境；首次picker409原因和完整产品目标继续开放。历史条目的“候选未纳入”描述当时状态，以本节实际纳入范围更新，不扩大其他验收。
+仅清理已无引用的新base及旧解压bundle约1.00GiB分配字节，所有ZIP/工作目录/状态/失败证据保留。current是当前Mac开发包，不代表正式完整交付；Windows原生、首次picker409原因及完整目标仍开放。历史条目描述当时状态，以本节具体纳入范围更新。
 
 ## 当前阻断与仍可推进的工作
 
