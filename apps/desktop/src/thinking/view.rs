@@ -101,7 +101,7 @@ impl HiveApp {
                         .border_color(Color::Divider.get(cx))
                         .text_sm()
                         .text_color(Color::Secondary.get(cx))
-                        .child(gpui_kit::base::SelectableText::new(
+                        .child(crate::text_reading::selectable_text(
                             SharedString::from(format!("thinking-body-{row}-{index}")),
                             text.clone(),
                         ))

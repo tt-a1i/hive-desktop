@@ -48,3 +48,18 @@ pub(crate) fn region(
             cx.stop_propagation();
         })
 }
+
+/// Preserve the native selection run while exposing its visible plain text.
+pub(crate) fn selectable_text(
+    id: impl Into<SharedString>,
+    text: impl Into<SharedString>,
+) -> Stateful<Div> {
+    let id = id.into();
+    let text = text.into();
+    div()
+        .id(SharedString::from(format!("{id}-accessible")))
+        .role(Role::Label)
+        .aria_label(text.clone())
+        .min_w_0()
+        .child(gpui_kit::base::SelectableText::new(id, text))
+}

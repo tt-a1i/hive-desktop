@@ -241,7 +241,7 @@ impl Render for ToolDiff {
                     .font_family(Theme::global(cx).mono_font_family.clone())
                     .text_size(px(12.))
                     .line_height(px(19.))
-                    .child(gpui_kit::base::SelectableText::new(
+                    .child(crate::text_reading::selectable_text(
                         "tool-diff-source",
                         self.document
                             .as_ref()

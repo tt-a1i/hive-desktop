@@ -108,7 +108,7 @@ impl HiveApp {
                     .rounded_lg()
                     .bg(Color::Inset.get(cx))
                     .text_sm()
-                    .child(gpui_kit::base::SelectableText::new(
+                    .child(crate::text_reading::selectable_text(
                         SharedString::from(format!("member-description-text-{}", member.id)),
                         if empty {
                             tr("未设置职责说明").to_owned()

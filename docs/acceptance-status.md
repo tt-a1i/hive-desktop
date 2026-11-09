@@ -84,3 +84,5 @@ Codex活跃主控的系统通知已接入同回合投递，针对上文工作流
 派单详情新增原生语义修复：任务/汇报/取消原因、关联责任、问答与回复引用现可从AX读取，中英文真实Hive消息/显式report记录已核对；主控与成员草稿在派单往返、跨项目和退出重开后分别保留。见[派单可读性](validation/2026-11-09-dispatch-accessibility.md)。本轮无模型推理，Windows仅编译，完整VoiceOver/输入法仍待，候选1534986未更新。
 
 晚到通知另取得真实Codex/Terra证据：主控先以WORK_STARTED结束后驱动才放行Worker，Worker显式report37/3，真实通知触发主控独立核验且只新增LATE_REPORT_OK 37/3一次；两会话完整冷恢复pending0、Mac实际历史/工具/工作流/产物及退出复核通过。见[晚到汇报](validation/2026-11-09-late-worker-report.md)。这是一位Worker/单通知案例，不扩大为并发通知、其他后端、Windows或所有重复情形解决；文件预览AX正文仍待补验，候选未更新。
+
+可选中文本新增共享AX包装：文件预览短正文/路径/只读说明及长文Home/End/翻页已取得源码Mac实证，成员职责/展开思考/原始补丁复用同一包装。见[正文语义与明确待验项](validation/2026-11-09-selectable-reading.md)。选区复制被窗口状态变化和截图故障打断，其他入口/错误态尚待原生补验；未将该项标记完成，native PID56760仍在隔离副本运行，候选未更新。

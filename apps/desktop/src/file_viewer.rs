@@ -246,12 +246,14 @@ impl Render for FileViewer {
             .tab_group()
             .child(
                 div()
+                    .id("file-preview-description").role(Role::Label).aria_label(self.source.description())
                     .text_xs()
                     .text_color(Color::Secondary.get(cx))
                     .child(self.source.description()),
             )
             .child(
                 div()
+                    .id("file-preview-path").role(Role::Label).aria_label(self.source.label())
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
                     .child(self.source.label()),
@@ -308,6 +310,7 @@ impl Render for FileViewer {
             .when_some(self.error.as_ref().map(|error|error.text()), |view, error| {
                 view.child(
                     div()
+                        .id("file-preview-error").role(Role::Label).aria_label(error.clone())
                         .text_sm()
                         .text_color(Color::Error.get(cx))
                         .child(error),
@@ -318,6 +321,7 @@ impl Render for FileViewer {
                 |view| {
                     view.child(
                         div()
+                            .id("file-preview-stale").role(Role::Label).aria_label(tr("仍显示上次成功读取的内容。"))
                             .text_xs()
                             .text_color(Color::Muted.get(cx))
                             .child(tr("仍显示上次成功读取的内容。")),
@@ -341,12 +345,13 @@ impl Render for FileViewer {
                     .when(text.is_empty(), |view| {
                         view.child(
                             div()
+                                .id("file-preview-empty").role(Role::Label).aria_label(tr("文件为空"))
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
                                 .child(tr("文件为空")),
                         )
                     })
-                    .child(gpui_kit::base::SelectableText::new(
+                    .child(crate::text_reading::selectable_text(
                         "file-preview-source",
                         text.clone(),
                     )),
