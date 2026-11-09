@@ -1,7 +1,25 @@
 use crate::{app::{HiveApp, SettingsSection}, language::tr, palette::Color};
 use gpui_kit::{component::{button::{Button, ButtonVariants}, scroll::ScrollableElement, *}, prelude::FluentBuilder, *};
+use gpui_kit::assets::IconName as Glyph;
 
 impl HiveApp {
+    pub(crate) fn render_project_context(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let project = self.workspaces.iter().find(|project| Some(&project.id) == self.workspace.as_ref());
+        h_flex().w_full().min_w_0().max_w(px(crate::conversation_list::CHAT_COLUMN_WIDTH)).mx_auto().gap_2()
+            .when_some(project, |row, project| {
+                let path = std::path::PathBuf::from(&project.path);
+                let identity = format!("{} · {}", project.name, project.path);
+                row.child(Button::new("home-project-folder").ghost().compact().icon(Glyph::FolderOpen)
+                    .accessibility_label(format!("{}: {identity}", tr("在文件管理器中打开项目")))
+                    .tooltip(project.path.clone()).on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&path))))
+                    .child(v_flex().min_w_0().flex_1().gap_1()
+                        .child(div().id("home-project-name").role(Role::Label).aria_label(project.name.clone())
+                            .text_sm().font_weight(FontWeight::SEMIBOLD).truncate().child(project.name.clone()))
+                        .child(div().id("home-project-path").role(Role::Label).aria_label(project.path.clone())
+                            .text_xs().text_color(Color::Muted.get(cx)).truncate().child(project.path.clone())))
+            })
+    }
+
     /// The first project uses the same picker and configuration flows as daily use.
     /// Opening this page never creates a session or starts an agent.
     pub(crate) fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {

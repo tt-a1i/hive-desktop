@@ -247,6 +247,8 @@ impl HiveApp {
             .child(
                 div()
                     .id("error-banner-text")
+                    .role(Role::Label)
+                    .aria_label(self.error.as_ref().map(|error| error.text()).unwrap_or_default())
                     .flex_1()
                     .min_w_0()
                     .max_h(px(160.))
@@ -566,6 +568,7 @@ impl Render for HiveApp {
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
             } else if self.workspace.is_none() && self.session.is_none() { self.render_welcome(cx).into_any_element()
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow && welcome, |v| v.px(px(44.))).when(!welcome, |v| v.px_0().pt_0()).id("conversation-surface").on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.import_image_paths(paths.paths().to_vec(), cx))).drag_over::<ExternalPaths>(|style, _, _, cx|style.bg(Color::Attention.get(cx))).key_context("HiveConversation").on_action(cx.listener(|this, _: &crate::CloseConversationFind, window, cx| this.close_conversation_find(window, cx))).when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
+                .when(welcome && self.workspace.is_some(), |view| view.child(self.render_project_context(cx)))
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .when(!welcome, |header| header.max_w_full().min_h(px(54.)).px_5().border_b_1().border_color(Color::Divider.get(cx)))
                     .when_some(self.conversation_return(cx), |header, back| header.child(back))
@@ -621,6 +624,10 @@ impl Render for HiveApp {
                         }
                     })))))
                 .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(self.render_conversation_list(narrow, cx)))
+                .when(welcome && self.session.is_none(), |surface| surface.child(div().id("home-agent-hint").role(Role::Label)
+                    .aria_label(tr("先写下需求，再选择主控 Agent。草稿会带入新会话。"))
+                    .w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().text_sm().text_color(Color::Muted.get(cx))
+                    .child(tr("先写下需求，再选择主控 Agent。草稿会带入新会话。"))))
                 .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_2().when(!welcome, |dock| dock.px_5().when(!narrow, |dock| dock.px(px(44.))))
                 .when(!welcome, |dock| dock.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().font_weight(FontWeight::SEMIBOLD)

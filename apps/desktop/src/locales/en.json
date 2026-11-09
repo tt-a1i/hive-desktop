@@ -1065,5 +1065,8 @@
   "内置 Pi、Claude Code、Codex 或外部 Pi，使用各自的模型与账号。": "Built-in Pi, Claude Code, Codex, or external Pi, with their own models and accounts.",
   "和团队一起工作": "Work with your team",
   "从主会话安排任务，随时查看成员的对话、执行过程与汇报。": "Delegate from the main conversation, then follow member conversations, tools, and reports.",
-  "检查外部 Agent 程序": "Check external agent programs"
+  "检查外部 Agent 程序": "Check external agent programs",
+  "在文件管理器中打开项目": "Show project in file manager",
+  "先写下需求，再选择主控 Agent。草稿会带入新会话。": "Write your request, then choose a lead agent. Your draft will move into the new conversation.",
+  "未能打开会话": "Could not open conversation"
 }

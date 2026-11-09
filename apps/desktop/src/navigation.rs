@@ -130,7 +130,8 @@ impl HiveApp {
             b.h(px(32.)).rounded_full().w_full().justify_start()
         })
         .ghost()
-        .icon(Glyph::Plus)
+        .when(id == "home-agent", |button| button.primary().dropdown_caret(true))
+        .icon(if id == "home-agent" { Glyph::Network } else { Glyph::Plus })
         .when(id == "new-session-menu", |b| {
             b.child(div().flex_1().font_weight(FontWeight::NORMAL).child(label))
         })

@@ -619,6 +619,7 @@ impl HiveApp {
                     return;
                 }
                 this.loading = false;
+                this.status = "未能打开会话".into();
                 match serde_json::from_value::<OpenSession>(value) {
                     Ok(open) => {
                         if open.session.id != id {
@@ -630,6 +631,7 @@ impl HiveApp {
                             return;
                         }
                         this.conversation_ready = true;
+                        this.status = "后台已连接".into();
                         if open.busy {
                             this.busy.insert(id.clone());
                         } else {

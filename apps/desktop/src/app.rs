@@ -630,6 +630,7 @@ impl HiveApp {
                     Err(error) => {
                         if this.open_request == open_request {
                             this.loading = false;
+                            if method == "chat.open" { this.status = "未能打开会话".into(); }
                             this.error = Some(error.into());
                         }
                     }
