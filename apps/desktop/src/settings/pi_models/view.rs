@@ -5,6 +5,7 @@ use gpui_kit::{
         button::{Button, ButtonVariants},
         input::Input,
         switch::Switch,
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -14,16 +15,16 @@ impl HiveApp {
     pub fn render_pi_models(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.pi_models;
         let disabled = !self.connected || state.loading;
-        v_flex().flex_1().min_h_0().min_w_0().id("pi-model-config-scroll").overflow_y_scroll().track_scroll(&state.scroll).gap_4()
+        let body = v_flex().flex_1().min_h_0().min_w_0().id("pi-model-config-scroll").overflow_y_scroll().track_scroll(&state.scroll).vertical_scrollbar(&state.scroll).gap_4()
             .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("管理自定义接口、模型和内置配置覆盖。保存后在“内置 Pi”设置 API Key；免认证服务可使用占位值。")))
             .child(h_flex().gap_2().flex_wrap()
                 .child(Button::new("add-pi-provider").primary().rounded_full().label(tr("添加提供商")).disabled(disabled || state.snapshot.is_none()).on_click(cx.listener(|this,_,window,cx|this.edit_pi_model_config(Some(Target{provider:String::new(),model:None,is_model:false,creating:true}),window,cx))))
                 .child(Button::new("reload-pi-model-config").ghost().compact().label(if state.loading {tr("处理中…")} else {tr("重新读取列表")}).disabled(disabled).on_click(cx.listener(|this,_,_,cx|this.pi_models_request(None,cx))))
                 .when_some(state.snapshot.as_ref().map(|s|std::path::PathBuf::from(&s.path)).or_else(||self.pi_agent_dir.clone()),|row,path|{row.child(Button::new("locate-pi-model-config").ghost().compact().label(tr("定位配置文件")).on_click(move|_,_,cx|cx.reveal_path(&path)))}))
-            .when_some(state.message.as_ref().map(|notice|notice.text()),|view,message|view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
+            .when_some(state.message.as_ref().filter(|_|state.target.is_none()).map(|notice|notice.text()),|view,message|view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
             .when_some(state.target.clone(),|view,target|view.child(self.render_pi_model_form(target,cx)))
             .when(state.snapshot.as_ref().is_some_and(|snapshot|snapshot.providers.is_empty()),|view|view.child(div().py_6().text_sm().text_color(Color::Secondary.get(cx)).child(tr("尚未添加自定义配置。内置模型仍可在会话的模型选择器中使用。"))))
-            .children(state.snapshot.iter().flat_map(|snapshot|&snapshot.providers).map(|provider|{
+            .children(state.snapshot.iter().filter(|_|state.target.is_none()).flat_map(|snapshot|&snapshot.providers).map(|provider|{
                 let id=provider.id.clone();let remove=id.clone();let add=id.clone();
                 v_flex().gap_2().py_3().border_b_1().border_color(Color::Divider.get(cx))
                     .child(h_flex().gap_2().items_center().flex_wrap()
@@ -39,7 +40,22 @@ impl HiveApp {
                             .child(Button::new(SharedString::from(format!("remove-pi-model-{remove_provider}-{remove_model}"))).ghost().compact().label(if model.override_only {tr("移除覆盖")} else {tr("移除模型")}).accessibility_label(format!("{}: {remove_provider}/{remove_model}",tr("移除模型配置"))).disabled(disabled || state.target.is_some()).on_click(cx.listener(move|this,_,window,cx|this.remove_pi_model_config(remove_provider.clone(),Some(remove_model.clone()),window,cx))))
                     }))
                     .child(h_flex().child(Button::new(SharedString::from(format!("add-pi-model-{add}"))).ghost().compact().label(tr("添加模型")).accessibility_label(format!("{}: {add}",tr("添加模型"))).disabled(disabled).on_click(cx.listener(move|this,_,window,cx|this.edit_pi_model_config(Some(Target{provider:add.clone(),model:None,is_model:true,creating:true}),window,cx)))))
-            }))
+            }));
+        v_flex().flex_1().min_h_0().min_w_0().gap_3()
+            .child(body)
+            .when(state.target.is_some(), |view| view.child(self.render_pi_model_actions(cx)))
+    }
+    fn render_pi_model_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = &self.pi_models;
+        let disabled = !self.connected || state.loading;
+        v_flex().flex_shrink_0().gap_2().pt_3().border_t_1().border_color(Color::Divider.get(cx))
+            .when_some(state.message.as_ref().map(ModelNotice::text), |view, message| view.child(
+                div().id("pi-model-form-notice").role(Role::Status).aria_label(message.clone()).text_sm().child(message)
+            ))
+            .child(h_flex().gap_2().items_center().flex_wrap()
+            .child(Button::new("save-pi-model-form").primary().rounded_full().label(tr("保存配置")).disabled(disabled || !state.dirty(cx)).on_click(cx.listener(|this,_,_,cx|this.save_pi_model_form(cx))))
+            .child(Button::new("cancel-pi-model-form").rounded_full().label(tr("关闭表单")).disabled(state.loading).on_click(cx.listener(|this,_,window,cx|this.edit_pi_model_config(None,window,cx))))
+            .when(state.dirty(cx),|row|row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("有未保存的修改")))))
     }
     fn render_pi_model_form(&self, target: Target, cx: &mut Context<Self>) -> impl IntoElement {
         let state = &self.pi_models;
@@ -72,10 +88,7 @@ impl HiveApp {
                     .child(Switch::new("pi-model-vision").accessibility_label(tr("模型支持图片输入")).checked(state.vision.unwrap_or(false)).disabled(disabled).on_change(cx.listener(|this,value,_,cx|{this.pi_models.vision=Some(*value);this.schedule_draft_save(cx);cx.notify();})))))
                 .when(state.override_only,|form|form.child(self.override_capability(tr("思考能力"),true,state.reasoning,disabled,cx)).child(self.override_capability(tr("图片输入"),false,state.vision,disabled,cx))))
             .child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("保存到 Pi 的 models.json，高级字段和其他提供商保持原样。仅保存配置，不验证服务端认证。")))
-            .child(h_flex().gap_2().items_center().flex_wrap()
-                .child(Button::new("save-pi-model-form").primary().rounded_full().label(tr("保存配置")).disabled(disabled || !state.dirty(cx)).on_click(cx.listener(|this,_,_,cx|this.save_pi_model_form(cx))))
-                .child(Button::new("cancel-pi-model-form").rounded_full().label(tr("关闭表单")).disabled(state.loading).on_click(cx.listener(|this,_,window,cx|this.edit_pi_model_config(None,window,cx))))
-                .when(state.dirty(cx),|row|row.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("有未保存的修改")))))
+
     }
     fn override_capability(
         &self,
