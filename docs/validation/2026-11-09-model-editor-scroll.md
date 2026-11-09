@@ -27,3 +27,20 @@
 新增提供商的首模型字段、modelOverrides继承按钮、英文/字号/VoiceOver与Windows原生仍需实测，因此#20保持开放；不是整个设置或可访问性矩阵完成。Mac鼠标滚动位移与模型/接口编辑Tab链路已经取得实际证据。candidate仍为dd0230a，未包含本修复。
 
 收据：`.artifacts/settings-layout/focus-receipt.json`、`focus-config-before.json`、五次 `focus-*-process/exit.json`、日志；最终两份产品源文件哈希已记。实际原生截图/按键/滚动见当前聊天CUA记录，没有保存额外大包。
+
+## 新增、覆盖与英文17字号补验
+
+继续#20，使用同一隔离配置与源码开发应用，没有调用模型。先保留31模型原配置，另加入仅作UI检查的openai/gpt-6.1-terra覆盖（reasoning=false、input=text/image）及一条无关覆盖。静态配置中的模型名不代表此轮执行了厂商模型。
+
+- 5769在1184×1104截图像素/中文默认字号，正常键盘从提供商ID、中文名称、回环Base URL，经类型选择到首模型字段。空格选择Responses、首模型填写gpt-6.1-terra，Tab到固定保存焦点环可见。正常退出后草稿各字段/类型逐项断言，真实models.json仍等于保存前基线。
+- 6919完整新进程恢复新增草稿，固定恢复提示和保存可见。实际保存新增narrow-new，逐对象核对只新增name/baseUrl/api及一个模型；原layout-local和两条openai覆盖完全保持。
+- 同一进程用鼠标滚至列表底部，打开覆盖模型。名称起Tab经Token字段到“思考能力：继承内置”，空格执行，再到“图片输入：继承内置”执行，两个组及标签/焦点可见。退出后草稿value两项为null，initial分别false/true，磁盘配置尚未改变。
+- 7405完整重开，在隔离应用切英文并字号从16增至17（desktop-appearance.json实读17），1184×1104窗口中恢复两项继承、数字32768/4096和名称，显示英文恢复提示。用正常Tab进入输入框与两组能力，字段和焦点可见；固定保存实际执行。
+- 保存后逐对象断言：只有目标modelOverrides中的reasoning和input字段被删除，没有转成models；数字、名称、另一覆盖、新接口、31个原模型及headers均保持。当前路径草稿已清除。
+- 13022完整新进程保持英文/17字号，不恢复旧草稿；重新编辑覆盖，两项继承仍选中，数字/名称正确、保存禁用。没有据此宣称全部字号或VoiceOver矩阵完成。
+
+新增流程另暴露初始焦点直接跳过必填ID到名称。公共edit入口现按creating选择ID，既有配置仍选名称；没有修改恢复草稿、验证或持久化逻辑。最终构建的13022分别打开新增提供商与新增模型，截图明确显示ID焦点环/光标；原覆盖编辑仍为名称焦点。关闭未改表单后正常退出。
+
+四个owned原生进程均Cmd+Q exit0，已核对不在进程表；最终Mac build、Windows MSVC cargo check、git diff --check通过。只改初始UI焦点，未新增/修改测试，不重复无关全量或模型检查；未新增ZIP。
+
+收据：`.artifacts/settings-layout/create-override-receipt.json`，创建前/后配置、两次退出前草稿及四次进程日志/exit JSON；原生截图在本聊天。此前“新增首模型/覆盖继承/英文均未验”的边界由上述具体路径补齐；#20保留其他字号、完整可访问性、Windows原生与包内验收，完整产品目标继续。

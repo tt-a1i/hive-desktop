@@ -360,7 +360,12 @@ impl HiveApp {
         self.pi_models.message = None;
         self.pi_models.scroll.set_offset(point(px(0.), px(0.)));
         if self.pi_models.target.is_some() {
-            let focus = self.pi_models.name.read(cx).focus_handle(cx);
+            let input = if self.pi_models.target.as_ref().is_some_and(|target| target.creating) {
+                &self.pi_models.id
+            } else {
+                &self.pi_models.name
+            };
+            let focus = input.read(cx).focus_handle(cx);
             window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }
         cx.notify();

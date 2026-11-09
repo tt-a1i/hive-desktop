@@ -496,3 +496,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 模型配置焦点滚动
 
 #20真实复现窄窗Tab至输入框仍离屏，原Div未消费Input原生显露请求。保留ScrollHandle与表单，补本地prepaint消费、实际焦点/视口变化与字段标签/能力控件组显露；允许手动滚离，不持续抢滚动。模型与接口编辑正反Tab、能力开关、同组按钮手动滚离后继续Tab、两方向滚轮、窄窗错误和16384保存/冷读回通过，配置仅改该字段；五个owned窗口exit0。Mac构建/Windows类型/diff通过，无新测试或ZIP。新增/覆盖/英文/Windows实际仍待，#20开放，见[滚动证据](validation/2026-11-09-model-editor-scroll.md)。
+
+## 2026-11-09 新增与覆盖配置补验
+
+#20补Mac窄窗新增接口全键盘、首模型/Responses、中文草稿退出/恢复/实际保存；覆盖模型两项恢复继承、null/false草稿区分、退出恢复、英文17字号和实际保存/冷读回通过。逐对象断言原31模型/headers/无关覆盖保持，目标只删除reasoning/input，无models转换，草稿清除。公共新增入口修正先聚焦必填ID，提供商/模型均在最终源码实测，既有编辑仍名称焦点。四个owned进程exit0，Mac构建/Windows类型/diff通过，无新测试/全量/ZIP；#20保留完整字号/可访问性/Windows/包内边界。见[补验记录](validation/2026-11-09-model-editor-scroll.md#新增覆盖与英文17字号补验)。
