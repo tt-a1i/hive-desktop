@@ -259,6 +259,7 @@ export class Chats implements StructuredSessionPort {
       const queue = new DeliveryQueue({
         directory: this.queueDir, sessionId: record.id, startPaused: true,
         completedIds: () => handle.completedDeliveryIds(),
+        ...(handle.steer && {steer: (item: import('./delivery-queue.js').DeliveryItem) => handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!})}),
         execute: item => item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.images && {images:item.images}), ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text),
         onError: error => { if (!chat?.aborted) this.recordDeliveryFailure(record.id, queue, chat?.failure ?? error); },
         onState: (busy, completedReportId) => {

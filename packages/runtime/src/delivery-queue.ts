@@ -17,6 +17,7 @@ interface DeliveryQueueOptions {
  sessionId: string;
  startPaused?: boolean;
  execute(item: DeliveryItem): Promise<void>;
+ steer?(item: DeliveryItem): Promise<boolean>;
  completedIds(): readonly string[];
  onError(error: Error): void;
  onState?(busy: boolean, completedReportId?: string): void;
@@ -45,6 +46,7 @@ function readSpool(path: string): DeliveryItem[] {
 /** A transport spool, not a task ledger. One owner per session is required. */
 export class DeliveryQueue {
  private readonly path: string;
+ private readonly steering = new Map<string, Promise<void>>();
  private items: DeliveryItem[];
  private running: Promise<void> | undefined;
  private paused = false;
@@ -88,6 +90,18 @@ export class DeliveryQueue {
   const images = promptImages(imageInput);
   if (images.length && !triggerTurn) throw new TypeError("不触发模型回合的投递暂不支持图片。");
   this.replace([...this.items, { id: randomUUID(), text, triggerTurn, ...(images.length && {images}), ...(presentation && { presentation: structuredClone(presentation) }) }]);
+  const item = this.items.at(-1)!;
+  // Only asynchronous system input may join the current turn. Never overtake a
+  // queued user/task input; persist first and retain until native completion.
+  if (!this.paused && this.busy && this.attemptedId === this.items[0]?.id
+    && item.triggerTurn && !item.images?.length && item.presentation?.origin === 'system'
+    && this.items.slice(1, -1).every(entry => this.steering.has(entry.id)) && this.options.steer) {
+   const attempt = this.options.steer(item).then(handled => {
+    if (handled && !this.options.completedIds().includes(item.id)) throw new Error('Native steering completed without a durable delivery receipt');
+   });
+   this.steering.set(item.id, attempt);
+   void attempt.catch(() => {});
+  }
   this.kick();
   this.emitState();
  }
@@ -152,6 +166,9 @@ export class DeliveryQueue {
  private async drain(): Promise<void> {
   while (!this.paused && this.items.length) {
    const item = this.items[0]!;
+   const steering = this.steering.get(item.id);
+   this.steering.delete(item.id);
+   if (steering) await steering;
    if (!this.options.completedIds().includes(item.id)) {
     this.attemptedId = item.id;
     await this.options.execute(item);

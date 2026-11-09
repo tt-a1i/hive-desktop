@@ -16,7 +16,7 @@ export function readCodexMetadata(directory: string, threadId: string): CodexMet
   }
   if (value.version !== 1 || !Array.isArray(value.context) || !Array.isArray(value.deliveries) || !Array.isArray(value.completed)
     || !value.context.every(entry => typeof entry.text === 'string' && typeof entry.customType === 'string')
-    || !value.deliveries.every(entry => typeof entry.turnId === 'string' && typeof entry.deliveryId === 'string' && isDeliveryPresentation(entry.presentation))
+    || !value.deliveries.every(entry => typeof entry.turnId === 'string' && (entry.itemId === undefined || typeof entry.itemId === 'string') && typeof entry.deliveryId === 'string' && isDeliveryPresentation(entry.presentation))
     || !value.completed.every(id => typeof id === 'string')) throw new Error('Invalid Hive Codex metadata');
   return value;
 }

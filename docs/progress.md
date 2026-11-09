@@ -544,3 +544,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 原生同回合通知与停止边界
 
 为工作流重复结果回复验证原始Codex0.166.0/Terra turn/steer：真实模型调用受控动态工具期间追加通知，正常完成同回合保存两个独立userMessage且只有一条final；错误回合ID/结束后追加明确拒绝。另一次追加成功后立即停止，持久历史与独立冷恢复均没有追加消息，证明RPC接受不能当完成。四个原生连接正常exit0；无生产投递/UI/包修改，手动探针和证据已保存。下一步必须连同native item来源关联、停止保留与队列结算接入，重复回复仍待修复。见[原生边界](validation/2026-11-09-codex-steering.md)。
+
+## 2026-11-09 系统通知并入 Codex 当前回合
+
+生产队列先持久化系统通知，在没有用户/任务排队阻挡时调用原生steer；来源按native item关联，只有接受+实际历史消息+成功终态才结算。多通知、响应排序、未消费/未持久化、停止、拒绝重试、终态竞争、断线、真实元数据写盘失败和用户顺序检查通过；关闭接线的基线回合3vs1失败。真实原样Codex/Terra主控亲自启动workflow，Worker显式report47/3，主控独立读文件/show后同回合只一条final，冷恢复pending0/两条来源保持。原始CLI接受后Stop另证实通知ID保留、冷恢复未误结算。第一轮探针漏description与独立探针导入失败保留，均不算产品成功。TS/build/team/Codex通过，无UI/新ZIP/全量suite；晚到通知和其他后端不冒称已解决，见[投递证据](validation/2026-11-09-steered-system-delivery.md)。

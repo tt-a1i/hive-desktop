@@ -3,7 +3,7 @@ import { promptImages } from '../prompt-images.js';
 import type { TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
-import { CodexTransport, type CodexServerRequest } from './codex-transport.js';
+import { CodexTransport, CodexRpcError, type CodexServerRequest } from './codex-transport.js';
 import { updateCodexSettings } from './codex-settings.js';
 import { mkdirSync } from 'node:fs';
 import { CodexInteractions } from './codex-interactions.js';
@@ -42,7 +42,8 @@ export interface CodexSessionHandle extends PiSessionHandle {
   dispose(): Promise<void>;
 }
 type Model = { id: string; model: string; displayName: string; hidden: boolean; supportedReasoningEfforts?: {reasoningEffort:string;description:string}[] };
-type Run = { tools: Set<Promise<unknown>>; nativeTools: Map<string, { done: Promise<void>; complete(): void }>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: { id: string; presentation: DeliveryPresentation };
+type InFlightDelivery = { id: string; text: string; presentation: DeliveryPresentation; itemId?: string; accepted?: boolean };
+type Run = { appended: InFlightDelivery[]; requests: Set<Promise<unknown>>; tools: Set<Promise<unknown>>; nativeTools: Map<string, { done: Promise<void>; complete(): void }>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: InFlightDelivery;
   terminal: Promise<CodexTurn>; resolve: (turn: CodexTurn) => void; reject: (error: Error) => void; done: Promise<void>; error?: Error };
 
 /** Codex 0.166 app-server public JSON-RPC; no terminal scraping or Pi model intermediary. */
@@ -65,11 +66,20 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     writeCodexMetadata(options.sessionDir, threadId, next);
     metadata = next;
   };
-  const rememberDelivery = (turnId: string) => {
-    const delivery = active?.delivery;
-    if (delivery && !metadata.deliveries.some(entry => entry.turnId === turnId)) {
-      persist({ ...metadata, deliveries: [...metadata.deliveries, { turnId, deliveryId: delivery.id, presentation: delivery.presentation }] });
+  const rememberDelivery = (turnId: string, item?: CodexItem) => {
+    const run = active;
+    if (!run || run.turnId !== turnId) return;
+    const primary = run.delivery;
+    if (primary && !metadata.deliveries.some(entry => entry.turnId === turnId && entry.deliveryId === primary.id)) {
+      persist({ ...metadata, deliveries: [...metadata.deliveries, { turnId, deliveryId: primary.id, presentation: primary.presentation }] });
     }
+    if (item?.type !== 'userMessage' || !Array.isArray(item.content)) return;
+    const text = codexInputText(item);
+    const delivery = [primary, ...run.appended.filter(entry => entry.accepted)].find(entry => entry && !entry.itemId && entry.text === text);
+    if (!delivery || metadata.deliveries.some(entry => entry.turnId === turnId && entry.itemId === item.id)) return;
+    const next = { turnId, itemId: item.id, deliveryId: delivery.id, presentation: delivery.presentation };
+    persist({ ...metadata, deliveries: [...metadata.deliveries.filter(entry => entry.deliveryId !== delivery.id || entry.turnId !== turnId), next] });
+    delivery.itemId = item.id;
   };
   let transport!: CodexTransport;
   const interactions = new CodexInteractions(() => threadId, emit, id => transport?.cancelServerRequest(id));
@@ -156,9 +166,14 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
         if (notification.method === 'item/started' || notification.method === 'item/completed') {
           const turnId = String(params.turnId);
           if (active?.turnId === turnId && !active.terminalComplete) interactions.item(turnId, params.item);
-          rememberDelivery(turnId);
+          rememberDelivery(turnId, params.item as CodexItem);
           if (notification.method === 'item/completed' || isCodexToolItem(params.item as CodexItem)) projection?.put(params.item as CodexItem, turnId);
-          events?.item(params.item as CodexItem, turnId, notification.method === 'item/completed');
+          const item = params.item as CodexItem;
+          const awaitingSource = item.type === 'userMessage' && active?.appended.some(entry =>
+            !entry.accepted && entry.text === codexInputText(item));
+          // A raw native user row and its later Hive delivery use different UI
+          // IDs. Wait for association instead of briefly emitting both rows.
+          if (!awaitingSource) events?.item(item, turnId, notification.method === 'item/completed');
           if (notification.method === 'item/completed' && active?.turnId === turnId) {
             const id = (params.item as CodexItem).id;
             active.nativeTools.get(id)?.complete();
@@ -195,7 +210,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, ...extra });
   };
   const recoverHistory = async (thread: CodexThreadResponse['thread']) => {
-    if (thread.historyMode === 'legacy') { projection!.recover(thread.turns); return; }
+    if (thread.historyMode === 'legacy') { projection!.recover(thread.turns); return thread.turns; }
     if (thread.historyMode !== 'paginated') throw new Error('Unsupported Codex history contract');
     const turns: CodexTurn[] = [];
     let cursor: string | null = null;
@@ -205,14 +220,17 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       turns.push(...page.data); cursor = page.nextCursor ?? null;
     } while (cursor);
     projection!.recover(turns, true);
+    return turns;
   };
   const hydrate = async () => {
     const read = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: false });
+    let turns: CodexTurn[];
     if (read.thread.historyMode === 'legacy') {
       const full = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: true });
-      await recoverHistory(full.thread);
-    } else await recoverHistory(read.thread);
+      turns = await recoverHistory(full.thread);
+    } else turns = await recoverHistory(read.thread);
     events!.restore(projection!.current());
+    return turns;
   };
   const models: Model[] = [];
   try {
@@ -230,7 +248,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     persist(metadata);
     mkdirSync(options.sessionDir, { recursive: true, mode: 0o700 });
     projection = new CodexProjection(options.sessionDir, threadId);
-    events = new CodexEvents(threadId, emit, id => metadata.deliveries.find(entry => entry.turnId === id));
+    events = new CodexEvents(threadId, emit, (id, itemId) => metadata.deliveries.find(entry => entry.turnId === id && entry.itemId === itemId)
+      ?? metadata.deliveries.find(entry => entry.turnId === id && entry.itemId === undefined));
     if (materialized) await recoverHistory(response!.thread);
     else if (!['legacy', 'paginated'].includes(response!.thread.historyMode)) throw new Error('Unsupported Codex history contract');
     events.restore(projection.current());
@@ -279,8 +298,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       const terminal = new Promise<CodexTurn>((yes, no) => { resolve = yes; reject = no; });
       // Requests can fail before the turn is created; keep terminal rejection observed.
       void terminal.catch(() => {});
-      const run: Run = { tools: new Set(), nativeTools: new Map(), terminalComplete: false, cancelled: false, controller: new AbortController(), terminal, resolve, reject, done: Promise.resolve(),
-        ...(promptOptions?.deliveryId && { delivery: { id: promptOptions.deliveryId,
+      const run: Run = { appended: [], requests: new Set(), tools: new Set(), nativeTools: new Map(), terminalComplete: false, cancelled: false, controller: new AbortController(), terminal, resolve, reject, done: Promise.resolve(),
+        ...(promptOptions?.deliveryId && { delivery: { id: promptOptions.deliveryId, text,
           presentation: isDeliveryPresentation(promptOptions.presentation) ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text } } }) };
       active = run;
       run.done = Promise.resolve().then(async () => {
@@ -296,14 +315,23 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           rememberDelivery(run.turnId);
           if ((run.cancelled || run.error) && !run.terminalComplete) await interrupt(run);
           const turn = await run.terminal;
-          await hydrate();
+          // Interrupted/failed turns must not wait for an outstanding steer ACK.
+          // Stop will close this owned transport; the durable notification stays.
+          if (turn.status === 'completed' && !run.cancelled && !run.error) await Promise.allSettled([...run.requests]);
+          const nativeTurns = await hydrate();
+          for (const entry of projection!.current()) if (entry.turnId === turn.id) rememberDelivery(turn.id, entry.item);
           if (run.error) throw run.error;
           if (turn.status === 'failed') throw new Error(turn.error?.message ?? 'Codex turn failed');
           if (turn.status === 'interrupted' || run.cancelled) {
             run.cancelled = true;
             if (run.delivery) throw new Error('Codex delivery was aborted');
           } else if (turn.status !== 'completed') throw new Error(`Unexpected Codex terminal status: ${turn.status}`);
-          else if (run.delivery) persist({ ...metadata, completed: [...new Set([...metadata.completed, run.delivery.id])] });
+          else {
+            const native = nativeTurns.find(entry => entry.id === turn.id && entry.status === 'completed');
+            const consumed = run.appended.filter(entry => entry.accepted && entry.itemId
+              && native?.items.some(item => item.id === entry.itemId && item.type === 'userMessage')).map(entry => entry.id);
+            persist({ ...metadata, completed: [...new Set([...metadata.completed, ...(run.delivery ? [run.delivery.id] : []), ...consumed])] });
+          }
         } catch (error) {
           if (!run.terminalComplete && run.turnId) {
             run.controller.abort();
@@ -320,6 +348,44 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
         }
       });
       return run.done;
+    },
+    async steer(text, input) {
+      const run = active;
+      if (disposed || !run?.turnId || run.terminalComplete || run.cancelled || run.error
+        || run.appended.some(entry => entry.text === text)) return false;
+      const delivery: InFlightDelivery = { id: input.deliveryId, text, presentation: input.presentation };
+      run.appended.push(delivery);
+      const request = transport.sendRequest<{turnId: string}>('turn/steer', {
+        threadId, expectedTurnId: run.turnId, input: [{type: 'text', text, text_elements: []}],
+      }).then(response => {
+        if (response.turnId !== run.turnId) throw new Error('Codex steered a different native turn');
+        delivery.accepted = true;
+        // Native item notifications may precede the RPC acknowledgement. Bind
+        // only accepted inputs, then refresh that same stable display item.
+        try {
+          for (const entry of projection!.current()) if (entry.turnId === run.turnId) rememberDelivery(entry.turnId, entry.item);
+          const bound = projection!.current().find(entry => entry.item.id === delivery.itemId);
+          if (bound) events!.item(bound.item, bound.turnId, true);
+        } catch (error) {
+          run.error = asError(error); run.controller.abort();
+          if (!run.terminalComplete) void interrupt(run).catch(run.reject);
+          throw error;
+        }
+      });
+      run.requests.add(request);
+      let failure: unknown, endedBeforeRejection = false;
+      try { await request; }
+      catch (error) { failure = error; endedBeforeRejection = run.terminalComplete && !run.error; }
+      finally { run.requests.delete(request); }
+      // The primary delivery reports failed/aborted turns. Appended inputs remain
+      // in their spool and must be eligible for a later explicit resume.
+      try { await run.done; } catch { return false; }
+      if (failure) {
+        if (endedBeforeRejection && failure instanceof CodexRpcError && failure.code === -32600) return false;
+        throw failure;
+      }
+      if (!metadata.completed.includes(delivery.id)) throw new Error('Codex did not confirm consumption of the appended delivery');
+      return true;
     },
     async abort(stopOptions) {
       interactions.clear('aborted');
@@ -373,5 +439,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       response = { ...response, model: id };
     },
   };
+}
+function codexInputText(item: CodexItem): string | undefined {
+  return Array.isArray(item.content) ? item.content.filter(part => part.type === 'text').map(part => part.text).join('') : undefined;
 }
 function asError(error: unknown): Error { return error instanceof Error ? error : new Error(String(error)); }

@@ -1,7 +1,7 @@
 import type { DeliveryPresentation } from '../delivery-presentation.js';
 
 export type CodexItem = { id: string; type: string; [key: string]: unknown };
-export type CodexDelivery = { turnId: string; deliveryId: string; presentation: DeliveryPresentation };
+export type CodexDelivery = { itemId?: string; turnId: string; deliveryId: string; presentation: DeliveryPresentation };
 export type CodexMetadata = { version: 1; context: { text: string; customType: string }[]; deliveries: CodexDelivery[]; completed: string[] };
 export type CodexTurn = { id: string; status: string; error?: { message: string } | null; items: CodexItem[] };
 export type CodexThread = { reasoningEffort?: string | null; model?: string; id: string; path: string | null; historyMode: 'legacy' | 'paginated'; turns: CodexTurn[] };
