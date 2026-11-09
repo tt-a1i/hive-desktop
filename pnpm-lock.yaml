@@ -16,7 +16,7 @@ patchedDependencies:
     hash: 8d8b47fc35dd20b8f75dd05cb70d495405ad825357e8f92239f0aa56610a092a
     path: patches/@lydell__node-pty-win32-x64@1.2.0-beta.15.patch
   '@tt-a1i/hive@2.2.1':
-    hash: d190f5990da9cbc41df491f218f39a73ae8035143582a4eea990d1225568ac69
+    hash: 7c02ce83275d11a54b1fba8504e8006000ef989c8a05b07edd75c116a2bc7bd5
     path: patches/@tt-a1i__hive@2.2.1.patch
 
 importers:
@@ -36,7 +36,7 @@ importers:
         version: 0.1.0
       '@tt-a1i/hive':
         specifier: 2.2.1
-        version: 2.2.1(patch_hash=d190f5990da9cbc41df491f218f39a73ae8035143582a4eea990d1225568ac69)(vite@8.3.6(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
+        version: 2.2.1(patch_hash=7c02ce83275d11a54b1fba8504e8006000ef989c8a05b07edd75c116a2bc7bd5)(vite@8.3.6(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))
       cross-spawn:
         specifier: 7.0.6
         version: 7.0.6
@@ -3150,7 +3150,7 @@ snapshots:
       tailwindcss: 4.3.5
       vite: 8.3.6(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0)
 
-  '@tt-a1i/hive@2.2.1(patch_hash=d190f5990da9cbc41df491f218f39a73ae8035143582a4eea990d1225568ac69)(vite@8.3.6(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))':
+  '@tt-a1i/hive@2.2.1(patch_hash=7c02ce83275d11a54b1fba8504e8006000ef989c8a05b07edd75c116a2bc7bd5)(vite@8.3.6(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.0))':
     dependencies:
       '@lydell/node-pty': 1.2.0-beta.15
       '@noble/ciphers': 2.4.0
