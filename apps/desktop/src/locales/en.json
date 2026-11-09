@@ -1094,5 +1094,7 @@
   "最近一次用量不是实时上下文占用；缓存输入和推理输出分别属于输入、输出的子集。重新连接后以原生通知为准。": "Latest usage is separate from live context occupancy. Cached input and reasoning output are subsets of input and output. After reconnecting, native notifications are authoritative.",
   "本次连接尚未收到原生回合统计；历史不会被重新计为零。": "This connection has not received native turn statistics. Historical usage is not reset to zero.",
   "主循环统计不含子 Agent 和辅助调用；模型累计取最新原生结果，不逐轮相加。原生报告有自身的恢复及重置边界，不是订阅额度或账单。": "Main-loop statistics exclude subagents and auxiliary calls. Model totals use the latest native result rather than summing turns. Native reports have their own restore/reset boundaries; they are not subscription quota or billing.",
-  "该原生后端未提供用量读取接口。": "This native backend does not provide a usage interface."
+  "该原生后端未提供用量读取接口。": "This native backend does not provide a usage interface.",
+  "从原生 Codex 线程读取；档位由当前模型提供。": "Read from the native Codex thread. Available levels come from the current model.",
+  "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。": "Shows the native applied effort. Environment, organization policy, or model capabilities may adjust the requested value."
 }

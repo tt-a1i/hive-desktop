@@ -36,40 +36,46 @@ impl HiveApp {
             .map(|state| format!("{} · {}",tr("推理"),label(&state.level)))
             .unwrap_or_else(|| tr("推理强度").into());
         let content = v_flex()
+            .id("reasoning-picker-content")
+            .role(Role::Group)
+            .aria_label(tr("会话推理强度"))
             .min_w_0()
             .gap_2()
             .child(
-                div()
+                crate::text_reading::selectable_text("reasoning-heading", tr("会话推理强度"))
                     .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(tr("会话推理强度")),
+                    .font_weight(FontWeight::SEMIBOLD),
             )
             .when(self.reasoning_picker.loading, |view| {
-                view.child(div().text_sm().child(tr("正在读取原生设置…")))
+                view.child(crate::text_reading::selectable_text("reasoning-loading", tr("正在读取原生设置…")).text_sm())
             })
             .when_some(self.reasoning_picker.error.as_ref(), |view, error| {
                 view.child(
-                    div()
+                    crate::text_reading::selectable_text("reasoning-error", error.clone())
                         .text_sm()
-                        .text_color(Color::Error.get(cx))
-                        .child(error.clone()),
+                        .text_color(Color::Error.get(cx)),
                 )
             })
             .when_some(self.reasoning_picker.state.as_ref(), |view, state| {
                 view.when_some(state.description.as_ref(), |view, text| {
+                    // Translate only metadata owned by Hive's native adapters.
+                    // Preserve unknown/provider diagnostics verbatim.
+                    let text = match text.as_str() {
+                        "从原生 Codex 线程读取；档位由当前模型提供。" => tr("从原生 Codex 线程读取；档位由当前模型提供。"),
+                        "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。" => tr("读取原生实际强度；环境、组织限制或模型能力可能调整请求值。"),
+                        _ => text.as_str(),
+                    };
                     view.child(
-                        div()
+                        crate::text_reading::selectable_text("reasoning-description", text.to_owned())
                             .text_xs()
-                            .text_color(Color::Muted.get(cx))
-                            .child(text.clone()),
+                            .text_color(Color::Muted.get(cx)),
                     )
                 })
                 .when(state.levels.len() < 2, |view| {
                     view.child(
-                        div()
+                        crate::text_reading::selectable_text("reasoning-unavailable", tr("当前模型没有可调推理选项。"))
                             .text_sm()
-                            .text_color(Color::Muted.get(cx))
-                            .child(tr("当前模型没有可调推理选项。")),
+                            .text_color(Color::Muted.get(cx)),
                     )
                 })
                 .children(state.levels.iter().enumerate().map(|(i, level)| {
