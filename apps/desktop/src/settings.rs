@@ -332,7 +332,7 @@ impl HiveApp {
                         SettingsSection::Remote => content.id("settings-remote-container").child(crate::focus_scroll::Viewport::new("remote-viewport", &self.remote.scroll, v_flex().flex_1().min_h_0().min_w_0().id("settings-remote-content").overflow_y_scroll().track_scroll(&self.remote.scroll).child(self.render_remote_settings(cx)))),
                         SettingsSection::Chat => content.id("settings-chat-content").overflow_y_scroll().child(self.render_chat_settings(cx)),
                         SettingsSection::Models => content.id("settings-model-config-content").child(self.render_pi_models(cx)),
-                        SettingsSection::PiAccounts => content.id("settings-pi-accounts").overflow_y_scroll().track_scroll(&self.pi_accounts.scroll).child(self.render_pi_accounts(cx)),
+                        SettingsSection::PiAccounts => content.id("settings-pi-accounts-container").child(crate::focus_scroll::Viewport::new("pi-accounts-viewport", &self.pi_accounts.scroll, v_flex().id("settings-pi-accounts").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.pi_accounts.scroll).child(self.render_pi_accounts(cx)))),
                         SettingsSection::Appearance => content.id("settings-appearance-content").overflow_y_scroll().child(self.render_appearance_settings(cx)),
                         SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()
                     .child(h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))

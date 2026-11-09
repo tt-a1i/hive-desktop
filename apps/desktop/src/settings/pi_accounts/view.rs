@@ -25,17 +25,17 @@ impl HiveApp {
             .filter(|provider| provider.matches(&query))
             .collect::<Vec<_>>();
         v_flex().gap_4()
-            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("连接内置 Pi 使用的账号，与 Pi CLI 共用登录信息。外部 Agent 使用各自的账号配置。")))
-            .child(h_flex().gap_2().flex_wrap()
+            .child(crate::text_reading::selectable_text("pi-accounts-description", tr("连接内置 Pi 使用的账号，与 Pi CLI 共用登录信息。外部 Agent 使用各自的账号配置。")).text_sm().text_color(Color::Secondary.get(cx)))
+            .child(crate::focus_scroll::Reveal::new("pi-accounts-actions-reveal", &accounts.scroll, h_flex().gap_2().flex_wrap()
                 .child(Button::new("reload-pi-accounts").ghost().compact().label(if accounts.loading { tr("处理中…") } else { tr("刷新账号状态") }).disabled(disabled)
                     .on_click(cx.listener(|this, _, window, cx| this.pi_auth_request("pi.auth.providers", json!({}), window.window_handle(), cx))))
                 .when_some(accounts.agent_dir.clone(), |row, dir| row.child(Button::new("open-pi-config-folder").ghost().compact().label(tr("打开 Pi 配置目录")).tooltip(dir.clone())
-                    .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&dir))))))
-            .child(Input::new(&accounts.search).aria_label(tr("搜索 Pi 提供商")).disabled(accounts.providers.is_none()))
+                    .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&dir)))))))
+            .child(crate::focus_scroll::Reveal::new("pi-accounts-search-reveal", &accounts.scroll, Input::new(&accounts.search).aria_label(tr("搜索 Pi 提供商")).disabled(accounts.providers.is_none())))
             .when(accounts.providers.is_some(), |view| view.child(h_flex().items_center().justify_between().gap_2()
-                .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("{} providers",matching.len()) } else { format!("{} 个提供商", matching.len()) }))
+                .child(crate::text_reading::selectable_text("pi-provider-count", if english() { format!("{} providers",matching.len()) } else { format!("{} 个提供商", matching.len()) }).text_xs().text_color(Color::Secondary.get(cx)))
                 .when(!query.is_empty(), |row| row.child(Button::new("clear-pi-provider-search").ghost().compact().label(tr("清除搜索")).on_click(cx.listener(|this, _, window, cx| this.pi_accounts.search.update(cx, |input, cx| { input.set_value("", window, cx); input.focus_handle(cx).focus(window, cx); })))))))
-            .when_some(accounts.message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm().child(message)))
+            .when_some(accounts.message.as_ref().map(|notice| notice.text()), |view, message| view.child(crate::text_reading::selectable_text("pi-accounts-notice", message).p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm()))
             .when_some(accounts.login.clone(), |view, login| {
                 let running = login.state == "running";
                 let api = login.auth_type == "api_key";
@@ -76,10 +76,10 @@ impl HiveApp {
                             }))))
                     }))
             })
-            .when(accounts.providers.is_none(), |view| view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(if accounts.loading { tr("正在读取 Pi 账号…") } else { tr("点击刷新读取可连接的账号。") })))
-            .when(accounts.providers.is_some() && matching.is_empty(), |view| view.child(div().py_6().text_sm().text_color(Color::Secondary.get(cx)).child(tr("没有匹配的提供商。可以换个名称搜索，或清除搜索查看全部。"))))
+            .when(accounts.providers.is_none(), |view| view.child(crate::text_reading::selectable_text("pi-accounts-loading", if accounts.loading { tr("正在读取 Pi 账号…") } else { tr("点击刷新读取可连接的账号。") }).text_sm().text_color(Color::Secondary.get(cx))))
+            .when(accounts.providers.is_some() && matching.is_empty(), |view| view.child(crate::text_reading::selectable_text("pi-accounts-empty", tr("没有匹配的提供商。可以换个名称搜索，或清除搜索查看全部。")).py_6().text_sm().text_color(Color::Secondary.get(cx))))
             .children(matching.into_iter().map(|provider| self.render_pi_provider(provider, cx)))
-            .child(div().pt_2().text_xs().text_color(Color::Muted.get(cx)).child(tr("本机保存的配置与 Pi 共用；环境变量等配置仍可生效。保存状态不代表已连接服务端。自定义模型可在“模型与接口”中编辑。")))
+            .child(crate::text_reading::selectable_text("pi-accounts-storage-note", tr("本机保存的配置与 Pi 共用；环境变量等配置仍可生效。保存状态不代表已连接服务端。自定义模型可在“模型与接口”中编辑。")).pt_2().text_xs().text_color(Color::Muted.get(cx)))
     }
 }
 
@@ -108,7 +108,16 @@ impl HiveApp {
     ) -> impl IntoElement + use<> {
         let id = provider.id.clone();
         let disabled = !self.connected || self.pi_accounts.loading || self.pi_accounts.running();
-        v_flex()
+        let status = match provider.stored_type.as_deref() {
+            Some("oauth") => tr("已保存订阅账号"),
+            Some("api_key") => tr("已保存 API 配置"),
+            _ => tr("未保存本机凭据"),
+        };
+        let field = v_flex()
+            .id(SharedString::from(format!("pi-provider-{id}")))
+            .role(Role::Group)
+            .aria_label(format!("{} · {status}", provider.name))
+            .min_w_0()
             .gap_2()
             .py_3()
             .border_b_1()
@@ -119,20 +128,13 @@ impl HiveApp {
                     .items_center()
                     .flex_wrap()
                     .child(
-                        div()
+                        crate::text_reading::selectable_text(SharedString::from(format!("pi-provider-{id}-name")), provider.name.clone())
                             .flex_1()
                             .min_w_0()
                             .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(provider.name.clone()),
+                            .font_weight(FontWeight::SEMIBOLD),
                     )
-                    .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(
-                        match provider.stored_type.as_deref() {
-                            Some("oauth") => tr("已保存订阅账号"),
-                            Some("api_key") => tr("已保存 API 配置"),
-                            _ => tr("未保存本机凭据"),
-                        },
-                    )),
+                    .child(crate::text_reading::selectable_text(SharedString::from(format!("pi-provider-{id}-status")), status).text_xs().text_color(Color::Secondary.get(cx))),
             )
             .child(
                 h_flex()
@@ -155,11 +157,7 @@ impl HiveApp {
                             .tooltip(method.label.clone())
                             .accessibility_label(format!(
                                 "{} · {}",
-                                if kind == "oauth" {
-                                    tr("订阅登录")
-                                } else {
-                                    tr("API 配置")
-                                },
+                                label,
                                 provider.name
                             ))
                             .disabled(disabled)
@@ -194,6 +192,7 @@ impl HiveApp {
                                 })),
                         )
                     }),
-            )
+            );
+        crate::focus_scroll::Reveal::new(SharedString::from(format!("pi-provider-{}-reveal", provider.id)), &self.pi_accounts.scroll, field)
     }
 }
