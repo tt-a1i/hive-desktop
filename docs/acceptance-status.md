@@ -68,3 +68,5 @@ Codex活跃主控的系统通知已接入同回合投递，针对上文工作流
 一对多新增真实证据：原始Codex/Terra主控亲自启动Promise.all双Worker，独立输入/产物49/3及61/4，两派单显式reported、工具活动区间重叠、主控唯一final，三会话冷恢复pending0。Mac原生核对三会话/双分支结果/产物并正常退出。见[两位Worker](validation/2026-11-09-two-worker-live.md)。源码运行，不扩大为包内/Windows/混合厂商或完整产品验收。
 
 双成员工作流停止新增修复：真实停止后原代码仍保留已取消任务pending1；现沿Hive账本终态/所有权清理cancelled与reported派单，保留用户/通知/汇报/未结/其他成员输入。真HTTP/SQLite/SDK回归先红后绿，可控协议双子进程停止/冷恢复pending0及旧故障数据Mac原生补验通过。见[取消队列](validation/2026-11-09-cancelled-dispatch-queue.md)。本轮无模型推理，候选ZIP尚未纳入，完整目标开放。
+
+工作流停止新增原生实证：实际聊天/工具创建两位可控协议成员，从详情点击停止，真实run/派单/进程/队列与冷恢复核对通过。修正停止误显示为红色错误、取消原因误称汇报，中英文原生对照及真实工作流失败保留红色通过。见[原生停止](validation/2026-11-09-native-workflow-stop.md)。本轮无厂商推理，候选包尚未更新，完整目标开放。

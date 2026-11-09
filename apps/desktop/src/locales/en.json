@@ -527,6 +527,8 @@
   "运行结果": "Run result",
   "运行详情尚未读取，请刷新重试。": "Run details have not loaded. Refresh to retry.",
   "运行错误": "Run error",
+  "停止原因": "Stop reason",
+  "中断原因": "Interruption reason",
   "还没有运行日志。": "No run logs yet.",
   "环境变量（覆盖应用设置）": "Environment variable (overrides app settings)",
   "应用设置": "App settings",

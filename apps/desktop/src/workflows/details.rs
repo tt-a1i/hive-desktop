@@ -22,6 +22,14 @@ impl HiveApp {
         };
         let disabled = !self.connected || self.workflows.acting || !self.workspace_writes_allowed();
         let id = run.id.clone();
+        let interrupted = matches!(run.status.as_str(), "stopped" | "interrupted");
+        let result_heading = if run.error.is_some() {
+            match run.status.as_str() {
+                "stopped" => tr("停止原因"),
+                "interrupted" => tr("中断原因"),
+                _ => tr("运行错误"),
+            }
+        } else { tr("运行结果") };
         let result = run.error.clone().unwrap_or_else(|| json(&run.result));
         let log_text = self
             .workflows
@@ -109,11 +117,7 @@ impl HiveApp {
                                         .flex_1()
                                         .text_sm()
                                         .font_weight(FontWeight::SEMIBOLD)
-                                        .child(if run.error.is_some() {
-                                            tr("运行错误")
-                                        } else {
-                                            tr("运行结果")
-                                        }),
+                                        .child(result_heading),
                                 )
                                 .child(
                                     Button::new("workflow-copy-result")
@@ -133,8 +137,11 @@ impl HiveApp {
                         )
                         .child(
                             div()
+                                .id("workflow-result-text")
+                                .role(Role::Label)
+                                .aria_label(format!("{result_heading}: {result}"))
                                 .text_sm()
-                                .when(run.error.is_some(), |view| {
+                                .when(run.error.is_some() && !interrupted, |view| {
                                     view.text_color(Color::Error.get(cx))
                                 })
                                 .child(result),
@@ -261,7 +268,10 @@ impl HiveApp {
             })
             .child(div().text_sm().child(dispatch.text.clone()))
             .when_some(dispatch.report_text.clone(), |view, text| {
-                view.child(div().text_sm().child(format!("{}: {text}",tr("汇报"))))
+                let label = if dispatch.status == "cancelled" { tr("取消原因") } else { tr("汇报") };
+                view.child(div().id(SharedString::from(format!("workflow-dispatch-outcome-{}", dispatch.id)))
+                    .role(Role::Label).aria_label(format!("{label}: {text}"))
+                    .text_sm().child(format!("{label}: {text}")))
             })
             .when_some(dispatch.last_pty_line.clone(), |view, text| {
                 view.child(

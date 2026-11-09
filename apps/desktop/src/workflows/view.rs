@@ -59,7 +59,7 @@ impl HiveApp {
                                     .when_some(parent,|view,parent|view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{}: {parent}",tr("子流程 · 父运行")))))
                                     .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("{} · {} agents · Started {}",basename(&run.script_path),run.agent_count,relative_time(run.started_at)) } else { format!("{} · {} 位执行成员 · {}开始",basename(&run.script_path),run.agent_count,relative_time(run.started_at)) }))
                                     .when_some(run.phase.clone(),|view,phase|view.child(div().text_sm().child(format!("{}: {phase}",tr("阶段")))))
-                                    .when_some(run.error.clone(),|view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error))))
+                                    .when_some(run.error.clone(),|view,error|view.child(div().text_sm().text_color(if matches!(run.status.as_str(),"stopped"|"interrupted") {Color::Secondary.get(cx)} else {Color::Error.get(cx)}).child(error))))
                                 .on_click(cx.listener(move|this,_,_,cx|this.select_workflow(Some(id.clone()),cx)))
                         }))
                         .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("定时计划")))
