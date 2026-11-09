@@ -87,10 +87,10 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 “设置 → 远程接入”已接入原有状态、配对、设备和审计；真实回环配对/撤销恢复通过，原生点击、真实网关及新包仍待验收，见 [远程配置记录](docs/validation/2026-11-09-remote-settings.md)。
 
-界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-09-shutdown-candidate.md)。current ZIP仍为1acd805，候选没有推广。
+界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-09-entry-candidate.md)。current ZIP仍为1acd805，候选没有推广。
 
 完整目标逐项证据、明确缺口及候选包状态见 [验收总表](docs/acceptance-status.md)。
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-最新1534986候选已重新冻结依赖，纳入工作流结果优先、紧凑导航、成员派单计数/窄窗操作和退出中断修复。四组包检查、实际包内双成员及追加派单、退出/冷恢复通过，见[最新候选实证](docs/validation/2026-11-09-shutdown-candidate.md)。本轮使用本地协议对端，无新厂商推理；Windows原生与完整产品仍待，current未推广。
+最新d4c57a1候选已整合首次进入引导、项目/主控入口、可读程序配置、键盘滚动及聊天打开状态修复。冻结依赖与当前runtime逐项核对，新ZIP独立解压后通过三组包检查及实际首次配置/项目创建/草稿转移/Terra选择/退出冷恢复，见[最新候选实证](docs/validation/2026-11-09-entry-candidate.md)。本轮无模型推理，Windows原生与完整产品仍待，current未推广；保留一个可直接打开的候选应用。

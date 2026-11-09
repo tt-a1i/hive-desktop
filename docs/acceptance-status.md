@@ -1,6 +1,6 @@
 # 完整目标的当前验收状态
 
-2026-11-09。目标仍是可日用、配置与细节体验对标Cindy/Maka的完整macOS和Windows客户端，复用Hive Web协作；以下按原目标列出证据及缺口，不能用已实现项目反过来缩小范围，也不表示表中已经穷尽所有对标细节。
+2026-11-09。目标仍是可日用、融合T3 Code/Beluga/Cindy体验并参考Maka架构的完整macOS和Windows客户端，复用Hive Web协作；以下按原目标列出证据及缺口，不能用已实现项目反过来缩小范围，也不表示表中已经穷尽所有对标细节。
 
 ## 按原目标核对
 
@@ -14,18 +14,18 @@
 | 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；源码Mac导出复制/失败重试/窄窗/AX提示，以及导出和文件预览Home/End/双向翻页、中文文件选区复制已取得实证，见[原生补验](validation/2026-11-09-native-resume.md) | 成员职责另已修复AX正文、首尾/翻页和选区复制，102行/3,531字符在Mac实证，见[成员阅读](validation/2026-11-09-member-responsibilities.md)；已纳入dd0230a候选并补包内首尾/翻页/窄窗验证，见[包内证据](validation/2026-11-09-stop-candidate.md)。真实Codex原生两条排队/停止/冷恢复/显式继续已补验，并修复额外恢复唤醒，见[排队恢复](validation/2026-11-09-queued-codex-ui.md)。VoiceOver播报、滚轮/完整键盘/字号、部分在途时序、系统输入与可访问性矩阵未完成；局部窄窗不推广到所有页面 |
 | 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言偏好与累计1046条主要页面/配置/聊天查找/协作/资源终端及静态和上下文错误文案已接入，模型编辑已补固定操作/提示、Tab与空格保存及冷读回，见[配置窄窗](validation/2026-11-09-model-editor-footer.md)，已纳入2b3c07e候选并补包内配置/退出恢复，见[配置候选](validation/2026-11-09-model-candidate.md)；模型/接口编辑另已补焦点与标签显露、正反Tab和实际滚动，见[滚动证据](validation/2026-11-09-model-editor-scroll.md)，新增/覆盖草稿及保存、英文17字号已补窄窗实测，完整字号/可访问性/Windows等边界仍在[#20](https://github.com/tt-a1i/hive-desktop/issues/20)；完整页面迁移、真实切换/草稿/窄窗仍未完成，见[语言记录](validation/2026-11-09-interface-language.md)、[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生设置/开关/配对码/拒绝已补包内实证，确认/撤销GUI、真实网关和Windows仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)及[最新候选](validation/2026-11-09-settled-candidate.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流删除最终按钮等仍待验收 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；Mac EPERM回归先红后绿；最新源码Cmd+Q、冷启动草稿/语言恢复、窗口关闭均exit0并清理后台，见[原生补验](validation/2026-11-09-native-resume.md) | 旧21544/54534已不在进程表，其退出原因未证实；候选包和Windows矩阵未完成，不承诺恢复任意中断工具或exactly-once |
-| macOS可实际使用 | current为1acd805；候选1534986重新冻结依赖，纳入结果顺序/更多导航/成员计数/退出中断。四组gate与实际包内本地peer双成员+追加派单、退出和cold pending0通过，见[最新候选](validation/2026-11-09-shutdown-candidate.md)；此前真实Terra模型证据按原范围保留 | 完整页面、输入法、远程/工作流等矩阵未完成；候选尚未作为current推广 |
+| macOS可实际使用 | current为1acd805；候选d4c57a1整合入口/配置/可读性修复，三组包gate、实际首次配置/项目/草稿/模型与冷恢复通过，见[最新候选](validation/2026-11-09-entry-candidate.md)；此前真实Terra模型证据按原范围保留 | 完整页面、输入法、远程/工作流等矩阵未完成；候选尚未作为current推广 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户明确暂时无Windows机器、先继续其他实施；不处理CI不等于取消Windows目标 |
 | 完整、精美、Cindy/Maka级体验 | 已有固定源码参考与安装Cindy局部原生走查，并实施多轮聊天/配置/导航改进 | 整体对标仍未证实；还须按实际安装体验做全流程及边角检查，不能以局部截图或当前清单宣称一致 |
 | 可安装与交付 | 有冻结Node/native依赖的Mac便携开发包及实际PTY/HTTP/SQLite检查 | 未签名/未公证；正式发行、完整安装体验与两个平台最终验收未完成 |
 
 ## 本轮候选包
 
-canonical candidate已更新为1534986f992fe011cef94706618bf2ee2acf40df，157,476,665字节。ZIP SHA256为e353c74c0a0343f651f41bfe039b47f9c644872f54888e7612277d54d0190529，原生程序SHA256为7bbceffa275433e2058844258a951e674dc71d0d9d9906ecdc5421c53f1f21ad。
+canonical candidate已更新为d4c57a1bbb5338a9761ae9c99519c72983c27a5f，159,575,042字节。ZIP SHA256为5bc0f9f36c196d2e0b450d473f6128abe90555b7a37240a0a506307ec57f6d6e，原生程序SHA256为406e2d91ed573d1e78e75ba33941539284f6af2377f247538f27bd1d97c36028。
 
-Hive补丁变化后重新进行锁定生产deploy、官方Node校验、ZIP独立解压及28,863个文件/链接匹配；四组包检查含新workflow-shutdown通过。实际包原生窗口双成员+额外派单2/1、窄窗操作、运行中Cmd+Q/cold interrupted、三dispatch cancelled、两成员history pending0通过。见[最新候选](validation/2026-11-09-shutdown-candidate.md)。本轮厂商侧为本地peer，不扩大此前真实Codex/Terra证据。
+核对生产依赖未变后复用1534986冻结依赖，完整替换当前dist/原生程序；112个runtime文件和28,863个解压条目匹配，实际仅原生程序字节变化。三组包检查（运行、模型、派单/工作流退出）通过；独立包真实窗口首次配置/项目创建/草稿转移/Terra选择、两次正常退出与整个后台冷恢复通过。无模型请求；见[最新候选](validation/2026-11-09-entry-candidate.md)。此前真实模型和其他后端/平台证据仍按原范围保留。
 
-只替换candidate，current仍1acd805且哈希不变。已在确认无应用/测试占用后清理本轮deployed/bundle/extracted副本，仅保留ZIP和轻量证据。未签名/未公证，Windows暂无运行环境，用户已确认先继续其他实施；完整产品仍未完成。后续历史条目“候选未纳入”以本节具体纳入范围更新，不扩大其他验收。
+只替换candidate，current仍1acd805且哈希重新核对不变。清理592MiB重复中间目录，保留一个可直接打开的候选应用、ZIP和证据。未签名/未公证，Windows暂无运行环境；完整产品仍未完成。后续历史条目“候选未纳入”以本节具体纳入范围更新，不扩大其他验收。
 
 ## 当前阻断与仍可推进的工作
 
