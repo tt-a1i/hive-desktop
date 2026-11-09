@@ -80,3 +80,5 @@ Codex活跃主控的系统通知已接入同回合投递，针对上文工作流
 成员卡片现使用Hive真实pending_task_count显示未结派单数，并补AX分组及窄窗整组操作。实际双Worker和追加派单验证1→2/另一人1，中英文单复数、会话往返/筛选、停止与进程退出通过，见[成员工作量](validation/2026-11-09-member-workload.md)。本轮无模型推理，Windows仅编译；运行中退出记录failed/runtime closing的新生命周期问题仍待核对。候选未更新，完整目标开放。
 
 运行中正常退出被误记失败已补根因修复：Hive runner关闭时中断执行、取消等待/脚本Worker并排空清理后再关存储。真实HTTP/SQLite/协议子进程回归覆盖双Worker、嵌套、纯计算及既有三种终态，Mac实际Cmd+Q/冷启动显示已中断通过，见[关闭工作流](validation/2026-11-09-workflow-shutdown.md)。未做新模型或Windows原生验证，旧错误记录不重写；候选尚未纳入，完整目标继续。
+
+派单详情新增原生语义修复：任务/汇报/取消原因、关联责任、问答与回复引用现可从AX读取，中英文真实Hive消息/显式report记录已核对；主控与成员草稿在派单往返、跨项目和退出重开后分别保留。见[派单可读性](validation/2026-11-09-dispatch-accessibility.md)。本轮无模型推理，Windows仅编译，完整VoiceOver/输入法仍待，候选1534986未更新。
