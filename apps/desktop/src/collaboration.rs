@@ -1,3 +1,4 @@
+mod view;
 mod cards;
 mod live;
 mod tasks;
@@ -52,6 +53,8 @@ pub(crate) struct Tasks {
 }
 pub struct Collaboration {
     pub visible: bool,
+    pub navigation_focus: FocusHandle,
+    pub focus_navigation: bool,
     pub tasks: Entity<TextViewState>,
     pub task_text: String,
     pub task_loading: bool,
@@ -88,6 +91,8 @@ impl Collaboration {
     pub fn new(cx: &mut Context<HiveApp>) -> Self {
         Self {
             visible: false,
+            navigation_focus: cx.focus_handle(),
+            focus_navigation: false,
             tasks: cx.new(|cx| TextViewState::markdown("", cx)),
             task_text: String::new(),
             task_loading: false,
@@ -125,6 +130,7 @@ impl Collaboration {
 impl HiveApp {
     pub fn close_collaboration(&mut self) {
         self.collaboration.visible = false;
+        self.collaboration.focus_navigation = false;
         self.collaboration.task_generation += 1;
         self.collaboration.task_loading = false;
         self.collaboration.task_refreshing = false;
@@ -143,6 +149,7 @@ impl HiveApp {
         self.member_panel = false;
         self.collaboration.visible = true;
         self.reload_collaboration(cx);
+        self.collaboration.focus_navigation = true;
     }
     pub fn reload_collaboration(&mut self, cx: &mut Context<Self>) {
         self.collaboration.workflow_origin = false;
@@ -296,6 +303,7 @@ impl HiveApp {
         c.detail_scroll = ScrollHandle::new();
         c.detail_error = None;
         c.selected = Some(item);
+        c.focus_navigation = true;
         c.detail_loading = false;
         c.messages.clear();
         c.responsibilities.clear();

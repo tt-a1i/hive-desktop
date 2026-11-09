@@ -1,6 +1,7 @@
 use super::Tasks;
 use crate::{app::HiveApp, language::tr};
 use crate::palette::Color;
+use crate::focus_scroll::Reveal;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -131,7 +132,7 @@ impl HiveApp {
         };
         let base = self.collaboration.task_text.clone();
         self.create_task_editor(
-            workspace,
+            workspace.clone(),
             SavedTaskDraft {
                 input: base.clone(),
                 base,
@@ -140,6 +141,10 @@ impl HiveApp {
             window,
             cx,
         );
+        if let Some(draft) = self.collaboration.task_drafts.get(&workspace) {
+            let focus = draft.input.read(cx).focus_handle(cx);
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        }
         self.schedule_draft_save(cx);
         cx.notify();
     }
@@ -263,7 +268,7 @@ impl HiveApp {
             .w_full()
             .min_w_0()
             .gap_3()
-            .child(
+            .child(Reveal::new("task-document-toolbar-reveal", &self.collaboration_scroll,
                 h_flex()
                     .gap_2()
                     .justify_between()
@@ -288,7 +293,7 @@ impl HiveApp {
                                 ),
                         )
                     }),
-            )
+            ))
             .when_some(draft, |view, draft| {
                 let input = draft.input.clone();
                 view.when_some(draft.conflicting_content.clone(), |view, latest| {
@@ -300,7 +305,7 @@ impl HiveApp {
                             .p_3()
                             .rounded_lg()
                             .bg(Color::Inset.get(cx))
-                            .child(
+                            .child(Reveal::new("task-conflict-copy-reveal", &self.collaboration_scroll,
                                 h_flex()
                                     .items_center()
                                     .justify_between()
@@ -321,7 +326,7 @@ impl HiveApp {
                                                 ))
                                             })),
                                     ),
-                            )
+                            ))
                             .child(
                                 div()
                                     .id("latest-task-content")
@@ -357,7 +362,7 @@ impl HiveApp {
                             .child(error),
                     )
                 })
-                .child(
+                .child(Reveal::new("task-draft-actions-reveal", &self.collaboration_scroll,
                     h_flex()
                         .flex_wrap()
                         .gap_2()
@@ -389,7 +394,7 @@ impl HiveApp {
                                     cx.listener(|this, _, _, cx| this.discard_task_draft(cx)),
                                 ),
                         ),
-                )
+                ))
             })
             .when(draft.is_none(), |view| {
                 view.when(self.collaboration.task_loading, |view| {

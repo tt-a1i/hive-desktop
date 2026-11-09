@@ -329,7 +329,7 @@ impl HiveApp {
                             .compact()
                             .label(tr("成员会话"))
                             .on_click(cx.listener(
-                                move |this, _, _, cx| this.open_member_session(session.clone(), cx),
+                                move |this, _, window, cx| this.open_member_session(session.clone(), window, cx),
                             )),
                         )
                     }),

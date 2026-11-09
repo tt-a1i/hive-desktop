@@ -539,7 +539,7 @@ impl HiveApp {
         self.show_session(id, cx);
     }
 
-    pub(crate) fn open_member_session(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(crate) fn open_member_session(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         use crate::app::ConversationSource;
         if !self.workspace_writes_allowed() || !self.sessions.iter().any(|s| s.id == id) {
             return;
@@ -566,6 +566,8 @@ impl HiveApp {
                 .push(ConversationSource::Session(current.id.clone()));
         }
         self.show_session(id, cx);
+        let focus = self.input.read(cx).focus_handle(cx);
+        window.on_next_frame(move |window, cx| focus.focus(window, cx));
     }
 
     pub(crate) fn show_session(&mut self, id: String, cx: &mut Context<Self>) {

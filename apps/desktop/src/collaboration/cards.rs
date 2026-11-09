@@ -1,4 +1,5 @@
 use super::Dispatch;
+use crate::focus_scroll::Reveal;
 use crate::{app::HiveApp, palette::Color, language::{english,tr}};
 use gpui_kit::{
     component::{
@@ -31,7 +32,7 @@ impl HiveApp {
         let owner = self.agent_name(&dispatch.to_agent_id);
         let state = super::dispatch_state(&dispatch.state);
         let text = excerpt(&dispatch.text);
-        Button::new(("dispatch", index))
+        Reveal::new(format!("dispatch-{}-reveal", dispatch.id), &self.collaboration_scroll, Button::new(("dispatch", index))
             .ghost()
             .w_full()
             .min_w_0()
@@ -79,7 +80,7 @@ impl HiveApp {
                                         .flex_shrink_0()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
-                                        .child(if english() { format!("{} artifacts", dispatch.artifacts.len()) } else { format!("{} 项产物", dispatch.artifacts.len()) }),
+                                        .child(if english() { format!("{} {}", dispatch.artifacts.len(), if dispatch.artifacts.len() == 1 { "artifact" } else { "artifacts" }) } else { format!("{} 项产物", dispatch.artifacts.len()) }),
                                 )
                             }),
                     )
@@ -120,6 +121,6 @@ impl HiveApp {
                         },
                     ),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx)))
+            .on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx))))
     }
 }
