@@ -35,7 +35,14 @@ impl HiveApp {
         });
         let window = window.window_handle();
         let connection = self.connection_generation;
-        cx.spawn(async move |this, cx| match receiver.await {
+        cx.spawn(async move |this, cx| {
+            let result = receiver.await;
+            let _ = window.update(cx, |_, window, cx| {
+                if this.update(cx, |this, _| this.connection_generation == connection && !this.closing).unwrap_or(false) {
+                    window.activate_window();
+                }
+            });
+            match result {
             Ok(Ok(Some(paths))) => {
                 if let Some(path) = paths.first() {
                     if let Some(path) = path.to_str() {
@@ -80,6 +87,7 @@ impl HiveApp {
                     this.error = Some(crate::app::ErrorNotice::Detail("文件夹选择器已关闭",error.to_string()));
                     cx.notify();
                 });
+            }
             }
         })
         .detach();

@@ -166,7 +166,7 @@ impl HiveApp {
                     }
                     let id = workspace.id.clone(); this.workspaces.push(workspace); this.select_workspace(id, cx);
                     this.focus_project_input = true;
-                    let _ = window.update(cx, |_, window, cx| {
+                    let _ = window.update(cx, |_, window, _cx| {
                         if window.viewport_size().width < px(820.) { this.sidebar_open = false; }
                     });
                 },
