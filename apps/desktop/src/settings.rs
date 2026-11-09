@@ -311,7 +311,7 @@ impl HiveApp {
             self.sidebar_open = false;
         }
         if let Some(focus) = self.preferences_return_focus.take() {
-            focus.focus(window, cx);
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }
         cx.notify();
     }

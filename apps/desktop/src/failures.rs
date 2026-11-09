@@ -55,13 +55,13 @@ impl HiveApp {
             crate::protocol::Backend::PiRpc => Some("pi"),
         };
         h_flex().min_w_0().gap_2().flex_wrap()
-            .when_some(backend, |row, backend| row.child(Button::new("repair-agent-program").ghost().compact()
+            .when_some(backend, |row, backend| row.child(Button::new("repair-agent-program").track_focus(&self.repair_program_focus).ghost().compact()
                 .label(tr("外部程序设置")).disabled(disabled)
                 .on_click(cx.listener(move |this, _, window, cx| this.open_program_setup(backend, window, cx)))))
             .when(backend.is_none(), |row| row.children([
-                ("repair-pi-accounts", SettingsSection::PiAccounts, tr("内置 Pi 账号")),
-                ("repair-pi-models", SettingsSection::Models, tr("模型与接口")),
-            ].into_iter().map(|(id, section, label)| Button::new(id).ghost().compact().label(label).disabled(disabled)
+                ("repair-pi-accounts", SettingsSection::PiAccounts, tr("内置 Pi 账号"), self.repair_accounts_focus.clone()),
+                ("repair-pi-models", SettingsSection::Models, tr("模型与接口"), self.repair_models_focus.clone()),
+            ].into_iter().map(|(id, section, label, focus)| Button::new(id).track_focus(&focus).ghost().compact().label(label).disabled(disabled)
                 .on_click(cx.listener(move |this, _, window, cx| { this.settings_section = section; this.open_settings(window, cx); })))))
             .into_any_element()
     }
