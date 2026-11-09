@@ -267,6 +267,7 @@ export class Chats implements StructuredSessionPort {
           wasBusy = busy;
         },
       });
+      this.pruneReportedDispatches(record, queue);
       if (earlyFailure) throw earlyFailure;
       chat = { handle, queue, aborted: false, ...(reasoningFailure && {reasoningFailure}) };
       this.live.set(record.id, chat);
@@ -689,8 +690,21 @@ export class Chats implements StructuredSessionPort {
     const paused = chat.queue.pause();
     await chat.handle.abort({ settleTools: true });
     await paused;
-    await chat.handle.dispose();
-    this.live.delete(id);
+    try {
+      // Hive retirement may interrupt the remaining native turn after report
+      // commits. Its task input must not become runnable again on cold resume.
+      if (!this.closing) this.pruneReportedDispatches(this.index.get(id), chat.queue);
+    } finally {
+      await chat.handle.dispose();
+      this.live.delete(id);
+    }
+  }
+  private pruneReportedDispatches(record: ChatRecord, queue: DeliveryQueue): void {
+    if (!record.agentId) return;
+    const settled = queue.pending.filter(item => item.presentation?.origin === 'dispatch'
+      && item.presentation.dispatchId
+      && this.hive.isReportedDispatch(record.workspaceId, record.agentId!, item.presentation.dispatchId));
+    queue.discardPending(new Set(settled.map(item => item.id)));
   }
   async close() {
     this.closing = true;

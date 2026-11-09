@@ -42,3 +42,5 @@ Web遗漏项来源：本地Hive的5d87d4ba10d9d66cfca32941a16c60e7e52476b0、版
 ## 桌面主控工作流新增实证
 
 主控已从原生聊天框接收请求并亲自编写/启动workflow，唯一真实Codex/Terra Worker显式汇报，主控独立文件核验83/4及冷恢复通过，见[记录](validation/2026-11-09-native-workflow-orchestrator.md)。这是源码runtime实证，未扩大候选包结论。内部系统通知正文改为默认折叠，Mac实际展开/收起通过；结束通知重复答复及已汇报Worker暂停原派单仍未解决。完整目标保持未完成。
+
+#22已补修复与实际证据：真实Codex/Terra汇报回收后pending=0、独立冷恢复及旧故障spool副本原生Mac核对通过，未汇报责任/用户输入/其他投递保留，见[队列结算](validation/2026-11-09-reported-dispatch-queue.md)。上节“已汇报Worker暂停原派单”缺口已解决；结束通知重复答复仍未解决，候选包未纳入本轮修复。

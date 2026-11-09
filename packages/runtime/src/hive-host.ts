@@ -25,6 +25,7 @@ export interface HiveHost {
 	readonly port: number;
 	request(method: string, path: string, body?: unknown): Promise<unknown>;
 	findReportPresentation(workspaceId: string, agentId: string, dispatchId: string, payload: string): unknown;
+	isReportedDispatch(workspaceId: string, agentId: string, dispatchId: string): boolean;
 	withWorkspaceWorkflowIdle<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
 	openTerminalSocket(runId: string, channel: 'io' | 'control', clientId: string, cols: number, rows: number): WebSocket;
 	close(): Promise<void>;
@@ -139,6 +140,10 @@ export async function createHiveHost({
             return new WebSocket(url, { headers: { cookie }, origin: base, handshakeTimeout: 10000, maxPayload: 8 * 1024 * 1024 });
         },
 		findReportPresentation: runtime.store.findReportPresentation,
+		isReportedDispatch(workspaceId, agentId, dispatchId) {
+			const dispatch = runtime.store.getDispatch(workspaceId, dispatchId);
+			return dispatch?.toAgentId === agentId && dispatch.status === 'reported';
+		},
 		withWorkspaceWorkflowIdle(workspaceId, operation) {
 			if (closing) return Promise.reject(new Error("Hive host is closed"));
 			return runtime.store.withWorkspaceWorkflowIdle(workspaceId, operation);

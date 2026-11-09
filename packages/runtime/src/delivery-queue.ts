@@ -101,6 +101,15 @@ export class DeliveryQueue {
  /** Prevents the next delivery; the caller must abort any running SDK call. */
  async pause(): Promise<void> { this.paused = true; await this.idle(); }
 
+ /** Reconcile transport entries against an authoritative settled-task ledger.
+  * Never remove a running delivery or infer task completion from an SDK turn. */
+ discardPending(ids: ReadonlySet<string>): void {
+  if (!this.paused || this.busy) throw new Error("Pause and await idle before reconciling deliveries");
+  const retained = this.items.filter(item => !ids.has(item.id));
+  if (retained.length !== this.items.length) this.replace(retained);
+  this.emitState();
+ }
+
  /** After pause + SDK abort + idle, discard only the interrupted delivery. */
  discardCurrent(): void {
   if (!this.paused || this.busy) throw new Error("Pause and await idle before discarding a delivery");

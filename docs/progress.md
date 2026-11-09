@@ -516,3 +516,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 桌面主控自主工作流与通知展示
 
 原生聊天框真实发送请求，Codex/Terra主控亲自保存并启动workflow，一位同模型Worker实际读写、messages/seen=0/带产物report，主控独立核验83/4；生产runtime冷读回通过。修复无独立摘要的系统通知直接铺开内部envelope，实际Mac展开/收起/成员工具恢复通过，Mac构建及Windows类型检查通过，两窗口正常exit0。无新ZIP/全量测试。保留发现：结束通知触发第二次主控结果答复；已汇报临时Worker仍有一条暂停原派单，需继续修复队列结算。见[实证与缺口](validation/2026-11-09-native-workflow-orchestrator.md)。
+
+## 2026-11-09 已汇报派单队列结算
+
+修复#22：复用Hive现有getDispatch，只清除当前成员账本reported的dispatch投递，加载与回收时在paused/idle队列原子协调，保留未汇报责任及其余消息。真实HTTP/SQLite/SDK/CLI检查覆盖停止、旧spool冷恢复及保留边界；同检查在649de4f Chats实际红、修复后绿，team/Codex/TS/build通过。原样Codex/Terra实际workflow/report/native确认后pending=0，独立冷恢复通过；旧真实故障数据副本冷恢复与Mac窗口不再出现待处理1，原工具历史保持，Cmd+Q exit0。无新ZIP/全量/Rust改动。异步结束通知重复答复仍保留，详见[结算记录](validation/2026-11-09-reported-dispatch-queue.md)。

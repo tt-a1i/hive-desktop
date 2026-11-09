@@ -16,6 +16,7 @@ declare module "@tt-a1i/hive/dist/src/cli/hive.js" {
         locateWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUploadLocation|undefined>;
         readWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUpload|null>;
         findReportPresentation(workspaceId: string, agentId: string, dispatchId: string, payload: string): unknown;
+        getDispatch(workspaceId: string, dispatchId: string): { toAgentId: string; status: string } | undefined;
         withWorkspaceWorkflowIdle<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
     } }>;
 }
