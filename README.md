@@ -87,10 +87,10 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 “设置 → 远程接入”已接入原有状态、配对、设备和审计；真实回环配对/撤销恢复通过，原生点击、真实网关及新包仍待验收，见 [远程配置记录](docs/validation/2026-11-09-remote-settings.md)。
 
-界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-09-steered-candidate.md)。current ZIP仍为1acd805，候选没有推广。
+界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-09-reading-candidate.md)。current ZIP仍为1acd805，候选没有推广。
 
 完整目标逐项证据、明确缺口及候选包状态见 [验收总表](docs/acceptance-status.md)。
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-最新768d085候选纳入空会话恢复、Codex同回合系统通知/来源结算，以及近期焦点、紧凑导航和工作流详情修复；包内真实Terra主控/Worker完成47/3、唯一final/冷恢复、四组包检查和实际原生结果/产物/窄窗设置通过，见[最新候选实证](docs/validation/2026-11-09-steered-candidate.md)。其他配置、语言、远程和平台证据按原范围保留，current未推广。
+最新06ee28b候选纳入冷启动显式输入恢复、已接收消息反馈及聊天/工具辅助功能语义；四组包检查和实际包窗口原始Codex/Terra冷输入、唯一新回合、退出/冷恢复pending0通过，见[最新候选实证](docs/validation/2026-11-09-reading-candidate.md)。前轮真实主控/Worker协作、配置、语言和远程证据按原范围保留，Windows原生与完整产品仍待，current未推广。
