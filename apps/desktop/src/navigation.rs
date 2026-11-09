@@ -3,6 +3,7 @@ mod session_row;
 mod settings;
 use crate::app::{HiveApp, SettingsSection};
 use crate::palette::Color;
+use crate::focus_scroll::{Reveal, Viewport};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::{
     component::{
@@ -308,13 +309,15 @@ impl HiveApp {
                     )
                     .child(self.render_more_navigation(cx)),
             )
-            .child(
+            .child(Viewport::new("workspace-navigation-viewport", &self.navigation_scroll,
                 v_flex()
                     .id("workspace-session-navigation")
                     .mt_4()
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.navigation_scroll)
+                    .p_1()
                     .child(self.render_pinned_navigation(cx))
                     .child(
                         v_flex()
@@ -363,24 +366,24 @@ impl HiveApp {
                             .when(self.add_workspace_open, |section| {
                                 section
                                     .child(
-                                        Input::new(&self.folder)
-                                            .aria_label(tr("工作区文件夹的绝对路径")),
+                                        Reveal::new("workspace-folder-input-reveal", &self.navigation_scroll, Input::new(&self.folder)
+                                            .aria_label(tr("工作区文件夹的绝对路径"))),
                                     )
                                     .child(
-                                        Button::new("choose-workspace-folder")
+                                        Reveal::new("workspace-folder-picker-reveal", &self.navigation_scroll, Button::new("choose-workspace-folder")
                                             .label(tr("选择文件夹…"))
                                             .disabled(!self.connected)
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.choose_workspace_folder(window, cx)
-                                            })),
+                                            }))),
                                     )
                                     .child(
-                                        Button::new("add-workspace")
+                                        Reveal::new("workspace-folder-add-reveal", &self.navigation_scroll, Button::new("add-workspace")
                                             .label(tr("添加文件夹"))
                                             .disabled(!self.connected || self.runtime.is_none())
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.add_workspace(window, cx)
-                                            })),
+                                            }))),
                                     )
                             })
                             .when(!self.projects_collapsed, |section| section.children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
@@ -498,7 +501,7 @@ impl HiveApp {
                                     })
                             }))),
                     ),
-            )
+            ))
             .child(
                 v_flex().flex_shrink_0().child(
                     Button::new("open-settings")

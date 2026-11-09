@@ -388,6 +388,12 @@ impl Render for HiveApp {
         let narrow = window.viewport_size().width < px(820.);
         let preferences = self.settings_panel || self.roles.visible;
         let compact_settings = window.viewport_size().width < px(720.);
+        if !self.loading && (!narrow || !self.sidebar_open) && self.viewing_conversation()
+            && std::mem::take(&mut self.focus_project_input)
+        {
+            let focus = self.input.read(cx).focus_handle(cx);
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        }
         if !preferences && (!narrow || !self.sidebar_open) && self.collaboration.visible
             && std::mem::take(&mut self.collaboration.focus_navigation)
         {
@@ -499,7 +505,7 @@ impl Render for HiveApp {
                     })))
                 .into_any_element()
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
-            } else if self.workspace.is_none() && self.session.is_none() { self.render_welcome(cx).into_any_element()
+            } else if self.workspace.is_none() && self.session.is_none() { self.render_welcome(window, cx).into_any_element()
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow && welcome, |v| v.px(px(44.))).when(!welcome, |v| v.px_0().pt_0()).id("conversation-surface").on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.import_image_paths(paths.paths().to_vec(), cx))).drag_over::<ExternalPaths>(|style, _, _, cx|style.bg(Color::Attention.get(cx))).key_context("HiveConversation").on_action(cx.listener(|this, _: &crate::CloseConversationFind, window, cx| this.close_conversation_find(window, cx))).when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
                 .when(welcome && self.workspace.is_some(), |view| view.child(self.render_project_context(cx)))
                 .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()

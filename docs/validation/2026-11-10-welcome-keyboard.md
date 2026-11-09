@@ -1,0 +1,33 @@
+# First-project keyboard navigation — 2026-11-10
+
+Baseline `4bcbbc3`, including candidate 34aebbe; fixed verification uses a built development app. Evidence `.artifacts/welcome-navigation-4bcbbc3/`. The existing candidate ZIP has not been rebuilt for these changes. Full product goal remains active. Remaining first native picker/input issue tracked separately in [#24](https://github.com/tt-a1i/hive-desktop/issues/24).
+
+## Actual problems
+
+English, Light, 20px, about 592×500 logical pixels, fresh owned state with no workspaces/chat/auth. Welcome's existing viewport had no initial rendered control focus and its actions did not request reveal. Four Tabs showed no usable focus movement; Return did not activate the intended action. A mouse-opened setup menu and Cmd+, still worked, so this was not reported as all keyboard input failing. Baseline native app quit normally, exit 0.
+
+During the actual first-project flow, adding from the narrow sidebar also left the navigation covering the successfully opened project. Its Add folder action could fall behind the fixed Settings footer. An AX click on that offscreen action opened Settings instead; this is an invalid verification attempt, not a successful Add action. A later known-focus Tab/Return really activated Add and exposed the original clipping problem (`navigation-form-overflow.*`, `navigation-add-hidden.*`).
+
+## Changes
+
+- Welcome now assigns its primary Open project action a focus handle when the connected welcome is mounted, using GPUI's existing keyed view state and next-frame focus. The state exists only while that view is rendered; it does not persist onboarding completion or steal focus on every render. Disabled/loading Open is not selected as an initial action.
+- Existing Reveal wraps the primary action group and bottom program action; existing welcome Viewport/ScrollHandle handles their visibility. No new general abstraction, timer or key interception.
+- The sidebar's existing workspace scroll area now tracks a ScrollHandle inside the existing Viewport helper. Separate reveal groups cover path input, folder picker and Add, with a small outline inset. Header/settings remain outside that scrolling area.
+- Shared successful add_workspace handling closes navigation only in a narrow window. A transient input-focus request is consumed when the conversation surface is visible and workspace loading has settled; changing workspace clears it. Picker and typed-path routes still share the existing real HTTP path with autostart_orchestrator false. This does not establish successful first-native-picker focus handoff; see the limit below.
+
+## Actual fixed verification
+
+1. Fresh-state wide welcome visibly focused Open project. After shrinking and closing navigation, the same primary action remained visible/focused. Two Tabs exposed Check external agent programs at the bottom, with full focus outline; Return opened the real External programs page (`fixed-wide.*`, `fixed-start.*`, `fixed-program-focus.*`). No version probe, save or sign-in was performed.
+2. Returning from settings, forward and reverse Tab scrolled back to the setup action with a visible outline. Return opened all three real setup destinations. Escape then reverse Tab/Return opened the native folder picker; Escape cancelled it and Return reopened it (`fixed-reverse-focus.*`, `fixed-setup-menu.*`, `picker-keyboard.*`, `picker-cancelled.*`). No workspace was created by cancelling.
+3. First path attempt pasted into an unfocused native Go-to sheet and accepted its previous default: the prior owned d4c57a1 fixture project. This was not the intended target and is retained in the first run's separate state. Retried by explicitly clicking/selecting the system path field and typing, verified the full path, then selected the new owned folder. No production project was selected; no Agent/model started. It is not claimed that all prior fixture files were independently hashed before this accidental selection.
+4. Final source, entirely new `state-checked`: keyboard primary action → native picker → explicitly verified `project-check` path → project page with the correct path. Immediate typeText without another click did **not** enter its draft. An earlier immediate-focus implementation had the same result. No retry/extra text is counted as success; the source of this native-picker handoff failure remains unproven. This is #24, not a completed first-project autofocus claim.
+5. Same final source/state: opened Add workspace form, explicitly entered owned `project-last` path. Two Tabs from its input revealed the entire Add folder button above the fixed footer, with full outline (`checked-add-button-focus.*`). Return created/opened that exact workspace, automatically closed narrow navigation, and typing `LAST_PROJECT_UNSENT` without an input click entered the correct composer (`checked-last-project-input.*`). No Agent was chosen and no message sent.
+6. All four native processes exited normally, exit 0 (one baseline candidate, three source-fix runs). Independent SQLite/file checks on final state confirm exactly two intended workspaces, zero messages/dispatches/agent runs/agent sessions, absent chat index, empty Pi auth and exact persisted last-project draft. Two default launch-config records are expected definitions, not executions; an initial assertion treating these as zero executions was corrected before final receipt. `check-state.py`, `receipt.json`.
+
+An intermediate screenshot of project entry was a transient tiny capture; not used as visual layout proof. Final last-project screenshot has the settled full-size project/composer. No inference, credentials, defaults or backend semantics changed.
+
+## Checks and remaining scope
+
+Final source passed `cargo +1.98.0 build --locked --manifest-path apps/desktop/Cargo.toml`, LLVM PATH `cargo +1.98.0 check --locked --manifest-path apps/desktop/Cargo.toml --target x86_64-pc-windows-msvc`, `git diff --check`, and actual native/SQLite/draft checks above. Pure UI change: no new fragile UI test, deleted test, full unrelated runtime suite or production test-only fallback. No large package copies or cleanup this turn; old working directories preserved.
+
+This validates welcome actions and typed-path project entry at this specific theme/font/language/window size. Native picker first-input handoff (#24), complete cold project-draft GUI restoration, Chinese/other theme/font coverage, broader project/session-list keyboard reachability, VoiceOver/IME, Windows native and candidate inclusion remain open. The four Agent options were observed in an earlier run's actual menu; model/backend readiness was not inferred from their listing. Full onboarding/T3/Beluga/Cindy parity is not established.

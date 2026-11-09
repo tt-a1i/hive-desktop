@@ -164,7 +164,12 @@ impl HiveApp {
                         this.add_workspace_open = false;
                         let _ = window.update(cx, |_, window, cx| folder.update(cx, |state, cx| state.set_value("", window, cx)));
                     }
-                    let id = workspace.id.clone(); this.workspaces.push(workspace); this.select_workspace(id, cx); },
+                    let id = workspace.id.clone(); this.workspaces.push(workspace); this.select_workspace(id, cx);
+                    this.focus_project_input = true;
+                    let _ = window.update(cx, |_, window, cx| {
+                        if window.viewport_size().width < px(820.) { this.sidebar_open = false; }
+                    });
+                },
                 Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("添加工作区响应错误",error.to_string())),
             }
         });
@@ -255,6 +260,7 @@ impl HiveApp {
         .detach();
     }
     pub(crate) fn reset_workspace_view(&mut self) {
+        self.focus_project_input = false;
         self.reset_workflows_workspace();
         self.conversation_sources.clear();
         self.session = None;
