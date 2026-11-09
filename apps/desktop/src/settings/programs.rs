@@ -53,10 +53,18 @@ impl ProgramCheck {
 }
 impl HiveApp {
     pub(crate) fn open_program_setup(&mut self, backend: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        self.program_setup_focus = Some(backend);
         self.settings_section = crate::app::SettingsSection::Programs;
         self.open_settings(window, cx);
+        self.finish_program_setup(window, cx);
+    }
+
+    pub(crate) fn finish_program_setup(&mut self, window: &mut Window, cx: &mut App) {
+        if self.settings_loading || self.executable_settings.is_none() { return; }
+        let Some(backend) = self.program_setup_focus.take() else { return; };
+        if !self.settings_panel || self.settings_section != crate::app::SettingsSection::Programs { return; }
         let input = match backend { "codex" => &self.codex_command, "claude" => &self.claude_command, _ => &self.pi_command };
-        input.update(cx, |input, cx| input.focus(window, cx));
+        input.update(cx, |input, cx| { input.focus(window, cx); input.select_all(window, cx); });
     }
 
     pub(crate) fn program_setup_status(&self, backend: &'static str, cx: &Context<Self>) -> String {

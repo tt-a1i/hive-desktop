@@ -1,5 +1,5 @@
 use crate::language::{english, tr};
-use crate::app::{HiveApp, SettingsSection};
+use crate::app::HiveApp;
 use crate::palette::Color;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::prelude::FluentBuilder;
@@ -560,8 +560,13 @@ impl Render for HiveApp {
                     .child(div().text_sm().child(tr("未能打开会话，草稿已保留。")))
                     .when(self.session.as_ref().is_some_and(|s| !matches!(s.backend, crate::protocol::Backend::Pi)), |panel| panel.child(
                         Button::new("open-program-settings").ghost().label(tr("外部程序设置")).on_click(cx.listener(|this, _, window, cx| {
-                            this.settings_section = SettingsSection::Programs;
-                            this.open_settings(window, cx);
+                            let backend = this.session.as_ref().and_then(|session| match session.backend {
+                                crate::protocol::Backend::Codex => Some("codex"),
+                                crate::protocol::Backend::Claude => Some("claude"),
+                                crate::protocol::Backend::PiRpc => Some("pi"),
+                                crate::protocol::Backend::Pi => None,
+                            });
+                            if let Some(backend) = backend { this.open_program_setup(backend, window, cx); }
                         }))
                     ))
                     .child(Button::new("retry-open-session").label(tr("重新打开会话")).on_click(cx.listener(|this, _, _, cx| {

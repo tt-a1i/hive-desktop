@@ -135,6 +135,7 @@ impl HiveApp {
     pub fn close_settings(&mut self) {
         if self.settings_panel {
             self.settings_panel = false;
+            self.program_setup_focus = None;
             self.executable_picker_generation += 1;
         }
     }
@@ -278,16 +279,19 @@ impl HiveApp {
                                 });
                             }
                             this.executable_settings = Some(settings);
+                            let _ = window.update(cx, |_, window, cx| this.finish_program_setup(window, cx));
                             if save {
                                 this.settings_message =
                                     Some(SettingsNotice::Message("设置已保存。新启动的外部进程将使用更新后的配置。"));
                             }
                         }
                         Err(error) => {
+                            this.program_setup_focus = None;
                             this.settings_message = Some(SettingsNotice::Error("设置响应格式错误", error.to_string()))
                         }
                     },
                     Err(error) => {
+                        this.program_setup_focus = None;
                         this.settings_message = Some(SettingsNotice::Error(if save { "保存设置失败" } else { "读取设置失败" }, error))
                     }
                 }
