@@ -175,6 +175,9 @@ impl HiveApp {
                             }
                         }
                         remote.error = None;
+                        if matches!(remote.message, Some(Notice::Submitted)) {
+                            remote.message = None;
+                        }
                     }
                     Err(error) => {
                         remote.valid = false;

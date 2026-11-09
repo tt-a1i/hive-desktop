@@ -520,3 +520,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 已汇报派单队列结算
 
 修复#22：复用Hive现有getDispatch，只清除当前成员账本reported的dispatch投递，加载与回收时在paused/idle队列原子协调，保留未汇报责任及其余消息。真实HTTP/SQLite/SDK/CLI检查覆盖停止、旧spool冷恢复及保留边界；同检查在649de4f Chats实际红、修复后绿，team/Codex/TS/build通过。原样Codex/Terra实际workflow/report/native确认后pending=0，独立冷恢复通过；旧真实故障数据副本冷恢复与Mac窗口不再出现待处理1，原工具历史保持，Cmd+Q exit0。无新ZIP/全量/Rust改动。异步结束通知重复答复仍保留，详见[结算记录](validation/2026-11-09-reported-dispatch-queue.md)。
+
+## 2026-11-09 远程接入原生补验与可访问性
+
+补#18 Mac真实设置入口、窄窗滚动、配对码复制、回环pending/拒绝、全局提醒返回、同一网关关闭/恢复、复制命令目录与英文标签验证。发现并修复状态/配对码/SAS等未进入AX树，以及刷新后Submitted提示永久残留；最终中文/英文AX实际读回、英文拒绝与状态恢复通过。3个窗口正常exit0，实际SQLite3次拒绝/0设备/网关无确认，退出后连接已断开并清理自有网关进程。Mac构建/Windows类型/diff通过，纯UI不补测试，无新ZIP。确认/撤销GUI、生产网关/手机、完整键盘与VoiceOver及Windows原生仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)。

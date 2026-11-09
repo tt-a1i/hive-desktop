@@ -43,17 +43,18 @@ impl HiveApp {
                 _ => tr("状态未知"),
             })
             .unwrap_or(tr("正在读取"));
+        let status_label = format!("{} · {connection}", tr("远程接入"));
         v_flex().gap_4().min_w_0()
             .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("复用 Hive 的端到端加密远程接入。网关转发密文；退出桌面应用后，远程连接也会停止。")))
             .child(h_flex().items_center().flex_wrap().gap_3()
-                .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{} · {connection}", tr("远程接入"))))
+                .child(div().id("remote-connection-status").role(Role::Status).aria_label(status_label.clone()).flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(status_label))
                 .child(Switch::new("remote-enabled").accessibility_label(tr("启用远程接入")).checked(enabled).disabled(!usable || !linked)
                     .on_change(cx.listener(|this, value, _, cx| this.remote_action("PUT", "/api/remote/enabled".into(), json!({"enabled":*value}), cx))))
                 .child(Button::new("remote-refresh").ghost().compact().label(tr("刷新")).disabled(!self.connected || remote.loading).on_click(cx.listener(|this, _, _, cx| this.refresh_remote(cx)))))
             .when(linked && enabled, |view| view.child(Button::new("remote-reconnect").ghost().compact().label(tr("重新连接网关")).disabled(!usable).on_click(cx.listener(|this, _, _, cx| this.remote_action("PUT", "/api/remote/enabled".into(), json!({"enabled":true}), cx)))))
             .when_some(status.and_then(|s| s.gateway_url.clone()), |view, url| view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(format!("{}: {url}", tr("网关")))))
-            .when_some(remote.error.as_ref().map(|error| format!("{}: {error}. {}", tr("远程接入读取失败"), tr("显示上次读取的内容，操作已暂停。"))), |view, error| view.child(div().p_3().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_sm().child(error)))
-            .when_some(remote.message.as_ref().map(|message| message.text()), |view, message| view.child(div().text_sm().child(message)))
+            .when_some(remote.error.as_ref().map(|error| format!("{}: {error}. {}", tr("远程接入读取失败"), tr("显示上次读取的内容，操作已暂停。"))), |view, error| view.child(div().id("remote-read-error").role(Role::Status).aria_label(error.clone()).p_3().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_sm().child(error)))
+            .when_some(remote.message.as_ref().map(|message| message.text()), |view, message| view.child(div().id("remote-action-notice").role(Role::Status).aria_label(message.clone()).text_sm().child(message)))
             .when(remote.loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("正在同步远程状态，暂显示上次读取的内容…"))))
             .child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Inset.get(cx))
                 .child(div().text_sm().child(if linked { tr("已连接 Hive 账号。退出登录将关闭远程接入；请在终端执行本应用专用命令。") } else { tr("请复制登录命令并在终端执行，再按提示打开浏览器授权。成功登录会启用远程接入。") }))
@@ -69,9 +70,10 @@ impl HiveApp {
                     .on_click(cx.listener(|this, _, _, cx| this.remote_action("POST", "/api/remote/pairings".into(), json!({}), cx)))))
             .when_some(remote.ticket.clone(), |view, ticket| {
                 let remaining = ticket.expires_at.saturating_sub(now()).div_ceil(1000);
+                let code = if remaining == 0 { tr("配对码已过期").into() } else { ticket.code.clone() };
                 view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Inset.get(cx))
                     .child(div().text_sm().child(tr("在手机 Hive 配对页面输入此码，然后对照两端的安全短码。")))
-                    .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(if remaining == 0 { tr("配对码已过期").into() } else { ticket.code.clone() }))
+                    .child(div().id("remote-pairing-code").role(Role::Label).aria_label(if english() { format!("Pairing code: {code}") } else { format!("配对码：{code}") }).text_2xl().font_weight(FontWeight::SEMIBOLD).child(code))
                     .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("Expires in {remaining}s · Use this code only for this pairing") } else { format!("剩余 {remaining} 秒 · 每个配对码仅用于本次配对") }))
                     .child(h_flex().gap_2()
                         .child(Button::new("remote-copy-pairing").compact().label(tr("复制配对码")).disabled(!usable || remaining == 0).on_click(cx.listener(|this, _, _, cx| {
@@ -84,14 +86,17 @@ impl HiveApp {
             .children(remote.pending.iter().map(|pending| {
                 let confirm_id = pending.pairing_id.clone();
                 let reject_id = confirm_id.clone();
+                let device_name = pending.device_name.as_deref().unwrap_or(tr("新设备"));
+                let title = format!("{}: {device_name}", tr("确认配对"));
+                let guidance = tr("请确认手机显示的安全短码与下方完全一致。不是你发起的请求或短码不符，请拒绝。");
                 v_flex().gap_2().p_3().rounded_lg().bg(Color::Attention.get(cx))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{}: {}", tr("确认配对"), pending.device_name.as_deref().unwrap_or(tr("新设备")))))
-                    .child(div().text_sm().child(tr("请确认手机显示的安全短码与下方完全一致。不是你发起的请求或短码不符，请拒绝。")))
-                    .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child(pending.sas.clone()))
+                    .child(div().id(format!("remote-pairing-name-{confirm_id}")).role(Role::Label).aria_label(title.clone()).text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
+                    .child(div().id(format!("remote-pairing-guidance-{confirm_id}")).role(Role::Label).aria_label(guidance).text_sm().child(guidance))
+                    .child(div().id(format!("remote-pairing-sas-{confirm_id}")).role(Role::Label).aria_label(if english() { format!("Security code: {}", pending.sas) } else { format!("安全短码：{}", pending.sas) }).text_2xl().font_weight(FontWeight::SEMIBOLD).child(pending.sas.clone()))
                     .child(div().text_xs().child(if english() { format!("Expires in {}s", pending.expires_at.saturating_sub(now()).div_ceil(1000)) } else { format!("剩余 {} 秒", pending.expires_at.saturating_sub(now()).div_ceil(1000)) }))
                     .child(h_flex().gap_2()
-                        .child(Button::new(format!("remote-confirm-{confirm_id}")).primary().label(tr("短码一致，确认")).disabled(!usable || pending.expires_at <= now()).on_click(cx.listener(move |this, _, _, cx| this.remote_pairing_decision(&confirm_id, true, cx))))
-                        .child(Button::new(format!("remote-reject-{reject_id}")).label(tr("拒绝")).disabled(!usable || pending.expires_at <= now()).on_click(cx.listener(move |this, _, _, cx| this.remote_pairing_decision(&reject_id, false, cx)))))
+                        .child(Button::new(format!("remote-confirm-{confirm_id}")).primary().label(tr("短码一致，确认")).accessibility_label(format!("{} · {device_name} · {}", tr("短码一致，确认"), pending.sas)).disabled(!usable || pending.expires_at <= now()).on_click(cx.listener(move |this, _, _, cx| this.remote_pairing_decision(&confirm_id, true, cx))))
+                        .child(Button::new(format!("remote-reject-{reject_id}")).label(tr("拒绝")).accessibility_label(format!("{} · {device_name}", tr("拒绝"))).disabled(!usable || pending.expires_at <= now()).on_click(cx.listener(move |this, _, _, cx| this.remote_pairing_decision(&reject_id, false, cx)))))
             }))
             .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("已配对设备")))
             .when(remote.details_valid && remote.devices.is_empty(), |view| view.child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("尚无已配对设备。"))))
