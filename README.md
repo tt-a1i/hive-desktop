@@ -87,10 +87,10 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 “设置 → 远程接入”已接入原有状态、配对、设备和审计；真实回环配对/撤销恢复通过，原生点击、真实网关及新包仍待验收，见 [远程配置记录](docs/validation/2026-11-09-remote-settings.md)。
 
-界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-09-composer-candidate.md)。current ZIP仍为1acd805，候选没有推广。
+界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-10-model-settings-candidate.md)。current ZIP仍为1acd805，候选没有推广。
 
 完整目标逐项证据、明确缺口及候选包状态见 [验收总表](docs/acceptance-status.md)。
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-最新b539c26候选已整合输入区分组、可滚动用量浮层、英文推理说明及首次配置分流，并保留此前入口/配置修复。独立解压通过三组包检查、实际首次配置、真实Terra已有线程与草稿恢复、窄窗用量/推理及正常退出冷读，见[最新候选实证](docs/validation/2026-11-09-composer-candidate.md)。本轮无新增推理，Windows原生与完整产品仍待，current未推广；保留一个可直接打开的候选应用。
+最新fb3dcd0候选已整合模型/推理统一面板、后台回合焦点修复、账号阅读与短窗口设置导航，并校准Codex验证版本。独立解压通过三组包检查、首次配置、真实Terra历史/草稿恢复、短窗口键盘操作及包内原生发送的真实Terra工具/回复；运行中中文草稿与最终冷恢复通过，见[最新候选实证](docs/validation/2026-11-10-model-settings-candidate.md)。Windows原生与完整产品仍待，current未推广；保留一个可直接打开的候选应用。

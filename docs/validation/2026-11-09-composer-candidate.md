@@ -1,5 +1,7 @@
 # Composer/setup candidate package — 2026-11-09
 
+Historical candidate, superseded by [fb3dcd0](2026-11-10-model-settings-candidate.md). Its ZIP and extracted runnable bundle were replaced after verification; original evidence and test state remain.
+
 Candidate source `b539c263e85a1d350af178785c53bcbd8ee154c6`.
 
 - Canonical ZIP: `.artifacts/hive-desktop-macos-arm64-candidate.zip`, 158,241,970 bytes.
