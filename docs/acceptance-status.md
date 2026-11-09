@@ -38,18 +38,18 @@ Pi账号页补提供商/本机保存状态分组与AX正文，并复用焦点自
 | 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；源码Mac导出复制/失败重试/窄窗/AX提示，以及导出和文件预览Home/End/双向翻页、中文文件选区复制已取得实证，见[原生补验](validation/2026-11-09-native-resume.md) | 成员职责另已修复AX正文、首尾/翻页和选区复制，102行/3,531字符在Mac实证，见[成员阅读](validation/2026-11-09-member-responsibilities.md)；已纳入dd0230a候选并补包内首尾/翻页/窄窗验证，见[包内证据](validation/2026-11-09-stop-candidate.md)。真实Codex原生两条排队/停止/冷恢复/显式继续已补验，并修复额外恢复唤醒，见[排队恢复](validation/2026-11-09-queued-codex-ui.md)。VoiceOver播报、滚轮/完整键盘/字号、部分在途时序、系统输入与可访问性矩阵未完成；局部窄窗不推广到所有页面 |
 | 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言偏好与累计1046条主要页面/配置/聊天查找/协作/资源终端及静态和上下文错误文案已接入，模型编辑已补固定操作/提示、Tab与空格保存及冷读回，见[配置窄窗](validation/2026-11-09-model-editor-footer.md)，已纳入2b3c07e候选并补包内配置/退出恢复，见[配置候选](validation/2026-11-09-model-candidate.md)；模型/接口编辑另已补焦点与标签显露、正反Tab和实际滚动，见[滚动证据](validation/2026-11-09-model-editor-scroll.md)，新增/覆盖草稿及保存、英文17字号已补窄窗实测，完整字号/可访问性/Windows等边界仍在[#20](https://github.com/tt-a1i/hive-desktop/issues/20)；完整页面迁移、真实切换/草稿/窄窗仍未完成，见[语言记录](validation/2026-11-09-interface-language.md)、[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生设置/开关/配对码/拒绝已补包内实证，确认/撤销GUI、真实网关和Windows仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)及[最新候选](validation/2026-11-09-settled-candidate.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流删除最终按钮等仍待验收 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；Mac EPERM回归先红后绿；最新源码Cmd+Q、冷启动草稿/语言恢复、窗口关闭均exit0并清理后台，见[原生补验](validation/2026-11-09-native-resume.md) | 旧21544/54534已不在进程表，其退出原因未证实；候选包和Windows矩阵未完成，不承诺恢复任意中断工具或exactly-once |
-| macOS可实际使用 | current为1acd805；候选fb3dcd0整合模型/推理面板与设置导航，三组包gate、实际首次配置、已有真实Terra恢复、短窗键盘、原生发送真实Terra工具/回复和运行中草稿/冷恢复通过，见[最新候选](validation/2026-11-10-model-settings-candidate.md)；此前真实模型证据按原范围保留 | 完整页面、输入法、远程/工作流等矩阵未完成；候选尚未作为current推广 |
+| macOS可实际使用 | current为1acd805；候选34aebbe进一步纳入配置搜索和协作焦点，三组包gate、真实短窗配置/派单/产物/成员输入及冷恢复通过，见[最新候选](validation/2026-11-10-navigation-candidate.md)；此前fb3dcd0包内真实Terra执行按原范围保留；此前真实模型证据按原范围保留 | 完整页面、输入法、远程/工作流等矩阵未完成；候选尚未作为current推广 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户明确暂时无Windows机器、先继续其他实施；不处理CI不等于取消Windows目标 |
 | 完整、精美、Cindy/Maka级体验 | 已有固定源码参考与安装Cindy局部原生走查，并实施多轮聊天/配置/导航改进 | 整体对标仍未证实；还须按实际安装体验做全流程及边角检查，不能以局部截图或当前清单宣称一致 |
 | 可安装与交付 | 有冻结Node/native依赖的Mac便携开发包及实际PTY/HTTP/SQLite检查 | 未签名/未公证；正式发行、完整安装体验与两个平台最终验收未完成 |
 
 ## 本轮候选包
 
-canonical candidate已更新为fb3dcd03f909a1fbb7680dabc11cb759dd01b32b，158,245,333字节。ZIP SHA256为6e54e24d89918413ae87ae98e578d5e1a287e30493dff43df39de508bc893779，原生程序SHA256为c46baa54c093710c6d4e86695fc09580922fa6328f62a2ed24610ffdc888e692。
+canonical candidate已更新为34aebbeec01b332bffc1e12d0cb2b2fb0b2aef7d，158,260,143字节。ZIP SHA256为beb0037ff0e0dca825802fed6bac86d54c803846d3a16812e6fefca91f381cbe，原生程序SHA256为f23173b98c1b056b552bac089ca9b180323f500019ae9f61ede0ce87748aff1d。
 
-核对生产依赖未变后复用1534986冻结依赖，完整替换当前dist/原生程序；112个runtime文件和28,863个解压条目匹配，实际仅原生程序与desktop-settings.js字节变化。三组包检查（运行、模型、派单/工作流退出）通过；独立包真实窗口首次配置、真实Terra历史/草稿恢复、短窗模型与设置键盘操作、包内原生发送真实Terra工具/回复及运行中草稿、三次正常退出与独立冷读通过；见[最新候选](validation/2026-11-10-model-settings-candidate.md)。此前真实模型和其他后端/平台证据仍按原范围保留。
+在fb3dcd0基础纳入模型列表焦点滚动、配置搜索/干净表单比较、协作操作与成员会话往返焦点。生产元数据及112个runtime文件未变，实际只更新原生二进制；28,863个解压条目与29个内部链接完整匹配。三组包检查通过，真实包内Node/runtime进程链、Light/20px短窗模型搜索/编辑与协作派单/产物预览、成员输入焦点、两次正常退出及冷恢复通过，见[最新候选](validation/2026-11-10-navigation-candidate.md)。本轮无新推理；fb3dcd0包内真实Terra工具/回复证据仍按[原范围](validation/2026-11-10-model-settings-candidate.md)保留，不改称新包的模型执行。
 
-只替换candidate，current仍1acd805且哈希重新核对不变。确认无占用后清理本轮重复base与过时b539c26解压包，合计约1.16GiB分配字节，保留新候选应用、ZIP和原证据/状态。未签名/未公证，Windows暂无运行环境；完整产品仍未完成。前述及后续历史条目“候选未纳入/未更新”描述各次验证当时的状态，以本节具体纳入范围更新，不扩大其他验收。
+只替换candidate，current仍1acd805且哈希重新核对不变。旧fb3dcd0 ZIP移入原证据目录保留，确认无占用后清理新base和旧解压bundle；精确分配字节见新候选cleanup.json，保留新候选应用、原证据/状态和聊天工作目录。未签名/未公证，Windows暂无运行环境；完整产品仍未完成。前述及后续历史条目“候选未纳入/未更新”描述各次验证当时的状态，以本节具体纳入范围更新，不扩大其他验收。
 
 ## 当前阻断与仍可推进的工作
 
