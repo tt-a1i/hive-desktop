@@ -1,5 +1,7 @@
 # Entry/configuration candidate package — 2026-11-09
 
+Superseded by the [b539c26 candidate](2026-11-09-composer-candidate.md). Its canonical ZIP and runnable extracted bundle were replaced/removed after verification; the original receipts/evidence below remain historical provenance.
+
 Canonical candidate source: `d4c57a1bbb5338a9761ae9c99519c72983c27a5f`.
 
 - ZIP: `.artifacts/hive-desktop-macos-arm64-candidate.zip`, 159,575,042 bytes.
