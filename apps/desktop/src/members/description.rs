@@ -18,7 +18,8 @@ impl HiveApp {
     ) -> AnyElement {
         let id = member.id.clone();
         let text = member.description.clone();
-        let expanded = self.member_details_open.contains(&id);
+        let scroll = self.member_details_open.get(&id);
+        let expanded = scroll.is_some();
         let empty = text.trim().is_empty();
         let summary = text
             .lines()
@@ -48,8 +49,9 @@ impl HiveApp {
                         .toggled(expanded)
                         .accessibility_label(if english() { format!("{} {}’s responsibilities", if expanded { tr("收起") } else { tr("展开") }, member.name) } else { format!("{} {} 的职责说明", if expanded { tr("收起") } else { tr("展开") }, member.name) })
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.member_details_open.remove(&id) {
-                                this.member_details_open.insert(id.clone());
+                            if this.member_details_open.remove(&id).is_none() {
+                                this.member_details_open
+                                    .insert(id.clone(), ScrollHandle::new());
                             }
                             cx.notify();
                         })),
@@ -85,26 +87,35 @@ impl HiveApp {
                         )
                     }),
             )
-            .when(expanded, |view| {
+            .when_some(scroll, |view, scroll| {
                 view.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "member-description-body-{}",
-                            member.id
-                        )))
-                        .w_full()
-                        .min_w_0()
-                        .max_h(px(220.))
-                        .overflow_y_scroll()
-                        .p_3()
-                        .rounded_lg()
-                        .bg(Color::Inset.get(cx))
-                        .text_sm()
-                        .child(if empty {
+                    crate::text_reading::region(
+                        format!("member-description-body-{}", member.id),
+                        if english() {
+                            format!(
+                                "{}’s responsibilities; scroll with arrow or page keys",
+                                member.name
+                            )
+                        } else {
+                            format!("{} 的职责说明，可用方向键或翻页键滚动", member.name)
+                        },
+                        scroll,
+                        px(220.),
+                        cx,
+                    )
+                    .w_full()
+                    .p_3()
+                    .rounded_lg()
+                    .bg(Color::Inset.get(cx))
+                    .text_sm()
+                    .child(gpui_kit::base::SelectableText::new(
+                        SharedString::from(format!("member-description-text-{}", member.id)),
+                        if empty {
                             tr("未设置职责说明").to_owned()
                         } else {
                             text
-                        }),
+                        },
+                    )),
                 )
             })
             .into_any_element()
