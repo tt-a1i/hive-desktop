@@ -1,7 +1,8 @@
-use crate::{app::HiveApp, palette::Color,language::tr};
+use crate::{app::{HiveApp, SettingsSection},focus_scroll::{Reveal,Viewport}, palette::Color,language::tr};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -30,7 +31,7 @@ fn details(owner: &str, message: &str, cx: &Context<HiveApp>) -> AnyElement {
                 .rounded_lg()
                 .bg(Color::Card.get(cx))
                 .text_xs()
-                .child(message.to_owned()),
+                .child(crate::text_reading::selectable_text(format!("failure-text-{owner}"), message)),
         )
         .child(
             Button::new(SharedString::from(format!("copy-failure-{owner}")))
@@ -45,13 +46,34 @@ fn details(owner: &str, message: &str, cx: &Context<HiveApp>) -> AnyElement {
         .into_any_element()
 }
 impl HiveApp {
+    pub(crate) fn render_agent_repair_actions(&self, disabled: bool, cx: &Context<Self>) -> AnyElement {
+        let Some(session) = &self.session else { return div().into_any_element(); };
+        let backend = match session.backend {
+            crate::protocol::Backend::Pi => None,
+            crate::protocol::Backend::Codex => Some("codex"),
+            crate::protocol::Backend::Claude => Some("claude"),
+            crate::protocol::Backend::PiRpc => Some("pi"),
+        };
+        h_flex().min_w_0().gap_2().flex_wrap()
+            .when_some(backend, |row, backend| row.child(Button::new("repair-agent-program").ghost().compact()
+                .label(tr("外部程序设置")).disabled(disabled)
+                .on_click(cx.listener(move |this, _, window, cx| this.open_program_setup(backend, window, cx)))))
+            .when(backend.is_none(), |row| row.children([
+                ("repair-pi-accounts", SettingsSection::PiAccounts, tr("内置 Pi 账号")),
+                ("repair-pi-models", SettingsSection::Models, tr("模型与接口")),
+            ].into_iter().map(|(id, section, label)| Button::new(id).ghost().compact().label(label).disabled(disabled)
+                .on_click(cx.listener(move |this, _, window, cx| { this.settings_section = section; this.open_settings(window, cx); })))))
+            .into_any_element()
+    }
     pub(crate) fn reset_reply_failures(&mut self) {
+        self.failure_scroll.set_offset(point(px(0.),px(0.)));
         self.delivery_failure = None;
         self.delivery_failure_expanded = false;
         self.agent_diagnostic = None;
     }
     pub(crate) fn set_delivery_failure(&mut self, failure: Option<DeliveryFailure>) {
         if self.delivery_failure != failure {
+            self.failure_scroll.set_offset(point(px(0.),px(0.)));
             self.delivery_failure_expanded = false;
         }
         self.delivery_failure = failure;
@@ -84,6 +106,7 @@ impl HiveApp {
             .child(
                 h_flex()
                     .gap_2()
+                    .flex_wrap()
                     .items_center()
                     .child(
                         div()
@@ -120,19 +143,26 @@ impl HiveApp {
             })
             .into_any_element()
     }
-    pub(crate) fn render_session_failure(&self, running: bool, cx: &Context<Self>) -> AnyElement {
+    pub(crate) fn render_session_failure(&self, window: &Window, running: bool, cx: &Context<Self>) -> AnyElement {
+        if self.agent_diagnostic.is_none() && self.delivery_failure.is_none() { return div().into_any_element(); }
+        let height = (window.viewport_size().height / 6.).min(px(180.)).max(px(64.));
+        div().flex().items_stretch().flex_shrink_0().w_full().min_w_0().h(height).rounded_lg().border_1().border_color(Color::Divider.get(cx))
+            .child(Viewport::new("session-failure-viewport", &self.failure_scroll,
+                v_flex().id("session-failure-scroll").flex_1().min_w_0().min_h_0().h(height).overflow_y_scroll().track_scroll(&self.failure_scroll).vertical_scrollbar(&self.failure_scroll).p_3()
+                    .child(self.render_failure_notice(running,cx))))
+            .into_any_element()
+    }
+    fn render_failure_notice(&self, running: bool, cx: &Context<Self>) -> AnyElement {
         let transient = self.agent_diagnostic.as_ref();
         if let Some(failure) = transient {
             return v_flex()
+                .flex_shrink_0()
                 .min_w_0()
                 .gap_2()
-                .p_3()
-                .rounded_lg()
-                .border_1()
-                .border_color(Color::Divider.get(cx))
                 .child(
-                    h_flex()
+                    Reveal::new("diagnostic-header-reveal", &self.failure_scroll, h_flex()
                         .gap_2()
+                        .flex_wrap()
                         .items_center()
                         .child(
                             div()
@@ -171,10 +201,11 @@ impl HiveApp {
                                     this.agent_diagnostic = None;
                                     cx.notify();
                                 })),
-                        ),
+                        )),
                 )
+                .child(Reveal::new("failure-repair-reveal", &self.failure_scroll, self.render_agent_repair_actions(running || !self.connected, cx)))
                 .when(failure.expanded, |view| {
-                    view.child(details("agent", &failure.message, cx))
+                    view.child(Reveal::new("agent-details-reveal", &self.failure_scroll, details("agent", &failure.message, cx)))
                 })
                 .into_any_element();
         }
@@ -187,15 +218,13 @@ impl HiveApp {
             || !self.conversation_ready
             || !self.workspace_writes_allowed();
         v_flex()
+            .flex_shrink_0()
             .min_w_0()
             .gap_2()
-            .p_3()
-            .rounded_lg()
-            .border_1()
-            .border_color(Color::Divider.get(cx))
             .child(
-                h_flex()
+                Reveal::new("delivery-header-reveal", &self.failure_scroll, h_flex()
                     .gap_2()
+                    .flex_wrap()
                     .items_center()
                     .child(
                         div()
@@ -230,7 +259,7 @@ impl HiveApp {
                             .accessibility_label(tr("重试原消息及附件"))
                             .disabled(disabled)
                             .on_click(cx.listener(|this, _, _, cx| this.resume(cx))),
-                    ),
+                    )),
             )
             .child(
                 div()
@@ -238,8 +267,9 @@ impl HiveApp {
                     .text_color(Color::Muted.get(cx))
                     .child(tr("待处理消息与附件已保留，重试将继续处理原来的内容。")),
             )
+            .child(Reveal::new("failure-repair-reveal", &self.failure_scroll, self.render_agent_repair_actions(running || !self.connected, cx)))
             .when(self.delivery_failure_expanded, |view| {
-                view.child(details("delivery", &failure.message, cx))
+                view.child(Reveal::new("delivery-details-reveal", &self.failure_scroll, details("delivery", &failure.message, cx)))
             })
             .into_any_element()
     }

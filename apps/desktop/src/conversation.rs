@@ -688,6 +688,7 @@ impl HiveApp {
                 diagnostic_write_failed,
                 ..
             } => {
+                self.failure_scroll.set_offset(point(px(0.),px(0.)));
                 self.agent_diagnostic = Some(crate::failures::Diagnostic {
                     message,
                     expanded: false,

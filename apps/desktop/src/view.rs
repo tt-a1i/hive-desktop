@@ -1,3 +1,4 @@
+use gpui_kit::component::scroll::ScrollableElement;
 use crate::language::{english, tr};
 use crate::app::HiveApp;
 use crate::palette::Color;
@@ -415,7 +416,7 @@ impl Render for HiveApp {
                     let title = if welcome && self.workspace.is_none() { tr("打开项目").into() } else if welcome { tr("今天想推进什么？").into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
                     div().id("session-title").role(Role::Label).aria_label(title.clone()).font_weight(FontWeight::SEMIBOLD).flex_1().min_w_0().when(welcome, |h| h.font_weight(FontWeight::MEDIUM).text_size(px(if window.viewport_size().width < px(1000.) { 28. } else { 32. })).line_height(px(40.)).whitespace_normal()).when(!welcome, |h| h.text_lg().truncate())
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
-                        .child(title)
+                        .child(if welcome { title } else { title.split_whitespace().collect::<Vec<_>>().join(" ") })
                 }))
                     .when(self.session.is_some() && self.session_name_target.as_deref() == self.session.as_ref().map(|s| s.id.as_str()), |header| header
                         .key_context("HiveSessionName")
@@ -450,17 +451,7 @@ impl Render for HiveApp {
                 })
                 .when(open_failed, |surface| surface.child(v_flex().flex_1().min_h_0().items_center().justify_center().gap_3()
                     .child(div().text_sm().child(tr("未能打开会话，草稿已保留。")))
-                    .when(self.session.as_ref().is_some_and(|s| !matches!(s.backend, crate::protocol::Backend::Pi)), |panel| panel.child(
-                        Button::new("open-program-settings").ghost().label(tr("外部程序设置")).on_click(cx.listener(|this, _, window, cx| {
-                            let backend = this.session.as_ref().and_then(|session| match session.backend {
-                                crate::protocol::Backend::Codex => Some("codex"),
-                                crate::protocol::Backend::Claude => Some("claude"),
-                                crate::protocol::Backend::PiRpc => Some("pi"),
-                                crate::protocol::Backend::Pi => None,
-                            });
-                            if let Some(backend) = backend { this.open_program_setup(backend, window, cx); }
-                        }))
-                    ))
+                    .child(self.render_agent_repair_actions(!self.connected || self.loading, cx))
                     .child(Button::new("retry-open-session").label(tr("重新打开会话")).on_click(cx.listener(|this, _, _, cx| {
                         if let Some(session) = &this.session {
                             this.error = None;
@@ -478,10 +469,13 @@ impl Render for HiveApp {
                         .child(self.session.as_ref().map(|s| tr(s.backend.label())).unwrap_or("Hive")))
                     .when(!self.status.is_background_connected() || running, |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
                         .child(if running { tr("正在回复…").to_string() } else { self.status.text() })))))
-                .child(v_flex().relative().w_full().min_w_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_0().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
+                .child(v_flex().relative().w_full().min_w_0().min_h_0().max_w(px(CHAT_COLUMN_WIDTH)).max_h(window.viewport_size().height * 0.65).mx_auto().flex_shrink_1().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
-                .child(self.render_session_failure(running,cx))
-                .child(self.render_pending_user_inputs(cx))
+                .child(crate::focus_scroll::Viewport::new("composer-body-viewport", &self.composer_scroll,
+                    v_flex().id("composer-body-scroll").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.composer_scroll).vertical_scrollbar(&self.composer_scroll)
+                        .child(v_flex().flex_shrink_0().min_w_0().gap_2()
+                .child(crate::focus_scroll::Reveal::new("composer-failure-reveal", &self.composer_scroll, self.render_session_failure(window,running,cx)))
+                .child(crate::focus_scroll::Reveal::new("composer-pending-reveal", &self.composer_scroll, self.render_pending_user_inputs(cx)))
                 .when(!running && pending > 0 && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some()), |view| view.child(h_flex().gap_3()
                     .child(div().text_sm().child(if english() { format!("Queued messages: {pending}") } else { format!("待处理消息：{pending}") }))
                     .when(!running, |view| view.child(Button::new("resume").label(tr("继续处理")).disabled(!self.connected || !self.conversation_ready || self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
@@ -504,8 +498,9 @@ impl Render for HiveApp {
 
                 .when(self.command_picker.open, |view| view.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window().offset(point(px(11.),px(-8.))).child(self.render_commands(window,cx))).with_priority(1)))
                 .child(self.render_input_attachments(cx))
-                .when(self.workspace.is_some(), |v| v.child(div().capture_action(cx.listener(Self::composer_enter)).capture_action(cx.listener(Self::command_up)).capture_action(cx.listener(Self::command_down)).capture_action(cx.listener(Self::command_escape)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label(tr("聊天消息")).on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) }))))
-                .child(self.render_composer_controls(window, running, can_submit && has_text, cx))
+                .when(self.workspace.is_some(), |v| v.child(crate::focus_scroll::Reveal::new("composer-input-reveal", &self.composer_scroll, div().capture_action(cx.listener(Self::composer_enter)).capture_action(cx.listener(Self::command_up)).capture_action(cx.listener(Self::command_down)).capture_action(cx.listener(Self::command_escape)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label(tr("聊天消息")).on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) })))))
+                        )))
+                .child(div().flex_shrink_0().child(self.render_composer_controls(window, running, can_submit && has_text, cx)))
                 .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { tr("后台暂不可用 · 可在窗口顶部重新启动后台") } else if running { tr("Agent 正在处理 · 新消息会按顺序排队") } else if pending > 0 { tr("有待处理消息，请先继续") } else { "" }))))
                 .when(needs_pi_model && self.connected, |surface| surface.child(
                     h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().min_w_0().flex_wrap().items_center().gap_2()
