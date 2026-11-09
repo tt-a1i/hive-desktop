@@ -34,4 +34,4 @@ current.zip 是固定位置，按一批变更更新，不为每次小改留下�
 
 ## 后续候选更新
 
-current仍为本页记录的1acd805。另一个candidate槽位已更新为dd0230a，含成员阅读与停止/恢复修复，并通过包内真实Terra及部分原生检查；候选SHA256为9d416c25e4d8f61097ec8abc6f862b78e5f58a58f94fd9679d798adb904e858a，完整边界见[最新候选](2026-11-09-stop-candidate.md)。候选未推广为current。
+current仍为本页记录的1acd805。candidate槽位先经dd0230a的成员阅读与停止/恢复修复实证，现更新至2b3c07e，另纳入模型配置固定栏、焦点/标签滚动和新增ID；包内配置/PTY/Hive及实际窄窗保存/退出恢复通过。候选SHA256为a3e41d9e17baef853d10bd68f9fea6961fcd8100454a50d93724f3c91eff3e5c，见[最新候选](2026-11-09-model-candidate.md)。此前模型与队列证据仍按[dd0230a记录](2026-11-09-stop-candidate.md)的范围保留，候选未推广为current。

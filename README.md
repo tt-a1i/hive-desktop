@@ -87,10 +87,10 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 “设置 → 远程接入”已接入原有状态、配对、设备和审计；真实回环配对/撤销恢复通过，原生点击、真实网关及新包仍待验收，见 [远程配置记录](docs/validation/2026-11-09-remote-settings.md)。
 
-界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-09-stop-candidate.md)。current ZIP仍为1acd805，候选没有推广。
+界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-09-model-candidate.md)。current ZIP仍为1acd805，候选没有推广。
 
 完整目标逐项证据、明确缺口及候选包状态见 [验收总表](docs/acceptance-status.md)。
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-最新dd0230a候选另纳入成员职责键盘阅读、队列恢复合并与Codex停止命令清理，包内真实Terra检查及部分原生体验已通过，见[最新候选实证](docs/validation/2026-11-09-stop-candidate.md)。
+最新2b3c07e候选另纳入模型配置固定操作/提示、焦点与标签显露及新增ID，包内PTY/Hive/SDK配置和实际窄窗保存/退出恢复已通过，见[最新候选实证](docs/validation/2026-11-09-model-candidate.md)。此前成员阅读、队列和真实Codex停止证据按原范围保留。

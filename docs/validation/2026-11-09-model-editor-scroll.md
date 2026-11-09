@@ -44,3 +44,5 @@
 四个owned原生进程均Cmd+Q exit0，已核对不在进程表；最终Mac build、Windows MSVC cargo check、git diff --check通过。只改初始UI焦点，未新增/修改测试，不重复无关全量或模型检查；未新增ZIP。
 
 收据：`.artifacts/settings-layout/create-override-receipt.json`，创建前/后配置、两次退出前草稿及四次进程日志/exit JSON；原生截图在本聊天。此前“新增首模型/覆盖继承/英文均未验”的边界由上述具体路径补齐；#20保留其他字号、完整可访问性、Windows原生与包内验收，完整产品目标继续。
+
+后续候选已更新为2b3c07e并取得包内窄窗输入/提示、草稿保存/冷读回及新增ID/首模型/覆盖焦点证据，见[配置候选](2026-11-09-model-candidate.md)。只补其中列明的路径，完整字号/可访问性/Windows仍待验收。

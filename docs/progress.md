@@ -500,3 +500,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 新增与覆盖配置补验
 
 #20补Mac窄窗新增接口全键盘、首模型/Responses、中文草稿退出/恢复/实际保存；覆盖模型两项恢复继承、null/false草稿区分、退出恢复、英文17字号和实际保存/冷读回通过。逐对象断言原31模型/headers/无关覆盖保持，目标只删除reasoning/input，无models转换，草稿清除。公共新增入口修正先聚焦必填ID，提供商/模型均在最终源码实测，既有编辑仍名称焦点。四个owned进程exit0，Mac构建/Windows类型/diff通过，无新测试/全量/ZIP；#20保留完整字号/可访问性/Windows/包内边界。见[补验记录](validation/2026-11-09-model-editor-scroll.md#新增覆盖与英文17字号补验)。
+
+## 2026-11-09 配置修复进入候选包
+
+2b3c07e候选约164MiB，仅替换原生程序；112runtime、28,833普通文件/29内部链接/31,570元数据核对保持。包内Node执行PTY/Hive/SQLite和四组SDK配置/覆盖/JSONL/常驻刷新通过。实际独立解压包在1184×1104窗口完成输入/能力焦点、固定校验、草稿退出恢复/保存/再冷读回、新增ID/首模型/覆盖按钮及鼠标滚动；原配置只改目标name/context，三次窗口exit0。无进程/lsof引用后清理解压副本、原子替换candidate，.artifacts仍约3.9GiB，current不推广。无产品/测试修改或全量/模型重验，见[候选记录](validation/2026-11-09-model-candidate.md)。
