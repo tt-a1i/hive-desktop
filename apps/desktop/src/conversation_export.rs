@@ -1,6 +1,9 @@
 mod snapshot;
 mod view;
-use crate::{app::HiveApp, language::{english,tr}};
+use crate::{
+    app::HiveApp,
+    language::{english, tr},
+};
 use gpui_kit::{component::*, *};
 use snapshot::Snapshot;
 use std::path::PathBuf;
@@ -16,11 +19,18 @@ struct ConversationExport {
     notice: Option<ExportNotice>,
     error: Option<(&'static str, String)>,
 }
-enum ExportNotice { Saved(PathBuf), Cancelled, Copied }
+struct ExportFooter {
+    export: Entity<ConversationExport>,
+}
+enum ExportNotice {
+    Saved(PathBuf),
+    Cancelled,
+    Copied,
+}
 impl ExportNotice {
     fn text(&self) -> String {
         match self {
-            Self::Saved(path) => format!("{}: {}",tr("已保存"),path.display()),
+            Self::Saved(path) => format!("{}: {}", tr("已保存"), path.display()),
             Self::Cancelled => tr("已取消保存，快照仍保留。").to_owned(),
             Self::Copied => tr("已复制完整快照").to_owned(),
         }
@@ -59,9 +69,19 @@ impl HiveApp {
             notice: None,
             error: None,
         });
+        let footer = cx.new(|cx| {
+            cx.observe(&export, |_, _, cx| cx.notify()).detach();
+            ExportFooter {
+                export: export.clone(),
+            }
+        });
         let width = (window.viewport_size().width - px(48.)).min(px(900.));
         window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title(tr("导出对话")).w(width).child(export.clone())
+            dialog
+                .title(tr("导出对话"))
+                .w(width)
+                .child(export.clone())
+                .footer(footer.clone())
         });
     }
 }
@@ -89,9 +109,10 @@ impl ConversationExport {
                     crate::file_save::save_file(&path, text.as_bytes()).map(|_| path)
                 })
                 .await
-                .map(Some).map_err(|error| ("保存失败，快照仍保留", error)),
+                .map(Some)
+                .map_err(|error| ("保存失败，快照仍保留", error)),
                 Ok(Ok(None)) => Ok(None),
-                error => Err(("无法选择保存位置",format!("{error:?}"))),
+                error => Err(("无法选择保存位置", format!("{error:?}"))),
             };
             let _ = this.update(cx, |this, cx| {
                 this.saving = false;

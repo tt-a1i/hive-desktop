@@ -34,3 +34,15 @@ UI保存失败重试、全页面语言切换、选区/undo/输入法、完整键
 Mac构建、Windows默认MSVC交叉类型检查、既有appearance::tests两条及git diff --check通过。日志分别在`/tmp/hive-native-appearance-{build,windows,test}.log`；收据`.artifacts/native-resume/{appearance-save-receipt,save-failure,save-retry-receipt}.json`。无新增/删除测试；这次纯外观入口修复按原生走查和已有偏好回归验证，未跑无关全量测试、未请求模型或制作新ZIP。
 
 新发现：保存失败/成功文字在画面可见，但当前AX树只返回开关/预览/按钮，没有这些提示文本；辅助技术错误通知仍需修复和实际验证。窄窗带长错误、完整键盘/输入法、Windows与候选包仍未验收。上述“保存失败重试未完成”已由本段补齐Mac普通窗口路径，不能推广到全部平台与可访问性矩阵。
+
+## 导出提示可读取与窄窗固定页脚
+
+修复上述AX遗漏：提示使用稳定节点及Status/Alert角色，完整已本地化提示作为aria_label；保留原始系统诊断。原生AX先读到中文复制/取消提示，最终布局又读到英文失败、保存路径、复制与取消提示。这里只证明AX可读取，未开启VoiceOver实测自动播报，不声称已完成屏幕阅读器体验。
+
+同一1184×1104截图像素窗口复现错误换行后按钮底部裁切。复用现有Dialog footer，将预览范围说明、状态/错误和操作一起固定；新增私有ExportFooter视图持有同一个ConversationExport实体，观察原实体通知，保存忙碌/恢复状态仍来自原保存流程。快照、选项、文件写入与协议没有另建副本或改语义。
+
+保留失败迭代：仅固定按钮时诊断末行仍裁切；禁止根容器收缩、尝试弹性预览都未取得完整诊断/滚动证据，均撤回。最终稳定截图确认两行完整EPERM诊断、预览范围说明和两个完整按钮同时可见，保存成功的长路径也完整换行；不是靠缩小字号或隐藏诊断通过。预览区域仍需另做完整滚动/键盘矩阵，本轮不将该项算通过。
+
+实际保护同一隔离文件，保存失败后原文OWNED_A11Y_ORIGINAL及immutable标志不变；解除标志后通过固定页脚重试成功。文件与此前同一会话的英文导出逐字一致：11,576字符、1200段，SHA256 `6095efbaac24b4aa75721a7e91849d498f6acccb583ba7fecbabc60377ab7a5e`。原草稿保持，SQLite messages=0、日志无chat.prompt。所有本轮验证进程均以Cmd+Q退出0，最终6551及自有后台已退出，测试保护标志清除。
+
+最终源码Mac构建、Windows默认MSVC交叉类型、既有export_preserves_selected_content一条及diff检查通过；未增删测试、未跑无关全量测试、未制作ZIP。日志`/tmp/hive-export-a11y-delivery-{build,windows,test}.log`。收据`.artifacts/native-resume/a11y-receipt.json`记录原生验证程序与最终构建两份哈希：原生走查后仅把私有类型ExportActions更名为ExportFooter并rustfmt，随后重新构建/检查。各中间版的退出与故障证据保留在a11y、a11y-footer、a11y-final、a11y-flex及a11y-fixed-status日志/收据，未将未通过的布局记为通过。
