@@ -524,3 +524,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 远程接入原生补验与可访问性
 
 补#18 Mac真实设置入口、窄窗滚动、配对码复制、回环pending/拒绝、全局提醒返回、同一网关关闭/恢复、复制命令目录与英文标签验证。发现并修复状态/配对码/SAS等未进入AX树，以及刷新后Submitted提示永久残留；最终中文/英文AX实际读回、英文拒绝与状态恢复通过。3个窗口正常exit0，实际SQLite3次拒绝/0设备/网关无确认，退出后连接已断开并清理自有网关进程。Mac构建/Windows类型/diff通过，纯UI不补测试，无新ZIP。确认/撤销GUI、生产网关/手机、完整键盘与VoiceOver及Windows原生仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)。
+
+## 2026-11-09 队列与远程修复进入候选包
+
+0e72137候选约164MiB，只替换原生程序/6个runtime/scripts，112runtime匹配、28,826未变文件/29内部链接/31,570元数据保持。包内PTY/Hive/SQLite、内外部Pi队列、派单结算/确认边界、远程加密HTTP/终端/撤销通过；实际原样Codex/Terra workflow完成31/3、原生report成功、成员pending0与独立冷恢复通过。原生工作流/日志/产物与远程AX/开关/拒绝/提示消退通过，两个窗口exit0、8+2进程结束；lsof无引用后清理解压并原子替换candidate，.artifacts约3.9GiB、current保持。新包检查脚本已加入，生产源码无额外修改，不跑全量或冒称Windows/完整UI矩阵。见[最新包证据](validation/2026-11-09-settled-candidate.md)。
