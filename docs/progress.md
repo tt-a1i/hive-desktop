@@ -512,3 +512,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 汇报回收修复进入候选包
 
 7c28580候选约164MiB，保留原生程序/依赖，替换4个runtime及scripts元数据；112runtime、28,829普通文件/29链接/31,570元数据核验。包内真实Terra workflow/dispatch/文件及native report确认、独立冷恢复通过；原生同UUID的report完成、结果/日志/产物预览及Cmd+Q exit0、8owned进程退出通过。PTY/Hive/SQLite、内外部Pi回环队列、JSONL确认/直接Stop/超时/断线通过。无新产品/测试或全量suite，清理解压并原子替换candidate，.artifacts约3.9GiB、current不推广。见[包内记录](validation/2026-11-09-report-candidate.md)。
+
+## 2026-11-09 桌面主控自主工作流与通知展示
+
+原生聊天框真实发送请求，Codex/Terra主控亲自保存并启动workflow，一位同模型Worker实际读写、messages/seen=0/带产物report，主控独立核验83/4；生产runtime冷读回通过。修复无独立摘要的系统通知直接铺开内部envelope，实际Mac展开/收起/成员工具恢复通过，Mac构建及Windows类型检查通过，两窗口正常exit0。无新ZIP/全量测试。保留发现：结束通知触发第二次主控结果答复；已汇报临时Worker仍有一条暂停原派单，需继续修复队列结算。见[实证与缺口](validation/2026-11-09-native-workflow-orchestrator.md)。

@@ -38,3 +38,7 @@
 - 用户恢复持续目标后，实际原生访问已可用，目标保持active。候选包已完成明确列出的原生操作，继续其余页面/输入、工作流、远程原生配置和完整包内验收；Pi重新登录、Claude真实模型和Windows环境仍各自列缺口。局部候选验收不等于完整体验，不推广current ZIP。
 
 Web遗漏项来源：本地Hive的5d87d4ba10d9d66cfca32941a16c60e7e52476b0、版本2.2.1，LanguageSetting.tsx明确有zh/en按钮，SettingsMenu.tsx包含RemoteAccessSection；两文件无本地未提交改动。语言入口及首批文案已接入，完整迁移待续；远程已接入并补侧栏入口，证据与缺口如上。这是现有基线缺口，不是将新功能另塞进原目标。
+
+## 桌面主控工作流新增实证
+
+主控已从原生聊天框接收请求并亲自编写/启动workflow，唯一真实Codex/Terra Worker显式汇报，主控独立文件核验83/4及冷恢复通过，见[记录](validation/2026-11-09-native-workflow-orchestrator.md)。这是源码runtime实证，未扩大候选包结论。内部系统通知正文改为默认折叠，Mac实际展开/收起通过；结束通知重复答复及已汇报Worker暂停原派单仍未解决。完整目标保持未完成。

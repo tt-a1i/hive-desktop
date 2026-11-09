@@ -374,7 +374,16 @@ impl HiveApp {
                 .is_some_and(|p| p.origin == DeliveryOrigin::User);
             let display = presentation
                 .as_ref()
-                .map(|p| p.display_text.clone())
+                .map(|p| {
+                    // A system delivery without a separate display summary is
+                    // internal context. Keep it in the existing raw-message
+                    // disclosure rather than repeating the envelope in chat.
+                    if p.origin == DeliveryOrigin::System && p.display_text == text {
+                        String::new()
+                    } else {
+                        p.display_text.clone()
+                    }
+                })
                 .unwrap_or_else(|| "此消息缺少有效的来源记录。展开查看原文。".into());
             let heading = presentation.as_ref().map(|p| p.origin.heading()).unwrap_or("来源未记录");
             let worker_name = presentation.as_ref().filter(|p|p.origin==DeliveryOrigin::Report).and_then(|p|p.worker_name.clone());
