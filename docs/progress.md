@@ -532,3 +532,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 远程键盘焦点显露
 
 实际复现英文窄窗Tab到离屏复制登录按钮且Space成功复制，证明焦点与显示脱节。提取已有模型配置显露路径为原生keyed元素Reveal/Viewport，远程操作组接入、模型保留显式焦点且减少重复状态；手动滚动保持，实际子焦点/视口变化才显露。Mac正反Tab、同组切换、缩窗和键盘生成/取消配对通过；1000高窗口的较高卡片底部裁切补修后完整焦点环可见。英文17字号模型字段/开关回归和配置原字节保持，4窗口正常exit0。Mac构建/Windows类型/diff通过；无UI测试/新依赖/新ZIP，动态设备卡片与完整矩阵仍待，见[键盘记录](validation/2026-11-09-settings-keyboard-reveal.md)。
+
+## 2026-11-09 窄窗设置导航收紧
+
+英文17字号窄窗九个入口原折三行，现复用gpui-kit菜单收为单行当前分区，宽窗仍侧栏，共用分区定义并抽离navigation/settings模块。实际键盘Space/方向键/Enter切换、Escape保留搜索、模型/角色往返与冷恢复草稿、中英文菜单/当前勾号及配置原字节保持通过。另修共用退出设置在窄窗留下导航遮罩，最终返回直接会话，Cmd+,/Escape后输入焦点恢复通过。三个窗口正常exit0，Mac构建/Windows类型/diff通过，无新依赖/测试/ZIP，完整主题/字号/VoiceOver/Windows仍待。见[导航记录](validation/2026-11-09-compact-settings-navigation.md)。

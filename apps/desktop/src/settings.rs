@@ -305,6 +305,9 @@ impl HiveApp {
         self.settings_search.update(cx, |input, cx| input.set_value("", window, cx));
         self.close_settings();
         self.close_roles();
+        if window.viewport_size().width < px(820.) {
+            self.sidebar_open = false;
+        }
         if let Some(focus) = self.preferences_return_focus.take() {
             focus.focus(window, cx);
         }
