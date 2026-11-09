@@ -20,7 +20,7 @@ const metadata = JSON.parse(await readFile(join(sdk, 'package.json'), 'utf8'));
 const sdkEntry = pathToFileURL(join(sdk, metadata.exports['.'].import)).href;
 const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-model-config-'));
 try {
-  for (const name of ['pi-model-config', 'pi-model-overrides', 'pi-model-overrides-wire', 'pi-model-reload']) {
+  for (const name of ['pi-model-config', 'pi-model-overrides', 'pi-model-overrides-wire', 'pi-model-reload', 'pi-default-model']) {
     const source = await readFile(join(root, 'packages/runtime/checks', name + '.ts'), 'utf8');
     const bound = source.replace(/from '\.\.\/src\/([^']+)'/g,
       (_all, module) => `from ${JSON.stringify(pathToFileURL(join(runtime, 'dist', module)).href)}`)
