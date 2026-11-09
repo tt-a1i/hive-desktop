@@ -1,5 +1,5 @@
 use crate::{app::{HiveApp, SettingsSection}, language::tr, palette::Color};
-use gpui_kit::{component::{button::{Button, ButtonVariants}, scroll::ScrollableElement, *}, prelude::FluentBuilder, *};
+use gpui_kit::{component::{button::{Button, ButtonVariants}, menu::{DropdownMenu, PopupMenuItem}, scroll::ScrollableElement, *}, prelude::FluentBuilder, *};
 use gpui_kit::assets::IconName as Glyph;
 
 impl HiveApp {
@@ -23,6 +23,7 @@ impl HiveApp {
     /// The first project uses the same picker and configuration flows as daily use.
     /// Opening this page never creates a session or starts an agent.
     pub(crate) fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let weak = cx.weak_entity();
         div().flex().flex_1().min_w_0().min_h_0().h_full().child(crate::focus_scroll::Viewport::new("welcome-viewport", &self.welcome_scroll, div().id("welcome-page").flex_1().min_w_0().min_h_0().h_full().overflow_y_scroll().track_scroll(&self.welcome_scroll).vertical_scrollbar(&self.welcome_scroll)
             .child(
                 v_flex().flex_shrink_0().w_full().max_w(px(640.)).mx_auto().gap_6().px_5().py_6()
@@ -38,8 +39,21 @@ impl HiveApp {
                         .child(h_flex().flex_shrink_0().gap_2().flex_wrap()
                             .child(Button::new("welcome-open-project").primary().label(tr("打开项目文件夹"))
                                 .disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.choose_workspace_folder(window, cx))))
-                            .child(Button::new("welcome-configure").ghost().label(tr("先配置 Agent"))
-                                .on_click(cx.listener(|this, _, window, cx| { this.settings_section = SettingsSection::PiAccounts; this.open_settings(window, cx); }))))
+                            .child(Button::new("welcome-configure").ghost().label(tr("先配置 Agent")).dropdown_caret(true)
+                                .accessibility_label(tr("选择 Agent 配置入口"))
+                                .dropdown_menu(move |mut menu, _, _| {
+                                    for (section, label) in [
+                                        (SettingsSection::PiAccounts, tr("内置 Pi 账号")),
+                                        (SettingsSection::Models, tr("模型与接口")),
+                                        (SettingsSection::Programs, tr("外部 Agent 程序")),
+                                    ] {
+                                        let weak = weak.clone();
+                                        menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                                            let _ = weak.update(cx, |this, cx| { this.settings_section = section; this.open_settings(window, cx); });
+                                        }));
+                                    }
+                                    menu
+                                })))
                         .child(div().text_xs().text_color(Color::Muted.get(cx)).child(if self.connected {
                             tr("打开项目后再选择 Agent；不会自动发送消息或启动成员。")
                         } else { tr("后台暂不可用 · 可在窗口顶部重新启动后台") })))
