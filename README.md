@@ -87,7 +87,7 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 “设置 → 远程接入”已接入原有状态、配对、设备和审计；真实回环配对/撤销恢复通过，原生点击、真实网关及新包仍待验收，见 [远程配置记录](docs/validation/2026-11-09-remote-settings.md)。
 
-界面语言偏好与首批导航/外观英文文案已开始接入；其他页面、实际切换与布局仍在迁移和验收，尚未纳入开发 ZIP，见 [语言进展](docs/validation/2026-11-09-interface-language.md)。
+界面语言偏好与主要页面英文文案已接入，并纳入17d8ce7候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-09-native-candidate.md)。current ZIP仍为1acd805，候选没有推广。
 
 完整目标逐项证据、明确缺口及候选包状态见 [验收总表](docs/acceptance-status.md)。
 
