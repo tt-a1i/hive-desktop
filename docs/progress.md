@@ -528,3 +528,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 队列与远程修复进入候选包
 
 0e72137候选约164MiB，只替换原生程序/6个runtime/scripts，112runtime匹配、28,826未变文件/29内部链接/31,570元数据保持。包内PTY/Hive/SQLite、内外部Pi队列、派单结算/确认边界、远程加密HTTP/终端/撤销通过；实际原样Codex/Terra workflow完成31/3、原生report成功、成员pending0与独立冷恢复通过。原生工作流/日志/产物与远程AX/开关/拒绝/提示消退通过，两个窗口exit0、8+2进程结束；lsof无引用后清理解压并原子替换candidate，.artifacts约3.9GiB、current保持。新包检查脚本已加入，生产源码无额外修改，不跑全量或冒称Windows/完整UI矩阵。见[最新包证据](validation/2026-11-09-settled-candidate.md)。
+
+## 2026-11-09 远程键盘焦点显露
+
+实际复现英文窄窗Tab到离屏复制登录按钮且Space成功复制，证明焦点与显示脱节。提取已有模型配置显露路径为原生keyed元素Reveal/Viewport，远程操作组接入、模型保留显式焦点且减少重复状态；手动滚动保持，实际子焦点/视口变化才显露。Mac正反Tab、同组切换、缩窗和键盘生成/取消配对通过；1000高窗口的较高卡片底部裁切补修后完整焦点环可见。英文17字号模型字段/开关回归和配置原字节保持，4窗口正常exit0。Mac构建/Windows类型/diff通过；无UI测试/新依赖/新ZIP，动态设备卡片与完整矩阵仍待，见[键盘记录](validation/2026-11-09-settings-keyboard-reveal.md)。

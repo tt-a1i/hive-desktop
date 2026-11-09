@@ -12,6 +12,7 @@ mod conversation;
 mod conversation_find;
 mod conversation_export;
 mod file_save;
+mod focus_scroll;
 mod conversation_list;
 mod drafts;
 mod failures;

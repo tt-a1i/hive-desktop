@@ -16,7 +16,6 @@ impl HiveApp {
         let state = &self.pi_models;
         let disabled = !self.connected || state.loading;
         let scroll = state.scroll.clone();
-        let control_focus = state.control_focus.clone();
         let body = v_flex().flex_1().min_h_0().min_w_0().id("pi-model-config-scroll").overflow_y_scroll().track_scroll(&state.scroll).vertical_scrollbar(&state.scroll).gap_4()
             .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("管理自定义接口、模型和内置配置覆盖。保存后在“内置 Pi”设置 API Key；免认证服务可使用占位值。")))
             .child(h_flex().gap_2().flex_wrap()
@@ -44,26 +43,7 @@ impl HiveApp {
                     .child(h_flex().child(Button::new(SharedString::from(format!("add-pi-model-{add}"))).ghost().compact().label(tr("添加模型")).accessibility_label(format!("{}: {add}",tr("添加模型"))).disabled(disabled).on_click(cx.listener(move|this,_,window,cx|this.edit_pi_model_config(Some(Target{provider:add.clone(),model:None,is_model:true,creating:true}),window,cx)))))
             }));
         v_flex().flex_1().min_h_0().min_w_0().gap_3()
-            .child(div().flex().flex_1().min_h_0().min_w_0()
-                .on_children_prepainted(move |_, window, cx| {
-                    // Input requests reveal during prepaint; a plain Div does not consume it.
-                    if !control_focus.iter().any(|focus| focus.contains_focused(window, cx)) { return; }
-                    let Some(target) = window.take_autoscroll() else { return; };
-                    let viewport = scroll.bounds();
-                    let delta = if target.top() < viewport.top() {
-                        viewport.top() - target.top()
-                    } else if target.bottom() > viewport.bottom() {
-                        viewport.bottom() - target.bottom()
-                    } else { px(0.) };
-                    if delta != px(0.) {
-                        let scroll = scroll.clone();
-                        let offset = scroll.offset() + point(px(0.), delta);
-                        window.on_next_frame(move |window, _| {
-                            scroll.set_offset(offset);
-                            window.refresh();
-                        });
-                    }
-                }).child(body))
+            .child(crate::focus_scroll::Viewport::new("pi-model-viewport", &scroll, body))
             .when(state.target.is_some(), |view| view.child(self.render_pi_model_actions(cx)))
     }
     fn render_pi_model_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -112,21 +92,10 @@ impl HiveApp {
 
     }
     fn reveal_model_control(&self, index: usize, control: impl IntoElement) -> impl IntoElement {
-        let focus = self.pi_models.control_focus[index].clone();
-        let last_focus = self.pi_models.control_last_focus[index].clone();
-        let scroll = self.pi_models.scroll.clone();
-        div().track_focus(&focus).tab_stop(false)
-            .on_children_prepainted(move |bounds, window, cx| {
-                let focused = window.focused(cx).filter(|_| focus.contains_focused(window, cx))
-                    .map(|focused| (focused, scroll.bounds()));
-                let changed = *last_focus.borrow() != focused;
-                let reveal = changed && focused.is_some();
-                *last_focus.borrow_mut() = focused;
-                if reveal && let Some(bounds) = bounds.first() {
-                    window.request_autoscroll(bounds.dilate(px(8.)));
-                }
-            }).child(control)
+        crate::focus_scroll::Reveal::new(format!("pi-model-control-{index}"), &self.pi_models.scroll, control)
+            .track_focus(&self.pi_models.control_focus[index])
     }
+
     fn override_capability(
         &self,
         label: &'static str,

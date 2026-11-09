@@ -326,7 +326,7 @@ impl HiveApp {
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
-                        SettingsSection::Remote => content.id("settings-remote-content").overflow_y_scroll().track_scroll(&self.remote.scroll).child(self.render_remote_settings(cx)),
+                        SettingsSection::Remote => content.id("settings-remote-container").child(crate::focus_scroll::Viewport::new("remote-viewport", &self.remote.scroll, v_flex().flex_1().min_h_0().min_w_0().id("settings-remote-content").overflow_y_scroll().track_scroll(&self.remote.scroll).child(self.render_remote_settings(cx)))),
                         SettingsSection::Chat => content.id("settings-chat-content").overflow_y_scroll().child(self.render_chat_settings(cx)),
                         SettingsSection::Models => content.id("settings-model-config-content").child(self.render_pi_models(cx)),
                         SettingsSection::PiAccounts => content.id("settings-pi-accounts").overflow_y_scroll().track_scroll(&self.pi_accounts.scroll).child(self.render_pi_accounts(cx)),
