@@ -237,6 +237,9 @@ impl HiveApp {
                                 )
                                 .child(
                                     div()
+                                        .id(SharedString::from(format!("tool-input-text-{id}")))
+                                        .role(Role::Label)
+                                        .aria_label(format!("{}: {input}", tr("输入参数")))
                                         .min_w_0()
                                         .font_family(Theme::global(cx).mono_font_family.clone())
                                         .text_size(px(12.))
@@ -256,6 +259,9 @@ impl HiveApp {
                                 )
                                 .child(
                                     div()
+                                        .id(SharedString::from(format!("tool-output-text-{id}")))
+                                        .role(Role::Label)
+                                        .aria_label(format!("{}: {text}", tr("输出")))
                                         .min_w_0()
                                         .font_family(Theme::global(cx).mono_font_family.clone())
                                         .text_size(px(12.))

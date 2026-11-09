@@ -60,3 +60,5 @@ Codex活跃主控的系统通知已接入同回合投递，针对上文工作流
 显式输入驱动的冷启动另补源码修复与原生实证：已有历史且无其他投递时，恢复事实进入上下文，不抢先再开回复；实际Mac窗口发送给原样Codex/Terra只新增一个回合并回复COLD_INPUT_OK，退出及冷读pending0/来源保持。手动恢复和启动失败后的清理经真HTTP/SQLite/Pi检查。见[输入恢复](validation/2026-11-09-user-input-recovery.md)。候选仍768d085，未包含这次源码修复。
 
 已接收输入反馈已修复并补原生证据：后台接受后至厂商消息出现前仍显示正文、处理/等待状态，按 delivery ID 去重；中英文 AX 名称、冷启动和正常退出通过。使用可控本地协议对端复现，未增加真实模型结论。见[接收反馈](validation/2026-11-09-received-input-feedback.md)。Mac 构建与 Windows MSVC 检查通过，候选 ZIP 未更新，#6 与完整目标继续开放。
+
+聊天辅助功能新增源码修复：用户/助手正文、已展开工具参数/输出及团队原文按可见状态提供文本语义。真实 Terra 主控与 Worker 历史的原生 AX 读取、通知展开/收起边界、正常退出通过，本次未运行新模型。见[聊天可读性](validation/2026-11-09-conversation-accessibility.md)。Mac 构建与 Windows 编译检查通过，完整 VoiceOver/流式/Windows 原生及候选包仍待。

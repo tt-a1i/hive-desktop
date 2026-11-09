@@ -41,6 +41,8 @@ impl HiveApp {
             });
         v_flex()
             .id(("message", i))
+            .role(Role::Group)
+            .aria_label(heading.clone())
             .min_w_0()
             .gap_2()
             .px_3()
@@ -157,7 +159,11 @@ impl HiveApp {
                     .as_ref()
                     .filter(|_| !message.text.is_empty()),
                 |view, markdown| {
-                    view.child(TextView::new(markdown).selectable(true).stream_fade(true))
+                    view.child(div()
+                        .id(("message-body", i))
+                        .role(Role::Label)
+                        .aria_label(markdown.read(cx).rendered_text().as_str().to_string())
+                        .child(TextView::new(markdown).selectable(true).stream_fade(true)))
                 },
             )
             .when(
@@ -165,6 +171,9 @@ impl HiveApp {
                 |view| {
                     view.child(
                         div()
+                            .id(("message-body", i))
+                            .role(Role::Label)
+                            .aria_label(message.text.clone())
                             .min_w_0()
                             .text_size(rems(15. / 16.))
                             .line_height(rems(1.5))
@@ -247,6 +256,9 @@ impl HiveApp {
                 |view| {
                     view.child(
                         div()
+                            .id(("delivery-raw", i))
+                            .role(Role::Label)
+                            .aria_label(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())
                             .min_w_0()
                             .p_3()
                             .rounded_lg()
