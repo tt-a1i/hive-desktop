@@ -56,7 +56,8 @@ export interface PiSessionHandle {
   completedDeliveryIds(): readonly string[];
   interactions?(): readonly AgentInteraction[];
   respondInteraction?(id: string, response: unknown): void | Promise<void>;
-  abort(): Promise<void>;
+  /** Member retirement may finish host tool acknowledgements; direct user stop stays immediate. */
+  abort(options?: { settleTools?: boolean }): Promise<void>;
   dispose(): void | Promise<void>;
   supportsImages?(): boolean;
   currentModel(): { provider: string; id: string; name: string } | undefined;

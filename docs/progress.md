@@ -504,3 +504,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 配置修复进入候选包
 
 2b3c07e候选约164MiB，仅替换原生程序；112runtime、28,833普通文件/29内部链接/31,570元数据核对保持。包内Node执行PTY/Hive/SQLite和四组SDK配置/覆盖/JSONL/常驻刷新通过。实际独立解压包在1184×1104窗口完成输入/能力焦点、固定校验、草稿退出恢复/保存/再冷读回、新增ID/首模型/覆盖按钮及鼠标滚动；原配置只改目标name/context，三次窗口exit0。无进程/lsof引用后清理解压副本、原子替换candidate，.artifacts仍约3.9GiB，current不推广。无产品/测试修改或全量/模型重验，见[候选记录](validation/2026-11-09-model-candidate.md)。
+
+## 2026-11-09 真实工作流暴露并修复Codex汇报回收
+
+#21：真实Terra Worker完成文件/汇报但native工具被临时成员立即回收中断。成员回收先等实际工具item/completed/turn结束或1500ms预算，直接Stop不等待，不伪造native成功。新JSONL四分支先红后绿，Codex/团队定向、生产TS和原样Terra后台Stop/另一连接/两条队列回归通过。第二轮探针非空stdout错误已校准并保留失败，第三轮全新真实workflow/dispatch/file/native report及runtime close完整exit0；持久恢复与Mac原生结果/日志/产物/成员往返另通过。无Rust/模型切换/新包或全量suite，候选2b3c07e尚未纳入修复，详见[工作流实证](validation/2026-11-09-workflow-codex-report.md)。

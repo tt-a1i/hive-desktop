@@ -687,7 +687,7 @@ export class Chats implements StructuredSessionPort {
   private async stopLive(id: string, chat: LiveChat) {
     if (chat.cleanup) return chat.cleanup;
     const paused = chat.queue.pause();
-    await chat.handle.abort();
+    await chat.handle.abort({ settleTools: true });
     await paused;
     await chat.handle.dispose();
     this.live.delete(id);

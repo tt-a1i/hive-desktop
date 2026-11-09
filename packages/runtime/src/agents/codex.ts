@@ -42,7 +42,7 @@ export interface CodexSessionHandle extends PiSessionHandle {
   dispose(): Promise<void>;
 }
 type Model = { id: string; model: string; displayName: string; hidden: boolean; supportedReasoningEfforts?: {reasoningEffort:string;description:string}[] };
-type Run = { tools: Set<Promise<unknown>>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: { id: string; presentation: DeliveryPresentation };
+type Run = { tools: Set<Promise<unknown>>; nativeTools: Map<string, { done: Promise<void>; complete(): void }>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: { id: string; presentation: DeliveryPresentation };
   terminal: Promise<CodexTurn>; resolve: (turn: CodexTurn) => void; reject: (error: Error) => void; done: Promise<void>; error?: Error };
 
 /** Codex 0.166 app-server public JSON-RPC; no terminal scraping or Pi model intermediary. */
@@ -108,6 +108,9 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           if (!Value.Check(tool.parameters, params.arguments)) throw new Error(`Invalid arguments for ${tool.name}`);
           const run = active;
           if (!run) throw new Error('Codex requested a Hive tool outside an active turn');
+          let complete!: () => void;
+          const done = new Promise<void>(resolve => { complete = resolve; });
+          run.nativeTools.set(String(params.callId), { done, complete });
           const execution = tool.execute(String(params.callId), params.arguments, run.controller.signal);
           run.tools.add(execution);
           let result: Awaited<ReturnType<CodexTool['execute']>>;
@@ -156,6 +159,11 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
           rememberDelivery(turnId);
           if (notification.method === 'item/completed' || isCodexToolItem(params.item as CodexItem)) projection?.put(params.item as CodexItem, turnId);
           events?.item(params.item as CodexItem, turnId, notification.method === 'item/completed');
+          if (notification.method === 'item/completed' && active?.turnId === turnId) {
+            const id = (params.item as CodexItem).id;
+            active.nativeTools.get(id)?.complete();
+            active.nativeTools.delete(id);
+          }
         } else if (notification.method === 'turn/completed' && active) {
           const turn = params.turn as CodexTurn;
           if (!active.turnId || active.turnId === turn.id) {
@@ -271,7 +279,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       const terminal = new Promise<CodexTurn>((yes, no) => { resolve = yes; reject = no; });
       // Requests can fail before the turn is created; keep terminal rejection observed.
       void terminal.catch(() => {});
-      const run: Run = { tools: new Set(), terminalComplete: false, cancelled: false, controller: new AbortController(), terminal, resolve, reject, done: Promise.resolve(),
+      const run: Run = { tools: new Set(), nativeTools: new Map(), terminalComplete: false, cancelled: false, controller: new AbortController(), terminal, resolve, reject, done: Promise.resolve(),
         ...(promptOptions?.deliveryId && { delivery: { id: promptOptions.deliveryId,
           presentation: isDeliveryPresentation(promptOptions.presentation) ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text } } }) };
       active = run;
@@ -313,10 +321,23 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       });
       return run.done;
     },
-    async abort() {
+    async abort(stopOptions) {
       interactions.clear('aborted');
       const run = active;
       if (!run) return;
+      if (stopOptions?.settleTools && run.nativeTools.size) {
+        // A workflow can retire this member as soon as report commits, before
+        // its CLI response reaches Codex. Wait for item/completed, not a sleep
+        // or a fabricated success. Use the owned CLI's normal shutdown budget.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            Promise.all([...run.nativeTools.values()].map(tool => tool.done)),
+            run.terminal.catch(() => {}),
+            new Promise<void>(resolve => { timer = setTimeout(resolve, 1500); }),
+          ]);
+        } finally { clearTimeout(timer); }
+      }
       run.cancelled = true; run.controller.abort();
       try { await interrupt(run); }
       finally { await run.done.catch(() => {}); }
