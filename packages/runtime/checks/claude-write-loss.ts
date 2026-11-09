@@ -18,13 +18,19 @@ try {
   const incomplete=scope==='current'||scope==='early-exit';
   const project=join(directory,scope),data=join(project,'state');await mkdir(project);
   process.env.CLAUDE_CONFIG_DIR=join(project,'claude');process.env.HIVE_CLAUDE_REASONING_WIRE=join(project,'wire.jsonl');process.env.HIVE_CLAUDE_REASONING_CONTROL=join(project,'control.json');
-  await writeFile(process.env.HIVE_CLAUDE_REASONING_CONTROL,JSON.stringify(scope==='early-exit'?{exitOnQuery:true}:{completeQueries:true,writesLost:scope}));
+  const finishGate=join(project,'release-terminal');
+  await writeFile(process.env.HIVE_CLAUDE_REASONING_CONTROL,JSON.stringify(scope==='early-exit'?{exitOnQuery:true,finishGate}:{completeQueries:true,writesLost:scope,finishGate}));
   const options={executableEnvironment:{HIVE_CLAUDE_COMMAND:fileURLToPath(new URL('./fixtures/claude-reasoning-peer.cjs',import.meta.url))}};
   const events:any[]=[];runtime=await createDesktopRuntime(data,event=>events.push(event),options);
   const ws=await runtime.hive.request('POST','/api/workspaces',{path:project,name:'Write-loss '+scope,autostart_orchestrator:false})as{id:string};
   const chat=await runtime.chats.create(ws.id,'claude');
-  await runtime.chats.prompt(chat.id,'First durable input');
-  await runtime.chats.prompt(chat.id,'Queued followup');
+  assert.equal((await runtime.chats.prompt(chat.id,'First durable input')).accepted,true);
+  assert.equal((await runtime.chats.prompt(chat.id,'Queued followup')).accepted,true);
+  // These cases require an accepted followup before the terminal/exit. An
+  // immediate process exit can correctly reject the second HTTP delivery.
+  const queued=await runtime.chats.open(chat.id);
+  assert.deepEqual(queued.pendingUserInputs.map(input=>input.text),['First durable input','Queued followup']);
+  await writeFile(finishGate,'finish');
   const first=events.flatMap(e=>e.type==='state'?e.pendingUserInputs??[]:[]).find(i=>i.text==='First durable input');assert.ok(first?.deliveryId);
   await wait(async()=>events.some(e=>e.type==='error')&&!(await runtime!.chats.open(chat.id)).busy);
   const settled=await runtime.chats.open(chat.id);

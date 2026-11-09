@@ -26,6 +26,8 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   else answer({});
  }else if(x.type==='user'){persist(x);if(x.shouldQuery!==false){active=x.uuid;log({event:'query',model,content:x.message.content});
    let c={};try{c=JSON.parse(fs.readFileSync(control,'utf8'));}catch{}
+   let finished=false;const finish=()=>{
+   if(finished)return;finished=true;
    if(c.exitOnQuery)process.exit(2);
    if(c.completeQueries){
     active=undefined;const uuid=crypto.randomUUID();const assistant={type:'assistant',uuid,session_id:sid,parent_tool_use_id:null,message:{id:'msg_'+uuid,type:'message',role:'assistant',model,content:[{type:'text',text:'Synthetic queued completion'}],stop_reason:'end_turn',stop_sequence:null,usage:{input_tokens:0,output_tokens:0}}};
@@ -38,5 +40,11 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
      log({event:'writes-lost',...loss});process.stdout.write(JSON.stringify(loss)+'\n',()=>process.exit(0));
     }
    }
+   };
+   if(c.finishGate&&!fs.existsSync(c.finishGate)){
+    const watcher=fs.watch(path.dirname(c.finishGate),()=>{if(fs.existsSync(c.finishGate)){watcher.close();finish();}});
+    process.stdin.once('end',()=>watcher.close());
+    if(fs.existsSync(c.finishGate)){watcher.close();finish();}
+   }else finish();
 }}
 });
