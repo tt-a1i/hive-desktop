@@ -87,10 +87,10 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 “设置 → 远程接入”已接入原有状态、配对、设备和审计；真实回环配对/撤销恢复通过，原生点击、真实网关及新包仍待验收，见 [远程配置记录](docs/validation/2026-11-09-remote-settings.md)。
 
-界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-10-model-settings-candidate.md)。current ZIP仍为1acd805，候选没有推广。
+界面语言偏好与主要页面英文文案已接入，并纳入当前候选便携包；包内实际切换、原草稿保持及部分窄窗验证通过。完整页面/输入法/布局矩阵仍在验收，见 [语言进展](docs/validation/2026-11-09-interface-language.md) 和 [最新候选包](docs/validation/2026-11-10-model-settings-candidate.md)。最新current/candidate的具体纳入范围以[验收总表](docs/acceptance-status.md)为准。
 
 完整目标逐项证据、明确缺口及候选包状态见 [验收总表](docs/acceptance-status.md)。
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-当前Mac开发包已更新为edbbae1优化release，纳入最新四Agent配置入口、异步输入保护和目标路径加载/选区交接。六组包检查、全新原生配置/项目选择、真实Codex Terra工具执行67/3及原线程/中英文草稿冷恢复通过，见[当前优化包](docs/validation/2026-11-10-current-optimized-flow.md)。首次Claude检查失败与测试握手修复有独立证据，生产代码未因此改变。旧ZIP/状态均保留；Windows原生、正式签名发行和完整产品目标仍待。
+当前Mac开发包已更新为7ae27ca优化release，纳入成员/选模/工作流键盘显露与刷新后的焦点交接。六组包检查、实际包内成员/产物/派单往返，以及上一包真实Terra会话、工具输出和精确草稿的新包冷恢复通过；本轮无新推理，见[当前优化包](docs/validation/2026-11-10-member-workflow-package.md)。初始包捕获的焦点失败、修复及原始证据均保留。旧ZIP/状态和上一可运行包保留；Windows原生、正式签名发行与完整产品目标仍待。
