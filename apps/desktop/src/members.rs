@@ -29,6 +29,15 @@ impl Member {
             other => other,
         }
     }
+    pub fn workload_label(&self) -> String {
+        if self.pending_task_count == 0 { return self.status_label().to_owned(); }
+        let count = self.pending_task_count;
+        if english() {
+            format!("{} · {count} open {}", self.status_label(), if count == 1 { "dispatch" } else { "dispatches" })
+        } else {
+            format!("{} · {count} 项未结派单", self.status_label())
+        }
+    }
     pub fn backend_label(&self) -> &str {
         match self.configured_command.as_deref() {
             Some("hive:pi") => "Pi",

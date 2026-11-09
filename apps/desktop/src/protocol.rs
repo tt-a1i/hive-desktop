@@ -76,6 +76,7 @@ pub struct Member {
     pub name: String,
     pub role: String,
     pub status: String,
+    pub pending_task_count: u64,
     #[serde(default)]
     pub configured_command: Option<String>,
     pub desktop_model: Option<ModelIdentity>,
