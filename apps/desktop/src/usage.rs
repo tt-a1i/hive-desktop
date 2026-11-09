@@ -2,11 +2,14 @@ use crate::{app::HiveApp, palette::Color, language::{english,tr}};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
+        popover::Popover,
         *,
     },
     prelude::FluentBuilder,
     *,
 };
+mod labels;
+use labels::native_label;
 use serde::Deserialize;
 use serde_json::json;
 #[derive(Deserialize)]
@@ -35,6 +38,7 @@ pub struct Snapshot {
 }
 #[derive(Default)]
 pub struct Usage {
+    scroll: ScrollHandle,
     pub visible: bool,
     pub loading: bool,
     pub snapshot: Option<Snapshot>,
@@ -53,6 +57,7 @@ impl HiveApp {
     pub(crate) fn reset_usage(&mut self) {
         self.usage.generation += 1;
         self.usage.visible = false;
+        self.usage.scroll.set_offset(point(px(0.), px(0.)));
         self.usage.loading = false;
         self.usage.snapshot = None;
         self.usage.error = None;
@@ -114,30 +119,30 @@ impl HiveApp {
         })
         .detach();
     }
-    pub(crate) fn usage_button(&self, cx: &Context<Self>) -> impl IntoElement {
-        Button::new("session-usage")
-            .ghost()
-            .compact()
-            .label(tr("用量"))
-            .accessibility_label(tr("查看原生用量和上下文"))
-            .selected(self.usage.visible)
-            .disabled(!self.connected || !self.conversation_ready || self.loading)
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.usage.visible = !this.usage.visible;
-                if this.usage.visible {
-                    this.load_usage(cx);
-                }
+    pub(crate) fn usage_button(&self, window: &Window, running: bool, cx: &Context<Self>) -> impl IntoElement + use<> {
+        Popover::new("session-usage-popover")
+            .anchor(Anchor::BottomRight)
+            .w(px(420.).min(window.viewport_size().width - px(32.)))
+            .open(self.usage.visible)
+            .trigger(Button::new("session-usage").ghost().compact().label(tr("用量"))
+                .accessibility_label(tr("查看原生用量和上下文"))
+                .selected(self.usage.visible)
+                .disabled(!self.connected || !self.conversation_ready || self.loading))
+            .on_open_change(cx.listener(|this, open, _, cx| {
+                this.usage.visible = *open;
+                if *open { this.load_usage(cx); }
                 cx.notify();
             }))
+            .when(self.usage.visible, |popover| popover.child(crate::text_reading::region(
+                "usage-popover-reading".into(), tr("原生用量").into(), &self.usage.scroll,
+                (window.viewport_size().height - px(96.)).min(px(360.)).max(px(100.)), cx
+            ).border_color(rgba(0)).p_0().child(self.render_usage(running, cx))))
     }
     pub(crate) fn render_usage(&self, running: bool, cx: &Context<Self>) -> AnyElement {
         v_flex()
             .min_w_0()
             .gap_2()
-            .p_3()
-            .rounded_lg()
-            .border_1()
-            .border_color(Color::Divider.get(cx))
+            .p_1()
             .child(
                 h_flex()
                     .items_center()
@@ -198,74 +203,29 @@ impl HiveApp {
                 )
             })
             .when_some(self.usage.snapshot.as_ref(), |view, snapshot| {
-                view.child(
-                    v_flex()
-                        .id("native-usage-details")
-                        .min_w_0()
-                        .max_h(px(240.))
-                        .overflow_y_scroll()
-                        .gap_3()
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(Color::Secondary.get(cx))
-                                .child(format!("{} · {}: Token",snapshot.source,tr("单位"))),
-                        )
-                        .when_some(snapshot.context.as_ref(), |view, context| {
-                            view.child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(div().text_sm().child(format!("{}{}",tr("当前上下文"),if context.estimated {tr("（原生估算）")} else {""})))
-                                    .child(div().text_sm().child(match context.tokens {
-                                        Some(tokens) => format!(
-                                                "{tokens} / {} Token{}",
-                                                context.window,
-                                                context
-                                                    .percent
-                                                    .map(|p| format!(" · {p:.1}%"))
-                                                    .unwrap_or_default()
-                                            ),
-                                        None => {
-                                            if english() {format!("Usage unavailable · Context window {} tokens",context.window)} else {format!("占用暂不可用 · 窗口 {} Token",context.window)}
-                                        }
-                                    })),
-                            )
-                        })
-                        .children(snapshot.reports.iter().map(|report| {
-                            v_flex()
-                                .min_w_0()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(report.label.clone()),
-                                )
-                                .child(h_flex().min_w_0().flex_wrap().gap_3().children(
-                                    report.counters.iter().map(|counter| {
-                                        v_flex()
-                                            .gap_1()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(Color::Muted.get(cx))
-                                                    .child(counter.label.clone()),
-                                            )
-                                            .child(
-                                                div().text_sm().child(counter.tokens.to_string()),
-                                            )
-                                    }),
-                                ))
-                        }))
-                        .when_some(snapshot.notice.clone(), |view, notice| {
-                            view.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Secondary.get(cx))
-                                    .child(notice),
-                            )
-                        }),
-                )
+                view.child(v_flex().id("native-usage-details").min_w_0().gap_3()
+                    .child(crate::text_reading::selectable_text("usage-source", format!("{} · {}: Token",native_label(&snapshot.source),tr("单位"))).text_xs().text_color(Color::Secondary.get(cx)))
+                    .when_some(snapshot.context.as_ref(), |view, context| {
+                        let title = format!("{}{}",tr("当前上下文"),if context.estimated {tr("（原生估算）")} else {""});
+                        let amount = match context.tokens {
+                            Some(tokens) => format!("{tokens} / {} Token{}",context.window,context.percent.map(|p| format!(" · {p:.1}%")).unwrap_or_default()),
+                            None => if english() {format!("Usage unavailable · Context window {} tokens",context.window)} else {format!("占用暂不可用 · 窗口 {} Token",context.window)},
+                        };
+                        view.child(v_flex().id("usage-context").role(Role::Label).aria_label(format!("{title}: {amount}")).gap_1()
+                            .child(div().text_sm().child(title)).child(div().text_sm().child(amount)))
+                    })
+                    .children(snapshot.reports.iter().enumerate().map(|(i, report)| {
+                        let title = native_label(&report.label);
+                        v_flex().id(SharedString::from(format!("usage-report-{i}"))).role(Role::Group).aria_label(title.clone()).min_w_0().gap_2()
+                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
+                            .child(h_flex().min_w_0().flex_wrap().gap_3().children(report.counters.iter().enumerate().map(|(j, counter)| {
+                                let label = native_label(&counter.label);
+                                v_flex().id(SharedString::from(format!("usage-counter-{i}-{j}"))).role(Role::Label).aria_label(format!("{label}: {}",counter.tokens)).gap_1()
+                                    .child(div().text_xs().text_color(Color::Muted.get(cx)).child(label))
+                                    .child(div().text_sm().child(counter.tokens.to_string()))
+                            })))
+                    }))
+                    .when_some(snapshot.notice.as_ref(), |view, notice| view.child(crate::text_reading::selectable_text("usage-notice", native_label(notice)).text_xs().text_color(Color::Secondary.get(cx)))))
             })
             .into_any_element()
     }

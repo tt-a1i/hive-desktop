@@ -6,6 +6,7 @@ mod attachments;
 mod collaboration;
 mod workflows;
 mod composer;
+mod composer_controls;
 mod queued_inputs;
 mod command_picker;
 mod conversation;
