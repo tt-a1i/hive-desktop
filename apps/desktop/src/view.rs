@@ -521,7 +521,7 @@ impl Render for HiveApp {
                     .when_some(self.conversation_return(cx), |header, back| header.child(back))
                     .when(self.session.is_none() || self.session_name_target.as_deref() != self.session.as_ref().map(|s| s.id.as_str()), |header| header.child({
                     let title = if welcome && self.workspace.is_none() { tr("打开项目").into() } else if welcome { tr("今天想推进什么？").into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
-                    div().id("session-title").role(Role::Label).aria_label(title.clone()).font_weight(FontWeight::SEMIBOLD).flex_1().min_w_0().when(welcome, |h| h.text_size(px(if window.viewport_size().width < px(1000.) { 28. } else { 32. })).line_height(px(40.)).whitespace_normal()).when(!welcome, |h| h.text_lg().truncate())
+                    div().id("session-title").role(Role::Label).aria_label(title.clone()).font_weight(FontWeight::SEMIBOLD).flex_1().min_w_0().when(welcome, |h| h.font_weight(FontWeight::MEDIUM).text_size(px(if window.viewport_size().width < px(1000.) { 28. } else { 32. })).line_height(px(40.)).whitespace_normal()).when(!welcome, |h| h.text_lg().truncate())
                         .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
                         .child(title)
                 }))
@@ -538,8 +538,8 @@ impl Render for HiveApp {
                     Button::new("find-in-conversation").ghost().compact().icon(Glyph::Search).accessibility_label(tr("查找当前会话")).tooltip(if cfg!(target_os = "macos") { tr("查找会话内容 · ⌘F") } else { tr("查找会话内容 · Ctrl+F") }).on_click(cx.listener(|this, _, window, cx| this.open_conversation_find(window, cx)))
                 ).child(Button::new("export-conversation").ghost().compact().icon(Glyph::FileDown).accessibility_label(tr("导出当前对话")).tooltip(tr("导出对话为 Markdown")).disabled(self.messages.is_empty()).on_click(cx.listener(|this, _, window, cx| this.open_conversation_export(window,cx)))))
                 .when(welcome && self.workspace.is_some(), |header| header.child(
-                    Button::new("home-team").ghost().rounded_full().icon(Glyph::Network)
-                        .label(tr("团队成员")).on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx)))
+                    Button::new("home-team").ghost().compact().rounded_full().icon(Glyph::Network)
+                        .accessibility_label(tr("团队成员")).tooltip(tr("团队成员")).on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx)))
                 )).when(!welcome && self.reading_above_latest(), |header| header.child(
                     Button::new("jump-to-latest").ghost().compact().icon(Glyph::ArrowDown)
                         .label(tr("回到最新")).accessibility_label(tr("回到最新消息"))
@@ -623,7 +623,7 @@ impl Render for HiveApp {
                             .disabled(self.refreshing_models || running).on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))))))
                 )
                 .when(welcome && self.workspace.is_some(), |surface| surface.child(
-                    v_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_start().mt_1().gap_1()
+                    h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_wrap().items_start().mt_1().gap_2()
                         .children([
                             (Glyph::FolderOpen, tr("了解这个项目"), tr("请梳理当前项目的结构、主要入口和运行方式。")),
                             (Glyph::Search, tr("审查未提交的改动"), tr("请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。")),

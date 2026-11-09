@@ -203,11 +203,10 @@ impl HiveApp {
         let terminal_enabled = self.connected && has_workspace && self.workspace_writes_allowed();
         let connected = self.connected;
         let selected = [self.workflows.visible, self.memory.visible, self.terminal.visible];
-        Button::new("navigation-more").ghost().h(px(32.)).rounded_full()
-            .icon(Glyph::Ellipsis).justify_start().w_full()
+        Button::new("navigation-more").ghost().compact().h(px(32.)).w(px(32.))
+            .icon(Glyph::Ellipsis).tooltip(tr("更多工作区功能"))
             .accessibility_label(tr("更多工作区功能"))
             .selected(selected.into_iter().any(|active| active))
-            .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("更多")))
             .dropdown_menu(move |mut menu, _, _| {
                 for (index, label, glyph, enabled) in [
                     (0, tr("工作流"), Glyph::Workflow, has_workspace),
@@ -250,12 +249,13 @@ impl HiveApp {
             .p_3()
             .gap_1()
             .child(self.render_navigation_bar(cx))
-            .child(self.new_chat_menu("new-session-menu", tr("新建"), None, cx))
-            .child(Button::new("search-sessions").ghost().h(px(32.)).rounded_full().icon(Glyph::Search)
-                .justify_start().w_full().accessibility_label(tr("搜索会话"))
+            .child(h_flex().w_full().min_w_0().gap_1()
+            .child(div().flex_1().min_w_0().child(self.new_chat_menu("new-session-menu", tr("新建"), None, cx)))
+            .child(Button::new("search-sessions").ghost().compact().h(px(32.)).w(px(32.)).icon(Glyph::Search)
+                .accessibility_label(tr("搜索会话"))
                 .tooltip(if cfg!(target_os = "macos") { tr("搜索会话 (⌘K)") } else { tr("搜索会话 (Ctrl+K)") })
-                .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("搜索会话")))
                 .disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.open_session_search(window, cx))))
+            .child(self.render_more_navigation(cx)))
             .child(
                 v_flex()
                     .flex_shrink_0()
@@ -306,14 +306,15 @@ impl HiveApp {
                                 }
                                 cx.notify();
                             })),
-                    )
-                    .child(self.render_more_navigation(cx)),
+                    ),
             )
             .child(Viewport::new("workspace-navigation-viewport", &self.navigation_scroll,
                 v_flex()
                     .id("workspace-session-navigation")
                     .mt_4()
                     .flex_1()
+                    .min_w_0()
+                    .w_full()
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.navigation_scroll)
