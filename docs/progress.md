@@ -548,3 +548,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 系统通知并入 Codex 当前回合
 
 生产队列先持久化系统通知，在没有用户/任务排队阻挡时调用原生steer；来源按native item关联，只有接受+实际历史消息+成功终态才结算。多通知、响应排序、未消费/未持久化、停止、拒绝重试、终态竞争、断线、真实元数据写盘失败和用户顺序检查通过；关闭接线的基线回合3vs1失败。真实原样Codex/Terra主控亲自启动workflow，Worker显式report47/3，主控独立读文件/show后同回合只一条final，冷恢复pending0/两条来源保持。原始CLI接受后Stop另证实通知ID保留、冷恢复未误结算。第一轮探针漏description与独立探针导入失败保留，均不算产品成功。TS/build/team/Codex通过，无UI/新ZIP/全量suite；晚到通知和其他后端不冒称已解决，见[投递证据](validation/2026-11-09-steered-system-delivery.md)。
+
+## 2026-11-09 同回合通知的原生恢复与详情阅读
+
+原始Codex无模型fork真实工作流历史到独立验收数据，Mac实际核对主控团队通知折叠/原文run47/3、唯一final、成员原生messages/report完成，以及成员→工作流阅读位置。发现详情首屏被全局配置卡占用，一处条件将配置保留列表、详情直接呈现运行/结果；新构建宽窗/1184×1000窄窗、47/3产物预览、返回列表/执行器原值无改动通过。Mac构建/Windows类型/diff通过，两窗口Cmd+Q exit0/PID消失，无模型/后台全量/新ZIP，动态流式与其他完整矩阵仍待。见[原生记录](validation/2026-11-09-steered-native-workflow.md)。

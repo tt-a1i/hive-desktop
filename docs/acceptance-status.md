@@ -54,3 +54,5 @@ Web遗漏项来源：本地Hive的5d87d4ba10d9d66cfca32941a16c60e7e52476b0、版
 空会话恢复已补源码修复：只有启动上下文时保存恢复事实、保持空闲；有实际历史和排队输入仍沿用恢复处理。真实Hive/Pi JSONL及原始Codex无模型控制链路通过，见[空会话恢复](validation/2026-11-09-empty-session-recovery.md)。此项不代表工作流结束重复回复已解决，候选0e72137未纳入本轮。
 
 Codex活跃主控的系统通知已接入同回合投递，针对上文工作流结束通知排到用户回合之后的路径，真实Terra主控/Worker完成47/3后只一条final，冷恢复pending0；适配器接受后Stop另验证通知ID保留、未误记完成。见[同回合投递](validation/2026-11-09-steered-system-delivery.md)。此结论限于列出路径：晚到通知、其他后端、原生窗口/Windows及候选包仍各自待验收，未将所有重复答复情形标为解决。
+
+同回合通知冷历史已补Mac原生展示：独立fork真实47/3历史，团队通知折叠/原文、唯一final、成员report完成和工作流往返核对通过；详情移除重复全局配置卡，列表保留配置，窄窗与产物预览通过。见[原生恢复](validation/2026-11-09-steered-native-workflow.md)。这不等于流式追加/Windows/全部UI矩阵验收，候选未更新。
