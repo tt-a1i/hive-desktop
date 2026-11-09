@@ -394,7 +394,12 @@ export class Chats implements StructuredSessionPort {
               sourceText: presentation.displayText, attachments: staged.map(item => item.attachment) };
           }
         }
-        if (options?.triggerTurn === false) {
+        // A cold paused queue already has work to wake the model. Supply current
+        // recovery facts before that work instead of appending a second wake-up
+        // after it has finished. An empty queue still needs normal recovery.
+        const recoveringQueuedWork = presentation?.origin === 'recovery'
+          && chat.queue.pendingCount > 0 && !chat.queue.busy;
+        if (options?.triggerTurn === false || recoveringQueuedWork) {
           if (images.length) throw new TypeError('不触发模型回合的投递暂不支持图片。');
           const startupContext = text;
           this.index.save({ ...this.index.get(id), startupContext });
