@@ -20,3 +20,17 @@
 UI保存失败重试、全页面语言切换、选区/undo/输入法、完整键盘/主题/窄窗矩阵、Windows原生及便携候选包GUI仍未完成。Pi重登和Claude真实模型边界不变，#16/#17及完整目标不关闭。
 
 收据在`.artifacts/native-resume/{receipt.json,export-copy-receipt.json,native.log,exit.json,reopen.log,reopen-exit.json}`。本轮没有产品/测试改动、新ZIP或依赖树副本；运行Mac构建、原生操作、文件逐字与SQLite只读检查，未跑全量测试。
+
+## 原生主题修复与真实保存失败重试
+
+上一轮稳定截图显示：浅色内容区上方仍是深色原生标题栏。追到`appearance::apply`只调用组件Theme；安装的GPUI明确提供`App::set_window_appearance`，组件Theme::change自身不设置原生外观。现于同一apply入口同步Light/Dark，System传None清除应用覆盖；仍在偏好成功保存后才应用，不改持久化格式、字号或用户系统设置。其他平台该GPUI接口为no-op，Windows仍须实际验收。
+
+修复构建在实际Mac窗口恢复浅色时，标题栏也变浅；切深色后两者同为深色。再切浅色→跟随系统，标题栏和内容回到系统深色，界面仍可操作，无强制固定浅色遗留。构建文件SHA256为`ab996829fda1bb3a950c98c6d292954b1ea017432c2c429c080dcd88fb0b23e6`；基线4620b98加appearance.rs本次修改。
+
+导出失败使用隔离项目中新建的`native-save-retry.md`（内容OWNED_IMMUTABLE_ORIGINAL），仅该文件设置macOS用户immutable标志。实际系统保存选中该精确文件名/项目目录并确认替换，原子persist真实返回Operation not permitted（os error 1）；原文件及保护标志均断言不变。截图显示“保存失败，快照仍保留”及原始诊断，选项仍关闭、复制/保存按钮可用。解除该测试文件标志后，不关闭快照，重新系统保存并确认替换成功。保存文件与同一快照复制后粘贴的落盘草稿逐字一致：11,323字符，1200段及尾部保留，SHA256为`f66ef5bdcbf74818422ef24a1b97825de4902113bdf6542d7124b1505ef11777`；原聊天草稿/隐藏上下文/另一会话/未选过程均排除。临时粘贴草稿随后通过界面清空，回到原会话并Cmd+Q，原生53897正常exit0、shutdown成功，无自有后台残留，测试文件保护标志已清除。
+
+曾拿另一份旧fixture的中文保存文件作golden，因会话/附件ID不同及本地化后的产物前缀标点不同断言失败；没有修改产品迁就旧文件，改为本次实际剪贴板与保存文件直接逐字核对。记录在save-retry-receipt.json，不将旧golden比较记为通过。
+
+Mac构建、Windows默认MSVC交叉类型检查、既有appearance::tests两条及git diff --check通过。日志分别在`/tmp/hive-native-appearance-{build,windows,test}.log`；收据`.artifacts/native-resume/{appearance-save-receipt,save-failure,save-retry-receipt}.json`。无新增/删除测试；这次纯外观入口修复按原生走查和已有偏好回归验证，未跑无关全量测试、未请求模型或制作新ZIP。
+
+新发现：保存失败/成功文字在画面可见，但当前AX树只返回开关/预览/按钮，没有这些提示文本；辅助技术错误通知仍需修复和实际验证。窄窗带长错误、完整键盘/输入法、Windows与候选包仍未验收。上述“保存失败重试未完成”已由本段补齐Mac普通窗口路径，不能推广到全部平台与可访问性矩阵。

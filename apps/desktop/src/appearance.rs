@@ -1,5 +1,5 @@
 use gpui_kit::{
-    App, Global, Window,
+    App, Global, Window, WindowAppearance,
     component::{Theme, ThemeMode},
     px,
 };
@@ -119,6 +119,13 @@ pub fn restore(root: &Path, cx: &mut App) {
 }
 
 pub fn apply(window: Option<&mut Window>, cx: &mut App) {
+    // Component themes do not change macOS window chrome or native dialogs.
+    // Clearing the override is essential when returning to the system theme.
+    cx.set_window_appearance(match cx.global::<Appearance>().mode() {
+        Mode::System => None,
+        Mode::Light => Some(WindowAppearance::Light),
+        Mode::Dark => Some(WindowAppearance::Dark),
+    });
     match cx.global::<Appearance>().mode() {
         Mode::System => Theme::sync_system_appearance(window, cx),
         Mode::Light => Theme::change(ThemeMode::Light, window, cx),
