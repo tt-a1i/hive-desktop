@@ -30,7 +30,7 @@ impl HiveApp {
             .min_w_0()
             .gap_2()
             .child(
-                h_flex()
+                crate::focus_scroll::Reveal::new(format!("member-{}-description-reveal", member.id), &self.member_scroll, h_flex()
                     .min_w_0()
                     .items_center()
                     .gap_2()
@@ -85,11 +85,11 @@ impl HiveApp {
                                 })
                             }),
                         )
-                    }),
+                    })),
             )
             .when_some(scroll, |view, scroll| {
                 view.child(
-                    crate::text_reading::region(
+                    crate::focus_scroll::Reveal::new(format!("member-{}-description-body-reveal", member.id), &self.member_scroll, crate::text_reading::region(
                         format!("member-description-body-{}", member.id),
                         if english() {
                             format!(
@@ -115,7 +115,7 @@ impl HiveApp {
                         } else {
                             text
                         },
-                    )),
+                    ))),
                 )
             })
             .into_any_element()

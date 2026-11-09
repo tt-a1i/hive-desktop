@@ -362,28 +362,6 @@ impl Render for HiveApp {
         let has_text = !self.input.read(cx).value().trim().is_empty()
             || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
         self.composer_has_text = has_text;
-        let member_search = self.member_search.read(cx).value().trim().to_lowercase();
-        let matching_members: Vec<_> = self.members.iter().enumerate().filter(|(_, member)| {
-            (self.member_status_filter == "all" || member.status == self.member_status_filter)
-                && (member_search.is_empty() || format!("{} {} {} {} {}", member.name, member.role, member.role_label(), member.backend_label(), member.description).to_lowercase().contains(&member_search))
-        }).collect();
-        let member_browsing = !member_search.is_empty() || self.member_status_filter != "all";
-        let member_query = self
-            .member_model_search
-            .read(cx)
-            .value()
-            .trim()
-            .to_lowercase();
-        let matching_member_models: Vec<_> = self
-            .member_catalog
-            .iter()
-            .filter(|model| {
-                format!("{} {} {}", model.provider, model.id, model.name)
-                    .to_lowercase()
-                    .contains(&member_query)
-            })
-            .cloned()
-            .collect();
         let welcome = self.session.as_ref().is_none_or(|s| s.agent_id.is_none())
             && !open_failed
             && self.pending_reports.is_empty()
@@ -425,93 +403,7 @@ impl Render for HiveApp {
             } else if self.memory.visible { self.render_memory(cx).into_any_element()
             } else if self.workflows.visible { self.render_workflows(cx)
             } else if self.collaboration.visible { self.render_collaboration(cx)
-            } else if self.member_panel { v_flex().flex_1().min_w_0().h_full().w_full().max_w(px(960.)).mx_auto().gap_4().px_5().py_6().when(!narrow, |panel| panel.px_8().py_8())
-                .child(h_flex().w_full().items_center().gap_2().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(tr("团队成员")))
-                    .child(div().flex_1().text_xs().text_color(Color::Muted.get(cx)).child(if self.member_loading { tr("更新中").into() } else { if english() { format!("{} {}", self.members.len(), if self.members.len() == 1 { "member" } else { "members" }) } else { format!("{} 位", self.members.len()) } }))
-                    .child(Button::new("refresh-members").ghost().compact().icon(Glyph::RefreshCw).tooltip(tr("刷新成员")).accessibility_label(tr("刷新成员")).disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_members(cx))))
-                    .child(Button::new("toggle-member-form").ghost().icon(Glyph::Plus).label(if self.member_form_open { tr("收起表单") } else { tr("添加成员") }).on_click(cx.listener(|this, _, _, cx| { this.member_form_open = !this.member_form_open; cx.notify(); }))))
-                .child(self.render_member_filters(matching_members.len(), member_browsing, cx))
-                .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
-                .when_some(self.member_error.clone(), |view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(format!("{}: {error}", tr("成员状态未能更新")))))
-                .child(v_flex().id("members-panel").flex_1().min_h_0().min_w_0().overflow_y_scroll().gap_2()
-                    .when(self.member_form_open, |list| list.child(v_flex().gap_2().p_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("新建成员")))
-                    .child(h_flex().gap_3().child(div().flex_1().min_w_0().child(Input::new(&self.member_name))).child(div().flex_1().min_w_0().child(Textarea::new(&self.member_description).aria_label(tr("成员职责说明")))))
-                    .child(self.render_member_templates(cx))
-                    .child(div().text_xs().child(tr("角色")))
-                    .child(h_flex().gap_1().children([("coder", tr("开发")), ("reviewer", tr("审查")), ("tester", tr("测试")), ("custom", tr("自定义"))].into_iter().enumerate().map(|(i, (role, label))| Button::new(("member-role", i)).label(label).selected(self.member_role == role).on_click(cx.listener(move |this, _, _, cx| { this.member_role = role; cx.notify(); })))))
-                    .child(div().text_xs().child(tr("成员后端")))
-                    .child(h_flex().gap_1().children([("pi", "Pi"), ("codex", "Codex"), ("pi-rpc", tr("外部 Pi")), ("claude", "Claude")].into_iter().enumerate().map(|(i, (backend, label))| Button::new(("member-backend", i)).label(label).selected(self.member_backend == backend).on_click(cx.listener(move |this, _, _, cx| { this.member_backend = backend; cx.notify(); })))))
-                    .child(Button::new("add-member").label(tr("添加成员")).disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.add_member(cx))))))
-
-                    .when(self.members.is_empty() && !self.member_loading && !self.member_form_open, |view| view.child(v_flex().flex_1().items_center().justify_center().gap_3()
-                        .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("还没有团队成员")))
-                        .child(Button::new("first-member").rounded_full().icon(Glyph::Plus).label(tr("添加第一位成员"))
-                            .on_click(cx.listener(|this, _, window, cx| { this.member_form_open = true; this.member_name.update(cx, |input, cx| input.focus(window, cx)); cx.notify(); })))))
-                    .when(!self.members.is_empty() && matching_members.is_empty(), |view|view.child(v_flex().items_center().gap_2().py_6()
-                        .child(div().text_sm().child(tr("没有匹配的成员")))
-                        .child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("尝试其他名称、职责、角色或 Agent，或清除筛选。")))))
-                    .children(matching_members.into_iter().map(|(i, member)| {
-                        let id = member.id.clone();
-                        let workspace = self.workspace.clone().unwrap_or_default();
-                        let editing = self.editing_member.as_ref() == Some(&id);
-                        let deleting = self.deleting_member.as_ref() == Some(&id);
-                        let running = member.status != "stopped";
-                        let stopping = self.member_stopping.as_ref() == Some(&id);
-                        let backend = crate::members::command_backend(member.configured_command.as_deref());
-                        let picker_open = self.member_picker_target.as_ref() == Some(&id);
-                        let chosen = member.desktop_model.as_ref();
-                        let member_model_ready = chosen.is_some();
-                        let session_id = self.sessions.iter().find(|session| session.agent_id.as_ref() == Some(&id)).map(|s| s.id.clone());
-                        let start_id = id.clone(); let start_workspace = workspace.clone();
-                        let picker_id = id.clone(); let picker_command = member.configured_command.clone();
-                        let save_id = id.clone(); let save_workspace = workspace.clone();
-                        let delete_id = id.clone(); let delete_workspace = workspace.clone();
-                        v_flex().id(SharedString::from(format!("team-member-{id}")))
-                            .role(Role::Group).aria_label(format!("{} · {} · {}", member.name, member.role_label(), member.backend_label()))
-                            .gap_2().py_3().px_2().border_b_1().border_color(Color::Divider.get(cx))
-                            .child(h_flex().w_full().min_w_0().flex_wrap().items_center().gap_3()
-                                .child(div().size(px(36.)).rounded_full().bg(Color::Inset.get(cx)).flex().items_center().justify_center().text_sm().font_weight(FontWeight::SEMIBOLD)
-                                    .child(member.name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default()))
-                                .child(v_flex().flex_1().min_w(px(160.)).gap_1()
-                                    .child(div().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).child(member.name.clone()))
-                                    .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{} · {}", member.role_label(), member.backend_label()))))
-                                .child(h_flex().flex_wrap().items_center().gap_3().when(narrow, |view| view.w_full())
-                                .child(div().id(SharedString::from(format!("member-workload-{id}"))).role(Role::Label)
-                                    .aria_label(member.workload_label()).rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().child(member.workload_label()))
-                                .when_some(session_id, |view, session_id| view.child(Button::new(("member-chat", i)).ghost().compact().icon(Glyph::MessagesSquare).label(tr("会话")).tooltip(tr("打开会话")).accessibility_label(if english() { format!("Open {}’s member conversation", member.name) } else { format!("打开 {} 的成员会话", member.name) }).on_click(cx.listener(move |this, _, window, cx| this.open_member_session(session_id.clone(), window, cx)))))
-                                .child(Button::new(("member-start-stop", i)).ghost().compact().label(if stopping { tr("正在停止…") } else if running { tr("停止") } else { tr("启动") }).disabled(!self.connected || self.member_loading || (!running && !member_model_ready)).on_click(cx.listener(move |this, _, _, cx| { if running { this.stop_member(start_id.clone(), cx); } else { this.member_action("POST", format!("/api/workspaces/{start_workspace}/agents/{start_id}/start"), None, cx); } })))
-                                .child(self.member_menu(member, cx))))
-                            .child(self.render_member_description(member, cx))
-                            .when(!running && backend.is_some(), |view| view.child(h_flex().child(Button::new(("choose-member-model", i)).ghost().compact()
-                                .label(if picker_open { tr("收起模型列表").into() } else { chosen.map(|m| format!("{} / {} ▾", m.provider, m.id)).unwrap_or_else(|| tr("选择启动模型 ▾").into()) })
-                                .disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, window, cx| {
-                                    if picker_open { this.member_picker_target = None; cx.notify(); }
-                                    else {
-                                        this.member_model_search.update(cx, |input, cx| input.set_value("", window, cx));
-                                        this.choose_member_models(picker_id.clone(), picker_command.clone(), cx);
-                                    }
-                                })))))
-                            .when(!running && backend.is_none(), |view| view.child(div().text_xs().child(tr("此成员的后端未配置或不受支持"))))
-                            .when(running, |view| view.when_some(chosen, |view, model| view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{} / {}", model.provider, model.id)))))
-                            .when(picker_open, |view| view.child(v_flex().gap_2()
-                                .child(Input::new(&self.member_model_search).aria_label(tr("搜索此成员的可用模型")))
-                                .when(self.member_catalog_loading, |view| view.child(div().text_sm().child(tr("正在读取可用模型…"))))
-                                .when_some(self.member_catalog_error.clone(), |view, (backend,error)| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(if english() { format!("Could not load {backend} models: {error}") } else { format!("读取 {backend} 模型失败：{error}") })))
-                                .when(!self.member_catalog_loading && self.member_catalog_error.is_none() && matching_member_models.is_empty(), |view| view.child(div().text_sm().child(tr("没有匹配的可用模型"))))
-                                .child(v_flex().id(("member-model-list", i)).h(px(168.)).min_h_0().overflow_y_scroll().gap_1()
-                                    .children(matching_member_models.iter().cloned().enumerate().map(|(j, model)| {
-                                        let path = format!("/api/workspaces/{workspace}/agents/{id}/config"); let command = member.configured_command.clone();
-                                        Button::new(("member-model", j)).ghost().selected(chosen.is_some_and(|m| m.provider == model.provider && m.id == model.id)).label(format!("{} / {}", model.provider, model.name)).tooltip(model.id.clone()).on_click(cx.listener(move |this, _, _, cx| { this.member_picker_target = None;
-                                            this.member_action("POST", path.clone(), Some(serde_json::json!({"command":command,"command_preset_id":null,"args":["--provider",model.provider,"--model",model.id]})), cx); }))
-                                    })))))
-                            .when(deleting, |view| view.child(h_flex().flex_wrap().items_center().gap_2()
-                                .child(div().text_sm().child(if english() { format!("Delete member {}?", member.name) } else { format!("删除成员 {}？", member.name) }))
-                                .child(Button::new(("confirm-delete", i)).label(tr("确认删除")).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| this.member_action("DELETE", format!("/api/workspaces/{delete_workspace}/workers/{delete_id}"), None, cx))))
-                                .child(Button::new(("cancel-delete", i)).ghost().label(tr("取消")).on_click(cx.listener(|this, _, _, cx| { this.deleting_member = None; cx.notify(); })))))
-                            .when(editing, |view| view.child(h_flex().w_full().gap_2().items_center().child(div().flex_1().min_w_0().child(Input::new(&self.member_rename).aria_label(tr("成员名称")))).child(Button::new(("member-save", i)).label(tr("保存名称")).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| { let name = this.member_rename.read(cx).value().trim().to_string(); if name.is_empty() { this.error = Some("请输入成员名称".into()); cx.notify(); } else { this.member_action("PATCH", format!("/api/workspaces/{save_workspace}/workers/{save_id}"), Some(serde_json::json!({"name":name})), cx); } }))).child(Button::new(("cancel-rename", i)).ghost().label(tr("取消")).on_click(cx.listener(|this, _, _, cx| { this.editing_member = None; cx.notify(); })))))
-                    })))
-                .into_any_element()
+            } else if self.member_panel { self.render_members(window, narrow, cx)
             } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
             } else if self.workspace.is_none() && self.session.is_none() { self.render_welcome(window, cx).into_any_element()
             } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow && welcome, |v| v.px(px(44.))).when(!welcome, |v| v.px_0().pt_0()).id("conversation-surface").on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.import_image_paths(paths.paths().to_vec(), cx))).drag_over::<ExternalPaths>(|style, _, _, cx|style.bg(Color::Attention.get(cx))).key_context("HiveConversation").on_action(cx.listener(|this, _: &crate::CloseConversationFind, window, cx| this.close_conversation_find(window, cx))).when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())

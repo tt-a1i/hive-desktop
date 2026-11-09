@@ -1,5 +1,6 @@
 use crate::language::{english, tr};
 mod description;
+mod view;
 use crate::{
     app::HiveApp,
     protocol::{Member, MemberRun, Model},
@@ -93,8 +94,9 @@ impl HiveApp {
                             this.editing_member = Some(rename_id.clone());
                             this.member_rename.update(cx, |input, cx| {
                                 input.set_value(current_name.clone(), window, cx);
-                                input.focus(window, cx);
                             });
+                            let focus = this.member_rename.read(cx).focus_handle(cx);
+                            window.on_next_frame(move |window, cx| focus.focus(window, cx));
                             cx.notify();
                         });
                     }),
@@ -256,6 +258,7 @@ impl HiveApp {
                     this.member_loading = false;
                     match result {
                         Ok(_) => {
+                            this.member_focus_search = this.editing_member.is_some() || this.deleting_member.is_some();
                             this.editing_member = None;
                             this.deleting_member = None;
                             this.refresh_members(cx);
@@ -286,6 +289,7 @@ impl HiveApp {
             cx.notify();
             return;
         }
+        self.error = None;
         let description = self.member_description.read(cx).value().trim().to_string();
         let command = format!("hive:{}", self.member_backend);
         let mut body = json!({"name":name,"role":self.member_role,"avatar":null,"autostart":false});
@@ -308,7 +312,7 @@ impl HiveApp {
                 if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {
                     this.member_loading = false;
-                    if let Err(error) = result { this.error = Some(crate::app::ErrorNotice::Detail("添加成员",error.to_string())); } else { this.member_form_open = false; }
+                    if let Err(error) = result { this.error = Some(crate::app::ErrorNotice::Detail("添加成员",error.to_string())); } else { this.member_form_open = false; this.member_focus_search = true; }
                     this.refresh_members(cx);
                     this.refresh_sessions(cx);
                     cx.notify();

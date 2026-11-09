@@ -25,6 +25,8 @@ impl HiveApp {
         self.close_roles();
         self.hide_terminal(cx);
         self.member_panel = true;
+        let focus = self.member_search.read(cx).focus_handle(cx);
+        window.on_next_frame(move |window, cx| focus.focus(window, cx));
         if window.viewport_size().width < px(820.) {
             self.sidebar_open = false;
         }
