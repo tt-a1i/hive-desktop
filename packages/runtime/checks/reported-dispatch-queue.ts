@@ -25,6 +25,8 @@ try {
  const worker=first.chats.list(ws.id).find(x=>x.agentId===member.id)!;assert.ok(worker);
  const queue=queues(first.chats).get(worker.id)!.queue;await queue.pause();
  const reported=await command(lead,['send','queue-worker','settled original responsibility']);
+ const cancelled=await command(lead,['send','queue-worker','cancelled responsibility']);
+ await command(lead,['cancel','--dispatch',cancelled.dispatch_id,'Owned cancellation']);
  const open=await command(lead,['send','queue-worker','still open responsibility']);
  const workerTool=createTeamTool(binding(member.id));
  const inbox=await command(workerTool,['messages','--dispatch',reported.dispatch_id]);
@@ -36,24 +38,31 @@ try {
  // Same task ID in another member's queue is not that member's responsibility.
  const mainQueue=queues(first.chats).get(main.id)!.queue;
  await mainQueue.enqueue('foreign dispatch',true,{version:1,origin:'dispatch',displayText:'foreign dispatch',dispatchId:reported.dispatch_id});
- const original=queue.pending;assert.equal(original.length,4);
- const retained=original.filter(x=>x.presentation?.dispatchId!==reported.dispatch_id||x.presentation.origin!=='dispatch');
+ await mainQueue.enqueue('foreign cancelled dispatch',true,{version:1,origin:'dispatch',displayText:'foreign cancelled dispatch',dispatchId:cancelled.dispatch_id});
+ assert.ok(queue.pending.some(x=>x.presentation?.origin==='cancel'&&x.presentation.dispatchId===cancelled.dispatch_id));
+ const original=queue.pending;assert.equal(original.length,6);
+ const retained=original.filter(x=>x.presentation?.origin!=='dispatch'||![reported.dispatch_id,cancelled.dispatch_id].includes(x.presentation.dispatchId));
  const live=first.agents.getActiveRunByAgentId(ws.id,member.id)!;assert.ok(live);
  first.agents.stopAgentRun(live.runId);assert.equal(await first.agents.waitForRunExit(live.runId,5000),true);
- const afterStop=await first.chats.open(worker.id);assert.equal(afterStop.pending,3);
+ const afterStop=await first.chats.open(worker.id);assert.equal(afterStop.pending,4);
  assert.deepEqual(queues(first.chats).get(worker.id)!.queue.pending,retained);
  assert.equal((await first.hive.request('GET',`/api/ui/workspaces/${ws.id}/dispatches/${reported.dispatch_id}`) as {state:string}).state,'reported');
+ assert.equal((await first.hive.request('GET',`/api/ui/workspaces/${ws.id}/dispatches/${cancelled.dispatch_id}`) as {state:string}).state,'cancelled');
  assert.equal((await first.hive.request('GET',`/api/ui/workspaces/${ws.id}/dispatches/${open.dispatch_id}`) as {state:string}).state,'submitted');
  assert.ok(mainQueue.pending.some(x=>x.text==='foreign dispatch'));
- // Preserve an old-version spool with an already reported task for cold-load reconciliation.
+ assert.ok(mainQueue.pending.some(x=>x.text==='foreign cancelled dispatch'));
+ // Preserve old-version spools for both terminal states to verify cold-load reconciliation.
+ const cancelledLegacy=original.find(x=>x.presentation?.origin==='dispatch'&&x.presentation.dispatchId===cancelled.dispatch_id)!;
+ await queues(first.chats).get(worker.id)!.queue.enqueue(cancelledLegacy.text,cancelledLegacy.triggerTurn,cancelledLegacy.presentation);
  const legacy=original.find(x=>x.presentation?.origin==='dispatch'&&x.presentation.dispatchId===reported.dispatch_id)!;
  await queues(first.chats).get(worker.id)!.queue.enqueue(legacy.text,legacy.triggerTurn,legacy.presentation);
- assert.equal((await first.chats.open(worker.id)).pending,4);
+ assert.equal((await first.chats.open(worker.id)).pending,6);
  await first.close();runtime=undefined;
  runtime=await createDesktopRuntime(join(directory,'state'),()=>{});
- assert.equal((await runtime.chats.open(worker.id)).pending,3);
+ assert.equal((await runtime.chats.open(worker.id)).pending,4);
  assert.deepEqual(queues(runtime.chats).get(worker.id)!.queue.pending,retained);
  await runtime.chats.open(main.id);
  assert.ok(queues(runtime.chats).get(main.id)!.queue.pending.some(x=>x.text==='foreign dispatch'));
- console.log('Reported dispatch queue passed: real report/retirement/cold recovery; unreported task, user input, report delivery and foreign ownership retained. No model requests.');
+ assert.ok(queues(runtime.chats).get(main.id)!.queue.pending.some(x=>x.text==='foreign cancelled dispatch'));
+ console.log('Settled dispatch queue passed: reported and cancelled tasks pruned; real report/retirement/cold recovery; unreported task, user input, report delivery and foreign ownership retained. No model requests.');
 }finally{await runtime?.close();await rm(directory,{recursive:true,force:true});}

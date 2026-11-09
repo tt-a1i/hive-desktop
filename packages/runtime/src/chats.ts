@@ -269,7 +269,7 @@ export class Chats implements StructuredSessionPort {
           wasBusy = busy;
         },
       });
-      this.pruneReportedDispatches(record, queue);
+      this.pruneSettledDispatches(record, queue);
       if (earlyFailure) throw earlyFailure;
       chat = { handle, queue, aborted: false, ...(reasoningFailure && {reasoningFailure}) };
       this.live.set(record.id, chat);
@@ -701,19 +701,19 @@ export class Chats implements StructuredSessionPort {
     await chat.handle.abort({ settleTools: true });
     await paused;
     try {
-      // Hive retirement may interrupt the remaining native turn after report
-      // commits. Its task input must not become runnable again on cold resume.
-      if (!this.closing) this.pruneReportedDispatches(this.index.get(id), chat.queue);
+      // Terminal dispatches no longer authorize work, even if retirement
+      // interrupts the native turn before it records a successful delivery.
+      if (!this.closing) this.pruneSettledDispatches(this.index.get(id), chat.queue);
     } finally {
       await chat.handle.dispose();
       this.live.delete(id);
     }
   }
-  private pruneReportedDispatches(record: ChatRecord, queue: DeliveryQueue): void {
+  private pruneSettledDispatches(record: ChatRecord, queue: DeliveryQueue): void {
     if (!record.agentId) return;
     const settled = queue.pending.filter(item => item.presentation?.origin === 'dispatch'
       && item.presentation.dispatchId
-      && this.hive.isReportedDispatch(record.workspaceId, record.agentId!, item.presentation.dispatchId));
+      && this.hive.isSettledDispatch(record.workspaceId, record.agentId!, item.presentation.dispatchId));
     queue.discardPending(new Set(settled.map(item => item.id)));
   }
   async close() {
