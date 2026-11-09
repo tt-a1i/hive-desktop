@@ -484,3 +484,7 @@ fresh frozen deploy更新Hive依赖后重新制作Mac候选ZIP（生产源码d9e
 ## 2026-11-09 Codex后台命令停止修复
 
 明确前台中断与已yield后台命令不同，旧后台分支真实复现Stop返回PID仍活。停止后复用当前聊天独占app-server关闭/按需恢复路径，保留原线程和后续暂停投递、撤销旧run/token；真实Terra检查通过进程退出、另一Codex连接不受影响和两条顺序回答。原生按钮亦确认命令/旧CLI已退出而窗口仍活；补清理恢复执行后的旧停止提示，独立原生复验exit0。Mac构建/Windows类型、拒绝中断与队列/团队定向回归通过；失败现场及额外启动尝试均留证，无新ZIP、不跑无关全量，详见[停止记录](validation/2026-11-09-codex-stop.md)。
+
+## 2026-11-09 停止与恢复修复进入候选包
+
+dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime与当前dist匹配、28,831普通文件/29内部链接/31,570元数据条目保持。包内PTY/Hive/SQLite、内置/原始外部Pi队列、启动恢复及原样Codex Terra真实停止/队列/另一连接均通过。实际候选原生窗口恢复真实结果和9条条目，未启动布局成员通过102行首尾/翻页/窄窗；Cmd+Q exit0、8个进程消失。lsof无引用后清理解压副本，.artifacts仍约3.9GiB，只替换candidate，current不推广。无产品/测试改动，不跑无关全量，见[候选记录](validation/2026-11-09-stop-candidate.md)。

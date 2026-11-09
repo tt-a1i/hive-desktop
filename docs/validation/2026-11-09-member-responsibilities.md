@@ -26,3 +26,7 @@
 证据 `.artifacts/member-layout/`：原职责、长夹具、完整复制收据、前后原生/RPC日志及退出记录、隔离数据、最终 receipt。构建日志 `/tmp/hive-member-reading-{build,windows}.log`。实际截图与点击留在本聊天工具记录。
 
 英文 AX、VoiceOver实际播报、滚轮、多个成员独立位置及 Windows 原生矩阵仍未验证；不能据此宣称整体 Cindy/Maka 对标完成。当前 ZIP 仍是此前17d8ce7候选，本修复待后续统一打包。
+
+## 后续候选包
+
+上述源码修复已纳入dd0230a候选并取得包内验证，见[候选实证](2026-11-09-stop-candidate.md)。本页原先未打包的边界描述属于当时记录，原始结果保持。

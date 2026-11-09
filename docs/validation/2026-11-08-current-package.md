@@ -31,3 +31,7 @@ current.zip 是固定位置，按一批变更更新，不为每次小改留下�
 检查完成并确认验证进程退出、lsof无打开引用后，删除临时解压副本及可重建的小型原生程序副本。核对settings-search ZIP与历史收据哈希后删除这份已被替代的生成包；ZIP只保留current、workflows、claude-write-loss三份，.artifacts回到约3.4GiB。没有删除旧聊天工作目录、会话或仍使用的依赖。
 
 当前收据 `.artifacts/current-package/receipt.json`，本批证据及清理收据 `.artifacts/session-resources/`。全量模型/协议suite、Windows真机和正式签名发行不在本批已验证范围内。
+
+## 后续候选更新
+
+current仍为本页记录的1acd805。另一个candidate槽位已更新为dd0230a，含成员阅读与停止/恢复修复，并通过包内真实Terra及部分原生检查；候选SHA256为9d416c25e4d8f61097ec8abc6f862b78e5f58a58f94fd9679d798adb904e858a，完整边界见[最新候选](2026-11-09-stop-candidate.md)。候选未推广为current。

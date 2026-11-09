@@ -11,25 +11,25 @@
 | Codex作为主控/Worker | 原样CLI0.166.0真实派单/文件/汇报/恢复；最新候选包已从原生聊天框跑通真实Terra单Worker及完整退出/冷启动，见[包内协作](validation/2026-11-09-packaged-codex-team.md)；新增真实Terra识图及整个runtime重开、原图字节保持；[Codex](validation/2026-11-07-codex.md)、[图片](validation/2026-11-09-codex-image-live.md) | 不等于所有厂商事件、复杂截图、Windows和所有混合后端组合已验收 |
 | 外部Pi作为主控/Worker | 原样CLI1.4.0真实Terra团队与恢复；[外部Pi](validation/2026-11-07-external-pi-team.md) | 新的真实图片推理、所有扩展UI和最新平台组合未完整验收；认证与内置Pi分别记录 |
 | Claude Code作为主控/Worker | 官方SDK、原样CLI无推理控制、持久化、工具回调、交互与合成对端；[Claude](validation/2026-11-07-claude-adapter.md) | 真实Claude模型团队协作未验收；保持只用Terra的用户约束，不换模型冒充成功 |
-| 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；源码Mac导出复制/失败重试/窄窗/AX提示，以及导出和文件预览Home/End/双向翻页、中文文件选区复制已取得实证，见[原生补验](validation/2026-11-09-native-resume.md) | 成员职责另已修复AX正文、首尾/翻页和选区复制，102行/3,531字符在Mac实证，见[成员阅读](validation/2026-11-09-member-responsibilities.md)；此修复尚未打包。真实Codex原生两条排队/停止/冷恢复/显式继续已补验，并修复额外恢复唤醒，见[排队恢复](validation/2026-11-09-queued-codex-ui.md)。VoiceOver播报、滚轮/完整键盘/字号、部分在途时序、系统输入与可访问性矩阵未完成；局部窄窗不推广到所有页面 |
+| 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；源码Mac导出复制/失败重试/窄窗/AX提示，以及导出和文件预览Home/End/双向翻页、中文文件选区复制已取得实证，见[原生补验](validation/2026-11-09-native-resume.md) | 成员职责另已修复AX正文、首尾/翻页和选区复制，102行/3,531字符在Mac实证，见[成员阅读](validation/2026-11-09-member-responsibilities.md)；已纳入dd0230a候选并补包内首尾/翻页/窄窗验证，见[包内证据](validation/2026-11-09-stop-candidate.md)。真实Codex原生两条排队/停止/冷恢复/显式继续已补验，并修复额外恢复唤醒，见[排队恢复](validation/2026-11-09-queued-codex-ui.md)。VoiceOver播报、滚轮/完整键盘/字号、部分在途时序、系统输入与可访问性矩阵未完成；局部窄窗不推广到所有页面 |
 | 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言偏好与累计1046条主要页面/配置/聊天查找/协作/资源终端及静态和上下文错误文案已接入，完整页面迁移、真实切换/草稿/窄窗仍未完成，见[语言记录](validation/2026-11-09-interface-language.md)、[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生点击、真实网关和Windows仍待验收，见[记录](validation/2026-11-09-remote-settings.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流删除最终按钮等仍待验收 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；Mac EPERM回归先红后绿；最新源码Cmd+Q、冷启动草稿/语言恢复、窗口关闭均exit0并清理后台，见[原生补验](validation/2026-11-09-native-resume.md) | 旧21544/54534已不在进程表，其退出原因未证实；候选包和Windows矩阵未完成，不承诺恢复任意中断工具或exactly-once |
-| macOS可实际使用 | current为1acd805；新候选17d8ce7已纳入语言及原生修复，通过包内PTY/HTTP/SQLite、启动选择恢复和部分实际GUI/正常退出/冷启动，见[最新候选](validation/2026-11-09-native-candidate.md) | 完整页面、输入法、远程/工作流等矩阵未完成；候选尚未作为current推广 |
+| macOS可实际使用 | current为1acd805；新候选dd0230a纳入成员阅读及停止/队列恢复修复，通过包内PTY/HTTP/SQLite、Pi队列、真实Codex停止/线程恢复及实际成员阅读/正常退出，见[最新候选](validation/2026-11-09-stop-candidate.md) | 完整页面、输入法、远程/工作流等矩阵未完成；候选尚未作为current推广 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户允许不处理CI，不等于取消Windows目标 |
 | 完整、精美、Cindy/Maka级体验 | 已有固定源码参考与安装Cindy局部原生走查，并实施多轮聊天/配置/导航改进 | 整体对标仍未证实；还须按实际安装体验做全流程及边角检查，不能以局部截图或当前清单宣称一致 |
 | 可安装与交付 | 有冻结Node/native依赖的Mac便携开发包及实际PTY/HTTP/SQLite检查 | 未签名/未公证；正式发行、完整安装体验与两个平台最终验收未完成 |
 
 ## 本轮候选包
 
-`.artifacts/hive-desktop-macos-arm64-candidate.zip`已更新为17d8ce7877328cd219d121fa46b09bb1a7f3698f，纳入界面语言、原生主题同步及导出AX/固定页脚修复。ZIP SHA256为006a8e689f020d505a5ac0be24765139f4ab0b345d247d8cc90ac2f429a0828e，原生程序SHA256为705ab9453aa49332cf4727dc01200c48af24934cb96d898d9bd7cbb38a1ce109。
+`.artifacts/hive-desktop-macos-arm64-candidate.zip`已更新为dd0230a0d68869594aec9a98fffe635e7be8bf12，包含成员阅读、恢复合入队列、Codex停止清理与旧状态复位。ZIP SHA256为9d416c25e4d8f61097ec8abc6f862b78e5f58a58f94fd9679d798adb904e858a，原生程序SHA256为6b92d53be37f5fdd6f2cfb42dfdd285ac1e3515383edca823ab0e20124471759。
 
-本轮仅替换d9e061b冻结候选中的原生程序，未fresh deploy。112个runtime编译文件与源码dist一致，28,833个普通文件、29个内部链接及31,570个元数据条目保持一致。包内PTY/HTTP/SQLite、原生启动恢复与实际中英/浅色/窄窗导出保存/文件末尾/正常退出/冷启动通过。完整界面和平台矩阵仍未完成，见[最新包内证据](validation/2026-11-09-native-candidate.md)。
+仅更新前候选的exe、chats.js/map三个条目；112个runtime文件与当前dist匹配，冻结依赖与清单保持。包内PTY/HTTP/SQLite、内置/原始外部Pi队列、原样Codex Terra停止/保留队列/另一连接及实际原生历史/成员阅读/正常退出通过；见[最新包内证据](validation/2026-11-09-stop-candidate.md)。合成回环、真实模型与未启动布局成员分开标记。
 
-current ZIP哈希f7174572fb16248b3a3f40e467a1322951a9ac4a26bd5c728ce0e52aceb57cf6未变，候选没有推广。实际正常退出、进程与lsof无引用后删除本轮解压副本，只保留一个候选ZIP与证据，.artifacts约3.9GiB。d9候选已被替换，旧收据在`.artifacts/native-package/superseded-candidate-receipt.json`；最新索引为`.artifacts/current-package/candidate-receipt.json`。此前d9的远程/加密终端证据保留为未变runtime的历史记录，不冒称本轮重跑；真实网关和Windows仍未通过。
+正常退出且8个自有进程/lsof无引用后，删除本轮解压目录；只替换candidate槽位，.artifacts约3.9GiB。current仍为1acd805，哈希f7174572fb16248b3a3f40e467a1322951a9ac4a26bd5c728ce0e52aceb57cf6不变，候选未推广。旧006a8e候选收据在`.artifacts/stop-candidate/superseded-candidate-receipt.json`，当前索引`.artifacts/current-package/candidate-receipt.json`。此前远程等历史实证不冒认为本轮重跑。
 
 ## 当前阻断与仍可推进的工作
 
-- [#19](https://github.com/tt-a1i/hive-desktop/issues/19)已在源码修复：Codex停止后关闭本聊天独占app-server，真实Mac后台命令退出、其他连接及原线程/队列保留；原生按钮和旧停止提示清理已补验，见[停止证据](validation/2026-11-09-codex-stop.md)。尚未纳入候选ZIP，Windows实际及逃逸进程不作保证。
+- [#19](https://github.com/tt-a1i/hive-desktop/issues/19)已在源码修复：Codex停止后关闭本聊天独占app-server，真实Mac后台命令退出、其他连接及原线程/队列保留；原生按钮和旧停止提示清理已补验，见[停止证据](validation/2026-11-09-codex-stop.md)。已纳入dd0230a候选并通过包内真实检查，Windows实际及逃逸进程不作保证。
 
 - 原生访问现已恢复，最新源码已完成部分双语/导出/退出补验，见[证据及限制](validation/2026-11-09-native-resume.md)。旧54534、21544已不在进程表，不能补记正常退出；ScreenCaptureKit仍偶发捕捉失败，按后续真实状态核对。
 - Pi的原生OpenAI订阅刷新仍返回400 invalid_grant，已请求重新登录；不再用相同认证重复请求，不自动更换接口、认证或模型。
