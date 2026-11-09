@@ -284,6 +284,7 @@ impl Render for SessionSearch {
                         },
                     )
                     .children(self.page.matches.iter().enumerate().map(|(i, hit)| {
+                        let title = crate::view::untitled_session_label(&hit.session).unwrap_or(&hit.title);
                         Button::new(("search-session", i))
                             .ghost()
                             .w_full()
@@ -291,7 +292,7 @@ impl Render for SessionSearch {
                             .py_2()
                             .justify_start()
                             .selected(i == self.selected)
-                            .accessibility_label(if english() { format!("Open {} · {} · {}", hit.title, hit.workspace_name, tr(hit.session.backend.label())) } else { format!("打开 {} · {} · {}", hit.title, hit.workspace_name, tr(hit.session.backend.label())) })
+                            .accessibility_label(if english() { format!("Open {} · {} · {}", title, hit.workspace_name, tr(hit.session.backend.label())) } else { format!("打开 {} · {} · {}", title, hit.workspace_name, tr(hit.session.backend.label())) })
                             .child(
                                 v_flex()
                                     .flex_1()
@@ -303,7 +304,7 @@ impl Render for SessionSearch {
                                             .truncate()
                                             .text_sm()
                                             .font_weight(FontWeight::MEDIUM)
-                                            .child(hit.title.clone()),
+                                            .child(title.to_owned()),
                                     )
                                     .child(
                                         div()

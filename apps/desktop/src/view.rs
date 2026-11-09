@@ -15,6 +15,13 @@ use gpui_kit::{
 
 use crate::conversation_list::CHAT_COLUMN_WIDTH;
 
+pub(crate) fn untitled_session_label(session: &crate::protocol::Session) -> Option<&'static str> {
+    // New records bind to an agent before their first user turn. Keep actual
+    // conversation titles and explicit renames verbatim, even for this text.
+    (!session.custom_title && session.agent_id.is_none() && session.title == "新会话")
+        .then(|| tr("新会话"))
+}
+
 impl HiveApp {
     pub(crate) fn agent_name(&self, id: &str) -> String {
         self.members
@@ -37,6 +44,7 @@ impl HiveApp {
         if session.custom_title {
             return &session.title;
         }
+        if let Some(title) = untitled_session_label(session) { return title; }
         session
             .agent_id
             .as_ref()

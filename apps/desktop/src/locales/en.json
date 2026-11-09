@@ -1012,6 +1012,7 @@
   "复制已接收消息": "Copy received message",
   "待处理消息": "Pending messages",
   "附件消息": "Message with attachments",
+  "新会话": "New conversation",
   "已入队，等待当前回复结束": "Queued; waiting for the current response to finish",
   "已入队，等待继续处理": "Queued; waiting to continue processing",
   "复制待处理消息": "Copy pending message",

@@ -285,7 +285,7 @@ impl HiveApp {
                                 };
                                 self.render_session_row(
                                     &hit.session,
-                                    hit.title.clone(),
+                                    crate::view::untitled_session_label(&hit.session).unwrap_or(&hit.title).to_owned(),
                                     Some(project),
                                     cx,
                                 )
