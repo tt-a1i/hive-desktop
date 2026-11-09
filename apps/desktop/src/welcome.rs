@@ -1,6 +1,7 @@
 use crate::{app::{HiveApp, SettingsSection}, focus_scroll::Reveal, language::tr, palette::Color};
 use gpui_kit::{component::{button::{Button, ButtonVariants}, menu::{DropdownMenu, PopupMenuItem}, scroll::ScrollableElement, *}, prelude::FluentBuilder, *};
 use gpui_kit::assets::IconName as Glyph;
+mod agents;
 
 impl HiveApp {
     pub(crate) fn render_project_context(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
@@ -64,6 +65,7 @@ impl HiveApp {
                         .child(div().text_xs().text_color(Color::Muted.get(cx)).child(if self.connected {
                             tr("打开项目后再选择 Agent；不会自动发送消息或启动成员。")
                         } else { tr("后台暂不可用 · 可在窗口顶部重新启动后台") })))
+                    .child(self.render_welcome_agents(cx))
                     .child(v_flex().flex_shrink_0().gap_4().pt_5().border_t_1().border_color(Color::Divider.get(cx))
                         .children([
                             ("01", tr("打开项目"), tr("选择本地文件夹，已有项目和会话会留在侧栏。")),

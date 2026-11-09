@@ -1105,5 +1105,11 @@
   "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。": "Shows the native applied effort. Environment, organization policy, or model capabilities may adjust the requested value.",
   "搜索提供商、模型或接口地址…": "Search providers, models or endpoint URLs…",
   "搜索模型配置": "Search model configuration",
-  "没有匹配的模型配置。试试提供商、模型名称、ID 或接口地址。": "No matching model configuration. Try a provider, model name, ID or endpoint URL."
+  "没有匹配的模型配置。试试提供商、模型名称、ID 或接口地址。": "No matching model configuration. Try a provider, model name, ID or endpoint URL.",
+  "尚未检查程序版本": "Program version not checked",
+  "选择你的 Agent": "Choose your agent",
+  "连接 Pi 账号或配置模型提供商。": "Connect a Pi account or configure a model provider.",
+  "配置": "Configure",
+  "版本检查不验证登录或模型可用性；选择 Agent 后使用其原有账号与模型。": "Version checks do not verify sign-in or model availability. Each agent uses its own account and models.",
+  "未保存的程序路径": "Unsaved executable path"
 }

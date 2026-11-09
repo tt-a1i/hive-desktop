@@ -21,3 +21,5 @@ Useful boundaries: footer controls and overflow menu share the same actions; eve
 ## Current application
 
 Project-context and lead-selection UI reuse Hive handlers; see [native entry/repair](../validation/2026-11-09-project-entry.md). These are initial source-informed improvements, not claims of complete design/functional parity. Future source reuse should pin its exact file/revision and include notices for actual copied material.
+
+2026-11-10: reread Beluga's same pinned `agent-setup.ts`. Added separate native welcome setup entries and existing version-probe summaries, retaining unknown/unsaved/changed states and explicit repair destinations; see [native setup verification](../validation/2026-11-10-welcome-agent-setup.md). No upstream code/assets, readiness policy or preferred-Agent fallback were copied. Full login/model readiness remains unimplemented.

@@ -234,7 +234,7 @@ impl HiveApp {
         let codex = self.codex_command.read(cx).value().trim().to_string();
         let claude = self.claude_command.read(cx).value().trim().to_string();
         let params = if save {
-            json!({"piCommand":if pi.is_empty() { None } else { Some(pi) }, "codexCommand":if codex.is_empty() { None } else { Some(codex) }, "claudeCommand":if claude.is_empty() { None } else { Some(claude) }})
+            json!({"piCommand":if pi.is_empty() { None } else { Some(pi.clone()) }, "codexCommand":if codex.is_empty() { None } else { Some(codex.clone()) }, "claudeCommand":if claude.is_empty() { None } else { Some(claude.clone()) }})
         } else {
             json!({})
         };
@@ -263,20 +263,18 @@ impl HiveApp {
                     Ok(value) => match serde_json::from_value::<ExecutableSettings>(value) {
                         Ok(settings) => {
                             if replace_inputs {
-                                let pi_input = this.pi_command.clone();
-                                let codex_input = this.codex_command.clone();
-                                let claude_input = this.claude_command.clone();
-                                let pi = settings.pi_command.clone().unwrap_or_default();
-                                let codex = settings.codex_command.clone().unwrap_or_default();
-                                let claude = settings.claude_command.clone().unwrap_or_default();
+                                let inputs = [
+                                    (this.pi_command.clone(), pi, settings.pi_command.clone().unwrap_or_default()),
+                                    (this.codex_command.clone(), codex, settings.codex_command.clone().unwrap_or_default()),
+                                    (this.claude_command.clone(), claude, settings.claude_command.clone().unwrap_or_default()),
+                                ];
                                 let _ = window.update(cx, |_, window, cx| {
-                                    pi_input
-                                        .update(cx, |input, cx| input.set_value(pi, window, cx));
-                                    codex_input
-                                        .update(cx, |input, cx| input.set_value(codex, window, cx));
-                                    claude_input.update(cx, |input, cx| {
-                                        input.set_value(claude, window, cx)
-                                    });
+                                    // Keep edits made while the asynchronous read was in flight.
+                                    for (input, expected, saved) in inputs {
+                                        if input.read(cx).value().trim() == expected {
+                                            input.update(cx, |input, cx| input.set_value(saved, window, cx));
+                                        }
+                                    }
                                 });
                             }
                             this.executable_settings = Some(settings);

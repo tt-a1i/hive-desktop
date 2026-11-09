@@ -44,7 +44,40 @@ pub struct ProgramCheck {
     loading: bool,
     result: Option<Result<ProgramResult, String>>,
 }
+impl ProgramCheck {
+    fn input_changed(&self, input: &str) -> bool {
+        let environment = self.result.as_ref().and_then(|result| result.as_ref().ok())
+            .is_some_and(|result| result.source == "env");
+        !environment && self.input != input.trim()
+    }
+}
 impl HiveApp {
+    pub(crate) fn open_program_setup(&mut self, backend: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_section = crate::app::SettingsSection::Programs;
+        self.open_settings(window, cx);
+        let input = match backend { "codex" => &self.codex_command, "claude" => &self.claude_command, _ => &self.pi_command };
+        input.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    pub(crate) fn program_setup_status(&self, backend: &'static str, cx: &Context<Self>) -> String {
+        let input = match backend { "codex" => &self.codex_command, "claude" => &self.claude_command, _ => &self.pi_command };
+        let Some(check) = self.program_checks.get(backend) else { return tr("尚未检查程序版本").into(); };
+        if check.loading { return tr("检查中…").into(); }
+        if check.input_changed(&input.read(cx).value()) { return tr("输入已更改，请重新检查。").into(); }
+        let message = match check.result.as_ref() {
+            Some(Ok(result)) => result.message(),
+            Some(Err(error)) => error.clone(),
+            None => tr("尚未检查程序版本").into(),
+        };
+        let saved = self.executable_settings.as_ref().and_then(|settings| match backend {
+            "codex" => settings.codex_command.as_deref(), "claude" => settings.claude_command.as_deref(), _ => settings.pi_command.as_deref(),
+        }).unwrap_or_default();
+        let environment = check.result.as_ref().and_then(|result| result.as_ref().ok()).is_some_and(|result| result.source == "env");
+        if !environment && input.read(cx).value().trim() != saved {
+            format!("{}: {message}", tr("未保存的程序路径"))
+        } else { message }
+    }
+
     pub(crate) fn render_program_settings(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let scroll = &self.program_scroll;
         crate::focus_scroll::Viewport::new("programs-viewport", scroll,
@@ -126,14 +159,7 @@ impl HiveApp {
         let probe_input = input.clone();
         let check = self.program_checks.get(backend);
         let loading = check.is_some_and(|check| check.loading);
-        let changed = check.is_some_and(|check| {
-            let environment = check
-                .result
-                .as_ref()
-                .and_then(|result| result.as_ref().ok())
-                .is_some_and(|result| result.source == "env");
-            !environment && check.input != input.read(cx).value().trim()
-        });
+        let changed = check.is_some_and(|check| check.input_changed(&input.read(cx).value()));
         let readout = |suffix: &str, text: String| crate::text_reading::selectable_text(
             SharedString::from(format!("program-{backend}-{suffix}")), text);
         let field = v_flex().min_w_0().gap_2().py_3().border_b_1().border_color(Color::Divider.get(cx))
