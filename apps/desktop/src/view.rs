@@ -476,9 +476,6 @@ impl Render for HiveApp {
                         .child(v_flex().flex_shrink_0().min_w_0().gap_2()
                 .child(crate::focus_scroll::Reveal::new("composer-failure-reveal", &self.composer_scroll, self.render_session_failure(window,running,cx)))
                 .child(crate::focus_scroll::Reveal::new("composer-pending-reveal", &self.composer_scroll, self.render_pending_user_inputs(cx)))
-                .when(!running && pending > 0 && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some()), |view| view.child(h_flex().gap_3()
-                    .child(div().text_sm().child(if english() { format!("Queued messages: {pending}") } else { format!("待处理消息：{pending}") }))
-                    .when(!running, |view| view.child(Button::new("resume").label(tr("继续处理")).disabled(!self.connected || !self.conversation_ready || self.loading).on_click(cx.listener(|this, _, _, cx| this.resume(cx)))))))
                 .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {
                     let session_id = session_id.clone();
                     let text = draft.clone();
