@@ -4,6 +4,8 @@
 
 ## 按原目标核对
 
+对照固定Web通知源码补回本机系统提醒接线：复用现有GPUI、默认关闭、本机偏好、通用提示及点击会话导航；三项逻辑/文件检查、Mac构建和Windows目标检查通过。Mac中文/英文20px窄窗、真实写盘失败保留原开关/移除故障重试、冷恢复、键盘显露通过，两个窗口正常退出，零消息/模型/Agent run。系统授权确认待用户回复，尚未发送通知，OS送达与点击返回不得当作完成。见[本机提醒进展](validation/2026-11-10-local-notifications.md)，#25开放，未进入当前021c162开发包。
+
 021c162优化开发包已纳入远程正文/审计事件名称、动态显露及计划确认/删除后焦点。只更换原生程序，112个runtime与依赖不变；重跑包内启动/真实PTY/HTTP/SQLite、两组包内窄窗原生操作及独立冷读通过。Finder实际替换安装、欢迎/远程关闭/正常退出通过，新增模型回合0；旧后台套件明确沿用46373f6范围。见[本批开发包](validation/2026-11-10-remote-schedule-package.md)。ZIP/DMG/Applications同一批，保留46373f6可运行回退；清掉约1GiB重复与更早解压副本。完整目标、Windows原生及正式发行继续开放。
 
 工作流计划删除补实机验收并修复确认区离屏和删除后焦点丢失：中文20px浅色窄窗，默认Cancel、再次回车取消、明确选择后仅目标删除、刷新焦点及继续阅读通过；独立HTTP冷读确认peer/原结果/日志逐字段保留。准备复验时显式resume消费既有通知，单列一次原样Codex Terra Medium只读回合，不冒称全轮零推理。见[计划删除](validation/2026-11-10-workflow-delete.md)。最终Mac构建/Windows目标检查通过；新源码尚未打包，其他时序/平台矩阵仍开放。
@@ -53,6 +55,7 @@ Pi账号页补提供商/本机保存状态分组与AX正文，并复用焦点自
 | Claude Code作为主控/Worker | 官方SDK、原样CLI无推理控制、持久化、工具回调、交互与合成对端；[Claude](validation/2026-11-07-claude-adapter.md) | 真实Claude模型团队协作未验收；保持只用Terra的用户约束，不换模型冒充成功 |
 | 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；源码Mac导出复制/失败重试/窄窗/AX提示，以及导出和文件预览Home/End/双向翻页、中文文件选区复制已取得实证，见[原生补验](validation/2026-11-09-native-resume.md) | 成员职责另已修复AX正文、首尾/翻页和选区复制，102行/3,531字符在Mac实证，见[成员阅读](validation/2026-11-09-member-responsibilities.md)；已纳入dd0230a候选并补包内首尾/翻页/窄窗验证，见[包内证据](validation/2026-11-09-stop-candidate.md)。真实Codex原生两条排队/停止/冷恢复/显式继续已补验，并修复额外恢复唤醒，见[排队恢复](validation/2026-11-09-queued-codex-ui.md)。VoiceOver播报、滚轮/完整键盘/字号、部分在途时序、系统输入与可访问性矩阵未完成；局部窄窗不推广到所有页面 |
 | 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言偏好与累计1046条主要页面/配置/聊天查找/协作/资源终端及静态和上下文错误文案已接入，模型编辑已补固定操作/提示、Tab与空格保存及冷读回，见[配置窄窗](validation/2026-11-09-model-editor-footer.md)，已纳入2b3c07e候选并补包内配置/退出恢复，见[配置候选](validation/2026-11-09-model-candidate.md)；模型/接口编辑另已补焦点与标签显露、正反Tab和实际滚动，见[滚动证据](validation/2026-11-09-model-editor-scroll.md)，新增/覆盖草稿及保存、英文17字号已补窄窗实测，完整字号/可访问性/Windows等边界仍在[#20](https://github.com/tt-a1i/hive-desktop/issues/20)；完整页面迁移、真实切换/草稿/窄窗仍未完成，见[语言记录](validation/2026-11-09-interface-language.md)、[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生设置/开关/配对码/拒绝已补包内实证，确认/撤销GUI已补实际隔离配对与冷读（见[最新补验](validation/2026-11-10-remote-confirmation.md)），真实网关和Windows仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)及[最新候选](validation/2026-11-09-settled-candidate.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流计划删除已补上述目标/peer/历史实证，精确在途时序与平台矩阵仍待 |
+| Web本机通知迁移 | 默认关闭的GPUI系统提醒接线及本机偏好/异常/窄窗键盘/冷恢复，见[本机提醒](validation/2026-11-10-local-notifications.md) | 系统授权待确认，送达/点击/真实回合/平台及音效矩阵未验收；[#25](https://github.com/tt-a1i/hive-desktop/issues/25)开放，不能把此前Webhook接入当本地提醒已完成 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；Mac EPERM回归先红后绿；最新源码Cmd+Q、冷启动草稿/语言恢复、窗口关闭均exit0并清理后台，见[原生补验](validation/2026-11-09-native-resume.md) | 旧21544/54534已不在进程表，其退出原因未证实；候选包和Windows矩阵未完成，不承诺恢复任意中断工具或exactly-once |
 | macOS可实际使用 | current/candidate现为021c162优化release，远程阅读/计划确认修复已纳入；包内启动/窄窗原生交互/冷读及Finder更新通过，见[当前开发包](validation/2026-11-10-remote-schedule-package.md)。未改后台的套件与真实成员80/4分别保留原版本证据，不冒充本轮重跑 | 完整页面、输入法、远程/协作/辅助技术与性能矩阵仍未完成；开发包不是完整交付 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户明确暂时无Windows机器、先继续其他实施；不处理CI不等于取消Windows目标 |

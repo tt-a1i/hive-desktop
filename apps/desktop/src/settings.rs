@@ -347,7 +347,7 @@ impl HiveApp {
                     .when(self.team_autostaff_loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("正在同步设置…"))))
                     .when(!self.team_autostaff_loading, |view| view.child(h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label(tr("重新读取")).disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx))))))
                     .when_some(self.team_autostaff_message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().text_sm().child(message))),
-                        SettingsSection::Notifications => content.id("settings-notification-content").overflow_y_scroll().child(self.render_notification_settings(cx)),
+                        SettingsSection::Notifications => content.id("settings-notification-container").child(crate::focus_scroll::Viewport::new("notifications-viewport", &self.notification_scroll, v_flex().id("settings-notification-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.notification_scroll).child(self.render_notification_settings(cx)))),
                         SettingsSection::Programs => content.id("settings-programs-container").child(self.render_program_settings(cx)),
                     }
                 }).into_any_element()

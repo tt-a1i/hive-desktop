@@ -593,6 +593,7 @@ impl HiveApp {
                 return;
             }
             *previous = event.sequence();
+            self.local_notification_event(&event, cx);
             self.apply_activity(&event);
             self.apply_interaction_event(&event);
             if !matches!(&event, PiEvent::State { .. } | PiEvent::Settled { .. }) {
@@ -609,6 +610,7 @@ impl HiveApp {
             .entry(event.session_id().into())
             .and_modify(|seen| *seen = (*seen).max(event.sequence()))
             .or_insert(event.sequence());
+        self.local_notification_event(&event, cx);
         self.apply_activity(&event);
         self.apply_interaction_event(&event);
         if matches!(&event, PiEvent::State { .. } | PiEvent::Settled { .. }) {

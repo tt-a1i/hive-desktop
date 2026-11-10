@@ -59,8 +59,8 @@ const ENTRIES: &[Entry] = &[
     Entry {
         section: Some(SettingsSection::Notifications),
         title: "通知",
-        description: "Webhook 通知地址",
-        keywords: "notification webhook url 提醒 通知 地址",
+        description: "本机系统提醒与 Webhook 通知地址",
+        keywords: "notification system local desktop webhook url 提醒 通知 地址 本机 系统",
     },
     Entry {
         section: Some(SettingsSection::Programs),

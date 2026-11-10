@@ -1,6 +1,7 @@
 mod app;
 mod appearance;
 mod language;
+mod local_notifications;
 mod artifacts;
 mod attachments;
 mod collaboration;
@@ -69,7 +70,9 @@ fn main() {
         .with_assets(gpui_kit::assets::AllAssets)
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
+            cx.set_app_identity("com.hive.desktop.dev", "Hive Desktop");
             gpui_kit::init(cx);
+            cx.set_global(local_notifications::Preferences::default());
             cx.set_global(appearance::Appearance::default());
             cx.set_global(language::Language::default());
             component::set_locale("zh-CN");

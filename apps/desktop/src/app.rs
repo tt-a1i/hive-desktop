@@ -154,6 +154,8 @@ pub struct HiveApp {
     pub executable_settings: Option<crate::settings::ExecutableSettings>,
     pub program_checks: HashMap<&'static str, crate::settings::programs::ProgramCheck>,
     pub program_setup_focus: Option<&'static str>,
+    pub local_alerts: crate::local_notifications::Alerts,
+    pub notification_scroll: ScrollHandle,
     pub notification_url: Entity<InputState>,
     pub notification_loaded: bool,
     pub notification_loading: bool,
@@ -252,6 +254,7 @@ pub struct HiveApp {
 }
 impl HiveApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::register_local_notifications(window, cx);
         let weak = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
             let _ = weak.update(cx, |this, cx| this.exit(cx));
@@ -460,6 +463,8 @@ impl HiveApp {
             executable_settings: None,
             program_checks: Default::default(),
             program_setup_focus: None,
+            local_alerts: Default::default(),
+            notification_scroll: ScrollHandle::new(),
             notification_url: cx.new(|cx| {
                 let mut input = InputState::new(window, cx).placeholder("https://…");
                 input.set_masked(true, window, cx);

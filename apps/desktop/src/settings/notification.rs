@@ -1,5 +1,6 @@
 use crate::language::tr;
 use crate::app::HiveApp;
+use crate::focus_scroll::Reveal;
 use gpui_kit::{
     component::{button::Button, input::Input, *},
     prelude::FluentBuilder,
@@ -109,16 +110,17 @@ impl HiveApp {
     }
     pub fn render_notification_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let disabled = !self.connected || self.notification_loading || !self.notification_loaded;
-        v_flex().gap_2()
+        v_flex().gap_4()
+            .child(self.render_local_notification_settings(cx))
             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("完成通知 Webhook")))
             .child(div().text_sm().child(tr("全局设置。成员汇报或工作流结束时，Hive 会尽力向此地址发送通知；留空可关闭。地址可能含密钥，请妥善保管。")))
             .child(div().text_sm().child(tr("通知内容包括工作区标识、成员名及汇报或工作流摘要。")))
-            .child(Input::new(&self.notification_url).aria_label(tr("完成通知 Webhook 地址")).mask_toggle().disabled(disabled))
-            .child(h_flex().gap_2()
+            .child(Reveal::new("notification-webhook-input-reveal", &self.notification_scroll, Input::new(&self.notification_url).aria_label(tr("完成通知 Webhook 地址")).mask_toggle().disabled(disabled)))
+            .child(Reveal::new("notification-webhook-actions-reveal", &self.notification_scroll, h_flex().gap_2().flex_wrap()
                 .child(Button::new("save-notification-url").label(if self.notification_loading { tr("处理中…") } else { tr("保存地址") }).disabled(disabled).on_click(cx.listener(|this, _, window, cx| this.notification_request(Some(false), window.window_handle(), cx))))
                 .child(Button::new("clear-notification-url").label(tr("清除地址")).disabled(disabled).on_click(cx.listener(|this, _, window, cx| this.notification_request(Some(true), window.window_handle(), cx))))
-                .child(Button::new("reload-notification-url").label(tr("重新读取")).disabled(!self.connected || self.notification_loading).on_click(cx.listener(|this, _, window, cx| this.notification_request(None, window.window_handle(), cx)))))
-            .when_some(self.notification_message, |view, message| view.child(div().text_sm().child(tr(message))))
+                .child(Button::new("reload-notification-url").label(tr("重新读取")).disabled(!self.connected || self.notification_loading).on_click(cx.listener(|this, _, window, cx| this.notification_request(None, window.window_handle(), cx))))))
+            .when_some(self.notification_message, |view, message| view.child(div().id("notification-webhook-notice").role(Role::Status).aria_label(tr(message)).text_sm().child(tr(message))))
     }
 }
 

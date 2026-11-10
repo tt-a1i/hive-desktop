@@ -1129,5 +1129,19 @@
   "关闭远程连接": "Close remote connection",
   "撤销设备访问": "Revoke device access",
   "拒绝远程请求": "Reject remote request",
-  "未关联设备": "No associated device"
+  "未关联设备": "No associated device",
+  "新的回复已结束，点击查看会话。": "A new reply has finished. Click to view the conversation.",
+  "会话遇到问题，点击查看并处理。": "This conversation needs attention. Click to review the problem.",
+  "Agent 正在等待你的操作，点击返回会话。": "An agent is waiting for your input. Click to return to the conversation.",
+  "读取本机提醒设置失败，提醒保持关闭": "Could not read local notification preferences; notifications remain off",
+  "提醒对应的会话已不存在，请核对工作区。": "The conversation for this notification no longer exists. Check the workspace.",
+  "在其他应用或会话中工作时，提醒新的回复、错误和待处理请求。系统提醒只显示会话名称与通用提示，不包含正文或工具结果。": "Get alerts for new replies, errors, and requests while working in other apps or conversations. System notifications show only the conversation name and a generic message, without reply text or tool results.",
+  "本机系统提醒": "Local system notifications",
+  "本机提醒偏好已保存；系统是否允许通知由系统设置决定。": "Local notification preferences saved. Notification delivery also depends on system settings.",
+  "保存本机提醒失败，原设置仍生效": "Could not save local notification preferences; the previous setting remains active",
+  "发送测试提醒": "Send a test notification",
+  "这是 Hive 的本机测试提醒。": "This is a local test notification from Hive.",
+  "测试提醒已提交给系统；若未显示，请检查系统通知权限与专注模式。": "Test notification submitted to the system. If it does not appear, check notification permissions and focus settings.",
+  "默认关闭。首次发送可能出现系统授权提示；允许、拒绝和专注模式均由系统控制。仅在应用运行时提醒。": "Off by default. The first notification may request system permission. Delivery depends on system permissions and focus settings. Notifications are sent only while the app is running.",
+  "本机系统提醒与 Webhook 通知地址": "Local system notifications and webhook URL"
 }
