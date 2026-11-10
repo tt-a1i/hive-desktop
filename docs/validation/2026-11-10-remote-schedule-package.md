@@ -25,7 +25,7 @@
 
 先确认旧安装版与46373f6清单一致且未运行；可运行旧包仍保留。Finder从挂载映像实际复制，经系统“较新项目替换较旧项目”提示选择Replace；拷贝完成后再次核对安装app全部28,865条清单。
 
-默认应用数据的workspace/messages/dispatches均0后，从Finder打开安装app，显示原品牌欢迎、四Agent配置与步骤；进入Remote查看未登录/关闭/无设备状态，没有启用远程或更改配置。安装原生PID29542、Node29547，路径都在/Applications/Hive Desktop.app。Cmd+Q后系统无运行app、两PID消失，默认三表仍0。Finder启动无exec句柄，exitCode按null记录，不写exit0。native-install-receipt.json与installed-welcome.png/AX保留。
+默认应用数据的workspace/messages/dispatches均0后，从Finder打开安装app，显示原品牌欢迎、四Agent配置与步骤；进入Remote查看未登录/关闭/无设备状态，没有启用远程或更改配置。安装原生PID29542、Node29547，路径都在/Applications/Hive Desktop.app。Cmd+Q后系统无运行app、两PID消失，默认三表仍0。Finder启动无exec句柄，exitCode按null记录，不写exit0。native-install-receipt.json、installed-welcome.png及installed-remote.ax.txt保留。
 
 ## 固定产物
 
