@@ -690,7 +690,9 @@ export class Chats implements StructuredSessionPort {
         if (this.live.get(id) === chat) this.live.delete(id);
         chat.onExit?.(error);
       }
-      const failures = cleanup.filter(result => result.status === 'rejected').map(result => result.reason);
+      // abort() rethrows the run's original error after awaiting owned tools.
+      // It is already reported above; only a distinct cleanup failure is new.
+      const failures = cleanup.flatMap(result => result.status === 'rejected' && result.reason !== error ? [result.reason] : []);
       if (failures.length) throw new AggregateError(failures, 'Backend exit cleanup failed');
     })();
     void chat.cleanup.catch(cleanupError => this.event(id, { type: 'error', sessionId: id,
