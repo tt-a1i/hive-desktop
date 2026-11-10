@@ -477,8 +477,8 @@ impl Render for HiveApp {
                 .child(crate::focus_scroll::Viewport::new("composer-body-viewport", &self.composer_scroll,
                     v_flex().id("composer-body-scroll").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.composer_scroll).vertical_scrollbar(&self.composer_scroll)
                         .child(v_flex().flex_shrink_0().min_w_0().gap_2()
-                .child(crate::focus_scroll::Reveal::new("composer-failure-reveal", &self.composer_scroll, self.render_session_failure(window,running,cx)))
-                .child(self.render_pending_user_inputs(cx))
+                .when_some(self.render_session_failure(window,running,cx), |body, failure| body.child(crate::focus_scroll::Reveal::new("composer-failure-reveal", &self.composer_scroll, failure)))
+                .when_some(self.render_pending_user_inputs(cx), |body, inputs| body.child(inputs))
                 .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {
                     let session_id = session_id.clone();
                     let text = draft.clone();
@@ -497,7 +497,7 @@ impl Render for HiveApp {
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child(tr("选择本地项目文件夹，开始与 Agent 协作。"))))
 
                 .when(self.command_picker.open, |view| view.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window().offset(point(px(11.),px(-8.))).child(self.render_commands(window,cx))).with_priority(1)))
-                .child(self.render_input_attachments(cx))
+                .when_some(self.render_input_attachments(cx), |body, attachments| body.child(attachments))
                 .when(self.workspace.is_some(), |v| v.child(crate::focus_scroll::Reveal::new("composer-input-reveal", &self.composer_scroll, div().capture_action(cx.listener(Self::composer_enter)).capture_action(cx.listener(Self::command_up)).capture_action(cx.listener(Self::command_down)).capture_action(cx.listener(Self::command_escape)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label(tr("聊天消息")).on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) })))))
                         )))
                 .child(div().flex_shrink_0().child(self.render_composer_controls(window, running, can_submit && has_text, cx)))

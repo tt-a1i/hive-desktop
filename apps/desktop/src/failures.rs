@@ -146,14 +146,14 @@ impl HiveApp {
             })
             .into_any_element()
     }
-    pub(crate) fn render_session_failure(&self, window: &Window, running: bool, cx: &Context<Self>) -> AnyElement {
-        if self.agent_diagnostic.is_none() && self.delivery_failure.is_none() { return div().into_any_element(); }
+    pub(crate) fn render_session_failure(&self, window: &Window, running: bool, cx: &Context<Self>) -> Option<AnyElement> {
+        if self.agent_diagnostic.is_none() && self.delivery_failure.is_none() { return None; }
         let height = (window.viewport_size().height / 6.).min(px(180.)).max(px(64.));
-        div().flex().items_stretch().flex_shrink_0().w_full().min_w_0().h(height).rounded_lg().border_1().border_color(Color::Divider.get(cx))
+        Some(div().flex().items_stretch().flex_shrink_0().w_full().min_w_0().h(height).rounded_lg().border_1().border_color(Color::Divider.get(cx))
             .child(Viewport::new("session-failure-viewport", &self.failure_scroll,
                 v_flex().id("session-failure-scroll").flex_1().min_w_0().min_h_0().h(height).overflow_y_scroll().track_scroll(&self.failure_scroll).vertical_scrollbar(&self.failure_scroll).p_3()
                     .child(self.render_failure_notice(running,cx))))
-            .into_any_element()
+            .into_any_element())
     }
     fn render_failure_notice(&self, running: bool, cx: &Context<Self>) -> AnyElement {
         let transient = self.agent_diagnostic.as_ref();

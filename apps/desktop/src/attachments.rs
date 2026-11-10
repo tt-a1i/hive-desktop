@@ -355,7 +355,7 @@ impl HiveApp {
             .detach();
         }
     }
-    pub(crate) fn render_input_attachments(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn render_input_attachments(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let refs = self.attachments.refs(self.draft_target.as_ref());
         let busy = self
             .session
@@ -485,9 +485,9 @@ impl HiveApp {
                 .as_ref()
                 .is_some_and(|key| self.attachments.loading.contains(key))
         {
-            return div().into_any_element();
+            return None;
         }
-        crate::text_reading::region(
+        Some(crate::text_reading::region(
             "draft-attachments".into(),
             tr("草稿附件，可用方向键或翻页键滚动").into(),
             &self.attachments.scroll,
@@ -500,7 +500,7 @@ impl HiveApp {
         .rounded_none()
         .p_0()
         .child(content)
-        .into_any_element()
+        .into_any_element())
     }
 }
 
