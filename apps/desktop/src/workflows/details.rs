@@ -11,13 +11,12 @@ use gpui_kit::{
 impl HiveApp {
     pub(super) fn render_workflow_detail(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(run) = &self.workflows.detail else {
-            return div()
-                .text_sm()
-                .child(if self.workflows.loading {
+            return crate::text_reading::selectable_text("workflow-detail-empty", if self.workflows.loading {
                     tr("正在读取运行详情…")
                 } else {
                     tr("运行详情尚未读取，请刷新重试。")
                 })
+                .text_sm()
                 .into_any_element();
         };
         let disabled = !self.connected || self.workflows.acting || !self.workspace_writes_allowed();
@@ -52,13 +51,16 @@ impl HiveApp {
                     .items_center()
                     .child(
                         div()
+                            .id("workflow-detail-name")
+                            .role(Role::Label)
+                            .aria_label(run.name.clone())
                             .flex_1()
                             .min_w_0()
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(run.name.clone()),
                     )
-                    .child(div().text_sm().child(status(&run.status).to_owned()))
+                    .child(crate::text_reading::selectable_text("workflow-detail-status", status(&run.status)).text_sm())
                     .when(run.status == "running", |row| {
                         row.child(
                             Button::new("workflow-stop")
@@ -78,21 +80,19 @@ impl HiveApp {
                     })),
             )
             .child(
-                div()
+                crate::text_reading::selectable_text("workflow-detail-started", if english() { format!("Started {} · {} agents", relative_time(run.started_at), run.agent_count) } else { format!("{} 开始 · {} 位执行成员", relative_time(run.started_at), run.agent_count) })
                     .text_xs()
-                    .text_color(Color::Secondary.get(cx))
-                    .child(if english() { format!("Started {} · {} agents", relative_time(run.started_at), run.agent_count) } else { format!("{} 开始 · {} 位执行成员", relative_time(run.started_at), run.agent_count) }),
+                    .text_color(Color::Secondary.get(cx)),
             )
             .when_some(run.finished_at, |view, time| {
                 view.child(
-                    div()
+                    crate::text_reading::selectable_text("workflow-detail-finished", format!("{}: {}",tr("结束于"),relative_time(time)))
                         .text_xs()
-                        .text_color(Color::Secondary.get(cx))
-                        .child(format!("{}: {}",tr("结束于"),relative_time(time))),
+                        .text_color(Color::Secondary.get(cx)),
                 )
             })
             .when_some(run.phase.clone(), |view, phase| {
-                view.child(div().text_sm().child(format!("{}: {phase}",tr("当前阶段"))))
+                view.child(crate::text_reading::selectable_text("workflow-detail-phase", format!("{}: {phase}",tr("当前阶段"))).text_sm())
             })
             .when(run.error.is_some() || !run.result.is_null(), |view| {
                 view.child(
@@ -136,22 +136,24 @@ impl HiveApp {
                                 .when(run.error.is_some() && !interrupted, |view| {
                                     view.text_color(Color::Error.get(cx))
                                 })
-                                .child(result),
+                                .child(gpui_kit::base::SelectableText::new("workflow-result-selection", result)),
                         ),
                 )
             })
             .child(
                 div()
+                    .id("workflow-dispatch-count")
+                    .role(Role::Label)
+                    .aria_label(format!("{} · {}",tr("关联派单"),self.workflows.dispatches.len()))
                     .text_lg()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(format!("{} · {}",tr("关联派单"),self.workflows.dispatches.len())),
             )
             .when(self.workflows.dispatches.is_empty(), |view| {
                 view.child(
-                    div()
+                    crate::text_reading::selectable_text("workflow-dispatch-empty", tr("此运行还没有成员派单。"))
                         .text_sm()
-                        .text_color(Color::Secondary.get(cx))
-                        .child(tr("此运行还没有成员派单。")),
+                        .text_color(Color::Secondary.get(cx)),
                 )
             })
             .children(
@@ -166,6 +168,9 @@ impl HiveApp {
                     .items_center()
                     .child(
                         div()
+                            .id("workflow-log-count")
+                            .role(Role::Label)
+                            .aria_label(format!("{} · {}",tr("运行日志"),self.workflows.logs.len()))
                             .flex_1()
                             .text_lg()
                             .font_weight(FontWeight::SEMIBOLD)
@@ -184,10 +189,9 @@ impl HiveApp {
             )
             .when(self.workflows.logs.is_empty(), |view| {
                 view.child(
-                    div()
+                    crate::text_reading::selectable_text("workflow-log-empty", tr("还没有运行日志。"))
                         .text_sm()
-                        .text_color(Color::Secondary.get(cx))
-                        .child(tr("还没有运行日志。")),
+                        .text_color(Color::Secondary.get(cx)),
                 )
             })
             .children(self.workflows.logs.iter().map(|log| {
@@ -198,12 +202,11 @@ impl HiveApp {
                     .rounded_lg()
                     .bg(Color::Inset.get(cx))
                     .child(
-                        div()
+                        crate::text_reading::selectable_text(SharedString::from(format!("workflow-log-time-{}",log.id)), relative_time(log.ts))
                             .text_xs()
-                            .text_color(Color::Secondary.get(cx))
-                            .child(relative_time(log.ts)),
+                            .text_color(Color::Secondary.get(cx)),
                     )
-                    .child(div().text_sm().child(log.message.clone()))
+                    .child(crate::text_reading::selectable_text(SharedString::from(format!("workflow-log-message-{}",log.id)), log.message.clone()).text_sm())
             }))
             .child(v_flex().min_w_0().gap_2().pt_3().border_t_1()
                 .border_color(Color::Divider.get(cx))

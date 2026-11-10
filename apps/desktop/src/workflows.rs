@@ -12,6 +12,7 @@ pub struct Workflows {
     pub visible: bool,
     pub focus_navigation: bool,
     pub loading: bool,
+    pub loaded: bool,
     pub acting: bool,
     pub generation: u64,
     pub error: Option<WorkflowError>,
@@ -47,6 +48,7 @@ impl Default for Workflows {
             visible: false,
             focus_navigation: false,
             loading: false,
+            loaded: false,
             acting: false,
             generation: 0,
             error: None,
@@ -102,6 +104,7 @@ impl HiveApp {
         self.invalidate_workflows();
         let state = &mut self.workflows;
         state.runs.clear();
+        state.loaded = false;
         state.schedules.clear();
         state.selected = None;
         state.detail = None;
@@ -208,6 +211,7 @@ impl HiveApp {
                 state.loading = false;
                 match result {
                     Ok(next) => {
+                        state.loaded = true;
                         state.runs = next.runs;
                         state.schedules = next.schedules;
                         state.enabled = Some(next.enabled);
