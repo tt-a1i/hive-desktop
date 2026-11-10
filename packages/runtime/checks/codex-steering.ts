@@ -53,12 +53,14 @@ try{
    await queue.enqueue('notice one',true,notice(1));
    if(mode==='normal'||mode==='before-ack')await queue.enqueue('notice two',true,notice(2));
    const accepted=queue.pending;assert.equal(DeliveryQueue.persistedCount(join(cwd,'spool'),'chat'),accepted.length);
+   if(origin==='report'&&(mode==='normal'||mode==='before-ack')){assert.deepEqual(queue.pendingReports.map(r=>r.processing),[true,true],'Reports appended to an active turn must show processing');assert.deepEqual(completedReports,[],'Processing is not durable completion');}
+   if(origin==='report'&&mode==='user-order')assert.deepEqual(queue.pendingReports.map(r=>r.processing),[false]);
    if(mode==='interrupted'||mode==='consumed-interrupted'||mode==='no-ack'){
     // Wait for actual native acceptance, without consuming the held tool.
     while(!(await readFile(join(cwd,'steers.log'),'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error;})))await new Promise(resolve=>setImmediate(resolve));
     const before=Date.now();const pausing=queue.pause();const aborting=session.abort();releaseTool.release();await aborting;await pausing;queue.discardCurrent();
     assert.ok(Date.now()-before<5000,'Stop must not wait for the 30-second steer RPC timeout');
-    assert.equal(signal?.aborted,true);assert.equal(queue.pendingCount,1);assert.equal(queue.pending[0]?.text,'notice one');assert.deepEqual(session.completedDeliveryIds(),[]);
+    assert.equal(signal?.aborted,true);if(origin==='report')assert.deepEqual(queue.pendingReports.map(r=>r.processing),[false]);assert.equal(queue.pendingCount,1);assert.equal(queue.pending[0]?.text,'notice one');assert.deepEqual(session.completedDeliveryIds(),[]);
     if(mode==='consumed-interrupted'){
      queue.resume();await queue.idle();assert.equal(queue.pendingCount,0);
      const rows=session.snapshot().history.filter((x:any)=>x.customType==='hive-delivery') as any[];
@@ -94,6 +96,7 @@ try{
    try{
     const cold=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',startPaused:true,completedIds:()=>restored.completedDeliveryIds(),onError:error=>errors.push(error),execute:async()=>{throw new Error('Cold check must not invoke a model');}});
     assert.equal(cold.pendingCount,(mode==='normal'||mode==='before-ack')?0:1);
+    if(origin==='report')assert.ok(cold.pendingReports.every(r=>!r.processing));
     const restoredMessages=restored.snapshot().history.filter((x:any)=>x.customType==='hive-delivery') as any[];
     const origins=restoredMessages.map(x=>x.presentation.origin);
     if(mode==='normal'||mode==='before-ack')assert.deepEqual(restoredMessages.slice(1).map(({presentation:{deliveryId,...presentation}}:any)=>presentation),[notice(1),notice(2)]);

@@ -612,3 +612,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-10 团队通知显示成员名
 
 原生真实双Worker就绪卡片遗漏后台已有workerName，一处移除report专用读取过滤，统一保留显式身份而不解析正文。Mac宽/窄窗与原文展开、正常退出、既有三会话轮数/台账/文件/投递ID保持通过；纯UI一行，无新推理/依赖/测试/包。Mac构建/Windows目标检查通过，[来源证据](validation/2026-11-10-notice-senders.md)。另只读走查T3/Beluga/Cindy，Beluga返回原欢迎状态，整体体验继续。
+
+## 2026-11-10 活动报告状态修正
+
+#28一处将已有原生追加进行中状态纳入pendingReports.processing，不提前完成。24组先红后绿含用户阻挡/停止/冷读，团队/TS/build通过；新原生Terra三会话各1轮、报告/字节/主控独立断言/唯一final与冷恢复通过，零额外唤醒。完成态实机可见，短暂processing画面没捕获，不扩大声称；未更新1e开发包，见[证据](validation/2026-11-10-report-processing.md)。
