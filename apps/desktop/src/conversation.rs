@@ -391,7 +391,7 @@ impl HiveApp {
                 })
                 .unwrap_or_else(|| "此消息缺少有效的来源记录。展开查看原文。".into());
             let heading = presentation.as_ref().map(|p| p.origin.heading()).unwrap_or("来源未记录");
-            let worker_name = presentation.as_ref().filter(|p|p.origin==DeliveryOrigin::Report).and_then(|p|p.worker_name.clone());
+            let worker_name = presentation.as_ref().and_then(|p| p.worker_name.clone());
             let expanded = self
                 .messages
                 .iter()

@@ -608,3 +608,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-10 汇报修复进入当前开发包
 
 1e68306优化Mac release纳入汇报同回合修复与欢迎摘要；冻结依赖不变、仅native/queue JS/map变化，116runtime/28,869清单/29链接精确匹配。四组包gate、欢迎页原样CLI版本/账号反馈、三会话包内冷读、Finder替换及安装启动/退出通过，零新模型。清理无占用重复base和第三旧021解压约1GiB，008可运行回退/全部ZIP证据保留；current/candidate/DMG/Applications更新，完整目标开放。[包记录](validation/2026-11-10-report-package.md)。
+
+## 2026-11-10 团队通知显示成员名
+
+原生真实双Worker就绪卡片遗漏后台已有workerName，一处移除report专用读取过滤，统一保留显式身份而不解析正文。Mac宽/窄窗与原文展开、正常退出、既有三会话轮数/台账/文件/投递ID保持通过；纯UI一行，无新推理/依赖/测试/包。Mac构建/Windows目标检查通过，[来源证据](validation/2026-11-10-notice-senders.md)。另只读走查T3/Beluga/Cindy，Beluga返回原欢迎状态，整体体验继续。
