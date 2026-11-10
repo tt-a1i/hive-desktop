@@ -65,7 +65,7 @@ export class Chats implements StructuredSessionPort {
     const groups = await this.navigationEntries(false, archived);
     const matches = groups.flat().filter(hit => {
       const backendName = { pi: '内置 Pi', codex: 'Codex', 'pi-rpc': '外部 Pi', claude: 'Claude Code' }[hit.session.backend];
-      const searchable = [hit.title, hit.session.title, hit.workspaceName, hit.session.backend, backendName].join(' ').toLocaleLowerCase();
+      const searchable = [hit.title, hit.session.title, hit.workspaceName, hit.workspacePath, hit.session.backend, backendName].join(' ').toLocaleLowerCase();
       return terms.every(term => searchable.includes(term));
     }).sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
     return { matches: matches.slice(offset, offset + 100), total: matches.length };
@@ -82,6 +82,7 @@ export class Chats implements StructuredSessionPort {
       return records().map(session => ({
         session,
         workspaceName: workspace.name,
+        workspacePath: workspace.path,
         title: !session.customTitle && session.agentId ? names.get(session.agentId) ?? session.title : session.title,
       }));
     }));

@@ -67,9 +67,9 @@ impl HiveApp {
         let search = cx.new(|cx| {
             let query = cx.new(|cx| {
                 InputState::new(window, cx).placeholder(if archived {
-                    tr("搜索已归档会话、项目或 Agent…")
+                    tr("搜索已归档会话、项目路径或 Agent…")
                 } else {
-                    tr("搜索会话名称、项目或 Agent…")
+                    tr("搜索会话名称、项目路径或 Agent…")
                 })
             });
             cx.subscribe_in(
@@ -217,7 +217,7 @@ impl Render for SessionSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let locale = cx.global::<crate::language::Language>().locale;
         if self.placeholder_locale != Some(locale) {
-            let label = if self.archived { tr("搜索已归档会话、项目或 Agent…") } else { tr("搜索会话名称、项目或 Agent…") };
+            let label = if self.archived { tr("搜索已归档会话、项目路径或 Agent…") } else { tr("搜索会话名称、项目路径或 Agent…") };
             self.query.update(cx, |query, cx| query.set_placeholder(label, window, cx));
             self.placeholder_locale = Some(locale);
         }
@@ -235,7 +235,7 @@ impl Render for SessionSearch {
                     this.move_selection(-1, cx)
                 }),
             )
-            .child(Input::new(&self.query).aria_label(tr("搜索会话名称、项目或 Agent")))
+            .child(Input::new(&self.query).aria_label(tr("搜索会话名称、项目路径或 Agent")))
             .child(
                 div()
                     .id("session-search-results")
@@ -285,6 +285,10 @@ impl Render for SessionSearch {
                     )
                     .children(self.page.matches.iter().enumerate().map(|(i, hit)| {
                         let title = crate::view::untitled_session_label(&hit.session).unwrap_or(&hit.title);
+                        let suffix = std::path::Path::new(&hit.workspace_path).components().rev().take(2).collect::<Vec<_>>()
+                            .into_iter().rev().map(|part| part.as_os_str().to_string_lossy()).collect::<Vec<_>>().join(std::path::MAIN_SEPARATOR_STR);
+                        let project = if suffix.is_empty() { hit.workspace_name.clone() } else { format!("{} · {suffix}", hit.workspace_name) };
+                        let identity = if hit.workspace_path.is_empty() { hit.workspace_name.clone() } else { format!("{} · {}", hit.workspace_name, hit.workspace_path) };
                         Button::new(("search-session", i))
                             .ghost()
                             .w_full()
@@ -292,7 +296,8 @@ impl Render for SessionSearch {
                             .py_2()
                             .justify_start()
                             .selected(i == self.selected)
-                            .accessibility_label(if english() { format!("Open {} · {} · {}", title, hit.workspace_name, tr(hit.session.backend.label())) } else { format!("打开 {} · {} · {}", title, hit.workspace_name, tr(hit.session.backend.label())) })
+                            .accessibility_label(if english() { format!("Open {} · {} · {}", title, identity, tr(hit.session.backend.label())) } else { format!("打开 {} · {} · {}", title, identity, tr(hit.session.backend.label())) })
+                            .tooltip(format!("{title} · {identity} · {}", tr(hit.session.backend.label())))
                             .child(
                                 v_flex()
                                     .flex_1()
@@ -313,7 +318,7 @@ impl Render for SessionSearch {
                                             .text_color(Color::Muted.get(cx))
                                             .child(format!(
                                                 "{} · {}",
-                                                hit.workspace_name,
+                                                project,
                                                 tr(hit.session.backend.label())
                                             )),
                                     ),

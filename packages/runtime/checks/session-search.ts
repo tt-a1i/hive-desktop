@@ -1,12 +1,12 @@
 /** Real Hive metadata and durable records. Search must not load any Agent session. */
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import type { ChatBackend } from '../src/chat-index.js';
 
-const directory = await mkdtemp(join(tmpdir(), 'hive-session-search-'));
+const directory = await realpath(await mkdtemp(join(tmpdir(), 'hive-session-search-')));
 let runtime: Awaited<ReturnType<typeof createDesktopRuntime>> | undefined;
 let events = 0;
 try {
@@ -29,6 +29,7 @@ try {
   const all = await runtime.chats.search('');
   assert.deepEqual(new Set(all.matches.map(hit => hit.session.id)), ids);
   assert.equal(all.total, 4);
+  for (const hit of all.matches) assert.equal(hit.workspacePath, hit.session.workspaceId === projects[0].id ? directory : join(directory, 'alpha'));
   assert.equal((await runtime.chats.search('BETA 发布')).total, 2);
   assert.deepEqual((await runtime.chats.search('aLpHa CODEX')).matches.map(hit => hit.session.backend), ['codex']);
   assert.equal((await runtime.chats.search('完全不存在')).total, 0);
@@ -80,6 +81,23 @@ try {
   assert.deepEqual(await runtime.chats.pinned(),pins,'Global pinned identities and member titles survive restart');
   await runtime.removeWorkspace(projects[0].id);
   assert.deepEqual(await runtime.chats.pinned(),[],'Removed workspaces must disappear from global pins');
+  const duplicateRecords=[];
+  for(const parent of ['left','right']) {
+    const path=join(directory,parent,'Shared');await mkdir(path,{recursive:true});
+    const workspace=await runtime.hive.request('POST','/api/workspaces',{path,name:'Same project',autostart_orchestrator:false}) as {id:string};
+    const record=await runtime.chats.createRecord(workspace.id,'pi');runtime.chats.rename(record.id,'Same conversation');
+    duplicateRecords.push({path,id:record.id});
+  }
+  const eventsBeforePaths=events;
+  const same=await runtime.chats.search('Same conversation');assert.equal(same.total,2);
+  for(const record of duplicateRecords) {
+    const hit=(await runtime.chats.search(record.path)).matches;assert.equal(hit.length,1);
+    assert.equal(hit[0].session.id,record.id);assert.equal(hit[0].workspacePath,record.path);
+  }
+  await runtime.close();runtime=undefined;
+  runtime=await createDesktopRuntime(join(directory,'state'),()=>{events++;});
+  assert.equal((await runtime.chats.search(duplicateRecords[1].path)).matches[0].session.id,duplicateRecords[1].id);
+  assert.equal(events,eventsBeforePaths,'Path search must not initialize an Agent');
   console.log('SESSION_SEARCH_OK: cross-project metadata, all backends, restart, result limit and no Agent initialization.');
 } finally {
   await runtime?.close();

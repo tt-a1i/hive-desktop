@@ -46,6 +46,8 @@ pub struct Session {
 pub struct SessionHit {
     pub session: Session,
     pub workspace_name: String,
+    #[serde(default)]
+    pub workspace_path: String,
     pub title: String,
 }
 #[derive(Clone, Copy, Default, Deserialize)]
