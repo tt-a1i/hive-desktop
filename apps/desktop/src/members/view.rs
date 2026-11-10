@@ -46,7 +46,7 @@ impl HiveApp {
                     .child(Reveal::new("member-form-roles-reveal", &self.member_scroll, h_flex().gap_1().children([("coder", tr("开发")), ("reviewer", tr("审查")), ("tester", tr("测试")), ("custom", tr("自定义"))].into_iter().enumerate().map(|(i, (role, label))| Button::new(("member-role", i)).label(label).selected(self.member_role == role).on_click(cx.listener(move |this, _, _, cx| { this.member_role = role; cx.notify(); }))))))
                     .child(div().text_xs().child(tr("成员后端")))
                     .child(Reveal::new("member-form-backends-reveal", &self.member_scroll, h_flex().gap_1().children([("pi", "Pi"), ("codex", "Codex"), ("pi-rpc", tr("外部 Pi")), ("claude", "Claude")].into_iter().enumerate().map(|(i, (backend, label))| Button::new(("member-backend", i)).label(label).selected(self.member_backend == backend).on_click(cx.listener(move |this, _, _, cx| { this.member_backend = backend; cx.notify(); }))))))
-                    .child(Reveal::new("member-form-save-reveal", &self.member_scroll, Button::new("add-member").label(tr("添加成员")).disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.add_member(cx)))))))
+                    .child(Reveal::new("member-form-save-reveal", &self.member_scroll, Button::new("add-member").label(tr("添加成员")).disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, window, cx| this.add_member(window, cx)))))))
 
                     .when(self.members.is_empty() && !self.member_loading && !self.member_form_open, |view| view.child(v_flex().flex_1().items_center().justify_center().gap_3()
                         .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("还没有团队成员")))

@@ -272,7 +272,7 @@ impl HiveApp {
         })
         .detach();
     }
-    pub fn add_member(&mut self, cx: &mut Context<Self>) {
+    pub fn add_member(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.workspace_writes_allowed() {
             return;
         }
@@ -283,14 +283,16 @@ impl HiveApp {
         else {
             return;
         };
-        let name = self.member_name.read(cx).value().trim().to_string();
+        let submitted_name = self.member_name.read(cx).value().to_string();
+        let name = submitted_name.trim().to_string();
         if name.is_empty() {
             self.error = Some("请输入成员名称".into());
             cx.notify();
             return;
         }
         self.error = None;
-        let description = self.member_description.read(cx).value().trim().to_string();
+        let submitted_description = self.member_description.read(cx).value().to_string();
+        let description = submitted_description.trim().to_string();
         let command = format!("hive:{}", self.member_backend);
         let mut body = json!({"name":name,"role":self.member_role,"avatar":null,"autostart":false});
         if !description.is_empty() {
@@ -301,6 +303,7 @@ impl HiveApp {
         let generation = self.member_generation;
         cx.notify();
         let connection = self.connection_generation;
+        let window = window.window_handle();
         cx.spawn(async move |this, cx| {
             let result = async {
                 let member = runtime.request("hive.request", json!({"method":"POST","path":format!("/api/workspaces/{workspace}/workers"),"body":body})).await?;
@@ -312,7 +315,17 @@ impl HiveApp {
                 if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {
                     this.member_loading = false;
-                    if let Err(error) = result { this.error = Some(crate::app::ErrorNotice::Detail("添加成员",error.to_string())); } else { this.member_form_open = false; this.member_focus_search = true; }
+                    if let Err(error) = result { this.error = Some(crate::app::ErrorNotice::Detail("添加成员",error.to_string())); } else {
+                        let _ = window.update(cx, |_, window, cx| {
+                            if this.member_name.read(cx).value().as_str() == submitted_name {
+                                this.member_name.update(cx, |input, cx| input.set_value("", window, cx));
+                            }
+                            if this.member_description.read(cx).value().as_str() == submitted_description {
+                                this.member_description.update(cx, |input, cx| input.set_value("", window, cx));
+                            }
+                        });
+                        this.member_form_open = false; this.member_focus_search = true;
+                    }
                     this.refresh_members(cx);
                     this.refresh_sessions(cx);
                     cx.notify();

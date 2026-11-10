@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前源码与开发包（2026-11-10）
+
+当前开发包为ecad294优化release，成员模型定向修复、导出正文阅读和Pi/Claude取消失败回收已纳入；六组包检查、额外两组包内取消回归、原生成员/导出及冷读通过，见[最新开发包](validation/2026-11-10-member-export-package.md)。此前下文current/candidate指针均为历史现场。连续创建成员的已提交名称/职责清空另已完成源码与原生/冷读验证，见[成员表单](validation/2026-11-10-member-form-reset.md)，尚未入包。完整目标与Windows原生继续开放。
+
 ## 总验收与候选包（2026-11-09）
 
 确认当前UI验证被Mac锁屏阻断，已请求手动解锁；不将此前超时认作应用死锁。候选66ef8f9纳入清理/导出源码，108个runtime及29,970个未改条目匹配，包内Node/PTY/Hive/SQLite gate通过；current仍为1acd805，候选未推广，临时解压已清理，.artifacts约3.8GiB。按原目标审计，补列Web已有语言与远程配置两个原生遗漏项为#17/#18，不用现有功能缩小完整范围。见[验收总表](acceptance-status.md)。
