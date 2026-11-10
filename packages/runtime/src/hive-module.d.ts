@@ -11,7 +11,8 @@ declare module "@tt-a1i/hive/dist/src/cli/hive.js" {
 			agentRuntimeFactory?: import("./hive-runtime-contract.js").HiveAgentRuntimeFactory;
 		},
 	): Promise<{ port: number; close(): Promise<void>; store: {
-        settings: { getAppState(key: string): { value: string | null } | undefined;
+        addWorkerWithLaunch(workspaceId: string, input: import('./hive-host.js').DesktopMemberInput & { avatar: null }, launch: import('./hive-runtime-contract.js').AgentLaunchConfigInput): import('./hive-runtime-contract.js').AgentSummary;
+        settings: { getAppState(key: string): { key: string; value: string | null } | undefined;
           setAppState(key: string, value: string): void };
         locateWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUploadLocation|undefined>;
         readWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUpload|null>;

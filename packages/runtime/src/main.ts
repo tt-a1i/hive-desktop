@@ -60,6 +60,8 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       hive.saveNavigation(value);
       return { ok: true };
     }
+    case 'team.member.create': return runtime.createMember(text(params, 'workspaceId'), { name: params.name, role: params.role, backend: params.backend,
+      ...(params.description !== undefined && { description: params.description }) });
     case 'team.members': {
       const workspace = text(params, 'workspaceId');
       const members = await hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspace)}/team`) as { id: string }[];

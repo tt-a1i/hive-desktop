@@ -184,3 +184,5 @@ Claude中断被拒绝后调用已返回但CLI仍活着已用官方SDK/真实子�
 当前Mac开发包已刷新为ecad294，包含本轮成员/导出界面与Pi/Claude取消回收修复。六组包检查＋两组包内取消失败回归、两个实际包窗口正常退出及成员/完整导出复制冷读通过；仅删无引用重复组装base回收约513.5MiB，旧包/应用/状态保留。见[开发包记录](validation/2026-11-10-member-export-package.md)。无新模型请求，完整目标/Windows原生继续开放。
 
 连续新建成员成功后仅清空已提交名称/职责，角色/后端沿用；真实Mac英文20窄窗Tab/Space/Return创建、重开空表单、重复名称409及收起/重开保留失败输入通过。15成员冷读仅比基线新增1位停止Codex reviewer，旧14位不变、零执行；Mac构建/Windows编译通过，见[成员表单](validation/2026-11-10-member-form-reset.md)。仅源码，包仍ecad294；在途编辑时序未单独复演，完整目标继续。
+
+成员创建的两步HTTP已真实复现配置失败后残留无后端成员/同名409，现通过单个本地请求复用Hive addWorkerWithLaunch事务。production JSONL＋真实HTTP/SQLite验证四后端、非法输入、写入失败回滚/原名重试、默认语言及冷身份，Mac真实失败→保留输入→直接重试→冷读16成员/零执行通过。见[成员事务](validation/2026-11-10-member-atomic-create.md)。runtime构建/类型、check:hive、Mac build和Windows目标check通过，仅源码，包仍ecad294；完整目标继续。

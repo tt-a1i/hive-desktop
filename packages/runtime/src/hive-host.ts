@@ -1,7 +1,10 @@
 import WebSocket from "ws";
 import { isAbsolute } from "node:path";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
+import { getDefaultRoleDescription } from '@tt-a1i/hive/dist/src/server/role-templates.js';
+import { resolveWorkspaceUiLanguage } from '@tt-a1i/hive/dist/src/server/workspace-ui-language.js';
 import type { HiveAgentRuntimeFactory } from "./hive-runtime-contract.js";
+export interface DesktopMemberInput { name: string; role: import('./hive-runtime-contract.js').WorkerRole; description?: string }
 
 export class HiveHttpError extends Error {
 	constructor(
@@ -20,6 +23,7 @@ export interface HiveUpload { record: { mimeType: string; originalName: string }
 export interface HiveUploadLocation {localPath:string;record:{mimeType:string;originalName:string;sizeBytes:number}}
 
 export interface HiveHost {
+    createMember(workspaceId: string, input: DesktopMemberInput, command: string): { id: string };
     locateUpload(workspaceId:string,id:string):Promise<HiveUploadLocation | undefined>;
     readUpload(workspaceId: string, id: string): Promise<HiveUpload | null>;
     getNavigation(): string | null;
@@ -91,6 +95,13 @@ export async function createHiveHost({
 	let closing: Promise<void> | undefined;
 	return {
 		port: runtime.port,
+        createMember(workspaceId, input, command) {
+            if (closing) throw new Error('Hive host is closed');
+            return runtime.store.addWorkerWithLaunch(workspaceId, {
+                ...input, avatar: null,
+                description: input.description ?? getDefaultRoleDescription(input.role, resolveWorkspaceUiLanguage(runtime.store.settings, workspaceId)),
+            }, { command, args: [], commandPresetId: null });
+        },
         locateUpload: (workspaceId,id) => {
             if (closing) throw new Error("Hive host is closed");
             return runtime.store.locateWorkspaceUpload(workspaceId,id);

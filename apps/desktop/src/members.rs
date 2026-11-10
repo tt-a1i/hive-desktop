@@ -293,8 +293,7 @@ impl HiveApp {
         self.error = None;
         let submitted_description = self.member_description.read(cx).value().to_string();
         let description = submitted_description.trim().to_string();
-        let command = format!("hive:{}", self.member_backend);
-        let mut body = json!({"name":name,"role":self.member_role,"avatar":null,"autostart":false});
+        let mut body = json!({"workspaceId":workspace,"name":name,"role":self.member_role,"backend":self.member_backend});
         if !description.is_empty() {
             body["description"] = json!(description);
         }
@@ -305,12 +304,7 @@ impl HiveApp {
         let connection = self.connection_generation;
         let window = window.window_handle();
         cx.spawn(async move |this, cx| {
-            let result = async {
-                let member = runtime.request("hive.request", json!({"method":"POST","path":format!("/api/workspaces/{workspace}/workers"),"body":body})).await?;
-                let id = member["id"].as_str().ok_or_else(|| "成员已创建，但响应缺少 ID；请刷新列表".to_string())?;
-                runtime.request("hive.request", json!({"method":"POST","path":format!("/api/workspaces/{workspace}/agents/{id}/config"),"body":{"command":command,"command_preset_id":null,"args":[]}})).await.map_err(|e| format!("成员已创建，但后端配置失败：{e}"))?;
-                Ok::<(), String>(())
-            }.await;
+            let result = runtime.request("team.member.create", body).await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection { return; }
                 if this.workspace.as_ref() == Some(&workspace) && this.member_generation == generation {

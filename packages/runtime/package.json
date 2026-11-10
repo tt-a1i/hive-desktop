@@ -43,7 +43,8 @@
     "check:queued-inputs-peers": "pnpm build && tsx checks/queued-user-inputs-peers.ts",
     "check:queued-inputs-external-pi": "pnpm build && tsx checks/queued-user-inputs-external-pi.ts",
     "check:queued-inputs": "pnpm build && tsx checks/queued-user-inputs.ts",
-    "check:usage": "pnpm build && tsx checks/agent-usage.ts && tsx checks/agent-usage-peers.ts && tsx checks/agent-usage-wire.ts"
+    "check:usage": "pnpm build && tsx checks/agent-usage.ts && tsx checks/agent-usage-peers.ts && tsx checks/agent-usage-wire.ts",
+    "check:members": "pnpm build && tsx checks/member-creation.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.317",

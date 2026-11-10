@@ -8,6 +8,8 @@ import { DesktopSettings, type DesktopExecutableEnvironment } from './desktop-se
 import { createStructuredRuntime } from './structured-runtime.js';
 import { PiAuth } from './pi-auth.js';
 import { PiModelConfig } from './pi-model-config.js';
+import { isWorkerRole } from '@tt-a1i/hive/dist/src/shared/types.js';
+import { structuredCommand } from './structured-runtime.js';
 
 export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEvent) => void,
   options: { executableEnvironment?: DesktopExecutableEnvironment; onTerminalEvent?: (event: TerminalEvent) => void } = {}) {
@@ -31,6 +33,14 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
   const terminal = new Terminals(hive, workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onTerminalEvent ?? (() => {}));
   let closing: Promise<void> | undefined;
   return { hive, chats, agents, settings, agentModels, terminal, piAuth, piModels,
+    createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; description?: unknown }) => {
+      chats.assertWorkspaceAvailable(workspaceId);
+      if (typeof input.name !== 'string' || !input.name.trim() || !isWorkerRole(input.role)
+        || typeof input.backend !== 'string' || !structuredCommand(`hive:${input.backend}`)
+        || (input.description !== undefined && typeof input.description !== 'string')) throw new TypeError('Invalid desktop member configuration');
+      return hive.createMember(workspaceId, { name: input.name, role: input.role,
+        ...(input.description !== undefined && { description: input.description as string }) }, `hive:${input.backend}`);
+    },
     removeWorkspace: (workspaceId: string) => chats.removeWorkspace(workspaceId, () => terminal.detachWorkspace(workspaceId)),
     requestHive: (method: string, path: string, body?: unknown) => {
       if (!['GET', 'HEAD'].includes(method.toUpperCase())) {
