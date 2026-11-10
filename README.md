@@ -93,4 +93,4 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-当前Mac开发包已更新为7ae27ca优化release，纳入成员/选模/工作流键盘显露与刷新后的焦点交接。六组包检查、实际包内成员/产物/派单往返，以及上一包真实Terra会话、工具输出和精确草稿的新包冷恢复通过；本轮无新推理，见[当前优化包](docs/validation/2026-11-10-member-workflow-package.md)。初始包捕获的焦点失败、修复及原始证据均保留。旧ZIP/状态和上一可运行包保留；Windows原生、正式签名发行与完整产品目标仍待。
+当前Mac开发包已更新为6edac4c优化release，纳入错误恢复、配置/新会话焦点、暂停队列继续与紧凑输入/消息布局。六组包检查、实际Terra工具及中文草稿冷恢复、失败态设置键盘往返通过；本轮真实请求包含一次模型命令失败和一次成功只读修正，见[开发包证据](docs/validation/2026-11-10-composer-package.md)。旧ZIP/状态和上一可运行包保留；Windows原生、正式签名发行与完整目标仍待。

@@ -1,9 +1,9 @@
 # 当前 Mac 开发包
 
-2026-11-10已更新为优化release，源码edbbae16af01a342272d839a668a2fc99d676e4d。ZIP143,400,169字节，SHA256 `085354108c29b318a0b6b8fd0f438fe3793dd7c62918cc7e485d59da8d91eded`。包含最新Agent引导与输入/选区修复，六组包检查、全新原生配置→项目→真实Terra工具/回复→冷恢复通过；Claude检查的首次失败和测试握手修复单独保留。完整实证与边界见[当前优化包](2026-11-10-current-optimized-flow.md)。
+2026-11-10已更新为源码 `6edac4c0f1851459b721cabdc2eb2b60a8708597` 的优化 release，ZIP 143,416,277 字节，SHA256 `a475a4e6fd67ab03adcb4b9930ff10cd49dba93f2c97c50cc8c75386f168837d`。纳入错误修复入口、配置返回与新建输入焦点、固定继续按钮和紧凑滚动布局；六组包检查、实际包内 Terra 工具与中文草稿冷恢复、Pi 失败态设置返回键盘流程通过。真实请求含一次模型命令失败及一次明确只读修正，完整证据和边界见[本轮开发包](2026-11-10-composer-package.md)。
 
 - 当前ZIP：`.artifacts/hive-desktop-macos-arm64-current.zip`
-- 可直接打开：`.artifacts/release-edbbae1/extracted/bundle/Hive Desktop.app`
+- 可直接打开：`.artifacts/release-6edac4c/extracted/bundle/Hive Desktop.app`
 - 当前收据：`.artifacts/current-package/receipt.json`
 - 未签名/未公证的Mac ARM64开发包；Windows原生及完整产品目标仍未完成。
 
