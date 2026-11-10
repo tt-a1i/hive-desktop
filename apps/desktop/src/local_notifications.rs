@@ -126,9 +126,7 @@ impl HiveApp {
     pub(crate) fn local_notification_event(&mut self, event: &PiEvent, cx: &mut Context<Self>) {
         let Some(kind) = self.local_alerts.classify(event, self.busy.contains(event.session_id())) else { return; };
         let reading = self.session.as_ref().is_some_and(|session| session.id == event.session_id())
-            && !self.settings_panel && !self.roles.visible && !self.memory.visible
-            && !self.workflows.visible && !self.collaboration.visible && !self.member_panel
-            && !self.terminal.visible;
+            && self.viewing_conversation();
         let sidebar_open = self.sidebar_open;
         // On macOS active_window can still identify the app's main window in the background.
         let foreground_chat = cx.active_window().and_then(|handle| handle.update(cx, |_, window, _|

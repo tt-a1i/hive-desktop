@@ -28,3 +28,11 @@
 原生操作工具要求OS权限单独确认，已异步请求用户允许本轮Hive Notification Audit申请macOS通知并点击Allow。尚未收到确认，未点击Test、未显示/接受系统授权、未发送任何系统通知。
 
 因此OS送达、点击返回/草稿保留、真实Agent完成/错误/交互/取消、前台抑制与后台投递、授权拒绝/专注模式、冷点击和Windows原生均未验收；#25保持开放。当前安装版/ZIP/DMG仍021c162，不含本次新源码。测试数据的通知偏好最终关闭，未改默认用户配置或全局认证。完整目标继续推进。
+
+## 后续：关闭提醒时的真实模型与冷恢复
+
+源码 b90c18d，继续使用自有隔离目录，不触发OS授权。原生界面在“保留草稿 B”写入未发送的 NOTIFICATION_OFF_KEEP_B · 保留未发送草稿；切到“提醒目标 A”，确认 GPT-6.1 Terra / Medium，实际发送只回复 NOTIF_OFF_REPLY_OK、不调用工具或修改文件的验证请求。收到精确回复，0工具，pending归零；返回B恢复原草稿。该次原生窗口正常退出，exec返回0。
+
+原始 Codex 线程 01a1c50b-063f-7d41-9756-14fdfc3e659b 的 JSONL 只有一次 task_started/task_complete，turn_context 为 gpt-6.1-terra、medium、自有项目路径，工具调用为空；live-off-model-receipt.json。独立包内 Node/runtime 调 chats.open 而非 resume：A助手正文精确匹配、pending=0、busy=false、完成投递ID保留，B历史空、pending=0、busy=false、原草稿逐字保留，本机通知false；live-off-cold-receipt.json。SQLite此时messages=1、agent_runs=1、dispatches/workflow_runs=0。这是后续实际模型阶段，前文settings-receipt.json的零回合/两空会话仍只描述较早设置验证现场。
+
+另修复命名空会话仍显示欢迎页的问题，见[标题验证](2026-11-10-empty-session-title.md)；之后新增第三条空会话，亦未发送消息。提醒关闭的真实回复验证通过，不代表开启时的前台抑制、系统送达、点击返回、错误或交互路径已通过。OS授权问题仍待回复，未发送任何系统通知；#25与完整目标保持开放。安装包仍021c162。

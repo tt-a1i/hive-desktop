@@ -366,7 +366,7 @@ impl Render for HiveApp {
         let has_text = !self.input.read(cx).value().trim().is_empty()
             || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
         self.composer_has_text = has_text;
-        let welcome = self.session.as_ref().is_none_or(|s| s.agent_id.is_none())
+        let welcome = self.session.as_ref().is_none_or(|s| s.agent_id.is_none() && !s.custom_title)
             && !open_failed
             && self.pending_reports.is_empty()
             && self.messages.is_empty()
