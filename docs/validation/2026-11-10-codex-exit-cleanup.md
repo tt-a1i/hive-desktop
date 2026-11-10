@@ -21,3 +21,11 @@
 窄窗1188×1014物理像素，点击固定“附件 · 2”可跨过错误及排队内容直接显示两张附件卡，长草稿仍在，未点击继续或重发。冷读逐字/ID比较两条原始投递、12行草稿、两个附件引用及上传副本的原始字节；原生历史仍仅1轮且字节保持。cold-receipt.json、root-error及attachments-narrow图/AX、owned-processes及故障前投递/草稿保存。
 
 仍有体验缺口：长草稿可把错误区挤出视野，键盘能显露但鼠标发现入口不够明显，继续修复。该合成进程验证不代表真实厂商崩溃或模型推理。Windows原生及完整目标未完成；尚未纳入1e68306包。
+
+## 后续：固定错误入口
+
+不新增错误面板，复用 Agent 状态行。有会话错误时，将可能误导的“已停止当前回复”等状态替换为“错误详情”按钮，点击重置既有 composer 与 failure 两个ScrollHandle到错误顶部。错误关闭后自动恢复原状态；无错误时不增加控件。不增加翻译键、依赖或后台行为。
+
+独立 `.artifacts/composer-error-entry` 使用生产后台/真实上传API预置12行草稿、两附件及两条暂停投递（并非UI Send的新证明）。在实际窗口点击继续后，只终止核对父子关系的自有合成对端；中文20px窄窗1188×1014下，错误内容在视野外时固定按钮仍可见；鼠标点击显示错误标题与详情/关闭操作，实际关闭后按钮和错误区域消失，恢复状态。原生退出exit0；cold脚本核对两条投递、草稿、附件引用/原始副本及单一原生轮次保持，没有继续或自动重发。error-visible/dismissed图与AX、cold-receipt保留。
+
+最终 Mac `cargo build --locked --manifest-path apps/desktop/Cargo.toml --bin hive-desktop`、Windows目标cargo check及git diff --check通过。纯UI后续无新测试；英文原生这一入口及VoiceOver、Windows原生仍未验收。源码与1e68306包继续分别记录。

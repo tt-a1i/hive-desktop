@@ -314,6 +314,7 @@ impl Render for HiveApp {
         }
         self.prepare_interactions(window, cx);
         self.prepare_terminal_view(cx);
+        let has_session_failure = self.agent_diagnostic.is_some() || self.delivery_failure.is_some();
         let running = self
             .session
             .as_ref()
@@ -470,7 +471,14 @@ impl Render for HiveApp {
                 .when(!welcome, |dock| dock.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
                     .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().font_weight(FontWeight::SEMIBOLD)
                         .child(self.session.as_ref().map(|s| tr(s.backend.label())).unwrap_or("Hive")))
-                    .when(!self.status.is_background_connected() || running, |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
+                    .when(has_session_failure, |row| row.child(Button::new("show-session-failure").ghost().compact().label(tr("错误详情"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.composer_scroll.set_offset(point(px(0.), px(0.)));
+                            this.failure_scroll.set_offset(point(px(0.), px(0.)));
+                            window.refresh();
+                            cx.notify();
+                        }))))
+                    .when(!has_session_failure && (!self.status.is_background_connected() || running), |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
                         .child(if running { tr("正在回复…").to_string() } else { self.status.text() })))))
                 .child(v_flex().relative().w_full().min_w_0().min_h_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_1().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
 
