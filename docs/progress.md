@@ -2,7 +2,7 @@
 
 ## 当前源码与开发包（2026-11-10）
 
-当前开发包为ecad294优化release，成员模型定向修复、导出正文阅读和Pi/Claude取消失败回收已纳入；六组包检查、额外两组包内取消回归、原生成员/导出及冷读通过，见[最新开发包](validation/2026-11-10-member-export-package.md)。此前下文current/candidate指针均为历史现场。连续创建成员的已提交名称/职责清空另已完成源码与原生/冷读验证，见[成员表单](validation/2026-11-10-member-form-reset.md)，尚未入包。完整目标与Windows原生继续开放。
+当前开发包为3339ce1优化release，成员模型修复、导出正文、Pi/Claude取消回收及成员事务/表单修复均已纳入。六组包检查＋包内成员事务专项、原始Codex Terra Medium实际成员配置/启动/文件工具80/4/停止/完整冷恢复通过，见[最新开发包](validation/2026-11-10-member-lifecycle-package.md)。此前下文current/candidate指针均为历史现场。完整目标与Windows原生继续开放。
 
 ## 总验收与候选包（2026-11-09）
 

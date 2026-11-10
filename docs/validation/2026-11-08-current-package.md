@@ -1,9 +1,9 @@
 # 当前 Mac 开发包
 
-2026-11-10已更新为源码 `ecad294232fb93493d9c1e1393559d6f61d06851` 的优化release，ZIP143,419,755字节，SHA256 `14c86c59a37e80bb307477575aff9fde6014873da2f9ee97b867a6bc09ef1cec`。纳入成员目录定向修复、导出正文/说明和Pi/Claude取消失败回收。六组包检查、两组额外包内取消回归、实际包窗口及独立冷读通过，见[本轮开发包](2026-11-10-member-export-package.md)。
+2026-11-10已更新为源码 `3339ce1cfba8f1879ab366975a7fd33a47bdbdde` 的优化release，ZIP143,419,916字节，SHA256 `3cd54516e5314d2ca657f0e8bb0dc3b6305bd437bc0248e0cb49303f1adc0929`。纳入成员事务创建和成功后清空提交表单；六组包检查、额外包内成员事务专项、原始Codex Terra Medium的实际包成员创建/模型/启动/文件工具80/4/停止/完整冷恢复通过，见[本轮开发包](2026-11-10-member-lifecycle-package.md)。
 
 - 当前ZIP：`.artifacts/hive-desktop-macos-arm64-current.zip`
-- 可直接打开：`.artifacts/release-ecad294/extracted/bundle/Hive Desktop.app`
+- 可直接打开：`.artifacts/release-3339ce1/extracted/bundle/Hive Desktop.app`
 - 当前收据：`.artifacts/current-package/receipt.json`
 - 未签名/未公证Mac ARM64开发包；Windows原生及完整产品目标仍未完成。
 

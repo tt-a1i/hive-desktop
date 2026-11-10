@@ -93,6 +93,4 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-当前Mac开发包已更新为6148801优化release，纳入协作概览、冷启动输入/恢复光标、工作流正文与逐页键盘阅读及计划确认说明。六组包检查、实际包窗口和两套独立冷读通过；本轮无新模型请求，真实厂商验证沿用未变化后台的前包证据，见[开发包记录](docs/validation/2026-11-10-workflow-package.md)。旧包/状态保留，Windows原生、正式发行与完整目标继续开放。
-
-当前Mac开发包已更新为ecad294优化release，纳入成员模型错误修复入口、导出预览阅读及Pi/Claude取消失败回收；实际包成员/导出窗口、包内取消专项、六组包检查与冷读通过。见[新版开发包](docs/validation/2026-11-10-member-export-package.md)。无新模型请求，Windows原生与完整目标仍开放。
+当前Mac开发包为3339ce1优化release，成员事务创建及表单修复已纳入；六组包检查和包内事务专项通过。实际包原始Codex Terra Medium完成成员创建/模型选择/启动、文件工具核验80/4、停止及完整冷恢复，草稿保持且无重放。见[开发包记录](docs/validation/2026-11-10-member-lifecycle-package.md)。Windows原生与完整目标仍开放。
