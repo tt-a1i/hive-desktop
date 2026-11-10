@@ -36,3 +36,7 @@
 - 证据在.artifacts/workflow-delete-b13ea26：fixed-cancel-focus.png、deleted.png/AX、retained-history.ax.txt、final-delete-focus.png、final-list.ax.txt、cancel-receipt.json、deleted-cold-receipt.json、final-cold-receipt.json及日志。
 
 已验证的是上述Mac中文20px浅色窄窗、取消/目标删除/冷读和键盘恢复。未覆盖删除写入失败/响应丢失的精确时序、所有语言主题、VoiceOver、Windows原生；#13及完整产品目标继续开放。当前安装版与ZIP/DMG未更新。
+
+## 本轮存储整理
+
+检查时.artifacts约8.6GiB、Rust target约4.8GiB，磁盘剩余约93GiB。对release-7ae27ca和release-edbbae1的两份旧ZIP重新核对原收据SHA256；各28,863个解压条目的路径集合、mode、文件SHA及内部软链接逐项与manifest一致，lsof无打开句柄，才移除两个extracted副本（文件分配块合计1,076,772,864字节，约1GiB；不把该数字当APFS即时物理回收保证）。保留各ZIP、收据、项目/状态/日志/脚本及失败记录；current46373f6和最近可运行回退db6fb20解压包保留。旧收据标记bundlePresent=false及恢复ZIP，不再把被移除路径称为现存可运行包。证据.artifacts/cleanup-2026-11-10-workflow/receipt.json。没有清除仍用于构建的Rust缓存或旧聊天目录。
