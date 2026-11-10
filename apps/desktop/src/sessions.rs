@@ -385,6 +385,7 @@ impl HiveApp {
                                                     .find(|session| !session.archived)
                                             }) {
                                                 this.open_session(first.id.clone(), cx);
+                                                this.focus_project_input = true;
                                             }
                                         }
                                     }
