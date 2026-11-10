@@ -1,5 +1,5 @@
 use crate::{app::{HiveApp, SettingsSection}, focus_scroll::Reveal, language::{english, tr}, palette::Color};
-use gpui_kit::{component::{button::{Button, ButtonVariants}, *}, *};
+use gpui_kit::{component::{button::{Button, ButtonVariants}, *}, prelude::FluentBuilder, *};
 
 impl HiveApp {
     pub(crate) fn render_welcome_agents(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
@@ -10,6 +10,7 @@ impl HiveApp {
             ].into_iter().map(|(backend, label)| {
                 let description = if backend == "builtin" { self.pi_accounts.setup_status() }
                     else { self.program_setup_status(backend, cx) };
+                let account = (backend == "codex").then(|| self.codex_account_setup_status(cx));
                 let action = if english() { format!("Configure {label}") } else { format!("配置 {label}") };
                 div().flex_1().min_w(px(220.)).p_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
                     .child(Reveal::new(SharedString::from(format!("welcome-agent-{backend}-reveal")), &self.welcome_scroll,
@@ -23,10 +24,12 @@ impl HiveApp {
                                     else { this.open_program_setup(backend, window, cx); }
                                 }))))
                         .child(div().id(SharedString::from(format!("welcome-agent-{backend}-status"))).role(Role::Label).aria_label(description.clone())
-                            .text_xs().text_color(Color::Secondary.get(cx)).child(description))))
+                            .text_xs().text_color(Color::Secondary.get(cx)).child(description))
+                        .when_some(account, |view, description| view.child(div().id("welcome-codex-account-status").role(Role::Label).aria_label(description.clone())
+                            .text_xs().text_color(Color::Secondary.get(cx)).child(description)))))
             })))
             .child(div().id("welcome-agent-check-scope").role(Role::Label)
-                .aria_label(tr("本机保存状态和版本检查不验证登录有效性或模型可用性；每个 Agent 使用各自的账号与模型。"))
-                .text_xs().text_color(Color::Muted.get(cx)).child(tr("本机保存状态和版本检查不验证登录有效性或模型可用性；每个 Agent 使用各自的账号与模型。")))
+                .aria_label(tr("本机保存状态、版本和连接检查不验证登录有效性或模型可用性；每个 Agent 使用各自的账号与模型。"))
+                .text_xs().text_color(Color::Muted.get(cx)).child(tr("本机保存状态、版本和连接检查不验证登录有效性或模型可用性；每个 Agent 使用各自的账号与模型。")))
     }
 }

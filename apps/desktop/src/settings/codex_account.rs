@@ -11,6 +11,37 @@ pub struct CodexAccountCheck {
     loading: bool,
     result: Option<Result<AccountResult, String>>,
 }
+impl AccountResult {
+    fn message_key(&self) -> &'static str {
+        match self.status.as_str() {
+            "account_detected" => match self.account_type.as_deref() {
+                Some("chatgpt") => "已连接 Codex，检测到 ChatGPT 账号记录。",
+                Some("apiKey") => "已连接 Codex，检测到 API Key 账号记录。",
+                Some("amazonBedrock") => "已连接 Codex，检测到 Amazon Bedrock 账号记录。",
+                Some("gcp") => "已连接 Codex，检测到 Google Cloud 账号记录。",
+                _ => "已连接 Codex，账号类型尚无法识别。",
+            },
+            "signed_out" => "已连接 Codex，未检测到账号；请在对应 CLI 中登录。",
+            "not_required" => "已连接 Codex，当前配置不要求 OpenAI 账号。",
+            "unknown" => "已连接 Codex，账号类型尚无法识别。",
+            "cancelled" => "检查已取消。",
+            _ => "无法完成 Codex 连接与账号检查，请核对程序路径并重试。",
+        }
+    }
+}
+impl CodexAccountCheck {
+    fn uses_environment(&self) -> bool {
+        self.result.as_ref().and_then(|value| value.as_ref().ok()).is_some_and(|value| value.source == "env")
+    }
+    fn input_changed(&self, input: &str) -> bool { !self.uses_environment() && input.trim() != self.input }
+    fn message(&self) -> (String, bool) {
+        match self.result.as_ref() {
+            None => (tr("尚未检查连接与账号").into(), false),
+            Some(Err(_)) => (tr("无法完成 Codex 连接与账号检查，请核对程序路径并重试。").into(), true),
+            Some(Ok(result)) => (tr(result.message_key()).into(), result.status == "failed"),
+        }
+    }
+}
 impl HiveApp {
     fn check_codex_account(&mut self, cx: &mut Context<Self>) {
         if !self.connected || self.codex_account.loading { return; }
@@ -30,10 +61,19 @@ impl HiveApp {
         }).detach();
         cx.notify();
     }
+    pub(crate) fn codex_account_setup_status(&self, cx: &Context<Self>) -> String {
+        let state = &self.codex_account;
+        if state.loading { return tr("正在检查连接与账号…").into(); }
+        if state.result.is_none() { return state.message().0; }
+        let input = self.codex_command.read(cx).value();
+        if state.input_changed(&input) { return tr("输入已更改，请重新检查连接与账号。").into(); }
+        let message = state.message().0;
+        let saved = self.executable_settings.as_ref().and_then(|settings| settings.codex_command.as_deref()).unwrap_or_default();
+        if !state.uses_environment() && input.trim() != saved { format!("{}: {message}", tr("未保存的程序路径")) } else { message }
+    }
     pub(crate) fn render_codex_account_check(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let state = &self.codex_account;
-        let environment = state.result.as_ref().and_then(|value| value.as_ref().ok()).is_some_and(|value| value.source == "env");
-        let changed = !environment && self.codex_command.read(cx).value().trim() != state.input;
+        let changed = state.input_changed(&self.codex_command.read(cx).value());
         v_flex().min_w_0().gap_2()
             .child(h_flex().child(Button::new("check-codex-account").label(if state.loading { tr("检查中…") } else { tr("检查 Codex 连接与账号") })
                 .disabled(!self.connected || self.settings_loading || self.executable_settings.is_none() || state.loading)
@@ -42,26 +82,7 @@ impl HiveApp {
                 .text_xs().text_color(Color::Muted.get(cx)))
             .when_some(state.result.as_ref(), |view, result| {
                 if changed { return view.child(crate::text_reading::selectable_text("codex-account-changed", tr("输入已更改，请重新检查。"))); }
-                let (message, error) = match result {
-                    Err(_) => (tr("无法完成 Codex 连接与账号检查，请核对程序路径并重试。").to_owned(), true),
-                    Ok(result) => {
-                        let key = match result.status.as_str() {
-                            "account_detected" => match result.account_type.as_deref() {
-                                Some("chatgpt") => "已连接 Codex，检测到 ChatGPT 账号记录。",
-                                Some("apiKey") => "已连接 Codex，检测到 API Key 账号记录。",
-                                Some("amazonBedrock") => "已连接 Codex，检测到 Amazon Bedrock 账号记录。",
-                                Some("gcp") => "已连接 Codex，检测到 Google Cloud 账号记录。",
-                                _ => "已连接 Codex，账号类型尚无法识别。",
-                            },
-                            "signed_out" => "已连接 Codex，未检测到账号；请在对应 CLI 中登录。",
-                            "not_required" => "已连接 Codex，当前配置不要求 OpenAI 账号。",
-                            "unknown" => "已连接 Codex，账号类型尚无法识别。",
-                            "cancelled" => "检查已取消。",
-                            _ => "无法完成 Codex 连接与账号检查，请核对程序路径并重试。",
-                        };
-                        (tr(key).to_owned(), result.status == "failed")
-                    }
-                };
+                let (message, error) = state.message();
                 view.child(crate::text_reading::selectable_text("codex-account-status", message).text_sm().text_color(if error { Color::Error.get(cx) } else { Color::Text.get(cx) }))
                     .when_some(result.as_ref().ok(), |view, result| view.child(crate::text_reading::selectable_text("codex-account-source",
                         super::EffectiveCommand { command:result.command.clone(), source:result.source.clone() }.label(tr("本次检查"))).text_xs().text_color(Color::Muted.get(cx)))
