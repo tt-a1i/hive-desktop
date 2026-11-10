@@ -29,3 +29,7 @@
 独立 `.artifacts/composer-error-entry` 使用生产后台/真实上传API预置12行草稿、两附件及两条暂停投递（并非UI Send的新证明）。在实际窗口点击继续后，只终止核对父子关系的自有合成对端；中文20px窄窗1188×1014下，错误内容在视野外时固定按钮仍可见；鼠标点击显示错误标题与详情/关闭操作，实际关闭后按钮和错误区域消失，恢复状态。原生退出exit0；cold脚本核对两条投递、草稿、附件引用/原始副本及单一原生轮次保持，没有继续或自动重发。error-visible/dismissed图与AX、cold-receipt保留。
 
 最终 Mac `cargo build --locked --manifest-path apps/desktop/Cargo.toml --bin hive-desktop`、Windows目标cargo check及git diff --check通过。纯UI后续无新测试；英文原生这一入口及VoiceOver、Windows原生仍未验收。源码与1e68306包继续分别记录。
+
+## 包内回归闸门
+
+将同一退出清理检查接入check-packaged-codex：只擦除TS类型并将生产runtime导入绑定到解压包，复制已有本地queue peer。修复前1e68306包负对照实际在新检查处以原AggregateError失败，前四个既有包内检查仍通过；package-negative.log保留。因此旧包尚未包含这项修复。新包正对照仍待本批打包后核对，不能用源码green替代。

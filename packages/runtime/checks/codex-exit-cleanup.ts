@@ -1,7 +1,7 @@
 /** Real Hive/SQLite/spool and production Codex transport; owned local JSONL peer, no inference. */
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
@@ -58,10 +58,11 @@ try {
   const turns = JSON.parse(await readFile(join(project, 'queue-peer-thread.json'), 'utf8')).turns;
   assert.equal(turns.length, 3);
   assert.ok(turns.slice(1).every((turn: any) => turn.status === 'completed'));
-  const output = resolve('../../.artifacts/codex-exit-cleanup');
+  const output = directory;
   await mkdir(output, { recursive: true });
   await writeFile(join(output, 'receipt.json'), JSON.stringify({ pass: true, directory,
     realModelRequests: 0, retainedDeliveryIds: accepted.map(input => input.deliveryId),
     cleanupResolved: true, nativeTurns: 3, originalFailure: failures.at(-1).message }, null, 2));
+  console.log(directory);
   console.log('CODEX_EXIT_CLEANUP_PASS: root diagnostic, reaping, exact cold queue and explicit recovery; local peer only.');
 } finally { await runtime.close(); }
