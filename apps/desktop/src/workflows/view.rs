@@ -147,8 +147,11 @@ impl HiveApp {
                         .label(tr("删除…"))
                         .disabled(disabled)
                         .accessibility_label(format!("{}: {}", tr("删除计划"), basename(&schedule.script_path)))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             this.workflows.deleting = Some(delete_id.clone());
+                            let focus = this.workflows.delete_cancel_focus
+                                .get_or_insert_with(|| cx.focus_handle()).clone();
+                            window.on_next_frame(move |window, cx| focus.focus(window, cx));
                             cx.notify();
                         })),
                     )),
@@ -209,6 +212,7 @@ impl HiveApp {
                             )
                             .child(
                                 Button::new("workflow-schedule-cancel")
+                                    .when_some(self.workflows.delete_cancel_focus.as_ref(), |button, focus| button.track_focus(focus))
                                     .ghost()
                                     .label(tr("取消"))
                                     .accessibility_label(format!("{}: {}", tr("取消删除计划"), basename(&schedule.script_path)))

@@ -31,6 +31,7 @@ pub struct Workflows {
     pub list_scroll: ScrollHandle,
     pub detail_scroll: ScrollHandle,
     pub deleting: Option<String>,
+    pub delete_cancel_focus: Option<FocusHandle>,
 }
 pub enum WorkflowError { Refresh(String), Action(String), Unconfirmed }
 impl WorkflowError {
@@ -67,6 +68,7 @@ impl Default for Workflows {
             list_scroll: ScrollHandle::new(),
             detail_scroll: ScrollHandle::new(),
             deleting: None,
+            delete_cancel_focus: None,
         }
     }
 }
@@ -275,7 +277,9 @@ impl HiveApp {
                         if policy {
                             this.workflows.policy_dirty = false;
                         }
-                        this.workflows.deleting = None;
+                        if this.workflows.deleting.take().is_some() {
+                            this.workflows.focus_navigation = true;
+                        }
                         this.refresh_workflows(cx);
                     }
                     Err(error) => {

@@ -55,3 +55,5 @@ CUA 曾遇锁屏、ScreenCaptureKit -3811、noWindowsAvailable 和滞后画面�
 ## 真实Codex/Terra补验与汇报回收
 
 生产workflow agent()的真实Codex/Terra Worker已读取/计算/写文件并显式汇报，发现并修复回收过早造成native report误报失败；确定性回归先红后绿、最终全新实际模型检查、持久恢复和原生结果/产物/成员往返通过，见[真实工作流与#21](2026-11-09-workflow-codex-report.md)。由驱动启动工作流，模型执行Worker职责，不冒称模型主控编写。此修复尚未进入2b3c07e候选。
+
+2026-11-10 计划删除最终按钮、取消、目标隔离和历史保留已补Mac原生及独立冷读；同时修复确认显露和删除后焦点恢复，见[计划删除补验](2026-11-10-workflow-delete.md)。本轮准备时通知消费产生的一次真实Terra回合单列；其余边界和完整目标继续开放。
