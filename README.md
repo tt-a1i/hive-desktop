@@ -93,4 +93,4 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-当前Mac开发包为3339ce1优化release，成员事务创建及表单修复已纳入；六组包检查和包内事务专项通过。实际包原始Codex Terra Medium完成成员创建/模型选择/启动、文件工具核验80/4、停止及完整冷恢复，草稿保持且无重放。见[开发包记录](docs/validation/2026-11-10-member-lifecycle-package.md)。Windows原生与完整目标仍开放。
+当前Mac开发包为db6fb20优化release，增加应用图标/版本、标准DMG及欢迎账号修复；真实Finder安装与启动、设置往返和退出回收通过。见[Mac安装记录](docs/validation/2026-11-10-macos-installation.md)。未签名/未公证，Windows原生与完整目标继续开放。
