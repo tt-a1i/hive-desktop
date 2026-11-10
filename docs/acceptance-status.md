@@ -48,14 +48,14 @@ Pi账号页补提供商/本机保存状态分组与AX正文，并复用焦点自
 | 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；源码Mac导出复制/失败重试/窄窗/AX提示，以及导出和文件预览Home/End/双向翻页、中文文件选区复制已取得实证，见[原生补验](validation/2026-11-09-native-resume.md) | 成员职责另已修复AX正文、首尾/翻页和选区复制，102行/3,531字符在Mac实证，见[成员阅读](validation/2026-11-09-member-responsibilities.md)；已纳入dd0230a候选并补包内首尾/翻页/窄窗验证，见[包内证据](validation/2026-11-09-stop-candidate.md)。真实Codex原生两条排队/停止/冷恢复/显式继续已补验，并修复额外恢复唤醒，见[排队恢复](validation/2026-11-09-queued-codex-ui.md)。VoiceOver播报、滚轮/完整键盘/字号、部分在途时序、系统输入与可访问性矩阵未完成；局部窄窗不推广到所有页面 |
 | 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言偏好与累计1046条主要页面/配置/聊天查找/协作/资源终端及静态和上下文错误文案已接入，模型编辑已补固定操作/提示、Tab与空格保存及冷读回，见[配置窄窗](validation/2026-11-09-model-editor-footer.md)，已纳入2b3c07e候选并补包内配置/退出恢复，见[配置候选](validation/2026-11-09-model-candidate.md)；模型/接口编辑另已补焦点与标签显露、正反Tab和实际滚动，见[滚动证据](validation/2026-11-09-model-editor-scroll.md)，新增/覆盖草稿及保存、英文17字号已补窄窗实测，完整字号/可访问性/Windows等边界仍在[#20](https://github.com/tt-a1i/hive-desktop/issues/20)；完整页面迁移、真实切换/草稿/窄窗仍未完成，见[语言记录](validation/2026-11-09-interface-language.md)、[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生设置/开关/配对码/拒绝已补包内实证，确认/撤销GUI、真实网关和Windows仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)及[最新候选](validation/2026-11-09-settled-candidate.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流删除最终按钮等仍待验收 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；Mac EPERM回归先红后绿；最新源码Cmd+Q、冷启动草稿/语言恢复、窗口关闭均exit0并清理后台，见[原生补验](validation/2026-11-09-native-resume.md) | 旧21544/54534已不在进程表，其退出原因未证实；候选包和Windows矩阵未完成，不承诺恢复任意中断工具或exactly-once |
-| macOS可实际使用 | current/candidate现为db6fb20优化release，另纳入欢迎账号修复与Mac图标/版本/DMG；真实Finder安装/首屏/设置/退出通过；六组包gate、包内事务专项与真实Codex成员配置/启动/工具80/4/停止/完整冷恢复通过，见[当前开发包](validation/2026-11-10-member-lifecycle-package.md) | 完整页面、输入法、远程/协作/辅助技术与性能矩阵仍未完成；开发包不是完整交付 |
+| macOS可实际使用 | current/candidate现为46373f6优化release，另纳入欢迎账号修复与Mac图标/版本/DMG；真实Finder安装/首屏/设置/退出通过；六组包gate、包内事务专项与真实Codex成员配置/启动/工具80/4/停止/完整冷恢复通过，见[当前开发包](validation/2026-11-10-member-lifecycle-package.md) | 完整页面、输入法、远程/协作/辅助技术与性能矩阵仍未完成；开发包不是完整交付 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户明确暂时无Windows机器、先继续其他实施；不处理CI不等于取消Windows目标 |
 | 完整、精美、Cindy/Maka级体验 | 已有固定源码参考与安装Cindy局部原生走查，并实施多轮聊天/配置/导航改进 | 整体对标仍未证实；还须按实际安装体验做全流程及边角检查，不能以局部截图或当前清单宣称一致 |
 | 可安装与交付 | 有冻结Node/native依赖的Mac便携开发包及实际PTY/HTTP/SQLite检查 | 未签名/未公证；正式发行、完整安装体验与两个平台最终验收未完成 |
 
 ## 当前开发包与候选
 
-最新指针为db6fb20，ZIP/DMG及实际Applications安装结果见[安装记录](validation/2026-11-10-macos-installation.md)和[当前包](validation/2026-11-08-current-package.md)。下面6148801及其后按时间追加内容保留为历史，不能作为最新current或现存解压目录保证。
+最新指针为46373f6，ZIP/DMG及实际Applications更新结果见[本批开发包](validation/2026-11-10-navigation-package.md)和[当前包](validation/2026-11-08-current-package.md)。下面6148801及其后按时间追加内容保留为历史，不能作为最新current或现存解压目录保证。
 
 ### 历史：6148801
 
@@ -206,3 +206,5 @@ Mac分发新增真实图标/版本与DMG，包内身份解码、六组后台gate
 对照实际Beluga欢迎/T3布局后，Hive欢迎加入原标识/工作台副标题、窄标题与紧凑可换行步骤；English默认16、中文16/冷启动20及列出宽窄窗、主按钮系统选择取消/外部配置往返通过，零新项目/会话/执行，Mac构建和Windows类型检查通过。原logo/三份通知字节保留，见[欢迎视觉](validation/2026-11-10-welcome-brand.md)。仅源码未入db6fb20，不扩大为竞品完整体验或所有UI矩阵已达标。
 
 同名项目/会话的搜索结果歧义已实际复现并修复：复用Hive规范项目路径筛选，结果目录摘要/完整路径tooltip与AX可区分。真实Mac宽窄窗⌘K、beta/Shared唯一命中/Return和Down返回Alpha、两份草稿/原ID/模型/导航冷读精确保持、零模型/执行通过，见[路径查找](validation/2026-11-10-session-project-paths.md)。搜索扩展先红后绿，归档/TS/build/Mac和Windows类型检查通过；完整主题字号/VoiceOver/Windows原生待验，未入db6fb20。
+
+近期欢迎/路径/图片/成员语义及删除后配置修复已进入46373f6 current/candidate：六组包gate＋包内删除后历史/路径专项通过，真实解压app项目草稿往返/冷读、Finder更新Applications/品牌欢迎及退出回收通过，见[本批开发包](validation/2026-11-10-navigation-package.md)。ZIP143,856,220字节，SHA4b0fe6ee…；前文“未入db6fb20”为历史阶段现已纳入。无新增厂商模型请求，完整UIUX/厂商/Windows原生与正式发行仍待。

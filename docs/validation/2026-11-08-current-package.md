@@ -1,10 +1,10 @@
 # 当前 Mac 开发包
 
-2026-11-10已更新为源码 `db6fb209e5d4dda4a3b4cc4d5876e3aa020be8db` 的优化release，纳入欢迎账号反馈/严格脱敏读取与Mac图标、版本和DMG分发。六组包检查＋包内Pi账号JSONL专项通过，真实Finder安装到Applications、首屏/设置往返、退出与后台回收通过，见[安装实证](2026-11-10-macos-installation.md)。上一版真实Codex成员80/4记录按原证据沿用，不冒称本轮重跑。
+2026-11-10已更新为源码 `46373f6bb11a66d5bfdd658ad848545e8a2db13d` 的优化release，纳入欢迎品牌/紧凑引导、路径查找、图片/成员可读取反馈及删除后配置校验。六组包检查＋包内删除成员历史/路径搜索专项、真实包内项目草稿往返/冷读、Finder更新Applications与品牌欢迎/退出通过，见[本批开发包](2026-11-10-navigation-package.md)。本轮没有新增厂商模型请求；旧Codex模型记录按其原版本保留。
 
-- 当前ZIP：`.artifacts/hive-desktop-macos-arm64-current.zip`，143,751,899字节，SHA256 `e80ae94c7aaef85347bc1f2ed2fc78cc8adbccc22b87b9b3cf5c2472844d60d9`。
-- DMG：`.artifacts/release-db6fb20/Hive-Desktop-macos-arm64.dmg`，SHA256 `0c0f0b7b84b38c5173ec36b6bd47899e6840bb878c1cc09a54d412b70ba98eee`。
-- 已安装：`/Applications/Hive Desktop.app`；可直接打开的解压副本：`.artifacts/release-db6fb20/extracted/bundle/Hive Desktop.app`。
+- 当前ZIP：`.artifacts/hive-desktop-macos-arm64-current.zip`，143,856,220字节，SHA256 `4b0fe6ee7e6d0b73dda487ccd824c26dd563d025d86affc155cee77af7bc2eb1`。
+- DMG：`.artifacts/release-46373f6/Hive-Desktop-macos-arm64.dmg`，SHA256 `03e7cd1ed711b8ec397f008974152ae9b44f0d860a6d7c656a173745cf2f5313`。
+- 已安装：`/Applications/Hive Desktop.app`；解压副本：`.artifacts/release-46373f6/extracted/bundle/Hive Desktop.app`。
 - 当前收据：`.artifacts/current-package/receipt.json`。
 - 未签名/未公证Mac ARM64开发包；Windows原生及完整产品目标仍未完成。
 
