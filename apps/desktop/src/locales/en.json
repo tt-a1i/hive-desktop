@@ -1143,5 +1143,16 @@
   "这是 Hive 的本机测试提醒。": "This is a local test notification from Hive.",
   "测试提醒已提交给系统；若未显示，请检查系统通知权限与专注模式。": "Test notification submitted to the system. If it does not appear, check notification permissions and focus settings.",
   "默认关闭。首次发送可能出现系统授权提示；允许、拒绝和专注模式均由系统控制。仅在应用运行时提醒。": "Off by default. The first notification may request system permission. Delivery depends on system permissions and focus settings. Notifications are sent only while the app is running.",
-  "本机系统提醒与 Webhook 通知地址": "Local system notifications and webhook URL"
+  "本机系统提醒与 Webhook 通知地址": "Local system notifications and webhook URL",
+  "检查 Codex 连接与账号": "Check Codex connection and account",
+  "建立原生连接并只读检查账号，不刷新凭据、不启动模型。检测到账号不代表登录仍有效或模型可用。": "Connect to the native CLI and read account status without refreshing credentials or starting a model. Detecting an account does not verify its validity or model access.",
+  "无法完成 Codex 连接与账号检查，请核对程序路径并重试。": "Could not check the Codex connection and account. Verify the executable path and try again.",
+  "已连接 Codex，检测到 ChatGPT 账号记录。": "Connected to Codex. A ChatGPT account record was detected.",
+  "已连接 Codex，检测到 API Key 账号记录。": "Connected to Codex. An API key account record was detected.",
+  "已连接 Codex，检测到 Amazon Bedrock 账号记录。": "Connected to Codex. An Amazon Bedrock account record was detected.",
+  "已连接 Codex，检测到 Google Cloud 账号记录。": "Connected to Codex. A Google Cloud account record was detected.",
+  "已连接 Codex，账号类型尚无法识别。": "Connected to Codex. The account type is not recognized.",
+  "已连接 Codex，未检测到账号；请在对应 CLI 中登录。": "Connected to Codex. No account was detected; sign in using this CLI.",
+  "已连接 Codex，当前配置不要求 OpenAI 账号。": "Connected to Codex. This configuration does not require an OpenAI account.",
+  "路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；版本检查只读取程序版本。修改在下次启动对应 Agent 时生效。": "Leave a path empty to search PATH. Environment variables take priority. Check the current entry before saving; the version check only reads its version. Changes apply the next time the Agent starts."
 }

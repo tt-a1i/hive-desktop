@@ -91,7 +91,7 @@ impl HiveApp {
         crate::focus_scroll::Viewport::new("programs-viewport", scroll,
             v_flex().id("settings-programs-content").flex_1().min_w_0().min_h_0()
                 .overflow_y_scroll().track_scroll(scroll).vertical_scrollbar(scroll).gap_3()
-                .child(crate::text_reading::selectable_text("programs-description", tr("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；检查只读取程序版本。修改在下次启动对应 Agent 时生效。")).text_sm().text_color(Color::Secondary.get(cx)))
+                .child(crate::text_reading::selectable_text("programs-description", tr("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；版本检查只读取程序版本。修改在下次启动对应 Agent 时生效。")).text_sm().text_color(Color::Secondary.get(cx)))
                 .child(crate::text_reading::selectable_text("programs-account-guidance", tr("Claude Code、Codex 和外部 Pi 使用各自 CLI 的登录与配置。检测到版本不代表已登录或模型可用；请先在对应 CLI 中完成设置。")).text_sm().text_color(Color::Secondary.get(cx)))
                 .when_some(self.settings_message.as_ref().map(|notice| notice.text()), |view, message| view.child(crate::text_reading::selectable_text("programs-save-notice", message).p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm()))
                 .child(self.executable_field("pi", tr("外部 Pi"), &self.pi_command, self.executable_settings.as_ref().map(|s| &s.effective.pi), cx))
@@ -189,6 +189,7 @@ impl HiveApp {
                     .child(readout("checked",EffectiveCommand{command:result.command.clone(),source:result.source.clone()}.label(tr("本次检查"))).text_xs().text_color(Color::Muted.get(cx)))
                     .when(result.version.as_ref().is_some_and(|version|version!=&result.verified_version),|row|row.child(readout("compatibility",if english() { format!("Client-verified version: {}. The detected version differs; compatibility has not been verified.",result.verified_version) } else { format!("客户端已验证版本：{}。检测版本不同，尚未验证兼容性。",result.verified_version) }).text_xs().text_color(Color::Secondary.get(cx)))))
             });
+        let field = field.when(backend == "codex", |field| field.child(self.render_codex_account_check(cx)));
         crate::focus_scroll::Reveal::new(SharedString::from(format!("program-{backend}-reveal")), &self.program_scroll, field)
     }
 }

@@ -180,6 +180,7 @@ impl HiveApp {
         self.settings_loading = false;
         self.agent_diagnostic = None;
         self.program_checks.clear();
+        self.codex_account = Default::default();
         self.reset_pi_accounts(window.window_handle(), cx);
         self.pi_models.reset_connection();
         if self.notification_loading {

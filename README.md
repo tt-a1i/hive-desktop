@@ -38,7 +38,7 @@ pnpm install
 pnpm dev
 ```
 
-应用使用独立的桌面数据目录，读取 Pi 的现有模型与认证配置。“设置 → 内置 Pi”支持 SDK 原生订阅登录、API 多步配置、提供商搜索和移除本机登录信息，复用 Pi 凭据；“设置 → 模型与接口”可添加兼容接口、编辑自定义模型及能力，保留 Pi 配置中的高级字段；见 [模型配置验证](docs/validation/2026-11-08-pi-model-config.md)。已有 modelOverrides 条目支持编辑、恢复继承和移除，见 [覆盖配置](docs/validation/2026-11-08-pi-model-overrides.md)。模型配置表单支持自动保存本地草稿与重启恢复，并保留外部修改冲突检查，见 [草稿验证](docs/validation/2026-11-08-pi-model-drafts.md)。桌面内切换会话模型不会改写 Pi 的全局默认。设置支持按名称与关键词搜索、Enter 打开和窄窗口导航，见 [设置搜索](docs/validation/2026-11-08-settings-search.md)。外部程序页可先检查当前输入的版本及实际命令来源，再保存；不运行模型，版本一致也不等于完整兼容性验收。见 [程序检查](docs/validation/2026-11-08-executable-check.md)。运行方式与环境变量见 [桌面应用](apps/desktop/README.md)。
+应用使用独立的桌面数据目录，读取 Pi 的现有模型与认证配置。“设置 → 内置 Pi”支持 SDK 原生订阅登录、API 多步配置、提供商搜索和移除本机登录信息，复用 Pi 凭据；“设置 → 模型与接口”可添加兼容接口、编辑自定义模型及能力，保留 Pi 配置中的高级字段；见 [模型配置验证](docs/validation/2026-11-08-pi-model-config.md)。已有 modelOverrides 条目支持编辑、恢复继承和移除，见 [覆盖配置](docs/validation/2026-11-08-pi-model-overrides.md)。模型配置表单支持自动保存本地草稿与重启恢复，并保留外部修改冲突检查，见 [草稿验证](docs/validation/2026-11-08-pi-model-drafts.md)。桌面内切换会话模型不会改写 Pi 的全局默认。设置支持按名称与关键词搜索、Enter 打开和窄窗口导航，见 [设置搜索](docs/validation/2026-11-08-settings-search.md)。外部程序页可先检查当前输入的版本及实际命令来源，再保存；不运行模型，版本一致也不等于完整兼容性验收。Codex 另可建立原生连接并只读检查脱敏账号状态，不刷新凭据；检测到账号不等于凭据或模型可用，见 [连接检查](docs/validation/2026-11-10-codex-account-check.md)。见 [程序检查](docs/validation/2026-11-08-executable-check.md)。运行方式与环境变量见 [桌面应用](apps/desktop/README.md)。
 
 ```sh
 pnpm check

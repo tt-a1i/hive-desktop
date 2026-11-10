@@ -20,6 +20,7 @@ pub mod remote;
 pub mod pi_accounts;
 pub mod pi_models;
 pub mod programs;
+pub mod codex_account;
 
 pub enum SettingsNotice { Message(&'static str), Error(&'static str, String) }
 impl SettingsNotice {

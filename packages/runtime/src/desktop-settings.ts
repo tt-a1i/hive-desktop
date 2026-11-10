@@ -1,4 +1,5 @@
-import { probeExecutable, type ExecutableProbeResult } from './executable-probe.js';
+import { probeExecutable } from './executable-probe.js';
+import {probeCodexAccount} from './codex-account.js';
 import type { HiveHost } from './hive-host.js';
 
 export interface DesktopExecutables { piCommand: string | null; codexCommand: string | null; claudeCommand: string | null }
@@ -30,7 +31,7 @@ function executables(value: unknown): DesktopExecutables {
 /** App-local settings use Hive's existing atomic SQLite app-state row. No cache or agent-global writes. */
 export class DesktopSettings {
   private readonly probeAbort = new AbortController();
-  private readonly probes = new Set<Promise<ExecutableProbeResult>>();
+  private readonly probes = new Set<Promise<unknown>>();
   constructor(private readonly hive: Pick<HiveHost, 'request'>,
     private readonly environment: DesktopExecutableEnvironment = process.env) {}
   private snapshot(saved: DesktopExecutables): DesktopSettingsSnapshot {
@@ -57,6 +58,17 @@ export class DesktopSettings {
     this.probes.add(task);
     try {
       return {backend,...effective,source:effective.source === 'app' && candidate !== saved[key] ? 'draft' : effective.source,...await task,verifiedVersion:{pi:'1.4.0',codex:'0.167.0',claude:'2.1.317'}[backend]};
+    } finally { this.probes.delete(task); }
+  }
+  async codexAccount(draft:unknown) {
+    const candidate=command(draft,'command');
+    const saved=await this.get();
+    if(this.probeAbort.signal.aborted) throw new Error('Desktop settings are closing');
+    const effective=this.snapshot({...saved,codexCommand:candidate}).effective.codex;
+    const task=probeCodexAccount(effective.command,this.probeAbort.signal);
+    this.probes.add(task);
+    try {
+      return {...effective,source:effective.source==='app'&&candidate!==saved.codexCommand?'draft':effective.source,...await task};
     } finally { this.probes.delete(task); }
   }
   async close(): Promise<void> {
