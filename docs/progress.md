@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包293afe3（2026-11-10）
+
+本批通知/汇报语义、输入区/附件及退出错误修复已纳入Mac优化包；ZIP四组检查、旧负新正对照、真实三会话包内冷读、解压包及Finder安装副本启动/退出/附件恢复通过，零新推理。current/candidate/DMG/Applications同批，清理无占用重复base约514MiB，保留1e可运行回退；见[本批验证](validation/2026-11-10-composer-package.md)。下文“未入1e”等为当时阶段记录，Windows原生与完整目标继续。
+
 ## Codex退出清理诊断（2026-11-10，后续源码）
 
 原生故障走查复现原始EOF被通用cleanup错误覆盖；仅排除重复抛出的同一Error对象，定向先红后绿、完整Codex/两后端队列/TS/build及Mac错误+队列+双附件/冷读通过，零真实模型。见[诊断与恢复](validation/2026-11-10-codex-exit-cleanup.md)。随后复用Agent状态行加固定错误入口，中文20px窄窗点击显露/关闭/恢复状态及原数据冷读通过；英文入口/Windows原生继续。未入1e包，完整目标继续。
