@@ -35,3 +35,11 @@
 实际复现：12行草稿加README，在1186×1014物理像素窗口，编辑器定位末尾后，Shift+Tab 虽切到附件按钮但附件仍在 composer 可视区外。给附件区域复用已有 `focus_scroll::Reveal`，仅一处调用方变化，无新滚动抽象。
 
 新二进制实际验证：编辑器 Cmd+Down → Shift+Tab 显露带焦点环的移除按钮；再次 Shift+Tab → Enter 打开README只读预览；关闭后回编辑器末尾 → Shift+Tab → Enter 实际移除附件，正文12行保持。保存 long-attachment-before/revealed/removed 图与AX；应用正常退出exit0，冷读脚本再次通过。Mac build/Windows目标check通过。鼠标从正文滚回附件的便利性仍需改善，本次不宣称已完成整个组合体验；尚未验证多图/多行附件与VoiceOver。
+
+## 后续：固定附件入口
+
+键盘显露仍不足以服务鼠标用户：长草稿把附件挤出视野时，用户需要知道还带着附件并能返回操作。底栏仅在有附件时显示数量按钮，点击按两个已有 ScrollHandle 的实际 bounds 定位附件顶部，附件内回到第一行。加号继续添加文件；零附件恢复原来文字，不占额外入口。只增加一个英文静态翻译键，无后台/依赖/测试变动。
+
+实际英文20px窄窗：添加README，编辑器到末行，底栏显示 Attachments · 1；鼠标点击后卡片可见，鼠标移除后入口消失且12行正文保持。随后对最终按bounds定位的源码，使用中文20px、已有两条暂停投递的独立项目验证：附件前面确实存在待显示补充消息，点击“附件 · 1”直接显示README卡片，而非停在队列顶部；移除后入口消失，未点击继续处理、发送或新增原生回合。AX 含“查看草稿附件 · 1”。两次原生进程exit0；最终 Mac build、Windows目标check、diff检查通过，独立冷读确认两条原始投递及12行新草稿完整、附件为空、原生历史仍仅1轮且未改。
+
+证据位于同目录 attachment-entry-visible/empty/queue 图和AX、attachment-entry-bounds-build/windows.log，以及 composer-state-check/cold-receipt.json。零真实模型请求。多图/多行附件、错误与队列及附件同时存在、Windows原生仍需后续走查；此入口不代表已改善正文内嵌套滚轮的所有行为。
