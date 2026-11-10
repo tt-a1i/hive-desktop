@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, cp, readFile, rm, writeFile, realpath, readdir, lstat }
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, relative, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prepareMacBundle } from './macos-bundle.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = name => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
@@ -39,7 +40,6 @@ try {
   await mkdir(dirname(bin), { recursive: true });
   await mkdir(resources, { recursive: true });
   await cp(binary, bin);
-  if (process.platform === 'darwin') await writeFile(join(app, 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>hive-desktop</string><key>CFBundleIdentifier</key><string>com.hive.desktop.dev</string><key>CFBundleName</key><string>Hive Desktop</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>0.1.0</string></dict></plist>`);
   progress('Copying production-deployed runtime');
   await cp(deployedRuntime, join(resources, 'runtime'), { recursive: true, verbatimSymlinks: true });
   const gpuiNotices = join(resources, 'licenses', 'gpui-pre');
@@ -53,6 +53,11 @@ try {
     await cp(join(root, 'crates', 'hive-terminal', file), join(terminalNotices, file));
   }
   await cp(join(root, 'apps/desktop/licenses/LICENSE-LUCIDE'), join(resources, 'licenses/LICENSE-LUCIDE'));
+  if (process.platform === 'darwin') {
+    const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+    await prepareMacBundle(app, { version: metadata.version,
+      iconSource: join(resources, 'runtime', 'node_modules', '@tt-a1i', 'hive', 'assets', 'logo.png') });
+  }
   progress('Runtime copy completed');
   progress(`Downloading official Node archive ${archive}`);
   run('curl', ['-fL', '--connect-timeout', '20', '--max-time', '120', '--retry', '2', '--retry-max-time', '300', '-o', join(temp, archive), `${url}/${archive}`]);

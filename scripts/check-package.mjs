@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, realpath, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 
 const i = process.argv.indexOf('--bundle');
@@ -37,6 +38,27 @@ function stop(child) {
   }
 }
 try {
+  if (process.platform === 'darwin') {
+    progress('Checking native application identity and decoded icon');
+    const info = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', join(base, 'Hive Desktop.app/Contents/Info.plist')], { encoding: 'utf8' });
+    assert.equal(info.status, 0, info.stderr);
+    const plist = JSON.parse(info.stdout);
+    const metadata = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8'));
+    assert.equal(plist.CFBundleShortVersionString, metadata.version.match(/^\d+\.\d+\.\d+/)[0]);
+    assert.equal(plist.CFBundleVersion, plist.CFBundleShortVersionString);
+    assert.equal(plist.CFBundleExecutable, 'hive-desktop');
+    assert.equal(plist.CFBundleIdentifier, 'com.hive.desktop.dev');
+    assert.equal(plist.CFBundlePackageType, 'APPL');
+    assert.equal(plist.NSHighResolutionCapable, true);
+    assert.match(plist.LSMinimumSystemVersion, /^\d+\.\d+(\.\d+)?$/);
+    assert.equal(plist.CFBundleIconFile, 'HiveDesktop.icns');
+    const iconset = join(directory, 'verified.iconset');
+    const icon = spawnSync('/usr/bin/iconutil', ['-c', 'iconset', '-o', iconset, join(resources, plist.CFBundleIconFile)], { encoding: 'utf8' });
+    assert.equal(icon.status, 0, icon.stderr);
+    const png = await readFile(join(iconset, 'icon_512x512.png'));
+    assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    assert.equal(png.readUInt32BE(16), 512); assert.equal(png.readUInt32BE(20), 512);
+  }
   progress('Checking compiled image payload contract with bundled Node');
   const imageProbe = start(['--input-type=module', '-e', `
     import assert from 'node:assert/strict';import {pathToFileURL} from 'node:url';
