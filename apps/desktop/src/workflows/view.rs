@@ -38,9 +38,10 @@ impl HiveApp {
                     .disabled(disabled).on_click(cx.listener(|this,_,_,cx|this.refresh_workflows(cx)))))
             .when_some(state.action_error.as_ref().map(|error| error.text()),|view,error|view.child(crate::text_reading::selectable_text("workflow-action-error",error).text_sm().text_color(Color::Error.get(cx))))
             .when_some(state.error.as_ref().map(|error| error.text()),|view,error|view.child(crate::text_reading::selectable_text("workflow-read-error",error).text_sm().text_color(Color::Error.get(cx))))
-            .child(Viewport::new("workflow-viewport", scroll, div().id(SharedString::from(state.selected.as_ref().map(|id|format!("workflow-scroll-{id}")).unwrap_or_else(||"workflows-list-scroll".into())))
-                .flex_1().min_h_0().min_w_0().overflow_y_scroll()
-                .track_scroll(scroll)
+            .child(Viewport::new("workflow-viewport", scroll, crate::text_reading::region(
+                state.selected.as_ref().map(|id|format!("workflow-scroll-{id}")).unwrap_or_else(||"workflows-list-scroll".into()),
+                tr("工作流内容，可用方向键、Home/End 或翻页键滚动").into(), scroll, window.viewport_size().height, cx)
+                .flex_1().w_full().min_h_0().border_color(rgba(0)).p_0()
                 .child(v_flex().w_full().flex_shrink_0().gap_4()
                     .when(state.selected.is_none(), |view| view.child(self.render_workflow_settings(cx)))
                     .when(state.enabled==Some(false),|view|view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("实验功能当前关闭；已有运行和计划仍可查看。"))))

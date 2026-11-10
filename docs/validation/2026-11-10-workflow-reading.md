@@ -34,3 +34,5 @@
 独立 `check-cold.mjs` 用真实 runtime/SQLite 逐字段核对三条终态不变、12条完成日志不变（全部三运行共14条）、精确未发送草稿、3条带各自 run ID 的系统通知仍暂停、busy false / 原模型 history 不变、Terra 选择保留；messages/dispatches/dispatch_messages 均零。见 `cold-receipt.json` / `cold.log`。初次只读检查误用了 `workflow_logs` 表名，核对实际 schema 后使用 `workflow_run_logs`，未改生产 schema。
 
 证据根 `.artifacts/workflow-reading-2426222/`。纯 UI 修改未新增/删除测试，未跑全量 suite；没有生产 TS/协议/调度更改。键盘逐页阅读、完整英文/字号/VoiceOver/大历史、窗口关闭期间在途操作、计划删除最终按钮及 Windows 原生仍待，#13不关闭；current/candidate仍为6edac4c开发包，未纳入本轮源码。完整目标保持进行中。
+
+后续已补列出范围的键盘逐页阅读、英文20字号及窄窗实证，见[键盘正文阅读](2026-11-10-workflow-page-reading.md)；不扩大为完整平台/辅助技术矩阵。
