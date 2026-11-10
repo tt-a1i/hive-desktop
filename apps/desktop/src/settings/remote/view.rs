@@ -2,6 +2,7 @@ use super::*;
 use crate::focus_scroll::Reveal;
 use crate::language::{english, tr};
 use crate::palette::Color;
+use crate::text_reading::selectable_text;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -53,7 +54,7 @@ impl HiveApp {
                     .on_change(cx.listener(|this, value, _, cx| this.remote_action("PUT", "/api/remote/enabled".into(), json!({"enabled":*value}), cx))))
                 .child(Button::new("remote-refresh").ghost().compact().label(tr("刷新")).disabled(!self.connected || remote.loading).on_click(cx.listener(|this, _, _, cx| this.refresh_remote(cx))))))
             .when(linked && enabled, |view| view.child(Reveal::new("remote-reconnect-reveal", &remote.scroll, Button::new("remote-reconnect").ghost().compact().label(tr("重新连接网关")).disabled(!usable).on_click(cx.listener(|this, _, _, cx| this.remote_action("PUT", "/api/remote/enabled".into(), json!({"enabled":true}), cx))))))
-            .when_some(status.and_then(|s| s.gateway_url.clone()), |view, url| view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(format!("{}: {url}", tr("网关")))))
+            .when_some(status.and_then(|s| s.gateway_url.clone()), |view, url| view.child(selectable_text("remote-gateway-address", format!("{}: {url}", tr("网关"))).text_sm().text_color(Color::Secondary.get(cx))))
             .when_some(remote.error.as_ref().map(|error| format!("{}: {error}. {}", tr("远程接入读取失败"), tr("显示上次读取的内容，操作已暂停。"))), |view, error| view.child(div().id("remote-read-error").role(Role::Status).aria_label(error.clone()).p_3().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_sm().child(error)))
             .when_some(remote.message.as_ref().map(|message| message.text()), |view, message| view.child(div().id("remote-action-notice").role(Role::Status).aria_label(message.clone()).text_sm().child(message)))
             .when(remote.loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("正在同步远程状态，暂显示上次读取的内容…"))))
@@ -100,33 +101,36 @@ impl HiveApp {
                         .child(Button::new(format!("remote-reject-{reject_id}")).label(tr("拒绝")).accessibility_label(format!("{} · {device_name}", tr("拒绝"))).disabled(!usable || pending.expires_at <= now()).on_click(cx.listener(move |this, _, _, cx| this.remote_pairing_decision(&reject_id, false, cx))))))
             }))
             .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("已配对设备")))
-            .when(remote.details_valid && remote.devices.is_empty(), |view| view.child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("尚无已配对设备。"))))
+            .when(remote.details_valid && remote.devices.is_empty(), |view| view.child(selectable_text("remote-no-devices", tr("尚无已配对设备。")).text_sm().text_color(Color::Muted.get(cx))))
             .children(remote.devices.iter().map(|device| {
                 let id = device.id.clone();
                 let revoke_id = id.clone();
                 let confirming = remote.revoking.as_ref() == Some(&id);
                 Reveal::new(format!("remote-device-reveal-{id}"), &remote.scroll, v_flex().gap_2().py_3().border_b_1().border_color(Color::Divider.get(cx))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(device.name.clone()))
-                    .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("{} · Created {} · Last active {}", device.id, age(device.created_at), device.last_active.map(age).unwrap_or(tr("尚无记录").into())) } else { format!("{} · 创建于{} · 最近活动{}", device.id, age(device.created_at), device.last_active.map(age).unwrap_or(tr("尚无记录").into())) }))
-                    .when(confirming, |view| view.child(div().text_sm().child(tr("撤销后将断开此设备，需重新配对才能访问。确认撤销？"))))
+                    .child(selectable_text(format!("remote-device-name-{id}"), device.name.clone()).text_sm().font_weight(FontWeight::SEMIBOLD))
+                    .child(selectable_text(format!("remote-device-details-{id}"), if english() { format!("{} · Created {} · Last active {}", device.id, age(device.created_at), device.last_active.map(age).unwrap_or(tr("尚无记录").into())) } else { format!("{} · 创建于{} · 最近活动{}", device.id, age(device.created_at), device.last_active.map(age).unwrap_or(tr("尚无记录").into())) }).text_xs().text_color(Color::Secondary.get(cx)))
+                    .when(confirming, |view| view.child(selectable_text(format!("remote-device-revoke-guidance-{id}"), tr("撤销后将断开此设备，需重新配对才能访问。确认撤销？")).text_sm()))
                     .child(h_flex().gap_2()
-                        .child(Button::new(format!("remote-revoke-{id}")).compact().label(if confirming { tr("确认撤销") } else { tr("撤销访问") }).disabled(!usable || !remote.details_valid)
+                        .child(Button::new(format!("remote-revoke-{id}")).compact().label(if confirming { tr("确认撤销") } else { tr("撤销访问") }).accessibility_label(format!("{} · {} · {id}", if confirming { tr("确认撤销") } else { tr("撤销访问") }, device.name)).disabled(!usable || !remote.details_valid)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if confirming { this.remote_revoke(&revoke_id, cx); }
                                 else { this.remote.revoking = Some(revoke_id.clone()); cx.notify(); }
                             })))
-                        .when(confirming, |view| view.child(Button::new(format!("remote-revoke-cancel-{id}")).ghost().compact().label(tr("取消")).on_click(cx.listener(|this, _, _, cx| { this.remote.revoking = None; cx.notify(); }))))))
+                        .when(confirming, |view| view.child(Button::new(format!("remote-revoke-cancel-{id}")).ghost().compact().label(tr("取消")).accessibility_label(format!("{} · {} · {id}", tr("取消"), device.name)).on_click(cx.listener(|this, _, _, cx| { this.remote.revoking = None; cx.notify(); }))))))
             }))
             .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("远程访问记录")))
             .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("最近 100 条记录。只展示现有 Hive 审计数据。")))
             .when(remote.details_valid && remote.audit.is_empty(), |view| view.child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("尚无远程访问记录。"))))
-            .children(remote.audit.iter().map(|entry| div().id(format!("remote-audit-{}", entry.id)).py_2().border_b_1().border_color(Color::Divider.get(cx)).text_xs()
-                .when(entry.result != "ok", |row| row.text_color(Color::Error.get(cx)))
-                .child(format!("{} · {} · {} · {}{}{}", age(entry.ts), entry.device_id.as_deref().unwrap_or(tr("未知设备")), entry.action, outcome(&entry.result),
+            .children(remote.audit.iter().map(|entry| {
+                let mut text = format!("{} · {} · {} · {}{}{}", age(entry.ts), entry.device_id.as_deref().unwrap_or(tr("未知设备")), entry.action, outcome(&entry.result),
                     entry.endpoint.as_ref().map(|p| format!(" · {p}")).unwrap_or_default(),
-                    entry.reject_reason.as_ref().map(|p| format!(" · {p}")).unwrap_or_default()))
-                .when_some(entry.workspace_id.clone(), |row, workspace| row.child(div().child(format!("{} {workspace}", tr("工作区：")))))
-                .when_some(entry.byte_count, |row, count| row.child(div().child(if english() { format!("{count} {}", if count == 1 { "byte" } else { "bytes" }) } else { format!("{count} 字节") })))
-                .when_some(entry.preview.clone(), |row, preview| row.child(div().child(preview)))))
+                    entry.reject_reason.as_ref().map(|p| format!(" · {p}")).unwrap_or_default());
+                if let Some(workspace) = &entry.workspace_id { text.push_str(&format!("\n{} {workspace}", tr("工作区："))); }
+                if let Some(count) = entry.byte_count { text.push_str(&if english() { format!("\n{count} {}", if count == 1 { "byte" } else { "bytes" }) } else { format!("\n{count} 字节") }); }
+                if let Some(preview) = &entry.preview { text.push('\n'); text.push_str(preview); }
+                div().id(format!("remote-audit-{}", entry.id)).py_2().border_b_1().border_color(Color::Divider.get(cx)).text_xs()
+                    .when(entry.result != "ok", |row| row.text_color(Color::Error.get(cx)))
+                    .child(selectable_text(format!("remote-audit-text-{}", entry.id), text))
+            }))
     }
 }

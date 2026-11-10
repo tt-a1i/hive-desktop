@@ -11,7 +11,7 @@ pub(crate) struct Reveal {
 }
 struct RevealState {
     focus: FocusHandle,
-    last: Option<(FocusHandle, Bounds<Pixels>)>,
+    last: Option<(FocusHandle, Bounds<Pixels>, Option<Size<Pixels>>)>,
 }
 impl Reveal {
     pub(crate) fn new(
@@ -46,7 +46,9 @@ impl RenderOnce for Reveal {
                 let focused = window
                     .focused(cx)
                     .filter(|_| focus.contains_focused(window, cx))
-                    .map(|focused| (focused, self.scroll.bounds()));
+                    // Track layout size, not the scrolled position: expanding a focused
+                    // group must reveal its actions, while manual scrolling stays put.
+                    .map(|focused| (focused, self.scroll.bounds(), bounds.first().map(|bounds| bounds.size)));
                 let reveal = state.update(cx, |state, _| {
                     let changed = state.last != focused;
                     state.last = focused;
