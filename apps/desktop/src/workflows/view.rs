@@ -96,14 +96,21 @@ impl HiveApp {
                     .items_center()
                     .child(
                         div()
+                            .id(SharedString::from(format!("schedule-name-{}",schedule.id)))
+                            .role(Role::Label)
+                            .aria_label(basename(&schedule.script_path).to_owned())
                             .flex_1()
                             .min_w_0()
+                            .truncate()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(basename(&schedule.script_path).to_owned()),
                     )
                     .child(
                         div()
+                            .id(SharedString::from(format!("schedule-status-{}",schedule.id)))
+                            .role(Role::Label)
+                            .aria_label(if enabled { tr("已启用") } else { tr("已暂停") })
                             .text_xs()
                             .child(if enabled { tr("已启用") } else { tr("已暂停") }),
                     )
@@ -146,10 +153,7 @@ impl HiveApp {
                     )),
             )
             .child(
-                div()
-                    .text_xs()
-                    .text_color(Color::Secondary.get(cx))
-                    .child(format!(
+                crate::text_reading::selectable_text(SharedString::from(format!("schedule-cron-{}",schedule.id)), format!(
                         "Cron: {} · {}",
                         schedule.cron,
                         if enabled {
@@ -157,22 +161,22 @@ impl HiveApp {
                         } else {
                             tr("暂停期间不触发").into()
                         }
-                    )),
+                    ))
+                    .text_xs()
+                    .text_color(Color::Secondary.get(cx)),
             )
             .when_some(schedule.last_run_at, |view, time| {
                 view.child(
-                    div()
+                    crate::text_reading::selectable_text(SharedString::from(format!("schedule-last-run-{}",schedule.id)), format!("{}: {}", tr("上次运行"), relative_time(time)))
                         .text_xs()
-                        .text_color(Color::Secondary.get(cx))
-                        .child(format!("{}: {}", tr("上次运行"), relative_time(time))),
+                        .text_color(Color::Secondary.get(cx)),
                 )
             })
-            .child(div().text_xs().child(schedule.script_path.clone()))
+            .child(crate::text_reading::selectable_text(SharedString::from(format!("schedule-path-{}",schedule.id)), schedule.script_path.clone()).text_xs())
             .when(!schedule.args.is_null(), |view| {
                 view.child(
-                    div()
-                        .text_sm()
-                        .child(format!("{}: {}", tr("参数"), json(&schedule.args))),
+                    crate::text_reading::selectable_text(SharedString::from(format!("schedule-args-{}",schedule.id)), format!("{}: {}", tr("参数"), json(&schedule.args)))
+                        .text_sm(),
                 )
             })
             .when(
