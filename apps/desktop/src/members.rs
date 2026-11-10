@@ -412,7 +412,7 @@ impl HiveApp {
                                 .ghost()
                                 .compact()
                                 .label(format!("{label} {count}"))
-                                .accessibility_label(if english() { format!("Filter members: {label}") } else { format!("筛选成员：{label}") })
+                                .accessibility_label(if english() { format!("Filter members: {label}, {count}") } else { format!("筛选成员：{label}，{count}") })
                                 .selected(self.member_status_filter == status)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.member_status_filter = status;
@@ -437,6 +437,9 @@ impl HiveApp {
             )
             .child(
                 div()
+                    .id("member-status-explanation")
+                    .role(Role::Label)
+                    .aria_label(tr("工作中表示有未完成派单；待命表示当前没有派单。"))
                     .text_xs()
                     .text_color(crate::palette::Color::Muted.get(cx))
                     .child(tr("工作中表示有未完成派单；待命表示当前没有派单。")),
@@ -444,6 +447,9 @@ impl HiveApp {
             .when(filtering, |view| {
                 view.child(
                     div()
+                        .id("member-filter-result-count")
+                        .role(Role::Label)
+                        .aria_label(if english() { format!("Showing {count} of {} members", self.members.len()) } else { format!("显示 {count} / {} 位成员", self.members.len()) })
                         .text_xs()
                         .text_color(crate::palette::Color::Muted.get(cx))
                         .child(if english() { format!("Showing {count} of {} members", self.members.len()) } else { format!("显示 {count} / {} 位成员", self.members.len()) }),

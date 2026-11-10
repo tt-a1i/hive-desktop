@@ -2,6 +2,8 @@
 
 ## 当前源码与开发包（2026-11-10）
 
+成员筛选后的最终删除已补Mac原生实证：取消保留、窄窗确认只删除目标、搜索焦点及其余两人/启动配置冷读保持，零模型/执行。确认姓名、筛选计数/空结果的AX缺失已修复并实际复验，见[成员删除](validation/2026-11-10-member-deletion.md)。源码修复未入当前包。
+
 图片系统选择/保存/取消/覆盖已补真实Mac实证，原图尺寸与成功反馈AX缺失已修复并验证，原上传/草稿/保存字节冷读一致，零模型或Agent执行。见[图片系统保存](validation/2026-11-10-image-system-save.md)；本次UI语义修复尚未入包。
 
 当前开发包为db6fb20优化release，已纳入欢迎账号反馈/严格脱敏读取及Mac图标/版本/DMG。六组包检查＋包内Pi账号专项、Finder真实安装至Applications、引导/设置往返/退出与后台回收通过，见[安装验证](validation/2026-11-10-macos-installation.md)。此前成员80/4真实Codex生命周期按[原记录](validation/2026-11-10-member-lifecycle-package.md)沿用。下文current/candidate为历史现场；完整目标、Windows原生与正式签名发行继续开放。

@@ -53,8 +53,8 @@ impl HiveApp {
                         .child(Button::new("first-member").rounded_full().icon(Glyph::Plus).label(tr("添加第一位成员"))
                             .on_click(cx.listener(|this, _, window, cx| { this.member_form_open = true; let focus = this.member_name.read(cx).focus_handle(cx); window.on_next_frame(move |window,cx|focus.focus(window,cx)); cx.notify(); })))))
                     .when(!self.members.is_empty() && matching_members.is_empty(), |view|view.child(v_flex().items_center().gap_2().py_6()
-                        .child(div().text_sm().child(tr("没有匹配的成员")))
-                        .child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("尝试其他名称、职责、角色或 Agent，或清除筛选。")))))
+                        .child(div().id("members-no-matches").role(Role::Label).aria_label(tr("没有匹配的成员")).text_sm().child(tr("没有匹配的成员")))
+                        .child(div().id("members-no-matches-help").role(Role::Label).aria_label(tr("尝试其他名称、职责、角色或 Agent，或清除筛选。")).text_xs().text_color(Color::Muted.get(cx)).child(tr("尝试其他名称、职责、角色或 Agent，或清除筛选。")))))
                     .children(matching_members.into_iter().map(|(i, member)| {
                         let id = member.id.clone();
                         let workspace = self.workspace.clone().unwrap_or_default();
@@ -128,7 +128,7 @@ impl HiveApp {
                                             this.member_action("POST", path.clone(), Some(serde_json::json!({"command":command,"command_preset_id":null,"args":["--provider",model.provider,"--model",model.id]})), cx); })))
                                     }))))))))
                             .when(deleting, |view| view.child(Reveal::new(format!("member-{id}-delete-reveal"), &self.member_scroll, h_flex().flex_wrap().items_center().gap_2()
-                                .child(div().text_sm().child(if english() { format!("Delete member {}?", member.name) } else { format!("删除成员 {}？", member.name) }))
+                                .child(div().id(SharedString::from(format!("member-{id}-delete-prompt"))).role(Role::Label).aria_label(if english() { format!("Delete member {}?", member.name) } else { format!("删除成员 {}？", member.name) }).text_sm().child(if english() { format!("Delete member {}?", member.name) } else { format!("删除成员 {}？", member.name) }))
                                 .child(Button::new(("confirm-delete", i)).label(tr("确认删除")).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| this.member_action("DELETE", format!("/api/workspaces/{delete_workspace}/workers/{delete_id}"), None, cx))))
                                 .child(Button::new(("cancel-delete", i)).ghost().label(tr("取消")).on_click(cx.listener(|this, _, _, cx| { this.deleting_member = None; this.member_focus_search = true; cx.notify(); }))))))
                             .when(editing, |view| view.child(Reveal::new(format!("member-{id}-rename-reveal"), &self.member_scroll, h_flex().w_full().gap_2().items_center().child(div().flex_1().min_w_0().child(Input::new(&self.member_rename).aria_label(tr("成员名称")))).child(Button::new(("member-save", i)).label(tr("保存名称")).disabled(!self.connected || self.member_loading).on_click(cx.listener(move |this, _, _, cx| { let name = this.member_rename.read(cx).value().trim().to_string(); if name.is_empty() { this.error = Some("请输入成员名称".into()); cx.notify(); } else { this.error = None; this.member_action("PATCH", format!("/api/workspaces/{save_workspace}/workers/{save_id}"), Some(serde_json::json!({"name":name})), cx); } }))).child(Button::new(("cancel-rename", i)).ghost().label(tr("取消")).on_click(cx.listener(|this, _, _, cx| { this.editing_member = None; this.member_focus_search = true; cx.notify(); }))))))

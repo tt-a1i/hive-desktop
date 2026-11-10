@@ -198,3 +198,5 @@ Claude中断被拒绝后调用已返回但CLI仍活着已用官方SDK/真实子�
 Mac分发新增真实图标/版本与DMG，包内身份解码、六组后台gate及Pi账号安全读取专项通过；Finder安装至Applications、全部28,865条清单、安装资源启动/欢迎/设置返回及退出回收通过，见[安装证据](validation/2026-11-10-macos-installation.md)。未签名/公证，未测下载隔离或Windows原生；完整目标继续。
 
 图片系统Open/Save已取得真实Mac操作证据：中文/空格导入、emoji文件名保存、取消、系统覆盖提示取消保留sentinel及确认后原字节一致均通过。原图尺寸/成功提示缺失于AX树的问题已修复，源码实际AX与593×507逻辑窄窗/原尺寸/退出/冷读原上传与草稿保持通过，见[系统保存](validation/2026-11-10-image-system-save.md)。零模型/执行，Mac构建和Windows类型检查通过；VoiceOver/Windows原生等完整矩阵仍开放，本次源码修复未入db6fb20包。
+
+成员最终删除补真实Mac实证：本轮自有stopped/Codex测试成员经筛选→取消→593×507逻辑窄窗确认删除，目标及启动配置消失，筛选/焦点与另两人原ID/职责/后端冷读保持。确认姓名、筛选计数/空结果AX缺失已修复，最终原生AX、取消及独立冷读通过，见[成员删除](validation/2026-11-10-member-deletion.md)。零推理/执行、Mac构建和Windows类型检查通过；运行中/带历史删除、VoiceOver/Windows原生仍开放，未入db6fb20。
