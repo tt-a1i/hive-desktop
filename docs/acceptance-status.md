@@ -188,3 +188,5 @@ Claude中断被拒绝后调用已返回但CLI仍活着已用官方SDK/真实子�
 成员创建的两步HTTP已真实复现配置失败后残留无后端成员/同名409，现通过单个本地请求复用Hive addWorkerWithLaunch事务。production JSONL＋真实HTTP/SQLite验证四后端、非法输入、写入失败回滚/原名重试、默认语言及冷身份，Mac真实失败→保留输入→直接重试→冷读16成员/零执行通过。见[成员事务](validation/2026-11-10-member-atomic-create.md)。runtime构建/类型、check:hive、Mac build和Windows目标check通过，仅源码，包仍ecad294；完整目标继续。
 
 当前Mac开发包刷新3339ce1：包内事务专项＋六组gate通过，原始Codex0.167/Terra Medium实际空团队创建→选模型→Start→成员直聊→真实文件工具80/4→Stop→两次正常退出/冷恢复通过。独立冷读保留唯一线程/1输入完成ID/原文件/两行草稿、run exited且无重放，见[成员生命周期包](validation/2026-11-10-member-lifecycle-package.md)。本轮1个真实用户模型回合，不将成员直聊充作新一对多验收；Windows原生与完整产品仍开放。
+
+欢迎页内置Pi现显示实际已读取的本机保存数量/空配置/读取失败及下一步，冷启动不保留Ready推断。真实损坏凭据复现SDK无signal返回旧缓存，现严格读取、固定脱敏修复提示，并在首次失败保留Pi目录定位入口；生产JSONL先红后绿，真实SDK登录/移除/关闭排空回归通过。Mac英文状态0/1/2/失败恢复、中文20窄窗键盘往返、Finder定位与零执行冷读通过，见[欢迎账号反馈](validation/2026-11-10-welcome-account-status.md)。Mac/Windows目标构建及runtime检查通过，仅源码，包仍3339ce1；保存不等于真实登录有效，完整目标继续。

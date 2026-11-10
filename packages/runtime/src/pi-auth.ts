@@ -22,6 +22,7 @@ type Login = {
 
 /** The SDK owns authentication and its existing locked credential store. Never serialize credentials. */
 export class PiAuth {
+  private readonly catalogAbort = new AbortController();
   private models?: Promise<ModelRuntime>;
   private login?: Login;
   private removal?: Promise<Awaited<ReturnType<PiAuth['providers']>> & { message: string }>;
@@ -44,7 +45,13 @@ export class PiAuth {
     return this.catalog(models);
   }
   private async catalog(models: ModelRuntime) {
-    const stored = new Map((await models.listCredentials()).map(info => [info.providerId, info.type]));
+    // Pi's unsignalled read may return the previous snapshot after a disk error.
+    // An explicit account refresh must report that error instead of stale success.
+    const credentials = await models.listCredentials({ signal: this.catalogAbort.signal }).catch(error => {
+      // JSON parser errors may quote credential-file contents. Keep the cause local.
+      throw new Error('读取本机登录信息失败，请检查 Pi 的 auth.json 文件后重新读取。', { cause: error });
+    });
+    const stored = new Map(credentials.map(info => [info.providerId, info.type]));
     const providers = models.getProviders().map(provider => ({
       id: provider.id, name: provider.name,
       methods: [
@@ -161,5 +168,6 @@ export class PiAuth {
     this.login?.controller.abort(new Error('后台已关闭，登录已取消'));
     await this.login?.done;
     await Promise.allSettled(this.removal ? [this.removal] : []);
+    this.catalogAbort.abort(new Error('Pi authentication is closing'));
   }
 }

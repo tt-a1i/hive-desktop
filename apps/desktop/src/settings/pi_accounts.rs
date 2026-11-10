@@ -94,6 +94,7 @@ fn runtime_message(message: &str) -> String {
         "已移除本机保存的凭据。环境变量等其他登录来源不受影响。",
         "凭据已移除，但模型列表更新失败。请返回会话刷新模型。",
         "后台已关闭，登录已取消",
+        "读取本机登录信息失败，请检查 Pi 的 auth.json 文件后重新读取。",
     ].into_iter().find(|key| *key == message).map(|key| tr(key).to_owned()).unwrap_or_else(|| message.to_owned())
 }
 enum AccountNotice { Disconnected, Runtime(String), Failed(String) }
@@ -114,6 +115,20 @@ fn input_placeholder(prompt: Option<&Prompt>) -> String {
     }).to_owned())
 }
 impl PiAccounts {
+    pub(crate) fn setup_status(&self) -> String {
+        if self.loading { return tr("正在读取 Pi 账号…").into(); }
+        if self.running() { return tr("账号配置进行中…").into(); }
+        if matches!(self.message, Some(AccountNotice::Failed(_))) {
+            return tr("本机登录信息未能更新，请在设置中重新读取。").into();
+        }
+        let Some(providers) = &self.providers else { return tr("连接 Pi 账号或配置模型提供商。").into(); };
+        let count = providers.iter().filter(|provider| provider.stored_type.is_some()).count();
+        if count == 0 { return tr("本机没有保存登录信息；环境变量等配置仍可生效。").into(); }
+        if english() {
+            format!("Login information saved locally for {count} {}. Choose a model after opening a project.", if count == 1 { "provider" } else { "providers" })
+        } else { format!("本机已保存 {count} 个提供商的登录信息；打开项目后选择模型。") }
+    }
+
     pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
         self.search.update(cx, |input,cx| input.set_placeholder(tr("搜索提供商，如 OpenAI、Anthropic…"),window,cx));
         self.input.update(cx, |input,cx| input.set_placeholder(input_placeholder(self.login.as_ref().and_then(|login| login.prompt.as_ref())),window,cx));

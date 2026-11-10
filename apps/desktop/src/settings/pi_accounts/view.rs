@@ -29,7 +29,7 @@ impl HiveApp {
             .child(crate::focus_scroll::Reveal::new("pi-accounts-actions-reveal", &accounts.scroll, h_flex().gap_2().flex_wrap()
                 .child(Button::new("reload-pi-accounts").ghost().compact().label(if accounts.loading { tr("处理中…") } else { tr("刷新账号状态") }).disabled(disabled)
                     .on_click(cx.listener(|this, _, window, cx| this.pi_auth_request("pi.auth.providers", json!({}), window.window_handle(), cx))))
-                .when_some(accounts.agent_dir.clone(), |row, dir| row.child(Button::new("open-pi-config-folder").ghost().compact().label(tr("打开 Pi 配置目录")).tooltip(dir.clone())
+                .when_some(accounts.agent_dir.clone().or_else(|| self.pi_agent_dir.as_ref().map(|path| path.to_string_lossy().into_owned())), |row, dir| row.child(Button::new("open-pi-config-folder").ghost().compact().label(tr("打开 Pi 配置目录")).tooltip(dir.clone())
                     .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&dir)))))))
             .child(crate::focus_scroll::Reveal::new("pi-accounts-search-reveal", &accounts.scroll, Input::new(&accounts.search).aria_label(tr("搜索 Pi 提供商")).disabled(accounts.providers.is_none())))
             .when(accounts.providers.is_some(), |view| view.child(h_flex().items_center().justify_between().gap_2()

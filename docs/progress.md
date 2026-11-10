@@ -2,7 +2,7 @@
 
 ## 当前源码与开发包（2026-11-10）
 
-当前开发包为3339ce1优化release，成员模型修复、导出正文、Pi/Claude取消回收及成员事务/表单修复均已纳入。六组包检查＋包内成员事务专项、原始Codex Terra Medium实际成员配置/启动/文件工具80/4/停止/完整冷恢复通过，见[最新开发包](validation/2026-11-10-member-lifecycle-package.md)。此前下文current/candidate指针均为历史现场。完整目标与Windows原生继续开放。
+当前开发包为3339ce1优化release，成员模型修复、导出正文、Pi/Claude取消回收及成员事务/表单修复均已纳入。六组包检查＋包内成员事务专项、原始Codex Terra Medium实际成员配置/启动/文件工具80/4/停止/完整冷恢复通过，见[最新开发包](validation/2026-11-10-member-lifecycle-package.md)。欢迎页账号保存反馈、严格读取失败/脱敏提示及首次失败目录入口另已完成源码和真实SDK/JSONL/Mac验证，尚未入包，见[账号反馈](validation/2026-11-10-welcome-account-status.md)。此前下文current/candidate指针均为历史现场。完整目标与Windows原生继续开放。
 
 ## 总验收与候选包（2026-11-09）
 

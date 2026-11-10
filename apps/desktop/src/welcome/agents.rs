@@ -8,7 +8,7 @@ impl HiveApp {
             .child(h_flex().w_full().flex_wrap().gap_3().items_stretch().children([
                 ("builtin", tr("内置 Pi")), ("codex", "Codex"), ("claude", "Claude Code"), ("pi", tr("外部 Pi")),
             ].into_iter().map(|(backend, label)| {
-                let description = if backend == "builtin" { tr("连接 Pi 账号或配置模型提供商。").into() }
+                let description = if backend == "builtin" { self.pi_accounts.setup_status() }
                     else { self.program_setup_status(backend, cx) };
                 let action = if english() { format!("Configure {label}") } else { format!("配置 {label}") };
                 div().flex_1().min_w(px(220.)).p_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
@@ -26,7 +26,7 @@ impl HiveApp {
                             .text_xs().text_color(Color::Secondary.get(cx)).child(description))))
             })))
             .child(div().id("welcome-agent-check-scope").role(Role::Label)
-                .aria_label(tr("版本检查不验证登录或模型可用性；选择 Agent 后使用其原有账号与模型。"))
-                .text_xs().text_color(Color::Muted.get(cx)).child(tr("版本检查不验证登录或模型可用性；选择 Agent 后使用其原有账号与模型。")))
+                .aria_label(tr("本机保存状态和版本检查不验证登录有效性或模型可用性；每个 Agent 使用各自的账号与模型。"))
+                .text_xs().text_color(Color::Muted.get(cx)).child(tr("本机保存状态和版本检查不验证登录有效性或模型可用性；每个 Agent 使用各自的账号与模型。")))
     }
 }

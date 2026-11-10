@@ -47,6 +47,24 @@ try {
   assert.ok(catalog.result.providers.some((provider: any) => provider.id === 'openai' && provider.storedType === null));
   assert.deepEqual(catalog.result.providers.find((provider: any) => provider.id === 'anthropic').methods.map((method: any) => method.type), ['oauth', 'api_key']);
   assert.equal(catalog.result.login, null);
+  const authPath = join(agentDir, 'auth.json');
+  const ownedCredential = JSON.stringify({ openai: { type: 'api_key', key: 'wire-metadata-secret-never-used' } });
+  await writeFile(authPath, ownedCredential);
+  const storedCatalog = await rpc('pi.auth.providers');
+  assert.equal(storedCatalog.result.providers.find((provider: any) => provider.id === 'openai').storedType, 'api_key');
+  assert.equal(JSON.stringify(storedCatalog).includes('wire-metadata-secret-never-used'), false);
+  const invalidCredentialFile = 'BROKEN_CREDENTIAL_SECRET';
+  await writeFile(authPath, invalidCredentialFile);
+  const readFailure = await rpc('pi.auth.providers');
+  assert.equal(readFailure.error?.code, 'DESKTOP_ERROR');
+  assert.equal(readFailure.error.message, '读取本机登录信息失败，请检查 Pi 的 auth.json 文件后重新读取。');
+  assert.equal(JSON.stringify(readFailure).includes('BROKEN_CRE'), false);
+  assert.equal(readFailure.result, undefined);
+  assert.equal(await readFile(authPath, 'utf8'), invalidCredentialFile);
+  await writeFile(authPath, '{}');
+  const recoveredCatalog = await rpc('pi.auth.providers');
+  assert.equal(recoveredCatalog.error, undefined);
+  assert.equal(recoveredCatalog.result.providers.find((provider: any) => provider.id === 'openai').storedType, null);
   assert.equal((await rpc('pi.auth.status')).result, null);
   assert.ok((await rpc('pi.auth.start', { providerId: 'invalid-provider' })).error);
   assert.ok((await rpc('pi.auth.respond', { loginId: 'stale', promptId: 'stale', value: 'unconsumed' })).error);
@@ -95,7 +113,8 @@ try {
   assert.equal((await rpc('shutdown')).result.ok, true);
   await exited;
   assert.equal(child.exitCode, 0);
-  console.log('PI_AUTH_WIRE_OK: production JSONL provider methods, native Anthropic fixture key setup/removal, invalid/stale/empty input, unchanged default model and clean shutdown. No API requests.');
+  assert.equal(stderr.includes('BROKEN_CRE'), false);
+  console.log('PI_AUTH_WIRE_OK: production JSONL provider methods, explicit credential read failure/recovery, native Anthropic fixture key setup/removal, invalid/stale/empty input, unchanged default model and clean shutdown. No API requests.');
 } finally {
   if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
   lines.close();
