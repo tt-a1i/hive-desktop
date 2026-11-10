@@ -9,7 +9,7 @@ const send=x=>process.stdout.write(JSON.stringify(x)+'\n');const log=x=>fs.appen
 const file=path.join(process.env.CLAUDE_CONFIG_DIR,'projects',process.cwd().replace(/[^a-zA-Z0-9]/g,'-'),`${sid}.jsonl`);let parentUuid=null;
 try{for(const line of fs.readFileSync(file,'utf8').trim().split('\n')){const x=JSON.parse(line);if(x.uuid)parentUuid=x.uuid;}}catch{}
 const persist=x=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.appendFileSync(file,JSON.stringify({...x,parentUuid,isSidechain:false,timestamp:new Date().toISOString(),cwd:process.cwd(),sessionId:sid})+'\n');parentUuid=x.uuid;};
-log({event:'start',sid,model});
+log({event:'start',sid,model,pid:process.pid});
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const x=JSON.parse(line);
  if(x.type==='control_request'){
@@ -22,7 +22,12 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
    if(c.rejectEffort===settings.effortLevel){send({type:'control_response',response:{subtype:'error',request_id:x.request_id,error:'Synthetic rejected effort'}});return;}
    effort=c.clampEffort||settings.effortLevel;answer({});
   }else if(sub==='set_model'){model=x.request.model;answer({});}
-  else if(sub==='interrupt'){answer({});if(active){const user=active;active=undefined;send({type:'result',subtype:'error_during_execution',is_error:true,uuid:crypto.randomUUID(),session_id:sid,user_message_uuid:user,terminal_reason:'aborted',errors:['Synthetic abort'],duration_ms:0,duration_api_ms:0,num_turns:0,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0},modelUsage:{},permission_denials:[]});}}
+  else if(sub==='interrupt'){
+   let c={};try{c=JSON.parse(fs.readFileSync(control,'utf8'));}catch{}
+   if(c.rejectInterrupt){
+    send({type:'control_response',response:{subtype:'error',request_id:x.request_id,error:'Synthetic rejected interruption'}});return;
+   }
+   answer({});if(active){const user=active;active=undefined;send({type:'result',subtype:'error_during_execution',is_error:true,uuid:crypto.randomUUID(),session_id:sid,user_message_uuid:user,terminal_reason:'aborted',errors:['Synthetic abort'],duration_ms:0,duration_api_ms:0,num_turns:0,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0},modelUsage:{},permission_denials:[]});}}
   else answer({});
  }else if(x.type==='user'){persist(x);if(x.shouldQuery!==false){active=x.uuid;log({event:'query',model,content:x.message.content});
    let c={};try{c=JSON.parse(fs.readFileSync(control,'utf8'));}catch{}

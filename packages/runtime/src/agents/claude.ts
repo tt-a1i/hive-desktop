@@ -228,7 +228,14 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
       const run = active; if (!run) return;
       run.cancelled = true; interactions.clear('aborted', run.uuid); run.controller.abort();
       try { await claudeDeadline(running.interrupt(), 'interrupt'); }
-      catch (error) { fail(asError(error)); running.close(); throw error; }
+      catch (error) {
+        fail(asError(error)); running.close();
+        // Settle first so the owner receives the original failure, then await
+        // the existing owned-process shutdown before returning the rejection.
+        await run.done.catch(() => {});
+        await close();
+        throw error;
+      }
       finally { await run.done.catch(() => {}); }
     },
     async dispose() { if (active) throw new Error('Abort and await the active Claude prompt before disposal'); await close(); },
