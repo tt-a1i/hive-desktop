@@ -1,6 +1,7 @@
 use crate::{app::{HiveApp, SettingsSection}, focus_scroll::Reveal, language::tr, palette::Color};
 use gpui_kit::{component::{button::{Button, ButtonVariants}, menu::{DropdownMenu, PopupMenuItem}, scroll::ScrollableElement, *}, prelude::FluentBuilder, *};
 use gpui_kit::assets::IconName as Glyph;
+use std::sync::{Arc, OnceLock};
 mod agents;
 
 impl HiveApp {
@@ -25,6 +26,9 @@ impl HiveApp {
     /// Opening this page never creates a session or starts an agent.
     pub(crate) fn render_welcome(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let weak = cx.weak_entity();
+        static LOGO: OnceLock<Arc<Image>> = OnceLock::new();
+        let logo = LOGO.get_or_init(|| Arc::new(Image::from_bytes(ImageFormat::Png, include_bytes!("../assets/hive-logo.png").to_vec()))).clone();
+        let compact = window.viewport_size().width < px(760.);
         let primary_focus = self.connected.then(|| window.use_keyed_state("welcome-primary-focus", cx, |window, cx| {
             let focus = cx.focus_handle();
             let initial = focus.clone();
@@ -35,9 +39,13 @@ impl HiveApp {
             .child(
                 v_flex().flex_shrink_0().w_full().max_w(px(640.)).mx_auto().gap_6().px_5().py_6()
                     .child(v_flex().flex_shrink_0().gap_3()
-                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(Color::Muted.get(cx)).child("HIVE"))
+                        .child(h_flex().items_center().gap_3()
+                            .child(div().size(px(48.)).flex_shrink_0().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx)).flex().items_center().justify_center().child(img(logo).size(px(36.))))
+                            .child(v_flex().gap_1()
+                                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("HIVE"))
+                                .child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("桌面工作台")))))
                         .child(div().id("welcome-title").role(Role::Label).aria_label(tr("你的项目，你的 Agent。一起推进。"))
-                            .text_size(px(36.)).line_height(px(46.)).font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(if compact { 28. } else { 36. })).line_height(px(if compact { 38. } else { 46. })).font_weight(FontWeight::SEMIBOLD)
                             .child(tr("你的项目，你的 Agent。一起推进。")))
                         .child(div().id("welcome-description").role(Role::Label).aria_label(tr("选择熟悉的 Agent 担任主控，在同一个地方交流、查看工具过程，与团队成员协作。")).text_base().text_color(Color::Secondary.get(cx))
                             .child(tr("选择熟悉的 Agent 担任主控，在同一个地方交流、查看工具过程，与团队成员协作。"))))
@@ -67,15 +75,16 @@ impl HiveApp {
                         } else { tr("后台暂不可用 · 可在窗口顶部重新启动后台") })))
                     .child(self.render_welcome_agents(cx))
                     .child(v_flex().flex_shrink_0().gap_4().pt_5().border_t_1().border_color(Color::Divider.get(cx))
-                        .children([
+                        .child(h_flex().flex_wrap().items_start().gap_4().children([
                             ("01", tr("打开项目"), tr("选择本地文件夹，已有项目和会话会留在侧栏。")),
                             ("02", tr("选择你的主控"), tr("内置 Pi、Claude Code、Codex 或外部 Pi，使用各自的模型与账号。")),
                             ("03", tr("和团队一起工作"), tr("从主会话安排任务，随时查看成员的对话、执行过程与汇报。")),
-                        ].into_iter().map(|(number, title, description)| h_flex().flex_shrink_0().items_start().gap_4()
-                            .child(div().text_xs().pt_1().text_color(Color::Muted.get(cx)).child(number))
-                            .child(v_flex().flex_shrink_0().id(SharedString::from(format!("welcome-step-{number}"))).role(Role::Label).aria_label(format!("{number} · {title} · {description}")).flex_1().min_w_0().gap_1()
-                                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
-                                .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(description)))))
+                        ].into_iter().map(|(number, title, description)| v_flex().flex_1().min_w(px(160.)).gap_2()
+                            .id(SharedString::from(format!("welcome-step-{number}"))).role(Role::Label).aria_label(format!("{number} · {title} · {description}"))
+                            .child(h_flex().items_center().gap_2()
+                                .child(div().text_xs().text_color(Color::Muted.get(cx)).child(number))
+                                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title)))
+                            .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(description)))))
                         .child(Reveal::new("welcome-programs-reveal", &self.welcome_scroll, Button::new("welcome-programs").ghost().label(tr("检查外部 Agent 程序"))
                             .on_click(cx.listener(|this, _, window, cx| { this.settings_section = SettingsSection::Programs; this.open_settings(window, cx); })))))
             )))

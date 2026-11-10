@@ -202,3 +202,5 @@ Mac分发新增真实图标/版本与DMG，包内身份解码、六组后台gate
 成员最终删除补真实Mac实证：本轮自有stopped/Codex测试成员经筛选→取消→593×507逻辑窄窗确认删除，目标及启动配置消失，筛选/焦点与另两人原ID/职责/后端冷读保持。确认姓名、筛选计数/空结果AX缺失已修复，最终原生AX、取消及独立冷读通过，见[成员删除](validation/2026-11-10-member-deletion.md)。零推理/执行、Mac构建和Windows类型检查通过；运行中/带历史删除、VoiceOver/Windows原生仍开放，未入db6fb20。
 
 已删除成员的旧会话prompt/resume/模型操作会重新写回孤立launch配置的问题已复现并修复：复用Hive store现有getAgent校验，两处写入统一；真HTTP/SQLite/Pi回归原包先红/源码绿，历史/其他成员配置与完整冷恢复保持且零模型请求。四组现有团队/恢复检查、TS/build通过，见[删除后会话](validation/2026-11-10-deleted-member-session.md)。未入db6fb20包，不扩大为所有删除时序或跨存储模型变更原子性。
+
+对照实际Beluga欢迎/T3布局后，Hive欢迎加入原标识/工作台副标题、窄标题与紧凑可换行步骤；English默认16、中文16/冷启动20及列出宽窄窗、主按钮系统选择取消/外部配置往返通过，零新项目/会话/执行，Mac构建和Windows类型检查通过。原logo/三份通知字节保留，见[欢迎视觉](validation/2026-11-10-welcome-brand.md)。仅源码未入db6fb20，不扩大为竞品完整体验或所有UI矩阵已达标。
