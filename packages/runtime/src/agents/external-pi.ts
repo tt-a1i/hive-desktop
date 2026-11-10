@@ -41,10 +41,16 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
   let initialized = false;
   let disposed = false;
   let failure: Error | undefined;
+  let failureNotified = false;
   let eventWork = Promise.resolve();
   let transport: ExternalPiTransport;
   const emit = (event: PiEvent) => options.onEvent(event);
   const interactions = new ExternalPiInteractions(() => state!.sessionId, emit, id => transport.expireUiRequest(id));
+  const notifyFailure = () => {
+    if (!initialized || !failure || active || disposed || failureNotified) return;
+    failureNotified = true;
+    options.onUnexpectedExit?.(failure);
+  };
   const refresh = async () => {
     const result = await transport.request<{ entries: SessionEntry[]; leafId: string | null }>('get_entries');
     branch = externalPiBranch(result.entries, result.leafId);
@@ -63,9 +69,9 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     catch (cause) {
       // A private bridge mutation may already have changed native memory before
       // its JSONL write failed. Never retry on that potentially divergent host.
-      failure = asError(cause);
-      if (!active && initialized) options.onUnexpectedExit?.(failure);
-      throw cause;
+      failure ??= asError(cause);
+      notifyFailure();
+      throw failure;
     }
   };
 
@@ -122,8 +128,8 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     onClose(error) {
       if (disposed) return;
       interactions.clear('disconnected');
-      failure = error; active?.reject(error);
-      if (initialized) options.onUnexpectedExit?.(error);
+      failure ??= error; active?.reject(failure);
+      notifyFailure();
     },
   });
   const setModel = async (provider: string, id: string) => {
@@ -227,7 +233,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
           interactions.clear('turn-ended'); transport.clearUiRequests();
           active = undefined; activeMessage = undefined;
           emit({ type: 'settled', sessionId: state!.sessionId, aborted: run.cancelled || run.aborted });
-          if (failure) options.onUnexpectedExit?.(failure);
+          notifyFailure();
         }
       });
       return run.done;
@@ -236,7 +242,14 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
       const run = active; if (!run) { await interactions.cancel('aborted'); transport.clearUiRequests(); return; }
       run.cancelled = true;
       try { await interactions.cancel('aborted'); transport.clearUiRequests(); await transport.request('clear_queue'); await transport.request('abort'); }
-      catch (error) { if (!failure) throw error; }
+      catch (error) {
+        // A rejected cancellation does not prove the native agent stopped.
+        // Retire its owned process before releasing the failed delivery.
+        failure ??= asError(error);
+        try { await transport.close(); }
+        finally { run.reject(failure); await run.done.catch(() => {}); }
+        throw error;
+      }
       await run.done.catch(() => {});
     },
     async dispose() {
