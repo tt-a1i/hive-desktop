@@ -48,7 +48,10 @@ fn details(owner: &str, message: &str, cx: &Context<HiveApp>) -> AnyElement {
 impl HiveApp {
     pub(crate) fn render_agent_repair_actions(&self, disabled: bool, cx: &Context<Self>) -> AnyElement {
         let Some(session) = &self.session else { return div().into_any_element(); };
-        let backend = match session.backend {
+        self.render_backend_repair_actions(session.backend, disabled, cx)
+    }
+    pub(crate) fn render_backend_repair_actions(&self, backend: crate::protocol::Backend, disabled: bool, cx: &Context<Self>) -> AnyElement {
+        let backend = match backend {
             crate::protocol::Backend::Pi => None,
             crate::protocol::Backend::Codex => Some("codex"),
             crate::protocol::Backend::Claude => Some("claude"),

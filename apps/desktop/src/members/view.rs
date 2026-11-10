@@ -104,7 +104,22 @@ impl HiveApp {
                             .when(picker_open, |view| view.child(v_flex().gap_2()
                                 .child(Reveal::new(format!("member-{id}-model-search-reveal"), &self.member_scroll, Input::new(&self.member_model_search).aria_label(tr("搜索此成员的可用模型"))))
                                 .when(self.member_catalog_loading, |view| view.child(crate::text_reading::selectable_text("member-model-loading", tr("正在读取可用模型…")).text_sm()))
-                                .when_some(self.member_catalog_error.clone(), |view, (backend,error)| view.child(crate::text_reading::selectable_text("member-model-error", if english() { format!("Could not load {backend} models: {error}") } else { format!("读取 {backend} 模型失败：{error}") }).text_sm().text_color(Color::Error.get(cx))))
+                                .when_some(self.member_catalog_error.clone(), |view, (backend,error)| {
+                                    let repair_backend = match backend.as_str() {
+                                        "pi" => Some(crate::protocol::Backend::Pi), "codex" => Some(crate::protocol::Backend::Codex),
+                                        "claude" => Some(crate::protocol::Backend::Claude), "pi-rpc" => Some(crate::protocol::Backend::PiRpc), _ => None,
+                                    };
+                                    let retry_id = id.clone(); let retry_command = member.configured_command.clone();
+                                    view.child(crate::text_reading::selectable_text("member-model-error", if english() { format!("Could not load {backend} models: {error}") } else { format!("读取 {backend} 模型失败：{error}") }).text_sm().text_color(Color::Error.get(cx)))
+                                        .child(Reveal::new(format!("member-{id}-model-repair-reveal"), &self.member_scroll, h_flex().min_w_0().flex_wrap().gap_2()
+                                            .when_some(repair_backend, |row, backend| row.child(self.render_backend_repair_actions(backend, !self.connected || self.member_catalog_loading, cx)))
+                                            .child(Button::new("member-model-retry").ghost().compact().label(tr("重新读取模型")).disabled(!self.connected || self.member_catalog_loading)
+                                                .on_click(cx.listener(move |this, _, window, cx| {
+                                                    this.choose_member_models(retry_id.clone(), retry_command.clone(), cx);
+                                                    let focus = this.member_model_search.read(cx).focus_handle(cx);
+                                                    window.on_next_frame(move |window,cx|focus.focus(window,cx));
+                                                })))))
+                                })
                                 .when(!self.member_catalog_loading && self.member_catalog_error.is_none() && matching_member_models.is_empty(), |view| view.child(crate::text_reading::selectable_text("member-model-empty", tr("没有匹配的可用模型")).text_sm()))
                                 .child(Reveal::new(format!("member-{id}-models-reveal"), &self.member_scroll, div().h(px(168.)).min_h_0().flex().child(Viewport::new("member-model-viewport", &self.member_model_scroll, v_flex().id("member-model-list").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.member_model_scroll).vertical_scrollbar(&self.member_model_scroll).gap_1().p_1()
                                     .children(matching_member_models.iter().cloned().enumerate().map(|(j, model)| {
