@@ -29,3 +29,9 @@
 - 无新增/修改测试；纯 UI 使用原生正向/空状态与实际持久化校验，未跑全量测试。
 
 尚未纳入 current/candidate/Applications 的1e68306包。Windows 原生、VoiceOver播报及完整目标继续，不以此项作为完整交付。
+
+## 后续：附件键盘显露
+
+实际复现：12行草稿加README，在1186×1014物理像素窗口，编辑器定位末尾后，Shift+Tab 虽切到附件按钮但附件仍在 composer 可视区外。给附件区域复用已有 `focus_scroll::Reveal`，仅一处调用方变化，无新滚动抽象。
+
+新二进制实际验证：编辑器 Cmd+Down → Shift+Tab 显露带焦点环的移除按钮；再次 Shift+Tab → Enter 打开README只读预览；关闭后回编辑器末尾 → Shift+Tab → Enter 实际移除附件，正文12行保持。保存 long-attachment-before/revealed/removed 图与AX；应用正常退出exit0，冷读脚本再次通过。Mac build/Windows目标check通过。鼠标从正文滚回附件的便利性仍需改善，本次不宣称已完成整个组合体验；尚未验证多图/多行附件与VoiceOver。

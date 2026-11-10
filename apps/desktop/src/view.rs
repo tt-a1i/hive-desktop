@@ -497,7 +497,7 @@ impl Render for HiveApp {
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child(tr("选择本地项目文件夹，开始与 Agent 协作。"))))
 
                 .when(self.command_picker.open, |view| view.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window().offset(point(px(11.),px(-8.))).child(self.render_commands(window,cx))).with_priority(1)))
-                .when_some(self.render_input_attachments(cx), |body, attachments| body.child(attachments))
+                .when_some(self.render_input_attachments(cx), |body, attachments| body.child(crate::focus_scroll::Reveal::new("composer-attachments-reveal", &self.composer_scroll, attachments)))
                 .when(self.workspace.is_some(), |v| v.child(crate::focus_scroll::Reveal::new("composer-input-reveal", &self.composer_scroll, div().capture_action(cx.listener(Self::composer_enter)).capture_action(cx.listener(Self::command_up)).capture_action(cx.listener(Self::command_down)).capture_action(cx.listener(Self::command_escape)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label(tr("聊天消息")).on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) })))))
                         )))
                 .child(div().flex_shrink_0().child(self.render_composer_controls(window, running, can_submit && has_text, cx)))
