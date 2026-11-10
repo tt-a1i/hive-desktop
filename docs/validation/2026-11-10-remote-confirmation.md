@@ -26,3 +26,9 @@
 - `.artifacts/remote-confirm-native/`：pending/paired AX及图片、expanded-clipped.png、expanded-fixed.png、manual-scroll.png、revoked.png/AX、paired-receipt.json、revoked-receipt.json、cold-receipt.json、gateway-events.json、构建与进程日志。密钥和凭据不进入报告。
 
 本轮为原生UI与共享显露修复，没有增加或删改自动化测试，没有运行无关全量runtime测试；真实后端链路由上述操作穿透。新源码尚未纳入当前46373f6 ZIP/DMG/Applications。未新增模型推理。该GUI流程没有建立活跃手机数据隧道，因此不声称本轮验证了活跃终端断开；加密隧道、HTTP/终端与撤销拒绝保持此前包内remote gate的独立证据。VoiceOver、完整语言/字号矩阵、真实手机及Windows原生仍待。
+
+## 访问历史的双语事件名称
+
+后续将原Hive七个审计类型映射为应用静态名称：接口请求、打开实时连接、实时连接输入、建立/关闭远程连接、撤销设备访问、拒绝远程请求。无device_id的记录显示“未关联设备”，避免把daemon级事件误标为未知设备；未知类型仍显示原值。没有翻译或改写端点、用户输入预览和诊断原因。
+
+实际原生界面检查本轮真实持久记录中的session_open/session_close/revoke三类，中英文名称及完整AX正文正确；中文20px/约593×507窄窗下，设备UUID和revoked原原因正常换行，滚轮可读。截图labels-zh20-narrow.png、两语言AX、labels-receipt.json保留；其余四种类型只核对原Hive声明及调用语义，不声称本次产生了这些网络事件。Mac build与Windows目标check再次通过，git diff检查通过。第四个窗口正常exit0；隔离偏好确认为zh/20px，远程保持关闭、active设备0，无新增网络或模型请求。当前安装包仍为46373f6。

@@ -27,6 +27,18 @@ fn age(time: u64) -> String {
 fn outcome(result: &str) -> &str {
     match result { "ok" => tr("成功"), "rejected" => tr("已拒绝"), "error" => tr("错误"), other => other }
 }
+fn action_name(action: &str) -> &str {
+    match action {
+        "http" => tr("接口请求"),
+        "ws_open" => tr("打开实时连接"),
+        "ws_input" => tr("实时连接输入"),
+        "session_open" => tr("建立远程连接"),
+        "session_close" => tr("关闭远程连接"),
+        "revoke" => tr("撤销设备访问"),
+        "reject" => tr("拒绝远程请求"),
+        other => other,
+    }
+}
 impl HiveApp {
     pub fn render_remote_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let remote = &self.remote;
@@ -122,7 +134,7 @@ impl HiveApp {
             .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("最近 100 条记录。只展示现有 Hive 审计数据。")))
             .when(remote.details_valid && remote.audit.is_empty(), |view| view.child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("尚无远程访问记录。"))))
             .children(remote.audit.iter().map(|entry| {
-                let mut text = format!("{} · {} · {} · {}{}{}", age(entry.ts), entry.device_id.as_deref().unwrap_or(tr("未知设备")), entry.action, outcome(&entry.result),
+                let mut text = format!("{} · {} · {} · {}{}{}", age(entry.ts), entry.device_id.as_deref().unwrap_or(tr("未关联设备")), action_name(&entry.action), outcome(&entry.result),
                     entry.endpoint.as_ref().map(|p| format!(" · {p}")).unwrap_or_default(),
                     entry.reject_reason.as_ref().map(|p| format!(" · {p}")).unwrap_or_default());
                 if let Some(workspace) = &entry.workspace_id { text.push_str(&format!("\n{} {workspace}", tr("工作区："))); }

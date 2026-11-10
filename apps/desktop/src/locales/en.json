@@ -1121,5 +1121,13 @@
   "连接 Pi 账号或配置模型提供商。": "Connect a Pi account or configure a model provider.",
   "配置": "Configure",
   "版本检查不验证登录或模型可用性；选择 Agent 后使用其原有账号与模型。": "Version checks do not verify sign-in or model availability. Each agent uses its own account and models.",
-  "未保存的程序路径": "Unsaved executable path"
+  "未保存的程序路径": "Unsaved executable path",
+  "接口请求": "API request",
+  "打开实时连接": "Open live connection",
+  "实时连接输入": "Live connection input",
+  "建立远程连接": "Open remote connection",
+  "关闭远程连接": "Close remote connection",
+  "撤销设备访问": "Revoke device access",
+  "拒绝远程请求": "Reject remote request",
+  "未关联设备": "No associated device"
 }
