@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 汇报状态的原生语义（2026-11-10，#28后续）
+
+补齐待处理成员Group/正文Label与两处状态Label，原先AX缺少成员归属和状态正文。生产后台/队列加隔离合成JSONL对端，在Mac中英文20px/窄窗实际跑通待处理→处理中→完成、两报告归属及只读冷恢复，零真实模型；实际steer分支仍按既有24模式与真实Terra证据分别记录。见[语义验证](validation/2026-11-10-report-state-accessibility.md)。Mac构建/Windows目标检查通过；未入1e包，VoiceOver播报/Windows原生及完整目标继续。
+
 ## 活动汇报状态（2026-11-10，#28后续源码）
 
 原生steer追加的报告排在用户队头后，却因getter只看index0显示待处理。一处纳入既有steering状态，24组先红后绿/团队集成/TS/build通过；原生新一对二Terra三个会话各1轮、报告/文件/独立断言/唯一final和完整冷读保持，见[处理状态](validation/2026-11-10-report-processing.md)。短暂processing动态画面未捕获，检查证据与实机完成状态分开记录；当前1e68306包未含本项，完整目标继续。

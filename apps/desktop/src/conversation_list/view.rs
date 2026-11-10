@@ -86,6 +86,9 @@ impl HiveApp {
                                 };
                                 row.child(
                                     div()
+                                        .id(("report-state", i))
+                                        .role(Role::Label)
+                                        .aria_label(state.to_owned())
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
                                         .child(state),
@@ -334,7 +337,11 @@ impl HiveApp {
                             .any(|message| message.id == report.delivery_id)
                     })
                     .map(|report| {
+                        let heading = format!("{} · {}", report.worker_name.as_deref().unwrap_or("Worker"), tr("成员汇报"));
                         v_flex()
+                            .id(SharedString::from(format!("pending-report-{}", report.delivery_id)))
+                            .role(Role::Group)
+                            .aria_label(heading.clone())
                             .min_w_0()
                             .gap_2()
                             .px_3()
@@ -348,13 +355,13 @@ impl HiveApp {
                                             .flex_1()
                                             .text_xs()
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .child(format!(
-                                                "{} · {}",
-                                                report.worker_name.as_deref().unwrap_or("Worker"),tr("成员汇报")
-                                            )),
+                                            .child(heading),
                                     )
                                     .child(
                                         div()
+                                            .id(SharedString::from(format!("pending-report-state-{}", report.delivery_id)))
+                                            .role(Role::Label)
+                                            .aria_label(tr(report.status()).to_owned())
                                             .text_xs()
                                             .text_color(Color::Muted.get(cx))
                                             .child(tr(report.status())),
@@ -377,7 +384,11 @@ impl HiveApp {
                                         |row, link| row.child(link),
                                     ),
                             )
-                            .child(div().text_sm().child(report.text.clone()))
+                            .child(div()
+                                .id(SharedString::from(format!("pending-report-body-{}", report.delivery_id)))
+                                .role(Role::Label)
+                                .aria_label(report.text.clone())
+                                .text_sm().child(report.text.clone()))
                             .children(report.artifacts.iter().enumerate().map(|(i, path)| {
                                 self.artifact_link(&report.delivery_id, i, path, cx)
                             }))
