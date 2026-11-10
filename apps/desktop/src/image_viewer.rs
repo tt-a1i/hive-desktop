@@ -171,6 +171,9 @@ impl Render for ImageViewer {
                     .when(self.dimensions.0 > 0, |row| {
                         row.child(
                             div()
+                                .id("image-dimensions")
+                                .role(Role::Label)
+                                .aria_label(format!("{} × {}", self.dimensions.0, self.dimensions.1))
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
                                 .child(format!("{} × {}", self.dimensions.0, self.dimensions.1)),
@@ -200,14 +203,14 @@ impl Render for ImageViewer {
                         })
                     })
                     .when(self.rendered.is_none() && self.error.is_none(), |view| {
-                        view.child(div().p_4().child(tr("正在读取原图…")))
+                        view.child(div().id("image-loading").role(Role::Label).aria_label(tr("正在读取原图…")).p_4().child(tr("正在读取原图…")))
                     }),
             )
             .when_some(self.notice.map(tr), |view, text| {
-                view.child(div().text_xs().child(text))
+                view.child(div().id("image-notice").role(Role::Label).aria_label(text).text_xs().child(text))
             })
             .when_some(self.error.as_ref().map(|(key,error)|format!("{}: {error}",tr(key))), |view, text| {
-                view.child(div().text_xs().text_color(Color::Error.get(cx)).child(text))
+                view.child(div().id("image-error").role(Role::Label).aria_label(text.clone()).text_xs().text_color(Color::Error.get(cx)).child(text))
             })
     }
 }

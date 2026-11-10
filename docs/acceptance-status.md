@@ -55,6 +55,10 @@ Pi账号页补提供商/本机保存状态分组与AX正文，并复用焦点自
 
 ## 当前开发包与候选
 
+最新指针为db6fb20，ZIP/DMG及实际Applications安装结果见[安装记录](validation/2026-11-10-macos-installation.md)和[当前包](validation/2026-11-08-current-package.md)。下面6148801及其后按时间追加内容保留为历史，不能作为最新current或现存解压目录保证。
+
+### 历史：6148801
+
 current/candidate共同指向`61488017561e0e5e821c07b0dfec9ed6fad6719e`的Mac ARM64优化release，143,419,605字节，SHA256 `ea78c52c37a8273e541c79229e560b2a2915c0f9ad417caec8623419a24e0321`，两路径为同字节硬链接。原6edac4c ZIP/收据和可运行解压应用保留。
 
 纳入协作任务正文默认收起、草稿光标/自动恢复焦点、工作流日志/状态/计划阅读、列表刷新位置、键盘逐页与计划确认说明。112个runtime输出、28,863个条目/模式、29个内部链接匹配；六组包gate全部exit0。新包实际English20冷启动直接追加中文多行草稿、工作流末条日志/来源及窄窗翻页、计划英文说明和取消通过，两套包内独立冷读逐字段核对通过；本轮新模型请求0，真实厂商证据沿用相同runtime的前包记录。见[本轮开发包](validation/2026-11-10-workflow-package.md)。
@@ -192,3 +196,5 @@ Claude中断被拒绝后调用已返回但CLI仍活着已用官方SDK/真实子�
 欢迎页内置Pi现显示实际已读取的本机保存数量/空配置/读取失败及下一步，冷启动不保留Ready推断。真实损坏凭据复现SDK无signal返回旧缓存，现严格读取、固定脱敏修复提示，并在首次失败保留Pi目录定位入口；生产JSONL先红后绿，真实SDK登录/移除/关闭排空回归通过。Mac英文状态0/1/2/失败恢复、中文20窄窗键盘往返、Finder定位与零执行冷读通过，见[欢迎账号反馈](validation/2026-11-10-welcome-account-status.md)。Mac/Windows目标构建及runtime检查通过，仅源码，包仍3339ce1；保存不等于真实登录有效，完整目标继续。
 
 Mac分发新增真实图标/版本与DMG，包内身份解码、六组后台gate及Pi账号安全读取专项通过；Finder安装至Applications、全部28,865条清单、安装资源启动/欢迎/设置返回及退出回收通过，见[安装证据](validation/2026-11-10-macos-installation.md)。未签名/公证，未测下载隔离或Windows原生；完整目标继续。
+
+图片系统Open/Save已取得真实Mac操作证据：中文/空格导入、emoji文件名保存、取消、系统覆盖提示取消保留sentinel及确认后原字节一致均通过。原图尺寸/成功提示缺失于AX树的问题已修复，源码实际AX与593×507逻辑窄窗/原尺寸/退出/冷读原上传与草稿保持通过，见[系统保存](validation/2026-11-10-image-system-save.md)。零模型/执行，Mac构建和Windows类型检查通过；VoiceOver/Windows原生等完整矩阵仍开放，本次源码修复未入db6fb20包。
