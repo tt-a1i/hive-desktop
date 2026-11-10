@@ -94,6 +94,7 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.collaboration.task_expanded = true;
         let input = cx.new(|cx| {
             let mut input = TextareaState::new(window, cx)
                 .auto_grow(8, 22)
@@ -271,13 +272,21 @@ impl HiveApp {
             .child(Reveal::new("task-document-toolbar-reveal", &self.collaboration_scroll,
                 h_flex()
                     .gap_2()
+                    .flex_wrap()
+                    .items_center()
                     .justify_between()
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(
+                    .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(
                         if draft.is_some() {
                             tr("任务 · 编辑 Markdown")
                         } else {
                             tr("任务")
                         },
+                    ))
+                    .when(draft.is_none() && !self.collaboration.task_text.is_empty(), |row| row.child(
+                        Button::new("toggle-task-document").ghost().compact()
+                            .label(if self.collaboration.task_expanded { tr("收起任务文档") } else { tr("展开任务文档") })
+                            .selected(self.collaboration.task_expanded)
+                            .on_click(cx.listener(|this, _, _, cx| { this.collaboration.task_expanded = !this.collaboration.task_expanded; cx.notify(); }))
                     ))
                     .when(draft.is_none(), |view| {
                         view.child(
@@ -414,9 +423,12 @@ impl HiveApp {
                         && self.collaboration.task_text.is_empty(),
                     |view| view.child(div().text_sm().child(tr("任务文档为空"))),
                 )
-                .when(!self.collaboration.task_text.is_empty(), |view| {
+                .when(self.collaboration.task_expanded && !self.collaboration.task_text.is_empty(), |view| {
                     view.child(
                         div()
+                            .id("task-document-body")
+                            .role(Role::Label)
+                            .aria_label(self.collaboration.tasks.read(cx).rendered_text().as_str().to_string())
                             .p_3()
                             .rounded_lg()
                             .bg(Color::Card.get(cx))

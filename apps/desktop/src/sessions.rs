@@ -260,6 +260,7 @@ impl HiveApp {
         .detach();
     }
     pub(crate) fn reset_workspace_view(&mut self) {
+        self.collaboration.task_expanded = false;
         self.focus_project_input = false;
         self.reset_workflows_workspace();
         self.conversation_sources.clear();

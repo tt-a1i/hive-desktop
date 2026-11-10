@@ -458,6 +458,8 @@
   "正在保存…": "Saving…",
   "正在读取任务…": "Loading tasks…",
   "用当前草稿更新文档": "Update document with this draft",
+  "展开任务文档": "Expand task document",
+  "收起任务文档": "Collapse task document",
   "编辑任务": "Edit tasks",
   "草稿保留在本机；点击“保存任务”后才会更新团队文档。": "Drafts are kept on this device. The team document changes only when you click “Save tasks”.",
   "（文档为空）": "(Empty document)",
