@@ -1,13 +1,10 @@
 import { fileURLToPath } from 'node:url';
+import { terminalCommand } from './terminal-command.js';
 
 // Copyable terminal commands, without mutating the caller's shell environment.
 export function remoteCommands(dataDir: string, platform = process.platform) {
-  const quote = platform === 'win32'
-    ? (value: string) => `'${value.replaceAll("'", "''")}'`
-    : (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
-  const prefix = platform === 'win32' ? '& ' : '';
-  const command = (action: string) => prefix + [
+  const command = (action: string) => terminalCommand([
     process.execPath, fileURLToPath(new URL('./remote-cli.js', import.meta.url)), dataDir, action,
-  ].map(quote).join(' ');
+  ], platform);
   return { login: command('login'), logout: command('logout'), status: command('status') };
 }

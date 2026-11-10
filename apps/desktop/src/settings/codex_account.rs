@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AccountResult { status: String, account_type: Option<String>, command: String, source: String }
+struct AccountResult { status: String, account_type: Option<String>, command: String, source: String, login_command: Option<String> }
 #[derive(Default)]
 pub struct CodexAccountCheck {
     input: String,
@@ -64,7 +64,16 @@ impl HiveApp {
                 };
                 view.child(crate::text_reading::selectable_text("codex-account-status", message).text_sm().text_color(if error { Color::Error.get(cx) } else { Color::Text.get(cx) }))
                     .when_some(result.as_ref().ok(), |view, result| view.child(crate::text_reading::selectable_text("codex-account-source",
-                        super::EffectiveCommand { command:result.command.clone(), source:result.source.clone() }.label(tr("本次检查"))).text_xs().text_color(Color::Muted.get(cx))))
+                        super::EffectiveCommand { command:result.command.clone(), source:result.source.clone() }.label(tr("本次检查"))).text_xs().text_color(Color::Muted.get(cx)))
+                        .when_some(result.login_command.as_ref().filter(|_| result.status == "signed_out"), |view, command| {
+                            let copy = command.clone();
+                            view.child(crate::text_reading::selectable_text("codex-login-instructions", if cfg!(target_os = "windows") {
+                                    tr("在 PowerShell 中执行以下命令完成登录，然后重新检查。")
+                                } else { tr("在终端执行以下命令完成登录，然后重新检查。") }).text_xs().text_color(Color::Secondary.get(cx)))
+                                .child(crate::text_reading::selectable_text("codex-login-command", command.clone()).text_sm())
+                                .child(h_flex().child(Button::new("copy-codex-login-command").label(tr("复制 Codex 登录命令"))
+                                    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))))
+                        }))
             })
     }
 }

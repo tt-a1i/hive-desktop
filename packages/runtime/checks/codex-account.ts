@@ -41,9 +41,13 @@ console.log('CODEX_ACCOUNT_PEERS_OK: exact no-refresh request, account variants/
 // The same check through real Hive app-state HTTP/SQLite, including env precedence
 // and runtime shutdown. Only fixtures below: no inference or user auth writes.
 const {createDesktopRuntime}=await import('../src/desktop-runtime.js');
+const {terminalCommand}=await import('../src/terminal-command.js');
 const test=await peer('settings',{requiresOpenaiAuth:true,account:{type:'chatgpt',email:'private@example.invalid'}});
 let runtime=await createDesktopRuntime(join(root,'data'),()=>{},{executableEnvironment:{}});
 try {
+ const signedOut=await peer('settings-signed-out',{requiresOpenaiAuth:true,account:null});
+ const signedResult=await runtime.settings.codexAccount(signedOut.command);
+ assert.deepEqual(signedResult,{command:signedOut.command,source:'draft',status:'signed_out',loginCommand:terminalCommand([signedOut.command,'login'])});
  const before=await runtime.settings.get();
  const result=await runtime.settings.codexAccount(test.command);
  assert.deepEqual(result,{command:test.command,source:'draft',status:'account_detected',accountType:'chatgpt'});

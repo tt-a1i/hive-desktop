@@ -1,5 +1,6 @@
 import { probeExecutable } from './executable-probe.js';
 import {probeCodexAccount} from './codex-account.js';
+import {terminalCommand} from './terminal-command.js';
 import type { HiveHost } from './hive-host.js';
 
 export interface DesktopExecutables { piCommand: string | null; codexCommand: string | null; claudeCommand: string | null }
@@ -68,7 +69,9 @@ export class DesktopSettings {
     const task=probeCodexAccount(effective.command,this.probeAbort.signal);
     this.probes.add(task);
     try {
-      return {...effective,source:effective.source==='app'&&candidate!==saved.codexCommand?'draft':effective.source,...await task};
+      const result=await task;
+      return {...effective,source:effective.source==='app'&&candidate!==saved.codexCommand?'draft':effective.source,...result,
+        ...(result.status==='signed_out' && {loginCommand:terminalCommand([effective.command,'login'])})};
     } finally { this.probes.delete(task); }
   }
   async close(): Promise<void> {
