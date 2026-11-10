@@ -4,6 +4,8 @@
 
 ## 按原目标核对
 
+源码66eb15c补后台生命周期定向复核：工作区移除/回滚/读取互斥、工作流双成员/嵌套/CPU退出与冷恢复、真实终端及独立JSONL共五个现有检查全部exit0；本次拥有的原始Pi及五个受控协议进程均已退出，原文件/会话保留。四条向已停止成员发送取消通知的409诊断原样保留，未扩大为所有异常时序无误。见[生命周期复核](validation/2026-11-10-lifecycle-audit.md)。本轮无生产/测试/开发包变化，无新模型推理；完整目标仍未完成。
+
 模型与接口配置已增加固定搜索、匹配数量/空结果/清除；接口名称/ID/地址、模型名称/ID/组合身份、中英文、筛选后的精确保存与冷启动重搜通过。同时修复已有名称末尾空格导致未编辑就出现保存/假草稿的比较误报；窄窗收起重复分区标题，宽窗保留，见[模型配置搜索](validation/2026-11-10-model-config-search.md)。最终Mac构建/Windows目标检查通过，无新模型调用；源码改动尚未纳入fb3dcd0候选，Windows原生及完整目标仍待。
 
 模型配置列表在深色/20px/约592×500窗口的离屏键盘操作已实际复现并修复；工具栏、接口/模型行及新增入口复用焦点显露，长列表正反74次Tab、手动滚轮后的同组显露、非法值不落盘、仅目标Token修改及完整冷读回通过，见[模型列表键盘](validation/2026-11-10-model-list-keyboard.md)。最终Mac构建/Windows目标检查通过；本轮源码修复尚未纳入fb3dcd0候选，VoiceOver和Windows原生仍待，#20保持开放。
@@ -38,7 +40,7 @@ Pi账号页补提供商/本机保存状态分组与AX正文，并复用焦点自
 | 统一聊天、工具与成员过程 | 聊天投影、思考、工具Diff/文件预览、成员会话、归档/搜索/草稿、附件、排队输入已实施；源码Mac导出复制/失败重试/窄窗/AX提示，以及导出和文件预览Home/End/双向翻页、中文文件选区复制已取得实证，见[原生补验](validation/2026-11-09-native-resume.md) | 成员职责另已修复AX正文、首尾/翻页和选区复制，102行/3,531字符在Mac实证，见[成员阅读](validation/2026-11-09-member-responsibilities.md)；已纳入dd0230a候选并补包内首尾/翻页/窄窗验证，见[包内证据](validation/2026-11-09-stop-candidate.md)。真实Codex原生两条排队/停止/冷恢复/显式继续已补验，并修复额外恢复唤醒，见[排队恢复](validation/2026-11-09-queued-codex-ui.md)。VoiceOver播报、滚轮/完整键盘/字号、部分在途时序、系统输入与可访问性矩阵未完成；局部窄窗不推广到所有页面 |
 | 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言偏好与累计1046条主要页面/配置/聊天查找/协作/资源终端及静态和上下文错误文案已接入，模型编辑已补固定操作/提示、Tab与空格保存及冷读回，见[配置窄窗](validation/2026-11-09-model-editor-footer.md)，已纳入2b3c07e候选并补包内配置/退出恢复，见[配置候选](validation/2026-11-09-model-candidate.md)；模型/接口编辑另已补焦点与标签显露、正反Tab和实际滚动，见[滚动证据](validation/2026-11-09-model-editor-scroll.md)，新增/覆盖草稿及保存、英文17字号已补窄窗实测，完整字号/可访问性/Windows等边界仍在[#20](https://github.com/tt-a1i/hive-desktop/issues/20)；完整页面迁移、真实切换/草稿/窄窗仍未完成，见[语言记录](validation/2026-11-09-interface-language.md)、[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生设置/开关/配对码/拒绝已补包内实证，确认/撤销GUI、真实网关和Windows仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)及[最新候选](validation/2026-11-09-settled-candidate.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流删除最终按钮等仍待验收 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；Mac EPERM回归先红后绿；最新源码Cmd+Q、冷启动草稿/语言恢复、窗口关闭均exit0并清理后台，见[原生补验](validation/2026-11-09-native-resume.md) | 旧21544/54534已不在进程表，其退出原因未证实；候选包和Windows矩阵未完成，不承诺恢复任意中断工具或exactly-once |
-| macOS可实际使用 | current/candidate现为edbbae1优化release；六组包gate及全新配置/项目/实际Terra执行/原线程和草稿冷恢复通过，见[当前优化包](validation/2026-11-10-current-optimized-flow.md) | 完整页面、输入法、远程/工作流等矩阵和首次picker409原因仍未完成；开发包不是完整交付 |
+| macOS可实际使用 | current/candidate现为6edac4c优化release；六组包gate、真实Codex/Terra失败与成功工具、原线程/草稿冷恢复及错误修复键盘流程通过，见[当前开发包](validation/2026-11-10-composer-package.md)；66eb15c协作概览源码尚未纳入该包 | 完整页面、输入法、远程/工作流等矩阵和首次picker409原因仍未完成；开发包不是完整交付 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户明确暂时无Windows机器、先继续其他实施；不处理CI不等于取消Windows目标 |
 | 完整、精美、Cindy/Maka级体验 | 已有固定源码参考与安装Cindy局部原生走查，并实施多轮聊天/配置/导航改进 | 整体对标仍未证实；还须按实际安装体验做全流程及边角检查，不能以局部截图或当前清单宣称一致 |
 | 可安装与交付 | 有冻结Node/native依赖的Mac便携开发包及实际PTY/HTTP/SQLite检查 | 未签名/未公证；正式发行、完整安装体验与两个平台最终验收未完成 |
