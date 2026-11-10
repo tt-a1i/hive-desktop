@@ -188,10 +188,14 @@ impl HiveApp {
                             .flex_wrap()
                             .gap_2()
                             .items_center()
-                            .child(div().text_sm().child(tr("删除该定时计划？运行历史会保留。")))
+                            .child(div().id(SharedString::from(format!("schedule-confirm-description-{}", schedule.id)))
+                                .role(Role::Label)
+                                .aria_label(format!("{}: {}", basename(&schedule.script_path), tr("删除该定时计划？运行历史会保留。")))
+                                .text_sm().child(tr("删除该定时计划？运行历史会保留。")))
                             .child(
                                 Button::new("workflow-schedule-confirm")
                                     .label(tr("确认删除计划"))
+                                    .accessibility_label(format!("{}: {}", tr("确认删除计划"), basename(&schedule.script_path)))
                                     .disabled(disabled)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.workflow_action(
@@ -207,6 +211,7 @@ impl HiveApp {
                                 Button::new("workflow-schedule-cancel")
                                     .ghost()
                                     .label(tr("取消"))
+                                    .accessibility_label(format!("{}: {}", tr("取消删除计划"), basename(&schedule.script_path)))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.workflows.deleting = None;
                                         this.workflows.focus_navigation = true;

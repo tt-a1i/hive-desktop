@@ -26,3 +26,5 @@
 `cargo build --locked --manifest-path apps/desktop/Cargo.toml --bin hive-desktop`、LLVM PATH 下的 Windows MSVC target check、`git diff --check` 均通过。纯 UI 修改未新增/删除测试，未运行全量 suite；实际验证为上述原生窗口、真实 HTTP/SQLite 与冷读断言。
 
 本轮无 last_run_at 非空数据，未把该条件分支标为实际窗口通过。计划删除最终操作、中文参数选择、跨连接在途时序、完整 VoiceOver/大历史与 Windows 原生仍待，#13 保持开放。current/candidate 仍为 `6edac4c` 开发包，未纳入本轮源码；完整目标保持进行中。
+
+后续真实非空last_run_at、中文参数实际选区复制和确认说明/键盘取消已补证据，见[定时执行与确认](2026-11-10-schedule-execution.md)。最终删除、完整语言/平台矩阵仍待。

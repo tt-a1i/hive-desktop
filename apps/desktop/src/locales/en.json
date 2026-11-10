@@ -508,6 +508,7 @@
   "查看工作流": "View workflow",
   "没有符合筛选的运行。": "No runs match this filter.",
   "确认删除计划": "Confirm schedule deletion",
+  "取消删除计划": "Cancel schedule deletion",
   "返回运行列表": "Back to runs",
   "还没有定时计划，由主控创建后在此管理。": "No schedules yet. Ask the orchestrator to create one, then manage it here.",
   "还没有工作流运行": "No workflow runs yet",
