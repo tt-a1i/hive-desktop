@@ -15,15 +15,16 @@ impl Render for ConversationExport {
             .max(px(100.))
             .min(px(500.));
         let preview: String = self.text.chars().take(10000).collect();
+        let description = if english() { format!("Fixed snapshot of {} loaded records in Markdown. Includes attachment names and metadata and available image counts. Unsent drafts are excluded.",self.snapshot.count()) } else { format!("{} 条已加载记录的固定快照 · Markdown 格式。只记录普通附件名称及元数据、可用的图片数量，未发送草稿不会导出。",self.snapshot.count()) };
         v_flex().min_w_0().gap_3()
-            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(self.snapshot.title.clone()))
-            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(if english() { format!("Fixed snapshot of {} loaded records in Markdown. Includes attachment names and metadata and available image counts. Unsent drafts are excluded.",self.snapshot.count()) } else { format!("{} 条已加载记录的固定快照 · Markdown 格式。只记录普通附件名称及元数据、可用的图片数量，未发送草稿不会导出。",self.snapshot.count()) }))
+            .child(div().id("export-title").role(Role::Label).aria_label(self.snapshot.title.clone()).text_sm().font_weight(FontWeight::SEMIBOLD).child(self.snapshot.title.clone()))
+            .child(div().id("export-description").role(Role::Label).aria_label(description.clone()).text_sm().text_color(Color::Secondary.get(cx)).child(description))
             .child(h_flex().flex_wrap().gap_4().items_center()
                 .child(h_flex().items_center().gap_2().child(Switch::new("export-thinking").accessibility_label(tr("导出时包含思考过程")).checked(self.thinking).disabled(self.saving)
                     .on_change(cx.listener(|this,value,_,cx|{this.thinking=*value;this.refresh(cx);}))).child(tr("包含思考过程")))
                 .child(h_flex().items_center().gap_2().child(Switch::new("export-tools").accessibility_label(tr("导出时包含工具过程")).checked(self.tools).disabled(self.saving)
                     .on_change(cx.listener(|this,value,_,cx|{this.tools=*value;this.refresh(cx);}))).child(tr("包含工具过程"))))
-            .child(crate::text_reading::region("export-preview".into(),tr("对话快照预览，可用方向键或翻页键滚动").into(),&self.scroll,height,cx).text_sm().child(preview))
+            .child(crate::text_reading::region("export-preview".into(),tr("对话快照预览，可用方向键或翻页键滚动").into(),&self.scroll,height,cx).text_sm().child(crate::text_reading::selectable_text("export-preview-text", preview)))
     }
 }
 impl Render for ExportFooter {
@@ -43,6 +44,9 @@ impl Render for ExportFooter {
             .when(truncated, |view| {
                 view.child(
                     div()
+                        .id("export-preview-limit")
+                        .role(Role::Label)
+                        .aria_label(tr("预览仅显示前 10,000 字；复制和保存包含完整快照。"))
                         .text_xs()
                         .text_color(Color::Secondary.get(cx))
                         .child(tr("预览仅显示前 10,000 字；复制和保存包含完整快照。")),

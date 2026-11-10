@@ -51,3 +51,5 @@ Cindy窗口能返回控件树，Finder定位又返回cgWindowNotFound；不能�
 ## 后续候选包状态
 
 d9e061b的fresh-deploy候选已包含本功能，替换先前66ef8f9候选；112个runtime文件、包内PTY/HTTP/SQLite、原生启动选择恢复通过，current仍未推广。详见[远程候选包补验](2026-11-09-remote-settings.md#mac候选包补验)。导出复制/窄窗/正常退出仍需系统走查，不能由包内启动检查代替。旧候选收据保留supersededBy与zipPresent=false，历史哈希不当作现存候选。
+
+后续源码补齐预览正文/标题/范围与截断说明的AX语义，实际滚轮/局部选择、窄窗键盘阅读、全文复制与系统保存逐字比对及冷恢复已补证据，见[2026-11-10导出补验](2026-11-10-export-reading.md)。本轮英文16范围，完整矩阵与Windows继续开放。
