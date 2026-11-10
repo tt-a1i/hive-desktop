@@ -93,4 +93,4 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-当前Mac开发包为0080304优化release，新增Codex连接检查/未登录修复命令、命名空会话标题及默认关闭的本机提醒接线；三组包内检查、窄窗实际复制/草稿/冷恢复、Finder更新与安装启动/退出通过，见[最新包记录](docs/validation/2026-11-10-connection-package.md)。通知送达/点击仍待授权验收；未签名/未公证，Windows原生与完整目标继续开放。
+当前Mac开发包为1e68306优化release，新增Codex成员汇报同回合处理与欢迎页版本/连接摘要；四组包内检查、实际账号反馈、三会话冷读、Finder更新与安装启动/退出通过，见[最新包记录](docs/validation/2026-11-10-report-package.md)。通知送达/点击仍待授权验收；未签名/未公证，Windows原生与完整目标继续开放。
