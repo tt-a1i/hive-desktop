@@ -294,8 +294,11 @@ impl Render for HiveApp {
                 .and_then(|key| self.drafts.get(key))
                 .cloned()
                 .unwrap_or_default();
-            self.input
-                .update(cx, |input, cx| input.set_value(text, window, cx));
+            self.input.update(cx, |input, cx| {
+                let end = text.len();
+                input.set_value(text, window, cx);
+                input.set_selected_range(end..end, cx);
+            });
             self.draft_owner = self.draft_target.clone();
         }
         let placeholder = self
