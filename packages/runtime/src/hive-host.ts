@@ -23,6 +23,7 @@ export interface HiveUpload { record: { mimeType: string; originalName: string }
 export interface HiveUploadLocation {localPath:string;record:{mimeType:string;originalName:string;sizeBytes:number}}
 
 export interface HiveHost {
+    configureAgentLaunch: import("./hive-runtime-contract.js").HiveAgentRuntime["configureAgentLaunch"];
     createMember(workspaceId: string, input: DesktopMemberInput, command: string): { id: string };
     locateUpload(workspaceId:string,id:string):Promise<HiveUploadLocation | undefined>;
     readUpload(workspaceId: string, id: string): Promise<HiveUpload | null>;
@@ -95,6 +96,10 @@ export async function createHiveHost({
 	let closing: Promise<void> | undefined;
 	return {
 		port: runtime.port,
+        configureAgentLaunch(workspaceId, agentId, input) {
+            if (closing) throw new Error('Hive host is closed');
+            runtime.store.configureAgentLaunch(workspaceId, agentId, input);
+        },
         createMember(workspaceId, input, command) {
             if (closing) throw new Error('Hive host is closed');
             return runtime.store.addWorkerWithLaunch(workspaceId, {

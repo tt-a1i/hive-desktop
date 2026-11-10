@@ -200,3 +200,5 @@ Mac分发新增真实图标/版本与DMG，包内身份解码、六组后台gate
 图片系统Open/Save已取得真实Mac操作证据：中文/空格导入、emoji文件名保存、取消、系统覆盖提示取消保留sentinel及确认后原字节一致均通过。原图尺寸/成功提示缺失于AX树的问题已修复，源码实际AX与593×507逻辑窄窗/原尺寸/退出/冷读原上传与草稿保持通过，见[系统保存](validation/2026-11-10-image-system-save.md)。零模型/执行，Mac构建和Windows类型检查通过；VoiceOver/Windows原生等完整矩阵仍开放，本次源码修复未入db6fb20包。
 
 成员最终删除补真实Mac实证：本轮自有stopped/Codex测试成员经筛选→取消→593×507逻辑窄窗确认删除，目标及启动配置消失，筛选/焦点与另两人原ID/职责/后端冷读保持。确认姓名、筛选计数/空结果AX缺失已修复，最终原生AX、取消及独立冷读通过，见[成员删除](validation/2026-11-10-member-deletion.md)。零推理/执行、Mac构建和Windows类型检查通过；运行中/带历史删除、VoiceOver/Windows原生仍开放，未入db6fb20。
+
+已删除成员的旧会话prompt/resume/模型操作会重新写回孤立launch配置的问题已复现并修复：复用Hive store现有getAgent校验，两处写入统一；真HTTP/SQLite/Pi回归原包先红/源码绿，历史/其他成员配置与完整冷恢复保持且零模型请求。四组现有团队/恢复检查、TS/build通过，见[删除后会话](validation/2026-11-10-deleted-member-session.md)。未入db6fb20包，不扩大为所有删除时序或跨存储模型变更原子性。

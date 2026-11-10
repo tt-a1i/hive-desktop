@@ -456,7 +456,7 @@ export class Chats implements StructuredSessionPort {
     }
     this.assertWorkspaceAvailable(record.workspaceId);
     this.index.bind(id, agentId);
-    this.runtime.configureAgentLaunch(record.workspaceId, agentId, this.launchConfig(this.index.get(id)));
+    this.hive.configureAgentLaunch(record.workspaceId, agentId, this.launchConfig(this.index.get(id)));
     // A forthcoming explicit input wakes the model itself. Keep startup facts
     // in context, without racing an extra recovery turn ahead of that input.
     if (forUserInput) this.startingForInput.add(id);
@@ -606,7 +606,7 @@ export class Chats implements StructuredSessionPort {
         delete record.reasoning;
         this.index.save(record);
         delete chat.reasoningFailure;
-        if (record.agentId) this.runtime.configureAgentLaunch(record.workspaceId, record.agentId, this.launchConfig(record));
+        if (record.agentId) this.hive.configureAgentLaunch(record.workspaceId, record.agentId, this.launchConfig(record));
         return { ok: true };
       });
     });
