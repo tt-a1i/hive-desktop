@@ -91,10 +91,10 @@ export class DeliveryQueue {
   if (images.length && !triggerTurn) throw new TypeError("不触发模型回合的投递暂不支持图片。");
   this.replace([...this.items, { id: randomUUID(), text, triggerTurn, ...(images.length && {images}), ...(presentation && { presentation: structuredClone(presentation) }) }]);
   const item = this.items.at(-1)!;
-  // Only asynchronous system input may join the current turn. Never overtake a
+  // Asynchronous system input and worker reports may join the current turn. Never overtake a
   // queued user/task input; persist first and retain until native completion.
   if (!this.paused && this.busy && this.attemptedId === this.items[0]?.id
-    && item.triggerTurn && !item.images?.length && item.presentation?.origin === 'system'
+    && item.triggerTurn && !item.images?.length && (item.presentation?.origin === 'system' || item.presentation?.origin === 'report')
     && this.items.slice(1, -1).every(entry => this.steering.has(entry.id)) && this.options.steer) {
    const attempt = this.options.steer(item).then(handled => {
     if (handled && !this.options.completedIds().includes(item.id)) throw new Error('Native steering completed without a durable delivery receipt');

@@ -600,3 +600,7 @@ dd0230a候选约164MiB，ZIP9d416c；仅替换exe/chats.js/map，112个runtime�
 ## 2026-11-09 冷恢复显式输入不抢先唤醒
 
 真HTTP/SQLite/Pi检查复现有历史冷会话直接prompt先排recovery再排user（2vs1）。只在显式输入驱动的启动HTTP期间标记意图，让恢复事实并入既有上下文，由用户投递唤醒；finally清理，手动恢复不变。新集成覆盖冷读、真实启动SQL故障后清理，team/Codex/共享厂商peer排队/外Pi生命周期/TS/build通过。原生窗口实际发送给原样Codex/Terra，只新增一个回合并回复COLD_INPUT_OK；Cmd+Q exit0/PID消失，完整冷读pending0、来源/完成/恢复上下文保持。无新ZIP/Rust/全量/Windows结论，768d085候选尚未纳入本轮，见[输入恢复](validation/2026-11-09-user-input-recovery.md)。
+
+## 2026-11-10 Codex 成员汇报避免额外空回合
+
+实际0080304原生一对二Terra场景完成文件/显式汇报/独立核验，但主控末尾又各跑空回合。共享准入仅扩大system至system/report，复用原生来源与持久确认；24组先红后绿、真实团队HTTP/SQLite及Codex/TS/build通过。新隔离Mac用同任务原生Send一次，主控和双Worker各1轮、正确报告/唯一final/只读字节断言、派单与成员跳转通过，完整退出exit0后独立冷读逐字段保持且零新推理。无新依赖/协议/Rust改动，未跑无关全量或更新包；[证据](validation/2026-11-10-codex-report-steering.md)，#27，完整目标继续。

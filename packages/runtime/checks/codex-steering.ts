@@ -38,19 +38,20 @@ const finish=status=>{turn.status=status;if(status==='completed'){const item={id
 `;
 const barrier=()=>{let release!:()=>void;return {promise:new Promise<void>(resolve=>{release=resolve;}),release:()=>release()};};
 try{
- for(const mode of ['normal','before-ack','interrupted','consumed-interrupted','no-ack','missing','unpersisted','reject','late','disconnect','write-failure','user-order']){
-  const cwd=join(root,mode);await mkdir(cwd);await writeFile(join(cwd,'package.json'),'{"type":"commonjs"}');await writeFile(join(cwd,'app-server'),peer);
+ for(const origin of ['system','report'] as const) for(const mode of ['normal','before-ack','interrupted','consumed-interrupted','no-ack','missing','unpersisted','reject','late','disconnect','write-failure','user-order']){
+  const cwd=join(root,`${origin}-${mode}`);await mkdir(cwd);await writeFile(join(cwd,'package.json'),'{"type":"commonjs"}');await writeFile(join(cwd,'app-server'),peer);
   const atTool=barrier(),releaseTool=barrier();const observed:any[]=[];let signal:AbortSignal|undefined;
   const options={cwd,sessionDir:join(cwd,'metadata'),command:process.execPath,model:{provider:'openai',id:'gpt-6.1-terra'},onEvent(event:any){observed.push(event);},customTools:[{name:'hold',description:'held host tool',parameters:Type.Object({}),execute:async(_id:string,_args:unknown,input?:AbortSignal)=>{signal=input;atTool.release();await releaseTool.promise;return {content:[{type:'text' as const,text:'verified'}]};}}]};
-  const session=await createCodexSession(options);const errors:Error[]=[];
-  const queue=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',completedIds:()=>session.completedDeliveryIds(),onError:error=>errors.push(error),
+  const session=await createCodexSession(options);const errors:Error[]=[];const completedReports:string[]=[];
+  const notice=(index:number)=>({version:1 as const,origin,displayText:index===1?'first notice':'second notice',...(origin==='report'&&{dispatchId:`dispatch-${index}`,workerId:`worker-${index}`,workerName:`proof-${index}`,artifacts:[`proof-${index}.txt`]})});
+  const queue=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',completedIds:()=>session.completedDeliveryIds(),onError:error=>errors.push(error),onState:(_busy,id)=>{if(id){assert.ok(session.completedDeliveryIds().includes(id));completedReports.push(id);}},
    execute:item=>session.prompt(item.text,{deliveryId:item.id,presentation:item.presentation}),steer:item=>session.steer!(item.text,{deliveryId:item.id,presentation:item.presentation!})});
   try{
    await queue.enqueue(mode,true,{version:1,origin:'user',displayText:mode});await atTool.promise;
    if(mode==='user-order')await queue.enqueue('queued user',true,{version:1,origin:'user',displayText:'queued user'});
    if(mode==='write-failure')await chmod(join(cwd,'metadata'),0o500);
-   await queue.enqueue('notice one',true,{version:1,origin:'system',displayText:'first notice'});
-   if(mode==='normal'||mode==='before-ack')await queue.enqueue('notice two',true,{version:1,origin:'system',displayText:'second notice'});
+   await queue.enqueue('notice one',true,notice(1));
+   if(mode==='normal'||mode==='before-ack')await queue.enqueue('notice two',true,notice(2));
    const accepted=queue.pending;assert.equal(DeliveryQueue.persistedCount(join(cwd,'spool'),'chat'),accepted.length);
    if(mode==='interrupted'||mode==='consumed-interrupted'||mode==='no-ack'){
     // Wait for actual native acceptance, without consuming the held tool.
@@ -61,17 +62,19 @@ try{
     if(mode==='consumed-interrupted'){
      queue.resume();await queue.idle();assert.equal(queue.pendingCount,0);
      const rows=session.snapshot().history.filter((x:any)=>x.customType==='hive-delivery') as any[];
-     assert.deepEqual(rows.map(x=>x.presentation.origin),['user','system','system']);
+     assert.deepEqual(rows.map(x=>x.presentation.origin),['user',origin,origin]);
      assert.equal(rows[1].presentation.deliveryId,accepted[1].id);assert.equal(rows[2].presentation.deliveryId,accepted[1].id);
     }
    }else{releaseTool.release();await queue.idle();}
    if(mode==='normal'||mode==='before-ack'){
-    assert.equal(JSON.parse(await readFile(join(cwd,'native.json'),'utf8')).turns.length,1,'Notices must join the original turn');
+    assert.equal(JSON.parse(await readFile(join(cwd,'native.json'),'utf8')).turns.length,1,`${origin}: notices must join the original turn`);
     assert.equal(queue.pendingCount,0);assert.deepEqual(errors,[]);assert.deepEqual(new Set(session.completedDeliveryIds()),new Set(accepted.map(x=>x.id)));
     const messages=session.snapshot().history.filter((x:any)=>x.customType==='hive-delivery') as any[];
     assert.deepEqual(messages.map(x=>x.presentation.displayText),[mode,'first notice','second notice']);
-    assert.deepEqual(messages.map(x=>x.presentation.origin),['user','system','system']);
+    assert.deepEqual(messages.map(x=>x.presentation.origin),['user',origin,origin]);
     assert.equal(new Set(messages.map(x=>x.presentation.deliveryId)).size,3);
+    assert.deepEqual(messages.slice(1).map(({presentation:{deliveryId,...presentation}}:any)=>presentation),[notice(1),notice(2)]);
+    assert.deepEqual(completedReports,origin==='report'?accepted.slice(1).map(x=>x.id):[]);
     assert.ok(!observed.some(event=>event.type==='message_end'&&event.message?.role==='user'&&JSON.stringify(event.message).includes('notice')),'Do not emit a raw user row before assigning its Hive delivery ID');
    }else if(mode==='missing'||mode==='unpersisted'||mode==='reject'){
     assert.equal(queue.pendingCount,1);assert.equal(errors.length,1);assert.equal(queue.pending[0]?.text,'notice one');
@@ -91,10 +94,12 @@ try{
    try{
     const cold=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',startPaused:true,completedIds:()=>restored.completedDeliveryIds(),onError:error=>errors.push(error),execute:async()=>{throw new Error('Cold check must not invoke a model');}});
     assert.equal(cold.pendingCount,(mode==='normal'||mode==='before-ack')?0:1);
-    const origins=restored.snapshot().history.filter((x:any)=>x.customType==='hive-delivery').map((x:any)=>x.presentation.origin);
-    assert.deepEqual(origins,(mode==='normal'||mode==='before-ack')?['user','system','system']:['user']);
+    const restoredMessages=restored.snapshot().history.filter((x:any)=>x.customType==='hive-delivery') as any[];
+    const origins=restoredMessages.map(x=>x.presentation.origin);
+    if(mode==='normal'||mode==='before-ack')assert.deepEqual(restoredMessages.slice(1).map(({presentation:{deliveryId,...presentation}}:any)=>presentation),[notice(1),notice(2)]);
+    assert.deepEqual(origins,(mode==='normal'||mode==='before-ack')?['user',origin,origin]:['user']);
    }finally{await restored.dispose();}
   }
  }
- console.log('Codex steering passed: native-item provenance, durable multi-notice completion/cold recovery, interrupt retention, missing consumption/rejection retry, terminal race, disconnect, metadata write failure and queued user ordering. Synthetic JSONL peer; no model.');
+ console.log('Codex steering passed: native-item provenance, durable system/report completion/cold recovery and report metadata/acknowledgement, interrupt retention, missing consumption/rejection retry, terminal race, disconnect, metadata write failure and queued user ordering. Synthetic JSONL peer; no model.');
 }finally{await rm(root,{recursive:true,force:true});}
