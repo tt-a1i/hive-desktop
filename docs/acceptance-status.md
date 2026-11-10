@@ -2,7 +2,7 @@
 
 ## 当前开发包293afe3（2026-11-10）
 
-本批通知/汇报语义、输入区/附件及退出错误修复已纳入Mac优化包；ZIP四组检查、旧负新正对照、真实三会话包内冷读、解压包及Finder安装副本启动/退出/附件恢复通过，零新推理。current/candidate/DMG/Applications同批，清理无占用重复base约514MiB，保留1e可运行回退；见[本批验证](validation/2026-11-10-composer-package.md)。下文“未入1e”等为当时阶段记录，Windows原生与完整目标继续。
+本批通知/汇报语义、输入区/附件及退出错误修复已纳入Mac优化包；ZIP四组检查、旧负新正对照、真实三会话包内冷读、解压包及Finder安装副本启动/退出/附件恢复通过，零新推理。current/candidate/DMG/Applications同批，清理无占用重复base约514MiB，保留1e可运行回退；见[本批验证](validation/2026-11-10-composer-exit-package.md)。下文“未入1e”等为当时阶段记录，Windows原生与完整目标继续。
 
 ## Codex退出清理诊断（2026-11-10，后续源码）
 
