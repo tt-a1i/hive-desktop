@@ -113,7 +113,11 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     else if (event.type === 'extension_error' || event.type === 'hive_extension_ui_unsupported') {
       const error = new Error(String(event.error ?? event.message ?? 'External Pi extension failed'));
       emit({ type: 'error', sessionId, message: error.message });
-      if (run) { run.error = error; if (!run.started) run.reject(error); }
+      // Native hook diagnostics do not invalidate a successful Pi reply.
+      // Command failures and unsupported dialogs still prevent delivery completion.
+      if (run && (event.type === 'hive_extension_ui_unsupported' || event.event === 'command')) {
+        run.error = error; if (!run.started) run.reject(error);
+      }
     } else if (event.type === 'extension_ui_request' && event.method === 'notify') {
       if (event.notifyType === 'error') emit({ type: 'error', sessionId, message: String(event.message) });
     }
