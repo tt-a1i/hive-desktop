@@ -1,3 +1,4 @@
+use super::PAGE;
 use crate::{
     app::HiveApp,
     focus_scroll::{Reveal, Viewport},
@@ -51,11 +52,11 @@ impl HiveApp {
                     .when(self.collaboration.list_loading, |view| view.child(div().text_sm().child(tr("正在读取派单…"))))
                     .when_some(self.collaboration.list_error.as_ref().map(|(key,error)| format!("{}: {error}", tr(key))), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
                     .when(!self.collaboration.list_loading && self.collaboration.list_error.is_none() && self.collaboration.dispatches.is_empty(), |view| view.child(div().text_sm().child(tr("此页没有派单"))))
-                    .children(self.collaboration.dispatches.iter().enumerate().map(|(i, dispatch)| self.render_dispatch_card(i, dispatch, cx)))
+                    .children(self.collaboration.dispatches.iter().take(PAGE).enumerate().map(|(i, dispatch)| self.render_dispatch_card(i, dispatch, cx)))
                     .child(Reveal::new("dispatch-pagination-reveal", scroll, h_flex().gap_2()
-                        .child(Button::new("dispatch-prev").label(tr("上一页")).disabled(!self.connected || self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(20); this.load_dispatches(cx); })))
-                        .child(div().text_sm().child(if english() { format!("Page {}", self.collaboration.offset / 20 + 1) } else { format!("第 {} 页", self.collaboration.offset / 20 + 1) }))
-                        .child(Button::new("dispatch-next").label(tr("下一页")).disabled(!self.connected || self.collaboration.dispatches.len() < 20 || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += 20; this.load_dispatches(cx); })))))
+                        .child(Button::new("dispatch-prev").label(tr("上一页")).disabled(!self.connected || self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(PAGE); this.load_dispatches(cx); })))
+                        .child(div().text_sm().child(if english() { format!("Page {}", self.collaboration.offset / PAGE + 1) } else { format!("第 {} 页", self.collaboration.offset / PAGE + 1) }))
+                        .child(Button::new("dispatch-next").label(tr("下一页")).disabled(!self.connected || self.collaboration.dispatches.len() <= PAGE || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += PAGE; this.load_dispatches(cx); })))))
                     )
                     .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
                         .when_some(self.collaboration.detail_error.as_ref().map(|(key,error)| format!("{}: {error}", tr(key))), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))

@@ -11,6 +11,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 const PAGE: usize = 20;
+const READ_LIMIT: usize = PAGE + 1;
 #[derive(Clone, Deserialize)]
 pub struct Dispatch {
     pub id: String,
@@ -245,7 +246,7 @@ impl HiveApp {
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let state = if filter == "all" { String::new() } else { format!("&state={filter}") };
-            let result = runtime.request("hive.request", json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/dispatches?limit={PAGE}&offset={offset}{state}")})).await;
+            let result = runtime.request("hive.request", json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/dispatches?limit={READ_LIMIT}&offset={offset}{state}")})).await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection { return; }
                 let c = &mut this.collaboration;

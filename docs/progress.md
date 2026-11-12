@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 协作整页分页（2026-11-12）
+
+修复刚好20/40条仍可进入空白下一页：加载与自动刷新统一读取21、显示20，以多出的一条判断下一页。真实HTTP/SQLite覆盖20/21/40条、筛选及升序身份完整性；一次原生20条禁用→追加21后自动启用→第二页仅21/退出0通过。Mac构建/Windows类型检查通过，见[证据](validation/2026-11-12-collaboration-pagination.md)。无新协议/store/正式测试或模型请求，准备与英文搜索修复一起打包。
+
 ## 英文后端名称搜索与账号边界（2026-11-12）
 
 真实接口复现External Pi/Built-in Pi搜索无结果；一行补齐英文显示词，六组中英文名称及现有跨项目/冷恢复搜索回归通过，无Agent初始化或模型请求。见[证据](validation/2026-11-12-search-labels-and-auth-boundaries.md)。搜索修复未入3a3f873包。Pi原生Terra单次复查仍在OAuth刷新返回invalid_grant，失败队列已清理；用户明确暂缓重登、继续只用Terra，Claude真实推理仍未验收。项目移除候选经render条件核对判为不可达，试改已撤回，无工作区删除。

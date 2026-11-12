@@ -1,4 +1,4 @@
-use super::{Dispatch, MessagePage, PAGE, Tasks};
+use super::{Dispatch, MessagePage, READ_LIMIT, Tasks};
 use crate::app::HiveApp;
 use gpui_kit::*;
 use serde_json::json;
@@ -66,7 +66,7 @@ impl HiveApp {
         let connection = self.connection_generation;
         cx.spawn(async move|this,cx|{
             let state=if filter=="all"{String::new()}else{format!("&state={filter}")};
-            let result=runtime.request("hive.request",json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/dispatches?limit={PAGE}&offset={offset}{state}")})).await;
+            let result=runtime.request("hive.request",json!({"method":"GET","path":format!("/api/ui/workspaces/{workspace}/dispatches?limit={READ_LIMIT}&offset={offset}{state}")})).await;
             let _=this.update(cx,|this,cx|{
                 if this.connection_generation!=connection{return;}
                 let c=&mut this.collaboration;
