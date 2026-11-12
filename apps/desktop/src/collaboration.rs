@@ -154,6 +154,7 @@ impl HiveApp {
         self.collaboration.focus_navigation = true;
     }
     pub fn reload_collaboration(&mut self, cx: &mut Context<Self>) {
+        self.refresh_members(cx);
         self.collaboration.workflow_origin = false;
         self.collaboration.chat_origin = None;
         self.collaboration.offset = 0;

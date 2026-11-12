@@ -35,6 +35,10 @@ impl HiveApp {
                 } else if id.ends_with(":__workflow__") {
                     tr("工作流").into()
                 } else if let Some(session) = self.sessions.iter().find(|session| session.agent_id.as_deref() == Some(id)) {
+                    // A stale/in-flight roster is not evidence that this member is historical.
+                    if self.member_loading || self.member_error.is_some() || self.busy.contains(&session.id) {
+                        return self.session_title(session).to_owned();
+                    }
                     if english() { format!("{} · Historical conversation", self.session_title(session)) } else { format!("{} · 历史会话", self.session_title(session)) }
                 } else {
                     id.into()
