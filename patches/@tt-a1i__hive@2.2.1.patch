@@ -776,10 +776,31 @@ index c4bdd2dfcaace3dae5dbce091695f94785d036c5..d4c3fcd350d90850ca4f416da5c2fa22
          },
      };
 diff --git a/dist/src/server/runtime-store-workflows.js b/dist/src/server/runtime-store-workflows.js
-index c5cbf640b7babd2deabd2700c830ff88624123b7..60041fe3245e2ecf98651310d473ca759b94eb2d 100644
+index c5cbf640b7babd2deabd2700c830ff88624123b7..9daaccb7b5e9d576b013ca5eb73c68b876354ed5 100644
 --- a/dist/src/server/runtime-store-workflows.js
 +++ b/dist/src/server/runtime-store-workflows.js
-@@ -68,9 +68,10 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+@@ -22,18 +22,8 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+                 if (!cancelled)
+                     return false;
+                 services.workspaceStore.markTaskCancelled(workspaceId, openDispatch.toAgentId);
+-                try {
+-                    void services.agentRuntime
+-                        .writeCancelPrompt(workspaceId, cancelled.toAgentId, cancelled.id, reason, {
+-                        requireActiveRun: true,
+-                    })
+-                        .catch((error) => {
+-                        console.error('[hive] swallowed:workflow.cancelDispatch.forward', error);
+-                    });
+-                }
+-                catch (error) {
+-                    console.error('[hive] swallowed:workflow.cancelDispatch.forward', error);
+-                }
++                // The workflow executor owns these ephemeral workers. Rejecting
++                // its dispatch wait below tears them down; no extra prompt is needed.
+                 return true;
+             },
+         },
+@@ -68,9 +58,10 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
                  : '\n' +
                      dispatches
                          .map((d) => {
@@ -793,7 +814,7 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..60041fe3245e2ecf98651310d473ca75
                                  : d.reportText.trim()
                              : `(no report; status=${d.status})`;
                          return `  #${d.stepIndex ?? '?'} -> ${escapeHiveEnvelopeText(reply)}`;
-@@ -82,8 +83,9 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+@@ -82,8 +73,9 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
                  const serialized = typeof finalRecord.result === 'string'
                      ? finalRecord.result
                      : JSON.stringify(finalRecord.result, null, 2);
