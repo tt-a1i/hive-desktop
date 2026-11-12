@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包db12698（2026-11-12）
+
+Unicode标题修复已入current/candidate、DMG及Applications，只更新两个runtime模块/map，原生二进制保持。包内真实新输入边界/Rust解析、旧坏标题四记录的两次原生冷开及退出、emoji/自定义记录/原数据核对、四组包检查和旧Terra三会话只读恢复通过，无厂商请求。清理无占用重复base/安装备份，3d4422f完整回退与证据保留。见[本批包范围](validation/2026-11-12-unicode-title-package.md)。下方未入包为历史，完整目标继续。
+
 ## 自动标题Unicode与原生协议（2026-11-12，源码）
 
 真实首条输入复现UTF-16截断留下半个emoji，旧自动标题及旧索引JSON均被原生同版serde_json拒绝。共享截取改为code point，旧自动标题读时只移除残片；正常emoji/自定义记录和原文件字节保持，Rust新响应解析通过。真实输入/队列/HTTP/SQLite及四个现有标题/搜索/归档/恢复检查通过。见[根因与证据](validation/2026-11-12-unicode-auto-title.md)。无正式测试、面板或厂商推理，未入3d4422f包，完整目标继续。
