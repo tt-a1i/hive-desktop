@@ -1162,5 +1162,10 @@
   "尚未检查连接与账号": "Connection and account not checked yet",
   "正在检查连接与账号…": "Checking connection and account…",
   "输入已更改，请重新检查连接与账号。": "The input changed. Check the connection and account again.",
-  "本机保存状态、版本和连接检查不验证登录有效性或模型可用性；每个 Agent 使用各自的账号与模型。": "Saved records, version checks, and connection checks do not verify sign-in validity or model access. Each Agent uses its own accounts and models."
+  "本机保存状态、版本和连接检查不验证登录有效性或模型可用性；每个 Agent 使用各自的账号与模型。": "Saved records, version checks, and connection checks do not verify sign-in validity or model access. Each Agent uses its own accounts and models.",
+  "复制诊断信息": "Copy diagnostics",
+  "正在读取诊断信息…": "Reading diagnostics…",
+  "诊断信息已复制到本机剪贴板。": "Diagnostics copied to the local clipboard.",
+  "复制诊断信息失败": "Could not copy diagnostics",
+  "包含项目与成员名称、版本和运行状态，不含消息正文、令牌或完整项目路径；仅复制到本机剪贴板。": "Includes project and member names, versions and runtime status; excludes message bodies, tokens and full project paths. Copied to the local clipboard only."
 }

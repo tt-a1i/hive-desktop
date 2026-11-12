@@ -54,7 +54,7 @@ const ENTRIES: &[Entry] = &[
         section: Some(SettingsSection::Remote),
         title: "远程接入",
         description: "账号连接、设备配对与访问记录",
-        keywords: "remote pairing device gateway audit 远程 手机 配对 设备 网关 安全短码 审计",
+        keywords: "remote pairing device gateway audit diagnostics support 远程 手机 配对 设备 网关 安全短码 审计 诊断 故障",
     },
     Entry {
         section: Some(SettingsSection::Notifications),

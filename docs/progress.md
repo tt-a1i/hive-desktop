@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 远程诊断复制（2026-11-12）
+
+补回Web已有的诊断复制入口，直接复用authenticated support-bundle，不增加后台或上传。真实HTTP/SQLite验证403、metadata保留及正文/token/完整路径/自定义网关脱敏；一次原生复制→Cmd+V到未发送草稿→退出0，完整JSON除两个生成时间外一致。Mac构建/Windows目标检查通过，见[证据](validation/2026-11-12-remote-diagnostics.md)。后台矩阵由代码完成；无正式测试改动、未入645c9a5包，完整目标继续。
+
 ## 原生混合后端路由与设置诊断（2026-11-12）
 
 四后端各做主控、各配四后端Worker的16组合，真实原生控制/team CLI/HTTP/SQLite、报告正确归属与完整后台重开保持通过；无模型推理或面板操作。另将共享原生设置失败的具体原因带到桌面，旧包/新源码生产JSONL对照、状态/文件保持及有效模型重试通过，TS/build与三组持久化/推理设置回归通过。见[证据](validation/2026-11-12-mixed-native-routing.md)。只改一行错误消息，未增改删正式测试；新诊断未入645c9a5包，真实混合推理/Windows及完整目标继续。

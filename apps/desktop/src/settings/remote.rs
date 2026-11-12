@@ -54,6 +54,7 @@ pub struct Remote {
     pub ticket: Option<Ticket>,
     pub revoking: Option<String>,
     pub loading: bool,
+    pub diagnostics_loading: bool,
     pub valid: bool,
     pub details_valid: bool,
     pub error: Option<String>,
@@ -64,6 +65,8 @@ enum Notice {
     TicketError(String),
     Submitted,
     ActionError(String),
+    DiagnosticsCopied,
+    DiagnosticsError(String),
 }
 impl Notice {
     fn text(&self) -> String {
@@ -72,6 +75,8 @@ impl Notice {
             Self::TicketError(error) => format!("{}: {error}", tr("配对信息无法读取")),
             Self::Submitted => tr("操作已提交，正在重新读取实际状态。").to_owned(),
             Self::ActionError(error) => format!("{}: {error}", tr("操作失败")),
+            Self::DiagnosticsCopied => tr("诊断信息已复制到本机剪贴板。").to_owned(),
+            Self::DiagnosticsError(error) => format!("{}: {error}", tr("复制诊断信息失败")),
         }
     }
 }
@@ -85,6 +90,33 @@ fn path_id(id: &str) -> String {
     url::form_urlencoded::byte_serialize(id.as_bytes()).collect()
 }
 impl HiveApp {
+    pub fn copy_remote_diagnostics(&mut self, cx: &mut Context<Self>) {
+        if !self.connected || self.closing || self.restarting || self.remote.diagnostics_loading {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else { return; };
+        let connection = self.connection_generation;
+        self.remote.diagnostics_loading = true;
+        self.remote.message = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = runtime.request("hive.request", json!({"method":"GET","path":"/api/diagnostics/support-bundle"})).await
+                .and_then(|bundle| serde_json::to_string_pretty(&bundle).map_err(|error| error.to_string()));
+            let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection || this.closing { return; }
+                this.remote.diagnostics_loading = false;
+                this.remote.message = Some(match result {
+                    Ok(text) => {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                        Notice::DiagnosticsCopied
+                    }
+                    Err(error) => Notice::DiagnosticsError(error),
+                });
+                cx.notify();
+            });
+        }).detach();
+    }
+
     pub fn refresh_remote(&mut self, cx: &mut Context<Self>) {
         if !self.connected || self.closing || self.restarting || self.remote.loading {
             return;
