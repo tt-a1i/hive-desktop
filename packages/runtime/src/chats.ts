@@ -64,7 +64,7 @@ export class Chats implements StructuredSessionPort {
     const terms = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
     const groups = await this.navigationEntries(false, archived);
     const matches = groups.flat().filter(hit => {
-      const backendName = { pi: '内置 Pi', codex: 'Codex', 'pi-rpc': '外部 Pi', claude: 'Claude Code' }[hit.session.backend];
+      const backendName = { pi: '内置 Pi Built-in Pi', codex: 'Codex', 'pi-rpc': '外部 Pi External Pi', claude: 'Claude Code' }[hit.session.backend];
       const searchable = [hit.title, hit.session.title, hit.workspaceName, hit.workspacePath, hit.session.backend, backendName].join(' ').toLocaleLowerCase();
       return terms.every(term => searchable.includes(term));
     }).sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));

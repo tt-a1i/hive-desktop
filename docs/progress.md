@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 英文后端名称搜索与账号边界（2026-11-12）
+
+真实接口复现External Pi/Built-in Pi搜索无结果；一行补齐英文显示词，六组中英文名称及现有跨项目/冷恢复搜索回归通过，无Agent初始化或模型请求。见[证据](validation/2026-11-12-search-labels-and-auth-boundaries.md)。搜索修复未入3a3f873包。Pi原生Terra单次复查仍在OAuth刷新返回invalid_grant，失败队列已清理；用户明确暂缓重登、继续只用Terra，Claude真实推理仍未验收。项目移除候选经render条件核对判为不可达，试改已撤回，无工作区删除。
+
 ## 当前开发包3a3f873（2026-11-12）
 
 设置原生错误原因、Web诊断复制和会话打开错误隔离已纳入优化release。四组包gate、包内Node设置旧/新对照及三会话冷读通过；解压包欢迎启动/包内进程路径/正常退出0、DMG与Applications完整清单替换通过。见[本批包证据](validation/2026-11-12-diagnostics-error-package.md)。无新模型推理，不重复页面走查；当前/candidate/DMG/安装副本同批。无占用重复base/安装备份及四个可重建开发App壳已清，状态/日志/ZIP与645c9a5回退保留。下方未入645c9a5为各轮历史状态，完整目标继续。

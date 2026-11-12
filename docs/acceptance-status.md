@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 英文搜索与认证复查（2026-11-12）
+
+External Pi/Built-in Pi的真实搜索缺口已在源码修正，六组名称及现有回归通过，未入3a3f873包。Pi原生Terra请求仍因OAuth invalid_grant失败，已abort清理；用户本轮明确暂不重登，并保持真实测试仅Terra，Claude推理边界不变。见[证据与排除项](validation/2026-11-12-search-labels-and-auth-boundaries.md)。完整目标保持开放，不因单个账号限制停止其他实施。
+
 ## 当前开发包3a3f873（2026-11-12）
 
 当前/candidate、DMG及Applications更新3a3f873，纳入诊断复制、原生设置错误原因及会话打开错误隔离。四组包gate、包内Node设置对照/三会话冷读、解压包实际启动退出0及DMG/安装清单核对通过；新模型0，安装副本本轮未另启动。见[证据与边界](validation/2026-11-12-diagnostics-error-package.md)。后文未入包描述按当时阶段保留；所有账号、正式发行、Windows原生及完整体验缺口仍开放。
