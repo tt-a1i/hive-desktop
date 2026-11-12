@@ -39,8 +39,13 @@ export class CodexProjection {
   }
   recover(turns: CodexTurn[], nativeItems = false): void {
     const next: CodexDisplayEntry[] = [];
+    const byTurn = new Map<string, CodexDisplayEntry[]>();
+    for (const entry of this.entries) {
+      const group = byTurn.get(entry.turnId);
+      if (group) group.push(entry); else byTurn.set(entry.turnId, [entry]);
+    }
     for (const turn of turns) {
-      const cached = this.entries.filter(entry => entry.turnId === turn.id);
+      const cached = byTurn.get(turn.id) ?? [];
       if (cached.length > 0) {
         const recovered = cached.map(entry => {
           if (!nativeItems || entry.item.status !== 'inProgress' || entry.item.hiveInterrupted === true) return entry;
