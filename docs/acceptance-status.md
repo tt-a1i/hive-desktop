@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 当前开发包d644db9（2026-11-12）
+
+协作原文复制与Codex长历史恢复优化已纳入current/candidate、DMG和Applications。四组包检查、包内长历史写盘/冷读一致性、旧Terra三会话只读恢复、欢迎启动/正常退出及安装完整清单通过。原生仅启动退出抽查，无新模型调用；清理无占用重复base/临时安装备份，保留3ed07c9可运行回退和全部验证状态。见[本批证据](validation/2026-11-12-copy-recovery-package.md)。下方未入包为各轮历史状态，完整目标继续。
+
 ## Codex长历史恢复（2026-11-12，源码）
 
 将按回合反复全表filter改为一次局部索引，保留恢复与持久化语义。合成5,000回合/10,000记录包含真实写盘的四样本中位312.1→68.0ms；原/新完整JSON哈希一致，8组旧/新差分及五个现有Codex检查、真实Terra旧三会话只读冷开通过。见[证据与性能范围](validation/2026-11-12-codex-recovery-performance.md)。无正式测试、模型或面板操作，未入3ed07c9包，完整目标继续。
@@ -157,14 +161,14 @@ Pi账号页补提供商/本机保存状态分组与AX正文，并复用焦点自
 | 现有Web协作与配置整合 | 团队职责/角色模板、任务与冲突、派单/消息/汇报、记忆、工作流、通知及程序/模型/认证配置已有接入 | 语言偏好与累计1046条主要页面/配置/聊天查找/协作/资源终端及静态和上下文错误文案已接入，模型编辑已补固定操作/提示、Tab与空格保存及冷读回，见[配置窄窗](validation/2026-11-09-model-editor-footer.md)，已纳入2b3c07e候选并补包内配置/退出恢复，见[配置候选](validation/2026-11-09-model-candidate.md)；模型/接口编辑另已补焦点与标签显露、正反Tab和实际滚动，见[滚动证据](validation/2026-11-09-model-editor-scroll.md)，新增/覆盖草稿及保存、英文17字号已补窄窗实测，完整字号/可访问性/Windows等边界仍在[#20](https://github.com/tt-a1i/hive-desktop/issues/20)；完整页面迁移、真实切换/草稿/窄窗仍未完成，见[语言记录](validation/2026-11-09-interface-language.md)、[#17](https://github.com/tt-a1i/hive-desktop/issues/17)；远程配置已接入并通过回环SAS配对和撤销断网/重开验证，原生设置/开关/配对码/拒绝已补包内实证，确认/撤销GUI已补实际隔离配对与冷读（见[最新补验](validation/2026-11-10-remote-confirmation.md)），真实网关和Windows仍待，见[原生补验](validation/2026-11-09-remote-native-ui.md)及[最新候选](validation/2026-11-09-settled-candidate.md)、[#18](https://github.com/tt-a1i/hive-desktop/issues/18)；工作流计划删除已补上述目标/peer/历史实证，精确在途时序与平台矩阵仍待 |
 | Web本机通知迁移 | 默认关闭的GPUI系统提醒接线及本机偏好/异常/窄窗键盘/冷恢复，见[本机提醒](validation/2026-11-10-local-notifications.md) | 系统授权待确认，关闭状态真实Terra回复已验证；开启后的送达/点击/平台及音效矩阵未验收；[#25](https://github.com/tt-a1i/hive-desktop/issues/25)开放，不能把此前Webhook接入当本地提醒已完成 |
 | 停止、重连、恢复、窗口生命周期 | 所有权清理、队列/身份恢复、Mac实际后台死亡/重连；Mac EPERM回归先红后绿；最新源码Cmd+Q、冷启动草稿/语言恢复、窗口关闭均exit0并清理后台，见[原生补验](validation/2026-11-09-native-resume.md) | 旧21544/54534已不在进程表，其退出原因未证实；候选包和Windows矩阵未完成，不承诺恢复任意中断工具或exactly-once |
-| macOS可实际使用 | current/candidate现为1e68306优化release，纳入汇报同回合修复与欢迎摘要；四组包内检查、欢迎实际账号/版本、三会话冷读、Finder更新/安装启动退出通过，见[当前开发包](validation/2026-11-10-report-package.md)。真实三会话Terra来自同提交源码验证，与包内无推理读取分开 | 完整页面、输入法、远程/协作/辅助技术与性能矩阵仍未完成；开发包不是完整交付 |
+| macOS可实际使用 | current/candidate现为d644db9优化release，纳入协作复制与恢复优化；四组包检查、恢复结果核对、欢迎启动退出、DMG及安装完整清单通过，见[当前开发包](validation/2026-11-12-copy-recovery-package.md)。真实Terra来自先前645c9a5，当前包只有三会话只读冷开；安装副本本轮未另启动 | 完整页面、输入法、远程/协作/辅助技术与性能矩阵仍未完成；开发包不是完整交付 |
 | Windows首版支持 | 已有平台接线与监督记录，本机默认功能MSVC类型检查通过；[跨平台](validation/2026-11-08-windows-cross-check.md) | 本批未取得Windows原生窗口、模型、外部CLI及包验收。用户明确暂时无Windows机器、先继续其他实施；不处理CI不等于取消Windows目标 |
 | 完整、精美、Cindy/Maka级体验 | 已有固定源码参考与安装Cindy局部原生走查，并实施多轮聊天/配置/导航改进 | 整体对标仍未证实；还须按实际安装体验做全流程及边角检查，不能以局部截图或当前清单宣称一致 |
 | 可安装与交付 | 有冻结Node/native依赖的Mac便携开发包及实际PTY/HTTP/SQLite检查 | 未签名/未公证；正式发行、完整安装体验与两个平台最终验收未完成 |
 
 ## 当前开发包与候选
 
-最新指针为1e68306，ZIP/DMG及实际Applications更新结果见[本批开发包](validation/2026-11-10-report-package.md)和[当前包](validation/2026-11-08-current-package.md)。下面6148801及其后按时间追加内容保留为历史，不能作为最新current或现存解压目录保证。
+最新指针为d644db9，ZIP/DMG、Applications及验证边界见[当前开发包](validation/2026-11-12-copy-recovery-package.md)。下面6148801及其他历史条目按当时阶段保留，不作为最新current或现存目录保证。
 
 ### 历史：6148801
 

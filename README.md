@@ -49,7 +49,7 @@ pnpm --filter @hive-desktop/runtime check:team
 
 这些检查使用临时数据目录，其中团队集成会运行真实 Hive HTTP / SQLite、Pi SDK 和 team CLI，但暂停模型执行。真实模型验证固定使用 Pi 原生 OpenAI / ChatGPT 接入的 `gpt-6.1-terra`，不依赖 Magpie；见 [协作验收记录](docs/validation/2026-11-07-structured-team.md)。
 
-当前 Mac 开发包及其验证边界见 [当前开发包](docs/validation/2026-11-12-pagination-search-package.md)。普通文件草稿使用紧凑文件行，草稿和历史中的文本附件可直接只读预览、复制、重新读取，见 [附件阅读](docs/validation/2026-11-08-attachment-preview.md)。普通文件和图片可选择/粘贴文件/拖放、混合或单独发送，并保留草稿和历史；普通文件通过 Hive 上传副本路径交给 Agent 按需读取。原始 Codex Terra 已实际读取删除源文件后的副本，并在桌面恢复工具记录和文件卡片，见 [文件验证](docs/validation/2026-11-08-file-attachments.md)。图片的原图查看、复制/保存已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。内置 Pi 的真实识图曾因 OAuth grant 失效失败；原生 Codex Terra 的真实识图、原图字节与完整后台重开恢复已通过，见 [Codex 图片实证](docs/validation/2026-11-09-codex-image-live.md)。Mac 系统图片选择/保存、取消与覆盖已补真实操作，原图字节及草稿冷读保持，见 [系统保存](docs/validation/2026-11-10-image-system-save.md)；长图片历史性能和 Windows 原生体验仍待验收。
+当前 Mac 开发包及其验证边界见 [当前开发包](docs/validation/2026-11-12-copy-recovery-package.md)。普通文件草稿使用紧凑文件行，草稿和历史中的文本附件可直接只读预览、复制、重新读取，见 [附件阅读](docs/validation/2026-11-08-attachment-preview.md)。普通文件和图片可选择/粘贴文件/拖放、混合或单独发送，并保留草稿和历史；普通文件通过 Hive 上传副本路径交给 Agent 按需读取。原始 Codex Terra 已实际读取删除源文件后的副本，并在桌面恢复工具记录和文件卡片，见 [文件验证](docs/validation/2026-11-08-file-attachments.md)。图片的原图查看、复制/保存已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。内置 Pi 的真实识图曾因 OAuth grant 失效失败；原生 Codex Terra 的真实识图、原图字节与完整后台重开恢复已通过，见 [Codex 图片实证](docs/validation/2026-11-09-codex-image-live.md)。Mac 系统图片选择/保存、取消与覆盖已补真实操作，原图字节及草稿冷读保持，见 [系统保存](docs/validation/2026-11-10-image-system-save.md)；长图片历史性能和 Windows 原生体验仍待验收。
 
 Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令处理，协作派单、汇报及恢复文本保持原有非交互投递。原始输入、实际后端消息及来源分开保留，见 [Pi 输入验证](docs/validation/2026-11-08-pi-user-input.md)。输入 `/` 或使用输入区命令按钮可筛选当前原生会话实际加载的技能、模板和扩展命令，选择只补入草稿，见 [命令选择验证](docs/validation/2026-11-08-pi-command-picker.md)。上述开发 ZIP 已纳入原生输入、选择器和历史/持久化修复；Windows 与正式发行边界单列。
 
@@ -93,4 +93,4 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-当前Mac开发包为3a3f873优化release，纳入诊断复制、设置错误原因和会话打开错误隔离；四组包检查、包内设置对照/三会话冷读、解压包原生启动退出及DMG/安装清单核对通过，见[最新包记录](docs/validation/2026-11-12-pagination-search-package.md)。本批无新模型推理，真实Terra证据仍归各原验证版本，安装副本未另开窗口。通知送达/点击仍待授权验收；未签名/未公证，Windows原生与完整目标继续开放。
+当前Mac开发包为3a3f873优化release，纳入诊断复制、设置错误原因和会话打开错误隔离；四组包检查、包内设置对照/三会话冷读、解压包原生启动退出及DMG/安装清单核对通过，见[最新包记录](docs/validation/2026-11-12-copy-recovery-package.md)。本批无新模型推理，真实Terra证据仍归各原验证版本，安装副本未另开窗口。通知送达/点击仍待授权验收；未签名/未公证，Windows原生与完整目标继续开放。
