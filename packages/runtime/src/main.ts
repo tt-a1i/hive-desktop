@@ -16,7 +16,12 @@ const protocolWrite = process.stdout.write.bind(process.stdout);
 // away from the desktop wire; only this captured writer sends protocol frames.
 process.stdout.write = process.stderr.write.bind(process.stderr);
 console.log = (...args: unknown[]) => { process.stderr.write(`${format(...args)}\n`); };
-const send = (message: unknown) => protocolWrite(`${JSON.stringify(message)}\n`);
+const send = (message: unknown) => {
+  // Keep legacy malformed text readable by Rust without rewriting stored history.
+  const frame = JSON.stringify(message, (_key, value: unknown) =>
+    typeof value === 'string' ? value.replace(/[\uD800-\uDFFF]/gu, '\uFFFD') : value);
+  return protocolWrite(`${frame}\n`);
+};
 
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });

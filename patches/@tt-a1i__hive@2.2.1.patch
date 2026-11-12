@@ -252,6 +252,37 @@ index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..b9e27abce99157db799260327d5c793a
          },
      };
      pty.onData((chunk) => {
+diff --git a/dist/src/server/recovery-summary.js b/dist/src/server/recovery-summary.js
+index 018b3549ed6a693b59fe7a55927290c4f3e21da8..639181956485c778b636b6ccea0d0141fd031012 100644
+--- a/dist/src/server/recovery-summary.js
++++ b/dist/src/server/recovery-summary.js
+@@ -61,7 +61,7 @@ const formatDispatchMessages = (dispatches, messages, agent) => {
+             `- dispatch ${dispatch.id}: latest included input sequence ${requiredSeenSeq}. This is a partial snapshot; read \`team messages --dispatch ${dispatch.id}\` for current context before its owner's report. Use the returned required_seen_seq after considering the inputs, not a sequence from this summary.`,
+             ...related
+                 .slice(-8)
+-                .map((message) => `  - ${message.id} (dispatch ${message.dispatchId}) #${message.sequence} ${message.kind} (${message.deliveryState}): ${escapeHiveEnvelopeText(message.text.slice(0, 500))}`),
++                .map((message) => `  - ${message.id} (dispatch ${message.dispatchId}) #${message.sequence} ${message.kind} (${message.deliveryState}): ${escapeHiveEnvelopeText(Array.from(message.text).slice(0, 500).join(''))}`),
+         ];
+     });
+ };
+@@ -76,7 +76,7 @@ const formatPendingQuestions = (messages, agent) => {
+             const replyCommand = buildDispatchQuestionReplyCommand(message);
+             return [
+                 `- question ${message.id}: target ${message.dispatchId}; source ${message.sourceDispatchId ?? 'orchestrator'}; from ${escapeHiveEnvelopeText(message.fromAgentId)}; ${message.deliveryState}.`,
+-                `  ${escapeHiveEnvelopeText(message.text.slice(0, 1000))}`,
++                `  ${escapeHiveEnvelopeText(Array.from(message.text).slice(0, 1000).join(''))}`,
+                 `  Read: team messages --dispatch ${message.dispatchId}`,
+                 ...(replyCommand ? [`  Reply with your answer on stdin: ${replyCommand}`] : []),
+             ];
+@@ -108,7 +108,7 @@ export const buildRecoverySummary = ({ agent, openDispatches, dispatchMessages =
+     ...formatPendingQuestions(actionableDispatchMessages, agent),
+     '',
+     `## Current ${TASKS_RELATIVE_PATH}`,
+-    escapeHiveEnvelopeText(tasksContent.slice(0, TASKS_HEAD_LIMIT)) || '(empty)',
++    escapeHiveEnvelopeText(Array.from(tasksContent).slice(0, TASKS_HEAD_LIMIT).join('')) || '(empty)',
+     '',
+     '## Active members',
+     ...formatWorkers(workers),
 diff --git a/dist/src/server/remote-config-keys.js b/dist/src/server/remote-config-keys.js
 index cf80f23b9ed3a2d34cf5c27de755dbc036b3490c..2b144e1aeab4dfc8f71255c3f9534d8c6db92f07 100644
 --- a/dist/src/server/remote-config-keys.js
@@ -850,10 +881,22 @@ index f74fc2d4250e25025d2f7fb327cf49df8c1277a5..c7aad08d1f2e58f4660f04a98143b948
              void stop(workspaceId)
                  .catch((closeError) => logWatcherError(workspaceId, closeError))
 diff --git a/dist/src/server/team-operations.js b/dist/src/server/team-operations.js
-index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..bdf1c4adaf6ffa3611d7c87fc030f8556c5dba81 100644
+index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..b02631b15ec7fc0636f4bd22cede430f7eb2b43b 100644
 --- a/dist/src/server/team-operations.js
 +++ b/dist/src/server/team-operations.js
-@@ -79,6 +79,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
+@@ -33,7 +33,10 @@ export const formatUnknownWorkerError = (workerName, roster) => {
+    nothing open — the right move is `team status`, not a report retry loop. */
+ export const formatNoOpenDispatchError = (workerName, requestedDispatchId, openDispatches) => {
+     if (requestedDispatchId !== undefined && openDispatches.length > 0) {
+-        const lines = openDispatches.map((dispatch) => `  - ${dispatch.id} (${dispatch.status}): ${dispatch.text.slice(0, 60)}${dispatch.text.length > 60 ? '…' : ''}`);
++        const lines = openDispatches.map((dispatch) => {
++            const text = Array.from(dispatch.text);
++            return `  - ${dispatch.id} (${dispatch.status}): ${text.slice(0, 60).join('')}${text.length > 60 ? '…' : ''}`;
++        });
+         return [
+             `Dispatch ${requestedDispatchId} is not open for worker ${workerName}. Your open dispatches:`,
+             ...lines,
+@@ -79,6 +82,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
              try {
                  void agentRuntime
                      .deliverSystemMessageToAgent(workspaceId, targetAgentId, entry.payload, {
