@@ -62,6 +62,16 @@ pub(crate) struct Attachments {
     preparing: HashSet<String>,
     verified: HashSet<String>,
 }
+async fn prepare_preview(data: String, renderer: SvgRenderer) -> Result<ImagePreview, String> {
+    static DECODERS: smol::lock::Semaphore = smol::lock::Semaphore::new(2);
+    let permit = DECODERS.acquire().await;
+    smol::unblock(move || {
+        // The blocking work owns the permit even if its caller leaves the chat.
+        let _permit = permit;
+        preview(data, renderer)
+    }).await
+}
+
 fn preview(data: String, renderer: SvgRenderer) -> Result<ImagePreview, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
@@ -239,7 +249,7 @@ impl HiveApp {
                         let image = match item.image {
                             Some(image) => {
                                 let render = renderer.clone();
-                                smol::unblock(move || preview(image.data, render))
+                                prepare_preview(image.data, render)
                                     .await
                                     .map(Some)
                             }
@@ -324,7 +334,7 @@ impl HiveApp {
                     }) {
                     Ok(mut images) => match images.pop() {
                         Some(item) => match item.image {
-                            Some(image) => smol::unblock(move || preview(image.data, renderer))
+                            Some(image) => prepare_preview(image.data, renderer)
                                 .await
                                 .map(Some),
                             None => Ok(None),
@@ -532,12 +542,10 @@ impl HiveApp {
         let request = self.open_request;
         let renderer = cx.svg_renderer();
         cx.spawn(async move |this, cx| {
-            let results = smol::unblock(move || {
-                data.into_iter()
-                    .map(|data| preview(data, renderer.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .await;
+            let mut results = Vec::with_capacity(data.len());
+            for data in data {
+                results.push(prepare_preview(data, renderer.clone()).await);
+            }
             let _ = this.update(cx, |this, cx| {
                 if this.open_request != request {
                     return;
