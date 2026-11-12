@@ -2,6 +2,8 @@ import { piUserInputSources, piUserInputNote, piUserPrompt, type PiUserInput } f
 import { piUsage } from '../agent-usage.js';
 import { promptImages } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
+import { closeSync, existsSync, openSync, readSync } from 'node:fs';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
@@ -31,6 +33,8 @@ type Run = { cancelled: boolean; aborted: boolean; started: boolean; error?: Err
 /** External Pi owns model routing, credentials, configuration and the durable transcript. */
 export async function createExternalPiSession(options: ExternalPiSessionOptions): Promise<ExternalPiSessionHandle> {
   let state: State | undefined;
+  let entries: SessionEntry[] = [];
+  let loadedSessionFile: string | undefined;
   let branch: SessionEntry[] = [];
   let history: Record<string, unknown>[] = [];
   let ids: string[] = [];
@@ -51,8 +55,38 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     failureNotified = true;
     options.onUnexpectedExit?.(failure);
   };
+  const loadEntries = async (): Promise<{ entries: SessionEntry[]; leafId: string | null }> => {
+    if (!entries.length && state?.sessionFile && loadedSessionFile !== state.sessionFile) {
+      entries = readSessionEntries(state.sessionFile);
+      loadedSessionFile = state.sessionFile;
+    }
+    if (!entries.length) {
+      const full = await transport.request<{ entries: SessionEntry[]; leafId: string | null }>('get_entries');
+      entries = [...full.entries];
+      return { entries, leafId: full.leafId };
+    }
+    try {
+      const delta = await transport.request<{ entries: SessionEntry[]; leafId: string | null }>('get_entries', { since: entries.at(-1)!.id });
+      if (delta.entries.length) entries.push(...delta.entries);
+      return { entries, leafId: delta.leafId };
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.startsWith('Entry not found:')) throw error;
+      const latest = await transport.request<State>('get_state');
+      if (state) state = latest;
+      entries = readSessionEntries(latest.sessionFile);
+      loadedSessionFile = latest.sessionFile;
+      if (!entries.length) {
+        const full = await transport.request<{ entries: SessionEntry[]; leafId: string | null }>('get_entries');
+        entries = [...full.entries];
+        return { entries, leafId: full.leafId };
+      }
+      const delta = await transport.request<{ entries: SessionEntry[]; leafId: string | null }>('get_entries', { since: entries.at(-1)!.id });
+      if (delta.entries.length) entries.push(...delta.entries);
+      return { entries, leafId: delta.leafId };
+    }
+  };
   const refresh = async () => {
-    const result = await transport.request<{ entries: SessionEntry[]; leafId: string | null }>('get_entries');
+    const result = await loadEntries();
     branch = externalPiBranch(result.entries, result.leafId);
     const sources = piUserInputSources(branch);
     const presented = branch.flatMap(entry => {
@@ -281,6 +315,52 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     },
     setModel,
   };
+}
+function readSessionEntries(filePath: string | undefined): SessionEntry[] {
+  if (!filePath || !existsSync(filePath)) return [];
+  const entries: SessionEntry[] = [];
+  let hasHeader = false;
+  const accept = (raw: string): boolean => {
+    const line = raw.trim();
+    if (!line) return true;
+    try {
+      const entry = JSON.parse(line) as SessionEntry | { type?: string; id?: string };
+      if (!entry || typeof entry !== 'object') return true;
+      if (!hasHeader) {
+        if (entry.type !== 'session' || typeof entry.id !== 'string') return false;
+        hasHeader = true;
+        return true;
+      }
+      if (entry.type !== 'session') entries.push(entry as SessionEntry);
+      return true;
+    } catch { return true; }
+  };
+  const fd = openSync(filePath, 'r');
+  try {
+    const decoder = new StringDecoder('utf8');
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    const parts: string[] = [];
+    for (;;) {
+      const read = readSync(fd, buffer, 0, buffer.length, null);
+      if (read === 0) break;
+      const chunk = decoder.write(buffer.subarray(0, read));
+      let start = 0;
+      let newline = chunk.indexOf('\n', start);
+      while (newline !== -1) {
+        const piece = chunk.slice(start, newline);
+        const line = parts.length ? (parts.push(piece), parts.join('')) : piece;
+        parts.length = 0;
+        if (!accept(line)) return [];
+        start = newline + 1;
+        newline = chunk.indexOf('\n', start);
+      }
+      if (start < chunk.length) parts.push(chunk.slice(start));
+    }
+    const tail = decoder.end();
+    if (tail) parts.push(tail);
+    if (parts.length && !accept(parts.join(''))) return [];
+    return hasHeader ? entries : [];
+  } finally { closeSync(fd); }
 }
 function isObject(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
 function sameMessage(a: Record<string, unknown>, b: Record<string, unknown>): boolean {

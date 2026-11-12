@@ -52,20 +52,31 @@ export class ExternalPiTransport {
     this.child.once('exit', (code, signal) => this.finish(new Error(`External Pi exited (${code ?? signal ?? 'unknown'})`)));
     for (const stream of [this.child.stdin, this.child.stdout, this.child.stderr]) stream.on('error', error => this.fail(error));
     this.child.stderr.on('data', (chunk: Buffer) => { this.stderr = Buffer.concat([this.stderr, chunk]).subarray(-16384); });
-    let buffer = Buffer.alloc(0);
+    const maxLineBytes = 32 * 1024 * 1024;
+    let chunks: Buffer[] = [];
+    let bufferedBytes = 0;
     this.child.stdout.on('data', (chunk: Buffer) => {
-      if (this.ended) return;
-      buffer = Buffer.concat([buffer, chunk]);
+      if (this.ended || !chunk.length) return;
+      let start = 0;
       let newline: number;
-      while ((newline = buffer.indexOf(10)) !== -1) {
-        if (newline > 8 * 1024 * 1024) return this.fail(new Error('External Pi JSONL line exceeds limit'));
-        const line = buffer.subarray(0, newline).toString('utf8').trim();
-        buffer = buffer.subarray(newline + 1);
+      while ((newline = chunk.indexOf(10, start)) !== -1) {
+        const slice = chunk.subarray(start, newline);
+        const lineBytes = bufferedBytes + slice.length;
+        if (lineBytes > maxLineBytes) { chunks = []; bufferedBytes = 0; return this.fail(new Error('External Pi JSONL line exceeds limit')); }
+        const line = (chunks.length ? Buffer.concat([...chunks, slice], lineBytes) : slice).toString('utf8').trim();
+        chunks = []; bufferedBytes = 0;
+        start = newline + 1;
         if (line) {
           try { this.receive(JSON.parse(line)); } catch (error) { return this.fail(asError(error)); }
+          if (this.ended) return;
         }
       }
-      if (buffer.length > 8 * 1024 * 1024) this.fail(new Error('External Pi JSONL line exceeds limit'));
+      if (start < chunk.length) {
+        const tail = chunk.subarray(start);
+        bufferedBytes += tail.length;
+        if (bufferedBytes > maxLineBytes) { chunks = []; bufferedBytes = 0; return this.fail(new Error('External Pi JSONL line exceeds limit')); }
+        chunks.push(tail);
+      }
     });
     this.child.stdout.once('end', () => { if (!this.closing) this.fail(new Error('Unexpected external Pi stdout EOF')); });
   }
