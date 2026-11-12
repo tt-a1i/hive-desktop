@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 当前开发包3ed07c9（2026-11-12）
+
+协作整页分页与英文后端搜索修复已进入current/candidate、DMG及Applications。四组包检查、包内六组搜索/三会话只读冷开、解压包欢迎启动与退出0、DMG和安装完整清单通过；无新模型请求。清理无占用重复base及临时安装备份，3a3f873回退与所有状态/日志保留。见[本批证据](validation/2026-11-12-pagination-search-package.md)。下方未入包为各轮历史记录；账号、Windows原生及完整产品验收继续开放。
+
 ## 英文搜索与认证复查（2026-11-12）
 
 External Pi/Built-in Pi的真实搜索缺口已在源码修正，六组名称及现有回归通过，未入3a3f873包。Pi原生Terra请求仍因OAuth invalid_grant失败，已abort清理；用户本轮明确暂不重登，并保持真实测试仅Terra，Claude推理边界不变。见[证据与排除项](validation/2026-11-12-search-labels-and-auth-boundaries.md)。完整目标保持开放，不因单个账号限制停止其他实施。
