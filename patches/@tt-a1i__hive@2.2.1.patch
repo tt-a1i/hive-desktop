@@ -1086,7 +1086,7 @@ index 7f1e616c416b50c7aec3a4ef6c6142b233f762b6..7cefabf68ea448c749cd0e0754374b40
       *  and any caller that wants to wait synchronously. */
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
 diff --git a/dist/src/server/workflow-runner.js b/dist/src/server/workflow-runner.js
-index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..f1d15c388ad9a1979d0c69e91c33ef14b87db5f9 100644
+index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af0b785753 100644
 --- a/dist/src/server/workflow-runner.js
 +++ b/dist/src/server/workflow-runner.js
 @@ -1,4 +1,5 @@
@@ -1154,7 +1154,27 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..f1d15c388ad9a1979d0c69e91c33ef14
              onWorkerSettled: () => activeScriptWorkers.delete(run.id),
              handlers: {
                  agent: agentExecutor.agent,
-@@ -212,7 +248,10 @@ export const createWorkflowRunner = (deps) => {
+@@ -185,16 +221,16 @@ export const createWorkflowRunner = (deps) => {
+                 assertRunActive: () => assertRunActive(run.id),
+             },
+         });
+-        // TIER 2 #11 — wall-clock budget timer. Triggers stopRun on
++        // TIER 2 #11 — wall-clock budget timer. Triggers stopRunAndChildren on
+         // expiry, which routes through the same path as a user-initiated
+         // stop (in-flight awaiters reject; outer catch records 'stopped').
+         // The setTimeout is unref'd so a forgotten timer can't keep the
+-        // Node process alive after shutdown. stopRun is declared further
++        // Node process alive after shutdown. stopRunAndChildren is declared further
+         // down the file but exists by the time this timer fires, so the
+         // closure reference is safe.
+         const budgetTimer = setTimeout(() => {
+             log(`[hive] maxDurationMs (${maxDurationMs}ms) exceeded — stopping run`);
+-            stopRun(run.id);
++            stopRunAndChildren(run.id, new Set(), `Workflow exceeded maxDurationMs (${maxDurationMs}ms)`);
+         }, maxDurationMs);
+         budgetTimer.unref?.();
+         try {
+@@ -212,11 +248,14 @@ export const createWorkflowRunner = (deps) => {
              // degraded result (often a list of nulls), which both lies to the UI
              // and lies to the orchestrator's completion notification. Check the
              // marker after fn returns and record the truth instead.
@@ -1166,6 +1186,11 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..f1d15c388ad9a1979d0c69e91c33ef14
                  workflowRunStore.updateRun(run.id, {
                      status: 'stopped',
                      finishedAt: Date.now(),
+-                    error: 'Stopped by user',
++                    error: workflowRunStore.getRun(run.id)?.error ?? 'Stopped by user',
+                 });
+             }
+             else {
 @@ -240,9 +279,9 @@ export const createWorkflowRunner = (deps) => {
              const message = errorToMessage(error);
              abortedRuns.set(run.id, message);
@@ -1189,7 +1214,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..f1d15c388ad9a1979d0c69e91c33ef14
          assertParentRunStillRunning(input);
          const run = workflowRunStore.createRun(buildCreateInput(input, loaded));
          rememberTrigger(run.id, input.triggeredByAgentId);
-@@ -325,30 +365,31 @@ export const createWorkflowRunner = (deps) => {
+@@ -325,31 +365,32 @@ export const createWorkflowRunner = (deps) => {
              throw new Error(`workflow run vanished mid-flight: ${run.id}`);
          return finalized;
      };
@@ -1225,13 +1250,15 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..f1d15c388ad9a1979d0c69e91c33ef14
          });
          return run;
      };
+-    const stopRunAndChildren = (runId, visited) => {
 +    const runWorkflow = async (input) => trackWorkspaceActivity(input.workspaceId, () => runWorkflowUntracked(input));
 +    const startWorkflow = async (input) => trackWorkspaceActivity(input.workspaceId, () => startWorkflowUntracked(input));
 +    const startWorkflowInline = async (input) => trackWorkspaceActivity(input.workspaceId, () => startWorkflowInlineUntracked(input));
-     const stopRunAndChildren = (runId, visited) => {
++    const stopRunAndChildren = (runId, visited, reason = 'Stopped by user') => {
          if (visited.has(runId))
              return false;
-@@ -359,7 +400,7 @@ export const createWorkflowRunner = (deps) => {
+         visited.add(runId);
+@@ -359,20 +400,20 @@ export const createWorkflowRunner = (deps) => {
          stoppedRuns.add(runId);
          void activeScriptWorkers
              .get(runId)
@@ -1240,6 +1267,22 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..f1d15c388ad9a1979d0c69e91c33ef14
              .catch(() => { });
          // Cancel every open workflow dispatch tied to this run; this rejects the
          // runner's pending `awaitReport` promises, which propagates up the
+         // executeWorkflow try → its catch sets status='stopped'.
+-        cancelOpenDispatchesForRun(runId, current.workspaceId, 'Stopped by user');
++        cancelOpenDispatchesForRun(runId, current.workspaceId, reason);
+         for (const child of workflowRunStore.listChildRuns(runId)) {
+             if (child.status === 'running')
+-                stopRunAndChildren(child.id, visited);
++                stopRunAndChildren(child.id, visited, reason);
+         }
+         workflowRunStore.updateRun(runId, {
+             status: 'stopped',
+             finishedAt: Date.now(),
+-            error: 'Stopped by user',
++            error: reason,
+         });
+         // If the script had no in-flight agent() call when stop was requested,
+         // it may never reject on its own. Persist the stopped state immediately
 @@ -380,5 +421,18 @@ export const createWorkflowRunner = (deps) => {
          return true;
      };

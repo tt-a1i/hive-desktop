@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 工作流超时原因（2026-11-12，源码）
+
+修复 maxDurationMs 超时被误记为用户停止：运行、嵌套子运行、派单取消和主控通知保留同一时限原因，手动停止与原终态语义保持。当前包旧 runtime 与新源码的真实 HTTP/SQLite/Pi/协议 Worker 对照、进程清理/七条运行冷恢复、通知原文及两个现有回归通过，零模型/面板请求。见[证据与边界](validation/2026-11-12-workflow-timeout-reason.md)。未入 a744821，下一包需重新部署生产依赖，完整目标继续。
+
 ## 当前开发包 a744821（2026-11-12）
 
 恢复摘要与旧历史 JSONL 修复已入 current/candidate、DMG 及 Applications。新生产部署、九项精确文件差异、完整清单/链接、包内真实 Pi 恢复与旧会话冷读→Rust、四组包检查、原生启动/正常退出均通过，零模型请求。见[包内证据](validation/2026-11-12-recovery-unicode-package.md)。上一版 46659e2 保留供回退；本批没有将账号、Windows 或完整产品体验标为完成。下文“当前”及“未入包”为各阶段历史状态。
