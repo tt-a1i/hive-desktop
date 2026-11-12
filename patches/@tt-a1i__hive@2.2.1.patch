@@ -775,6 +775,36 @@ index c4bdd2dfcaace3dae5dbce091695f94785d036c5..d4c3fcd350d90850ca4f416da5c2fa22
              return revoked;
          },
      };
+diff --git a/dist/src/server/runtime-store-workflows.js b/dist/src/server/runtime-store-workflows.js
+index c5cbf640b7babd2deabd2700c830ff88624123b7..60041fe3245e2ecf98651310d473ca759b94eb2d 100644
+--- a/dist/src/server/runtime-store-workflows.js
++++ b/dist/src/server/runtime-store-workflows.js
+@@ -68,9 +68,10 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+                 : '\n' +
+                     dispatches
+                         .map((d) => {
+-                        const reply = d.reportText
+-                            ? d.reportText.length > 200
+-                                ? `${d.reportText.slice(0, 197).trim()}...`
++                        const report = Array.from(d.reportText ?? '');
++                        const reply = report.length
++                            ? report.length > 200
++                                ? `${report.slice(0, 197).join('').trim()}...`
+                                 : d.reportText.trim()
+                             : `(no report; status=${d.status})`;
+                         return `  #${d.stepIndex ?? '?'} -> ${escapeHiveEnvelopeText(reply)}`;
+@@ -82,8 +83,9 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+                 const serialized = typeof finalRecord.result === 'string'
+                     ? finalRecord.result
+                     : JSON.stringify(finalRecord.result, null, 2);
+-                const truncated = serialized.length > 4000
+-                    ? `${serialized.slice(0, 4000)}\n...(truncated; ${serialized.length - 4000} more chars)`
++                const characters = Array.from(serialized);
++                const truncated = characters.length > 4000
++                    ? `${characters.slice(0, 4000).join('')}\n...(truncated; ${characters.length - 4000} more chars)`
+                     : serialized;
+                 return `\nResult (workflow return value):\n${escapeHiveEnvelopeText(truncated)}`;
+             })();
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
 index 9b36020983e2e585aa03922183b8d12631f59ed7..9b0be8c09af2b1b265447b54c021677f64e808c1 100644
 --- a/dist/src/server/runtime-store.js
