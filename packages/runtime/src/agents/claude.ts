@@ -174,7 +174,11 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     usage:()=>claudeUsage(nativeUsage),
     interactions: () => interactions.snapshot(),
     respondInteraction: (id, response) => { check(); interactions.respond(id, response); },
-    completedDeliveryIds: () => metadata.completed.filter(entry => projection.hasNativeUuid(entry.userUuid) && projection.hasNativeUuid(entry.assistantUuid)).map(entry => entry.deliveryId),
+    completedDeliveryIds: () => {
+      if (!metadata.completed.length) return [];
+      const uuids = projection.nativeUuids();
+      return metadata.completed.filter(entry => uuids.has(entry.userUuid) && uuids.has(entry.assistantUuid)).map(entry => entry.deliveryId);
+    },
     async addContext(text, customType = 'hive-context') {
       check(); if (active) throw new Error('Claude session is already processing a prompt');
       const uuid = randomUUID(); persist({ ...metadata, context: [...metadata.context, { uuid, customType, text }] });

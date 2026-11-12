@@ -13,6 +13,15 @@ export class ClaudeProjection {
   constructor(private readonly metadata: () => ClaudeMetadata) {}
   clear(): void { this.rows.clear(); this.groups.clear(); this.previous = undefined; }
   endStream(): void { this.active = undefined; this.apiId = undefined; }
+  nativeUuids(): ReadonlySet<string> {
+    const uuids = new Set<string>();
+    for (const item of this.rows.values()) {
+      const source = item.message.source as { nativeUuid: string; nativeUuids?: string[] };
+      uuids.add(source.nativeUuid);
+      for (const uuid of source.nativeUuids ?? []) uuids.add(uuid);
+    }
+    return uuids;
+  }
   hasNativeUuid(uuid: string): boolean { return [...this.rows.values()].some(item => {
     const source = item.message.source as { nativeUuid: string; nativeUuids?: string[] }; return source.nativeUuid === uuid || source.nativeUuids?.includes(uuid);
   }); }
