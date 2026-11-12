@@ -69,6 +69,9 @@ impl HiveApp {
             .into_any_element()
     }
     pub(crate) fn reset_reply_failures(&mut self) {
+        if matches!(self.error, Some(crate::app::ErrorNotice::Conversation(_))) {
+            self.error = None;
+        }
         self.failure_scroll.set_offset(point(px(0.),px(0.)));
         self.delivery_failure = None;
         self.delivery_failure_expanded = false;

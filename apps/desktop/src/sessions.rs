@@ -635,11 +635,11 @@ impl HiveApp {
                 match serde_json::from_value::<OpenSession>(value) {
                     Ok(open) => {
                         if open.session.id != id {
-                            this.error = Some("打开响应中的会话身份不匹配".into());
+                            this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("打开响应中的会话身份不匹配".into())));
                             return;
                         }
                         if open.history_message_ids.len() != open.history.len() {
-                            this.error = Some("会话快照中的消息身份数量不匹配".into());
+                            this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("会话快照中的消息身份数量不匹配".into())));
                             return;
                         }
                         this.conversation_ready = true;
@@ -681,7 +681,7 @@ impl HiveApp {
                         }
                         this.restore_conversation_position(&id);
                     }
-                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("打开会话响应错误",error.to_string())),
+                    Err(error) => this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(crate::app::ErrorNotice::Detail("打开会话响应错误",error.to_string())))),
                 }
             },
         );

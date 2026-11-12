@@ -666,7 +666,12 @@ impl HiveApp {
                         if this.open_request == open_request {
                             this.loading = false;
                             if method == "chat.open" { this.status = "未能打开会话".into(); }
-                            this.error = Some(error.into());
+                            let error = error.into();
+                            this.error = Some(if method == "chat.open" {
+                                ErrorNotice::Conversation(Box::new(error))
+                            } else {
+                                error
+                            });
                         }
                     }
                 }

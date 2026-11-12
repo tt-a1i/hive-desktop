@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 会话打开错误隔离（2026-11-12）
+
+修复打开A失败后旧错误留在健康B的问题：共享RPC及响应校验错误标记Conversation归属，复用切换会话/工作区的清理入口，只清会话打开错误，保留普通全局错误与旧请求序号保护。一次原生失败→正常→失败、退出0，Mac构建/Windows类型检查通过；见[证据](validation/2026-11-12-conversation-open-errors.md)。无正式测试改动，无模型请求，完整目标继续。
+
 ## 远程诊断复制（2026-11-12）
 
 补回Web已有的诊断复制入口，直接复用authenticated support-bundle，不增加后台或上传。真实HTTP/SQLite验证403、metadata保留及正文/token/完整路径/自定义网关脱敏；一次原生复制→Cmd+V到未发送草稿→退出0，完整JSON除两个生成时间外一致。Mac构建/Windows目标检查通过，见[证据](validation/2026-11-12-remote-diagnostics.md)。后台矩阵由代码完成；无正式测试改动、未入645c9a5包，完整目标继续。

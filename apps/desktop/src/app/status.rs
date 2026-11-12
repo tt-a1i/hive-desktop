@@ -27,6 +27,7 @@ pub(crate) enum ErrorNotice {
     Message(&'static str),
     Raw(String),
     Detail(&'static str, String),
+    Conversation(Box<ErrorNotice>),
     Context(&'static str, Box<ErrorNotice>, &'static str),
     Batch(Vec<ErrorNotice>),
 }
@@ -42,6 +43,7 @@ impl ErrorNotice {
             Self::Message(key) => tr(key).to_owned(),
             Self::Raw(error) => error.clone(),
             Self::Detail(key,error) => format!("{}: {error}",tr(key)),
+            Self::Conversation(error) => error.text(),
             Self::Context(key,cause,guidance) => format!("{}: {}\n{}",tr(key),cause.text(),tr(guidance)),
             Self::Batch(errors) => errors.iter().map(Self::text).collect::<Vec<_>>().join("\n"),
         }
