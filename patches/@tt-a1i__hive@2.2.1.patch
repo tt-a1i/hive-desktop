@@ -557,6 +557,19 @@ index 25a83167817bb30b04d3f76376611c3b446e8ff7..678ef6ff9ace92b4d31f05deae331d1c
      const ports = {
          getCommandPreset: (id) => store.settings.getCommandPreset(id),
          getOrchestratorLaunchConfig: () => store.peekAgentLaunchConfig(workspaceId, getOrchestratorId(workspaceId)),
+diff --git a/dist/src/server/routes-workspaces.js b/dist/src/server/routes-workspaces.js
+index 389129f122892581215028f0cc8bfabd21a8ad3b..433439b07a6d293cb99fdc78c030597b4c25ad4b 100644
+--- a/dist/src/server/routes-workspaces.js
++++ b/dist/src/server/routes-workspaces.js
+@@ -29,7 +29,7 @@ const serializeTeamListWithOpenDispatches = (store, workspaceId, options = {}) =
+             id: dispatch.id,
+             status: dispatch.status,
+             age_minutes: Math.max(0, Math.floor((now - (dispatch.submittedAt ?? dispatch.createdAt)) / 60_000)),
+-            task_preview: dispatch.text.slice(0, 60),
++            task_preview: Array.from(dispatch.text).slice(0, 60).join(''),
+         });
+         openByWorker.set(dispatch.toAgentId, list);
+     }
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
 index 531749345d132f9a9f93f4f5ad10c8f48e368acd..6576cae1f3286b5503e682784695792c081fbc9d 100644
 --- a/dist/src/server/runtime-store-contract.d.ts

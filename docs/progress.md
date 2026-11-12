@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 团队任务预览Unicode（2026-11-12，依赖补丁）
+
+真实team.members JSONL复现Hive2.2.1任务预览截断emoji后被Rust解析器拒绝；既有依赖补丁只修正共享预览截取，完整任务不变。前后实际RPC/Rust对照、四项成员/团队回归、TS/build及离线冻结安装通过，无正式测试、面板或厂商请求。见[证据与依赖范围](validation/2026-11-12-unicode-team-preview.md)。锁文件patch hash已变化，下一包必须重新部署生产依赖，不能沿用旧冻结依赖组装；尚未入db12698，完整目标继续。
+
 ## 当前开发包db12698（2026-11-12）
 
 Unicode标题修复已入current/candidate、DMG及Applications，只更新两个runtime模块/map，原生二进制保持。包内真实新输入边界/Rust解析、旧坏标题四记录的两次原生冷开及退出、emoji/自定义记录/原数据核对、四组包检查和旧Terra三会话只读恢复通过，无厂商请求。清理无占用重复base/安装备份，3d4422f完整回退与证据保留。见[本批包范围](validation/2026-11-12-unicode-title-package.md)。下方未入包为历史，完整目标继续。
