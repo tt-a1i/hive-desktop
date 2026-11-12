@@ -485,7 +485,7 @@ export class Chats implements StructuredSessionPort {
       const chat = await this.require(id);
       if (!chat.queue.pendingCount) chat.queue.resume();
       const record = this.index.get(id);
-      this.index.save({ ...record, title: !record.customTitle && record.title === '新会话' ? text.trim().slice(0, 60) || '附件消息' : record.title, updatedAt: Date.now() });
+      this.index.save({ ...record, title: !record.customTitle && record.title === '新会话' ? Array.from(text.trim()).slice(0, 60).join('') || '附件消息' : record.title, updatedAt: Date.now() });
       if (record.agentId === `${record.workspaceId}:orchestrator`) {
         await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/user-input`, { text: inputText });
       } else {

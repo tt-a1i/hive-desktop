@@ -43,7 +43,10 @@ export class ChatIndex {
     const value: unknown = existsSync(this.file) ? JSON.parse(readFileSync(this.file, 'utf8')) : [];
     if (!Array.isArray(value) || !value.every(isChatRecord)) throw new Error('Invalid desktop chat index');
     this.records = value.map(record => {
-      const normalized = { ...record, backend: record.backend ?? 'pi' };
+      // Older automatic titles could end with half an emoji after UTF-16 slicing.
+      // With /u, this range matches only unpaired surrogates, preserving valid emoji.
+      const title = record.customTitle ? record.title : record.title.replace(/[\uD800-\uDFFF]/gu, '');
+      const normalized = { ...record, title, backend: record.backend ?? 'pi' };
       if (normalized.backend === 'pi' && isUnsetPiModel(normalized.model)) delete normalized.model;
       return normalized;
     });
