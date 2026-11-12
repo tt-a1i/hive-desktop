@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包 a744821（2026-11-12）
+
+恢复摘要与旧历史 JSONL 修复已入 current/candidate、DMG 及 Applications。新生产部署、九项精确文件差异、完整清单/链接、包内真实 Pi 恢复与旧会话冷读→Rust、四组包检查、原生启动/正常退出均通过，零模型请求。见[包内证据](validation/2026-11-12-recovery-unicode-package.md)。上一版 46659e2 保留供回退；本批没有将账号、Windows 或完整产品体验标为完成。下文“当前”及“未入包”为各阶段历史状态。
+
 ## 当前开发包46659e2（2026-11-12）
 
 按新Hive补丁离线冻结重新部署381包，官方Node下载/校验、完整28,869清单/29链接、六项精确变化通过；原生程序及其他依赖文件保持。包内实际团队JSONL→Rust、原生成员读取/正常退出、四组包检查及旧Terra三会话只读冷开通过，无厂商请求。current/candidate、DMG、Applications更新；清理重复base/安装备份/deployed树，db12698回退及证据保留。见[新部署与包范围](validation/2026-11-12-team-preview-package.md)。冻结依赖基线现为46659e2；下方未入包/旧冻结基线为历史，完整目标继续。
