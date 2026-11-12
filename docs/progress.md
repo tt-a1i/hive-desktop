@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 活动成员与645c9a5开发包（2026-11-12）
+
+原始Codex Terra medium真实主控+双Worker各1轮，两条显式reported、独立Python exit0字节断言通过；原生捕获两名Working/Submitted及活动成员正确名称。源码退出、新包内三会话冷读/原生重开、精确草稿与退出回收通过。四组包gate、DMG只读内容核对、完整清单安装替换通过；current/candidate/DMG/Applications更新645c9a5，见[证据](validation/2026-11-12-live-members-package.md)。恢复/打包主要由脚本检查，安装副本本轮未另开原生窗口。旧包和可运行回退保留，完整目标继续。
+
 ## 成员读取失败与原生标签复验（2026-11-12）
 
 补原生失败/延迟/成功后的历史标签矩阵，发现并修复首次读取失败仍显示空团队引导和错误正文缺失AX的问题。英文失败→重试→缓存保留、中文真空团队/错误区分、精确草稿冷恢复与正常退出通过；真实HTTP/SQLite及三会话轮数核对通过，新增模型0。Mac构建/Windows目标检查通过，见[本轮证据](validation/2026-11-12-member-roster-native.md)。活动新Worker动态标签、Windows原生及完整验收继续；未入293afe3包。下方“无原生工具”为前轮历史状态。
