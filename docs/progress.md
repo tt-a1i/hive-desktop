@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包 7b7940c（2026-11-12）
+
+Claude 完成回执批量核对已入 current/candidate、DMG 和 Applications。仅四份 JS/map 精确变化，完整清单/链接及安装核对通过；包内 Projection 十阶段、官方 SDK/受控 CLI 的缺失/空回执/冷恢复、最新真实 Terra 三会话 40 条完整历史与正式 JSONL→Rust、四组包检查通过。本批无新推理/面板操作，78fef23 保留回退，见[包内证据与边界](validation/2026-11-12-claude-completion-package.md)。下文未入包/当前为各阶段历史状态，完整目标继续。
+
 ## 最新源码真实 Terra 协作（2026-11-12）
 
 d43f55e 上一次输入、真实 Codex/Terra medium 主控和两位 Worker 各一原生回合，独立写文件、显式汇报及主控只读字节断言通过。完整后台重开与正式 main.js 冷读，40 条完整历史/27 条工具结果、消息 IDs、来源和账本一致；真实 JSONL 经同版 Rust 解析器通过。见[真实协作与恢复边界](validation/2026-11-12-latest-terra-team.md)。零面板操作，Pi 登录搁置、无 Claude 推理；当前安装包仍 78fef23，完整目标继续。
