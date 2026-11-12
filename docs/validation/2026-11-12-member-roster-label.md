@@ -1,5 +1,7 @@
 # 成员列表刷新与历史会话标签
 
+后续已恢复原生工具并补失败/延迟/删除后标签检查，另发现并修复成员页读取失败的空团队误导；实际范围和未覆盖的活动Worker场景见[原生复验](2026-11-12-member-roster-native.md)。下文保留本次源码修复时的历史验证边界。
+
 基于2c5a4a6。前轮293afe3安装包真实Terra一对二协作时，协作概览短暂显示正在工作的proof-alpha/beta为Historical conversation，随后恢复。原始观察及限制见2026-11-10-installed-293afe3-team.md，不视为已完成动态UI验收。
 
 源码链路：reload_collaboration立即请求任务与派单，但不请求成员；start_workspace_updates仅在协作/成员页显示时每三秒刷新成员。会话列表先收到新成员，agent_name在旧成员列表未命中时从会话标题回退，并无条件追加历史标签。因此“缓存里暂时没有”被误当成“已经不是成员”。

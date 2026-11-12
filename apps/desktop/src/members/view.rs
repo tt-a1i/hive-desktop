@@ -31,12 +31,15 @@ impl HiveApp {
             .collect();
         v_flex().flex_1().min_w_0().min_h_0().h_full().overflow_hidden().child(Viewport::new("members-viewport", &self.member_scroll, v_flex().id("members-page").flex_1().min_h_0().min_w_0().h_full().w_full().max_w(px(960.)).mx_auto().gap_4().px_5().py_6().when(!narrow, |panel| panel.px_8().py_8()).overflow_y_scroll().track_scroll(&self.member_scroll).vertical_scrollbar(&self.member_scroll)
                 .child(div().flex_shrink_0().child(Reveal::new("members-header-reveal", &self.member_scroll, h_flex().w_full().items_center().gap_2().child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(tr("团队成员")))
-                    .child(div().flex_1().text_xs().text_color(Color::Muted.get(cx)).child(if self.member_loading { tr("更新中").into() } else { if english() { format!("{} {}", self.members.len(), if self.members.len() == 1 { "member" } else { "members" }) } else { format!("{} 位", self.members.len()) } }))
+                    .child(div().flex_1().text_xs().text_color(Color::Muted.get(cx)).child(if self.member_loading { tr("更新中").into() } else if self.members.is_empty() && self.member_error.is_some() { tr("成员状态未能更新").into() } else { if english() { format!("{} {}", self.members.len(), if self.members.len() == 1 { "member" } else { "members" }) } else { format!("{} 位", self.members.len()) } }))
                     .child(Button::new("refresh-members").ghost().compact().icon(Glyph::RefreshCw).tooltip(tr("刷新成员")).accessibility_label(tr("刷新成员")).disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_members(cx))))
                     .child(Button::new("toggle-member-form").ghost().icon(Glyph::Plus).label(if self.member_form_open { tr("收起表单") } else { tr("添加成员") }).on_click(cx.listener(|this, _, window, cx| { this.member_form_open = !this.member_form_open; let input = if this.member_form_open { &this.member_name } else { &this.member_search }; let focus = input.read(cx).focus_handle(cx); window.on_next_frame(move |window,cx|focus.focus(window,cx)); cx.notify(); }))))))
-                .child(div().flex_shrink_0().child(Reveal::new("members-filter-reveal", &self.member_scroll, self.render_member_filters(matching_members.len(), member_browsing, cx))))
+                .when(!self.members.is_empty() || self.member_error.is_none(), |view| view.child(div().flex_shrink_0().child(Reveal::new("members-filter-reveal", &self.member_scroll, self.render_member_filters(matching_members.len(), member_browsing, cx)))))
                 .when(self.error.is_some(), |view| view.child(div().flex_shrink_0().child(self.render_error_banner(cx))))
-                .when_some(self.member_error.clone(), |view,error|view.child(div().text_sm().text_color(Color::Error.get(cx)).child(format!("{}: {error}", tr("成员状态未能更新")))))
+                .when_some(self.member_error.clone(), |view,error| {
+                    let message = format!("{}: {error}", tr("成员状态未能更新"));
+                    view.child(div().id("member-refresh-error").role(Role::Label).aria_label(message.clone()).text_sm().text_color(Color::Error.get(cx)).child(message))
+                })
                 .child(v_flex().id("members-panel").flex_shrink_0().min_w_0().gap_2().p_1()
                     .when(self.member_form_open, |list| list.child(v_flex().gap_2().p_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("新建成员")))
@@ -48,7 +51,7 @@ impl HiveApp {
                     .child(Reveal::new("member-form-backends-reveal", &self.member_scroll, h_flex().gap_1().children([("pi", "Pi"), ("codex", "Codex"), ("pi-rpc", tr("外部 Pi")), ("claude", "Claude")].into_iter().enumerate().map(|(i, (backend, label))| Button::new(("member-backend", i)).label(label).selected(self.member_backend == backend).on_click(cx.listener(move |this, _, _, cx| { this.member_backend = backend; cx.notify(); }))))))
                     .child(Reveal::new("member-form-save-reveal", &self.member_scroll, Button::new("add-member").label(tr("添加成员")).disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, window, cx| this.add_member(window, cx)))))))
 
-                    .when(self.members.is_empty() && !self.member_loading && !self.member_form_open, |view| view.child(v_flex().flex_1().items_center().justify_center().gap_3()
+                    .when(self.members.is_empty() && !self.member_loading && self.member_error.is_none() && !self.member_form_open, |view| view.child(v_flex().flex_1().items_center().justify_center().gap_3()
                         .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("还没有团队成员")))
                         .child(Button::new("first-member").rounded_full().icon(Glyph::Plus).label(tr("添加第一位成员"))
                             .on_click(cx.listener(|this, _, window, cx| { this.member_form_open = true; let focus = this.member_name.read(cx).focus_handle(cx); window.on_next_frame(move |window,cx|focus.focus(window,cx)); cx.notify(); })))))
