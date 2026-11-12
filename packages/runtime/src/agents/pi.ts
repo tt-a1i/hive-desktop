@@ -148,7 +148,9 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     }
   });
   const unsubscribeErrors = session.extensionRunner.onError(error => {
-    if (active) active.finalError = error.error;
+    // SDK event-hook diagnostics do not fail a completed run. Commands report
+    // handler failures here while still returning a handled-input disposition.
+    if (active && error.event === 'command') active.finalError = error.error;
     options.onEvent({ type: 'error', sessionId, message: error.error });
   });
   let savedModelUnavailable = false;
