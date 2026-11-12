@@ -23,3 +23,5 @@
 - `pnpm --filter @hive-desktop/runtime exec tsx checks/structured-runtime.ts`
 
 不跑全量测试：本次范围是两个生产通知格式化分支，用真实工作流、CLI/HTTP 报告、持久化队列、冷读与相关现有回归验证。没有面板操作、新模型请求、协议或存储语义改动。旧通知原文不重写；下一包必须按新补丁重新生产部署。Pi 登录继续搁置，真实推理仅 Terra；账号/系统通知/Windows 真机与完整产品目标继续开放。
+
+后续已纳入 ff2aa70 开发包，具体包内验证见[工作流开发包](2026-11-12-workflow-reliability-package.md)。上文待入包描述为源码阶段状态。

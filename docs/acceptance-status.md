@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 ff2aa70（2026-11-12）
+
+工作流超时原因和完成通知 Unicode 修复已入 current/candidate、DMG 及 Applications。新生产部署、七项精确差异、完整清单/链接、包内七条运行与五条 Unicode 流程、主控通知/进程清理/冷恢复、12 条正式 JSONL→Rust 及四组包检查通过，零模型/面板请求。见[包内证据](validation/2026-11-12-workflow-reliability-package.md)。原生程序未变，未重复 UI 验收；a744821 保留回退。下文待入包/当前为各阶段历史状态，完整目标继续。
+
 ## 工作流完成通知 Unicode（2026-11-12，源码）
 
 真实运行结果/JSON/Worker 汇报的五个案例确认完成通知切坏 emoji 或错误截短；生产通知生成按码点统一计算阈值/截断/剩余字符数，完整结果和报告保持。真实 CLI seen→HTTP report、持久化通知与完整冷恢复、三个现有回归通过，零模型/面板请求；见[证据](validation/2026-11-12-workflow-notice-unicode.md)。与超时原因修复一起待入下一包，完整目标继续。
