@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 0a388b3（2026-11-13）
+
+外部 Pi 扩展诊断（`a26ab5a`）、外部 Pi 合规图片历史（`f8a9460`）与 Codex 合规图片历史及 `excludeTurns` 冷恢复（`0a388b3`）已入 current/candidate、DMG 和 Applications。八份 JS/map 精确更新、完整清单/链接与安装核对通过；包内外部 Pi 六组诊断、外部 Pi 与 Codex 跨轮超 32 MiB/单轮 6 图/dispatch 多图/33 MiB 超限拒绝、d43f55e 真实三会话 40 条历史副本冷读→Rust 及四组包检查通过，无新厂商推理/面板操作。保留 7b7940c 可运行回退并退役 11 个更早重复解压树（保留全部 ZIP 与收据），见[包内证据与边界](validation/2026-11-13-image-history-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
 ## Codex 合规图片历史与增量分页（2026-11-12，源码）
 
 原始 Codex 0.167.0 `app-server` 复现单轮 19.45 MB 合规多图、跨轮累计超 8 MiB 及 12 轮 38.90 MB 冷重开 `thread/resume` 单行超限锁死。改为 32 MiB 有界分片一次拼接、`thread/resume({ excludeTurns: true })`（保留落盘 `legacy` 线程回退）与 `thread/turns/list({ limit: 1 })` 增量前缀游标刷新。五组前后对照、d43f55e 真实三会话副本冷读及六组相关回归通过，见[实证与边界](validation/2026-11-12-codex-image-history.md)。无厂商推理/面板操作/正式测试改动，待入安装包，完整目标继续。

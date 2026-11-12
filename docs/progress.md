@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包 0a388b3（2026-11-13）
+
+外部 Pi 扩展诊断（`a26ab5a`）、外部 Pi 合规图片历史（`f8a9460`）与 Codex 合规图片历史及增量分页（`0a388b3`）已合并入 current/candidate、DMG 和 Applications。仅八份 JS/map 精确变化，完整 28,869 清单/29 链接及安装核对通过；包内外部 Pi 六组诊断+冷恢复、外部 Pi 与 Codex 跨轮超 32 MiB/单轮 6 图/dispatch 多图/超限拒绝、d43f55e 真实 Terra 三会话 40 条完整历史副本冷读及正式 JSONL→Rust、四组包检查通过，零新推理/面板操作。7b7940c 保留直接可运行回退，11 个更早旧解压树经清单/哈希/无占用核对后退役（归档 ZIP 与收据保留），见[包内证据与存储](validation/2026-11-13-image-history-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
 ## Codex 合规图片历史与增量分页（2026-11-12，源码）
 
 原始 Codex 0.167.0 `app-server` 复现单轮 6 图（19.45 MB ≤ 20 MB）、`dispatch` 3 图（9.73 MB）及跨轮累计超限（第 3 轮 9.72 MB 与 12 轮 38.90 MB 冷重开 `thread/resume`）触发 `Codex JSONL line exceeds limit` 锁死会话。`codex-transport.ts` 单行有界上限对齐至 32 MiB 并消除分片重复拷贝，`codex.ts` 在 `thread/resume` 传入 `excludeTurns: true`（保留落盘 `legacy` 线程回退）并以 `limit: 1` 及已终态前缀游标增量刷新 `thread/turns/list`。五组前后对照、d43f55e 真实三会话副本冷读及六组相关回归通过，见[实证与边界](validation/2026-11-12-codex-image-history.md)。本地回环、无厂商推理或正式测试改动，待入安装包，完整目标继续。
