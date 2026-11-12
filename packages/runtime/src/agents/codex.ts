@@ -209,18 +209,56 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     },
   });
   const resume = async (extra: Record<string, unknown> = {}) => {
-    response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, ...extra });
+    response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, excludeTurns: true, ...extra });
+    if (response.thread.historyMode === 'legacy' && response.thread.turns.length === 0 && response.thread.path) {
+      response = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: true });
+    }
+  };
+  let settledTurns: CodexTurn[] = [];
+  let settledCursor: string | null = null;
+  const isTurnSettled = (turn: CodexTurn) => turn.status !== 'inProgress'
+    && (turn.status !== 'completed' || !turn.items.some(item => item.status === 'inProgress'));
+  const fetchPaginatedTurns = async (initialPrefix: CodexTurn[], initialCursor: string | null) => {
+    const prefixIds = new Set(initialPrefix.map(turn => turn.id));
+    const tail: CodexTurn[] = [];
+    let nextSettledTurns = initialPrefix;
+    let nextSettledCursor = initialCursor;
+    let allTailSettled = true;
+    let cursor = initialCursor;
+    do {
+      // Request one turn per page so multi-turn inline image histories never pack >32 MiB onto a single RPC line.
+      const page: {data: (CodexTurn & {itemsView?: string})[]; nextCursor?: string | null} = await transport.sendRequest('thread/turns/list', {threadId, cursor, sortDirection: 'asc', itemsView: 'full', limit: 1});
+      if (page.data.some(turn => turn.itemsView !== 'full')) throw new Error('Codex did not return complete turn items');
+      if (page.data.some(turn => prefixIds.has(turn.id))) throw new CodexRpcError(-32602, 'Codex turn cursor overlapped settled prefix');
+      for (const turn of page.data) {
+        prefixIds.add(turn.id);
+        tail.push(turn);
+        if (!isTurnSettled(turn)) allTailSettled = false;
+      }
+      const upcoming = page.nextCursor ?? null;
+      if (allTailSettled && upcoming !== null) {
+        nextSettledTurns = [...initialPrefix, ...tail];
+        nextSettledCursor = upcoming;
+      }
+      cursor = upcoming;
+    } while (cursor);
+    settledTurns = nextSettledTurns;
+    settledCursor = nextSettledCursor;
+    return [...initialPrefix, ...tail];
   };
   const recoverHistory = async (thread: CodexThreadResponse['thread']) => {
     if (thread.historyMode === 'legacy') { projection!.recover(thread.turns); return thread.turns; }
     if (thread.historyMode !== 'paginated') throw new Error('Unsupported Codex history contract');
-    const turns: CodexTurn[] = [];
-    let cursor: string | null = null;
-    do {
-      const page: {data: (CodexTurn & {itemsView?: string})[]; nextCursor?: string | null} = await transport.sendRequest('thread/turns/list', {threadId, cursor, sortDirection: 'asc', itemsView: 'full', limit: 100});
-      if (page.data.some(turn => turn.itemsView !== 'full')) throw new Error('Codex did not return complete turn items');
-      turns.push(...page.data); cursor = page.nextCursor ?? null;
-    } while (cursor);
+    let turns: CodexTurn[];
+    if (settledCursor !== null) {
+      try { turns = await fetchPaginatedTurns(settledTurns, settledCursor); }
+      catch (error) {
+        if (!(error instanceof CodexRpcError)) throw error;
+        settledTurns = [];
+        settledCursor = null;
+        turns = await fetchPaginatedTurns([], null);
+      }
+    } else turns = await fetchPaginatedTurns([], null);
     projection!.recover(turns, true);
     return turns;
   };

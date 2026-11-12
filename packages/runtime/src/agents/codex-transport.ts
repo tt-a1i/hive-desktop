@@ -25,7 +25,8 @@ export class CodexRpcError extends Error {
 }
 
 type Pending = { resolve: (result: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
-const MAX_LINE_BYTES = 8 * 1024 * 1024;
+// A single compliant turn can carry up to MAX_TOTAL_IMAGE_BASE64 (20 MB) of inline data URLs plus RPC framing.
+const MAX_LINE_BYTES = 32 * 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 
 /** JSONL transport for the configured local Codex CLI. */
@@ -59,21 +60,48 @@ export class CodexTransport {
     this.child.stderr.on('data', (chunk: Buffer) => {
       this.diagnosticBuffer = Buffer.concat([this.diagnosticBuffer, chunk]).subarray(-MAX_STDERR_BYTES);
     });
-    let buffered = Buffer.alloc(0);
+    let chunks: Buffer[] = [];
+    let bufferedBytes = 0;
     this.child.stdout.on('data', (chunk: Buffer) => {
       if (this.ended) return;
-      buffered = Buffer.concat([buffered, chunk]);
-      let newline: number;
-      while ((newline = buffered.indexOf(10)) !== -1) {
-        if (newline > MAX_LINE_BYTES) return this.fail(new Error('Codex JSONL line exceeds limit'));
-        const line = buffered.subarray(0, newline).toString('utf8').trim();
-        buffered = buffered.subarray(newline + 1);
+      let start = 0;
+      for (;;) {
+        const newline = chunk.indexOf(10, start);
+        if (newline === -1) {
+          const tail = start === 0 ? chunk : chunk.subarray(start);
+          if (tail.length > 0) {
+            if (bufferedBytes + tail.length > MAX_LINE_BYTES) {
+              chunks = [];
+              bufferedBytes = 0;
+              return this.fail(new Error('Codex JSONL line exceeds limit'));
+            }
+            chunks.push(tail);
+            bufferedBytes += tail.length;
+          }
+          return;
+        }
+        const head = chunk.subarray(start, newline);
+        start = newline + 1;
+        const lineLength = bufferedBytes + head.length;
+        if (lineLength > MAX_LINE_BYTES) {
+          chunks = [];
+          bufferedBytes = 0;
+          return this.fail(new Error('Codex JSONL line exceeds limit'));
+        }
+        const rawLine = chunks.length === 0
+          ? head
+          : head.length === 0 && chunks.length === 1
+            ? chunks[0]!
+            : Buffer.concat(head.length === 0 ? chunks : [...chunks, head], lineLength);
+        chunks = [];
+        bufferedBytes = 0;
+        const line = rawLine.toString('utf8').trim();
         if (line) {
           try { this.receive(JSON.parse(line)); }
           catch (error) { return this.fail(asError(error)); }
         }
+        if (this.ended) return;
       }
-      if (buffered.length > MAX_LINE_BYTES) this.fail(new Error('Codex JSONL line exceeds limit'));
     });
     this.child.stdout.once('end', () => {
       if (!this.closing) this.fail(new Error('Unexpected Codex app-server stdout EOF'));

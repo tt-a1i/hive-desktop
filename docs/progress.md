@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## Codex 合规图片历史与增量分页（2026-11-12，源码）
+
+原始 Codex 0.167.0 `app-server` 复现单轮 6 图（19.45 MB ≤ 20 MB）、`dispatch` 3 图（9.73 MB）及跨轮累计超限（第 3 轮 9.72 MB 与 12 轮 38.90 MB 冷重开 `thread/resume`）触发 `Codex JSONL line exceeds limit` 锁死会话。`codex-transport.ts` 单行有界上限对齐至 32 MiB 并消除分片重复拷贝，`codex.ts` 在 `thread/resume` 传入 `excludeTurns: true`（保留落盘 `legacy` 线程回退）并以 `limit: 1` 及已终态前缀游标增量刷新 `thread/turns/list`。五组前后对照、d43f55e 真实三会话副本冷读及六组相关回归通过，见[实证与边界](validation/2026-11-12-codex-image-history.md)。本地回环、无厂商推理或正式测试改动，待入安装包，完整目标继续。
+
 ## 外部 Pi 合规图片历史（2026-11-12，源码）
 
 真实 `SessionManager` 与原始 Pi 1.4.0 复现合规图片第 3 轮（累计 9.72 MB）及单轮 6 图（19.45 MB）触发 `External Pi JSONL line exceeds limit`，且落盘后会话无法再次打开。`external-pi.ts` 改为只读分块装载已落盘会话文件并用 `get_entries({ since })` 增量刷新（保留新会话切换重载），`external-pi-transport.ts` 单行有界上限对齐单轮包络至 32 MiB 并消除分片重复拼接。38.90 MB（> 32 MiB）12 轮冷读续聊、完整后台 4 轮多图+bash+冷重开、单轮 6 图、dispatch 3 图及 33 MiB 超限拒绝对照与相关回归通过，见[实证与边界](validation/2026-11-12-external-pi-image-history.md)。本地协议回环、无厂商推理或正式测试改动，待入安装包，完整目标继续。
