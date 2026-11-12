@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包46659e2（2026-11-12）
+
+按新Hive补丁离线冻结重新部署381包，官方Node下载/校验、完整28,869清单/29链接、六项精确变化通过；原生程序及其他依赖文件保持。包内实际团队JSONL→Rust、原生成员读取/正常退出、四组包检查及旧Terra三会话只读冷开通过，无厂商请求。current/candidate、DMG、Applications更新；清理重复base/安装备份/deployed树，db12698回退及证据保留。见[新部署与包范围](validation/2026-11-12-team-preview-package.md)。冻结依赖基线现为46659e2；下方未入包/旧冻结基线为历史，完整目标继续。
+
 ## 团队任务预览Unicode（2026-11-12，依赖补丁）
 
 真实team.members JSONL复现Hive2.2.1任务预览截断emoji后被Rust解析器拒绝；既有依赖补丁只修正共享预览截取，完整任务不变。前后实际RPC/Rust对照、四项成员/团队回归、TS/build及离线冻结安装通过，无正式测试、面板或厂商请求。见[证据与依赖范围](validation/2026-11-12-unicode-team-preview.md)。锁文件patch hash已变化，下一包必须重新部署生产依赖，不能沿用旧冻结依赖组装；尚未入db12698，完整目标继续。
