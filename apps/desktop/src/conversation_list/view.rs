@@ -58,13 +58,15 @@ impl HiveApp {
                 view.child(
                     h_flex()
                         .min_w_0()
+                        .flex_wrap()
+                        .items_center()
                         .gap_2()
                         .justify_between()
                         .child(
                             div()
                                 .flex_1()
-                                .min_w_0()
-                                .truncate()
+                                .min_w(px(160.))
+                                .whitespace_normal()
                                 .text_xs()
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .text_color(Color::Secondary.get(cx))
@@ -95,6 +97,9 @@ impl HiveApp {
                                 )
                             },
                         )
+                )
+                .when(message.delivery.is_some(), |view| view.child(
+                    h_flex().min_w_0().flex_wrap().gap_2()
                         .when_some(
                             self.dispatch_link(
                                 &message.id,
@@ -121,6 +126,8 @@ impl HiveApp {
                         .when(message.delivery.is_some(), |view| {
                             view.child(
                                 Button::new(("expand-delivery", i))
+                                    .ghost()
+                                    .compact()
                                     .accessibility_label(format!("{} {}",if message.delivery.as_ref().is_some_and(|d|d.expanded) {tr("收起")} else {tr("查看")},tr("消息原文")))
                                     .label(
                                         if message.delivery.as_ref().is_some_and(|d| d.expanded) {
@@ -146,7 +153,7 @@ impl HiveApp {
                                     }),
                             )
                         }),
-                )
+                ))
             })
             .when(
                 message.failure.is_some() && !self.hidden_current_failure(i),
