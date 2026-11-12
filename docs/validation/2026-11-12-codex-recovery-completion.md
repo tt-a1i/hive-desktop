@@ -52,3 +52,5 @@ failure.mjs 使用实际 EISDIR：保留原 JSON 文件，故障时把提交目�
 - `pnpm --filter @hive-desktop/runtime exec tsx checks/codex-interrupted-tools.ts`
 
 未新增、修改或删除正式测试；未跑全量测试：仅桌面 Codex 显示日志的局部终态合并与提交顺序，使用真实文件错误、完整成功差分、实际原生协议及相关回归验证。当前安装包不变，下一次统一纳入开发包。没有面板操作、厂商推理、依赖或用户全局配置变动；Pi 登录继续搁置，真实推理仅 Terra，Windows 真机与完整产品目标继续开放。
+
+后续已纳入 78fef23 开发包，见[包内证据](2026-11-12-codex-history-package.md)。上文待入包为源码阶段状态。

@@ -34,3 +34,5 @@
 - `pnpm --filter @hive-desktop/runtime exec tsx checks/codex-interrupted-tools.ts`
 
 全部通过。尤其 steering 的写盘失败/冷恢复/追加消费与重试保留覆盖索引失效边界。未新增、修改或删除正式测试，未跑全量测试：改动限于既有查找回调的临时索引，采用原生协议、完整 JSON 一致性、持久化/动态追加及相关现有回归验证。无面板操作、新模型推理、协议/用户数据语义变化。当前安装包仍为 3a18b94；Pi 登录继续搁置，真实推理只用 Terra，Windows 真机与完整产品验收仍开放。
+
+后续已纳入 78fef23 开发包，见[包内证据](2026-11-12-codex-history-package.md)。上文待入包为源码阶段状态。
