@@ -590,7 +590,7 @@ export class Chats implements StructuredSessionPort {
       // raw filesystem/backend failure in the conversation's agent stream.
       this.failLive(id, chat, error instanceof Error ? error : new Error(String(error)), false);
       await chat.cleanup;
-      throw new Error('无法保存原生会话设置，会话已暂停；修复问题后可重新读取并重试。', { cause: error });
+      throw new Error(`原生会话设置更新失败，会话已暂停；修复问题后可重新读取并重试。原因：${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
   }
   async setModel(id: string, provider: string, modelId: string) {

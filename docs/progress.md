@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 原生混合后端路由与设置诊断（2026-11-12）
+
+四后端各做主控、各配四后端Worker的16组合，真实原生控制/team CLI/HTTP/SQLite、报告正确归属与完整后台重开保持通过；无模型推理或面板操作。另将共享原生设置失败的具体原因带到桌面，旧包/新源码生产JSONL对照、状态/文件保持及有效模型重试通过，TS/build与三组持久化/推理设置回归通过。见[证据](validation/2026-11-12-mixed-native-routing.md)。只改一行错误消息，未增改删正式测试；新诊断未入645c9a5包，真实混合推理/Windows及完整目标继续。
+
 ## 活动成员与645c9a5开发包（2026-11-12）
 
 原始Codex Terra medium真实主控+双Worker各1轮，两条显式reported、独立Python exit0字节断言通过；原生捕获两名Working/Submitted及活动成员正确名称。源码退出、新包内三会话冷读/原生重开、精确草稿与退出回收通过。四组包gate、DMG只读内容核对、完整清单安装替换通过；current/candidate/DMG/Applications更新645c9a5，见[证据](validation/2026-11-12-live-members-package.md)。恢复/打包主要由脚本检查，安装副本本轮未另开原生窗口。旧包和可运行回退保留，完整目标继续。
