@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前包后台边界补验（2026-11-12）
+
+3ed07c9包内任务监听、模型配置、Pi历史/写盘、Claude写盘恢复及远程加密/撤销五组现有检查全部exit0；无需账号/面板/厂商推理。真实文件错误、HTTP/SQLite、SDK/RPC及加密PTY执行有断言；合成CLI/本地网关不冒称真实模型或互联网验收。ZIP哈希保持，无生产代码/正式测试变化。见[范围与证据](validation/2026-11-12-package-backend-boundaries.md)。完整目标继续。
+
 ## 当前开发包3ed07c9（2026-11-12）
 
 协作整页分页与英文后端搜索修复已进入current/candidate、DMG及Applications。四组包检查、包内六组搜索/三会话只读冷开、解压包欢迎启动与退出0、DMG和安装完整清单通过；无新模型请求。清理无占用重复base及临时安装备份，3a3f873回退与所有状态/日志保留。见[本批证据](validation/2026-11-12-pagination-search-package.md)。下方未入包为各轮历史记录；账号、Windows原生及完整产品验收继续开放。
