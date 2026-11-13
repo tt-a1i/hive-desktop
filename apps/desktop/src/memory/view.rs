@@ -16,7 +16,7 @@ use gpui_kit::{
 fn memory_status_dot(status: &str, cx: &App) -> (Rgba, Rgba) {
     match status {
         "active" => (Color::Text.get(cx), Color::Success.get(cx)),
-        "candidate" => (Color::Text.get(cx), Color::Attention.get(cx)),
+        "candidate" => (Color::Text.get(cx), crate::chrome::attention_dot(cx)),
         "rejected" => (Color::Secondary.get(cx), Color::Error.get(cx)),
         "archived" => (Color::Secondary.get(cx), Color::Muted.get(cx)),
         _ => (Color::Text.get(cx), Color::Muted.get(cx)),

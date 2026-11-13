@@ -118,7 +118,7 @@ impl HiveApp {
             let (_badge_bg, badge_fg, badge_dot) =
                 super::dispatch_badge_colors(&item.state, cx);
             let dot_color = badge_dot.unwrap_or_else(|| match item.state.as_str() {
-                "queued" | "submitted" => Color::Attention.get(cx),
+                "queued" | "submitted" => crate::chrome::attention_dot(cx),
                 _ => Color::Muted.get(cx),
             });
             let detail_scroll = &self.collaboration.detail_scroll;

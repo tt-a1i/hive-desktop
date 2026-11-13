@@ -556,7 +556,7 @@ impl HiveApp {
                                                 let workload_dot = match member.status.as_str() {
                                                     "working" => Color::Accent.get(cx),
                                                     "idle" if member.pending_task_count > 0 => {
-                                                        Color::Attention.get(cx)
+                                                        crate::chrome::attention_dot(cx)
                                                     }
                                                     "idle" => Color::Success.get(cx),
                                                     _ => Color::Muted.get(cx),

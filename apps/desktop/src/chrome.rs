@@ -16,6 +16,15 @@ use gpui_kit::{
 pub const TOPBAR_HEIGHT: f32 = 46.;
 
 #[inline]
+pub(crate) fn attention_dot(cx: &App) -> Rgba {
+    rgb(if Theme::global(cx).is_dark() {
+        0xfbbf24
+    } else {
+        0xd97706
+    })
+}
+
+#[inline]
 pub fn traffic_light_inset(window: &Window) -> Pixels {
     if cfg!(target_os = "macos") && !window.is_fullscreen() {
         px(78.)

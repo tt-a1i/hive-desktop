@@ -523,7 +523,7 @@ impl HiveApp {
         let (_badge_bg, badge_fg, badge_dot) =
             crate::collaboration::dispatch_badge_colors(&dispatch.status, cx);
         let dot_color = badge_dot.unwrap_or_else(|| match dispatch.status.as_str() {
-            "queued" | "submitted" => Color::Attention.get(cx),
+            "queued" | "submitted" => crate::chrome::attention_dot(cx),
             _ => Color::Muted.get(cx),
         });
         v_flex()
