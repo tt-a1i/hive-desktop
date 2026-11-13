@@ -1,5 +1,13 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 992aae6 与清理（2026-11-13）
+
+Sidecar 协议帧完整排空与异常 `shutdown` 在打开 `stdin` 上即时退出、会话索引原子刷盘、多路关闭错误 `AggregateError` 保留，以及全设置面板（外观/聊天/团队/内置 Pi）、设置搜索与会话搜索/归档弹窗的 `Viewport` + `Reveal` 窄窗键盘显露闭环（`992aae6`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `1c04393500e52e1b353866075fb20d6a9471457f9223091c8bda652072ae6d8f`）。精确 9 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、协议排空与异常退出检查（`18 ms` / `13 ms`）、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文深色 `20 px` 欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`62e6a6e` 保留直接可运行回退，退役 `4b3135d` 解压树并清理 Rust 中间构建缓存与重复产物约 6.68 GB（6.23 GiB），见[包内证据与边界](validation/2026-11-13-sidecar-wire-and-settings-scroll-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
+## Sidecar 协议帧排空、异常关闭防卡死与全设置/会话搜索视口焦点闭环（2026-11-13，源码）
+
+修复 `main.ts` 在并发流水线请求及异常 `shutdown` 时未关闭 `input` 或未等待 `protocolWrite` 回调导致挂死满 `3,000 ms` 或响应帧截断的问题，补齐 `ChatIndex` 原子落盘 `flush: true` 与 `StructuredLifecycle` / `DesktopSettings` 多路关闭错误 `AggregateError` 保留；补齐设置面板剩余纵向滚动分区、设置搜索与会话搜索/归档弹窗的 `Viewport` + `Reveal` + `.vertical_scrollbar` 键盘显露闭环及 `focus_scroll` 几何单测。五组协议与聚合实测、六组零推理运行时回归、`LOCALE_AUDIT_OK`（1,301 键）、Rust 36 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查与 macOS release 构建通过，见[实证与边界](validation/2026-11-13-sidecar-wire-and-settings-scroll.md)。已纳入 `992aae6` 开发包，完整目标继续。
+
 ## 当前开发包 62e6a6e 与清理（2026-11-13）
 
 运行时三阶段关闭隔离、三后端启动期握手即时取消与多句柄排空（`2abce78`），以及桌面跨边界自有诊断闭合本地化、会话资源浏览窄窗 `Viewport` + `Reveal` 键盘显露与交互/预览/导出/终端表面打磨（`62e6a6e`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `bfb4d71e551ec54c65cd83f0533af096793e62ff5433f7b53c3c8c6b5539c80d`）。精确 23 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、关闭隔离与三后端启动取消检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与欢迎页/Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`4b3135d` 保留直接可运行回退，退役 `9e6a44a` 解压树并清理重复/临时构建产物约 1.41 GB（1.31 GiB），见[包内证据与边界](validation/2026-11-13-shutdown-cancel-surfaces-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

@@ -1,5 +1,13 @@
 # Hive Desktop 进度
 
+## 当前开发包 992aae6 与清理（2026-11-13）
+
+Node sidecar JSONL 协议帧完整排空与异常 `shutdown` 在打开 `stdin` 上即时退出、会话索引原子刷盘与多路关闭错误 `AggregateError` 保留，以及全设置面板（外观/聊天/团队/内置 Pi）、设置搜索与会话搜索/归档弹窗的 `Viewport` + `Reveal` 窄窗键盘显露闭环（`992aae6`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 8 份后台 JS/map，28,869 项清单/29 链接、DMG 只读挂载与安装核对通过；包内四组正式包检查、协议帧排空与异常关闭即时退出（`18 ms` / `13 ms`）、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文深色 `20 px` 欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `62e6a6e` 直接可运行回退，退役 `4b3135d` 解压树并清理 Rust 中间构建缓存与重复产物约 6.68 GB（6.23 GiB），见[包内证据与边界](validation/2026-11-13-sidecar-wire-and-settings-scroll-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
+## Sidecar 协议帧排空、异常关闭防卡死与全设置/会话搜索视口焦点闭环（2026-11-13，源码）
+
+全量复核 `packages/runtime/src/` 的协议流/退出/持久化路径与 `apps/desktop/src/` 全部纵向滚动面板（推进 `#1`、`#17`、`#20`）：(1) `main.ts` 追踪全部在途请求（`inFlight`）与 `protocolWrite` 写回调（`pendingWrites`），将 `method === 'shutdown'` 的 `input.close()` 移入 `finally`，消除异常关闭在打开 `stdin` 上挂死 `3,000 ms` 至 `SIGTERM` 的窗口（实测 `12 ms` 内输出错误帧并主动退出 `1`）；(2) `chat-index.ts` 补齐 `flush: true` 原子刷盘，`structured-runtime-lifecycle.ts` 与 `desktop-settings.ts` 补齐多路拒绝 `AggregateError` 保留；(3) 为设置“外观 / 聊天 / 团队”、设置搜索（`#settings-search-results`）、内置 Pi 提供商筛选/登录输入行及“搜索会话 / 已归档会话”（`#session-search-results`）补齐 `Viewport` + `Reveal` + `.vertical_scrollbar` 键盘自动显露，并在 `focus_scroll.rs` 补充视口几何单测。五组协议与聚合实测、六组零推理运行时回归、Rust 36 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查与 macOS release 构建全部通过，见[实证与边界](validation/2026-11-13-sidecar-wire-and-settings-scroll.md)。
+
 ## 当前开发包 62e6a6e 与清理（2026-11-13）
 
 运行时三阶段关闭隔离、三后端启动期握手即时取消与多连接完整排空（`2abce78`），以及桌面跨边界自有诊断闭合本地化、会话资源窄窗 `Viewport` + `Reveal` 焦点显露与交互/预览/导出/终端表面打磨（`62e6a6e`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 22 份后台 JS/map，28,869 项清单/29 链接、DMG 只读挂载与安装核对通过；包内四组正式包检查、关闭隔离与三后端挂起启动即时取消（`207 ms` / `357 ms`）、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `4b3135d` 直接可运行回退，退役 `9e6a44a` 解压树并清理本批重复与临时构建产物约 1.41 GB（1.31 GiB），见[包内证据与边界](validation/2026-11-13-shutdown-cancel-surfaces-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
