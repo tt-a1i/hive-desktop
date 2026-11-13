@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 跨层文案本地化、动态回退与双语会话搜索索引（2026-11-13，源码）
+
+推进 `#17` 跨层文案与检索一致性：`chats.ts` 搜索索引补齐未绑定默认 `'New conversation'` 别名与绑定会话双语角色词（零 Agent 启动），`session_row.rs` / `search.rs` 对齐 `:__workflow__` 与角色副标题，缺来源投递提示、默认恢复摘要与空错误诊断改为渲染期动态本地化且不污染引用草稿，`language.rs` 闭合集 `localize_owned_error` 覆盖桌面与运行时自有错误并逐字节保留外部原文，`locales/en.json` 扩展至 1,298 条唯一键。`session-search`、双语别名与 d43f55e 真实三会话冷副本检索、Rust 测试及 Windows 交叉检查通过，见[实证与边界](validation/2026-11-13-cross-layer-localization-and-search-aliases.md)。未关闭 `#17`（仍待原生全表面/字号/VoiceOver/Windows 硬件核验），待入下一安装包，完整目标继续。
+
 ## 暂停队列新输入保持、可执行程序解析与元数据原子写清理（2026-11-13，源码）
 
 复现并修复 Codex 停止后或冷重开暂停/队首失败队列在发送补充消息时被 `activateOnce` 隐式恢复消费、`claude.ts` 命中同名目录/空 `PATH` 段/`win32` 无扩展名脚本，以及 `claude-metadata.ts` / `codex-metadata.ts` 原子替换失败残留 `.tmp` 文件。四组前后对照、d43f55e 真实三会话副本冷读与 `check:runtime`、`check:team` 等 12 组回归通过，见[实证与边界](validation/2026-11-13-runtime-queue-and-executable-hardening.md)。无厂商推理/面板操作/正式测试改动，待入下一安装包，完整目标继续。

@@ -37,9 +37,17 @@ enum Notice { ReadError(String), Saved, SaveError(String) }
 impl ComposerPreferences {
     fn message(&self) -> Option<String> {
         self.message.as_ref().map(|notice| match notice {
-            Notice::ReadError(error) => format!("{}: {error}", tr("读取聊天设置失败")),
+            Notice::ReadError(error) => format!(
+                "{}: {}",
+                tr("读取聊天设置失败"),
+                crate::language::localize_owned_error(error)
+            ),
             Notice::Saved => tr("发送快捷键已保存").to_owned(),
-            Notice::SaveError(error) => format!("{}: {error}", tr("保存聊天设置失败，原快捷键仍生效")),
+            Notice::SaveError(error) => format!(
+                "{}: {}",
+                tr("保存聊天设置失败，原快捷键仍生效"),
+                crate::language::localize_owned_error(error)
+            ),
         })
     }
 }

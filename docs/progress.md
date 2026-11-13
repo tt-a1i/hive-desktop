@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 跨层文案本地化、动态回退与双语会话搜索索引（2026-11-13，源码）
+
+审计 `apps/desktop/src/` 与 `packages/runtime/src/` 补齐跨层中英文与检索一致性（推进 `#17`）：(1) `chats.ts` 搜索索引对未绑定默认 `'新会话'` 补充 `'New conversation'`（排除自定义同名会话），对绑定会话补充双语角色词（主控/工作流/成员），全程零 Agent 启动；(2) `navigation/session_row.rs` 与 `sessions/search.rs` 对齐 `:__workflow__` 及绑定角色副标题与无障碍描述；(3) 缺来源投递提示、默认恢复摘要与空错误诊断改为渲染期动态本地化，防止缺来源提示误入引用草稿并保留原文复制；(4) `language.rs` 新增闭合集 `localize_owned_error` 接入各面板自有错误展示（外部 CLI/OS/SDK 原文逐字节保留），补齐适配器标签、英文标点及 `locales/en.json` 至 1,298 条唯一键。`session-search`、双语别名与 d43f55e 真实三会话副本冷搜、Rust 单元/进程树测试及 Windows 交叉检查通过，见[实证与边界](validation/2026-11-13-cross-layer-localization-and-search-aliases.md)。待入下一安装包并做原生窗口核验，完整目标继续。
+
 ## 暂停队列新输入保持、可执行程序解析与元数据原子写清理（2026-11-13，源码）
 
 逐模块审计 `packages/runtime/src/` 并复现修复三处边界：(1) `chats.ts` 在已暂停或队首失败队列上发送补充消息触发 `activateOnce(id, true)` 时不再隐式 `queue.resume()`，保留暂停态、队首失败原因及冷开空闲主控的 outbox 汇报重放，仅在显式 `chats.resume()` 时继续消费；(2) `claude.ts` 可执行程序查找过滤空 `PATH` 段、校验常规文件并在 `win32` 仅匹配 `.exe`；(3) `claude-metadata.ts` 与 `codex-metadata.ts` 原子重命名失败时确保清理 `.tmp` 临时文件。四组前后对照、d43f55e 真实三会话副本冷读及 `check:runtime`、`check:team` 等 12 组回归通过，见[实证与边界](validation/2026-11-13-runtime-queue-and-executable-hardening.md)。本地受控回环/合成 CLI、无厂商推理或正式测试改动，待入安装包，完整目标继续。

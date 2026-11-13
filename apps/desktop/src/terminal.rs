@@ -28,7 +28,11 @@ impl TerminalStatus {
     }
 }
 fn terminal_error_text(error: &str) -> String {
-    ["终端恢复顺序错误，请重新连接","终端快照未完整消费，未确认恢复","终端输出顺序错误，请重新连接","终端输出未完整消费，未发送确认","终端操作未获确认，请重新连接","终端连接响应身份不匹配","未能确认 Shell 已停止，请刷新后查看状态","Shell 列表格式错误","Shell 启动响应格式错误"].into_iter().find(|key|*key==error).map(|key|tr(key).to_owned()).unwrap_or_else(||error.to_owned())
+    ["终端恢复顺序错误，请重新连接","终端快照未完整消费，未确认恢复","终端输出顺序错误，请重新连接","终端输出未完整消费，未发送确认","终端操作未获确认，请重新连接","终端连接响应身份不匹配","未能确认 Shell 已停止，请刷新后查看状态","Shell 列表格式错误","Shell 启动响应格式错误"]
+        .into_iter()
+        .find(|key| *key == error)
+        .map(|key| tr(key).to_owned())
+        .unwrap_or_else(|| crate::language::localize_owned_error(error))
 }
 pub struct WorkspaceTerminal {
     pub visible: bool,

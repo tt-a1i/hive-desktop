@@ -48,7 +48,7 @@ impl HiveApp {
                                     crate::focus_scroll::Reveal::new(("model-option-reveal",i), model_scroll,
                                         Button::new(("model", i)).ghost().compact().justify_start().flex_shrink_0().w_full().min_w_0().h_auto().py_2()
                                             .disabled(self.reasoning_picker.loading)
-                                            .accessibility_label(format!("{}，{} / {}",model.name,model.provider,model.id))
+                                            .accessibility_label(if crate::language::english() { format!("{}, {} / {}",model.name,model.provider,model.id) } else { format!("{}，{} / {}",model.name,model.provider,model.id) })
                                             .tooltip(format!("{}\n{} / {}",model.name,model.provider,model.id))
                                             .child(v_flex().flex_1().min_w_0().items_start().gap_1()
                                                 .child(div().w_full().truncate().text_sm().child(model.name.clone()))

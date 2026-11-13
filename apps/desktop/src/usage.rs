@@ -50,7 +50,7 @@ pub enum UsageError { Decode(String), Request(String) }
 impl UsageError {
     fn text(&self) -> String {
         let (key,error)=match self { Self::Decode(error)=>("用量数据格式错误",error),Self::Request(error)=>("未能读取原生用量",error) };
-        format!("{}: {error}",tr(key))
+        format!("{}: {}",tr(key),crate::language::localize_owned_error(error))
     }
 }
 impl HiveApp {

@@ -56,6 +56,11 @@ impl HiveApp {
         } else {
             tr("在文件资源管理器中显示")
         };
+        let detail = if crate::language::english() {
+            format!("{label}: {path}")
+        } else {
+            format!("{label}：{path}")
+        };
         h_flex()
             .w_full()
             .min_w_0()
@@ -68,8 +73,8 @@ impl HiveApp {
                     .flex_1()
                     .justify_start()
                     .icon(Glyph::FolderOpen)
-                    .accessibility_label(format!("{label}：{path}"))
-                    .tooltip(format!("{label}：{path}"))
+                    .accessibility_label(detail.clone())
+                    .tooltip(detail)
                     .child(div().flex_1().min_w_0().truncate().child(path.to_owned()))
                     .disabled(unavailable)
                     .on_click(cx.listener(move |_, _, _, cx| {

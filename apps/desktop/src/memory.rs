@@ -74,7 +74,7 @@ impl MemoryError {
             Self::Load(error) => ("读取记忆失败", error),
             Self::Save(error) => ("保存记忆变更失败", error),
         };
-        format!("{}: {error}", tr(key))
+        format!("{}: {}", tr(key), crate::language::localize_owned_error(error))
     }
 }
 impl Memory {

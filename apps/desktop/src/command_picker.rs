@@ -44,7 +44,7 @@ impl CatalogNotice {
     fn text(&self) -> String {
         match self {
             Self::Message(key) => tr(key).to_owned(),
-            Self::Error(key,error) => format!("{}: {error}",tr(key)),
+            Self::Error(key,error) => format!("{}: {}",tr(key),crate::language::localize_owned_error(error)),
         }
     }
 }

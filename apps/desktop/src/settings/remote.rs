@@ -70,13 +70,13 @@ enum Notice {
 }
 impl Notice {
     fn text(&self) -> String {
-        use crate::language::tr;
+        use crate::language::{localize_owned_error, tr};
         match self {
-            Self::TicketError(error) => format!("{}: {error}", tr("配对信息无法读取")),
+            Self::TicketError(error) => format!("{}: {}", tr("配对信息无法读取"), localize_owned_error(error)),
             Self::Submitted => tr("操作已提交，正在重新读取实际状态。").to_owned(),
-            Self::ActionError(error) => format!("{}: {error}", tr("操作失败")),
+            Self::ActionError(error) => format!("{}: {}", tr("操作失败"), localize_owned_error(error)),
             Self::DiagnosticsCopied => tr("诊断信息已复制到本机剪贴板。").to_owned(),
-            Self::DiagnosticsError(error) => format!("{}: {error}", tr("复制诊断信息失败")),
+            Self::DiagnosticsError(error) => format!("{}: {}", tr("复制诊断信息失败"), localize_owned_error(error)),
         }
     }
 }

@@ -51,7 +51,7 @@ impl Snapshot {
                         }
                         .to_owned()
                     },
-                    body: message.text.clone(),
+                    body: message.display_body().to_owned(),
                     thinking: message
                         .thinking
                         .iter()
@@ -110,7 +110,7 @@ impl Snapshot {
                     failure: message
                         .failure
                         .as_ref()
-                        .map(|failure| failure.message.clone()),
+                        .map(|failure| failure.display_message().to_owned()),
                 })
                 .collect(),
         }

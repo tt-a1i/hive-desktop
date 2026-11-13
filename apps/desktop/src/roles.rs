@@ -40,8 +40,8 @@ impl RoleError {
     fn text(&self) -> String {
         match self {
             Self::Message(key) => tr(key).to_owned(),
-            Self::Load(error) => format!("{}: {error}", tr("读取角色模板失败")),
-            Self::Mutation(error) => format!("{}: {error}", tr("角色模板操作失败")),
+            Self::Load(error) => format!("{}: {}", tr("读取角色模板失败"), crate::language::localize_owned_error(error)),
+            Self::Mutation(error) => format!("{}: {}", tr("角色模板操作失败"), crate::language::localize_owned_error(error)),
         }
     }
 }

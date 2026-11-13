@@ -27,8 +27,8 @@ impl PreviewError {
             Self::Binary => tr("文件包含二进制内容，无法作为文本预览。").to_owned(),
             Self::Encoding => tr("文件不是 UTF-8 文本，暂不支持此编码的预览。").to_owned(),
             Self::InvalidAttachmentPath => tr("附件没有返回有效的本地路径。").to_owned(),
-            Self::Source(error) => error.clone(),
-            Self::Io(key,error) => format!("{}: {error}",tr(key)),
+            Self::Source(error) => crate::language::localize_owned_error(error),
+            Self::Io(key,error) => format!("{}: {}",tr(key),crate::language::localize_owned_error(error)),
         }
     }
 }

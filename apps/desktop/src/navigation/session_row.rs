@@ -30,6 +30,8 @@ impl HiveApp {
             .map(|agent| {
                 if agent.ends_with(":orchestrator") {
                     tr("主控")
+                } else if agent.ends_with(":__workflow__") {
+                    tr("工作流")
                 } else {
                     tr("成员")
                 }
@@ -256,7 +258,7 @@ impl HiveApp {
                                         .px_2()
                                         .text_xs()
                                         .text_color(Color::Error.get(cx))
-                                        .child(format!("{}: {error}", tr("读取置顶失败"))),
+                                        .child(format!("{}: {}", tr("读取置顶失败"), crate::language::localize_owned_error(error))),
                                 )
                             })
                             .children(state.records.iter().map(|hit| {

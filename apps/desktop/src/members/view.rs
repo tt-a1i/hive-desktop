@@ -37,7 +37,7 @@ impl HiveApp {
                 .when(!self.members.is_empty() || self.member_error.is_none(), |view| view.child(div().flex_shrink_0().child(Reveal::new("members-filter-reveal", &self.member_scroll, self.render_member_filters(matching_members.len(), member_browsing, cx)))))
                 .when(self.error.is_some(), |view| view.child(div().flex_shrink_0().child(self.render_error_banner(cx))))
                 .when_some(self.member_error.clone(), |view,error| {
-                    let message = format!("{}: {error}", tr("成员状态未能更新"));
+                    let message = format!("{}: {}", tr("成员状态未能更新"), crate::language::localize_owned_error(&error));
                     view.child(div().id("member-refresh-error").role(Role::Label).aria_label(message.clone()).text_sm().text_color(Color::Error.get(cx)).child(message))
                 })
                 .child(v_flex().id("members-panel").flex_shrink_0().min_w_0().gap_2().p_1()
@@ -113,7 +113,8 @@ impl HiveApp {
                                         "claude" => Some(crate::protocol::Backend::Claude), "pi-rpc" => Some(crate::protocol::Backend::PiRpc), _ => None,
                                     };
                                     let retry_id = id.clone(); let retry_command = member.configured_command.clone();
-                                    view.child(crate::text_reading::selectable_text("member-model-error", if english() { format!("Could not load {backend} models: {error}") } else { format!("读取 {backend} 模型失败：{error}") }).text_sm().text_color(Color::Error.get(cx)))
+                                    let localized = crate::language::localize_owned_error(&error);
+                                    view.child(crate::text_reading::selectable_text("member-model-error", if english() { format!("Could not load {backend} models: {localized}") } else { format!("读取 {backend} 模型失败：{error}") }).text_sm().text_color(Color::Error.get(cx)))
                                         .child(Reveal::new(format!("member-{id}-model-repair-reveal"), &self.member_scroll, h_flex().min_w_0().flex_wrap().gap_2()
                                             .when_some(repair_backend, |row, backend| row.child(self.render_backend_repair_actions(backend, !self.connected || self.member_catalog_loading, cx)))
                                             .child(Button::new("member-model-retry").ghost().compact().label(tr("重新读取模型")).disabled(!self.connected || self.member_catalog_loading)

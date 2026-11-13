@@ -409,7 +409,7 @@ impl HiveApp {
                 view.when(self.collaboration.task_loading, |view| {
                     view.child(div().text_sm().child(tr("正在读取任务…")))
                 })
-                .when_some(self.collaboration.task_error.as_ref().map(|(key,error)| format!("{}: {error}", tr(key))), |view, error| {
+                .when_some(self.collaboration.task_error.as_ref().map(|(key,error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, error| {
                     view.child(
                         div()
                             .text_sm()

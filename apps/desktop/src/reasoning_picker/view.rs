@@ -48,22 +48,39 @@ impl HiveApp {
             })
             .when_some(self.reasoning_picker.error.as_ref(), |view, error| {
                 view.child(
-                    crate::text_reading::selectable_text("reasoning-error", error.clone())
-                        .text_sm()
-                        .text_color(Color::Error.get(cx)),
+                    crate::text_reading::selectable_text(
+                        "reasoning-error",
+                        crate::language::localize_owned_error(error),
+                    )
+                    .text_sm()
+                    .text_color(Color::Error.get(cx)),
                 )
             })
             .when_some(self.reasoning_picker.state.as_ref(), |view, state| {
                 view.when_some(state.description.as_ref(), |view, text| {
                     // Translate only metadata owned by Hive's native adapters.
                     // Preserve unknown/provider diagnostics verbatim.
-                    let text = match text.as_str() {
-                        "从原生 Codex 线程读取；档位由当前模型提供。" => tr("从原生 Codex 线程读取；档位由当前模型提供。"),
-                        "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。" => tr("读取原生实际强度；环境、组织限制或模型能力可能调整请求值。"),
-                        _ => text.as_str(),
+                    let text = if let Some(inner) = text
+                        .strip_prefix("原设置未能恢复：")
+                        .and_then(|rest| rest.strip_suffix(" 请选择当前可用档位。"))
+                    {
+                        if crate::language::english() {
+                            format!(
+                                "Could not restore saved effort: {} Choose an available level.",
+                                crate::language::localize_owned_error(inner)
+                            )
+                        } else {
+                            text.clone()
+                        }
+                    } else {
+                        match text.as_str() {
+                            "从原生 Codex 线程读取；档位由当前模型提供。" => tr("从原生 Codex 线程读取；档位由当前模型提供。").to_owned(),
+                            "读取原生实际强度；环境、组织限制或模型能力可能调整请求值。" => tr("读取原生实际强度；环境、组织限制或模型能力可能调整请求值。").to_owned(),
+                            _ => text.clone(),
+                        }
                     };
                     view.child(
-                        crate::text_reading::selectable_text("reasoning-description", text.to_owned())
+                        crate::text_reading::selectable_text("reasoning-description", text)
                             .text_xs()
                             .text_color(Color::Muted.get(cx)),
                     )

@@ -38,7 +38,9 @@ enum SearchError { Request(String), WorkspaceMissing }
 impl SearchError {
     fn text(&self) -> String {
         match self {
-            Self::Request(error) => format!("{}: {error}", tr("搜索失败")),
+            Self::Request(error) => {
+                format!("{}: {}", tr("搜索失败"), crate::language::localize_owned_error(error))
+            }
             Self::WorkspaceMissing => tr("工作区正在移除或已不存在，请重新搜索。").to_owned(),
         }
     }
@@ -285,10 +287,24 @@ impl Render for SessionSearch {
                     )
                     .children(self.page.matches.iter().enumerate().map(|(i, hit)| {
                         let title = crate::view::untitled_session_label(&hit.session).unwrap_or(&hit.title);
+                        let role = hit.session.agent_id.as_deref().map(|agent| {
+                            if agent.ends_with(":orchestrator") {
+                                tr("主控")
+                            } else if agent.ends_with(":__workflow__") {
+                                tr("工作流")
+                            } else {
+                                tr("成员")
+                            }
+                        });
                         let suffix = std::path::Path::new(&hit.workspace_path).components().rev().take(2).collect::<Vec<_>>()
                             .into_iter().rev().map(|part| part.as_os_str().to_string_lossy()).collect::<Vec<_>>().join(std::path::MAIN_SEPARATOR_STR);
                         let project = if suffix.is_empty() { hit.workspace_name.clone() } else { format!("{} · {suffix}", hit.workspace_name) };
                         let identity = if hit.workspace_path.is_empty() { hit.workspace_name.clone() } else { format!("{} · {}", hit.workspace_name, hit.workspace_path) };
+                        let meta = match role {
+                            Some(role) => format!("{project} · {role} · {}", tr(hit.session.backend.label())),
+                            None => format!("{project} · {}", tr(hit.session.backend.label())),
+                        };
+                        let role_suffix = role.map(|role| format!(" · {role}")).unwrap_or_default();
                         Button::new(("search-session", i))
                             .ghost()
                             .w_full()
@@ -296,8 +312,8 @@ impl Render for SessionSearch {
                             .py_2()
                             .justify_start()
                             .selected(i == self.selected)
-                            .accessibility_label(if english() { format!("Open {} · {} · {}", title, identity, tr(hit.session.backend.label())) } else { format!("打开 {} · {} · {}", title, identity, tr(hit.session.backend.label())) })
-                            .tooltip(format!("{title} · {identity} · {}", tr(hit.session.backend.label())))
+                            .accessibility_label(if english() { format!("Open {} · {}{} · {}", title, identity, role_suffix, tr(hit.session.backend.label())) } else { format!("打开 {} · {}{} · {}", title, identity, role_suffix, tr(hit.session.backend.label())) })
+                            .tooltip(format!("{title} · {identity}{role_suffix} · {}", tr(hit.session.backend.label())))
                             .child(
                                 v_flex()
                                     .flex_1()
@@ -316,11 +332,7 @@ impl Render for SessionSearch {
                                             .truncate()
                                             .text_xs()
                                             .text_color(Color::Muted.get(cx))
-                                            .child(format!(
-                                                "{} · {}",
-                                                project,
-                                                tr(hit.session.backend.label())
-                                            )),
+                                            .child(meta),
                                     ),
                             )
                             .on_click(cx.listener(move |this, _, window, cx| {

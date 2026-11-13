@@ -152,16 +152,22 @@ impl HiveApp {
                 ]
                 .into_iter()
                 .filter_map(|(key, label)| {
-                    params[key]
-                        .as_str()
-                        .map(|text| div().text_sm().child(format!("{label}：{text}")))
+                    params[key].as_str().map(|text| {
+                        div().text_sm().child(if crate::language::english() {
+                            format!("{label}: {text}")
+                        } else {
+                            format!("{label}：{text}")
+                        })
+                    })
                 }),
             )
             .when_some(params["mcpServer"].as_object(), |view, _| {
                 view.child(
-                    div()
-                        .text_sm()
-                        .child(format!("MCP：{}", params["mcpServer"])),
+                    div().text_sm().child(if crate::language::english() {
+                        format!("MCP: {}", params["mcpServer"])
+                    } else {
+                        format!("MCP：{}", params["mcpServer"])
+                    }),
                 )
             })
             .when(params["defaultToNo"] == true, |view| {

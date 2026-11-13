@@ -598,6 +598,6 @@ impl HiveApp {
             .collect();
         summary
             .first()
-            .map(|first| (first.clone(), summary.join("，")))
+            .map(|first| (first.clone(), summary.join(if crate::language::english() { ", " } else { "，" })))
     }
 }

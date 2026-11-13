@@ -48,11 +48,11 @@ enum Notice { Saved, ReadError(String), WriteError(String) }
 
 impl Appearance {
     pub fn message(&self) -> Option<String> {
-        use crate::language::tr;
+        use crate::language::{localize_owned_error, tr};
         self.message.as_ref().map(|message| match message {
             Notice::Saved => tr("外观已保存").to_owned(),
-            Notice::ReadError(error) => format!("{}: {error}", tr("读取外观设置失败")),
-            Notice::WriteError(error) => format!("{}: {error}", tr("保存外观失败")),
+            Notice::ReadError(error) => format!("{}: {}", tr("读取外观设置失败"), localize_owned_error(error)),
+            Notice::WriteError(error) => format!("{}: {}", tr("保存外观失败"), localize_owned_error(error)),
         })
     }
     pub fn mode(&self) -> Mode {

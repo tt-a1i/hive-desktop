@@ -24,7 +24,7 @@ pub struct ConversationFind {
 
 fn matches(message: &Message, input: Option<&serde_json::Value>, query: &str) -> bool {
     !query.is_empty()
-        && (message.text.to_lowercase().contains(query)
+        && (message.display_body().to_lowercase().contains(query)
             || message
                 .thinking
                 .iter()
@@ -39,7 +39,7 @@ fn matches(message: &Message, input: Option<&serde_json::Value>, query: &str) ->
             || message
                 .failure
                 .as_ref()
-                .is_some_and(|failure| failure.message.to_lowercase().contains(query))
+                .is_some_and(|failure| failure.display_message().to_lowercase().contains(query))
             || message
                 .delivery
                 .as_ref()

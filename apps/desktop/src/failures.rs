@@ -15,6 +15,15 @@ pub struct Diagnostic {
     pub expanded: bool,
     pub diagnostic_write_failed: bool,
 }
+impl Diagnostic {
+    pub(crate) fn display_message(&self) -> &str {
+        if self.message.trim().is_empty() {
+            tr("Agent 回复未完成。")
+        } else {
+            &self.message
+        }
+    }
+}
 
 fn details(owner: &str, message: &str, cx: &Context<HiveApp>) -> AnyElement {
     let text = message.to_owned();
@@ -145,7 +154,7 @@ impl HiveApp {
                     ),
             )
             .when(failure.expanded, |view| {
-                view.child(details(&format!("reply-{index}"), &failure.message, cx))
+                view.child(details(&format!("reply-{index}"), failure.display_message(), cx))
             })
             .into_any_element()
     }

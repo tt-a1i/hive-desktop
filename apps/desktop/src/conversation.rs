@@ -377,6 +377,7 @@ impl HiveApp {
             let explicit_user = presentation
                 .as_ref()
                 .is_some_and(|p| p.origin == DeliveryOrigin::User);
+            let missing_provenance = presentation.is_none();
             let display = presentation
                 .as_ref()
                 .map(|p| {
@@ -389,7 +390,7 @@ impl HiveApp {
                         p.display_text.clone()
                     }
                 })
-                .unwrap_or_else(|| "此消息缺少有效的来源记录。展开查看原文。".into());
+                .unwrap_or_default();
             let heading = presentation.as_ref().map(|p| p.origin.heading()).unwrap_or("来源未记录");
             let worker_name = presentation.as_ref().and_then(|p| p.worker_name.clone());
             let expanded = self
@@ -424,6 +425,10 @@ impl HiveApp {
                     rendered.layout_revision += 1;
                 }
 
+                let next_missing = rendered
+                    .delivery
+                    .as_ref()
+                    .is_none_or(|d| d.missing_provenance != missing_provenance);
                 rendered.delivery = if explicit_user {
                     None
                 } else {
@@ -438,8 +443,12 @@ impl HiveApp {
                         artifacts: presentation.map(|p| p.artifacts).unwrap_or_default(),
                         raw: text,
                         expanded,
+                        missing_provenance,
                     })
                 };
+                if next_missing && rendered.delivery.is_some() {
+                    rendered.layout_revision += 1;
+                }
             }
         } else if role == "toolResult" {
             if let (Some(call), Some(args)) =
@@ -461,7 +470,7 @@ impl HiveApp {
                 let failure = (message["stopReason"] == "error").then(|| {
                     message["errorMessage"]
                         .as_str()
-                        .unwrap_or("Agent 回复未完成。")
+                        .unwrap_or_default()
                         .to_owned()
                 });
                 if failure.is_some() && !self.messages.iter().any(|m| m.id == id) {

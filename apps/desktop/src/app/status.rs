@@ -41,8 +41,8 @@ impl ErrorNotice {
     pub(crate) fn text(&self) -> String {
         match self {
             Self::Message(key) => tr(key).to_owned(),
-            Self::Raw(error) => error.clone(),
-            Self::Detail(key,error) => format!("{}: {error}",tr(key)),
+            Self::Raw(error) => crate::language::localize_owned_error(error),
+            Self::Detail(key,error) => format!("{}: {}",tr(key),crate::language::localize_owned_error(error)),
             Self::Conversation(error) => error.text(),
             Self::Context(key,cause,guidance) => format!("{}: {}\n{}",tr(key),cause.text(),tr(guidance)),
             Self::Batch(errors) => errors.iter().map(Self::text).collect::<Vec<_>>().join("\n"),

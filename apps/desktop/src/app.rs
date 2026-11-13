@@ -47,6 +47,7 @@ pub struct DeliveryCard {
     pub worker_name: Option<String>,
     pub raw: String,
     pub expanded: bool,
+    pub missing_provenance: bool,
 }
 impl DeliveryCard {
     pub(crate) fn heading_text(&self) -> String {
@@ -71,6 +72,19 @@ pub struct Message {
     pub image_sources: Vec<Arc<Image>>,
     pub images_loading: bool,
     pub images_error: Option<String>,
+}
+impl Message {
+    pub(crate) fn display_body(&self) -> &str {
+        if self.delivery.as_ref().is_some_and(|card| card.missing_provenance) {
+            crate::language::tr("此消息缺少有效的来源记录。展开查看原文。")
+        } else if self.delivery.as_ref().is_some_and(|card| card.heading == "会话恢复")
+            && self.text == "已恢复会话，继续处理未完成的工作。"
+        {
+            crate::language::tr("已恢复会话，继续处理未完成的工作。")
+        } else {
+            &self.text
+        }
+    }
 }
 pub struct ConversationPosition {
     pub anchor: Option<crate::conversation_list::ReadingAnchor>,

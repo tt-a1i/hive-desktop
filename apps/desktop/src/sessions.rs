@@ -153,7 +153,7 @@ impl HiveApp {
         let name = std::path::Path::new(&path)
             .file_name()
             .and_then(|s| s.to_str())
-            .unwrap_or("项目")
+            .unwrap_or_else(|| crate::language::tr("项目"))
             .to_string();
         let window = window.window_handle();
         self.request("hive.request", json!({"method":"POST","path":"/api/workspaces","body":{"path":path,"name":name,"autostart_orchestrator":false}}), cx, move |this, value, cx| {

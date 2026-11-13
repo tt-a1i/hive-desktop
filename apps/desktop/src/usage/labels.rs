@@ -6,6 +6,8 @@ pub(super) fn native_label(text: &str) -> String {
         return format!("{} · {model}", tr("模型累计"));
     }
     const LABELS: &[&str] = &[
+        "内置 Pi 原生会话",
+        "外部 Pi 原生会话",
         "Codex 原生线程",
         "Claude 官方 SDK",
         "原生会话累计",

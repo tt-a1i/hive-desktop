@@ -37,8 +37,8 @@ pub enum WorkflowError { Refresh(String), Action(String), Unconfirmed }
 impl WorkflowError {
     fn text(&self) -> String {
         match self {
-            Self::Refresh(error) => format!("{}: {error}", tr("工作流未能更新，保留上次结果")),
-            Self::Action(error) => format!("{}: {error}", tr("工作流操作失败，请刷新核对")),
+            Self::Refresh(error) => format!("{}: {}", tr("工作流未能更新，保留上次结果"), crate::language::localize_owned_error(error)),
+            Self::Action(error) => format!("{}: {}", tr("工作流操作失败，请刷新核对"), crate::language::localize_owned_error(error)),
             Self::Unconfirmed => tr("操作结果尚未确认，请刷新后核对；执行器草稿已保留。").to_owned(),
         }
     }

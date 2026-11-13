@@ -179,13 +179,14 @@ impl HiveApp {
                 },
             )
             .when(
-                message.markdown.is_none() && !message.text.is_empty(),
+                message.markdown.is_none() && !message.display_body().is_empty(),
                 |view| {
+                    let body = message.display_body().to_owned();
                     view.child(
                         div()
                             .id(("message-body", i))
                             .role(Role::Label)
-                            .aria_label(message.text.clone())
+                            .aria_label(body.clone())
                             .min_w_0()
                             .text_size(rems(15. / 16.))
                             .line_height(rems(1.5))
@@ -198,7 +199,7 @@ impl HiveApp {
                                     .border_1()
                                     .border_color(Color::Divider.get(cx))
                             })
-                            .child(message.text.clone()),
+                            .child(body),
                     )
                 },
             )
