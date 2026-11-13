@@ -22,19 +22,27 @@ impl HiveApp {
                     return;
                 }
             };
+            enum Adoption {
+                Adopted,
+                Closing,
+                Stale,
+            }
             let adopted = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return Adoption::Stale;
+                }
                 this.runtime = Some(runtime.clone());
                 if this.closing {
                     this.shutdown_and_quit(cx);
-                    return false;
+                    return Adoption::Closing;
                 }
                 cx.notify();
-                true
+                Adoption::Adopted
             });
             match adopted {
-                Ok(true) => (),
-                Ok(false) => return,
-                Err(_) => {
+                Ok(Adoption::Adopted) => (),
+                Ok(Adoption::Closing) => return,
+                Ok(Adoption::Stale) | Err(_) => {
                     runtime.shutdown().await;
                     return;
                 }
@@ -239,6 +247,7 @@ impl HiveApp {
                 self.settings_panel,
                 self.member_panel,
                 self.workflows.visible,
+                self.collaboration.visible,
             );
             self.show_session(id, cx);
             (
@@ -247,6 +256,7 @@ impl HiveApp {
                 self.settings_panel,
                 self.member_panel,
                 self.workflows.visible,
+                self.collaboration.visible,
             ) = views;
         }
         self.refresh_sessions(cx);

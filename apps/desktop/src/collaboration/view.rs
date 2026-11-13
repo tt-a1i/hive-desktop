@@ -9,6 +9,7 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -22,8 +23,8 @@ impl HiveApp {
         } else {
             &self.collaboration_scroll
         };
-        v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
-                .child(h_flex().gap_2().items_center()
+        v_flex().flex_1().min_w_0().min_h_0().h_full().gap_4().px_5().py_6()
+                .child(h_flex().w_full().max_w(px(960.)).mx_auto().gap_2().items_center()
                     .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("back-dispatch-list").track_focus(&self.collaboration.navigation_focus).ghost().icon(Glyph::ArrowLeft).label(if self.collaboration.workflow_origin { tr("返回工作流") } else if self.collaboration.chat_origin.is_some() { tr("返回来源会话") } else { tr("返回派单列表") }).on_click(cx.listener(|this, _, window, cx| {
                         if this.collaboration.workflow_origin { this.close_collaboration(); this.show_workflows(window, cx); return; }
                         let c = &mut this.collaboration;
@@ -40,28 +41,32 @@ impl HiveApp {
                         cx.notify();
                     }))))
                     .child(div().flex_1().text_xl().font_weight(FontWeight::SEMIBOLD).child(if self.collaboration.selected.is_some() { tr("派单详情") } else { tr("协作概览") }))
-                    .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("refresh-dispatch").ghost().label(tr("刷新详情")).disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_dispatch(cx)))))
-                    .when(self.collaboration.selected.is_none(), |row| row.child(Button::new("refresh-collaboration").track_focus(&self.collaboration.navigation_focus).label(tr("刷新")).disabled(!self.connected || self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx))))))
-                .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
-                .child(Viewport::new("collaboration-viewport", scroll, div().id("collaboration-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(scroll).p_1()
-                  .child(v_flex().w_full().min_w_0().flex_shrink_0().gap_3()
+                    .when(self.collaboration.selected.is_some(), |row| row.child(Button::new("refresh-dispatch").ghost().icon(Glyph::RefreshCw).label(tr("刷新详情")).disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(|this, _, _, cx| this.refresh_dispatch(cx)))))
+                    .when(self.collaboration.selected.is_none(), |row| row.child(Button::new("refresh-collaboration").track_focus(&self.collaboration.navigation_focus).ghost().icon(Glyph::RefreshCw).label(tr("刷新")).disabled(!self.connected || self.tasks_saving()).on_click(cx.listener(|this, _, _, cx| this.reload_collaboration(cx))))))
+                .when(self.error.is_some(), |view| view.child(div().w_full().max_w(px(960.)).mx_auto().child(self.render_error_banner(cx))))
+                .child(Viewport::new("collaboration-viewport", scroll, div().id("collaboration-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(scroll).vertical_scrollbar(scroll).p_1()
+                  .child(v_flex().w_full().max_w(px(960.)).mx_auto().min_w_0().flex_shrink_0().gap_3()
                     .when(self.collaboration.selected.is_none(), |list| list
                     .child(self.render_tasks(cx))
-                    .child(div().pt_3().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("派单")))
-                    .child(Reveal::new("dispatch-filters-reveal", scroll, h_flex().flex_wrap().gap_1().children([("all", tr("全部")), ("queued", tr("排队中")), ("submitted", tr("已提交")), ("reported", tr("已汇报")), ("cancelled", tr("已取消"))].into_iter().enumerate().map(|(i, (filter, label))| Button::new(("dispatch-filter", i)).label(label).selected(self.collaboration.filter == filter).on_click(cx.listener(move |this, _, _, cx| { this.collaboration.filter = filter; this.collaboration.offset = 0; this.load_dispatches(cx); }))))))
-                    .when(self.collaboration.list_loading, |view| view.child(div().text_sm().child(tr("正在读取派单…"))))
-                    .when_some(self.collaboration.list_error.as_ref().map(|(key,error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
-                    .when(!self.collaboration.list_loading && self.collaboration.list_error.is_none() && self.collaboration.dispatches.is_empty(), |view| view.child(div().text_sm().child(tr("此页没有派单"))))
+                    .child(div().pt_2().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("派单")))
+                    .child(Reveal::new("dispatch-filters-reveal", scroll, h_flex().flex_wrap().gap_1().children([("all", tr("全部")), ("queued", tr("排队中")), ("submitted", tr("已提交")), ("reported", tr("已汇报")), ("cancelled", tr("已取消"))].into_iter().enumerate().map(|(i, (filter, label))| Button::new(("dispatch-filter", i)).ghost().compact().rounded_full().label(label).selected(self.collaboration.filter == filter).on_click(cx.listener(move |this, _, _, cx| { this.collaboration.filter = filter; this.collaboration.offset = 0; this.load_dispatches(cx); }))))))
+                    .when(self.collaboration.list_loading, |view| view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("正在读取派单…"))))
+                    .when_some(self.collaboration.list_error.as_ref().map(|(key,error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, error| view.child(div().p_3().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_sm().text_color(Color::Error.get(cx)).child(error)))
+                    .when(!self.collaboration.list_loading && self.collaboration.list_error.is_none() && self.collaboration.dispatches.is_empty(), |view| view.child(div().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx)).text_sm().text_color(Color::Muted.get(cx)).child(tr("此页没有派单"))))
                     .children(self.collaboration.dispatches.iter().take(PAGE).enumerate().map(|(i, dispatch)| self.render_dispatch_card(i, dispatch, cx)))
-                    .child(Reveal::new("dispatch-pagination-reveal", scroll, h_flex().gap_2()
-                        .child(Button::new("dispatch-prev").label(tr("上一页")).disabled(!self.connected || self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(PAGE); this.load_dispatches(cx); })))
-                        .child(div().text_sm().child(if english() { format!("Page {}", self.collaboration.offset / PAGE + 1) } else { format!("第 {} 页", self.collaboration.offset / PAGE + 1) }))
-                        .child(Button::new("dispatch-next").label(tr("下一页")).disabled(!self.connected || self.collaboration.dispatches.len() <= PAGE || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += PAGE; this.load_dispatches(cx); })))))
+                    .child(Reveal::new("dispatch-pagination-reveal", scroll, h_flex().items_center().gap_2()
+                        .child(Button::new("dispatch-prev").ghost().compact().rounded_full().label(tr("上一页")).disabled(!self.connected || self.collaboration.offset == 0 || self.collaboration.list_loading).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset = this.collaboration.offset.saturating_sub(PAGE); this.load_dispatches(cx); })))
+                        .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("Page {}", self.collaboration.offset / PAGE + 1) } else { format!("第 {} 页", self.collaboration.offset / PAGE + 1) }))
+                        .child(Button::new("dispatch-next").ghost().compact().rounded_full().label(tr("下一页")).disabled(!self.connected || self.collaboration.dispatches.len() <= PAGE || self.collaboration.list_loading || self.collaboration.offset >= 100_000).on_click(cx.listener(|this, _, _, cx| { this.collaboration.offset += PAGE; this.load_dispatches(cx); })))))
                     )
-                    .when_some(self.collaboration.selected.as_ref(), |view, item| view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
-                        .when_some(self.collaboration.detail_error.as_ref().map(|(key,error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
+                    .when_some(self.collaboration.selected.as_ref(), |view, item| {
+                        let (badge_bg, badge_fg, badge_dot) = super::dispatch_badge_colors(&item.state, cx);
+                        view.child(v_flex().gap_3().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
+                        .when_some(self.collaboration.detail_error.as_ref().map(|(key,error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, error| view.child(div().p_3().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_sm().text_color(Color::Error.get(cx)).child(error)))
                         .child(Reveal::new("dispatch-participants-reveal", scroll, h_flex().items_center().flex_wrap().gap_2()
-                            .child(div().id("dispatch-state").role(Role::Label).aria_label(crate::collaboration::dispatch_state(&item.state).to_owned()).rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().child(crate::collaboration::dispatch_state(&item.state).to_owned()))
+                            .child(h_flex().id("dispatch-state").role(Role::Label).aria_label(crate::collaboration::dispatch_state(&item.state).to_owned()).items_center().gap(px(5.)).rounded_full().bg(badge_bg).text_color(badge_fg).px(px(9.)).py(px(3.)).text_xs().font_weight(FontWeight::MEDIUM)
+                                .when_some(badge_dot, |pill, dot| pill.child(div().size(px(6.)).rounded_full().bg(dot)))
+                                .child(crate::collaboration::dispatch_state(&item.state).to_owned()))
                             .child(div().id("dispatch-participants").role(Role::Label).aria_label(format!("{} → {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| tr("未记录发送者").into()), self.agent_name(&item.to_agent_id))).text_sm().text_color(Color::Secondary.get(cx)).child(format!("{} → {}", item.from_agent_id.as_ref().map(|id| self.agent_name(id)).unwrap_or_else(|| tr("未记录发送者").into()), self.agent_name(&item.to_agent_id))))
                             .when_some(self.member_session_link(&item.id, Some(&item.to_agent_id), tr("负责人的会话"), cx), |row, link| row.child(link))
                             .child(div().flex_1())
@@ -104,7 +109,7 @@ impl HiveApp {
                             })
                             .child(div().id(SharedString::from(format!("collaboration-body-{}", message.id))).role(Role::Label).aria_label(message.text.clone()).text_sm().child(message.text.clone()))
                             .when_some(message.delivery_error.clone(), |view, error| view.child(div().id(SharedString::from(format!("collaboration-error-{}", message.id))).role(Role::Label).aria_label(format!("{}: {error}", tr("投递错误"))).text_xs().text_color(Color::Error.get(cx)).child(format!("{}: {error}", tr("投递错误")))))))
-                        .when_some(self.collaboration.next_message.clone(), |view, cursor| view.child(Reveal::new("dispatch-messages-more-reveal", scroll, Button::new("more-dispatch-messages").label(tr("加载更多消息")).disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(Some(cursor.clone()), cx))))))))
-                ))).into_any_element()
+                        .when_some(self.collaboration.next_message.clone(), |view, cursor| view.child(Reveal::new("dispatch-messages-more-reveal", scroll, Button::new("more-dispatch-messages").label(tr("加载更多消息")).disabled(!self.connected || self.collaboration.message_loading).on_click(cx.listener(move |this, _, _, cx| this.load_dispatch_messages(Some(cursor.clone()), cx)))))))}))
+                )).into_any_element()
     }
 }

@@ -37,7 +37,9 @@ impl Render for ExportFooter {
             .read(cx)
             .error
             .as_ref()
-            .map(|(key, error)| format!("{}: {error}", tr(key)));
+            .map(|(key, error)| {
+                format!("{}: {}", tr(key), crate::language::localize_owned_error(error))
+            });
         v_flex()
             .min_w_0()
             .gap_2()

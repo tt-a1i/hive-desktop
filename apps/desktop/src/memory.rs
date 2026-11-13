@@ -1,7 +1,10 @@
 mod view;
 
 use crate::{app::HiveApp, language::{english, tr}};
-use gpui_kit::{component::input::InputState, *};
+use gpui_kit::{
+    component::input::{InputEvent, InputState},
+    *,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -50,6 +53,7 @@ struct MemoryMutation {
 
 pub struct Memory {
     pub visible: bool,
+    pub(super) scroll: ScrollHandle,
     query: Entity<InputState>,
     status: &'static str,
     scope: &'static str,
@@ -65,6 +69,7 @@ pub struct Memory {
     generation: u64,
     pending_actions: HashSet<String>,
     action_results: HashMap<String, Result<(), MemoryError>>,
+    _query_subscription: Subscription,
 }
 #[derive(Clone)]
 enum MemoryError { Load(String), Save(String) }
@@ -82,9 +87,27 @@ impl Memory {
         self.query.update(cx, |input, cx| input.set_placeholder(tr("搜索记忆内容…"), window, cx));
     }
     pub fn new(window: &mut Window, cx: &mut Context<HiveApp>) -> Self {
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索记忆内容…")));
+        let subscription = cx.subscribe(&query, |this: &mut HiveApp, _, event: &InputEvent, cx| {
+            if matches!(
+                event,
+                InputEvent::PressEnter {
+                    secondary: false,
+                    shift: false,
+                }
+            ) && this.connected
+                && !this.memory.loading
+                && !this.memory.acting
+            {
+                this.memory.selected = None;
+                this.memory.scroll.set_offset(point(px(0.), px(0.)));
+                this.load_memory(cx);
+            }
+        });
         Self {
             visible: false,
-            query: cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索记忆内容…"))),
+            scroll: ScrollHandle::new(),
+            query,
             status: "active",
             scope: "workspace",
             workspace: None,
@@ -99,6 +122,7 @@ impl Memory {
             generation: 0,
             pending_actions: HashSet::new(),
             action_results: HashMap::new(),
+            _query_subscription: subscription,
         }
     }
 }
@@ -189,6 +213,7 @@ impl HiveApp {
         let m = &mut self.memory;
         if m.workspace.as_ref() != Some(&workspace) {
             m.selected = None;
+            m.scroll.set_offset(point(px(0.), px(0.)));
         }
         m.workspace = Some(workspace.clone());
         m.generation += 1;

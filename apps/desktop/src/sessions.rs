@@ -544,6 +544,7 @@ impl HiveApp {
     }
 
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
+        self.close_collaboration();
         self.conversation_sources.clear();
         self.show_session(id, cx);
     }

@@ -42,68 +42,95 @@ impl HiveApp {
             .map(|log| log.message.as_str())
             .collect::<Vec<_>>()
             .join("\n");
+        let (run_badge_bg, run_badge_fg, run_badge_dot) = status_badge_colors(&run.status, cx);
         v_flex()
             .gap_4()
             .child(
-                Reveal::new("workflow-detail-header-reveal", &self.workflows.detail_scroll, h_flex()
+                v_flex()
                     .gap_2()
-                    .flex_wrap()
-                    .items_center()
+                    .p_4()
+                    .rounded_xl()
+                    .bg(Color::Card.get(cx))
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
                     .child(
-                        div()
-                            .id("workflow-detail-name")
-                            .role(Role::Label)
-                            .aria_label(run.name.clone())
-                            .flex_1()
-                            .min_w_0()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(run.name.clone()),
+                        Reveal::new("workflow-detail-header-reveal", &self.workflows.detail_scroll, h_flex()
+                            .gap_2()
+                            .flex_wrap()
+                            .items_center()
+                            .child(
+                                div()
+                                    .id("workflow-detail-name")
+                                    .role(Role::Label)
+                                    .aria_label(run.name.clone())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(run.name.clone()),
+                            )
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .px_2p5()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(run_badge_bg)
+                                    .when_some(run_badge_dot, |pill, dot| pill.child(div().size(px(6.)).rounded_full().bg(dot)))
+                                    .child(crate::text_reading::selectable_text("workflow-detail-status", status(&run.status)).text_xs().font_weight(FontWeight::MEDIUM).text_color(run_badge_fg)),
+                            )
+                            .when(run.status == "running", |row| {
+                                row.child(
+                                    Button::new("workflow-stop")
+                                        .label(tr("停止运行"))
+                                        .disabled(disabled)
+                                        .accessibility_label(format!("{}: {}", tr("停止工作流"), run.name))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.workflow_action(
+                                                "POST",
+                                                format!("/api/workflows/runs/{id}/stop"),
+                                                None,
+                                                false,
+                                                cx,
+                                            )
+                                        })),
+                                )
+                            })),
                     )
-                    .child(crate::text_reading::selectable_text("workflow-detail-status", status(&run.status)).text_sm())
-                    .when(run.status == "running", |row| {
-                        row.child(
-                            Button::new("workflow-stop")
-                                .label(tr("停止运行"))
-                                .disabled(disabled)
-                                .accessibility_label(format!("{}: {}", tr("停止工作流"), run.name))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.workflow_action(
-                                        "POST",
-                                        format!("/api/workflows/runs/{id}/stop"),
-                                        None,
-                                        false,
-                                        cx,
-                                    )
-                                })),
+                    .child(
+                        crate::text_reading::selectable_text("workflow-detail-started", if english() { format!("Started {} · {} agents", relative_time(run.started_at), run.agent_count) } else { format!("{} 开始 · {} 位执行成员", relative_time(run.started_at), run.agent_count) })
+                            .text_xs()
+                            .text_color(Color::Secondary.get(cx)),
+                    )
+                    .when_some(run.finished_at, |view, time| {
+                        view.child(
+                            crate::text_reading::selectable_text("workflow-detail-finished", format!("{}: {}",tr("结束于"),relative_time(time)))
+                                .text_xs()
+                                .text_color(Color::Secondary.get(cx)),
                         )
-                    })),
+                    })
+                    .when_some(run.phase.clone(), |view, phase| {
+                        view.child(crate::text_reading::selectable_text("workflow-detail-phase", format!("{}: {phase}",tr("当前阶段"))).text_sm())
+                    }),
             )
-            .child(
-                crate::text_reading::selectable_text("workflow-detail-started", if english() { format!("Started {} · {} agents", relative_time(run.started_at), run.agent_count) } else { format!("{} 开始 · {} 位执行成员", relative_time(run.started_at), run.agent_count) })
-                    .text_xs()
-                    .text_color(Color::Secondary.get(cx)),
-            )
-            .when_some(run.finished_at, |view, time| {
-                view.child(
-                    crate::text_reading::selectable_text("workflow-detail-finished", format!("{}: {}",tr("结束于"),relative_time(time)))
-                        .text_xs()
-                        .text_color(Color::Secondary.get(cx)),
-                )
-            })
-            .when_some(run.phase.clone(), |view, phase| {
-                view.child(crate::text_reading::selectable_text("workflow-detail-phase", format!("{}: {phase}",tr("当前阶段"))).text_sm())
-            })
             .when(run.error.is_some() || !run.result.is_null(), |view| {
                 view.child(
                     v_flex()
                         .gap_2()
-                        .p_3()
-                        .rounded_lg()
-                        .bg(Color::Inset.get(cx))
+                        .p_4()
+                        .rounded_xl()
+                        .bg(if run.error.is_some() && !interrupted {
+                            Color::ErrorSurface.get(cx)
+                        } else {
+                            Color::Card.get(cx)
+                        })
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
                         .child(
                             Reveal::new("workflow-result-actions-reveal", &self.workflows.detail_scroll, h_flex()
                                 .gap_2()
+                                .items_center()
                                 .child(
                                     div()
                                         .flex_1()
@@ -151,9 +178,11 @@ impl HiveApp {
             )
             .when(self.workflows.dispatches.is_empty(), |view| {
                 view.child(
-                    crate::text_reading::selectable_text("workflow-dispatch-empty", tr("此运行还没有成员派单。"))
-                        .text_sm()
-                        .text_color(Color::Secondary.get(cx)),
+                    div().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx)).child(
+                        crate::text_reading::selectable_text("workflow-dispatch-empty", tr("此运行还没有成员派单。"))
+                            .text_sm()
+                            .text_color(Color::Secondary.get(cx)),
+                    ),
                 )
             })
             .children(
@@ -189,9 +218,11 @@ impl HiveApp {
             )
             .when(self.workflows.logs.is_empty(), |view| {
                 view.child(
-                    crate::text_reading::selectable_text("workflow-log-empty", tr("还没有运行日志。"))
-                        .text_sm()
-                        .text_color(Color::Secondary.get(cx)),
+                    div().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx)).child(
+                        crate::text_reading::selectable_text("workflow-log-empty", tr("还没有运行日志。"))
+                            .text_sm()
+                            .text_color(Color::Secondary.get(cx)),
+                    ),
                 )
             })
             .children(self.workflows.logs.iter().map(|log| {
@@ -199,8 +230,10 @@ impl HiveApp {
                     .id(("workflow-log", log.id as usize))
                     .gap_1()
                     .p_3()
-                    .rounded_lg()
-                    .bg(Color::Inset.get(cx))
+                    .rounded_xl()
+                    .bg(Color::Card.get(cx))
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
                     .child(
                         crate::text_reading::selectable_text(SharedString::from(format!("workflow-log-time-{}",log.id)), relative_time(log.ts))
                             .text_xs()
@@ -208,7 +241,7 @@ impl HiveApp {
                     )
                     .child(crate::text_reading::selectable_text(SharedString::from(format!("workflow-log-message-{}",log.id)), log.message.clone()).text_sm())
             }))
-            .child(v_flex().min_w_0().gap_2().pt_3().border_t_1()
+            .child(v_flex().min_w_0().gap_2().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1()
                 .border_color(Color::Divider.get(cx))
                 .child(Reveal::new("workflow-metadata-actions-reveal", &self.workflows.detail_scroll, h_flex().min_w_0().gap_2().items_center()
                     .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::SEMIBOLD)
@@ -239,10 +272,13 @@ impl HiveApp {
             .iter()
             .find(|session| session.agent_id.as_ref() == Some(&dispatch.to_agent_id))
             .map(|session| session.id.clone());
+        let (badge_bg, badge_fg, badge_dot) =
+            crate::collaboration::dispatch_badge_colors(&dispatch.status, cx);
         v_flex()
             .gap_2()
-            .p_3()
-            .rounded_lg()
+            .p_4()
+            .rounded_xl()
+            .bg(Color::Card.get(cx))
             .border_1()
             .border_color(Color::Divider.get(cx))
             .child(
@@ -261,9 +297,20 @@ impl HiveApp {
                             })),
                     )
                     .child(
-                        div().text_xs().child(
-                            crate::collaboration::dispatch_state(&dispatch.status).to_owned(),
-                        ),
+                        h_flex()
+                            .items_center()
+                            .gap_1p5()
+                            .px_2p5()
+                            .py_0p5()
+                            .rounded_full()
+                            .bg(badge_bg)
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(badge_fg)
+                            .when_some(badge_dot, |pill, dot| pill.child(div().size(px(6.)).rounded_full().bg(dot)))
+                            .child(
+                                crate::collaboration::dispatch_state(&dispatch.status).to_owned(),
+                            ),
                     ),
             )
             .child(

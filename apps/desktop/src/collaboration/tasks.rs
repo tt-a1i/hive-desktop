@@ -36,8 +36,8 @@ pub(crate) struct TaskDraft {
     base: String,
     conflicting_content: Option<SharedString>,
     pub saving: bool,
-    operation: u64,
-    error: Option<(&'static str, String)>,
+    pub(super) operation: u64,
+    pub(super) error: Option<(&'static str, String)>,
 }
 
 impl HiveApp {
@@ -269,6 +269,11 @@ impl HiveApp {
             .w_full()
             .min_w_0()
             .gap_3()
+            .p_4()
+            .rounded_xl()
+            .bg(Color::Card.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
             .child(Reveal::new("task-document-toolbar-reveal", &self.collaboration_scroll,
                 h_flex()
                     .gap_2()
@@ -363,9 +368,12 @@ impl HiveApp {
                         .aria_label(tr("任务文档 Markdown"))
                         .disabled(draft.saving),
                 )
-                .when_some(draft.error.as_ref().map(|(key,error)| format!("{}: {error}", tr(key))), |view, error| {
+                .when_some(draft.error.as_ref().map(|(key,error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, error| {
                     view.child(
                         div()
+                            .id("task-draft-error")
+                            .role(Role::Alert)
+                            .aria_label(error.clone())
                             .text_sm()
                             .text_color(Color::Error.get(cx))
                             .child(error),
@@ -421,7 +429,7 @@ impl HiveApp {
                     !self.collaboration.task_loading
                         && self.collaboration.task_error.is_none()
                         && self.collaboration.task_text.is_empty(),
-                    |view| view.child(div().text_sm().child(tr("任务文档为空"))),
+                    |view| view.child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("任务文档为空"))),
                 )
                 .when(self.collaboration.task_expanded && !self.collaboration.task_text.is_empty(), |view| {
                     view.child(
@@ -431,7 +439,7 @@ impl HiveApp {
                             .aria_label(self.collaboration.tasks.read(cx).rendered_text().as_str().to_string())
                             .p_3()
                             .rounded_lg()
-                            .bg(Color::Card.get(cx))
+                            .bg(Color::Inset.get(cx))
                             .child(TextView::new(&self.collaboration.tasks).selectable(true)),
                     )
                 })

@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 桌面后台生命周期竞态、次级面板焦点显露与界面层次打磨（2026-11-13，源码）
+
+继续审计并完善 `apps/desktop/src/`：(1) `app/backend.rs` 在 `start_backend` 检测到 `connection_generation` 已变更时主动 `shutdown()` 过期 `Runtime` 句柄防止进程组泄漏，`restore_backend_view` 保留 `collaboration.visible` 并在 `sessions.rs` `open_session` 显式关闭协作浮层，`reset_collaboration_connection` 在断线中断任务保存时写入明确待核对提示并保留草稿；(2) 修复 `members/view.rs` 模型目录报错的后端展示名映射与中英文闭合翻译，补齐 `settings/remote`、`pi_accounts`、`conversation_export` 自有错误翻译并将 `locales/en.json` 扩展至 1,301 条唯一键（100% 静态与自有错误键覆盖）；(3) `memory` 与 `roles` 接入 `Viewport` + `Reveal` 窄窗键盘自动显露、回车搜索与编辑自动聚焦，协作/成员/记忆/角色/工作流次级面板统一 `960px` 居中阅读宽度、`Color::Card` 圆角卡片与语义状态胶囊，既有元素 ID 与无障碍语义不变。Rust 35 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查及 macOS release 构建全部通过，见[实证与边界](validation/2026-11-13-desktop-panels-hardening-and-craft.md)。即将连同 `cd32e9d` 组装最新 macOS ARM64 开发包并执行包内与原生窗口核验。
+
 ## 会话停止清理竞态、Codex 账号探测取消与显示日志原子写防护（2026-11-13，源码）
 
 继续审计 `packages/runtime/src/` 并复现修复四处并发与资源清理边界：(1) `chats.ts` 的 `stopLive()` 同步挂载 `chat.cleanup` 并在 `dispose()` 成功后、Promise 结算前同步触发单次 `onExit`，消除会话停止/退役期间并发 `open`/`reasoning`/`prompt` 命中销毁中句柄（`"Codex session is disposed"`）及微任务旧 `runId` 窗口；(2) `stopLive()` 将 `abort({ settleTools: true })` 纳入 `Promise.allSettled` + `finally { dispose() }`，修复 `stopAgentRun` 在 `abort` 抛错且连接未自发断开时泄漏子进程、令牌与 `running` 状态，同时用 `lastErrorMessage` 去重避免重复错误广播；(3) `CodexTransport.start()` 接入 `AbortSignal`，使 `probeCodexAccount` 在 `initialize` 挂起时的取消耗时从 `5,007 ms` 降至 `< 900 ms` 并确保回收子进程；(4) `CodexProjection.save()` 补齐 `.tmp` 异常清理，`team-tool.ts` 补齐子进程 `error` 分支的 `abort` 监听移除。五组前后对照、d43f55e 真实三会话副本冷读及 `check:codex`、`check:codex-account`、`check:workflow-shutdown`、`check:workspace-removal` 等回归通过，见[实证与边界](validation/2026-11-13-runtime-stop-and-probe-hardening.md)。无厂商推理或正式测试改动，待入下一开发包，完整目标继续。

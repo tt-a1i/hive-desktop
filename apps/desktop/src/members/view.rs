@@ -38,25 +38,25 @@ impl HiveApp {
                 .when(self.error.is_some(), |view| view.child(div().flex_shrink_0().child(self.render_error_banner(cx))))
                 .when_some(self.member_error.clone(), |view,error| {
                     let message = format!("{}: {}", tr("成员状态未能更新"), crate::language::localize_owned_error(&error));
-                    view.child(div().id("member-refresh-error").role(Role::Label).aria_label(message.clone()).text_sm().text_color(Color::Error.get(cx)).child(message))
+                    view.child(div().id("member-refresh-error").role(Role::Alert).aria_label(message.clone()).px_3().py_2().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_sm().text_color(Color::Error.get(cx)).child(message))
                 })
-                .child(v_flex().id("members-panel").flex_shrink_0().min_w_0().gap_2().p_1()
-                    .when(self.member_form_open, |list| list.child(v_flex().gap_2().p_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
+                .child(v_flex().id("members-panel").flex_shrink_0().min_w_0().gap_3().p_1()
+                    .when(self.member_form_open, |list| list.child(v_flex().gap_3().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
                     .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("新建成员")))
                     .child(Reveal::new("member-form-inputs-reveal", &self.member_scroll, h_flex().gap_3().child(div().flex_1().min_w_0().child(Input::new(&self.member_name).aria_label(tr("成员名称")))).child(div().flex_1().min_w_0().child(Textarea::new(&self.member_description).aria_label(tr("成员职责说明"))))))
                     .child(Reveal::new("member-form-templates-reveal", &self.member_scroll, self.render_member_templates(cx)))
-                    .child(div().text_xs().child(tr("角色")))
-                    .child(Reveal::new("member-form-roles-reveal", &self.member_scroll, h_flex().gap_1().children([("coder", tr("开发")), ("reviewer", tr("审查")), ("tester", tr("测试")), ("custom", tr("自定义"))].into_iter().enumerate().map(|(i, (role, label))| Button::new(("member-role", i)).label(label).selected(self.member_role == role).on_click(cx.listener(move |this, _, _, cx| { this.member_role = role; cx.notify(); }))))))
-                    .child(div().text_xs().child(tr("成员后端")))
-                    .child(Reveal::new("member-form-backends-reveal", &self.member_scroll, h_flex().gap_1().children([("pi", "Pi"), ("codex", "Codex"), ("pi-rpc", tr("外部 Pi")), ("claude", "Claude")].into_iter().enumerate().map(|(i, (backend, label))| Button::new(("member-backend", i)).label(label).selected(self.member_backend == backend).on_click(cx.listener(move |this, _, _, cx| { this.member_backend = backend; cx.notify(); }))))))
-                    .child(Reveal::new("member-form-save-reveal", &self.member_scroll, Button::new("add-member").label(tr("添加成员")).disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, window, cx| this.add_member(window, cx)))))))
+                    .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("角色")))
+                    .child(Reveal::new("member-form-roles-reveal", &self.member_scroll, h_flex().flex_wrap().gap_1().children([("coder", tr("开发")), ("reviewer", tr("审查")), ("tester", tr("测试")), ("custom", tr("自定义"))].into_iter().enumerate().map(|(i, (role, label))| Button::new(("member-role", i)).rounded_full().compact().label(label).selected(self.member_role == role).on_click(cx.listener(move |this, _, _, cx| { this.member_role = role; cx.notify(); }))))))
+                    .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("成员后端")))
+                    .child(Reveal::new("member-form-backends-reveal", &self.member_scroll, h_flex().flex_wrap().gap_1().children([("pi", "Pi"), ("codex", "Codex"), ("pi-rpc", tr("外部 Pi")), ("claude", "Claude")].into_iter().enumerate().map(|(i, (backend, label))| Button::new(("member-backend", i)).rounded_full().compact().label(label).selected(self.member_backend == backend).on_click(cx.listener(move |this, _, _, cx| { this.member_backend = backend; cx.notify(); }))))))
+                    .child(Reveal::new("member-form-save-reveal", &self.member_scroll, h_flex().child(Button::new("add-member").label(tr("添加成员")).disabled(!self.connected || self.member_loading).on_click(cx.listener(|this, _, window, cx| this.add_member(window, cx))))))))
 
-                    .when(self.members.is_empty() && !self.member_loading && self.member_error.is_none() && !self.member_form_open, |view| view.child(v_flex().flex_1().items_center().justify_center().gap_3()
+                    .when(self.members.is_empty() && !self.member_loading && self.member_error.is_none() && !self.member_form_open, |view| view.child(v_flex().items_center().justify_center().gap_3().p_6().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
                         .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(tr("还没有团队成员")))
                         .child(Button::new("first-member").rounded_full().icon(Glyph::Plus).label(tr("添加第一位成员"))
                             .on_click(cx.listener(|this, _, window, cx| { this.member_form_open = true; let focus = this.member_name.read(cx).focus_handle(cx); window.on_next_frame(move |window,cx|focus.focus(window,cx)); cx.notify(); })))))
-                    .when(!self.members.is_empty() && matching_members.is_empty(), |view|view.child(v_flex().items_center().gap_2().py_6()
-                        .child(div().id("members-no-matches").role(Role::Label).aria_label(tr("没有匹配的成员")).text_sm().child(tr("没有匹配的成员")))
+                    .when(!self.members.is_empty() && matching_members.is_empty(), |view|view.child(v_flex().items_center().gap_2().p_6().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
+                        .child(div().id("members-no-matches").role(Role::Label).aria_label(tr("没有匹配的成员")).text_sm().font_weight(FontWeight::MEDIUM).child(tr("没有匹配的成员")))
                         .child(div().id("members-no-matches-help").role(Role::Label).aria_label(tr("尝试其他名称、职责、角色或 Agent，或清除筛选。")).text_xs().text_color(Color::Muted.get(cx)).child(tr("尝试其他名称、职责、角色或 Agent，或清除筛选。")))))
                     .children(matching_members.into_iter().map(|(i, member)| {
                         let id = member.id.clone();
@@ -70,22 +70,32 @@ impl HiveApp {
                         let chosen = member.desktop_model.as_ref();
                         let member_model_ready = chosen.is_some();
                         let session_id = self.sessions.iter().find(|session| session.agent_id.as_ref() == Some(&id)).map(|s| s.id.clone());
+                        let (workload_bg, workload_fg, workload_dot) = match member.status.as_str() {
+                            "working" => (Color::Attention.get(cx), Color::Text.get(cx), None),
+                            "idle" if member.pending_task_count > 0 => (Color::Attention.get(cx), Color::Text.get(cx), None),
+                            "idle" => (Color::Inset.get(cx), Color::Text.get(cx), Some(Color::Success.get(cx))),
+                            "stopped" => (Color::Inset.get(cx), Color::Secondary.get(cx), None),
+                            _ => (Color::Inset.get(cx), Color::Text.get(cx), None),
+                        };
+                        let workload_label = member.workload_label();
                         let start_id = id.clone(); let start_workspace = workspace.clone();
                         let picker_id = id.clone(); let picker_command = member.configured_command.clone();
                         let save_id = id.clone(); let save_workspace = workspace.clone();
                         let delete_id = id.clone(); let delete_workspace = workspace.clone();
                         v_flex().flex_shrink_0().id(SharedString::from(format!("team-member-{id}")))
                             .role(Role::Group).aria_label(format!("{} · {} · {}", member.name, member.role_label(), member.backend_label()))
-                            .gap_2().py_3().px_2().border_b_1().border_color(Color::Divider.get(cx))
+                            .gap_2p5().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
                             .child(Reveal::new(format!("member-{id}-header-reveal"), &self.member_scroll, h_flex().w_full().min_w_0().flex_wrap().items_center().gap_3()
-                                .child(div().size(px(36.)).rounded_full().bg(Color::Inset.get(cx)).flex().items_center().justify_center().text_sm().font_weight(FontWeight::SEMIBOLD)
+                                .child(div().size(px(36.)).rounded_full().bg(Color::Inset.get(cx)).border_1().border_color(Color::Divider.get(cx)).flex().items_center().justify_center().text_sm().font_weight(FontWeight::SEMIBOLD)
                                     .child(member.name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default()))
-                                .child(v_flex().flex_1().min_w(px(160.)).gap_1()
+                                .child(v_flex().flex_1().min_w(px(160.)).gap_0p5()
                                     .child(div().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).child(member.name.clone()))
                                     .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{} · {}", member.role_label(), member.backend_label()))))
-                                .child(h_flex().flex_wrap().items_center().gap_3().when(narrow, |view| view.w_full())
-                                .child(div().id(SharedString::from(format!("member-workload-{id}"))).role(Role::Label)
-                                    .aria_label(member.workload_label()).rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().child(member.workload_label()))
+                                .child(h_flex().flex_wrap().items_center().gap_2().when(narrow, |view| view.w_full())
+                                .child(h_flex().id(SharedString::from(format!("member-workload-{id}"))).role(Role::Label)
+                                    .aria_label(workload_label.clone()).items_center().gap_1p5().rounded_full().bg(workload_bg).px_2p5().py_0p5().text_xs().font_weight(FontWeight::MEDIUM).text_color(workload_fg)
+                                    .when_some(workload_dot, |pill, dot| pill.child(div().size(px(6.)).rounded_full().bg(dot)))
+                                    .child(workload_label))
                                 .when_some(session_id, |view, session_id| view.child(Button::new(("member-chat", i)).ghost().compact().icon(Glyph::MessagesSquare).label(tr("会话")).tooltip(tr("打开会话")).accessibility_label(if english() { format!("Open {}’s member conversation", member.name) } else { format!("打开 {} 的成员会话", member.name) }).on_click(cx.listener(move |this, _, window, cx| this.open_member_session(session_id.clone(), window, cx)))))
                                 .child(Button::new(("member-start-stop", i)).ghost().compact().label(if stopping { tr("正在停止…") } else if running { tr("停止") } else { tr("启动") }).disabled(!self.connected || self.member_loading || (!running && !member_model_ready)).on_click(cx.listener(move |this, _, _, cx| { if running { this.stop_member(start_id.clone(), cx); } else { this.member_action("POST", format!("/api/workspaces/{start_workspace}/agents/{start_id}/start"), None, cx); } })))
                                 .child(self.member_menu(member, cx)))))
@@ -102,9 +112,9 @@ impl HiveApp {
                                         window.on_next_frame(move |window,cx|focus.focus(window,cx));
                                     }
                                 }))))))
-                            .when(!running && backend.is_none(), |view| view.child(div().text_xs().child(tr("此成员的后端未配置或不受支持"))))
+                            .when(!running && backend.is_none(), |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("此成员的后端未配置或不受支持"))))
                             .when(running, |view| view.when_some(chosen, |view, model| view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(format!("{} / {}", model.provider, model.id)))))
-                            .when(picker_open, |view| view.child(v_flex().gap_2()
+                            .when(picker_open, |view| view.child(v_flex().gap_2().p_3().rounded_lg().bg(Color::Inset.get(cx))
                                 .child(Reveal::new(format!("member-{id}-model-search-reveal"), &self.member_scroll, Input::new(&self.member_model_search).aria_label(tr("搜索此成员的可用模型"))))
                                 .when(self.member_catalog_loading, |view| view.child(crate::text_reading::selectable_text("member-model-loading", tr("正在读取可用模型…")).text_sm()))
                                 .when_some(self.member_catalog_error.clone(), |view, (backend,error)| {
@@ -112,9 +122,10 @@ impl HiveApp {
                                         "pi" => Some(crate::protocol::Backend::Pi), "codex" => Some(crate::protocol::Backend::Codex),
                                         "claude" => Some(crate::protocol::Backend::Claude), "pi-rpc" => Some(crate::protocol::Backend::PiRpc), _ => None,
                                     };
+                                    let backend_label = repair_backend.map(|b| tr(b.label())).unwrap_or(backend.as_str());
                                     let retry_id = id.clone(); let retry_command = member.configured_command.clone();
                                     let localized = crate::language::localize_owned_error(&error);
-                                    view.child(crate::text_reading::selectable_text("member-model-error", if english() { format!("Could not load {backend} models: {localized}") } else { format!("读取 {backend} 模型失败：{error}") }).text_sm().text_color(Color::Error.get(cx)))
+                                    view.child(crate::text_reading::selectable_text("member-model-error", if english() { format!("Could not load {backend_label} models: {localized}") } else { format!("读取 {backend_label} 模型失败：{localized}") }).text_sm().text_color(Color::Error.get(cx)))
                                         .child(Reveal::new(format!("member-{id}-model-repair-reveal"), &self.member_scroll, h_flex().min_w_0().flex_wrap().gap_2()
                                             .when_some(repair_backend, |row, backend| row.child(self.render_backend_repair_actions(backend, !self.connected || self.member_catalog_loading, cx)))
                                             .child(Button::new("member-model-retry").ghost().compact().label(tr("重新读取模型")).disabled(!self.connected || self.member_catalog_loading)

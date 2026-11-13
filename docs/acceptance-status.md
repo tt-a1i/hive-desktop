@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 桌面后台生命周期竞态、次级面板焦点显露与界面层次打磨（2026-11-13，源码）
+
+修复 `start_backend` 过期 `Runtime` 启动句柄未回收、后台重连重置 `collaboration.visible` 与断线静默清除在途任务保存状态的问题；修复 `members/view.rs` 模型读取错误的后端名称映射与双语闭合本地化，补齐远程设置、Pi 账号与对话导出的自有错误本地化（`locales/en.json` 达 1,301 条唯一键，覆盖率 100%）；为记忆与角色模板页接入 `Viewport` + `Reveal` 窄窗键盘显露，并融合 Beluga、T3 Code 与 Cindy 统一协作、成员、记忆、角色、工作流面板的 `960px` 居中容器、`Color::Card` 卡片与语义状态胶囊（推进 `#17`、`#20` 与整体体验）。Rust 35 项单元测试、13 项进程树监督检查、两项 Windows MSVC 交叉检查及 macOS release 构建通过，见[实证与边界](validation/2026-11-13-desktop-panels-hardening-and-craft.md)。随即连同 `cd32e9d` 纳入新开发包并执行包内与原生窗口核验，完整目标继续。
+
 ## 会话停止清理竞态、Codex 账号探测取消与显示日志原子写防护（2026-11-13，源码）
 
 复现并修复 `Chats.stopLive()` 未挂载 `chat.cleanup` 导致释放期并发请求抛 `"Codex session is disposed"`、`stopAgentRun()` 在 `abort` 抛错且传输层存活时泄漏子进程/令牌/`running` 状态、`probeCodexAccount()` 在 `initialize` 挂起时需等待 `5,007 ms` 超时才响应取消，以及 `CodexProjection.save()` 重命名失败残留 `.tmp` 与 `team-tool.ts` 启动报错泄漏 `abort` 监听器。五组前后对照、d43f55e 真实三会话副本冷读与 `check:codex`、`check:codex-account`、`check:workflow-shutdown`、`check:workspace-removal` 等回归通过，见[实证与边界](validation/2026-11-13-runtime-stop-and-probe-hardening.md)。无厂商推理/面板操作/正式测试改动，待随桌面端改进一并纳入下一开发包，完整目标继续。

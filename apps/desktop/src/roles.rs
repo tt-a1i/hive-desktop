@@ -1,12 +1,15 @@
+use crate::focus_scroll::{Reveal, Viewport};
 use crate::language::{english, tr};
 use crate::app::HiveApp;
 use crate::palette::Color;
+use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     component::{
-        button::Button,
+        button::{Button, ButtonVariants},
         input::{Input, Textarea},
+        scroll::ScrollableElement,
     },
     *,
 };
@@ -26,6 +29,7 @@ pub struct RoleTemplate {
 }
 pub struct Roles {
     pub visible: bool,
+    pub scroll: ScrollHandle,
     items: Vec<RoleTemplate>,
     loading: bool,
     error: Option<RoleError>,
@@ -49,6 +53,7 @@ impl Roles {
     pub fn new() -> Self {
         Self {
             visible: false,
+            scroll: ScrollHandle::new(),
             items: vec![],
             loading: false,
             error: None,
@@ -226,30 +231,37 @@ impl HiveApp {
         .detach();
     }
     pub fn render_roles(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().flex_1().min_w_0().h_full().gap_3().p_5()
-            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(tr("角色模板")))
-            .child(div().text_sm().child(tr("保存常用职责。创建成员时可选择模板，仍需确认后创建。")))
-            .when_some(self.roles.error.as_ref().map(|error| error.text()), |view, error| view.child(div().text_sm().text_color(Color::Error.get(cx)).child(error)))
-            .when_some(self.roles.notice, |view, notice| view.child(div().text_sm().child(tr(notice))))
-            .child(div().id("roles-scroll").flex_1().min_h_0().overflow_y_scroll().child(v_flex().w_full().flex_shrink_0().gap_3()
-                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.editing.is_some() { tr("编辑模板") } else { tr("新建模板") }))
-                .child(Input::new(&self.role_name).aria_label(tr("角色模板名称")))
-                .child(Textarea::new(&self.role_description).aria_label(tr("角色模板职责说明")))
-                .child(h_flex().gap_1().children([("orchestrator", tr("主控")), ("coder", tr("开发")), ("reviewer", tr("审查")), ("tester", tr("测试")), ("custom", tr("自定义"))].into_iter().enumerate().map(|(i, (role, label))| Button::new(("role-type", i)).label(label).selected(self.roles.role_type == role).on_click(cx.listener(move |this, _, _, cx| { this.roles.role_type = role; cx.notify(); })))))
-                .child(h_flex().gap_2().child(Button::new("save-role").label(if self.roles.editing.is_some() { tr("保存修改") } else { tr("创建模板") }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.save_role(cx))))
-                    .child(Button::new("new-role-form").label(tr("新建空白模板")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, window, cx| { this.roles.editing = None; this.roles.role_type = "custom"; this.role_name.update(cx, |state, cx| state.set_value("", window, cx)); this.role_description.update(cx, |state, cx| state.set_value("", window, cx)); cx.notify(); }))))
-                .child(h_flex().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.loading { tr("正在读取或保存…") } else { tr("已有模板") })).child(Button::new("refresh-roles").label(tr("刷新")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.load_roles(cx)))))
-                .when(!self.roles.loading && self.roles.items.is_empty(), |view| view.child(div().text_sm().child(tr("暂无模板"))))
+        let scroll = &self.roles.scroll;
+        v_flex().flex_1().min_w_0().min_h_0().h_full().gap_4().px_5().py_6()
+            .child(v_flex().w_full().max_w(px(960.)).mx_auto().gap_1()
+                .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(tr("角色模板")))
+                .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("保存常用职责。创建成员时可选择模板，仍需确认后创建。"))))
+            .when_some(self.roles.error.as_ref().map(|error| error.text()), |view, error| view.child(div().w_full().max_w(px(960.)).mx_auto().id("roles-error").role(Role::Alert).aria_label(error.clone()).p_3().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_sm().text_color(Color::Error.get(cx)).child(error)))
+            .when_some(self.roles.notice, |view, notice| view.child(div().w_full().max_w(px(960.)).mx_auto().id("roles-notice").role(Role::Status).aria_label(tr(notice)).text_sm().text_color(Color::Secondary.get(cx)).child(tr(notice))))
+            .child(Viewport::new("roles-viewport", scroll, div().id("roles-scroll").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(scroll).vertical_scrollbar(scroll).p_1().child(v_flex().w_full().max_w(px(960.)).mx_auto().flex_shrink_0().gap_4()
+                .child(v_flex().gap_3().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.editing.is_some() { tr("编辑模板") } else { tr("新建模板") }))
+                    .child(Reveal::new("roles-name-reveal", scroll, Input::new(&self.role_name).aria_label(tr("角色模板名称"))))
+                    .child(Reveal::new("roles-description-reveal", scroll, Textarea::new(&self.role_description).aria_label(tr("角色模板职责说明"))))
+                    .child(Reveal::new("roles-types-reveal", scroll, h_flex().flex_wrap().gap_1().children([("orchestrator", tr("主控")), ("coder", tr("开发")), ("reviewer", tr("审查")), ("tester", tr("测试")), ("custom", tr("自定义"))].into_iter().enumerate().map(|(i, (role, label))| Button::new(("role-type", i)).ghost().compact().rounded_full().label(label).selected(self.roles.role_type == role).on_click(cx.listener(move |this, _, _, cx| { this.roles.role_type = role; cx.notify(); }))))))
+                    .child(Reveal::new("roles-save-reveal", scroll, h_flex().flex_wrap().gap_2()
+                        .child(Button::new("save-role").primary().rounded_full().label(if self.roles.editing.is_some() { tr("保存修改") } else { tr("创建模板") }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.save_role(cx))))
+                        .child(Button::new("new-role-form").ghost().rounded_full().label(tr("新建空白模板")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, window, cx| { this.roles.editing = None; this.roles.role_type = "custom"; this.role_name.update(cx, |state, cx| state.set_value("", window, cx)); this.role_description.update(cx, |state, cx| state.set_value("", window, cx)); let focus = this.role_name.read(cx).focus_handle(cx); window.on_next_frame(move |window, cx| focus.focus(window, cx)); cx.notify(); }))))))
+                .child(Reveal::new("roles-refresh-reveal", scroll, h_flex().items_center().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if self.roles.loading { tr("正在读取或保存…") } else { tr("已有模板") })).child(Button::new("refresh-roles").ghost().compact().icon(Glyph::RefreshCw).label(tr("刷新")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| this.load_roles(cx))))))
+                .when(!self.roles.loading && self.roles.items.is_empty(), |view| view.child(div().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx)).text_sm().text_color(Color::Muted.get(cx)).child(tr("暂无模板"))))
                 .children(self.roles.items.iter().enumerate().map(|(i, template)| {
                     let item = template.clone(); let delete = template.id.clone(); let deleting = self.roles.deleting.as_ref() == Some(&template.id);
-                    v_flex().gap_2().p_3().rounded_lg().bg(Color::Card.get(cx))
-                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{} · {}{}", template.name, role_label(&template.role_type), if template.is_builtin { if english() { " · Built-in" } else { " · 内置" } } else { "" })))
-                        .child(div().text_sm().child(template.description.clone()))
-                        .when(!template.is_builtin, |view| view.child(h_flex().gap_2()
-                            .child(Button::new(("edit-role", i)).label(tr("编辑")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, window, cx| { this.roles.role_type = role_key(&item.role_type); this.role_name.update(cx, |state, cx| state.set_value(item.name.clone(), window, cx)); this.role_description.update(cx, |state, cx| state.set_value(item.description.clone(), window, cx)); this.roles.editing = Some(item.clone()); this.roles.deleting = None; cx.notify(); })))
-                            .child(Button::new(("delete-role", i)).label(if deleting { if english() { format!("Confirm deletion of “{}”", template.name) } else { format!("确认删除「{}」", template.name) } } else { tr("删除").into() }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, _, cx| { if this.roles.deleting.as_ref() == Some(&delete) { this.role_mutation("DELETE", format!("/api/settings/role-templates/{delete}"), None, cx); } else { this.roles.deleting = Some(delete.clone()); cx.notify(); } })))
-                            .when(deleting, |view| view.child(Button::new(("cancel-delete-role", i)).label(tr("取消")).accessibility_label(if english() { format!("Cancel deletion of role template {}", template.name) } else { format!("取消删除角色模板 {}", template.name) }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| { this.roles.deleting = None; cx.notify(); }))))))
-                }))))
+                    v_flex().gap_2().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
+                        .child(h_flex().flex_wrap().items_center().gap_2()
+                            .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::SEMIBOLD).child(template.name.clone()))
+                            .child(div().rounded_full().bg(Color::Inset.get(cx)).px(px(9.)).py(px(2.)).text_xs().text_color(Color::Secondary.get(cx)).child(role_label(&template.role_type).to_owned()))
+                            .when(template.is_builtin, |row| row.child(div().rounded_full().bg(Color::Inset.get(cx)).px(px(9.)).py(px(2.)).text_xs().text_color(Color::Muted.get(cx)).child(tr("内置")))))
+                        .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(template.description.clone()))
+                        .when(!template.is_builtin, |view| view.child(Reveal::new(("roles-actions-reveal", i), scroll, h_flex().flex_wrap().gap_2()
+                            .child(Button::new(("edit-role", i)).ghost().compact().rounded_full().label(tr("编辑")).disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, window, cx| { this.roles.role_type = role_key(&item.role_type); this.role_name.update(cx, |state, cx| state.set_value(item.name.clone(), window, cx)); this.role_description.update(cx, |state, cx| state.set_value(item.description.clone(), window, cx)); this.roles.editing = Some(item.clone()); this.roles.deleting = None; this.roles.scroll.set_offset(point(px(0.), px(0.))); let focus = this.role_name.read(cx).focus_handle(cx); window.on_next_frame(move |window, cx| focus.focus(window, cx)); cx.notify(); })))
+                            .child(Button::new(("delete-role", i)).ghost().compact().rounded_full().label(if deleting { if english() { format!("Confirm deletion of “{}”", template.name) } else { format!("确认删除「{}」", template.name) } } else { tr("删除").into() }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(move |this, _, _, cx| { if this.roles.deleting.as_ref() == Some(&delete) { this.role_mutation("DELETE", format!("/api/settings/role-templates/{delete}"), None, cx); } else { this.roles.deleting = Some(delete.clone()); cx.notify(); } })))
+                            .when(deleting, |view| view.child(Button::new(("cancel-delete-role", i)).ghost().compact().rounded_full().label(tr("取消")).accessibility_label(if english() { format!("Cancel deletion of role template {}", template.name) } else { format!("取消删除角色模板 {}", template.name) }).disabled(!self.connected || self.roles.loading).on_click(cx.listener(|this, _, _, cx| { this.roles.deleting = None; cx.notify(); })))))))
+                })))))
     }
     pub fn render_member_templates(&self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()

@@ -165,6 +165,7 @@ pub(crate) fn localize_owned_error(error: &str) -> String {
         "models.json 的链接目标不存在，请先修复链接",
         "models.json 不是普通文件",
         "配置未通过 Pi 校验，未保存。请检查接口类型、地址、模型参数以及现有高级配置。",
+        "请重新读取或再次保存以核对团队文档。",
     ];
     if let Some(key) = OWNED_ERRORS.iter().find(|key| **key == error) {
         return tr(key).to_owned();
@@ -316,6 +317,15 @@ mod tests {
         let report = crate::app::DeliveryCard { dispatch_id:None,report:true,worker_id:None,artifacts:vec![],heading:"成员汇报",worker_name:Some("成员汇报".to_owned()),raw:original.to_owned(),expanded:false,missing_provenance:false };
         component::set_locale(Locale::En.component_locale());
         assert_eq!(tr("设置"), "Settings");
+        assert_eq!(tr("内置"), "Built-in");
+        assert_eq!(
+            tr("连接已中断，任务保存结果尚未确认"),
+            "Connection interrupted; task save was not confirmed"
+        );
+        assert_eq!(
+            localize_owned_error("请重新读取或再次保存以核对团队文档。"),
+            "Reload or save again to verify the team document."
+        );
         assert_eq!(connected.text(), "Backend connected");
         assert_eq!(notice.text(), "Backend not connected");
         assert_eq!(owned.text(), "Select an available model for built-in Pi before sending a message.");

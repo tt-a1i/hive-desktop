@@ -89,6 +89,23 @@ pub fn status(value: &str) -> &str {
         other => other,
     }
 }
+pub(crate) fn status_badge_colors(
+    value: &str,
+    cx: &gpui_kit::App,
+) -> (gpui_kit::Rgba, gpui_kit::Rgba, Option<gpui_kit::Rgba>) {
+    use crate::palette::Color;
+    match value {
+        "running" => (Color::Attention.get(cx), Color::Text.get(cx), None),
+        "completed" | "succeeded" => (
+            Color::Inset.get(cx),
+            Color::Text.get(cx),
+            Some(Color::Success.get(cx)),
+        ),
+        "failed" => (Color::ErrorSurface.get(cx), Color::Error.get(cx), None),
+        "stopped" | "interrupted" => (Color::Inset.get(cx), Color::Secondary.get(cx), None),
+        _ => (Color::Inset.get(cx), Color::Text.get(cx), None),
+    }
+}
 pub fn json(value: &Value) -> String {
     if let Value::String(text) = value {
         text.clone()

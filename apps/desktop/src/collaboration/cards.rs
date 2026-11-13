@@ -31,16 +31,20 @@ impl HiveApp {
         let item = dispatch.clone();
         let owner = self.agent_name(&dispatch.to_agent_id);
         let state = super::dispatch_state(&dispatch.state);
+        let (badge_bg, badge_fg, badge_dot) = super::dispatch_badge_colors(&dispatch.state, cx);
         let text = excerpt(&dispatch.text);
-        Reveal::new(format!("dispatch-{}-reveal", dispatch.id), &self.collaboration_scroll, Button::new(("dispatch", index))
+        Reveal::new(format!("dispatch-{}-reveal", dispatch.id), &self.collaboration_scroll, div()
+            .rounded_xl()
+            .bg(Color::Card.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .child(Button::new(("dispatch", index))
             .ghost()
             .w_full()
             .min_w_0()
             .h_auto()
             .p_3()
-            .rounded_lg()
-            .border_1()
-            .border_color(Color::Divider.get(cx))
+            .rounded_xl()
             .justify_start()
             .accessibility_label(format!("{}: {state} · {owner} · {}", tr("打开派单"), text.chars().take(160).collect::<String>()))
             .child(
@@ -56,13 +60,18 @@ impl HiveApp {
                             .items_center()
                             .gap_2()
                             .child(
-                                div()
+                                h_flex()
                                     .flex_shrink_0()
+                                    .items_center()
+                                    .gap(px(5.))
                                     .rounded_full()
-                                    .bg(Color::Inset.get(cx))
-                                    .px_2()
-                                    .py_1()
+                                    .bg(badge_bg)
+                                    .text_color(badge_fg)
+                                    .px(px(9.))
+                                    .py(px(2.))
                                     .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .when_some(badge_dot, |pill, dot| pill.child(div().size(px(6.)).rounded_full().bg(dot)))
                                     .child(state.to_owned()),
                             )
                             .child(
@@ -121,6 +130,6 @@ impl HiveApp {
                         },
                     ),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx))))
+            .on_click(cx.listener(move |this, _, _, cx| this.select_dispatch(item.clone(), cx)))))
     }
 }

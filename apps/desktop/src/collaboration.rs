@@ -466,6 +466,23 @@ pub fn delivery_state(value: &str) -> &str {
     }
 }
 
+pub(crate) fn dispatch_badge_colors(
+    value: &str,
+    cx: &App,
+) -> (Rgba, Rgba, Option<Rgba>) {
+    use crate::palette::Color;
+    match value {
+        "reported" => (
+            Color::Inset.get(cx),
+            Color::Text.get(cx),
+            Some(Color::Success.get(cx)),
+        ),
+        "queued" | "submitted" => (Color::Attention.get(cx), Color::Text.get(cx), None),
+        "cancelled" => (Color::Inset.get(cx), Color::Secondary.get(cx), None),
+        _ => (Color::Inset.get(cx), Color::Text.get(cx), None),
+    }
+}
+
 impl HiveApp {
     pub fn reset_collaboration_connection(&mut self) {
         let c = &mut self.collaboration;
@@ -481,7 +498,14 @@ impl HiveApp {
         c.message_loading = false;
         c.message_refreshing = false;
         for draft in c.task_drafts.values_mut() {
-            draft.saving = false;
+            if draft.saving {
+                draft.saving = false;
+                draft.operation = 0;
+                draft.error = Some((
+                    "连接已中断，任务保存结果尚未确认",
+                    "请重新读取或再次保存以核对团队文档。".into(),
+                ));
+            }
         }
     }
 }

@@ -1296,5 +1296,8 @@
   "Pi 会话变更未能保存，请修复问题后重试": "Could not save Pi session changes. Fix the issue and try again",
   "工作区已移除，但桌面记录或后续清理未完成": "Workspace removed, but local records or follow-up cleanup did not finish",
   "移除失败，暂时无法确认工作区是否仍存在；请刷新工作区列表": "Removal failed and workspace existence could not be confirmed; refresh the workspace list",
-  "工作区尚未移除，部分会话可能已停止；原有会话记录和待投递数据保留": "Workspace was not removed, though some conversations may have stopped; conversation records and queued deliveries are preserved"
+  "工作区尚未移除，部分会话可能已停止；原有会话记录和待投递数据保留": "Workspace was not removed, though some conversations may have stopped; conversation records and queued deliveries are preserved",
+  "内置": "Built-in",
+  "连接已中断，任务保存结果尚未确认": "Connection interrupted; task save was not confirmed",
+  "请重新读取或再次保存以核对团队文档。": "Reload or save again to verify the team document."
 }

@@ -12,7 +12,7 @@ impl HiveApp {
     pub(super) fn render_workflow_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let state = &self.workflows;
         let disabled = !self.connected || state.acting || !self.workspace_writes_allowed();
-        v_flex().gap_3().p_4().rounded_lg().border_1().border_color(Color::Divider.get(cx))
+        v_flex().gap_3().p_4().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
             .child(Reveal::new("workflow-feature-reveal", &state.list_scroll, h_flex().flex_wrap().gap_2().items_center()
                 .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("工作流 · 实验功能")))
                 .when_some(state.enabled,|row,enabled|row.child(Button::new("workflow-feature-toggle")
