@@ -146,7 +146,11 @@ impl Render for ConversationExport {
                                 div()
                                     .text_size(px(11.))
                                     .text_color(Color::Muted.get(cx))
-                                    .child(format!("{} chars", preview.chars().count())),
+                                    .child(if english() {
+                                        format!("{} chars", preview.chars().count())
+                                    } else {
+                                        format!("{} 字符", preview.chars().count())
+                                    }),
                             ),
                     )
                     .child(
