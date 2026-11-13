@@ -2,7 +2,7 @@
 
 ## 当前开发包 c0c1163 与清理（2026-11-13）
 
-Beluga 风格首次引导/本地 Agent 就绪面板与 T3 Code 风格主窗口骨架、macOS 沉浸式交通灯标题栏、256px 紧凑侧栏、768px 纯净会话流、单行 `WorkLog` 思考/工具过程与 `rounded-2xl` 悬浮输入框重构（`c0c1163`，按产品决策暂缓日常单 Agent 工作区中的多 Agent 编排显式入口，底层协作与冷恢复完整保留）已入 current/candidate 与 DMG（ZIP SHA-256 `3ba3e9ccff339dac1a0498fc3f2d54aaf0feb6f83de5945b6611660f7c80241f`；因检测到旧 `/Applications/Hive Desktop.app` 正在用户会话运行未强制终止旧进程，已核验的新版 `.app` 与 DMG 已就绪）。精确 1 项原生二进制变更、28,869 项清单/链接与 DMG 核对通过；包内四组正式包检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与浅色/深色 `20 px` Beluga 引导页、深色 T3 Code 主窗口 Terra 冷读三次运行正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`5bb7b0b` 保留直接可运行回退，退役 `992aae6` 解压树并清理临时参考克隆与 Rust 中间构建缓存约 6.84 GB（6.37 GiB），见[包内证据与边界](validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+Beluga 风格首次引导/本地 Agent 就绪面板与 T3 Code 风格主窗口骨架、macOS 沉浸式交通灯标题栏、256px 紧凑侧栏、768px 纯净会话流、单行 `WorkLog` 思考/工具过程与 `rounded-2xl` 悬浮输入框重构（`c0c1163`，按产品决策暂缓日常单 Agent 工作区中的多 Agent 编排显式入口，底层协作与冷恢复完整保留）已入 current/candidate、DMG 与 `/Applications/Hive Desktop.app`（ZIP SHA-256 `3ba3e9ccff339dac1a0498fc3f2d54aaf0feb6f83de5945b6611660f7c80241f`）。精确 1 项原生二进制变更、28,869 项清单/链接与 DMG/安装核对全部通过；包内四组正式包检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与浅色/深色 `20 px` Beluga 引导页、深色 T3 Code 主窗口 Terra 冷读三次运行正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`5bb7b0b` 保留直接可运行回退，退役 `992aae6` 解压树并清理临时参考克隆、安装备份与 Rust 中间构建缓存约 7.29 GB（6.79 GiB），见[包内证据与边界](validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
 
 ## Beluga 引导页 + T3 Code 主窗口/侧栏/会话流/浮动输入框 UI/UX 重构（2026-11-13，源码）
 

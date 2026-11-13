@@ -1,6 +1,6 @@
 # c0c1163 开发包：Beluga 引导页 + T3 Code 主窗口/侧栏/会话流/浮动输入框 UI/UX 重构
 
-2026-11-13，源码 `c0c116382a8cc53433539c50cee37a7dad5bc9c5`，纳入 [Beluga + T3 Code UI/UX 重构验证](2026-11-13-beluga-t3code-ui-overhaul.md)（`c0c1163`）与 [设计复刻与融合记录](../research/2026-11-13-beluga-t3code-ui-overhaul.md)。current/candidate ZIP 与 DMG 已同步更新。
+2026-11-13，源码 `c0c116382a8cc53433539c50cee37a7dad5bc9c5`，纳入 [Beluga + T3 Code UI/UX 重构验证](2026-11-13-beluga-t3code-ui-overhaul.md)（`c0c1163`）与 [设计复刻与融合记录](../research/2026-11-13-beluga-t3code-ui-overhaul.md)。current/candidate ZIP、DMG 与 `/Applications/Hive Desktop.app` 已同步更新。
 
 ## 包与安装状态
 
@@ -16,7 +16,7 @@
 3ba3e9ccff339dac1a0498fc3f2d54aaf0feb6f83de5945b6611660f7c80241f
 ```
 
-DMG（`228,092,164` bytes，SHA-256 `17ec0e33c19864263c2628a4a96fd49981f0c0aa5d0c4493b1c4b830a97d39e0`）通过 `hdiutil verify`，只读挂载核对全部 28,869 项应用清单及 `/Applications` 快捷链接后卸载。由于打包时检测到用户会话中正在运行旧 `/Applications/Hive Desktop.app`（`5bb7b0b`），安装脚本按安全保护未强制终止用户运行实例；已就绪的新版 `.app` 位于 `.artifacts/release-c0c1163/extracted/bundle/Hive Desktop.app`（以及 `.artifacts/release-c0c1163/Hive-Desktop-macos-arm64.dmg`），退出当前打开的旧应用后即可直接替换或打开体验。current/candidate 为同字节硬链接，仍为未签名、未公证开发包，不是正式发行。
+DMG（`228,092,164` bytes，SHA-256 `17ec0e33c19864263c2628a4a96fd49981f0c0aa5d0c4493b1c4b830a97d39e0`）通过 `hdiutil verify`，只读挂载核对全部 28,869 项应用清单及 `/Applications` 快捷链接后卸载。在用户退出旧 `/Applications/Hive Desktop.app`（`5bb7b0b`）并经 `lsof +D` 确认无占用后，经临时副本逐项校验、备份原子替换并清理临时安装备份，安装后 `/Applications/Hive Desktop.app` 全部 28,869 项清单一致。current/candidate 为同字节硬链接，仍为未签名、未公证开发包，不是正式发行。
 
 ## 包内与原生窗口实际验证
 
