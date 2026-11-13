@@ -1,5 +1,13 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 c0c1163 与清理（2026-11-13）
+
+Beluga 风格首次引导/本地 Agent 就绪面板与 T3 Code 风格主窗口骨架、macOS 沉浸式交通灯标题栏、256px 紧凑侧栏、768px 纯净会话流、单行 `WorkLog` 思考/工具过程与 `rounded-2xl` 悬浮输入框重构（`c0c1163`，按产品决策暂缓日常单 Agent 工作区中的多 Agent 编排显式入口，底层协作与冷恢复完整保留）已入 current/candidate 与 DMG（ZIP SHA-256 `3ba3e9ccff339dac1a0498fc3f2d54aaf0feb6f83de5945b6611660f7c80241f`；因检测到旧 `/Applications/Hive Desktop.app` 正在用户会话运行未强制终止旧进程，已核验的新版 `.app` 与 DMG 已就绪）。精确 1 项原生二进制变更、28,869 项清单/链接与 DMG 核对通过；包内四组正式包检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与浅色/深色 `20 px` Beluga 引导页、深色 T3 Code 主窗口 Terra 冷读三次运行正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`5bb7b0b` 保留直接可运行回退，退役 `992aae6` 解压树并清理临时参考克隆与 Rust 中间构建缓存约 6.84 GB（6.37 GiB），见[包内证据与边界](validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
+## Beluga 引导页 + T3 Code 主窗口/侧栏/会话流/浮动输入框 UI/UX 重构（2026-11-13，源码）
+
+按确认分工方案落地原生 GPUI UI/UX 升级：首次进入引导与本地 Agent 环境检测复刻 Beluga，主窗口沉浸式交通灯标题栏、紧凑工作区/会话树、无头像对话流、单行 `WorkLog` 思考/工具折叠、居中空项目起草页、`rounded-2xl` 悬浮输入框与冷调浅深色 `Theme` 令牌复刻 T3 Code；暂缓日常单 Agent 工作区中的多 Agent 编排显式入口并保持底层运行时与既有自动化选择器契约完整。1,313 键双语词条闭合检查、Rust 36 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查与 macOS release 构建通过，见[设计记录](research/2026-11-13-beluga-t3code-ui-overhaul.md)与[实证与边界](validation/2026-11-13-beluga-t3code-ui-overhaul.md)。已纳入 `c0c1163` 开发包，完整目标继续。
+
 ## 当前开发包 5bb7b0b 与清理（2026-11-13）
 
 内置 Pi 退出登录凭据脱敏读取与关闭信号 `0 ms` 即时取消、外部 Pi 交互并发取消写帧完整排空与 `AggregateError` 保留、内置 Pi 嵌套会话头目录初始化、会话装载上下文注入后的关闭中断检查、工作区移除 `/api/ui/workspaces/*` 写拦截与关闭态导航防护，以及 `/` 原生命令菜单及输入区卡片 `Viewport` + `Reveal` 焦点显露与搜索筛选滚动归零（`5bb7b0b`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `d87a68ea6618a32b113cc952500eac54d0207d01f24e21e2deb63e4033be065c`）。精确 13 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、六项后台边界与打开 `stdin` 流水线/异常关闭即时退出（`10 ms` / `6 ms`）、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文深色 `20 px` 欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`992aae6` 保留直接可运行回退，退役 `62e6a6e` 解压树并清理 Rust 中间构建缓存与重复产物约 5.75 GB（5.36 GiB），见[包内证据与边界](validation/2026-11-13-backend-hardening-and-picker-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

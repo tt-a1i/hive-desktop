@@ -1,5 +1,13 @@
 # Hive Desktop 进度
 
+## 当前开发包 c0c1163 与清理（2026-11-13）
+
+Beluga 风格首次引导与本地 Agent 就绪卡片 + T3 Code 风格主窗口骨架、macOS 沉浸式交通灯标题栏、紧凑工程侧栏、纯净会话流、单行可展开 `WorkLog` 思考/工具过程与 `rounded-2xl` 悬浮输入框重构（`c0c1163`，日常单 Agent 工作区默认收敛多 Agent 编排入口，底层协作与冷恢复完整保留）已合并入 current/candidate 与 DMG（检测到旧 `/Applications/Hive Desktop.app` 正在用户会话运行，未强制终止旧进程，新版 `.app` 与 DMG 已就绪）。精确更新原生主程序 1 项，28,869 项清单/29 链接与 DMG 只读挂载核对通过；包内四组正式包检查、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与浅色/深色 `20 px` Beluga 引导页、深色 T3 Code 主窗口 Terra 冷读三次独立运行正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `5bb7b0b` 直接可运行回退，退役 `992aae6` 解压树并清理临时参考克隆与 Rust 中间构建缓存约 6.84 GB（6.37 GiB），见[包内证据与边界](validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
+## Beluga 引导页 + T3 Code 主窗口/侧栏/会话流/浮动输入框 UI/UX 重构（2026-11-13，源码）
+
+按已确认的 UI/UX 第一优先级方案（推进 `#1`、`#17`、`#20`）：(1) `welcome.rs` / `welcome/agents.rs` 复刻 Beluga 引导页（沉浸式顶栏、居中品牌徽章与字标、胶囊主次按钮、单卡四行分组式 Agent 环境检测）；(2) 新增 `chrome.rs` 并在 `main.rs` 启用 macOS `appears_transparent` + `traffic_light_position(15, 16)` + `app_owns_titlebar_drag`，消除双标题栏割裂与顶栏双击延迟；(3) `navigation*`、`conversation_list*`、`thinking/view.rs`、`tool_message.rs`、`view.rs`、`composer_controls.rs`、`palette.rs`、`appearance.rs` 与 `settings/*` 复刻 T3 Code 视觉与交互层次（`256px` 侧栏与 `6px` 语义状态点、`768px` 会话流、单行 `WorkLog` 折叠、居中空项目起草页与 `rounded-2xl` 悬浮输入框 + 圆形 `ArrowUp` 发送按钮，同步冷调中性浅色与曜石石墨深色 `Theme` 令牌）；(4) 暂缓单 Agent 日常界面的多 Agent 编排显式入口，保持底层运行时与已有成员/派单上下文自动感知不变。1,313 键双语词条闭合检查、Rust 36 + 13 项测试、两项 Windows MSVC 交叉检查与 macOS release 构建通过，见[设计记录](research/2026-11-13-beluga-t3code-ui-overhaul.md)与[实证与边界](validation/2026-11-13-beluga-t3code-ui-overhaul.md)。
+
 ## 当前开发包 5bb7b0b 与清理（2026-11-13）
 
 内置 Pi 退出登录凭据脱敏读取与关闭信号 `0 ms` 即时取消、外部 Pi 原生交互取消 `Promise.allSettled` 兄弟写帧排空与超时句柄解绑、内置 Pi 嵌套会话头目录 `0700`/`0600` 创建、会话装载期上下文注入后的关闭中断防护、工作区移除 `/api/ui/workspaces/*` 写拦截与宿主导航关闭防护，以及 `/` 原生命令菜单及输入区卡片 `Viewport` + `Reveal` 焦点显露与四类搜索滚动归零（`5bb7b0b`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 12 份后台 JS/map，28,869 项清单/29 链接、DMG 只读挂载与安装核对通过；包内四组正式包检查、后台六项边界与 sidecar 打开 `stdin` 流水线/异常关闭即时退出（`10 ms` / `6 ms`）、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文深色 `20 px` 欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `992aae6` 直接可运行回退，退役 `62e6a6e` 解压树并清理 Rust 中间构建缓存与重复产物约 5.75 GB（5.36 GiB），见[包内证据与边界](validation/2026-11-13-backend-hardening-and-picker-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
