@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 暂停队列新输入保持、可执行程序解析与元数据原子写清理（2026-11-13，源码）
+
+复现并修复 Codex 停止后或冷重开暂停/队首失败队列在发送补充消息时被 `activateOnce` 隐式恢复消费、`claude.ts` 命中同名目录/空 `PATH` 段/`win32` 无扩展名脚本，以及 `claude-metadata.ts` / `codex-metadata.ts` 原子替换失败残留 `.tmp` 文件。四组前后对照、d43f55e 真实三会话副本冷读与 `check:runtime`、`check:team` 等 12 组回归通过，见[实证与边界](validation/2026-11-13-runtime-queue-and-executable-hardening.md)。无厂商推理/面板操作/正式测试改动，待入下一安装包，完整目标继续。
+
 ## 当前开发包 0a388b3（2026-11-13）
 
 外部 Pi 扩展诊断（`a26ab5a`）、外部 Pi 合规图片历史（`f8a9460`）与 Codex 合规图片历史及 `excludeTurns` 冷恢复（`0a388b3`）已入 current/candidate、DMG 和 Applications。八份 JS/map 精确更新、完整清单/链接与安装核对通过；包内外部 Pi 六组诊断、外部 Pi 与 Codex 跨轮超 32 MiB/单轮 6 图/dispatch 多图/33 MiB 超限拒绝、d43f55e 真实三会话 40 条历史副本冷读→Rust 及四组包检查通过，无新厂商推理/面板操作。保留 7b7940c 可运行回退并退役 11 个更早重复解压树（保留全部 ZIP 与收据），见[包内证据与边界](validation/2026-11-13-image-history-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
 export type ClaudeMetadata = { version: 1; context: { uuid: string; customType: string; text: string }[];
@@ -22,5 +22,10 @@ export function writeClaudeMetadata(directory: string, sessionId: string, metada
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const target = claudeMetadataPath(directory, sessionId);
   const temporary = `${target}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, JSON.stringify(metadata), { mode: 0o600 }); renameSync(temporary, target);
+  try {
+    writeFileSync(temporary, JSON.stringify(metadata), { encoding: 'utf8', mode: 0o600, flush: true });
+    renameSync(temporary, target);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }

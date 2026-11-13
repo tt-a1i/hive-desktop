@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 暂停队列新输入保持、可执行程序解析与元数据原子写清理（2026-11-13，源码）
+
+逐模块审计 `packages/runtime/src/` 并复现修复三处边界：(1) `chats.ts` 在已暂停或队首失败队列上发送补充消息触发 `activateOnce(id, true)` 时不再隐式 `queue.resume()`，保留暂停态、队首失败原因及冷开空闲主控的 outbox 汇报重放，仅在显式 `chats.resume()` 时继续消费；(2) `claude.ts` 可执行程序查找过滤空 `PATH` 段、校验常规文件并在 `win32` 仅匹配 `.exe`；(3) `claude-metadata.ts` 与 `codex-metadata.ts` 原子重命名失败时确保清理 `.tmp` 临时文件。四组前后对照、d43f55e 真实三会话副本冷读及 `check:runtime`、`check:team` 等 12 组回归通过，见[实证与边界](validation/2026-11-13-runtime-queue-and-executable-hardening.md)。本地受控回环/合成 CLI、无厂商推理或正式测试改动，待入安装包，完整目标继续。
+
 ## 当前开发包 0a388b3（2026-11-13）
 
 外部 Pi 扩展诊断（`a26ab5a`）、外部 Pi 合规图片历史（`f8a9460`）与 Codex 合规图片历史及增量分页（`0a388b3`）已合并入 current/candidate、DMG 和 Applications。仅八份 JS/map 精确变化，完整 28,869 清单/29 链接及安装核对通过；包内外部 Pi 六组诊断+冷恢复、外部 Pi 与 Codex 跨轮超 32 MiB/单轮 6 图/dispatch 多图/超限拒绝、d43f55e 真实 Terra 三会话 40 条完整历史副本冷读及正式 JSONL→Rust、四组包检查通过，零新推理/面板操作。7b7940c 保留直接可运行回退，11 个更早旧解压树经清单/哈希/无占用核对后退役（归档 ZIP 与收据保留），见[包内证据与存储](validation/2026-11-13-image-history-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

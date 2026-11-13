@@ -36,6 +36,7 @@ export class Chats implements StructuredSessionPort {
   private readonly sequences = new Map<string, number>();
   private readonly activating = new Map<string, Promise<void>>();
   private readonly startingForInput = new Set<string>();
+  private readonly keepingPaused = new Set<string>();
   readonly attachments: ChatAttachments;
   private readonly sessionDir: string;
   private readonly queueDir: string;
@@ -421,7 +422,7 @@ export class Chats implements StructuredSessionPort {
           await chat.queue.enqueue(text, true, presentation, images);
         }
       },
-      ready: () => chat.queue.resume(),
+      ready: () => { if (!this.keepingPaused.has(id)) chat.queue.resume(); },
       stop: () => this.stopLive(id, chat),
     };
   }
@@ -481,9 +482,15 @@ export class Chats implements StructuredSessionPort {
         const staged=await this.attachments.get(this.index.get(id).workspaceId, ids);
         if (staged.some(item=>item.image) && opened.handle.supportsImages?.() === false) throw new Error('当前模型不支持图片，请切换模型后重试。');
       }
-      await this.activateOnce(id, true);
+      const keepPaused = !opened.queue.busy && opened.queue.pendingCount > 0;
+      if (keepPaused) this.keepingPaused.add(id);
+      try {
+        await this.activateOnce(id, true);
+      } finally {
+        if (keepPaused) this.keepingPaused.delete(id);
+      }
       const chat = await this.require(id);
-      if (!chat.queue.pendingCount) chat.queue.resume();
+      if (!keepPaused && !chat.queue.pendingCount) chat.queue.resume();
       const record = this.index.get(id);
       this.index.save({ ...record, title: !record.customTitle && record.title === '新会话' ? Array.from(text.trim()).slice(0, 60).join('') || '附件消息' : record.title, updatedAt: Date.now() });
       if (record.agentId === `${record.workspaceId}:orchestrator`) {

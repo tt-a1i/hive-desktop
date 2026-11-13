@@ -3,8 +3,8 @@ import { readClaudeReasoning } from './claude-reasoning.js';
 import { promptImages } from '../prompt-images.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID, type UUID } from 'node:crypto';
-import { accessSync, constants } from 'node:fs';
-import { delimiter, extname, isAbsolute, join, resolve } from 'node:path';
+import { accessSync, constants, statSync } from 'node:fs';
+import { extname, isAbsolute, resolve } from 'node:path';
 import { getSessionMessages, query, type CanUseTool, type ModelInfo, type OnElicitation, type OnUserDialog,
   type Query, type EffortLevel, type SDKResultMessage, type SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
@@ -256,14 +256,24 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     async setModel(provider, id) { check(); if (active) throw new Error('Claude session is already processing a prompt'); if (provider !== 'claude') throw new Error('Unsupported Claude model provider'); await claudeDeadline(running.setModel(id), 'set model'); currentModel = id; },
   };
 }
-export function resolveClaudeExecutable(command: string): string {
-  if (process.platform === 'win32' && ['.cmd', '.bat', '.ps1'].includes(extname(command).toLowerCase())) throw new Error('Configure the native Claude Code .exe; shell launchers are not supported');
-  const paths = isAbsolute(command) || command.includes('/') || command.includes('\\') ? [resolve(command)]
-    : (process.env.PATH ?? '').split(delimiter).flatMap(directory => {
-      const path = join(directory, command);
-      return process.platform === 'win32' && !extname(command) ? [path, `${path}.exe`] : [path];
+export function resolveClaudeExecutable(command: string, platform: NodeJS.Platform = process.platform, envPath = process.env.PATH): string {
+  if (platform === 'win32' && ['.cmd', '.bat', '.ps1'].includes(extname(command).toLowerCase())) throw new Error('Configure the native Claude Code .exe; shell launchers are not supported');
+  const explicit = isAbsolute(command) || command.includes('/') || command.includes('\\');
+  const paths = explicit
+    ? (platform === 'win32' && !extname(command) ? [`${resolve(command)}.exe`, resolve(command)] : [resolve(command)])
+    : (envPath ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean).flatMap(directory => {
+      const path = resolve(directory, command);
+      return platform === 'win32' && !extname(command) ? [`${path}.exe`] : [path];
     });
-  for (const path of paths) { try { accessSync(path, constants.X_OK); return path; } catch (error) { if (!['ENOENT', 'EACCES', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error; } }
+  for (const path of paths) {
+    try {
+      if (!statSync(path).isFile()) continue;
+      accessSync(path, constants.X_OK);
+      return path;
+    } catch (error) {
+      if (!['ENOENT', 'EACCES', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    }
+  }
   throw new Error('Original Claude Code executable was not found; configure HIVE_CLAUDE_COMMAND');
 }
 function asError(value: unknown): Error { return value instanceof Error ? value : new Error(String(value)); }

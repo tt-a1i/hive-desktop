@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
 import type { CodexMetadata } from './codex-history.js';
@@ -24,6 +24,10 @@ export function writeCodexMetadata(directory: string, threadId: string, metadata
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const target = codexMetadataFile(directory, threadId);
   const temporary = `${target}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, JSON.stringify(metadata), { mode: 0o600 });
-  renameSync(temporary, target);
+  try {
+    writeFileSync(temporary, JSON.stringify(metadata), { encoding: 'utf8', mode: 0o600, flush: true });
+    renameSync(temporary, target);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
