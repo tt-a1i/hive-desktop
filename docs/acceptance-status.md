@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 4b3135d 与清理（2026-11-13）
+
+后台停止清理串行化、异常停止无泄漏回收与 Codex 账号探测即时取消（`cd32e9d`），以及桌面过期 `Runtime` 启动句柄回收、协作重连保留、记忆/角色面板 `Viewport` + `Reveal` 窄窗键盘显露、1,301 项双语闭合本地化与协作/成员/记忆/角色/工作流视觉层次打磨（`4b3135d`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `19e0ce4df703df3f840d44861d1409888c15ccf3b59a644f26148e9d77980d05`）。精确 13 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、并发清理与探测取消检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与欢迎页/Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`9e6a44a` 保留直接可运行回退，退役 `0a388b3` 解压树并清理重复/临时构建产物约 1.41 GB（1.31 GiB），见[包内证据与边界](validation/2026-11-13-teardown-panels-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
 ## 桌面后台生命周期竞态、次级面板焦点显露与界面层次打磨（2026-11-13，源码）
 
 修复 `start_backend` 过期 `Runtime` 启动句柄未回收、后台重连重置 `collaboration.visible` 与断线静默清除在途任务保存状态的问题；修复 `members/view.rs` 模型读取错误的后端名称映射与双语闭合本地化，补齐远程设置、Pi 账号与对话导出的自有错误本地化（`locales/en.json` 达 1,301 条唯一键，覆盖率 100%）；为记忆与角色模板页接入 `Viewport` + `Reveal` 窄窗键盘显露，并融合 Beluga、T3 Code 与 Cindy 统一协作、成员、记忆、角色、工作流面板的 `960px` 居中容器、`Color::Card` 卡片与语义状态胶囊（推进 `#17`、`#20` 与整体体验）。Rust 35 项单元测试、13 项进程树监督检查、两项 Windows MSVC 交叉检查及 macOS release 构建通过，见[实证与边界](validation/2026-11-13-desktop-panels-hardening-and-craft.md)。随即连同 `cd32e9d` 纳入新开发包并执行包内与原生窗口核验，完整目标继续。
