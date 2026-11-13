@@ -43,6 +43,8 @@ mod tool_diff;
 mod text_reading;
 mod file_viewer;
 mod transport;
+#[cfg(feature = "ui-preview")]
+mod ui_preview;
 mod usage;
 mod view;
 mod workspace_actions;

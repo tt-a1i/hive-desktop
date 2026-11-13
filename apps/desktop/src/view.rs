@@ -666,6 +666,8 @@ impl HiveApp {
 
 impl Render for HiveApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(feature = "ui-preview")]
+        crate::ui_preview::maybe_apply(self, window, cx);
         let locale = cx.global::<crate::language::Language>().locale;
         if self.interface_locale != Some(locale) {
             self.localize_placeholders(window, cx);
