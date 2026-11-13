@@ -124,10 +124,20 @@ impl HiveApp {
             .anchor(Anchor::BottomRight)
             .w(px(420.).min(window.viewport_size().width - px(32.)))
             .open(self.usage.visible)
-            .trigger(Button::new("session-usage").ghost().compact().label(tr("用量"))
-                .accessibility_label(tr("查看原生用量和上下文"))
-                .selected(self.usage.visible)
-                .disabled(!self.connected || !self.conversation_ready || self.loading))
+            .trigger(
+                Button::new("session-usage")
+                    .custom(crate::palette::quiet_icon_variant(cx))
+                    .compact()
+                    .xsmall()
+                    .h(px(28.))
+                    .w(px(28.))
+                    .rounded_lg()
+                    .icon(gpui_kit::assets::IconName::ChartNoAxesColumn)
+                    .tooltip(tr("查看原生用量和上下文"))
+                    .accessibility_label(tr("查看原生用量和上下文"))
+                    .selected(self.usage.visible)
+                    .disabled(!self.connected || !self.conversation_ready || self.loading),
+            )
             .on_open_change(cx.listener(|this, open, _, cx| {
                 this.usage.visible = *open;
                 if *open { this.load_usage(cx); }

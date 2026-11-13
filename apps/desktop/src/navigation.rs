@@ -4,7 +4,7 @@ use crate::language::tr;
 mod session_row;
 mod settings;
 use crate::app::HiveApp;
-use crate::palette::Color;
+use crate::palette::{self, Color};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::{
     component::{
@@ -81,7 +81,7 @@ impl HiveApp {
     }
 
     /// Top bar used when the left sidebar is collapsed on non-chat subviews,
-    /// or inside the left sidebar header itself.
+    /// or inside the left sidebar header itself (T3 Code inline traffic-lights + PanelLeft + wordmark).
     pub fn render_navigation_bar(
         &self,
         in_sidebar: bool,
@@ -99,7 +99,7 @@ impl HiveApp {
             .gap_1p5()
             .when(in_sidebar, |bar| {
                 bar.px_1()
-                    .when(inset > px(0.), |b| b.pl(inset - px(2.)))
+                    .when(inset > px(0.), |b| b.pl(inset - px(4.)))
             })
             .when(!in_sidebar, |bar| {
                 bar.px_3()
@@ -107,31 +107,35 @@ impl HiveApp {
                     .border_color(Color::Divider.get(cx))
                     .when(inset > px(0.), |b| b.pl(inset + px(8.)))
             })
-            .when(!in_sidebar, |bar| {
-                bar.child(
-                    Button::new("toggle-navigation")
-                        .ghost()
-                        .compact()
-                        .h(px(28.))
-                        .w(px(28.))
-                        .icon(Glyph::PanelLeft)
-                        .tooltip(tr("打开或收起导航"))
-                        .accessibility_label(tr("打开或收起工作区与会话导航"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.sidebar_open = !this.sidebar_open;
-                            cx.notify();
-                        })),
-                )
-            })
+            .child(
+                Button::new("toggle-navigation")
+                    .custom(palette::quiet_icon_variant(cx))
+                    .compact()
+                    .xsmall()
+                    .h(px(26.))
+                    .w(px(26.))
+                    .rounded_md()
+                    .icon(Glyph::PanelLeft)
+                    .tooltip(tr("打开或收起导航"))
+                    .accessibility_label(tr("打开或收起工作区与会话导航"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.sidebar_open = !this.sidebar_open;
+                        cx.notify();
+                    })),
+            )
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .px_1()
+                    .px_0p5()
                     .truncate()
-                    .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(Color::Secondary.get(cx))
+                    .text_sm()
+                    .font_weight(if in_sidebar {
+                        FontWeight::BOLD
+                    } else {
+                        FontWeight::SEMIBOLD
+                    })
+                    .text_color(Color::Text.get(cx))
                     .child(if in_sidebar {
                         "Hive".to_owned()
                     } else {
@@ -152,22 +156,6 @@ impl HiveApp {
             })
             .when(!self.viewing_conversation(), |view| {
                 view.child(self.return_to_chat_button(cx))
-            })
-            .when(in_sidebar, |bar| {
-                bar.child(
-                    Button::new("toggle-navigation")
-                        .ghost()
-                        .compact()
-                        .h(px(28.))
-                        .w(px(28.))
-                        .icon(Glyph::PanelLeft)
-                        .tooltip(tr("打开或收起导航"))
-                        .accessibility_label(tr("打开或收起工作区与会话导航"))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.sidebar_open = !this.sidebar_open;
-                            cx.notify();
-                        })),
-                )
             })
     }
 
@@ -193,21 +181,29 @@ impl HiveApp {
                 .unwrap_or_else(|| id.into()),
         )
         .when(project.is_some(), |button| {
-            button.ghost().compact().h(px(26.)).w(px(26.)).rounded_md()
+            button
+                .custom(palette::subtle_icon_variant(cx))
+                .compact()
+                .xsmall()
+                .h(px(24.))
+                .w(px(24.))
+                .rounded_md()
         })
         .when(id == "new-session-menu", |b| {
-            b.ghost()
-                .h(px(30.))
-                .rounded_lg()
-                .w_full()
-                .justify_start()
+            b.custom(palette::quiet_icon_variant(cx))
+                .compact()
+                .xsmall()
+                .h(px(26.))
+                .w(px(26.))
+                .rounded_md()
         })
         .when(id == "home-agent", |button| {
             button
-                .secondary()
+                .custom(palette::quiet_icon_variant(cx))
                 .compact()
-                .h(px(28.))
-                .rounded_full()
+                .h(px(26.))
+                .px_2()
+                .rounded_lg()
                 .dropdown_caret(true)
         })
         .icon(if id == "home-agent" {
@@ -216,16 +212,6 @@ impl HiveApp {
             Glyph::Plus
         } else {
             Glyph::SquarePen
-        })
-        .when(id == "new-session-menu", |b| {
-            b.child(
-                div()
-                    .flex_1()
-                    .text_left()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(label),
-            )
         })
         .when(id != "new-session-menu" && project.is_none(), |b| {
             b.label(label)
@@ -299,11 +285,12 @@ impl HiveApp {
             self.terminal.visible,
         ];
         Button::new("navigation-more")
-            .ghost()
+            .custom(palette::quiet_icon_variant(cx))
             .compact()
-            .h(px(30.))
-            .w(px(30.))
-            .rounded_lg()
+            .xsmall()
+            .h(px(26.))
+            .w(px(26.))
+            .rounded_md()
             .icon(Glyph::Ellipsis)
             .tooltip(tr("更多工作区功能"))
             .accessibility_label(tr("更多工作区功能"))
@@ -353,50 +340,84 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let show_team_footer = self.has_active_team_context();
+        let terminal_enabled =
+            self.connected && self.workspace.is_some() && self.workspace_writes_allowed();
         v_flex()
             .when(narrow, |view| view.flex_1().min_w_0())
-            .when(!narrow, |view| view.w(px(256.)).flex_shrink_0())
+            .when(!narrow, |view| view.w(px(252.)).flex_shrink_0())
             .h_full()
             .bg(Color::Sidebar.get(cx))
             .border_r_1()
             .border_color(Color::Divider.get(cx))
             .px_2()
             .pb_2()
-            .gap_1()
+            .gap_0p5()
             .child(self.render_navigation_bar(true, window, cx))
             .child(
                 h_flex()
                     .w_full()
                     .min_w_0()
+                    .items_center()
                     .px_0p5()
-                    .gap_1()
+                    .pt_0p5()
+                    .gap_0p5()
                     .child(
-                        div().flex_1().min_w_0().child(self.new_chat_menu(
-                            "new-session-menu",
-                            tr("新建会话"),
-                            None,
-                            cx,
-                        )),
+                        div().flex_1().min_w_0().child(
+                            Button::new("search-sessions")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(28.))
+                                .w_full()
+                                .justify_start()
+                                .rounded_md()
+                                .icon(Glyph::Search)
+                                .accessibility_label(tr("搜索会话"))
+                                .tooltip(if cfg!(target_os = "macos") {
+                                    tr("搜索会话 (⌘K)")
+                                } else {
+                                    tr("搜索会话 (Ctrl+K)")
+                                })
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_left()
+                                        .text_size(px(13.))
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(tr("搜索")),
+                                )
+                                .disabled(!self.connected)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_session_search(window, cx)
+                                })),
+                        ),
                     )
                     .child(
-                        Button::new("search-sessions")
-                            .ghost()
+                        Button::new("toggle-add-workspace")
+                            .custom(palette::quiet_icon_variant(cx))
                             .compact()
-                            .h(px(30.))
-                            .w(px(30.))
-                            .rounded_lg()
-                            .icon(Glyph::Search)
-                            .accessibility_label(tr("搜索会话"))
-                            .tooltip(if cfg!(target_os = "macos") {
-                                tr("搜索会话 (⌘K)")
+                            .xsmall()
+                            .h(px(26.))
+                            .w(px(26.))
+                            .rounded_md()
+                            .icon(Glyph::FolderPlus)
+                            .selected(self.add_workspace_open)
+                            .accessibility_label(if self.add_workspace_open {
+                                tr("收起添加工作区")
                             } else {
-                                tr("搜索会话 (Ctrl+K)")
+                                tr("添加工作区")
                             })
-                            .disabled(!self.connected)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_session_search(window, cx)
+                            .tooltip(if self.add_workspace_open {
+                                tr("收起添加工作区")
+                            } else {
+                                tr("添加工作区")
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.add_workspace_open = !this.add_workspace_open;
+                                cx.notify();
                             })),
                     )
+                    .child(self.new_chat_menu("new-session-menu", tr("新建会话"), None, cx))
                     .child(self.render_more_navigation(cx)),
             )
             .child(Viewport::new(
@@ -404,7 +425,7 @@ impl HiveApp {
                 &self.navigation_scroll,
                 v_flex()
                     .id("workspace-session-navigation")
-                    .mt_2()
+                    .mt_1p5()
                     .flex_1()
                     .min_w_0()
                     .w_full()
@@ -418,65 +439,11 @@ impl HiveApp {
                         v_flex()
                             .w_full()
                             .flex_shrink_0()
-                            .gap_1()
-                            .child(
-                                h_flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .px_1()
-                                    .child(
-                                        Button::new("toggle-project-section")
-                                            .ghost()
-                                            .compact()
-                                            .h(px(24.))
-                                            .icon(if self.projects_collapsed {
-                                                Glyph::ChevronRight
-                                            } else {
-                                                Glyph::ChevronDown
-                                            })
-                                            .label(tr("工作区"))
-                                            .text_color(Color::Muted.get(cx))
-                                            .accessibility_label(if self.projects_collapsed {
-                                                tr("展开工作区列表")
-                                            } else {
-                                                tr("收起工作区列表")
-                                            })
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.projects_collapsed = !this.projects_collapsed;
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("toggle-add-workspace")
-                                            .ghost()
-                                            .compact()
-                                            .h(px(24.))
-                                            .w(px(24.))
-                                            .rounded_md()
-                                            .icon(if self.add_workspace_open {
-                                                Glyph::PanelLeft
-                                            } else {
-                                                Glyph::Plus
-                                            })
-                                            .accessibility_label(if self.add_workspace_open {
-                                                tr("收起添加工作区")
-                                            } else {
-                                                tr("添加工作区")
-                                            })
-                                            .tooltip(if self.add_workspace_open {
-                                                tr("收起添加工作区")
-                                            } else {
-                                                tr("添加工作区")
-                                            })
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.add_workspace_open = !this.add_workspace_open;
-                                                cx.notify();
-                                            })),
-                                    ),
-                            )
+                            .gap_0p5()
                             .when(self.add_workspace_open, |section| {
                                 section.child(
                                     v_flex()
+                                        .mb_1p5()
                                         .p_2()
                                         .gap_1p5()
                                         .rounded_xl()
@@ -528,6 +495,65 @@ impl HiveApp {
                                         ),
                                 )
                             })
+                            .child(
+                                Button::new("toggle-project-section")
+                                    .custom(palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_1p5()
+                                    .w_full()
+                                    .rounded_md()
+                                    .accessibility_label(if self.projects_collapsed {
+                                        tr("展开工作区列表")
+                                    } else {
+                                        tr("收起工作区列表")
+                                    })
+                                    .child(
+                                        h_flex()
+                                            .flex_1()
+                                            .w_full()
+                                            .items_center()
+                                            .justify_between()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child(tr("工作区")),
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .when(!self.workspaces.is_empty(), |r| {
+                                                        r.child(
+                                                            div()
+                                                                .text_size(px(11.))
+                                                                .text_color(Color::Muted.get(cx))
+                                                                .child(
+                                                                    self.workspaces
+                                                                        .len()
+                                                                        .to_string(),
+                                                                ),
+                                                        )
+                                                    })
+                                                    .child(
+                                                        Icon::new(if self.projects_collapsed {
+                                                            Glyph::ChevronRight
+                                                        } else {
+                                                            Glyph::ChevronDown
+                                                        })
+                                                        .size(px(12.))
+                                                        .text_color(Color::Muted.get(cx)),
+                                                    ),
+                                            ),
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.projects_collapsed = !this.projects_collapsed;
+                                        cx.notify();
+                                    })),
+                            )
                             .when(!self.projects_collapsed, |section| {
                                 section.children(self.workspaces.iter().enumerate().map(
                                     |(i, workspace)| {
@@ -549,10 +575,13 @@ impl HiveApp {
                                                     .gap_0p5()
                                                     .child(
                                                         Button::new(("expand-project", i))
-                                                            .ghost()
+                                                            .custom(palette::subtle_icon_variant(
+                                                                cx,
+                                                            ))
                                                             .compact()
-                                                            .h(px(26.))
-                                                            .w(px(22.))
+                                                            .xsmall()
+                                                            .h(px(24.))
+                                                            .w(px(20.))
                                                             .rounded_md()
                                                             .icon(if expanded {
                                                                 Glyph::ChevronDown
@@ -596,26 +625,43 @@ impl HiveApp {
                                                         div().flex_1().min_w_0().child(
                                                             Button::new(("workspace", i))
                                                                 .ghost()
+                                                                .compact()
                                                                 .rounded_md()
-                                                                .icon(if expanded {
-                                                                    Glyph::FolderOpen
-                                                                } else {
-                                                                    Glyph::Folder
-                                                                })
                                                                 .h(px(28.))
+                                                                .px_1p5()
                                                                 .w_full()
                                                                 .min_w_0()
+                                                                .accessibility_label(
+                                                                    workspace.name.clone(),
+                                                                )
                                                                 .child(
-                                                                    div()
+                                                                    h_flex()
                                                                         .flex_1()
                                                                         .min_w_0()
-                                                                        .text_left()
-                                                                        .font_weight(
-                                                                            FontWeight::MEDIUM,
-                                                                        )
-                                                                        .truncate()
+                                                                        .items_center()
+                                                                        .gap_1p5()
                                                                         .child(
-                                                                            workspace.name.clone(),
+                                                                            palette::project_badge(
+                                                                                &workspace.name,
+                                                                                17.,
+                                                                                cx,
+                                                                            ),
+                                                                        )
+                                                                        .child(
+                                                                            div()
+                                                                                .flex_1()
+                                                                                .min_w_0()
+                                                                                .text_left()
+                                                                                .text_size(px(13.))
+                                                                                .font_weight(
+                                                                                    FontWeight::MEDIUM,
+                                                                                )
+                                                                                .truncate()
+                                                                                .child(
+                                                                                    workspace
+                                                                                        .name
+                                                                                        .clone(),
+                                                                                ),
                                                                         ),
                                                                 )
                                                                 .tooltip(workspace.path.clone())
@@ -660,7 +706,8 @@ impl HiveApp {
                                                                 ))
                                                                 .ghost()
                                                                 .compact()
-                                                                .h(px(24.))
+                                                                .xsmall()
+                                                                .h(px(22.))
                                                                 .label(label)
                                                                 .accessibility_label(
                                                                     if crate::language::english() {
@@ -709,8 +756,11 @@ impl HiveApp {
                                             )
                                             .when(expanded, |group| {
                                                 let rows = v_flex()
-                                                    .pl_3p5()
-                                                    .pt(px(2.))
+                                                    .ml_2p5()
+                                                    .pl_2()
+                                                    .border_l_1()
+                                                    .border_color(Color::Divider.get(cx))
+                                                    .mt_0p5()
                                                     .gap(px(1.))
                                                     .min_w_0();
                                                 group.child(match sessions {
@@ -758,8 +808,6 @@ impl HiveApp {
                     .flex_shrink_0()
                     .pt_1()
                     .gap_1()
-                    .border_t_1()
-                    .border_color(Color::Divider.get(cx))
                     .when(show_team_footer, |footer| {
                         footer.child(
                             h_flex()
@@ -823,35 +871,58 @@ impl HiveApp {
                         )
                     })
                     .child(
-                        Button::new("open-settings")
-                            .h(px(30.))
-                            .rounded_lg()
-                            .ghost()
-                            .icon(Glyph::Settings)
-                            .justify_start()
+                        h_flex()
                             .w_full()
-                            .tooltip(if cfg!(target_os = "macos") {
-                                tr("设置 (⌘,)")
-                            } else {
-                                tr("设置 (Ctrl+,)")
-                            })
-                            .accessibility_label(tr("设置"))
+                            .items_center()
+                            .px_0p5()
+                            .gap_1()
                             .child(
-                                div()
-                                    .flex_1()
-                                    .text_left()
-                                    .text_sm()
-                                    .font_weight(FontWeight::NORMAL)
-                                    .child(tr("设置")),
+                                Button::new("open-settings")
+                                    .custom(palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(28.))
+                                    .w(px(28.))
+                                    .rounded_md()
+                                    .icon(Glyph::Settings)
+                                    .tooltip(if cfg!(target_os = "macos") {
+                                        tr("设置 (⌘,)")
+                                    } else {
+                                        tr("设置 (Ctrl+,)")
+                                    })
+                                    .accessibility_label(tr("设置"))
+                                    .selected(self.settings_panel || self.roles.visible)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.open_settings(window, cx);
+                                        if window.viewport_size().width < px(820.) {
+                                            this.sidebar_open = false;
+                                        }
+                                        cx.notify();
+                                    })),
                             )
-                            .selected(self.settings_panel || self.roles.visible)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_settings(window, cx);
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                cx.notify();
-                            })),
+                            .child(
+                                Button::new("sidebar-quick-terminal")
+                                    .custom(palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(28.))
+                                    .w(px(28.))
+                                    .rounded_md()
+                                    .icon(Glyph::SquareTerminal)
+                                    .tooltip(tr("工作区终端"))
+                                    .accessibility_label(tr("工作区终端"))
+                                    .selected(self.terminal.visible)
+                                    .disabled(!terminal_enabled)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if this.terminal.visible {
+                                            this.hide_terminal(cx);
+                                        } else {
+                                            this.show_terminal(window, cx);
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(div().flex_1()),
                     ),
             )
     }
@@ -859,10 +930,11 @@ impl HiveApp {
     fn project_menu(&self, id: String, cx: &Context<Self>) -> impl IntoElement + use<> {
         let weak = cx.weak_entity();
         Button::new("open-workspace-menu")
-            .ghost()
+            .custom(palette::subtle_icon_variant(cx))
             .compact()
-            .h(px(26.))
-            .w(px(26.))
+            .xsmall()
+            .h(px(24.))
+            .w(px(24.))
             .rounded_md()
             .icon(Glyph::Ellipsis)
             .tooltip(tr("项目操作"))

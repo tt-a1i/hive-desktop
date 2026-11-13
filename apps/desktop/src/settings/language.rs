@@ -40,12 +40,16 @@ impl HiveApp {
                     ]
                     .into_iter()
                     .map(|(locale, label, id)| {
+                        let active = selected == locale;
                         Button::new(id)
-                            .rounded_full()
+                            .outline()
+                            .small()
+                            .rounded_lg()
+                            .px_3()
                             .label(label)
                             .accessibility_label(label)
-                            .selected(selected == locale)
-                            .toggled(selected == locale)
+                            .selected(active)
+                            .toggled(active)
                             .disabled(!language::available(cx))
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 language::choose(locale, cx);

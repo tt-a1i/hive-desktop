@@ -7,12 +7,59 @@ impl HiveApp {
         let selected = current.and_then(|current| self.models.iter().find(|model| model.provider == current.provider && model.id == current.id));
         let name = selected.filter(|model| !model.name.trim().is_empty()).map(|model| model.name.clone())
             .or_else(|| current.map(|model| model.id.clone())).unwrap_or_else(|| tr("选择模型").into());
-        let label = self.reasoning_label().map(|level| format!("{name} · {level}")).unwrap_or(name);
-        let identity = current.map(|model| format!("{} / {}", model.provider, model.id)).unwrap_or_else(|| tr("选择会话模型").into());
-        let unavailable = !self.connected || !self.conversation_ready || running || self.loading || self.closing;
-        let trigger = Button::new("choose-model").accessibility_label(tr("选择会话模型与推理强度"))
-            .ghost().compact().min_w_0().max_w(px(if window.viewport_size().width < px(900.) {260.} else {340.}))
-            .label(label.clone()).dropdown_caret(true).tooltip(format!("{label}\n{identity}\n{}",tr("只影响当前会话，不修改 Agent 全局默认"))).disabled(unavailable);
+        let effort = self.reasoning_label();
+        let label = effort
+            .as_ref()
+            .map(|level| format!("{name} · {level}"))
+            .unwrap_or_else(|| name.clone());
+        let identity = current
+            .map(|model| format!("{} / {}", model.provider, model.id))
+            .unwrap_or_else(|| tr("选择会话模型").into());
+        let unavailable =
+            !self.connected || !self.conversation_ready || running || self.loading || self.closing;
+        let trigger = Button::new("choose-model")
+            .accessibility_label(tr("选择会话模型与推理强度"))
+            .custom(crate::palette::quiet_icon_variant(cx))
+            .compact()
+            .h(px(28.))
+            .px_2()
+            .rounded_lg()
+            .min_w_0()
+            .max_w(px(if window.viewport_size().width < px(900.) {
+                250.
+            } else {
+                330.
+            }))
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(12.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(Color::Secondary.get(cx))
+                            .child(name.clone()),
+                    )
+                    .when_some(effort, |row, level| {
+                        row.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(12.5))
+                                .text_color(Color::Muted.get(cx))
+                                .child(level),
+                        )
+                    }),
+            )
+            .dropdown_caret(true)
+            .tooltip(format!(
+                "{label}\n{identity}\n{}",
+                tr("只影响当前会话，不修改 Agent 全局默认")
+            ))
+            .disabled(unavailable);
         if unavailable { return trigger.into_any_element(); }
         Popover::new("session-model-picker").anchor(Anchor::BottomRight)
             .w(px(600.).min(window.viewport_size().width - px(32.)))

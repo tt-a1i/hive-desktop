@@ -234,9 +234,13 @@ impl HiveApp {
     }
     pub(crate) fn command_button(&self, cx: &Context<Self>) -> AnyElement {
         Button::new("native-commands")
-            .ghost()
+            .custom(crate::palette::quiet_icon_variant(cx))
             .compact()
-            .label("/")
+            .xsmall()
+            .h(px(28.))
+            .w(px(28.))
+            .rounded_lg()
+            .icon(gpui_kit::assets::IconName::Slash)
             .tooltip(tr("技能、提示模板与扩展命令"))
             .accessibility_label(tr("选择原生命令"))
             .selected(self.command_picker.open)

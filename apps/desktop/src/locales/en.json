@@ -1311,5 +1311,12 @@
   "先写下需求，再选择 Agent。草稿会带入新会话。": "Write your request first, then choose an Agent. Your draft carries into the new conversation.",
   "定位并修复问题": "Investigate and fix an issue",
   "请帮我重现并定位当前项目中的问题，给出根因分析和修复方案。": "Please help reproduce and pinpoint the issue in this project, then provide a root-cause analysis and fix.",
-  "在本地工作区直接连接 Agent，查看消息、代码改动与工具执行过程。": "Connect an Agent directly in your local workspace to follow messages, code changes and tool activity."
+  "在本地工作区直接连接 Agent，查看消息、代码改动与工具执行过程。": "Connect an Agent directly in your local workspace to follow messages, code changes and tool activity.",
+  "输入需求，支持粘贴图片与 / 命令…": "Ask anything, paste images, or type /…",
+  "在文件管理器中打开当前项目": "Show current project in file manager",
+  "打开工作区终端": "Open workspace terminal",
+  "直接输入需求，或使用下方快捷指令开始。": "Describe what you want to build, or pick a quick starter below.",
+  "了解项目": "Explore project",
+  "审查改动": "Review changes",
+  "排查问题": "Debug an issue"
 }

@@ -39,12 +39,16 @@ impl HiveApp {
                     ]
                     .into_iter()
                     .map(|(id, label, mode)| {
+                        let active = saved.mode() == mode;
                         Button::new(id)
-                            .rounded_full()
+                            .outline()
+                            .small()
+                            .rounded_lg()
+                            .px_3()
                             .label(label)
                             .accessibility_label(if crate::language::english() { format!("Appearance: {label}") } else { format!("外观：{label}") })
-                            .selected(saved.mode() == mode)
-                            .toggled(saved.mode() == mode)
+                            .selected(active)
+                            .toggled(active)
                             .disabled(!appearance::available(cx))
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 appearance::choose(mode, window, cx)
@@ -73,6 +77,9 @@ impl HiveApp {
                     .items_center()
                     .child(
                         Button::new("decrease-interface-font")
+                            .outline()
+                            .small()
+                            .rounded_lg()
                             .label("A−")
                             .accessibility_label(tr("减小界面字号"))
                             .disabled(
@@ -84,9 +91,12 @@ impl HiveApp {
                                 appearance::choose_font_size(size, window, cx);
                             })),
                     )
-                    .child(div().text_sm().child(format!("{} px", saved.font_size())))
+                    .child(div().text_sm().px_1().child(format!("{} px", saved.font_size())))
                     .child(
                         Button::new("increase-interface-font")
+                            .outline()
+                            .small()
+                            .rounded_lg()
                             .label("A+")
                             .accessibility_label(tr("增大界面字号"))
                             .disabled(
@@ -100,6 +110,9 @@ impl HiveApp {
                     )
                     .child(
                         Button::new("reset-interface-font")
+                            .outline()
+                            .small()
+                            .rounded_lg()
                             .label(tr("恢复默认"))
                             .accessibility_label(tr("恢复默认界面字号"))
                             .disabled(

@@ -84,12 +84,16 @@ impl HiveApp {
         let reply_id = message.id.clone();
         let delivery = message.delivery.is_some();
         h_flex()
-            .gap_1()
+            .gap_0p5()
             .when(message.role == "user", |row| row.justify_end())
             .child(
                 Button::new(("copy", index))
-                    .ghost()
+                    .custom(crate::palette::subtle_icon_variant(cx))
                     .compact()
+                    .xsmall()
+                    .h(px(24.))
+                    .w(px(24.))
+                    .rounded_md()
                     .icon(Glyph::Copy)
                     .disabled(!delivery && message.text.is_empty())
                     .tooltip(if delivery {
@@ -115,8 +119,12 @@ impl HiveApp {
                 |row| {
                     row.child(
                         Button::new(("quote", index))
-                            .ghost()
+                            .custom(crate::palette::subtle_icon_variant(cx))
                             .compact()
+                            .xsmall()
+                            .h(px(24.))
+                            .w(px(24.))
+                            .rounded_md()
                             .icon(Glyph::Reply)
                             .tooltip(tr("引用回复"))
                             .accessibility_label(tr("引用消息到草稿"))
@@ -246,8 +254,9 @@ impl HiveApp {
         };
         Some(
             Button::new("conversation-return")
-                .ghost()
+                .custom(crate::palette::quiet_icon_variant(cx))
                 .compact()
+                .xsmall()
                 .h(px(28.))
                 .w(px(28.))
                 .rounded_lg()
@@ -340,11 +349,11 @@ impl HiveApp {
             .mx_auto()
             .flex_shrink_1()
             .gap_2()
-            .px(px(14.))
-            .pt(px(12.))
+            .px(px(16.))
+            .pt(px(14.))
             .pb(px(10.))
             .when(welcome && self.workspace.is_some(), |composer| {
-                composer.min_h(px(136.)).justify_between()
+                composer.min_h(px(126.)).justify_between()
             })
             .rounded_2xl()
             .border_1()
@@ -649,12 +658,17 @@ impl Render for HiveApp {
             .as_ref()
             .map(|s| {
                 if crate::language::english() {
-                    format!("Message {}…", crate::language::tr(s.backend.label()))
+                    format!(
+                        "Ask {} anything, paste images, or type /…",
+                        crate::language::tr(s.backend.label())
+                    )
                 } else {
-                    format!("向 {} 发送消息…", s.backend.label())
+                    format!("向 {} 发送消息，支持粘贴图片与 / 命令…", s.backend.label())
                 }
             })
-            .unwrap_or_else(|| crate::language::tr("输入消息…").into());
+            .unwrap_or_else(|| {
+                crate::language::tr("输入需求，支持粘贴图片与 / 命令…").into()
+            });
         if self.input_placeholder != placeholder {
             self.input_placeholder = placeholder.clone();
             self.input
@@ -868,13 +882,26 @@ impl Render for HiveApp {
                         } else if self.workspace.is_none() && self.session.is_none() {
                             self.render_welcome(window, cx).into_any_element()
                         } else {
+                            let active_project = self
+                                .workspaces
+                                .iter()
+                                .find(|ws| Some(&ws.id) == self.workspace.as_ref())
+                                .cloned();
                             let renaming = self.session.is_some()
                                 && self.session_name_target.as_deref()
                                     == self.session.as_ref().map(|s| s.id.as_str());
-                            let title = if welcome && self.workspace.is_none() {
+                            let title = if welcome && active_project.is_none() {
                                 tr("打开项目").into()
                             } else if welcome {
-                                tr("今天想推进什么？").into()
+                                if let Some(ws) = &active_project {
+                                    if english() {
+                                        format!("What should we build in {}?", ws.name)
+                                    } else {
+                                        format!("今天在 {} 构建什么？", ws.name)
+                                    }
+                                } else {
+                                    tr("今天想推进什么？").into()
+                                }
                             } else {
                                 self.session
                                     .as_ref()
@@ -912,16 +939,17 @@ impl Render for HiveApp {
                                     chrome::drag_bar("chat-topbar", window, cx)
                                         .w_full()
                                         .pl(topbar_inset)
-                                        .pr_4()
-                                        .gap_2()
+                                        .pr_3()
+                                        .gap_1p5()
                                         .when(!welcome, |bar| {
                                             bar.border_b_1().border_color(Color::Divider.get(cx))
                                         })
                                         .when(!self.sidebar_open, |bar| {
                                             bar.child(
                                                 Button::new("toggle-navigation")
-                                                    .ghost()
+                                                    .custom(crate::palette::quiet_icon_variant(cx))
                                                     .compact()
+                                                    .xsmall()
                                                     .h(px(28.))
                                                     .w(px(28.))
                                                     .rounded_lg()
@@ -937,7 +965,108 @@ impl Render for HiveApp {
                                             )
                                         })
                                         .when(welcome, |bar| {
-                                            bar.child(div().flex_1().min_w_0())
+                                            bar.child(
+                                                h_flex()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .when_some(
+                                                        active_project.clone(),
+                                                        |crumb, ws| {
+                                                            crumb
+                                                                .child(
+                                                                    crate::palette::project_badge(
+                                                                        &ws.name,
+                                                                        18.,
+                                                                        cx,
+                                                                    ),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .max_w(px(220.))
+                                                                        .text_size(px(13.))
+                                                                        .font_weight(
+                                                                            FontWeight::MEDIUM,
+                                                                        )
+                                                                        .text_color(
+                                                                            Color::Secondary
+                                                                                .get(cx),
+                                                                        )
+                                                                        .truncate()
+                                                                        .child(ws.name),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_size(px(12.))
+                                                                        .text_color(
+                                                                            Color::Muted
+                                                                                .get(cx)
+                                                                                .opacity(0.55),
+                                                                        )
+                                                                        .child("/"),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_size(px(13.))
+                                                                        .font_weight(
+                                                                            FontWeight::MEDIUM,
+                                                                        )
+                                                                        .text_color(
+                                                                            Color::Text.get(cx),
+                                                                        )
+                                                                        .truncate()
+                                                                        .child(tr("新会话")),
+                                                                )
+                                                        },
+                                                    ),
+                                            )
+                                            .when_some(active_project.clone(), |bar, ws| {
+                                                let folder_path =
+                                                    std::path::PathBuf::from(&ws.path);
+                                                bar.child(
+                                                    Button::new("topbar-open-folder")
+                                                        .custom(
+                                                            crate::palette::quiet_icon_variant(cx),
+                                                        )
+                                                        .compact()
+                                                        .xsmall()
+                                                        .h(px(28.))
+                                                        .w(px(28.))
+                                                        .rounded_lg()
+                                                        .icon(Glyph::FolderOpen)
+                                                        .tooltip(tr("在文件管理器中打开项目"))
+                                                        .accessibility_label(tr(
+                                                            "在文件管理器中打开当前项目",
+                                                        ))
+                                                        .on_click(cx.listener(
+                                                            move |_, _, _, cx| {
+                                                                cx.reveal_path(&folder_path)
+                                                            },
+                                                        )),
+                                                )
+                                                .child(
+                                                    Button::new("topbar-quick-terminal")
+                                                        .custom(
+                                                            crate::palette::quiet_icon_variant(cx),
+                                                        )
+                                                        .compact()
+                                                        .xsmall()
+                                                        .h(px(28.))
+                                                        .w(px(28.))
+                                                        .rounded_lg()
+                                                        .icon(Glyph::SquareTerminal)
+                                                        .tooltip(tr("打开工作区终端"))
+                                                        .accessibility_label(tr("打开工作区终端"))
+                                                        .disabled(!self.connected)
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.show_terminal(window, cx);
+                                                                cx.notify();
+                                                            },
+                                                        )),
+                                                )
+                                            })
                                         })
                                         .when(!welcome, |bar| {
                                             bar.when_some(
@@ -950,23 +1079,70 @@ impl Render for HiveApp {
                                                     .collect::<Vec<_>>()
                                                     .join(" ");
                                                 header.child(
-                                                    div()
-                                                        .id("session-title")
-                                                        .role(Role::Label)
-                                                        .aria_label(title.clone())
-                                                        .text_sm()
-                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                    h_flex()
                                                         .flex_1()
                                                         .min_w_0()
-                                                        .truncate()
-                                                        .tooltip({
-                                                            let title = title.clone();
-                                                            move |window, cx| {
-                                                                Tooltip::new(title.clone())
-                                                                    .build(window, cx)
-                                                            }
-                                                        })
-                                                        .child(clean_title),
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .when_some(
+                                                            active_project.clone(),
+                                                            |crumb, ws| {
+                                                                crumb
+                                                                    .child(
+                                                                        crate::palette::project_badge(
+                                                                            &ws.name,
+                                                                            18.,
+                                                                            cx,
+                                                                        ),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .max_w(px(180.))
+                                                                            .flex_shrink_0()
+                                                                            .text_size(px(13.))
+                                                                            .font_weight(
+                                                                                FontWeight::MEDIUM,
+                                                                            )
+                                                                            .text_color(
+                                                                                Color::Muted
+                                                                                    .get(cx),
+                                                                            )
+                                                                            .truncate()
+                                                                            .child(ws.name),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .flex_shrink_0()
+                                                                            .text_size(px(12.))
+                                                                            .text_color(
+                                                                                Color::Muted
+                                                                                    .get(cx)
+                                                                                    .opacity(0.55),
+                                                                            )
+                                                                            .child("/"),
+                                                                    )
+                                                            },
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .id("session-title")
+                                                                .role(Role::Label)
+                                                                .aria_label(title.clone())
+                                                                .text_size(px(13.))
+                                                                .font_weight(FontWeight::SEMIBOLD)
+                                                                .text_color(Color::Text.get(cx))
+                                                                .flex_1()
+                                                                .min_w_0()
+                                                                .truncate()
+                                                                .tooltip({
+                                                                    let title = title.clone();
+                                                                    move |window, cx| {
+                                                                        Tooltip::new(title.clone())
+                                                                            .build(window, cx)
+                                                                    }
+                                                                })
+                                                                .child(clean_title),
+                                                        ),
                                                 )
                                             })
                                             .when(renaming, |header| {
@@ -1073,12 +1249,15 @@ impl Render for HiveApp {
                                             .when(!renaming, |header| {
                                                 header.child(
                                                     Button::new("rename-session")
-                                                        .ghost()
+                                                        .custom(crate::palette::quiet_icon_variant(
+                                                            cx,
+                                                        ))
                                                         .compact()
+                                                        .xsmall()
                                                         .h(px(28.))
                                                         .w(px(28.))
                                                         .rounded_lg()
-                                                        .icon(Glyph::SquarePen)
+                                                        .icon(Glyph::Pencil)
                                                         .tooltip(tr("重命名会话"))
                                                         .accessibility_label(tr("重命名当前会话"))
                                                         .disabled(
@@ -1104,8 +1283,13 @@ impl Render for HiveApp {
                                                     header
                                                         .child(
                                                             Button::new("find-in-conversation")
-                                                                .ghost()
+                                                                .custom(
+                                                                    crate::palette::quiet_icon_variant(
+                                                                        cx,
+                                                                    ),
+                                                                )
                                                                 .compact()
+                                                                .xsmall()
                                                                 .h(px(28.))
                                                                 .w(px(28.))
                                                                 .rounded_lg()
@@ -1130,8 +1314,13 @@ impl Render for HiveApp {
                                                         )
                                                         .child(
                                                             Button::new("export-conversation")
-                                                                .ghost()
+                                                                .custom(
+                                                                    crate::palette::quiet_icon_variant(
+                                                                        cx,
+                                                                    ),
+                                                                )
                                                                 .compact()
+                                                                .xsmall()
                                                                 .h(px(28.))
                                                                 .w(px(28.))
                                                                 .rounded_lg()
@@ -1149,6 +1338,36 @@ impl Render for HiveApp {
                                                                     },
                                                                 )),
                                                         )
+                                                },
+                                            )
+                                            .when(
+                                                !renaming && active_project.is_some(),
+                                                |header| {
+                                                    header.child(
+                                                        Button::new("topbar-quick-terminal")
+                                                            .custom(
+                                                                crate::palette::quiet_icon_variant(
+                                                                    cx,
+                                                                ),
+                                                            )
+                                                            .compact()
+                                                            .xsmall()
+                                                            .h(px(28.))
+                                                            .w(px(28.))
+                                                            .rounded_lg()
+                                                            .icon(Glyph::SquareTerminal)
+                                                            .tooltip(tr("打开工作区终端"))
+                                                            .accessibility_label(tr(
+                                                                "打开工作区终端",
+                                                            ))
+                                                            .disabled(!self.connected)
+                                                            .on_click(cx.listener(
+                                                                |this, _, window, cx| {
+                                                                    this.show_terminal(window, cx);
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    )
                                                 },
                                             )
                                             .when(self.reading_above_latest(), |header| {
@@ -1267,6 +1486,11 @@ impl Render for HiveApp {
                                     },
                                 )
                                 .when(welcome, |surface| {
+                                    let hero_px = if window.viewport_size().width < px(1000.) {
+                                        26.
+                                    } else {
+                                        30.
+                                    };
                                     surface.child(
                                         v_flex()
                                             .id("welcome-draft-scroll")
@@ -1276,7 +1500,7 @@ impl Render for HiveApp {
                                             .overflow_y_scroll()
                                             .px_5()
                                             .when(!narrow, |v| v.px(px(44.)))
-                                            .pb_8()
+                                            .pb_10()
                                             .when(
                                                 window.viewport_size().height > px(560.),
                                                 |v| v.justify_center(),
@@ -1289,38 +1513,64 @@ impl Render for HiveApp {
                                                     .gap_4()
                                                     .child(
                                                         v_flex()
-                                                            .gap_2p5()
-                                                            .items_start()
-                                                            .when(
-                                                                self.workspace.is_some(),
-                                                                |hero| {
-                                                                    hero.child(
-                                                                        self.render_project_context(
-                                                                            cx,
-                                                                        ),
-                                                                    )
-                                                                },
-                                                            )
+                                                            .w_full()
+                                                            .items_center()
+                                                            .text_center()
+                                                            .gap_1p5()
+                                                            .pb_1()
                                                             .child(
                                                                 div()
                                                                     .id("session-title")
                                                                     .role(Role::Label)
                                                                     .aria_label(title.clone())
-                                                                    .font_weight(
-                                                                        FontWeight::SEMIBOLD,
-                                                                    )
-                                                                    .text_size(px(if window
-                                                                        .viewport_size()
-                                                                        .width
-                                                                        < px(1000.)
-                                                                    {
-                                                                        28.
-                                                                    } else {
-                                                                        32.
-                                                                    }))
-                                                                    .line_height(px(40.))
+                                                                    .text_size(px(hero_px))
+                                                                    .line_height(px(38.))
                                                                     .whitespace_normal()
-                                                                    .child(title),
+                                                                    .child(
+                                                                        if let Some(ws) =
+                                                                            active_project.as_ref()
+                                                                        {
+                                                                            h_flex()
+                                                                                .flex_wrap()
+                                                                                .justify_center()
+                                                                                .items_baseline()
+                                                                                .gap_1p5()
+                                                                                .child(
+                                                                                    div()
+                                                                                        .font_weight(FontWeight::NORMAL)
+                                                                                        .text_color(Color::Text.get(cx).opacity(0.86))
+                                                                                        .child(if english() {
+                                                                                            "What should we build in"
+                                                                                        } else {
+                                                                                            "今天在"
+                                                                                        }),
+                                                                                )
+                                                                                .child(
+                                                                                    div()
+                                                                                        .font_weight(FontWeight::BOLD)
+                                                                                        .text_color(Color::Text.get(cx))
+                                                                                        .child(ws.name.clone()),
+                                                                                )
+                                                                                .child(
+                                                                                    div()
+                                                                                        .font_weight(FontWeight::NORMAL)
+                                                                                        .text_color(Color::Text.get(cx).opacity(0.86))
+                                                                                        .child(if english() {
+                                                                                            "?"
+                                                                                        } else {
+                                                                                            "构建什么？"
+                                                                                        }),
+                                                                                )
+                                                                                .into_any_element()
+                                                                        } else {
+                                                                            div()
+                                                                                .font_weight(
+                                                                                    FontWeight::SEMIBOLD,
+                                                                                )
+                                                                                .child(title)
+                                                                                .into_any_element()
+                                                                        },
+                                                                    ),
                                                             )
                                                             .when(
                                                                 self.session.is_none(),
@@ -1332,13 +1582,30 @@ impl Render for HiveApp {
                                                                             .aria_label(tr(
                                                                                 "先写下需求，再选择 Agent。草稿会带入新会话。",
                                                                             ))
-                                                                            .text_sm()
+                                                                            .text_xs()
                                                                             .text_color(
                                                                                 Color::Muted
                                                                                     .get(cx),
                                                                             )
                                                                             .child(tr(
                                                                                 "先写下需求，再选择 Agent。草稿会带入新会话。",
+                                                                            )),
+                                                                    )
+                                                                },
+                                                            )
+                                                            .when(
+                                                                self.session.is_some()
+                                                                    && self.workspace.is_some(),
+                                                                |hero| {
+                                                                    hero.child(
+                                                                        div()
+                                                                            .text_xs()
+                                                                            .text_color(
+                                                                                Color::Muted
+                                                                                    .get(cx),
+                                                                            )
+                                                                            .child(tr(
+                                                                                "直接输入需求，或使用下方快捷指令开始。",
                                                                             )),
                                                                     )
                                                                 },
@@ -1361,50 +1628,55 @@ impl Render for HiveApp {
                                                         col.child(
                                                             h_flex()
                                                                 .w_full()
+                                                                .min_w_0()
                                                                 .flex_wrap()
-                                                                .items_start()
+                                                                .items_center()
+                                                                .justify_between()
                                                                 .gap_2()
-                                                                .children(
-                                                                    [
-                                                                        (
-                                                                            Glyph::FolderOpen,
-                                                                            tr("了解这个项目"),
-                                                                            tr("请梳理当前项目的结构、主要入口和运行方式。"),
-                                                                        ),
-                                                                        (
-                                                                            Glyph::Search,
-                                                                            tr("审查未提交的改动"),
-                                                                            tr("请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。"),
-                                                                        ),
-                                                                        (
-                                                                            Glyph::SquareTerminal,
-                                                                            tr("定位并修复问题"),
-                                                                            tr("请帮我重现并定位当前项目中的问题，给出根因分析和修复方案。"),
-                                                                        ),
-                                                                    ]
-                                                                    .into_iter()
-                                                                    .enumerate()
-                                                                    .map(|(i, (icon, label, prompt))| {
-                                                                        div()
-                                                                            .rounded_full()
-                                                                            .bg(Color::Card.get(cx))
-                                                                            .border_1()
-                                                                            .border_color(
-                                                                                Color::Divider
-                                                                                    .get(cx),
-                                                                            )
-                                                                            .child(
+                                                                .px_1()
+                                                                .child(
+                                                                    self.render_project_context(cx),
+                                                                )
+                                                                .child(
+                                                                    h_flex()
+                                                                        .flex_wrap()
+                                                                        .items_center()
+                                                                        .gap_1()
+                                                                        .children(
+                                                                            [
+                                                                                (
+                                                                                    Glyph::FolderOpen,
+                                                                                    tr("了解项目"),
+                                                                                    tr("请梳理当前项目的结构、主要入口和运行方式。"),
+                                                                                ),
+                                                                                (
+                                                                                    Glyph::Search,
+                                                                                    tr("审查改动"),
+                                                                                    tr("请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。"),
+                                                                                ),
+                                                                                (
+                                                                                    Glyph::SquareTerminal,
+                                                                                    tr("排查问题"),
+                                                                                    tr("请帮我重现并定位当前项目中的问题，给出根因分析和修复方案。"),
+                                                                                ),
+                                                                            ]
+                                                                            .into_iter()
+                                                                            .enumerate()
+                                                                            .map(|(i, (icon, label, prompt))| {
                                                                                 Button::new((
                                                                                     "starter",
                                                                                     i,
                                                                                 ))
-                                                                                .ghost()
-                                                                                .h(px(33.))
-                                                                                .rounded_full()
-                                                                                .text_color(
-                                                                                    Color::Secondary
-                                                                                        .get(cx),
+                                                                                .custom(
+                                                                                    crate::palette::quiet_icon_variant(
+                                                                                        cx,
+                                                                                    ),
                                                                                 )
+                                                                                .compact()
+                                                                                .xsmall()
+                                                                                .h(px(26.))
+                                                                                .px_2()
+                                                                                .rounded_md()
                                                                                 .icon(icon)
                                                                                 .label(label)
                                                                                 .on_click(cx.listener(
@@ -1431,9 +1703,9 @@ impl Render for HiveApp {
                                                                                             },
                                                                                         )
                                                                                     },
-                                                                                )),
-                                                                            )
-                                                                    }),
+                                                                                ))
+                                                                            }),
+                                                                        ),
                                                                 ),
                                                         )
                                                     }),

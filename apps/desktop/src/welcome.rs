@@ -25,72 +25,62 @@ impl HiveApp {
             .workspaces
             .iter()
             .find(|project| Some(&project.id) == self.workspace.as_ref());
-        h_flex()
-            .w_full()
-            .min_w_0()
-            .max_w(px(crate::conversation_list::CHAT_COLUMN_WIDTH))
-            .mx_auto()
-            .when_some(project, |row, project| {
-                let path = std::path::PathBuf::from(&project.path);
-                let identity = format!("{} · {}", project.name, project.path);
-                row.child(
-                    h_flex()
-                        .min_w_0()
-                        .max_w_full()
-                        .items_center()
-                        .gap_1p5()
-                        .pl_1p5()
-                        .pr_3()
-                        .py_1()
-                        .rounded_full()
-                        .bg(Color::Inset.get(cx))
-                        .border_1()
-                        .border_color(Color::Divider.get(cx))
-                        .child(
-                            Button::new("home-project-folder")
-                                .ghost()
-                                .compact()
-                                .rounded_full()
-                                .h(px(24.))
-                                .w(px(24.))
-                                .icon(Glyph::FolderOpen)
-                                .accessibility_label(format!(
-                                    "{}: {identity}",
-                                    tr("在文件管理器中打开项目")
-                                ))
-                                .tooltip(project.path.clone())
-                                .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&path))),
-                        )
-                        .child(
-                            div()
-                                .id("home-project-name")
-                                .role(Role::Label)
-                                .aria_label(project.name.clone())
-                                .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .truncate()
-                                .child(project.name.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(Color::Muted.get(cx))
-                                .child("·"),
-                        )
-                        .child(
-                            div()
-                                .id("home-project-path")
-                                .role(Role::Label)
-                                .aria_label(project.path.clone())
-                                .min_w_0()
-                                .flex_1()
-                                .text_xs()
-                                .text_color(Color::Muted.get(cx))
-                                .truncate()
-                                .child(project.path.clone()),
-                        ),
-                )
-            })
+        h_flex().min_w_0().when_some(project, |row, project| {
+            let path = std::path::PathBuf::from(&project.path);
+            let identity = format!("{} · {}", project.name, project.path);
+            let display_path = crate::palette::display_path(&project.path);
+            row.child(
+                h_flex()
+                    .min_w_0()
+                    .max_w_full()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new("home-project-folder")
+                            .custom(crate::palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .rounded_md()
+                            .h(px(24.))
+                            .w(px(24.))
+                            .icon(Glyph::FolderOpen)
+                            .accessibility_label(format!(
+                                "{}: {identity}",
+                                tr("在文件管理器中打开项目")
+                            ))
+                            .tooltip(project.path.clone())
+                            .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&path))),
+                    )
+                    .child(
+                        div()
+                            .id("home-project-name")
+                            .role(Role::Label)
+                            .aria_label(project.name.clone())
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(Color::Secondary.get(cx))
+                            .truncate()
+                            .child(project.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx).opacity(0.6))
+                            .child("·"),
+                    )
+                    .child(
+                        div()
+                            .id("home-project-path")
+                            .role(Role::Label)
+                            .aria_label(project.path.clone())
+                            .max_w(px(220.))
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .truncate()
+                            .child(display_path),
+                    ),
+            )
+        })
     }
 
     /// Beluga-inspired centered onboarding & agent readiness view when no project is open.
@@ -118,17 +108,6 @@ impl HiveApp {
         } else {
             px(0.)
         };
-        let primary_focus = self.connected.then(|| {
-            window
-                .use_keyed_state("welcome-primary-focus", cx, |window, cx| {
-                    let focus = cx.focus_handle();
-                    let initial = focus.clone();
-                    window.on_next_frame(move |window, cx| initial.focus(window, cx));
-                    focus
-                })
-                .read(cx)
-                .clone()
-        });
         v_flex()
             .flex_1()
             .min_w_0()
@@ -143,10 +122,12 @@ impl HiveApp {
                     .when(collapsed_sidebar, |bar| {
                         bar.child(
                             Button::new("toggle-navigation")
-                                .ghost()
+                                .custom(crate::palette::quiet_icon_variant(cx))
                                 .compact()
+                                .xsmall()
                                 .h(px(28.))
                                 .w(px(28.))
+                                .rounded_lg()
                                 .icon(Glyph::PanelLeft)
                                 .tooltip(tr("打开或收起导航"))
                                 .accessibility_label(tr("打开或收起工作区与会话导航"))
@@ -177,7 +158,7 @@ impl HiveApp {
                         v_flex()
                             .flex_shrink_0()
                             .w_full()
-                            .max_w(px(580.))
+                            .max_w(px(620.))
                             .mx_auto()
                             .gap_6()
                             .px_6()
@@ -188,14 +169,14 @@ impl HiveApp {
                                     .flex_shrink_0()
                                     .items_center()
                                     .text_center()
-                                    .gap_3()
+                                    .gap_2p5()
                                     .child(
                                         v_flex()
                                             .items_center()
                                             .gap_2()
                                             .child(
                                                 div()
-                                                    .size(px(52.))
+                                                    .size(px(48.))
                                                     .flex_shrink_0()
                                                     .rounded_2xl()
                                                     .bg(Color::Card.get(cx))
@@ -205,11 +186,11 @@ impl HiveApp {
                                                     .flex()
                                                     .items_center()
                                                     .justify_center()
-                                                    .child(img(logo).size(px(36.))),
+                                                    .child(img(logo).size(px(32.))),
                                             )
                                             .child(
                                                 div()
-                                                    .text_xs()
+                                                    .text_size(px(11.))
                                                     .font_weight(FontWeight::SEMIBOLD)
                                                     .text_color(Color::Muted.get(cx))
                                                     .child("H I V E"),
@@ -220,8 +201,8 @@ impl HiveApp {
                                             .id("welcome-title")
                                             .role(Role::Label)
                                             .aria_label(tr("你的项目，你的 Agent。"))
-                                            .text_size(px(if compact { 28. } else { 36. }))
-                                            .line_height(px(if compact { 36. } else { 44. }))
+                                            .text_size(px(if compact { 26. } else { 32. }))
+                                            .line_height(px(if compact { 34. } else { 40. }))
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .child(tr("你的项目，你的 Agent。")),
                                     )
@@ -254,14 +235,11 @@ impl HiveApp {
                                             .child(
                                                 Button::new("welcome-open-project")
                                                     .primary()
-                                                    .rounded_full()
-                                                    .h(px(38.))
-                                                    .px_5()
+                                                    .rounded_xl()
+                                                    .h(px(36.))
+                                                    .px_4()
                                                     .icon(Glyph::FolderOpen)
                                                     .label(tr("打开项目文件夹"))
-                                                    .when_some(primary_focus, |button, focus| {
-                                                        button.track_focus(&focus)
-                                                    })
                                                     .disabled(!self.connected)
                                                     .on_click(cx.listener(|this, _, window, cx| {
                                                         this.choose_workspace_folder(window, cx)
@@ -269,10 +247,10 @@ impl HiveApp {
                                             )
                                             .child(
                                                 Button::new("welcome-configure")
-                                                    .secondary()
-                                                    .rounded_full()
-                                                    .h(px(38.))
-                                                    .px_4()
+                                                    .outline()
+                                                    .rounded_xl()
+                                                    .h(px(36.))
+                                                    .px_3p5()
                                                     .label(tr("先配置 Agent"))
                                                     .dropdown_caret(true)
                                                     .accessibility_label(tr("选择 Agent 配置入口"))

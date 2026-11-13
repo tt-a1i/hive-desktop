@@ -44,9 +44,12 @@ impl HiveApp {
                         "welcome-programs-reveal",
                         &self.welcome_scroll,
                         Button::new("welcome-programs")
-                            .ghost()
+                            .custom(crate::palette::quiet_icon_variant(cx))
                             .compact()
-                            .rounded_full()
+                            .xsmall()
+                            .h(px(26.))
+                            .px_2()
+                            .rounded_md()
                             .label(tr("检查外部 Agent 程序"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.settings_section = SettingsSection::Programs;
@@ -193,9 +196,11 @@ impl HiveApp {
                                         Button::new(SharedString::from(format!(
                                             "welcome-agent-{backend}"
                                         )))
-                                        .ghost()
+                                        .outline()
                                         .compact()
-                                        .rounded_full()
+                                        .small()
+                                        .h(px(28.))
+                                        .rounded_lg()
                                         .px_3()
                                         .label(tr("配置"))
                                         .accessibility_label(action.clone())

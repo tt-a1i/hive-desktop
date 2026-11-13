@@ -45,6 +45,12 @@ impl HiveApp {
             });
         let find_matched = self.conversation_find_matches(&message.id);
         let is_plain_user = message.role == "user" && message.delivery.is_none();
+        let hide_speaker_header = message.explicit_user
+            || (message.role == "assistant"
+                && message.delivery.is_none()
+                && i > 0
+                && (self.messages[i - 1].role == "assistant"
+                    || self.messages[i - 1].tool.is_some()));
         v_flex()
             .id(("message", i))
             .role(Role::Group)
@@ -78,7 +84,7 @@ impl HiveApp {
             .when(is_plain_user, |bubble| {
                 bubble.ml_auto().max_w(px(560.)).items_end()
             })
-            .when(!message.explicit_user, |view| {
+            .when(!hide_speaker_header, |view| {
                 view.child(
                     h_flex()
                         .min_w_0()

@@ -71,11 +71,13 @@ impl HiveApp {
             .unwrap_or_default();
         let is_selected = self.viewing_conversation()
             && self.session.as_ref().is_some_and(|s| s.id == session.id);
+        let relative_time = palette::compact_relative_time(session.updated_at, english());
         let menu = Button::new(SharedString::from(format!("{scope}-menu-{id}")))
-            .ghost()
+            .custom(palette::subtle_icon_variant(cx))
             .compact()
-            .h(px(26.))
-            .w(px(26.))
+            .xsmall()
+            .h(px(22.))
+            .w(px(22.))
             .rounded_md()
             .icon(Glyph::Ellipsis)
             .tooltip(tr("会话操作"))
@@ -146,11 +148,9 @@ impl HiveApp {
                 div().flex_1().min_w_0().child(
                     Button::new(SharedString::from(format!("{scope}-{id}")))
                         .ghost()
-                        .h(if project_name.is_some() {
-                            px(42.)
-                        } else {
-                            px(29.)
-                        })
+                        .compact()
+                        .h(px(28.))
+                        .px_1p5()
                         .rounded_md()
                         .accessibility_label(format!(
                             "{}{} · {} · {role}{activity}{}",
@@ -172,50 +172,53 @@ impl HiveApp {
                         ))
                         .w_full()
                         .min_w_0()
+                        .when_some(project_name.as_ref(), |row, name| {
+                            row.child(palette::project_badge(name, 16., cx))
+                        })
                         .when_some(dot_color, |row, color| {
                             row.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(color))
                         })
                         .child(
-                            v_flex()
+                            div()
                                 .flex_1()
                                 .min_w_0()
-                                .items_start()
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .text_left()
-                                        .text_sm()
-                                        .when(is_selected, |t| t.font_weight(FontWeight::MEDIUM))
-                                        .truncate()
-                                        .child(title.clone()),
-                                )
-                                .when_some(project_name, |row, name| {
-                                    row.child(
-                                        div()
-                                            .text_xs()
-                                            .w_full()
-                                            .text_left()
-                                            .truncate()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child(name),
-                                    )
-                                }),
+                                .text_left()
+                                .text_size(px(13.))
+                                .text_color(if is_selected {
+                                    Color::Text.get(cx)
+                                } else {
+                                    Color::Secondary.get(cx)
+                                })
+                                .when(is_selected, |t| t.font_weight(FontWeight::MEDIUM))
+                                .truncate()
+                                .child(title.clone()),
                         )
-                        .when(session.pinned && scope != "pinned", |row| {
+                        .when(session.pinned && scope != "pinned" && activity_label.is_none(), |row| {
                             row.child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(tr("置顶")),
+                                Icon::new(Glyph::Pin)
+                                    .size(px(11.))
+                                    .text_color(Color::Muted.get(cx)),
                             )
                         })
                         .when_some(activity_label, |row, label| {
                             row.child(
                                 div()
-                                    .text_xs()
+                                    .flex_shrink_0()
+                                    .text_size(px(11.))
                                     .text_color(Color::Muted.get(cx))
                                     .child(label),
                             )
+                        })
+                        .when(activity_label.is_none(), |row| {
+                            row.when_some(relative_time, |row, ts| {
+                                row.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(11.))
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(ts),
+                                )
+                            })
                         })
                         .tooltip(format!(
                             "{} · {role} · {}{project_tooltip}",
@@ -246,42 +249,84 @@ impl HiveApp {
             !state.records.is_empty() || state.loading || state.error.is_some(),
             |section| {
                 section
-                    .pb_2p5()
+                    .pb_2()
                     .child(
                         h_flex()
+                            .w_full()
                             .items_center()
-                            .justify_between()
-                            .px_1()
+                            .gap_0p5()
                             .child(
-                                Button::new("toggle-pinned-section")
-                                    .ghost()
-                                    .compact()
-                                    .h(px(24.))
-                                    .icon(if state.collapsed {
-                                        Glyph::ChevronRight
-                                    } else {
-                                        Glyph::ChevronDown
-                                    })
-                                    .label(tr("置顶"))
-                                    .text_color(Color::Muted.get(cx))
-                                    .toggled(!state.collapsed)
-                                    .accessibility_label(if state.collapsed {
-                                        tr("展开置顶会话")
-                                    } else {
-                                        tr("收起置顶会话")
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.pinned_sessions.collapsed =
-                                            !this.pinned_sessions.collapsed;
-                                        cx.notify();
-                                    })),
+                                div().flex_1().min_w_0().child(
+                                    Button::new("toggle-pinned-section")
+                                        .custom(palette::quiet_icon_variant(cx))
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(24.))
+                                        .px_1p5()
+                                        .w_full()
+                                        .rounded_md()
+                                        .accessibility_label(if state.collapsed {
+                                            tr("展开置顶会话")
+                                        } else {
+                                            tr("收起置顶会话")
+                                        })
+                                        .child(
+                                            h_flex()
+                                                .flex_1()
+                                                .w_full()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(tr("置顶")),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .when(!state.records.is_empty(), |r| {
+                                                            r.child(
+                                                                div()
+                                                                    .text_size(px(11.))
+                                                                    .text_color(
+                                                                        Color::Muted.get(cx),
+                                                                    )
+                                                                    .child(
+                                                                        state
+                                                                            .records
+                                                                            .len()
+                                                                            .to_string(),
+                                                                    ),
+                                                            )
+                                                        })
+                                                        .child(
+                                                            Icon::new(if state.collapsed {
+                                                                Glyph::ChevronRight
+                                                            } else {
+                                                                Glyph::ChevronDown
+                                                            })
+                                                            .size(px(12.))
+                                                            .text_color(Color::Muted.get(cx)),
+                                                        ),
+                                                ),
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.pinned_sessions.collapsed =
+                                                !this.pinned_sessions.collapsed;
+                                            cx.notify();
+                                        })),
+                                ),
                             )
                             .child(
                                 Button::new("refresh-pinned-section")
-                                    .ghost()
+                                    .custom(palette::subtle_icon_variant(cx))
                                     .compact()
-                                    .h(px(24.))
-                                    .w(px(24.))
+                                    .xsmall()
+                                    .h(px(22.))
+                                    .w(px(22.))
                                     .rounded_md()
                                     .icon(Glyph::RefreshCw)
                                     .tooltip(tr("刷新置顶会话"))

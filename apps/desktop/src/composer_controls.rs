@@ -1,4 +1,9 @@
-use crate::{app::HiveApp, language::tr, palette::Color, protocol::Backend};
+use crate::{
+    app::HiveApp,
+    language::tr,
+    palette::{self, Color},
+    protocol::Backend,
+};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -49,15 +54,16 @@ impl HiveApp {
                     .min_w_0()
                     .flex_wrap()
                     .items_center()
-                    .gap_1()
+                    .gap_0p5()
                     .child(
                         Button::new("attach-images")
-                            .ghost()
+                            .custom(palette::quiet_icon_variant(cx))
                             .compact()
+                            .xsmall()
                             .h(px(28.))
                             .w(px(28.))
                             .rounded_lg()
-                            .icon(Glyph::Plus)
+                            .icon(Glyph::Paperclip)
                             .tooltip(tr("添加文件或图片"))
                             .accessibility_label(tr("添加文件或图片"))
                             .disabled(
@@ -77,9 +83,10 @@ impl HiveApp {
                     .when(attachment_count > 0, |row| {
                         row.child(
                             Button::new("show-draft-attachments")
-                                .ghost()
+                                .custom(palette::quiet_icon_variant(cx))
                                 .compact()
                                 .h(px(26.))
+                                .px_2()
                                 .rounded_full()
                                 .label(format!("{} · {}", tr("附件"), attachment_count))
                                 .accessibility_label(format!(
@@ -114,19 +121,17 @@ impl HiveApp {
                                 .aria_label(label)
                                 .flex_shrink_0()
                                 .h(px(26.))
-                                .px(px(9.))
-                                .rounded_full()
-                                .bg(Color::Inset.get(cx))
+                                .px(px(7.))
+                                .rounded_lg()
                                 .flex()
                                 .items_center()
-                                .gap(px(5.))
+                                .gap(px(4.))
                                 .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(Color::Secondary.get(cx))
+                                .text_color(Color::Muted.get(cx))
                                 .child(
                                     Icon::new(backend_glyph(session.backend))
-                                        .size_3()
-                                        .text_color(Color::Secondary.get(cx)),
+                                        .size(px(13.))
+                                        .text_color(Color::Muted.get(cx)),
                                 )
                                 .child(label),
                         )
@@ -154,6 +159,9 @@ impl HiveApp {
                         .when(running, |actions| {
                             actions.child(
                                 Button::new("stop")
+                                    .custom(palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
                                     .h(px(30.))
                                     .w(px(30.))
                                     .rounded_full()
@@ -180,9 +188,11 @@ impl HiveApp {
                         .when(!can_resume, |actions| {
                             actions.child(
                                 Button::new("send")
-                                    .primary()
-                                    .h(px(30.))
-                                    .when(!running, |button| button.w(px(30.)))
+                                    .custom(palette::send_circle_variant(can_send, cx))
+                                    .compact()
+                                    .h(px(32.))
+                                    .when(!running, |button| button.w(px(32.)))
+                                    .when(running, |button| button.px_3())
                                     .rounded_full()
                                     .icon(Glyph::ArrowUp)
                                     .when(running, |button| button.label(tr("排队")))

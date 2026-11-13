@@ -145,8 +145,9 @@ impl HiveApp {
                         .gap_1p5()
                         .child(
                             Button::new("leave-preferences")
-                                .ghost()
+                                .custom(crate::palette::quiet_icon_variant(cx))
                                 .compact()
+                                .xsmall()
                                 .h(px(28.))
                                 .w(px(28.))
                                 .rounded_lg()
