@@ -1,4 +1,8 @@
-use crate::{app::HiveApp, palette::Color,language::{english,tr}};
+use crate::{
+    app::HiveApp,
+    language::{english, tr},
+    palette::Color,
+};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
@@ -40,28 +44,39 @@ impl HiveApp {
                 .into()
             });
         let find_matched = self.conversation_find_matches(&message.id);
+        let is_plain_user = message.role == "user" && message.delivery.is_none();
         v_flex()
             .id(("message", i))
             .role(Role::Group)
             .aria_label(heading.clone())
             .min_w_0()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .rounded_xl()
+            .gap_1p5()
+            .when(!is_plain_user, |view| view.px_1().py_0p5().rounded_xl())
             .when(!find_matched && message.delivery.is_some(), |view| {
-                view.bg(Color::Card.get(cx))
+                view.px_3p5()
+                    .py_2p5()
+                    .rounded_2xl()
+                    .bg(Color::Card.get(cx))
                     .border_1()
                     .border_color(Color::Divider.get(cx))
             })
-            .when(!find_matched && message.delivery.is_none() && message.role == "notice", |view| {
-                view.bg(Color::Inset.get(cx))
-            })
+            .when(
+                !find_matched && message.delivery.is_none() && message.role == "notice",
+                |view| {
+                    view.px_3p5()
+                        .py_2()
+                        .rounded_xl()
+                        .bg(Color::Inset.get(cx))
+                },
+            )
             .when(find_matched, |view| {
-                view.bg(Color::Attention.get(cx))
+                view.px_3()
+                    .py_2()
+                    .rounded_xl()
+                    .bg(Color::Attention.get(cx))
             })
-            .when(message.role == "user" && message.delivery.is_none(), |bubble| {
-                bubble.ml_auto().max_w(px(680.))
+            .when(is_plain_user, |bubble| {
+                bubble.ml_auto().max_w(px(560.)).items_end()
             })
             .when(!message.explicit_user, |view| {
                 view.child(
@@ -74,15 +89,13 @@ impl HiveApp {
                         .child(
                             div()
                                 .flex_1()
-                                .min_w(px(160.))
+                                .min_w(px(120.))
                                 .whitespace_normal()
                                 .text_xs()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(Color::Secondary.get(cx))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(Color::Muted.get(cx))
                                 .child(heading),
                         )
-                        .when(message.role == "assistant" && (!message.text.is_empty() || !message.images.is_empty() || message.delivery.is_some()),
-                            |row| row.child(self.message_actions(i, message, cx)))
                         .when(
                             message.delivery.as_ref().is_some_and(|card| card.report),
                             |row| {
@@ -103,45 +116,56 @@ impl HiveApp {
                                         .rounded_full()
                                         .bg(Color::Inset.get(cx))
                                         .px_2()
-                                        .py(px(2.))
+                                        .py(px(1.))
                                         .text_xs()
                                         .text_color(Color::Secondary.get(cx))
                                         .child(state),
                                 )
                             },
-                        )
+                        ),
                 )
-                .when(message.delivery.is_some(), |view| view.child(
-                    h_flex().min_w_0().flex_wrap().gap_2()
-                        .when_some(
-                            self.dispatch_link(
-                                &message.id,
-                                message
-                                    .delivery
-                                    .as_ref()
-                                    .and_then(|d| d.dispatch_id.as_deref()),
-                                cx,
-                            ),
-                            |row, link| row.child(link),
-                        )
-                        .when_some(
-                            self.member_session_link(
-                                &message.id,
-                                message
-                                    .delivery
-                                    .as_ref()
-                                    .and_then(|card| card.worker_id.as_deref()),
-                                tr("成员会话"),
-                                cx,
-                            ),
-                            |row, link| row.child(link),
-                        )
-                        .when(message.delivery.is_some(), |view| {
-                            view.child(
+                .when(message.delivery.is_some(), |view| {
+                    view.child(
+                        h_flex()
+                            .min_w_0()
+                            .flex_wrap()
+                            .gap_1p5()
+                            .when_some(
+                                self.dispatch_link(
+                                    &message.id,
+                                    message
+                                        .delivery
+                                        .as_ref()
+                                        .and_then(|d| d.dispatch_id.as_deref()),
+                                    cx,
+                                ),
+                                |row, link| row.child(link),
+                            )
+                            .when_some(
+                                self.member_session_link(
+                                    &message.id,
+                                    message
+                                        .delivery
+                                        .as_ref()
+                                        .and_then(|card| card.worker_id.as_deref()),
+                                    tr("成员会话"),
+                                    cx,
+                                ),
+                                |row, link| row.child(link),
+                            )
+                            .child(
                                 Button::new(("expand-delivery", i))
                                     .ghost()
                                     .compact()
-                                    .accessibility_label(format!("{} {}",if message.delivery.as_ref().is_some_and(|d|d.expanded) {tr("收起")} else {tr("查看")},tr("消息原文")))
+                                    .accessibility_label(format!(
+                                        "{} {}",
+                                        if message.delivery.as_ref().is_some_and(|d| d.expanded) {
+                                            tr("收起")
+                                        } else {
+                                            tr("查看")
+                                        },
+                                        tr("消息原文")
+                                    ))
                                     .label(
                                         if message.delivery.as_ref().is_some_and(|d| d.expanded) {
                                             tr("收起原文")
@@ -164,9 +188,9 @@ impl HiveApp {
                                             cx.notify();
                                         })
                                     }),
-                            )
-                        }),
-                ))
+                            ),
+                    )
+                })
             })
             .when(
                 message.failure.is_some() && !self.hidden_current_failure(i),
@@ -184,11 +208,13 @@ impl HiveApp {
                     .as_ref()
                     .filter(|_| !message.text.is_empty()),
                 |view, markdown| {
-                    view.child(div()
-                        .id(("message-body", i))
-                        .role(Role::Label)
-                        .aria_label(markdown.read(cx).rendered_text().as_str().to_string())
-                        .child(TextView::new(markdown).selectable(true).stream_fade(true)))
+                    view.child(
+                        div()
+                            .id(("message-body", i))
+                            .role(Role::Label)
+                            .aria_label(markdown.read(cx).rendered_text().as_str().to_string())
+                            .child(TextView::new(markdown).selectable(true).stream_fade(true)),
+                    )
                 },
             )
             .when(
@@ -202,48 +228,68 @@ impl HiveApp {
                             .aria_label(body.clone())
                             .min_w_0()
                             .text_size(rems(15. / 16.))
-                            .line_height(rems(1.5))
-                            .when(message.role == "user", |bubble| {
+                            .line_height(rems(1.55))
+                            .when(is_plain_user, |bubble| {
                                 bubble
                                     .px_4()
-                                    .py_2()
-                                    .rounded_xl()
-                                    .bg(Color::Card.get(cx))
-                                    .border_1()
-                                    .border_color(Color::Divider.get(cx))
+                                    .py_2p5()
+                                    .rounded_2xl()
+                                    .bg(Color::Bubble.get(cx))
                             })
                             .child(body),
                     )
                 },
             )
             .when(message.images_loading, |view| {
-                view.child(div().text_xs().child(tr("读取图片…")))
+                view.child(
+                    div()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
+                        .child(tr("读取图片…")),
+                )
             })
             .when_some(message.images_error.as_ref(), |view, error| {
                 view.child(
                     div()
                         .text_xs()
                         .text_color(Color::Error.get(cx))
-                        .child(format!("{}: {error}",tr("图片预览失败"))),
+                        .child(format!("{}: {error}", tr("图片预览失败"))),
                 )
             })
             .when(!message.images.is_empty(), |view| {
                 view.child(
-                    h_flex().min_w_0().flex_wrap().gap_2().children(
-                        message
-                            .images
-                            .iter()
-                            .cloned()
-                            .enumerate()
-                            .map(|(index, image)| {
-                                let original = message.image_sources[index].clone();
-                                let name =
-                                    format!("{}-{}.{}",if english() {"Image"} else {"图片"},index+1,original.format.extension());
-                                Button::new(SharedString::from(format!("view-image-{i}-{index}")))
+                    h_flex()
+                        .min_w_0()
+                        .flex_wrap()
+                        .gap_2()
+                        .when(is_plain_user, |row| row.justify_end())
+                        .children(
+                            message
+                                .images
+                                .iter()
+                                .cloned()
+                                .enumerate()
+                                .map(|(index, image)| {
+                                    let original = message.image_sources[index].clone();
+                                    let name = format!(
+                                        "{}-{}.{}",
+                                        if english() { "Image" } else { "图片" },
+                                        index + 1,
+                                        original.format.extension()
+                                    );
+                                    Button::new(SharedString::from(format!(
+                                        "view-image-{i}-{index}"
+                                    )))
                                     .ghost()
+                                    .rounded_xl()
+                                    .overflow_hidden()
                                     .w(px(144.))
                                     .h(px(112.))
-                                    .accessibility_label(format!("{} {}",tr("查看图片"),index+1))
+                                    .accessibility_label(format!(
+                                        "{} {}",
+                                        tr("查看图片"),
+                                        index + 1
+                                    ))
                                     .child(
                                         img(image)
                                             .w(px(144.))
@@ -253,19 +299,25 @@ impl HiveApp {
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.open_image(original.clone(), name.clone(), window, cx)
                                     }))
-                            }),
-                    ),
+                                }),
+                        ),
                 )
             })
             .when(!message.files.is_empty(), |view| {
                 view.child(
-                    h_flex().w_full().min_w_0().flex_wrap().gap_2().children(
-                        message
-                            .files
-                            .iter()
-                            .cloned()
-                            .map(|item| self.file_attachment_link(&message.id, item, cx)),
-                    ),
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .flex_wrap()
+                        .gap_2()
+                        .when(is_plain_user, |row| row.justify_end())
+                        .children(
+                            message
+                                .files
+                                .iter()
+                                .cloned()
+                                .map(|item| self.file_attachment_link(&message.id, item, cx)),
+                        ),
                 )
             })
             .when_some(message.delivery.as_ref(), |view, delivery| {
@@ -284,11 +336,19 @@ impl HiveApp {
                         div()
                             .id(("delivery-raw", i))
                             .role(Role::Label)
-                            .aria_label(message.delivery.as_ref().map(|d| d.raw.clone()).unwrap_or_default())
+                            .aria_label(
+                                message
+                                    .delivery
+                                    .as_ref()
+                                    .map(|d| d.raw.clone())
+                                    .unwrap_or_default(),
+                            )
                             .min_w_0()
                             .p_3()
-                            .rounded_lg()
+                            .rounded_xl()
                             .bg(Color::Inset.get(cx))
+                            .border_1()
+                            .border_color(Color::Divider.get(cx))
                             .text_sm()
                             .child(
                                 message
@@ -301,13 +361,14 @@ impl HiveApp {
                 },
             )
             .when(
-                message.role != "assistant" && (!message.text.is_empty()
+                !message.text.is_empty()
                     || !message.images.is_empty()
-                    || message.delivery.is_some()),
+                    || message.delivery.is_some(),
                 |view| view.child(self.message_actions(i, message, cx)),
             )
             .into_any_element()
     }
+
     pub(crate) fn render_conversation_tail(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let running = self
             .session
@@ -324,7 +385,7 @@ impl HiveApp {
             .track_focus(&self.conversation_list.tail_focus)
             .w_full()
             .min_w_0()
-            .gap_5()
+            .gap_4()
             .when(
                 self.messages.is_empty()
                     && self.pending_reports.is_empty()
@@ -333,19 +394,23 @@ impl HiveApp {
                     ) == 0
                         || !self.connected),
                 |view| {
-                    view.child(div().py_8().text_color(Color::Muted.get(cx)).child(
-                        if self.loading {
-                            tr("正在读取…")
-                        } else if !self.connected {
-                            tr("后台连接已断开，当前草稿仍保留。可在窗口顶部重新启动后台。")
-                        } else if running {
-                            tr("正在等待 Agent 回复…")
-                        } else if needs_pi_model {
-                            tr("还没有消息。")
-                        } else {
-                            tr("会话已就绪。发送第一条消息开始工作。")
-                        },
-                    ))
+                    view.child(
+                        div()
+                            .py_6()
+                            .text_sm()
+                            .text_color(Color::Muted.get(cx))
+                            .child(if self.loading {
+                                tr("正在读取…")
+                            } else if !self.connected {
+                                tr("后台连接已断开，当前草稿仍保留。可在窗口顶部重新启动后台。")
+                            } else if running {
+                                tr("正在等待 Agent 回复…")
+                            } else if needs_pi_model {
+                                tr("还没有消息。")
+                            } else {
+                                tr("会话已就绪。发送第一条消息开始工作。")
+                            }),
+                    )
                 },
             )
             .children(
@@ -358,15 +423,26 @@ impl HiveApp {
                             .any(|message| message.id == report.delivery_id)
                     })
                     .map(|report| {
-                        let heading = format!("{} · {}", report.worker_name.as_deref().unwrap_or("Worker"), tr("成员汇报"));
+                        let heading = format!(
+                            "{} · {}",
+                            report.worker_name.as_deref().unwrap_or("Worker"),
+                            tr("成员汇报")
+                        );
                         v_flex()
-                            .id(SharedString::from(format!("pending-report-{}", report.delivery_id)))
+                            .id(SharedString::from(format!(
+                                "pending-report-{}",
+                                report.delivery_id
+                            )))
                             .role(Role::Group)
                             .aria_label(heading.clone())
                             .min_w_0()
                             .gap_2()
-                            .px_3()
-                            .py_2()
+                            .px_3p5()
+                            .py_2p5()
+                            .rounded_2xl()
+                            .bg(Color::Card.get(cx))
+                            .border_1()
+                            .border_color(Color::Divider.get(cx))
                             .child(
                                 h_flex()
                                     .gap_2()
@@ -376,11 +452,15 @@ impl HiveApp {
                                             .flex_1()
                                             .text_xs()
                                             .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(Color::Secondary.get(cx))
                                             .child(heading),
                                     )
                                     .child(
                                         div()
-                                            .id(SharedString::from(format!("pending-report-state-{}", report.delivery_id)))
+                                            .id(SharedString::from(format!(
+                                                "pending-report-state-{}",
+                                                report.delivery_id
+                                            )))
                                             .role(Role::Label)
                                             .aria_label(tr(report.status()).to_owned())
                                             .text_xs()
@@ -405,14 +485,24 @@ impl HiveApp {
                                         |row, link| row.child(link),
                                     ),
                             )
-                            .child(div()
-                                .id(SharedString::from(format!("pending-report-body-{}", report.delivery_id)))
-                                .role(Role::Label)
-                                .aria_label(report.text.clone())
-                                .text_sm().child(report.text.clone()))
-                            .children(report.artifacts.iter().enumerate().map(|(i, path)| {
-                                self.artifact_link(&report.delivery_id, i, path, cx)
-                            }))
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "pending-report-body-{}",
+                                        report.delivery_id
+                                    )))
+                                    .role(Role::Label)
+                                    .aria_label(report.text.clone())
+                                    .text_sm()
+                                    .child(report.text.clone()),
+                            )
+                            .children(
+                                report
+                                    .artifacts
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, path)| self.artifact_link(&report.delivery_id, i, path, cx)),
+                            )
                     }),
             )
             .child(self.render_interactions(cx))

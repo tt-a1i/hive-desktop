@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::SettingsSection;
 use crate::focus_scroll::{Reveal, Viewport};
 use gpui_kit::component::scroll::ScrollableElement;
 
@@ -22,7 +23,12 @@ impl HiveApp {
         }
     }
 
-    pub fn render_settings_tabs(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_settings_tabs(
+        &self,
+        compact: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let entries = [
             (
                 "settings-appearance-tab",
@@ -49,16 +55,10 @@ impl HiveApp {
                 Some(SettingsSection::Models),
             ),
             (
-                "settings-team-tab",
-                tr("团队"),
-                Glyph::Network,
-                Some(SettingsSection::Team),
-            ),
-            (
-                "settings-remote-tab",
-                tr("远程接入"),
-                Glyph::Network,
-                Some(SettingsSection::Remote),
+                "settings-programs-tab",
+                tr("外部程序"),
+                Glyph::SquareTerminal,
+                Some(SettingsSection::Programs),
             ),
             (
                 "settings-notifications-tab",
@@ -67,10 +67,16 @@ impl HiveApp {
                 Some(SettingsSection::Notifications),
             ),
             (
-                "settings-programs-tab",
-                tr("外部程序"),
-                Glyph::SquareTerminal,
-                Some(SettingsSection::Programs),
+                "settings-remote-tab",
+                tr("远程接入"),
+                Glyph::Network,
+                Some(SettingsSection::Remote),
+            ),
+            (
+                "settings-team-tab",
+                tr("团队"),
+                Glyph::Network,
+                Some(SettingsSection::Team),
             ),
             ("settings-roles-tab", tr("角色模板"), Glyph::Bot, None),
         ];
@@ -101,62 +107,82 @@ impl HiveApp {
             tr("返回会话")
         };
         let weak = cx.weak_entity();
-        let menu_entries = entries.clone();
+        let menu_entries = entries;
         let current = if self.roles.visible {
             None
         } else {
             Some(self.settings_section)
         };
+        let inset = chrome::traffic_light_inset(window);
         div()
             .flex()
             .flex_shrink_0()
-            .p_3()
             .gap_1()
-            .bg(Color::Surface.get(cx))
-            .when(compact, |bar| bar.flex_row().items_center().border_b_1())
+            .bg(Color::Sidebar.get(cx))
+            .border_color(Color::Divider.get(cx))
+            .when(compact, |bar| {
+                bar.flex_row()
+                    .items_center()
+                    .px_3()
+                    .py_2()
+                    .when(inset > px(0.), |b| b.pl(inset + px(8.)))
+                    .border_b_1()
+            })
             .when(!compact, |bar| {
                 bar.flex_col()
                     .h_full()
                     .min_h_0()
-                    .w(px(260.))
-                    .pl_6()
-                    .pr_4()
-                    .pt_7()
+                    .w(px(248.))
+                    .px_3()
+                    .pb_3()
+                    .border_r_1()
             })
-            .border_color(Color::Divider.get(cx))
-            .child(
-                h_flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_2()
-                    .when(!compact, |row| row.px_3().pb_4())
-                    .child(
-                        Button::new("leave-preferences")
-                            .ghost()
-                            .compact()
-                            .rounded_full()
-                            .icon(Glyph::ArrowLeft)
-                            .accessibility_label(back)
-                            .tooltip(back)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.leave_preferences(window, cx)
-                            })),
-                    )
-                    .when(!compact, |row| {
-                        row.child(
-                            div()
-                                .text_2xl()
-                                .font_weight(FontWeight::MEDIUM)
-                                .child(tr("设置")),
+            .when(!compact, |bar| {
+                bar.child(
+                    chrome::drag_bar("settings-sidebar-topbar", window, cx)
+                        .w_full()
+                        .when(inset > px(0.), |b| b.pl(inset - px(4.)))
+                        .gap_1p5()
+                        .child(
+                            Button::new("leave-preferences")
+                                .ghost()
+                                .compact()
+                                .h(px(28.))
+                                .w(px(28.))
+                                .rounded_lg()
+                                .icon(Glyph::ArrowLeft)
+                                .accessibility_label(back)
+                                .tooltip(back)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.leave_preferences(window, cx)
+                                })),
                         )
-                    }),
-            )
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(tr("设置")),
+                        ),
+                )
+            })
             .when(compact, |bar| {
                 bar.child(
+                    Button::new("leave-preferences")
+                        .ghost()
+                        .compact()
+                        .rounded_lg()
+                        .icon(Glyph::ArrowLeft)
+                        .accessibility_label(back)
+                        .tooltip(back)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.leave_preferences(window, cx)),
+                        ),
+                )
+                .child(
                     Button::new("settings-section-menu")
                         .ghost()
-                        .h(px(36.))
-                        .rounded_full()
+                        .h(px(34.))
+                        .rounded_lg()
                         .flex_1()
                         .min_w_0()
                         .icon(*current_glyph)
@@ -194,8 +220,8 @@ impl HiveApp {
                         .flex_1()
                         .min_h_0()
                         .min_w_0()
-                        .gap_1()
-                        .p_1()
+                        .gap_0p5()
+                        .pt_1()
                         .overflow_y_scroll()
                         .track_scroll(&self.preferences_nav_scroll)
                         .vertical_scrollbar(&self.preferences_nav_scroll)
@@ -205,15 +231,23 @@ impl HiveApp {
                                 &self.preferences_nav_scroll,
                                 Button::new(id)
                                     .ghost()
-                                    .h(px(36.))
+                                    .h(px(32.))
                                     .flex_shrink_0()
-                                    .rounded_full()
+                                    .rounded_lg()
                                     .icon(glyph)
                                     .w_full()
                                     .justify_start()
                                     .accessibility_label(label)
                                     .tooltip(label)
-                                    .child(div().flex_1().min_w_0().truncate().child(label))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .text_left()
+                                            .text_sm()
+                                            .truncate()
+                                            .child(label),
+                                    )
                                     .selected(selected(section))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.select_preferences_target(section, window, cx)

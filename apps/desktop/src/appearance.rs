@@ -1,7 +1,7 @@
 use gpui_kit::{
     App, Global, Window, WindowAppearance,
     component::{Theme, ThemeMode},
-    px,
+    px, rgb,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -132,7 +132,93 @@ pub fn apply(window: Option<&mut Window>, cx: &mut App) {
         Mode::Dark => Theme::change(ThemeMode::Dark, window, cx),
     }
     let font_size = cx.global::<Appearance>().font_size();
-    Theme::update(cx, |theme| theme.font_size = px(f32::from(font_size)));
+    Theme::update(cx, |theme| {
+        theme.font_size = px(f32::from(font_size));
+        theme.radius = px(8.0);
+        theme.radius_lg = px(14.0);
+        if theme.is_dark() {
+            theme.background = rgb(0x16161a).into();
+            theme.foreground = rgb(0xededf0).into();
+            theme.border = rgb(0x282831).into();
+            theme.input = rgb(0x2d2d37).into();
+            theme.popover = rgb(0x1d1d23).into();
+            theme.popover_foreground = rgb(0xededf0).into();
+            theme.muted = rgb(0x212128).into();
+            theme.muted_foreground = rgb(0x7c7c86).into();
+            theme.secondary = rgb(0x212128).into();
+            theme.secondary_hover = rgb(0x2a2a33).into();
+            theme.secondary_active = rgb(0x272731).into();
+            theme.secondary_foreground = rgb(0xededf0).into();
+            // Button::Ghost multiplies accent by 0.5 opacity in dark mode.
+            theme.accent = rgb(0x363644).into();
+            theme.accent_foreground = rgb(0xf4f4f7).into();
+            theme.sidebar = rgb(0x111114).into();
+            theme.sidebar_border = rgb(0x24242c).into();
+            theme.sidebar_foreground = rgb(0xededf0).into();
+            theme.sidebar_accent = rgb(0x23232c).into();
+            theme.sidebar_accent_foreground = rgb(0xf4f4f7).into();
+            theme.colors.list = rgb(0x16161a).into();
+            theme.list_hover = rgb(0x202028).into();
+            theme.list_active = rgb(0x262630).into();
+            theme.list_active_border = rgb(0x3b63f6).into();
+            theme.primary = rgb(0x4f6ef7).into();
+            theme.primary_hover = rgb(0x6380fa).into();
+            theme.primary_active = rgb(0x3f5ee0).into();
+            theme.primary_foreground = rgb(0xffffff).into();
+            theme.button_primary = rgb(0x4f6ef7).into();
+            theme.button_primary_hover = rgb(0x6380fa).into();
+            theme.button_primary_active = rgb(0x3f5ee0).into();
+            theme.button_primary_foreground = rgb(0xffffff).into();
+            theme.button = rgb(0x212128).into();
+            theme.button_hover = rgb(0x2a2a34).into();
+            theme.button_active = rgb(0x30303b).into();
+            theme.button_foreground = rgb(0xededf0).into();
+            theme.ring = rgb(0x5b7cfa).into();
+            theme.caret = rgb(0x5b7cfa).into();
+            theme.title_bar = rgb(0x16161a).into();
+            theme.title_bar_border = rgb(0x282831).into();
+        } else {
+            theme.background = rgb(0xffffff).into();
+            theme.foreground = rgb(0x18181b).into();
+            theme.border = rgb(0xe5e6eb).into();
+            theme.input = rgb(0xdcdfe6).into();
+            theme.popover = rgb(0xffffff).into();
+            theme.popover_foreground = rgb(0x18181b).into();
+            theme.muted = rgb(0xf2f3f6).into();
+            theme.muted_foreground = rgb(0x71717a).into();
+            theme.secondary = rgb(0xf2f3f6).into();
+            theme.secondary_hover = rgb(0xe8eaef).into();
+            theme.secondary_active = rgb(0xe7e9ef).into();
+            theme.secondary_foreground = rgb(0x18181b).into();
+            theme.accent = rgb(0xecedf2).into();
+            theme.accent_foreground = rgb(0x18181b).into();
+            theme.sidebar = rgb(0xf6f6f8).into();
+            theme.sidebar_border = rgb(0xe5e6eb).into();
+            theme.sidebar_foreground = rgb(0x18181b).into();
+            theme.sidebar_accent = rgb(0xe9ebf0).into();
+            theme.sidebar_accent_foreground = rgb(0x18181b).into();
+            theme.colors.list = rgb(0xffffff).into();
+            theme.list_hover = rgb(0xf3f4f7).into();
+            theme.list_active = rgb(0xeaecef).into();
+            theme.list_active_border = rgb(0x3b63f6).into();
+            theme.primary = rgb(0x3b63f6).into();
+            theme.primary_hover = rgb(0x2f54e0).into();
+            theme.primary_active = rgb(0x2547cc).into();
+            theme.primary_foreground = rgb(0xffffff).into();
+            theme.button_primary = rgb(0x3b63f6).into();
+            theme.button_primary_hover = rgb(0x2f54e0).into();
+            theme.button_primary_active = rgb(0x2547cc).into();
+            theme.button_primary_foreground = rgb(0xffffff).into();
+            theme.button = rgb(0xf4f4f7).into();
+            theme.button_hover = rgb(0xebecef).into();
+            theme.button_active = rgb(0xe2e4ea).into();
+            theme.button_foreground = rgb(0x18181b).into();
+            theme.ring = rgb(0x3b63f6).into();
+            theme.caret = rgb(0x3b63f6).into();
+            theme.title_bar = rgb(0xffffff).into();
+            theme.title_bar_border = rgb(0xe5e6eb).into();
+        }
+    });
 }
 
 pub fn choose(mode: Mode, window: &mut Window, cx: &mut App) {

@@ -1,5 +1,5 @@
-use crate::language::{english, tr};
 use super::*;
+use crate::language::{english, tr};
 
 impl HiveApp {
     pub(super) fn render_session_link(
@@ -37,10 +37,21 @@ impl HiveApp {
                 }
             })
             .unwrap_or(tr("会话"));
-        let activity = self
-            .session_activity(&id)
+        let activity_label = self.session_activity(&id);
+        let activity = activity_label
             .map(|label| format!(" · {label}"))
             .unwrap_or_default();
+        let dot_color = if self.interaction_count(&id) > 0 {
+            Some(Color::Error.get(cx))
+        } else if self.busy.contains(&id) {
+            Some(Color::Accent.get(cx))
+        } else if self.pending.get(&id).copied().unwrap_or(0) > 0 {
+            Some(Color::Muted.get(cx))
+        } else if self.unread.contains(&id) {
+            Some(Color::Success.get(cx))
+        } else {
+            None
+        };
         let archive_blocked = self.busy.contains(&id)
             || self.pending.get(&id).copied().unwrap_or(0) > 0
             || self.interaction_count(&id) > 0;
@@ -58,18 +69,33 @@ impl HiveApp {
                     .unwrap_or_else(|| format!(" · {name}"))
             })
             .unwrap_or_default();
+        let is_selected = self.viewing_conversation()
+            && self.session.as_ref().is_some_and(|s| s.id == session.id);
         let menu = Button::new(SharedString::from(format!("{scope}-menu-{id}")))
             .ghost()
             .compact()
-            .h(px(28.))
-            .w(px(28.))
+            .h(px(26.))
+            .w(px(26.))
+            .rounded_md()
             .icon(Glyph::Ellipsis)
             .tooltip(tr("会话操作"))
             .accessibility_label(
                 project_name
                     .as_ref()
-                    .map(|name| if english() { format!("Pinned conversation actions: {title} · {name}") } else { format!("{title} · {name} 的置顶会话操作") })
-                    .unwrap_or_else(|| if english() { format!("Conversation actions: {title}") } else { format!("{title} 的会话操作") }),
+                    .map(|name| {
+                        if english() {
+                            format!("Pinned conversation actions: {title} · {name}")
+                        } else {
+                            format!("{title} · {name} 的置顶会话操作")
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        if english() {
+                            format!("Conversation actions: {title}")
+                        } else {
+                            format!("{title} 的会话操作")
+                        }
+                    }),
             )
             .disabled(
                 !self.connected || pinning || self.workspace_removing.as_ref() == Some(&project),
@@ -114,16 +140,18 @@ impl HiveApp {
         h_flex()
             .min_w_0()
             .w_full()
+            .items_center()
+            .gap_0p5()
             .child(
                 div().flex_1().min_w_0().child(
                     Button::new(SharedString::from(format!("{scope}-{id}")))
                         .ghost()
                         .h(if project_name.is_some() {
-                            px(46.)
+                            px(42.)
                         } else {
-                            px(30.)
+                            px(29.)
                         })
-                        .rounded_lg()
+                        .rounded_md()
                         .accessibility_label(format!(
                             "{}{} · {} · {role}{activity}{}",
                             project_name
@@ -132,21 +160,41 @@ impl HiveApp {
                                 .unwrap_or_default(),
                             tr(session.backend.label()),
                             title,
-                            if session.pinned { if english() { " · Pinned" } else { " · 已置顶" } } else { "" }
+                            if session.pinned {
+                                if english() {
+                                    " · Pinned"
+                                } else {
+                                    " · 已置顶"
+                                }
+                            } else {
+                                ""
+                            }
                         ))
                         .w_full()
                         .min_w_0()
+                        .when_some(dot_color, |row, color| {
+                            row.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(color))
+                        })
                         .child(
                             v_flex()
                                 .flex_1()
                                 .min_w_0()
                                 .items_start()
-                                .child(div().w_full().truncate().child(title.clone()))
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .text_left()
+                                        .text_sm()
+                                        .when(is_selected, |t| t.font_weight(FontWeight::MEDIUM))
+                                        .truncate()
+                                        .child(title.clone()),
+                                )
                                 .when_some(project_name, |row, name| {
                                     row.child(
                                         div()
                                             .text_xs()
                                             .w_full()
+                                            .text_left()
                                             .truncate()
                                             .text_color(Color::Muted.get(cx))
                                             .child(name),
@@ -161,12 +209,12 @@ impl HiveApp {
                                     .child(tr("置顶")),
                             )
                         })
-                        .when(!activity.is_empty(), |row| {
+                        .when_some(activity_label, |row, label| {
                             row.child(
                                 div()
                                     .text_xs()
                                     .text_color(Color::Muted.get(cx))
-                                    .child(activity.trim_start_matches(" · ").to_owned()),
+                                    .child(label),
                             )
                         })
                         .tooltip(format!(
@@ -175,10 +223,7 @@ impl HiveApp {
                             tr(session.backend.label())
                         ))
                         .disabled(self.workspace_removing.as_ref() == Some(&project))
-                        .selected(
-                            self.viewing_conversation()
-                                && self.session.as_ref().is_some_and(|s| s.id == session.id),
-                        )
+                        .selected(is_selected)
                         .on_click(cx.listener({
                             let session = session.clone();
                             move |this, _, window, cx| {
@@ -197,24 +242,28 @@ impl HiveApp {
 
     pub(super) fn render_pinned_navigation(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let state = &self.pinned_sessions;
-        v_flex().min_w_0().gap_1().when(
+        v_flex().min_w_0().gap_0p5().when(
             !state.records.is_empty() || state.loading || state.error.is_some(),
             |section| {
                 section
-                    .pb_3()
+                    .pb_2p5()
                     .child(
                         h_flex()
+                            .items_center()
                             .justify_between()
+                            .px_1()
                             .child(
                                 Button::new("toggle-pinned-section")
                                     .ghost()
                                     .compact()
+                                    .h(px(24.))
                                     .icon(if state.collapsed {
                                         Glyph::ChevronRight
                                     } else {
                                         Glyph::ChevronDown
                                     })
                                     .label(tr("置顶"))
+                                    .text_color(Color::Muted.get(cx))
                                     .toggled(!state.collapsed)
                                     .accessibility_label(if state.collapsed {
                                         tr("展开置顶会话")
@@ -231,6 +280,9 @@ impl HiveApp {
                                 Button::new("refresh-pinned-section")
                                     .ghost()
                                     .compact()
+                                    .h(px(24.))
+                                    .w(px(24.))
+                                    .rounded_md()
                                     .icon(Glyph::RefreshCw)
                                     .tooltip(tr("刷新置顶会话"))
                                     .accessibility_label(tr("刷新置顶会话"))
@@ -247,6 +299,7 @@ impl HiveApp {
                                 section.child(
                                     div()
                                         .px_2()
+                                        .py_1()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
                                         .child(tr("正在更新置顶会话…")),
@@ -256,9 +309,14 @@ impl HiveApp {
                                 section.child(
                                     div()
                                         .px_2()
+                                        .py_1()
                                         .text_xs()
                                         .text_color(Color::Error.get(cx))
-                                        .child(format!("{}: {}", tr("读取置顶失败"), crate::language::localize_owned_error(error))),
+                                        .child(format!(
+                                            "{}: {}",
+                                            tr("读取置顶失败"),
+                                            crate::language::localize_owned_error(error)
+                                        )),
                                 )
                             })
                             .children(state.records.iter().map(|hit| {
@@ -287,7 +345,9 @@ impl HiveApp {
                                 };
                                 self.render_session_row(
                                     &hit.session,
-                                    crate::view::untitled_session_label(&hit.session).unwrap_or(&hit.title).to_owned(),
+                                    crate::view::untitled_session_label(&hit.session)
+                                        .unwrap_or(&hit.title)
+                                        .to_owned(),
                                     Some(project),
                                     cx,
                                 )

@@ -123,13 +123,16 @@ impl HiveApp {
             self.open_settings_match(index, window, cx);
         }
     }
-    pub(super) fn render_settings_search(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
+    pub(super) fn render_settings_search(
+        &self,
+        compact: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let search_row = h_flex()
             .w_full()
-            .max_w(px(960.))
+            .max_w(px(900.))
             .mx_auto()
-            .px_5()
-            .pt_4()
             .gap_2()
             .items_center()
             .child(
@@ -153,7 +156,19 @@ impl HiveApp {
                             cx.notify();
                         })),
                 )
-            })
+            });
+
+        if compact {
+            div().w_full().px_5().pt_3().child(search_row).into_any_element()
+        } else {
+            crate::chrome::drag_bar("settings-content-topbar", window, cx)
+                .w_full()
+                .px_6()
+                .border_b_1()
+                .border_color(Color::Divider.get(cx))
+                .child(search_row)
+                .into_any_element()
+        }
     }
     pub(super) fn render_settings_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let query = self.settings_search.read(cx).value().trim().to_lowercase();

@@ -118,15 +118,21 @@ impl HiveApp {
             .child(
                 v_flex()
                     .gap_2()
-                    .p_3()
-                    .rounded_lg()
+                    .p_3p5()
+                    .rounded_xl()
+                    .bg(Color::Card.get(cx))
                     .border_1()
                     .border_color(Color::Divider.get(cx))
-                    .child(div().text_base().child(tr("阅读预览 · Hive Desktop")))
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(tr("阅读预览 · Hive Desktop")),
+                    )
                     .child(
                         div()
                             .text_sm()
-                            .child(tr("在主会话与成员之间协作，查看消息、工具过程和配置。")),
+                            .child(tr("在本地工作区直接连接 Agent，查看消息、代码改动与工具执行过程。")),
                     )
                     .child(
                         div()

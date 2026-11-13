@@ -1,5 +1,6 @@
 mod app;
 mod appearance;
+mod chrome;
 mod language;
 mod local_notifications;
 mod artifacts;
@@ -126,9 +127,13 @@ fn main() {
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
                         title: Some("Hive".into()),
-                        ..Default::default()
+                        appears_transparent: cfg!(target_os = "macos"),
+                        traffic_light_position: cfg!(target_os = "macos")
+                            .then(|| point(px(15.), px(16.))),
                     }),
-                    window_bounds: Some(WindowBounds::centered(size(px(1180.), px(820.)), cx)),
+                    app_owns_titlebar_drag: cfg!(target_os = "macos"),
+                    window_bounds: Some(WindowBounds::centered(size(px(1220.), px(820.)), cx)),
+                    window_min_size: Some(size(px(640.), px(480.))),
                     ..Default::default()
                 },
                 cx,

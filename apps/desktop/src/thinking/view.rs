@@ -1,5 +1,9 @@
 use super::ThinkingBlock;
-use crate::{app::HiveApp, palette::Color, language::{english,tr}};
+use crate::{
+    app::HiveApp,
+    language::{english, tr},
+    palette::Color,
+};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -9,6 +13,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+
 impl HiveApp {
     pub(crate) fn render_thinking(
         &self,
@@ -36,15 +41,30 @@ impl HiveApp {
                 Button::new(SharedString::from(format!("thinking-toggle-{row}-{index}")))
                     .ghost()
                     .compact()
+                    .h(px(26.))
+                    .px_1p5()
+                    .rounded_md()
                     .justify_start()
                     .w_full()
-                    .accessibility_label(if english() {format!("{} thinking block {}: {label}",if expanded {tr("收起")} else {tr("展开")},index+1)} else {format!("{}思考过程，第 {} 段，{label}",if expanded {tr("收起")} else {tr("展开")},index+1)})
+                    .accessibility_label(if english() {
+                        format!(
+                            "{} thinking block {}: {label}",
+                            if expanded { tr("收起") } else { tr("展开") },
+                            index + 1
+                        )
+                    } else {
+                        format!(
+                            "{}思考过程，第 {} 段，{label}",
+                            if expanded { tr("收起") } else { tr("展开") },
+                            index + 1
+                        )
+                    })
                     .disabled(block.redacted)
                     .child(
                         h_flex()
                             .flex_1()
                             .min_w_0()
-                            .gap_2()
+                            .gap_1p5()
                             .items_center()
                             .child(
                                 Icon::new(if block.redacted {
@@ -52,12 +72,22 @@ impl HiveApp {
                                 } else {
                                     Glyph::Sparkles
                                 })
-                                .size_4(),
+                                .size(px(13.))
+                                .text_color(if block.running {
+                                    Color::Accent.get(cx)
+                                } else {
+                                    Color::Muted.get(cx)
+                                }),
                             )
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(Color::Muted.get(cx))
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(if block.running {
+                                        Color::Text.get(cx)
+                                    } else {
+                                        Color::Secondary.get(cx)
+                                    })
                                     .child(label),
                             )
                             .when(!block.redacted, |row| {
@@ -67,7 +97,8 @@ impl HiveApp {
                                     } else {
                                         Glyph::ChevronRight
                                     })
-                                    .size_3(),
+                                    .size(px(12.))
+                                    .text_color(Color::Muted.get(cx)),
                                 )
                             }),
                     )
@@ -93,13 +124,14 @@ impl HiveApp {
                 view.child(
                     v_flex()
                         .min_w_0()
-                        .ml_2()
+                        .ml_2p5()
                         .pl_3()
                         .py_1()
                         .gap_1()
                         .border_l_2()
                         .border_color(Color::Divider.get(cx))
                         .text_sm()
+                        .line_height(rems(1.5))
                         .text_color(Color::Secondary.get(cx))
                         .child(crate::text_reading::selectable_text(
                             SharedString::from(format!("thinking-body-{row}-{index}")),
@@ -112,16 +144,18 @@ impl HiveApp {
                                 )))
                                 .ghost()
                                 .compact()
+                                .h(px(24.))
+                                .w(px(24.))
                                 .icon(Glyph::Copy)
-                                .accessibility_label(if english() {format!("Copy thinking block {}",index+1)} else {format!("复制思考过程，第 {} 段",index+1)})
+                                .accessibility_label(if english() {
+                                    format!("Copy thinking block {}", index + 1)
+                                } else {
+                                    format!("复制思考过程，第 {} 段", index + 1)
+                                })
                                 .tooltip(tr("复制思考过程"))
-                                .on_click(cx.listener(
-                                    move |_, _, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            text.clone(),
-                                        ))
-                                    },
-                                )),
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+                                })),
                             ),
                         ),
                 )

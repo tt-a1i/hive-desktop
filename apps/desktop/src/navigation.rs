@@ -1,9 +1,10 @@
+use crate::chrome;
+use crate::focus_scroll::{Reveal, Viewport};
 use crate::language::tr;
 mod session_row;
 mod settings;
-use crate::app::{HiveApp, SettingsSection};
+use crate::app::HiveApp;
 use crate::palette::Color;
-use crate::focus_scroll::{Reveal, Viewport};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::{
     component::{
@@ -17,6 +18,19 @@ use gpui_kit::{
 };
 
 impl HiveApp {
+    pub(crate) fn has_active_team_context(&self) -> bool {
+        let is_worker =
+            |id: &str| !id.ends_with(":orchestrator") && !id.ends_with(":__workflow__");
+        self.member_panel
+            || self.collaboration.visible
+            || !self.pending_reports.is_empty()
+            || self.members.iter().any(|member| is_worker(&member.id))
+            || self
+                .sessions
+                .iter()
+                .any(|session| session.agent_id.as_deref().is_some_and(is_worker))
+    }
+
     pub(crate) fn show_team(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_workflows();
         self.close_memory();
@@ -45,39 +59,88 @@ impl HiveApp {
             || self.workflows.visible)
     }
 
-    pub fn render_navigation_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
+    pub(crate) fn return_to_chat_button(&self, cx: &Context<Self>) -> Button {
+        Button::new("return-chat")
+            .ghost()
+            .compact()
+            .rounded_lg()
+            .label(tr("返回会话"))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.hide_terminal(cx);
+                this.close_memory();
+                this.close_settings();
+                this.close_roles();
+                this.close_collaboration();
+                this.close_workflows();
+                this.member_panel = false;
+                if window.viewport_size().width < px(820.) {
+                    this.sidebar_open = false;
+                }
+                cx.notify();
+            }))
+    }
+
+    /// Top bar used when the left sidebar is collapsed on non-chat subviews,
+    /// or inside the left sidebar header itself.
+    pub fn render_navigation_bar(
+        &self,
+        in_sidebar: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let inset = chrome::traffic_light_inset(window);
+        let id = if in_sidebar {
+            "sidebar-topbar"
+        } else {
+            "collapsed-topbar"
+        };
+        chrome::drag_bar(id, window, cx)
             .w_full()
-            .flex_shrink_0()
-            .items_center()
-            .gap_2()
-            .min_h(px(34.))
-            .when(!self.sidebar_open, |bar| bar.px_3())
-            .child(
-                Button::new("toggle-navigation")
-                    .ghost()
-                    .icon(Glyph::PanelLeft)
-                    .tooltip(tr("打开或收起导航"))
-                    .accessibility_label(tr("打开或收起工作区与会话导航"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.sidebar_open = !this.sidebar_open;
-                        cx.notify();
-                    })),
-            )
+            .gap_1p5()
+            .when(in_sidebar, |bar| {
+                bar.px_1()
+                    .when(inset > px(0.), |b| b.pl(inset - px(2.)))
+            })
+            .when(!in_sidebar, |bar| {
+                bar.px_3()
+                    .border_b_1()
+                    .border_color(Color::Divider.get(cx))
+                    .when(inset > px(0.), |b| b.pl(inset + px(8.)))
+            })
+            .when(!in_sidebar, |bar| {
+                bar.child(
+                    Button::new("toggle-navigation")
+                        .ghost()
+                        .compact()
+                        .h(px(28.))
+                        .w(px(28.))
+                        .icon(Glyph::PanelLeft)
+                        .tooltip(tr("打开或收起导航"))
+                        .accessibility_label(tr("打开或收起工作区与会话导航"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sidebar_open = !this.sidebar_open;
+                            cx.notify();
+                        })),
+                )
+            })
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
+                    .px_1()
                     .truncate()
-                    .text_sm()
-                    .text_color(Color::Muted.get(cx))
-                    .child(
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(Color::Secondary.get(cx))
+                    .child(if in_sidebar {
+                        "Hive".to_owned()
+                    } else {
                         self.workspaces
                             .iter()
                             .find(|workspace| Some(&workspace.id) == self.workspace.as_ref())
                             .map(|workspace| workspace.name.clone())
-                            .unwrap_or_else(|| tr("桌面工作台").into()),
-                    ),
+                            .unwrap_or_else(|| tr("桌面工作台").into())
+                    }),
             )
             .when(!self.connected && self.runtime.is_some(), |view| {
                 view.child(
@@ -88,22 +151,20 @@ impl HiveApp {
                 )
             })
             .when(!self.viewing_conversation(), |view| {
-                view.child(
-                    Button::new("return-chat")
+                view.child(self.return_to_chat_button(cx))
+            })
+            .when(in_sidebar, |bar| {
+                bar.child(
+                    Button::new("toggle-navigation")
                         .ghost()
                         .compact()
-                        .label(tr("返回会话"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.hide_terminal(cx);
-                            this.close_memory();
-                            this.close_settings();
-                            this.close_roles();
-                            this.close_collaboration();
-                            this.close_workflows();
-                            this.member_panel = false;
-                            if window.viewport_size().width < px(820.) {
-                                this.sidebar_open = false;
-                            }
+                        .h(px(28.))
+                        .w(px(28.))
+                        .icon(Glyph::PanelLeft)
+                        .tooltip(tr("打开或收起导航"))
+                        .accessibility_label(tr("打开或收起工作区与会话导航"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sidebar_open = !this.sidebar_open;
                             cx.notify();
                         })),
                 )
@@ -119,24 +180,52 @@ impl HiveApp {
     ) -> impl IntoElement {
         let weak = cx.weak_entity();
         let target = project.map(|workspace| workspace.id.clone());
-        let project_label =
-            project.map(|workspace| if crate::language::english() { format!("New conversation in {}: choose an Agent", workspace.name) } else { format!("在 {} 中新建会话，选择 Agent 后端", workspace.name) });
+        let project_label = project.map(|workspace| {
+            if crate::language::english() {
+                format!("New conversation in {}: choose an Agent", workspace.name)
+            } else {
+                format!("在 {} 中新建会话，选择 Agent 后端", workspace.name)
+            }
+        });
         Button::new(
             project
                 .map(|workspace| SharedString::from(format!("new-project-chat-{}", workspace.id)))
                 .unwrap_or_else(|| id.into()),
         )
         .when(project.is_some(), |button| {
-            button.compact().h(px(28.)).w(px(28.))
+            button.ghost().compact().h(px(26.)).w(px(26.)).rounded_md()
         })
         .when(id == "new-session-menu", |b| {
-            b.h(px(32.)).rounded_full().w_full().justify_start()
+            b.ghost()
+                .h(px(30.))
+                .rounded_lg()
+                .w_full()
+                .justify_start()
         })
-        .ghost()
-        .when(id == "home-agent", |button| button.primary().dropdown_caret(true))
-        .icon(if id == "home-agent" { Glyph::Network } else { Glyph::Plus })
+        .when(id == "home-agent", |button| {
+            button
+                .secondary()
+                .compact()
+                .h(px(28.))
+                .rounded_full()
+                .dropdown_caret(true)
+        })
+        .icon(if id == "home-agent" {
+            Glyph::Sparkles
+        } else if project.is_some() {
+            Glyph::Plus
+        } else {
+            Glyph::SquarePen
+        })
         .when(id == "new-session-menu", |b| {
-            b.child(div().flex_1().font_weight(FontWeight::NORMAL).child(label))
+            b.child(
+                div()
+                    .flex_1()
+                    .text_left()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(label),
+            )
         })
         .when(id != "new-session-menu" && project.is_none(), |b| {
             b.label(label)
@@ -204,9 +293,19 @@ impl HiveApp {
         let has_workspace = self.workspace.is_some();
         let terminal_enabled = self.connected && has_workspace && self.workspace_writes_allowed();
         let connected = self.connected;
-        let selected = [self.workflows.visible, self.memory.visible, self.terminal.visible];
-        Button::new("navigation-more").ghost().compact().h(px(32.)).w(px(32.))
-            .icon(Glyph::Ellipsis).tooltip(tr("更多工作区功能"))
+        let selected = [
+            self.workflows.visible,
+            self.memory.visible,
+            self.terminal.visible,
+        ];
+        Button::new("navigation-more")
+            .ghost()
+            .compact()
+            .h(px(30.))
+            .w(px(30.))
+            .rounded_lg()
+            .icon(Glyph::Ellipsis)
+            .tooltip(tr("更多工作区功能"))
             .accessibility_label(tr("更多工作区功能"))
             .selected(selected.into_iter().any(|active| active))
             .dropdown_menu(move |mut menu, _, _| {
@@ -216,126 +315,132 @@ impl HiveApp {
                     (2, tr("工作区终端"), Glyph::SquareTerminal, terminal_enabled),
                     (3, tr("已归档会话"), Glyph::Archive, connected),
                 ] {
-                    if index == 3 { menu = menu.separator(); }
+                    if index == 3 {
+                        menu = menu.separator();
+                    }
                     let weak = weak.clone();
                     let current = selected.get(index).copied().unwrap_or(false);
-                    menu = menu.item(PopupMenuItem::new(label)
-                        .icon(if current { Glyph::Check } else { glyph })
-                        .checked(current).disabled(!enabled)
-                        .on_click(move |_, window, cx| {
-                            let _ = weak.update(cx, |this, cx| match index {
-                                0 => this.show_workflows(window, cx),
-                                1 => {
-                                    this.hide_terminal(cx);
-                                    this.open_memory(cx);
-                                    if window.viewport_size().width < px(820.) { this.sidebar_open = false; }
-                                    cx.notify();
-                                }
-                                2 => this.show_terminal(window, cx),
-                                _ => this.open_archived_sessions(window, cx),
-                            });
-                        }));
+                    menu = menu.item(
+                        PopupMenuItem::new(label)
+                            .icon(if current { Glyph::Check } else { glyph })
+                            .checked(current)
+                            .disabled(!enabled)
+                            .on_click(move |_, window, cx| {
+                                let _ = weak.update(cx, |this, cx| match index {
+                                    0 => this.show_workflows(window, cx),
+                                    1 => {
+                                        this.hide_terminal(cx);
+                                        this.open_memory(cx);
+                                        if window.viewport_size().width < px(820.) {
+                                            this.sidebar_open = false;
+                                        }
+                                        cx.notify();
+                                    }
+                                    2 => this.show_terminal(window, cx),
+                                    _ => this.open_archived_sessions(window, cx),
+                                });
+                            }),
+                    );
                 }
                 menu
             })
     }
 
-    pub fn render_navigation(&self, narrow: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_navigation(
+        &self,
+        narrow: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let show_team_footer = self.has_active_team_context();
         v_flex()
             .when(narrow, |view| view.flex_1().min_w_0())
-            .when(!narrow, |view| view.w(px(260.)).flex_shrink_0())
+            .when(!narrow, |view| view.w(px(256.)).flex_shrink_0())
             .h_full()
             .bg(Color::Sidebar.get(cx))
             .border_r_1()
             .border_color(Color::Divider.get(cx))
-            .p_3()
+            .px_2()
+            .pb_2()
             .gap_1()
-            .child(self.render_navigation_bar(cx))
-            .child(h_flex().w_full().min_w_0().gap_1()
-            .child(div().flex_1().min_w_0().child(self.new_chat_menu("new-session-menu", tr("新建"), None, cx)))
-            .child(Button::new("search-sessions").ghost().compact().h(px(32.)).w(px(32.)).icon(Glyph::Search)
-                .accessibility_label(tr("搜索会话"))
-                .tooltip(if cfg!(target_os = "macos") { tr("搜索会话 (⌘K)") } else { tr("搜索会话 (Ctrl+K)") })
-                .disabled(!self.connected).on_click(cx.listener(|this, _, window, cx| this.open_session_search(window, cx))))
-            .child(self.render_more_navigation(cx)))
+            .child(self.render_navigation_bar(true, window, cx))
             .child(
-                v_flex()
-                    .flex_shrink_0()
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .px_0p5()
                     .gap_1()
                     .child(
-                        Button::new("toggle-members")
-                            .h(px(32.))
-                            .rounded_full()
-                            .ghost()
-                            .icon(Glyph::Bot)
-                            .justify_start()
-                            .w_full()
-                            .accessibility_label(tr("团队成员"))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .font_weight(FontWeight::NORMAL)
-                                    .child(tr("团队成员")),
-                            )
-                            .selected(self.member_panel)
-                            .disabled(self.workspace.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_team(window, cx);
-                            })),
+                        div().flex_1().min_w_0().child(self.new_chat_menu(
+                            "new-session-menu",
+                            tr("新建会话"),
+                            None,
+                            cx,
+                        )),
                     )
                     .child(
-                        Button::new("open-collaboration")
-                            .h(px(32.))
-                            .rounded_full()
+                        Button::new("search-sessions")
                             .ghost()
-                            .icon(Glyph::Network)
-                            .justify_start()
-                            .w_full()
-                            .accessibility_label(tr("协作概览"))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .font_weight(FontWeight::NORMAL)
-                                    .child(tr("协作概览")),
-                            )
-                            .selected(self.collaboration.visible)
-                            .disabled(self.workspace.is_none())
+                            .compact()
+                            .h(px(30.))
+                            .w(px(30.))
+                            .rounded_lg()
+                            .icon(Glyph::Search)
+                            .accessibility_label(tr("搜索会话"))
+                            .tooltip(if cfg!(target_os = "macos") {
+                                tr("搜索会话 (⌘K)")
+                            } else {
+                                tr("搜索会话 (Ctrl+K)")
+                            })
+                            .disabled(!self.connected)
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.hide_terminal(cx);
-                                this.open_collaboration(cx);
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                cx.notify();
+                                this.open_session_search(window, cx)
                             })),
-                    ),
+                    )
+                    .child(self.render_more_navigation(cx)),
             )
-            .child(Viewport::new("workspace-navigation-viewport", &self.navigation_scroll,
+            .child(Viewport::new(
+                "workspace-navigation-viewport",
+                &self.navigation_scroll,
                 v_flex()
                     .id("workspace-session-navigation")
-                    .mt_4()
+                    .mt_2()
                     .flex_1()
                     .min_w_0()
                     .w_full()
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.navigation_scroll)
-                    .p_1()
+                    .px_0p5()
+                    .py_1()
                     .child(self.render_pinned_navigation(cx))
                     .child(
                         v_flex()
                             .w_full()
                             .flex_shrink_0()
-                            .gap_2()
+                            .gap_1()
                             .child(
                                 h_flex()
                                     .items_center()
                                     .justify_between()
+                                    .px_1()
                                     .child(
-                                        Button::new("toggle-project-section").ghost().compact()
-                                            .icon(if self.projects_collapsed { Glyph::ChevronRight } else { Glyph::ChevronDown })
+                                        Button::new("toggle-project-section")
+                                            .ghost()
+                                            .compact()
+                                            .h(px(24.))
+                                            .icon(if self.projects_collapsed {
+                                                Glyph::ChevronRight
+                                            } else {
+                                                Glyph::ChevronDown
+                                            })
                                             .label(tr("工作区"))
-                                            .accessibility_label(if self.projects_collapsed { tr("展开工作区列表") } else { tr("收起工作区列表") })
+                                            .text_color(Color::Muted.get(cx))
+                                            .accessibility_label(if self.projects_collapsed {
+                                                tr("展开工作区列表")
+                                            } else {
+                                                tr("收起工作区列表")
+                                            })
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.projects_collapsed = !this.projects_collapsed;
                                                 cx.notify();
@@ -345,6 +450,9 @@ impl HiveApp {
                                         Button::new("toggle-add-workspace")
                                             .ghost()
                                             .compact()
+                                            .h(px(24.))
+                                            .w(px(24.))
+                                            .rounded_md()
                                             .icon(if self.add_workspace_open {
                                                 Glyph::PanelLeft
                                             } else {
@@ -367,164 +475,384 @@ impl HiveApp {
                                     ),
                             )
                             .when(self.add_workspace_open, |section| {
-                                section
-                                    .child(
-                                        Reveal::new("workspace-folder-input-reveal", &self.navigation_scroll, Input::new(&self.folder)
-                                            .aria_label(tr("工作区文件夹的绝对路径"))),
-                                    )
-                                    .child(
-                                        Reveal::new("workspace-folder-picker-reveal", &self.navigation_scroll, Button::new("choose-workspace-folder")
-                                            .label(tr("选择文件夹…"))
-                                            .disabled(!self.connected)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.choose_workspace_folder(window, cx)
-                                            }))),
-                                    )
-                                    .child(
-                                        Reveal::new("workspace-folder-add-reveal", &self.navigation_scroll, Button::new("add-workspace")
-                                            .label(tr("添加文件夹"))
-                                            .disabled(!self.connected || self.runtime.is_none())
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.add_workspace(window, cx)
-                                            }))),
-                                    )
-                            })
-                            .when(!self.projects_collapsed, |section| section.children(self.workspaces.iter().enumerate().map(|(i, workspace)| {
-                                let id = workspace.id.clone();
-                                let toggle_id = id.clone();
-                                let expanded = self.expanded_projects.contains(&id);
-                                let sessions = if self.workspace.as_ref() == Some(&id) {
-                                    Some(&self.sessions)
-                                } else {
-                                    self.project_sessions.get(&id)
-                                };
-                                v_flex()
-                                    .min_w_0()
-                                    .child(
-                                        h_flex()
-                                            .w_full()
-                                            .child(
-                                                Button::new(("expand-project", i))
-                                                    .ghost()
-                                                    .compact()
-                                                    .h(px(28.)).w(px(24.)).icon(if expanded { Glyph::ChevronDown } else { Glyph::ChevronRight })
-                                                    .toggled(expanded)
-                                                    .accessibility_label(if crate::language::english() {
-                                                        format!("{} {} conversations", if expanded { tr("收起") } else { tr("展开") }, workspace.name)
-                                                    } else { format!("{} {} 的会话", if expanded { tr("收起") } else { tr("展开") }, workspace.name) })
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _, cx| {
-                                                            this.toggle_project(
-                                                                toggle_id.clone(),
-                                                                cx,
-                                                            )
-                                                        },
-                                                    )),
-                                            )
-                                            .child(
-                                                div().flex_1().min_w_0().child(
-                                                    Button::new(("workspace", i))
-                                                        .ghost()
-                                                        .icon(if expanded { Glyph::FolderOpen } else { Glyph::Folder }).h(px(28.))
-                                                        .w_full()
-                                                        .min_w_0()
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .min_w_0()
-                                                                .truncate()
-                                                                .child(workspace.name.clone()),
-                                                        )
-                                                        .tooltip(workspace.path.clone())
-                                                        .selected(
-                                                            self.workspace.as_ref()
-                                                                == Some(&workspace.id)
-                                                                && self.session.is_none()
-                                                                && self.viewing_conversation(),
-                                                        )
-                                                        .disabled(
-                                                            self.workspace_removing.as_ref()
-                                                                == Some(&workspace.id),
-                                                        )
+                                section.child(
+                                    v_flex()
+                                        .p_2()
+                                        .gap_1p5()
+                                        .rounded_xl()
+                                        .bg(Color::Card.get(cx))
+                                        .border_1()
+                                        .border_color(Color::Divider.get(cx))
+                                        .child(Reveal::new(
+                                            "workspace-folder-input-reveal",
+                                            &self.navigation_scroll,
+                                            Input::new(&self.folder)
+                                                .aria_label(tr("工作区文件夹的绝对路径")),
+                                        ))
+                                        .child(
+                                            h_flex()
+                                                .gap_1p5()
+                                                .child(Reveal::new(
+                                                    "workspace-folder-picker-reveal",
+                                                    &self.navigation_scroll,
+                                                    Button::new("choose-workspace-folder")
+                                                        .secondary()
+                                                        .compact()
+                                                        .label(tr("选择文件夹…"))
+                                                        .disabled(!self.connected)
                                                         .on_click(cx.listener(
-                                                            move |this, _, window, cx| {
-                                                                if this.terminal.visible {
-                                                                    this.remember_terminal_focus(
-                                                                        window, cx,
-                                                                    );
-                                                                }
-                                                                this.select_workspace(
-                                                                    id.clone(),
-                                                                    cx,
+                                                            |this, _, window, cx| {
+                                                                this.choose_workspace_folder(
+                                                                    window, cx,
                                                                 )
                                                             },
                                                         )),
-                                                ),
-                                            )
-                                            .when(!expanded, |row| {
-                                                if let Some((label, detail)) = sessions.and_then(|items| self.project_activity(items)) {
-                                                    row.child(Button::new(SharedString::from(format!("project-activity-{}", workspace.id)))
-                                                        .ghost().compact().h(px(28.)).label(label)
-                                                        .accessibility_label(if crate::language::english() { format!("Expand {} conversations: {detail}", workspace.name) } else { format!("展开 {} 的会话：{detail}", workspace.name) })
-                                                        .tooltip(detail)
-                                                        .on_click(cx.listener({ let id=workspace.id.clone(); move |this,_,_,cx| this.toggle_project(id.clone(),cx) })))
-                                                } else { row }
-                                            })
-                                            .child(self.new_chat_menu("project-new-chat", tr("新建"), Some(workspace), cx))
-                                            .when(
-                                                self.workspace.as_ref() == Some(&workspace.id),
-                                                |row| {
-                                                    row.child(
-                                                        self.project_menu(workspace.id.clone(), cx),
+                                                ))
+                                                .child(Reveal::new(
+                                                    "workspace-folder-add-reveal",
+                                                    &self.navigation_scroll,
+                                                    Button::new("add-workspace")
+                                                        .primary()
+                                                        .compact()
+                                                        .label(tr("添加文件夹"))
+                                                        .disabled(
+                                                            !self.connected
+                                                                || self.runtime.is_none(),
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.add_workspace(window, cx)
+                                                            },
+                                                        )),
+                                                )),
+                                        ),
+                                )
+                            })
+                            .when(!self.projects_collapsed, |section| {
+                                section.children(self.workspaces.iter().enumerate().map(
+                                    |(i, workspace)| {
+                                        let id = workspace.id.clone();
+                                        let toggle_id = id.clone();
+                                        let expanded = self.expanded_projects.contains(&id);
+                                        let sessions = if self.workspace.as_ref() == Some(&id) {
+                                            Some(&self.sessions)
+                                        } else {
+                                            self.project_sessions.get(&id)
+                                        };
+                                        v_flex()
+                                            .min_w_0()
+                                            .mt_0p5()
+                                            .child(
+                                                h_flex()
+                                                    .w_full()
+                                                    .items_center()
+                                                    .gap_0p5()
+                                                    .child(
+                                                        Button::new(("expand-project", i))
+                                                            .ghost()
+                                                            .compact()
+                                                            .h(px(26.))
+                                                            .w(px(22.))
+                                                            .rounded_md()
+                                                            .icon(if expanded {
+                                                                Glyph::ChevronDown
+                                                            } else {
+                                                                Glyph::ChevronRight
+                                                            })
+                                                            .toggled(expanded)
+                                                            .accessibility_label(
+                                                                if crate::language::english() {
+                                                                    format!(
+                                                                        "{} {} conversations",
+                                                                        if expanded {
+                                                                            tr("收起")
+                                                                        } else {
+                                                                            tr("展开")
+                                                                        },
+                                                                        workspace.name
+                                                                    )
+                                                                } else {
+                                                                    format!(
+                                                                        "{} {} 的会话",
+                                                                        if expanded {
+                                                                            tr("收起")
+                                                                        } else {
+                                                                            tr("展开")
+                                                                        },
+                                                                        workspace.name
+                                                                    )
+                                                                },
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                move |this, _, _, cx| {
+                                                                    this.toggle_project(
+                                                                        toggle_id.clone(),
+                                                                        cx,
+                                                                    )
+                                                                },
+                                                            )),
                                                     )
-                                                },
-                                            ),
-                                    )
-                                    .when(expanded, |group| {
-                                        let rows = v_flex().pl_4().pt(px(2.)).gap(px(2.)).min_w_0();
-                                        group.child(match sessions {
-                                            Some(items) if items.iter().all(|session|session.archived) => rows.child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(Color::Muted.get(cx))
-                                                    .child(tr("暂无未归档会话")),
-                                            ),
-                                            Some(items) => {
-                                                rows.children(items.iter().filter(|session|!session.archived).map(|session| {
-                                                    self.render_session_link(session, cx)
-                                                }))
-                                            }
-                                            None => rows.child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(Color::Muted.get(cx))
-                                                    .child(tr("正在读取会话…")),
-                                            ),
-                                        })
-                                    })
-                            }))),
+                                                    .child(
+                                                        div().flex_1().min_w_0().child(
+                                                            Button::new(("workspace", i))
+                                                                .ghost()
+                                                                .rounded_md()
+                                                                .icon(if expanded {
+                                                                    Glyph::FolderOpen
+                                                                } else {
+                                                                    Glyph::Folder
+                                                                })
+                                                                .h(px(28.))
+                                                                .w_full()
+                                                                .min_w_0()
+                                                                .child(
+                                                                    div()
+                                                                        .flex_1()
+                                                                        .min_w_0()
+                                                                        .text_left()
+                                                                        .font_weight(
+                                                                            FontWeight::MEDIUM,
+                                                                        )
+                                                                        .truncate()
+                                                                        .child(
+                                                                            workspace.name.clone(),
+                                                                        ),
+                                                                )
+                                                                .tooltip(workspace.path.clone())
+                                                                .selected(
+                                                                    self.workspace.as_ref()
+                                                                        == Some(&workspace.id)
+                                                                        && self.session.is_none()
+                                                                        && self
+                                                                            .viewing_conversation(),
+                                                                )
+                                                                .disabled(
+                                                                    self.workspace_removing.as_ref()
+                                                                        == Some(&workspace.id),
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    move |this, _, window, cx| {
+                                                                        if this.terminal.visible {
+                                                                            this.remember_terminal_focus(
+                                                                                window, cx,
+                                                                            );
+                                                                        }
+                                                                        this.select_workspace(
+                                                                            id.clone(),
+                                                                            cx,
+                                                                        )
+                                                                    },
+                                                                )),
+                                                        ),
+                                                    )
+                                                    .when(!expanded, |row| {
+                                                        if let Some((label, detail)) = sessions
+                                                            .and_then(|items| {
+                                                                self.project_activity(items)
+                                                            })
+                                                        {
+                                                            row.child(
+                                                                Button::new(SharedString::from(
+                                                                    format!(
+                                                                        "project-activity-{}",
+                                                                        workspace.id
+                                                                    ),
+                                                                ))
+                                                                .ghost()
+                                                                .compact()
+                                                                .h(px(24.))
+                                                                .label(label)
+                                                                .accessibility_label(
+                                                                    if crate::language::english() {
+                                                                        format!(
+                                                                            "Expand {} conversations: {detail}",
+                                                                            workspace.name
+                                                                        )
+                                                                    } else {
+                                                                        format!(
+                                                                            "展开 {} 的会话：{detail}",
+                                                                            workspace.name
+                                                                        )
+                                                                    },
+                                                                )
+                                                                .tooltip(detail)
+                                                                .on_click(cx.listener({
+                                                                    let id = workspace.id.clone();
+                                                                    move |this, _, _, cx| {
+                                                                        this.toggle_project(
+                                                                            id.clone(),
+                                                                            cx,
+                                                                        )
+                                                                    }
+                                                                })),
+                                                            )
+                                                        } else {
+                                                            row
+                                                        }
+                                                    })
+                                                    .child(self.new_chat_menu(
+                                                        "project-new-chat",
+                                                        tr("新建"),
+                                                        Some(workspace),
+                                                        cx,
+                                                    ))
+                                                    .when(
+                                                        self.workspace.as_ref()
+                                                            == Some(&workspace.id),
+                                                        |row| {
+                                                            row.child(self.project_menu(
+                                                                workspace.id.clone(),
+                                                                cx,
+                                                            ))
+                                                        },
+                                                    ),
+                                            )
+                                            .when(expanded, |group| {
+                                                let rows = v_flex()
+                                                    .pl_3p5()
+                                                    .pt(px(2.))
+                                                    .gap(px(1.))
+                                                    .min_w_0();
+                                                group.child(match sessions {
+                                                    Some(items)
+                                                        if items
+                                                            .iter()
+                                                            .all(|session| session.archived) =>
+                                                    {
+                                                        rows.child(
+                                                            div()
+                                                                .px_2()
+                                                                .py_1()
+                                                                .text_xs()
+                                                                .text_color(Color::Muted.get(cx))
+                                                                .child(tr("暂无未归档会话")),
+                                                        )
+                                                    }
+                                                    Some(items) => rows.children(
+                                                        items
+                                                            .iter()
+                                                            .filter(|session| !session.archived)
+                                                            .map(|session| {
+                                                                self.render_session_link(
+                                                                    session, cx,
+                                                                )
+                                                            }),
+                                                    ),
+                                                    None => rows.child(
+                                                        div()
+                                                            .px_2()
+                                                            .py_1()
+                                                            .text_xs()
+                                                            .text_color(Color::Muted.get(cx))
+                                                            .child(tr("正在读取会话…")),
+                                                    ),
+                                                })
+                                            })
+                                    },
+                                ))
+                            }),
                     ),
             ))
             .child(
-                v_flex().flex_shrink_0().child(
-                    Button::new("open-settings")
-                        .h(px(32.))
-                        .rounded_full()
-                        .ghost()
-                        .icon(Glyph::Settings)
-                        .justify_start()
-                        .w_full()
-                        .tooltip(if cfg!(target_os = "macos") { tr("设置 (⌘,)") } else { tr("设置 (Ctrl+,)") }).accessibility_label(tr("设置"))
-                        .child(div().flex_1().font_weight(FontWeight::NORMAL).child(tr("设置")))
-                        .selected(self.settings_panel || self.roles.visible)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_settings(window, cx);
-                            if window.viewport_size().width < px(820.) {
-                                this.sidebar_open = false;
-                            }
-                            cx.notify();
-                        })),
-                ),
+                v_flex()
+                    .flex_shrink_0()
+                    .pt_1()
+                    .gap_1()
+                    .border_t_1()
+                    .border_color(Color::Divider.get(cx))
+                    .when(show_team_footer, |footer| {
+                        footer.child(
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .child(
+                                    Button::new("toggle-members")
+                                        .h(px(28.))
+                                        .rounded_lg()
+                                        .ghost()
+                                        .compact()
+                                        .icon(Glyph::Bot)
+                                        .justify_start()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .accessibility_label(tr("团队成员"))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_xs()
+                                                .child(tr("团队成员")),
+                                        )
+                                        .selected(self.member_panel)
+                                        .disabled(self.workspace.is_none())
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.show_team(window, cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("open-collaboration")
+                                        .h(px(28.))
+                                        .rounded_lg()
+                                        .ghost()
+                                        .compact()
+                                        .icon(Glyph::Network)
+                                        .justify_start()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .accessibility_label(tr("协作概览"))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_xs()
+                                                .child(tr("协作概览")),
+                                        )
+                                        .selected(self.collaboration.visible)
+                                        .disabled(self.workspace.is_none())
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.hide_terminal(cx);
+                                            this.open_collaboration(cx);
+                                            if window.viewport_size().width < px(820.) {
+                                                this.sidebar_open = false;
+                                            }
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                    })
+                    .child(
+                        Button::new("open-settings")
+                            .h(px(30.))
+                            .rounded_lg()
+                            .ghost()
+                            .icon(Glyph::Settings)
+                            .justify_start()
+                            .w_full()
+                            .tooltip(if cfg!(target_os = "macos") {
+                                tr("设置 (⌘,)")
+                            } else {
+                                tr("设置 (Ctrl+,)")
+                            })
+                            .accessibility_label(tr("设置"))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_left()
+                                    .text_sm()
+                                    .font_weight(FontWeight::NORMAL)
+                                    .child(tr("设置")),
+                            )
+                            .selected(self.settings_panel || self.roles.visible)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_settings(window, cx);
+                                if window.viewport_size().width < px(820.) {
+                                    this.sidebar_open = false;
+                                }
+                                cx.notify();
+                            })),
+                    ),
             )
     }
 
@@ -533,6 +861,9 @@ impl HiveApp {
         Button::new("open-workspace-menu")
             .ghost()
             .compact()
+            .h(px(26.))
+            .w(px(26.))
+            .rounded_md()
             .icon(Glyph::Ellipsis)
             .tooltip(tr("项目操作"))
             .accessibility_label(tr("项目操作"))
@@ -561,15 +892,15 @@ impl HiveApp {
                     }));
                 }
                 let weak = weak.clone();
-                menu.separator()
-                    .item(
-                        PopupMenuItem::new(tr("移除当前工作区…")).on_click(move |_, window, cx| {
-                            let _ = weak.update(cx, |this, cx| this.remove_workspace(window, cx));
-                        }),
-                    )
+                menu.separator().item(
+                    PopupMenuItem::new(tr("移除当前工作区…")).on_click(move |_, window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.remove_workspace(window, cx));
+                    }),
+                )
             })
     }
-    fn session_activity(&self, id: &str) -> Option<&'static str> {
+
+    pub(super) fn session_activity(&self, id: &str) -> Option<&'static str> {
         if self.interaction_count(id) > 0 {
             Some(tr("待回应"))
         } else if self.busy.contains(id) {
@@ -596,8 +927,11 @@ impl HiveApp {
                 (count > 0).then(|| format!("{count} {label}"))
             })
             .collect();
-        summary
-            .first()
-            .map(|first| (first.clone(), summary.join(if crate::language::english() { ", " } else { "，" })))
+        summary.first().map(|first| {
+            (
+                first.clone(),
+                summary.join(if crate::language::english() { ", " } else { "，" }),
+            )
+        })
     }
 }

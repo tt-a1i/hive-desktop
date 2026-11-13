@@ -1,6 +1,6 @@
 use crate::app::{HiveApp, Message, ToolPresentation};
+use crate::language::{english, tr};
 use crate::palette::Color;
-use crate::language::{english,tr};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -50,7 +50,28 @@ fn input_summary(args: &serde_json::Value) -> Option<String> {
     )
 }
 
+fn tool_glyph(name: &str) -> Glyph {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("read") || lower.contains("file") || lower.contains("view") {
+        Glyph::FileText
+    } else if lower.contains("search") || lower.contains("grep") || lower.contains("glob") {
+        Glyph::Search
+    } else if lower.contains("bash")
+        || lower.contains("exec")
+        || lower.contains("command")
+        || lower.contains("shell")
+        || lower.contains("terminal")
+    {
+        Glyph::SquareTerminal
+    } else if lower.contains("edit") || lower.contains("write") || lower.contains("patch") {
+        Glyph::SquarePen
+    } else {
+        Glyph::Cpu
+    }
+}
+
 impl HiveApp {
+    /// T3 Code `WorkLog` compact group disclosure row.
     pub fn render_completed_tools_header(
         &self,
         start: usize,
@@ -63,30 +84,62 @@ impl HiveApp {
                 .iter()
                 .any(|m| m.tool.as_ref().is_some_and(|t| t.expanded));
         let count = messages.len();
-        v_flex().min_w_0().gap_1().child(
+        v_flex().min_w_0().child(
             Button::new(("tool-group", start))
                 .ghost()
+                .compact()
+                .h(px(28.))
+                .px_1p5()
+                .rounded_md()
                 .w_full()
-                .accessibility_label(if english() { format!("{} work activity, {count} tools completed", if expanded {tr("收起")} else {tr("展开")}) } else { format!("{}工作过程，{count} 项工具已完成", if expanded {tr("收起")} else {tr("展开")}) })
+                .accessibility_label(if english() {
+                    format!(
+                        "{} work activity, {count} tools completed",
+                        if expanded { tr("收起") } else { tr("展开") }
+                    )
+                } else {
+                    format!(
+                        "{}工作过程，{count} 项工具已完成",
+                        if expanded { tr("收起") } else { tr("展开") }
+                    )
+                })
                 .child(
                     h_flex()
                         .flex_1()
                         .items_center()
-                        .gap_2()
-                        .child(Icon::new(Glyph::Cpu).size_4().text_color(Color::Muted.get(cx)))
-                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(tr("工作过程")))
+                        .gap_1p5()
+                        .child(
+                            Icon::new(Glyph::Cpu)
+                                .size(px(13.))
+                                .text_color(Color::Muted.get(cx)),
+                        )
                         .child(
                             div()
-                                .rounded_full()
-                                .bg(Color::Inset.get(cx))
-                                .px_2()
-                                .py(px(1.))
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(Color::Secondary.get(cx))
+                                .child(tr("工作过程")),
+                        )
+                        .child(
+                            div()
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
-                                .child(if english() {format!("{count} completed")} else {format!("{count} 项已完成")}),
+                                .child(if english() {
+                                    format!("· {count} completed")
+                                } else {
+                                    format!("· {count} 项已完成")
+                                }),
                         )
-                        .child(div().flex_1())
-                        .child(Icon::new(if expanded { Glyph::ChevronDown } else { Glyph::ChevronRight }).size_3().text_color(Color::Muted.get(cx))),
+                        .child(
+                            Icon::new(if expanded {
+                                Glyph::ChevronDown
+                            } else {
+                                Glyph::ChevronRight
+                            })
+                            .size(px(12.))
+                            .text_color(Color::Muted.get(cx)),
+                        )
+                        .child(div().flex_1()),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.prepare_conversation_expansion(&key);
@@ -120,51 +173,104 @@ impl HiveApp {
     ) -> impl IntoElement {
         let id = message.id.clone();
         let toggle_id = id.clone();
-        let action = if tool.expanded { tr("收起") } else { tr("展开") };
+        let action = if tool.expanded {
+            tr("收起")
+        } else {
+            tr("展开")
+        };
         let input = self.tool_inputs.get(&id).filter(|args| !args.is_null());
         let summary = input.and_then(input_summary);
         let failed = tool.status == "失败";
+        let in_progress = tool.status == "执行中";
         let status_color = match tool.status {
             "失败" => Color::Error.get(cx),
-            "完成" => Color::Success.get(cx),
-            "执行中" => Color::Text.get(cx),
+            "完成" => Color::Muted.get(cx),
+            "执行中" => Color::Accent.get(cx),
             _ => Color::Secondary.get(cx),
         };
         v_flex()
             .id(("tool-message-row", index))
             .when(self.conversation_find_matches(&message.id), |view| {
-                view.bg(Color::Attention.get(cx)).rounded_lg()
+                view.bg(Color::Attention.get(cx)).rounded_lg().px_1()
             })
             .min_w_0()
             .gap_1()
             .child(
                 Button::new(("tool-details", index))
                     .ghost()
+                    .compact()
+                    .h(px(26.))
+                    .px_1p5()
+                    .rounded_md()
                     .w_full()
-                    .accessibility_label(if english() { format!("{action} {} tool details · {} {}",tool.name,tr(tool.status),summary.as_deref().unwrap_or("")) } else {format!("{action} {} 工具详情，{} {}",tool.name,tr(tool.status),summary.as_deref().unwrap_or(""))})
+                    .accessibility_label(if english() {
+                        format!(
+                            "{action} {} tool details · {} {}",
+                            tool.name,
+                            tr(tool.status),
+                            summary.as_deref().unwrap_or("")
+                        )
+                    } else {
+                        format!(
+                            "{action} {} 工具详情，{} {}",
+                            tool.name,
+                            tr(tool.status),
+                            summary.as_deref().unwrap_or("")
+                        )
+                    })
                     .child(
                         h_flex()
                             .flex_1()
                             .min_w_0()
                             .items_center()
-                            .gap_2()
-                            .child(Icon::new(if tool.expanded { Glyph::ChevronDown } else { Glyph::ChevronRight }).size_3().text_color(Color::Muted.get(cx)))
-                            .child(div().flex_shrink_0().rounded_md().bg(Color::Inset.get(cx)).px(px(6.)).py(px(2.)).text_xs().font_weight(FontWeight::SEMIBOLD).child(tool.name.clone()))
+                            .gap_1p5()
                             .child(
-                                div()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .truncate()
-                                    .text_sm()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(summary.unwrap_or_default()),
+                                Icon::new(tool_glyph(&tool.name))
+                                    .size(px(13.))
+                                    .text_color(if failed {
+                                        Color::Error.get(cx)
+                                    } else if in_progress {
+                                        Color::Accent.get(cx)
+                                    } else {
+                                        Color::Muted.get(cx)
+                                    }),
                             )
                             .child(
                                 div()
                                     .flex_shrink_0()
                                     .text_xs()
-                                    .text_color(status_color)
-                                    .child(tr(tool.status)),
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(Color::Secondary.get(cx))
+                                    .child(tool.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .text_left()
+                                    .truncate()
+                                    .text_xs()
+                                    .font_family(Theme::global(cx).mono_font_family.clone())
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(summary.unwrap_or_default()),
+                            )
+                            .when(tool.status != "完成", |row| {
+                                row.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_xs()
+                                        .text_color(status_color)
+                                        .child(tr(tool.status)),
+                                )
+                            })
+                            .child(
+                                Icon::new(if tool.expanded {
+                                    Glyph::ChevronDown
+                                } else {
+                                    Glyph::ChevronRight
+                                })
+                                .size(px(12.))
+                                .text_color(Color::Muted.get(cx)),
                             ),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -186,7 +292,9 @@ impl HiveApp {
                 });
                 let text = message.text.clone();
                 let details = match &args {
-                    Some(input) if !text.is_empty() => format!("{}\n{input}\n\n{}\n{text}",tr("输入参数"),tr("输出")),
+                    Some(input) if !text.is_empty() => {
+                        format!("{}\n{input}\n\n{}\n{text}", tr("输入参数"), tr("输出"))
+                    }
                     Some(input) => input.clone(),
                     None => text.clone(),
                 };
@@ -195,20 +303,32 @@ impl HiveApp {
                         .tab_group()
                         .gap_2()
                         .p_3()
-                        .rounded_lg()
+                        .rounded_xl()
                         .bg(Color::Inset.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
                         .child({
                             crate::text_reading::region(
                                 format!("tool-details-body-{id}"),
-                                if english() { format!("{} tool input and output; scroll with arrow or page keys",tool.name) } else {format!("{} 工具输入与输出，可用方向键或翻页键滚动",tool.name)},
+                                if english() {
+                                    format!(
+                                        "{} tool input and output; scroll with arrow or page keys",
+                                        tool.name
+                                    )
+                                } else {
+                                    format!(
+                                        "{} 工具输入与输出，可用方向键或翻页键滚动",
+                                        tool.name
+                                    )
+                                },
                                 &tool.details_scroll,
-                                px(320.),
+                                px(300.),
                                 cx,
                             )
                             .gap_2()
                             .when_some(input, |card, value| {
                                 card.child(
-                                    h_flex().flex_wrap().gap_2().children(
+                                    h_flex().flex_wrap().gap_1p5().children(
                                         crate::file_viewer::tool_paths(&tool.name, value)
                                             .into_iter()
                                             .enumerate()
@@ -223,8 +343,14 @@ impl HiveApp {
                                                 .min_w_0()
                                                 .icon(Glyph::FileText)
                                                 .label(path.clone())
-                                                .accessibility_label(format!("{}: {path}",tr("预览文件")))
-                                                .tooltip(format!("{}: {path}",tr("预览当前磁盘内容")))
+                                                .accessibility_label(format!(
+                                                    "{}: {path}",
+                                                    tr("预览文件")
+                                                ))
+                                                .tooltip(format!(
+                                                    "{}: {path}",
+                                                    tr("预览当前磁盘内容")
+                                                ))
                                                 .on_click(cx.listener(
                                                     move |this, _, window, cx| {
                                                         this.open_file_preview(
@@ -242,6 +368,7 @@ impl HiveApp {
                                 card.child(
                                     div()
                                         .text_xs()
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(Color::Muted.get(cx))
                                         .child(tr("输入参数")),
                                 )
@@ -264,6 +391,7 @@ impl HiveApp {
                                 card.child(
                                     div()
                                         .text_xs()
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(Color::Muted.get(cx))
                                         .child(tr("输出")),
                                 )
@@ -286,7 +414,7 @@ impl HiveApp {
                         .child(
                             h_flex()
                                 .justify_end()
-                                .gap_2()
+                                .gap_1p5()
                                 .when(
                                     crate::tool_diff::data::available(
                                         &tool.name,
@@ -319,13 +447,18 @@ impl HiveApp {
                                                 tool.patch.as_deref(),
                                             ))
                                             .accessibility_label(format!(
-                                                "{}: {}{}",tr("查看改动"),
+                                                "{}: {}{}",
+                                                tr("查看改动"),
                                                 tool.name,
                                                 if self.conversation_find_patch_match(
                                                     &id,
                                                     tool.patch.as_deref()
                                                 ) {
-                                                    if english() { ", includes search matches" } else { "，包含查找匹配" }
+                                                    if english() {
+                                                        ", includes search matches"
+                                                    } else {
+                                                        "，包含查找匹配"
+                                                    }
                                                 } else {
                                                     ""
                                                 }
@@ -350,7 +483,11 @@ impl HiveApp {
                                         .icon(Glyph::Copy)
                                         .disabled(details.is_empty())
                                         .tooltip(tr("复制详情"))
-                                        .accessibility_label(if english() {format!("Copy {} tool details",tool.name)} else {format!("复制 {} 工具详情",tool.name)})
+                                        .accessibility_label(if english() {
+                                            format!("Copy {} tool details", tool.name)
+                                        } else {
+                                            format!("复制 {} 工具详情", tool.name)
+                                        })
                                         .on_click(cx.listener(move |_, _, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
                                                 details.clone(),
@@ -363,8 +500,8 @@ impl HiveApp {
             .when(failed && !tool.expanded, |view| {
                 view.child(
                     div()
-                        .px_3()
-                        .text_sm()
+                        .px_2p5()
+                        .text_xs()
                         .text_color(Color::Error.get(cx))
                         .child(message.text.chars().take(160).collect::<String>()),
                 )

@@ -211,7 +211,8 @@ Move-Item -LiteralPath $WorkerFile -Destination $offline
 try {
     Invoke-Action '打开 Reviewer 的成员会话'
     [void](Wait-Action '重新打开会话')
-    $model = Find-Action '选择会话模型'
+    $model = Find-Action '选择会话模型与推理强度'
+    if ($null -eq $model) { $model = Find-Action '选择会话模型' }
     if ($null -eq $model -or $model.Current.IsEnabled) { throw 'Unavailable history must disable model selection.' }
 } finally {
     Move-Item -LiteralPath $offline -Destination $WorkerFile

@@ -1,8 +1,10 @@
-use gpui_kit::component::scroll::ScrollableElement;
-use crate::language::{english, tr};
 use crate::app::HiveApp;
+use crate::chrome;
+use crate::conversation_list::CHAT_COLUMN_WIDTH;
+use crate::language::{english, tr};
 use crate::palette::Color;
 use gpui_kit::assets::IconName as Glyph;
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     component::{
@@ -13,8 +15,6 @@ use gpui_kit::{
     },
     *,
 };
-
-use crate::conversation_list::CHAT_COLUMN_WIDTH;
 
 pub(crate) fn untitled_session_label(session: &crate::protocol::Session) -> Option<&'static str> {
     // New records bind to an agent before their first user turn. Keep actual
@@ -34,22 +34,36 @@ impl HiveApp {
                     tr("主控").into()
                 } else if id.ends_with(":__workflow__") {
                     tr("工作流").into()
-                } else if let Some(session) = self.sessions.iter().find(|session| session.agent_id.as_deref() == Some(id)) {
+                } else if let Some(session) = self
+                    .sessions
+                    .iter()
+                    .find(|session| session.agent_id.as_deref() == Some(id))
+                {
                     // A stale/in-flight roster is not evidence that this member is historical.
-                    if self.member_loading || self.member_error.is_some() || self.busy.contains(&session.id) {
+                    if self.member_loading
+                        || self.member_error.is_some()
+                        || self.busy.contains(&session.id)
+                    {
                         return self.session_title(session).to_owned();
                     }
-                    if english() { format!("{} · Historical conversation", self.session_title(session)) } else { format!("{} · 历史会话", self.session_title(session)) }
+                    if english() {
+                        format!("{} · Historical conversation", self.session_title(session))
+                    } else {
+                        format!("{} · 历史会话", self.session_title(session))
+                    }
                 } else {
                     id.into()
                 }
             })
     }
+
     pub(crate) fn session_title<'a>(&'a self, session: &'a crate::protocol::Session) -> &'a str {
         if session.custom_title {
             return &session.title;
         }
-        if let Some(title) = untitled_session_label(session) { return title; }
+        if let Some(title) = untitled_session_label(session) {
+            return title;
+        }
         session
             .agent_id
             .as_ref()
@@ -170,12 +184,13 @@ impl HiveApp {
                 .compact()
                 .label(label)
                 .accessibility_label(format!(
-                    "{}: {}",tr("打开成员会话"),
+                    "{}: {}",
+                    tr("打开成员会话"),
                     self.session_title(member_chat)
                 ))
-                .on_click(
-                    cx.listener(move |this, _, window, cx| this.open_member_session(id.clone(), window, cx)),
-                ),
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_member_session(id.clone(), window, cx)
+                })),
         )
     }
 
@@ -193,14 +208,25 @@ impl HiveApp {
                 {
                     return None;
                 }
-                (tr("返回派单详情").to_owned(), ConversationSource::Dispatch(id))
+                (
+                    tr("返回派单详情").to_owned(),
+                    ConversationSource::Dispatch(id),
+                )
             }
-            Some(ConversationSource::Workflow) => (tr("返回工作流").to_owned(), ConversationSource::Workflow),
-            Some(ConversationSource::Team) => (tr("返回团队成员").to_owned(), ConversationSource::Team),
+            Some(ConversationSource::Workflow) => {
+                (tr("返回工作流").to_owned(), ConversationSource::Workflow)
+            }
+            Some(ConversationSource::Team) => {
+                (tr("返回团队成员").to_owned(), ConversationSource::Team)
+            }
             Some(ConversationSource::Session(id)) => {
                 let previous = self.sessions.iter().find(|s| s.id == id)?;
                 (
-                    if english() { format!("Back to {}", self.session_title(previous)) } else { format!("返回 {}", self.session_title(previous)) },
+                    if english() {
+                        format!("Back to {}", self.session_title(previous))
+                    } else {
+                        format!("返回 {}", self.session_title(previous))
+                    },
                     ConversationSource::Session(id),
                 )
             }
@@ -222,6 +248,9 @@ impl HiveApp {
             Button::new("conversation-return")
                 .ghost()
                 .compact()
+                .h(px(28.))
+                .w(px(28.))
+                .rounded_lg()
                 .icon(Glyph::ArrowLeft)
                 .accessibility_label(label.clone())
                 .tooltip(label)
@@ -259,19 +288,29 @@ impl HiveApp {
             .bg(Color::ErrorSurface.get(cx))
             .border_1()
             .border_color(Color::Error.get(cx).opacity(0.28))
-            .rounded_lg()
+            .rounded_xl()
             .child(
                 div()
                     .id("error-banner-text")
                     .role(Role::Label)
-                    .aria_label(self.error.as_ref().map(|error| error.text()).unwrap_or_default())
+                    .aria_label(
+                        self.error
+                            .as_ref()
+                            .map(|error| error.text())
+                            .unwrap_or_default(),
+                    )
                     .flex_1()
                     .min_w_0()
                     .max_h(px(160.))
                     .overflow_y_scroll()
                     .text_sm()
                     .whitespace_normal()
-                    .child(self.error.as_ref().map(|error|error.text()).unwrap_or_default()),
+                    .child(
+                        self.error
+                            .as_ref()
+                            .map(|error| error.text())
+                            .unwrap_or_default(),
+                    ),
             )
             .child(
                 Button::new("dismiss-error")
@@ -282,6 +321,304 @@ impl HiveApp {
                         cx.notify();
                     })),
             )
+    }
+
+    fn render_composer_card(
+        &self,
+        window: &Window,
+        welcome: bool,
+        running: bool,
+        can_send: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        v_flex()
+            .relative()
+            .w_full()
+            .min_w_0()
+            .min_h_0()
+            .max_w(px(CHAT_COLUMN_WIDTH))
+            .mx_auto()
+            .flex_shrink_1()
+            .gap_2()
+            .px(px(14.))
+            .pt(px(12.))
+            .pb(px(10.))
+            .when(welcome && self.workspace.is_some(), |composer| {
+                composer.min_h(px(136.)).justify_between()
+            })
+            .rounded_2xl()
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .bg(Color::Card.get(cx))
+            .shadow_xs()
+            .child(crate::focus_scroll::Viewport::new(
+                "composer-body-viewport",
+                &self.composer_scroll,
+                v_flex()
+                    .id("composer-body-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.composer_scroll)
+                    .vertical_scrollbar(&self.composer_scroll)
+                    .child(
+                        v_flex()
+                            .flex_shrink_0()
+                            .min_w_0()
+                            .gap_2()
+                            .when_some(
+                                self.render_session_failure(window, running, cx),
+                                |body, failure| {
+                                    body.child(crate::focus_scroll::Reveal::new(
+                                        "composer-failure-reveal",
+                                        &self.composer_scroll,
+                                        failure,
+                                    ))
+                                },
+                            )
+                            .when_some(self.render_pending_user_inputs(cx), |body, inputs| {
+                                body.child(inputs)
+                            })
+                            .when_some(
+                                self.session.as_ref().and_then(|session| {
+                                    self.failed_drafts
+                                        .get(&session.id)
+                                        .map(|drafts| (session.id.clone(), drafts))
+                                }),
+                                |view, (session_id, drafts)| {
+                                    view.child(v_flex().gap_2().children(
+                                        drafts.iter().enumerate().map(|(i, draft)| {
+                                            let session_id = session_id.clone();
+                                            let text = draft.clone();
+                                            crate::focus_scroll::Reveal::new(
+                                                ("failed-draft-reveal", i),
+                                                &self.composer_scroll,
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .p_3()
+                                                    .rounded_xl()
+                                                    .border_1()
+                                                    .border_color(
+                                                        Color::Error.get(cx).opacity(0.28),
+                                                    )
+                                                    .bg(Color::ErrorSurface.get(cx))
+                                                    .child(
+                                                        div().flex_1().min_w_0().text_sm().child(
+                                                            format!(
+                                                                "{}: {draft}",
+                                                                tr("发送失败，内容已保留")
+                                                            ),
+                                                        ),
+                                                    )
+                                                    .child(
+                                                        Button::new(("copy-failed-draft", i))
+                                                            .label(tr("复制内容"))
+                                                            .accessibility_label(tr(
+                                                                "复制发送失败的内容",
+                                                            ))
+                                                            .on_click(cx.listener(
+                                                                move |_, _, _, cx| {
+                                                                    cx.write_to_clipboard(
+                                                                        ClipboardItem::new_string(
+                                                                            text.clone(),
+                                                                        ),
+                                                                    )
+                                                                },
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        Button::new(("dismiss-failed-draft", i))
+                                                            .label(tr("移除"))
+                                                            .accessibility_label(tr(
+                                                                "移除发送失败的内容",
+                                                            ))
+                                                            .on_click(cx.listener(
+                                                                move |this, _, _, cx| {
+                                                                    if let Some(drafts) = this
+                                                                        .failed_drafts
+                                                                        .get_mut(&session_id)
+                                                                    {
+                                                                        if i < drafts.len() {
+                                                                            drafts.remove(i);
+                                                                        }
+                                                                    }
+                                                                    this.schedule_draft_save(cx);
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    ),
+                                            )
+                                        }),
+                                    ))
+                                },
+                            )
+                            .when(!self.connected && self.runtime.is_some(), |view| {
+                                view.child(crate::focus_scroll::Reveal::new(
+                                    "disconnected-draft-reveal",
+                                    &self.composer_scroll,
+                                    Button::new("copy-disconnected-draft")
+                                        .label(tr("复制当前草稿"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                this.input.read(cx).value().to_string(),
+                                            ));
+                                        })),
+                                ))
+                            })
+                            .when(welcome && self.workspace.is_none(), |surface| {
+                                surface.child(
+                                    div()
+                                        .text_sm()
+                                        .p_2()
+                                        .text_color(Color::Secondary.get(cx))
+                                        .child(tr("选择本地项目文件夹，开始与 Agent 协作。")),
+                                )
+                            })
+                            .when(self.command_picker.open, |view| {
+                                view.child(
+                                    deferred(
+                                        anchored()
+                                            .anchor(Anchor::BottomLeft)
+                                            .snap_to_window()
+                                            .offset(point(px(14.), px(-8.)))
+                                            .child(self.render_commands(window, cx)),
+                                    )
+                                    .with_priority(1),
+                                )
+                            })
+                            .when_some(self.render_input_attachments(cx), |body, attachments| {
+                                body.child(crate::focus_scroll::Reveal::new(
+                                    "composer-attachments-reveal",
+                                    &self.composer_scroll,
+                                    attachments,
+                                ))
+                            })
+                            .when(self.workspace.is_some(), |v| {
+                                v.child(crate::focus_scroll::Reveal::new(
+                                    "composer-input-reveal",
+                                    &self.composer_scroll,
+                                    div()
+                                        .capture_action(cx.listener(Self::composer_enter))
+                                        .capture_action(cx.listener(Self::command_up))
+                                        .capture_action(cx.listener(Self::command_down))
+                                        .capture_action(cx.listener(Self::command_escape))
+                                        .child(
+                                            Textarea::new(&self.input)
+                                                .appearance(false)
+                                                .bordered(false)
+                                                .aria_label(tr("聊天消息"))
+                                                .on_paste({
+                                                    let app = cx.weak_entity();
+                                                    move |item, _, cx| {
+                                                        app.update(cx, |this, cx| {
+                                                            this.paste_images(item, cx)
+                                                        })
+                                                        .unwrap_or(false)
+                                                    }
+                                                }),
+                                        ),
+                                ))
+                            }),
+                    ),
+            ))
+            .child(div().flex_shrink_0().child(self.render_composer_controls(
+                window, welcome, running, can_send, cx,
+            )))
+    }
+
+    fn render_composer_status(
+        &self,
+        running: bool,
+        pending: usize,
+        needs_pi_model: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        v_flex()
+            .w_full()
+            .max_w(px(CHAT_COLUMN_WIDTH))
+            .mx_auto()
+            .gap_1p5()
+            .when(
+                !self.connected || running || pending > 0 || !self.status.is_background_connected(),
+                |v| {
+                    v.child(
+                        div()
+                            .px_1()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(if !self.connected {
+                                tr("后台暂不可用 · 可在窗口顶部重新启动后台").to_string()
+                            } else if !self.status.is_background_connected() {
+                                self.status.text()
+                            } else if running {
+                                tr("Agent 正在处理 · 新消息会按顺序排队").to_string()
+                            } else {
+                                tr("有待处理消息，请先继续").to_string()
+                            }),
+                    )
+                },
+            )
+            .when(needs_pi_model && self.connected, |surface| {
+                surface.child(
+                    h_flex()
+                        .w_full()
+                        .px_1()
+                        .min_w_0()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(Color::Secondary.get(cx))
+                                .child(if let Some(model) = &self.unavailable_model {
+                                    if english() {
+                                        format!("{} / {} is unavailable", model.provider, model.id)
+                                    } else {
+                                        format!("{} / {} 暂不可用", model.provider, model.id)
+                                    }
+                                } else if self.models.iter().any(|m| m.available) {
+                                    tr("选择模型后即可发送。").into()
+                                } else {
+                                    tr("请先连接 Pi 账号或配置模型提供商，然后刷新。").into()
+                                }),
+                        )
+                        .when_some(self.pi_agent_dir.clone(), |row, dir| {
+                            row.child(
+                                Button::new("locate-pi-config")
+                                    .ghost()
+                                    .compact()
+                                    .label(tr("定位配置目录"))
+                                    .tooltip(dir.display().to_string())
+                                    .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&dir))),
+                            )
+                        })
+                        .child(
+                            Button::new("open-pi-accounts")
+                                .ghost()
+                                .compact()
+                                .label(tr("连接账号"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.settings_section = crate::app::SettingsSection::PiAccounts;
+                                    this.open_settings(window, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("refresh-pi-models")
+                                .ghost()
+                                .compact()
+                                .label(if self.refreshing_models {
+                                    tr("刷新中…")
+                                } else {
+                                    tr("刷新模型")
+                                })
+                                .disabled(self.refreshing_models || running)
+                                .on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))),
+                        ),
+                )
+            })
     }
 }
 
@@ -310,13 +647,18 @@ impl Render for HiveApp {
         let placeholder = self
             .session
             .as_ref()
-            .map(|s| if crate::language::english() { format!("Message {}…", crate::language::tr(s.backend.label())) } else { format!("向 {} 发送消息…", s.backend.label()) })
+            .map(|s| {
+                if crate::language::english() {
+                    format!("Message {}…", crate::language::tr(s.backend.label()))
+                } else {
+                    format!("向 {} 发送消息…", s.backend.label())
+                }
+            })
             .unwrap_or_else(|| crate::language::tr("输入消息…").into());
         if self.input_placeholder != placeholder {
             self.input_placeholder = placeholder.clone();
-            self.input.update(cx, |input, cx| {
-                input.set_placeholder(placeholder, window, cx)
-            });
+            self.input
+                .update(cx, |input, cx| input.set_placeholder(placeholder, window, cx));
         }
         self.prepare_interactions(window, cx);
         self.prepare_terminal_view(cx);
@@ -355,7 +697,10 @@ impl Render for HiveApp {
             && !needs_pi_model
             && self.workspace_writes_allowed()
             && self.connected
-            && self.session.as_ref().is_none_or(|session| !self.inflight_inputs.contains_key(&session.id))
+            && self
+                .session
+                .as_ref()
+                .is_none_or(|session| !self.inflight_inputs.contains_key(&session.id))
             && !self.loading
             && (pending == 0 || running)
             && !self.closing;
@@ -365,15 +710,17 @@ impl Render for HiveApp {
                 == crate::composer::SendMode::Enter;
         if submit_on_enter != self.composer_submit_on_enter {
             self.composer_submit_on_enter = submit_on_enter;
-            self.input.update(cx, |input, cx| {
-                input.set_submit_on_enter(submit_on_enter, cx)
-            });
+            self.input
+                .update(cx, |input, cx| input.set_submit_on_enter(submit_on_enter, cx));
         }
         self.sync_conversation_list(cx);
         let has_text = !self.input.read(cx).value().trim().is_empty()
             || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
         self.composer_has_text = has_text;
-        let welcome = self.session.as_ref().is_none_or(|s| s.agent_id.is_none() && !s.custom_title)
+        let welcome = self
+            .session
+            .as_ref()
+            .is_none_or(|s| s.agent_id.is_none() && !s.custom_title)
             && !open_failed
             && self.pending_reports.is_empty()
             && self.messages.is_empty()
@@ -385,167 +732,785 @@ impl Render for HiveApp {
         let narrow = window.viewport_size().width < px(820.);
         let preferences = self.settings_panel || self.roles.visible;
         let compact_settings = window.viewport_size().width < px(720.);
-        if !self.loading && (!narrow || !self.sidebar_open) && self.viewing_conversation()
+        if !self.loading
+            && (!narrow || !self.sidebar_open)
+            && self.viewing_conversation()
             && std::mem::take(&mut self.focus_project_input)
         {
             let focus = self.input.read(cx).focus_handle(cx);
             window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }
-        if !preferences && (!narrow || !self.sidebar_open) && self.collaboration.visible
+        if !preferences
+            && (!narrow || !self.sidebar_open)
+            && self.collaboration.visible
             && std::mem::take(&mut self.collaboration.focus_navigation)
         {
             let focus = self.collaboration.navigation_focus.clone();
             window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }
-        v_flex().size_full().bg(Color::Surface.get(cx)).text_color(Color::Text.get(cx))
-            .when(!self.connected && !self.closing && (!self.loading || self.restarting), |view| view.child(
-                h_flex().flex_shrink_0().items_center().gap_3().p_3().bg(Color::Attention.get(cx))
-                    .child(div().flex_1().min_w_0().text_sm().child(if self.restarting { tr("正在重新启动后台，当前草稿已保留。") } else { tr("后台未连接，当前草稿已保留。") }))
-                    .child(Button::new("restart-backend").label(tr("重新启动后台")).disabled(self.restarting)
-                        .on_click(cx.listener(|this, _, window, cx| this.restart_backend(window, cx))))))
-            .when(self.connected && self.remote.valid && self.remote.pending.iter().any(|p| p.expires_at > crate::settings::remote::now()) && !(self.settings_panel && self.settings_section == crate::app::SettingsSection::Remote), |view| view.child(
-                h_flex().flex_shrink_0().items_center().gap_3().p_3().bg(Color::Attention.get(cx))
-                    .child(div().flex_1().min_w_0().text_sm().child(crate::language::tr("有新设备等待配对，请核对两端安全短码后确认。")))
-                    .child(Button::new("remote-pending-banner").label(crate::language::tr("查看配对请求")).on_click(cx.listener(|this, _, window, cx| this.select_settings_section(crate::app::SettingsSection::Remote, window, cx))))))
-            .when(!preferences && !self.sidebar_open, |layout| layout.child(self.render_navigation_bar(cx)))
-            .child(h_flex().flex_1().min_h_0().w_full()
-            .when(!preferences && self.sidebar_open, |view| view.child(self.render_navigation(narrow, cx)))
-            .when(preferences || !narrow || !self.sidebar_open, |view| view.child(if preferences { self.render_preferences(compact_settings, cx).into_any_element()
-            } else if self.memory.visible { self.render_memory(cx).into_any_element()
-            } else if self.workflows.visible { self.render_workflows(window, cx)
-            } else if self.collaboration.visible { self.render_collaboration(cx)
-            } else if self.member_panel { self.render_members(window, narrow, cx)
-            } else if self.terminal.visible { self.render_terminal(cx).into_any_element()
-            } else if self.workspace.is_none() && self.session.is_none() { self.render_welcome(window, cx).into_any_element()
-            } else { v_flex().flex_1().min_w_0().h_full().gap_3().py_4().px_5().when(!narrow && welcome, |v| v.px(px(44.))).when(!welcome, |v| v.px_0().pt_0()).id("conversation-surface").on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| this.import_image_paths(paths.paths().to_vec(), cx))).drag_over::<ExternalPaths>(|style, _, _, cx|style.bg(Color::Attention.get(cx))).key_context("HiveConversation").on_action(cx.listener(|this, _: &crate::CloseConversationFind, window, cx| this.close_conversation_find(window, cx))).when(welcome, |v| v.overflow_y_scroll()).when(welcome && window.viewport_size().height > px(600.), |v| v.justify_center())
-                .when(welcome && self.workspace.is_some(), |view| view.child(self.render_project_context(cx)))
-                .child(h_flex().flex_shrink_0().min_w_0().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
-                    .when(!welcome, |header| header.max_w_full().min_h(px(54.)).px_5().border_b_1().border_color(Color::Divider.get(cx)))
-                    .when_some(self.conversation_return(cx), |header, back| header.child(back))
-                    .when(self.session.is_none() || self.session_name_target.as_deref() != self.session.as_ref().map(|s| s.id.as_str()), |header| header.child({
-                    let title = if welcome && self.workspace.is_none() { tr("打开项目").into() } else if welcome { tr("今天想推进什么？").into() } else { self.session.as_ref().map(|s| self.session_title(s).to_string()).unwrap_or_else(|| "Hive".into()) };
-                    div().id("session-title").role(Role::Label).aria_label(title.clone()).font_weight(FontWeight::SEMIBOLD).flex_1().min_w_0().when(welcome, |h| h.font_weight(FontWeight::MEDIUM).text_size(px(if window.viewport_size().width < px(1000.) { 28. } else { 32. })).line_height(px(40.)).whitespace_normal()).when(!welcome, |h| h.text_lg().truncate())
-                        .tooltip({ let title = title.clone(); move |window, cx| Tooltip::new(title.clone()).build(window, cx) })
-                        .child(if welcome { title } else { title.split_whitespace().collect::<Vec<_>>().join(" ") })
-                }))
-                    .when(self.session.is_some() && self.session_name_target.as_deref() == self.session.as_ref().map(|s| s.id.as_str()), |header| header
-                        .key_context("HiveSessionName")
-                        .on_action(cx.listener(|this, _: &crate::CancelSessionRename, _, cx| { if !this.session_name_loading { this.session_name_target = None; cx.notify(); } }))
-                        .child(div().flex_1().min_w_0().child(Input::new(&self.session_name).aria_label(tr("会话名称")).disabled(self.session_name_loading)))
-                        .child(Button::new("save-session-name").primary().label(tr("保存名称")).disabled(!self.connected || self.session_name_loading).on_click(cx.listener(|this, _, _, cx| this.save_session_name(cx))))
-                        .child(Button::new("cancel-session-name").ghost().label(tr("取消")).disabled(self.session_name_loading).on_click(cx.listener(|this, _, _, cx| { this.session_name_target = None; cx.notify(); }))))
-                    .when(!welcome && self.session_name_target.as_deref() != self.session.as_ref().map(|s| s.id.as_str()), |header| header
-                        .child(Button::new("rename-session").ghost().compact().icon(Glyph::SquarePen).tooltip(tr("重命名会话")).accessibility_label(tr("重命名当前会话"))
-                            .disabled(!self.connected || self.session_name_loading || !self.workspace_writes_allowed()).on_click(cx.listener(|this, _, window, cx| this.begin_session_rename(window, cx)))))
-                .when(!welcome && self.conversation_ready && self.session.is_some() && !self.loading, |header| header.child(
-                    Button::new("find-in-conversation").ghost().compact().icon(Glyph::Search).accessibility_label(tr("查找当前会话")).tooltip(if cfg!(target_os = "macos") { tr("查找会话内容 · ⌘F") } else { tr("查找会话内容 · Ctrl+F") }).on_click(cx.listener(|this, _, window, cx| this.open_conversation_find(window, cx)))
-                ).child(Button::new("export-conversation").ghost().compact().icon(Glyph::FileDown).accessibility_label(tr("导出当前对话")).tooltip(tr("导出对话为 Markdown")).disabled(self.messages.is_empty()).on_click(cx.listener(|this, _, window, cx| this.open_conversation_export(window,cx)))))
-                .when(welcome && self.workspace.is_some(), |header| header.child(
-                    Button::new("home-team").ghost().compact().rounded_full().icon(Glyph::Network)
-                        .accessibility_label(tr("团队成员")).tooltip(tr("团队成员")).on_click(cx.listener(|this, _, window, cx| this.show_team(window, cx)))
-                )).when(!welcome && self.reading_above_latest(), |header| header.child(
-                    Button::new("jump-to-latest").ghost().compact().icon(Glyph::ArrowDown)
-                        .label(tr("回到最新")).accessibility_label(tr("回到最新消息"))
-                        .on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))
-                )))
-                .when(self.conversation_find.is_some(), |view| view.child(self.render_conversation_find(cx)))
-                .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
-                .when(self.session.as_ref().is_some_and(|session| self.interaction_count(&session.id) > 0), |view| view.child(Button::new("show-pending-interactions").label(if english() { format!("Waiting for response · {}", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id))) } else { format!("等待回应 · {} 项", self.session.as_ref().map_or(0, |session| self.interaction_count(&session.id))) }).on_click(cx.listener(|this, _, _, cx| { this.jump_to_latest(cx); }))))
-                .when(self.session.as_ref().is_some_and(|session|session.archived), |surface| {
-                    let session=self.session.as_ref().unwrap().clone();
-                    surface.child(h_flex().flex_wrap().gap_2().px_4().items_center()
-                        .child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("已归档 · 发送或收到新消息后自动恢复")))
-                        .child(Button::new("restore-current-session").ghost().label(tr("恢复会话"))
-                            .disabled(!self.connected || self.session_archive_loading.contains(&session.id) || self.session_pin_loading.contains(&session.id))
-                            .on_click(cx.listener(move |this,_,_,cx|this.set_session_archived(session.clone(),false,cx)))))
-                })
-                .when(open_failed, |surface| surface.child(v_flex().flex_1().min_h_0().items_center().justify_center().gap_3()
-                    .child(div().text_sm().child(tr("未能打开会话，草稿已保留。")))
-                    .child(self.render_agent_repair_actions(!self.connected || self.loading, cx))
-                    .child(Button::new("retry-open-session").label(tr("重新打开会话")).on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(session) = &this.session {
-                            this.error = None;
-                            this.show_session(session.id.clone(), cx);
-                        }
-                    })))))
-                .when(!welcome && !open_failed && self.session.is_some(), |surface| surface.child(self.render_conversation_list(narrow, cx)))
-                .when(welcome && self.session.is_none(), |surface| surface.child(div().id("home-agent-hint").role(Role::Label)
-                    .aria_label(tr("先写下需求，再选择主控 Agent。草稿会带入新会话。"))
-                    .w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().text_sm().text_color(Color::Muted.get(cx))
-                    .child(tr("先写下需求，再选择主控 Agent。草稿会带入新会话。"))))
-                .child(v_flex().w_full().min_w_0().min_h_0().max_h(window.viewport_size().height * 0.65).flex_shrink_0().gap_2().when(!welcome, |dock| dock.px_5().when(!narrow, |dock| dock.px(px(44.))))
-                .when(!welcome, |dock| dock.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
-                    .child(h_flex().items_center().gap(px(5.)).rounded_full().bg(Color::Inset.get(cx)).px(px(10.)).py_1().text_xs().font_weight(FontWeight::SEMIBOLD)
-                        .when_some(self.session.as_ref(), |pill, s| pill.child(Icon::new(crate::composer_controls::backend_glyph(s.backend)).size_3().text_color(Color::Secondary.get(cx))))
-                        .child(self.session.as_ref().map(|s| tr(s.backend.label())).unwrap_or("Hive")))
-                    .when(has_session_failure, |row| row.child(Button::new("show-session-failure").ghost().compact().label(tr("错误详情"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.composer_scroll.set_offset(point(px(0.), px(0.)));
-                            this.failure_scroll.set_offset(point(px(0.), px(0.)));
-                            window.refresh();
-                            cx.notify();
-                        }))))
-                    .when(!has_session_failure && (!self.status.is_background_connected() || running), |row| row.child(div().text_xs().text_color(Color::Muted.get(cx))
-                        .child(if running { tr("正在回复…").to_string() } else { self.status.text() })))))
-                .child(v_flex().relative().w_full().min_w_0().min_h_0().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_shrink_1().gap_2().px(px(11.)).pt(px(11.)).pb(px(6.)).when(welcome && self.workspace.is_some(), |composer| composer.min_h(px(140.)).justify_between()).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
+        let inset = chrome::traffic_light_inset(window);
+        let disconnected_banner =
+            !self.connected && !self.closing && (!self.loading || self.restarting);
+        let remote_banner = self.connected
+            && self.remote.valid
+            && self
+                .remote
+                .pending
+                .iter()
+                .any(|p| p.expires_at > crate::settings::remote::now())
+            && !(self.settings_panel
+                && self.settings_section == crate::app::SettingsSection::Remote);
 
-                .child(crate::focus_scroll::Viewport::new("composer-body-viewport", &self.composer_scroll,
-                    v_flex().id("composer-body-scroll").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.composer_scroll).vertical_scrollbar(&self.composer_scroll)
-                        .child(v_flex().flex_shrink_0().min_w_0().gap_2()
-                .when_some(self.render_session_failure(window,running,cx), |body, failure| body.child(crate::focus_scroll::Reveal::new("composer-failure-reveal", &self.composer_scroll, failure)))
-                .when_some(self.render_pending_user_inputs(cx), |body, inputs| body.child(inputs))
-                .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {
-                    let session_id = session_id.clone();
-                    let text = draft.clone();
-                    crate::focus_scroll::Reveal::new(("failed-draft-reveal", i), &self.composer_scroll, h_flex().items_center().gap_2().p_3().rounded_lg().border_1().border_color(Color::Error.get(cx).opacity(0.28)).bg(Color::ErrorSurface.get(cx))
-                        .child(div().flex_1().min_w_0().text_sm().child(format!("{}: {draft}", tr("发送失败，内容已保留"))))
-                        .child(Button::new(("copy-failed-draft", i)).label(tr("复制内容")).accessibility_label(tr("复制发送失败的内容")).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())))))
-                        .child(Button::new(("dismiss-failed-draft", i)).label(tr("移除")).accessibility_label(tr("移除发送失败的内容")).on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(drafts) = this.failed_drafts.get_mut(&session_id) { if i < drafts.len() { drafts.remove(i); } }
-                            this.schedule_draft_save(cx);
-                            cx.notify();
-                        }))))
-                }))))
-                .when(!self.connected && self.runtime.is_some(), |view| view.child(crate::focus_scroll::Reveal::new("disconnected-draft-reveal", &self.composer_scroll, Button::new("copy-disconnected-draft").label(tr("复制当前草稿")).on_click(cx.listener(|this, _, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(this.input.read(cx).value().to_string()));
-                })))))
-                .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child(tr("选择本地项目文件夹，开始与 Agent 协作。"))))
-
-                .when(self.command_picker.open, |view| view.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window().offset(point(px(11.),px(-8.))).child(self.render_commands(window,cx))).with_priority(1)))
-                .when_some(self.render_input_attachments(cx), |body, attachments| body.child(crate::focus_scroll::Reveal::new("composer-attachments-reveal", &self.composer_scroll, attachments)))
-                .when(self.workspace.is_some(), |v| v.child(crate::focus_scroll::Reveal::new("composer-input-reveal", &self.composer_scroll, div().capture_action(cx.listener(Self::composer_enter)).capture_action(cx.listener(Self::command_up)).capture_action(cx.listener(Self::command_down)).capture_action(cx.listener(Self::command_escape)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label(tr("聊天消息")).on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) })))))
-                        )))
-                .child(div().flex_shrink_0().child(self.render_composer_controls(window, welcome, running, can_submit && has_text, cx)))
-                .when(!self.connected || running || pending > 0 || (self.workspace.is_some() && !needs_pi_model), |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { tr("后台暂不可用 · 可在窗口顶部重新启动后台") } else if running { tr("Agent 正在处理 · 新消息会按顺序排队") } else if pending > 0 { tr("有待处理消息，请先继续") } else { cx.global::<crate::composer::ComposerPreferences>().mode.hint() }))))
-                .when(needs_pi_model && self.connected, |surface| surface.child(
-                    h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().min_w_0().flex_wrap().items_center().gap_2()
-                        .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model {
-                            if english() { format!("{} / {} is unavailable", model.provider, model.id) } else { format!("{} / {} 暂不可用", model.provider, model.id) }
-                        } else if self.models.iter().any(|m| m.available) { tr("选择模型后即可发送。").into() }
-                        else { tr("请先连接 Pi 账号或配置模型提供商，然后刷新。").into() }))
-                        .when_some(self.pi_agent_dir.clone(), |row, dir| row.child(Button::new("locate-pi-config").ghost().compact().label(tr("定位配置目录")).tooltip(dir.display().to_string())
-                            .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&dir)))))
-                        .child(Button::new("open-pi-accounts").ghost().compact().label(tr("连接账号")).on_click(cx.listener(|this, _, window, cx| { this.settings_section = crate::app::SettingsSection::PiAccounts; this.open_settings(window, cx); })))
-                        .child(Button::new("refresh-pi-models").ghost().compact().label(if self.refreshing_models { tr("刷新中…") } else { tr("刷新模型") })
-                            .disabled(self.refreshing_models || running).on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))))))
-                )
-                .when(welcome && self.workspace.is_some(), |surface| surface.child(
-                    h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().flex_wrap().items_start().mt_1().gap_2()
-                        .children([
-                            (Glyph::FolderOpen, tr("了解这个项目"), tr("请梳理当前项目的结构、主要入口和运行方式。")),
-                            (Glyph::Search, tr("审查未提交的改动"), tr("请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。")),
-                            (Glyph::Network, tr("拆分团队任务"), tr("请先和我确认这次要达成的目标，再提出适合由成员并行处理的任务。")),
-                        ].into_iter().enumerate().map(|(i,(icon,label,prompt))| {
-                            div().rounded_full().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx)).child(
-                                Button::new(("starter",i)).ghost().h(px(34.)).rounded_full().text_color(Color::Secondary.get(cx)).icon(icon).label(label)
-                                    .on_click(cx.listener(move |this, _, window, cx| this.input.update(cx, |input,cx| {
-                                        let current = input.value();
-                                        let value = if current.is_empty() { prompt.to_owned() } else { format!("{current}\n{prompt}") };
-                                        input.replace_all(value, window, cx);
-                                        input.focus(window,cx);
-                                    }))))
+        v_flex()
+            .size_full()
+            .bg(Color::Surface.get(cx))
+            .text_color(Color::Text.get(cx))
+            .when(disconnected_banner, |view| {
+                view.child(
+                    h_flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_3()
+                        .p_3()
+                        .when(inset > px(0.), |b| b.pl(inset + px(12.)))
+                        .bg(Color::Attention.get(cx))
+                        .child(div().flex_1().min_w_0().text_sm().child(if self.restarting {
+                            tr("正在重新启动后台，当前草稿已保留。")
+                        } else {
+                            tr("后台未连接，当前草稿已保留。")
                         }))
-                ))
-                .into_any_element() })))
+                        .child(
+                            Button::new("restart-backend")
+                                .label(tr("重新启动后台"))
+                                .disabled(self.restarting)
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.restart_backend(window, cx)
+                                    }),
+                                ),
+                        ),
+                )
+            })
+            .when(remote_banner, |view| {
+                view.child(
+                    h_flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_3()
+                        .p_3()
+                        .when(inset > px(0.) && !disconnected_banner, |b| {
+                            b.pl(inset + px(12.))
+                        })
+                        .bg(Color::Attention.get(cx))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .child(crate::language::tr(
+                                    "有新设备等待配对，请核对两端安全短码后确认。",
+                                )),
+                        )
+                        .child(
+                            Button::new("remote-pending-banner")
+                                .label(crate::language::tr("查看配对请求"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.select_settings_section(
+                                        crate::app::SettingsSection::Remote,
+                                        window,
+                                        cx,
+                                    )
+                                })),
+                        ),
+                )
+            })
+            .when(
+                !preferences && !self.sidebar_open && !self.viewing_conversation(),
+                |layout| layout.child(self.render_navigation_bar(false, window, cx)),
+            )
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .when(!preferences && self.sidebar_open, |view| {
+                        view.child(self.render_navigation(narrow, window, cx))
+                    })
+                    .when(preferences || !narrow || !self.sidebar_open, |view| {
+                        view.child(if preferences {
+                            self.render_preferences(compact_settings, window, cx)
+                                .into_any_element()
+                        } else if !self.viewing_conversation() {
+                            let body = if self.memory.visible {
+                                self.render_memory(cx).into_any_element()
+                            } else if self.workflows.visible {
+                                self.render_workflows(window, cx)
+                            } else if self.collaboration.visible {
+                                self.render_collaboration(cx)
+                            } else if self.member_panel {
+                                self.render_members(window, narrow, cx)
+                            } else {
+                                self.render_terminal(cx).into_any_element()
+                            };
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .when(cfg!(target_os = "macos") && self.sidebar_open, |col| {
+                                    col.child(
+                                        chrome::drag_bar("subview-topbar", window, cx)
+                                            .min_h(px(22.))
+                                            .w_full(),
+                                    )
+                                })
+                                .child(div().flex_1().min_h_0().min_w_0().w_full().child(body))
+                                .into_any_element()
+                        } else if self.workspace.is_none() && self.session.is_none() {
+                            self.render_welcome(window, cx).into_any_element()
+                        } else {
+                            let renaming = self.session.is_some()
+                                && self.session_name_target.as_deref()
+                                    == self.session.as_ref().map(|s| s.id.as_str());
+                            let title = if welcome && self.workspace.is_none() {
+                                tr("打开项目").into()
+                            } else if welcome {
+                                tr("今天想推进什么？").into()
+                            } else {
+                                self.session
+                                    .as_ref()
+                                    .map(|s| self.session_title(s).to_string())
+                                    .unwrap_or_else(|| "Hive".into())
+                            };
+                            let topbar_inset = if !self.sidebar_open
+                                && inset > px(0.)
+                                && !disconnected_banner
+                                && !remote_banner
+                            {
+                                inset + px(8.)
+                            } else {
+                                px(16.)
+                            };
+
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .id("conversation-surface")
+                                .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                                    this.import_image_paths(paths.paths().to_vec(), cx)
+                                }))
+                                .drag_over::<ExternalPaths>(|style, _, _, cx| {
+                                    style.bg(Color::Attention.get(cx))
+                                })
+                                .key_context("HiveConversation")
+                                .on_action(cx.listener(
+                                    |this, _: &crate::CloseConversationFind, window, cx| {
+                                        this.close_conversation_find(window, cx)
+                                    },
+                                ))
+                                .child(
+                                    chrome::drag_bar("chat-topbar", window, cx)
+                                        .w_full()
+                                        .pl(topbar_inset)
+                                        .pr_4()
+                                        .gap_2()
+                                        .when(!welcome, |bar| {
+                                            bar.border_b_1().border_color(Color::Divider.get(cx))
+                                        })
+                                        .when(!self.sidebar_open, |bar| {
+                                            bar.child(
+                                                Button::new("toggle-navigation")
+                                                    .ghost()
+                                                    .compact()
+                                                    .h(px(28.))
+                                                    .w(px(28.))
+                                                    .rounded_lg()
+                                                    .icon(Glyph::PanelLeft)
+                                                    .tooltip(tr("打开或收起导航"))
+                                                    .accessibility_label(tr(
+                                                        "打开或收起工作区与会话导航",
+                                                    ))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.sidebar_open = !this.sidebar_open;
+                                                        cx.notify();
+                                                    })),
+                                            )
+                                        })
+                                        .when(welcome, |bar| {
+                                            bar.child(div().flex_1().min_w_0())
+                                        })
+                                        .when(!welcome, |bar| {
+                                            bar.when_some(
+                                                self.conversation_return(cx),
+                                                |header, back| header.child(back),
+                                            )
+                                            .when(!renaming, |header| {
+                                                let clean_title = title
+                                                    .split_whitespace()
+                                                    .collect::<Vec<_>>()
+                                                    .join(" ");
+                                                header.child(
+                                                    div()
+                                                        .id("session-title")
+                                                        .role(Role::Label)
+                                                        .aria_label(title.clone())
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .tooltip({
+                                                            let title = title.clone();
+                                                            move |window, cx| {
+                                                                Tooltip::new(title.clone())
+                                                                    .build(window, cx)
+                                                            }
+                                                        })
+                                                        .child(clean_title),
+                                                )
+                                            })
+                                            .when(renaming, |header| {
+                                                header
+                                                    .key_context("HiveSessionName")
+                                                    .on_action(cx.listener(
+                                                        |this,
+                                                         _: &crate::CancelSessionRename,
+                                                         _,
+                                                         cx| {
+                                                            if !this.session_name_loading {
+                                                                this.session_name_target = None;
+                                                                cx.notify();
+                                                            }
+                                                        },
+                                                    ))
+                                                    .child(
+                                                        div().flex_1().min_w_0().child(
+                                                            Input::new(&self.session_name)
+                                                                .aria_label(tr("会话名称"))
+                                                                .disabled(
+                                                                    self.session_name_loading,
+                                                                ),
+                                                        ),
+                                                    )
+                                                    .child(
+                                                        Button::new("save-session-name")
+                                                            .primary()
+                                                            .compact()
+                                                            .label(tr("保存名称"))
+                                                            .disabled(
+                                                                !self.connected
+                                                                    || self.session_name_loading,
+                                                            )
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.save_session_name(cx)
+                                                                },
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        Button::new("cancel-session-name")
+                                                            .ghost()
+                                                            .compact()
+                                                            .label(tr("取消"))
+                                                            .disabled(self.session_name_loading)
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.session_name_target = None;
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    )
+                                            })
+                                            .when(!renaming && has_session_failure, |header| {
+                                                header.child(
+                                                    Button::new("show-session-failure")
+                                                        .ghost()
+                                                        .compact()
+                                                        .label(tr("错误详情"))
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.composer_scroll.set_offset(
+                                                                    point(px(0.), px(0.)),
+                                                                );
+                                                                this.failure_scroll.set_offset(
+                                                                    point(px(0.), px(0.)),
+                                                                );
+                                                                window.refresh();
+                                                                cx.notify();
+                                                            },
+                                                        )),
+                                                )
+                                            })
+                                            .when(
+                                                !renaming
+                                                    && !has_session_failure
+                                                    && (!self.status.is_background_connected()
+                                                        || running),
+                                                |header| {
+                                                    header.child(
+                                                        div()
+                                                            .px_2()
+                                                            .py_0p5()
+                                                            .rounded_full()
+                                                            .bg(Color::AccentSoft.get(cx))
+                                                            .text_xs()
+                                                            .font_weight(FontWeight::MEDIUM)
+                                                            .text_color(Color::Accent.get(cx))
+                                                            .child(
+                                                                if running
+                                                                    && self
+                                                                        .status
+                                                                        .is_background_connected()
+                                                                {
+                                                                    tr("正在回复…").to_string()
+                                                                } else {
+                                                                    self.status.text()
+                                                                },
+                                                            ),
+                                                    )
+                                                },
+                                            )
+                                            .when(!renaming, |header| {
+                                                header.child(
+                                                    Button::new("rename-session")
+                                                        .ghost()
+                                                        .compact()
+                                                        .h(px(28.))
+                                                        .w(px(28.))
+                                                        .rounded_lg()
+                                                        .icon(Glyph::SquarePen)
+                                                        .tooltip(tr("重命名会话"))
+                                                        .accessibility_label(tr("重命名当前会话"))
+                                                        .disabled(
+                                                            !self.connected
+                                                                || self.session_name_loading
+                                                                || !self.workspace_writes_allowed(),
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.begin_session_rename(
+                                                                    window, cx,
+                                                                )
+                                                            },
+                                                        )),
+                                                )
+                                            })
+                                            .when(
+                                                !renaming
+                                                    && self.conversation_ready
+                                                    && self.session.is_some()
+                                                    && !self.loading,
+                                                |header| {
+                                                    header
+                                                        .child(
+                                                            Button::new("find-in-conversation")
+                                                                .ghost()
+                                                                .compact()
+                                                                .h(px(28.))
+                                                                .w(px(28.))
+                                                                .rounded_lg()
+                                                                .icon(Glyph::Search)
+                                                                .accessibility_label(tr(
+                                                                    "查找当前会话",
+                                                                ))
+                                                                .tooltip(
+                                                                    if cfg!(target_os = "macos") {
+                                                                        tr("查找会话内容 · ⌘F")
+                                                                    } else {
+                                                                        tr("查找会话内容 · Ctrl+F")
+                                                                    },
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    |this, _, window, cx| {
+                                                                        this.open_conversation_find(
+                                                                            window, cx,
+                                                                        )
+                                                                    },
+                                                                )),
+                                                        )
+                                                        .child(
+                                                            Button::new("export-conversation")
+                                                                .ghost()
+                                                                .compact()
+                                                                .h(px(28.))
+                                                                .w(px(28.))
+                                                                .rounded_lg()
+                                                                .icon(Glyph::FileDown)
+                                                                .accessibility_label(tr(
+                                                                    "导出当前对话",
+                                                                ))
+                                                                .tooltip(tr("导出对话为 Markdown"))
+                                                                .disabled(self.messages.is_empty())
+                                                                .on_click(cx.listener(
+                                                                    |this, _, window, cx| {
+                                                                        this.open_conversation_export(
+                                                                            window, cx,
+                                                                        )
+                                                                    },
+                                                                )),
+                                                        )
+                                                },
+                                            )
+                                            .when(self.reading_above_latest(), |header| {
+                                                header.child(
+                                                    Button::new("jump-to-latest")
+                                                        .ghost()
+                                                        .compact()
+                                                        .rounded_lg()
+                                                        .icon(Glyph::ArrowDown)
+                                                        .label(tr("回到最新"))
+                                                        .accessibility_label(tr("回到最新消息"))
+                                                        .on_click(cx.listener(
+                                                            |this, _, _, cx| {
+                                                                this.jump_to_latest(cx);
+                                                            },
+                                                        )),
+                                                )
+                                            })
+                                        }),
+                                )
+                                .when(self.conversation_find.is_some(), |view| {
+                                    view.child(self.render_conversation_find(cx))
+                                })
+                                .when(self.error.is_some(), |view| {
+                                    view.child(
+                                        div()
+                                            .w_full()
+                                            .max_w(px(CHAT_COLUMN_WIDTH + 64.))
+                                            .mx_auto()
+                                            .px_5()
+                                            .pt_2()
+                                            .child(self.render_error_banner(cx)),
+                                    )
+                                })
+                                .when(
+                                    self.session.as_ref().is_some_and(|session| {
+                                        self.interaction_count(&session.id) > 0
+                                    }),
+                                    |view| {
+                                        view.child(
+                                            div().px_5().pt_2().child(
+                                                Button::new("show-pending-interactions")
+                                                    .rounded_full()
+                                                    .label(if english() {
+                                                        format!(
+                                                            "Waiting for response · {}",
+                                                            self.session.as_ref().map_or(
+                                                                0,
+                                                                |session| self
+                                                                    .interaction_count(&session.id),
+                                                            )
+                                                        )
+                                                    } else {
+                                                        format!(
+                                                            "等待回应 · {} 项",
+                                                            self.session.as_ref().map_or(
+                                                                0,
+                                                                |session| self
+                                                                    .interaction_count(&session.id),
+                                                            )
+                                                        )
+                                                    })
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.jump_to_latest(cx);
+                                                    })),
+                                            ),
+                                        )
+                                    },
+                                )
+                                .when(
+                                    self.session.as_ref().is_some_and(|session| session.archived),
+                                    |surface| {
+                                        let session = self.session.as_ref().unwrap().clone();
+                                        surface.child(
+                                            h_flex()
+                                                .flex_wrap()
+                                                .gap_2()
+                                                .px_5()
+                                                .py_2()
+                                                .border_b_1()
+                                                .border_color(Color::Divider.get(cx))
+                                                .items_center()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(tr(
+                                                            "已归档 · 发送或收到新消息后自动恢复",
+                                                        )),
+                                                )
+                                                .child(
+                                                    Button::new("restore-current-session")
+                                                        .ghost()
+                                                        .compact()
+                                                        .label(tr("恢复会话"))
+                                                        .disabled(
+                                                            !self.connected
+                                                                || self
+                                                                    .session_archive_loading
+                                                                    .contains(&session.id)
+                                                                || self
+                                                                    .session_pin_loading
+                                                                    .contains(&session.id),
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                this.set_session_archived(
+                                                                    session.clone(),
+                                                                    false,
+                                                                    cx,
+                                                                )
+                                                            },
+                                                        )),
+                                                ),
+                                        )
+                                    },
+                                )
+                                .when(welcome, |surface| {
+                                    surface.child(
+                                        v_flex()
+                                            .id("welcome-draft-scroll")
+                                            .flex_1()
+                                            .min_h_0()
+                                            .w_full()
+                                            .overflow_y_scroll()
+                                            .px_5()
+                                            .when(!narrow, |v| v.px(px(44.)))
+                                            .pb_8()
+                                            .when(
+                                                window.viewport_size().height > px(560.),
+                                                |v| v.justify_center(),
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .w_full()
+                                                    .max_w(px(CHAT_COLUMN_WIDTH))
+                                                    .mx_auto()
+                                                    .gap_4()
+                                                    .child(
+                                                        v_flex()
+                                                            .gap_2p5()
+                                                            .items_start()
+                                                            .when(
+                                                                self.workspace.is_some(),
+                                                                |hero| {
+                                                                    hero.child(
+                                                                        self.render_project_context(
+                                                                            cx,
+                                                                        ),
+                                                                    )
+                                                                },
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .id("session-title")
+                                                                    .role(Role::Label)
+                                                                    .aria_label(title.clone())
+                                                                    .font_weight(
+                                                                        FontWeight::SEMIBOLD,
+                                                                    )
+                                                                    .text_size(px(if window
+                                                                        .viewport_size()
+                                                                        .width
+                                                                        < px(1000.)
+                                                                    {
+                                                                        28.
+                                                                    } else {
+                                                                        32.
+                                                                    }))
+                                                                    .line_height(px(40.))
+                                                                    .whitespace_normal()
+                                                                    .child(title),
+                                                            )
+                                                            .when(
+                                                                self.session.is_none(),
+                                                                |hero| {
+                                                                    hero.child(
+                                                                        div()
+                                                                            .id("home-agent-hint")
+                                                                            .role(Role::Label)
+                                                                            .aria_label(tr(
+                                                                                "先写下需求，再选择 Agent。草稿会带入新会话。",
+                                                                            ))
+                                                                            .text_sm()
+                                                                            .text_color(
+                                                                                Color::Muted
+                                                                                    .get(cx),
+                                                                            )
+                                                                            .child(tr(
+                                                                                "先写下需求，再选择 Agent。草稿会带入新会话。",
+                                                                            )),
+                                                                    )
+                                                                },
+                                                            ),
+                                                    )
+                                                    .child(self.render_composer_card(
+                                                        window,
+                                                        welcome,
+                                                        running,
+                                                        can_submit && has_text,
+                                                        cx,
+                                                    ))
+                                                    .child(self.render_composer_status(
+                                                        running,
+                                                        pending,
+                                                        needs_pi_model,
+                                                        cx,
+                                                    ))
+                                                    .when(self.workspace.is_some(), |col| {
+                                                        col.child(
+                                                            h_flex()
+                                                                .w_full()
+                                                                .flex_wrap()
+                                                                .items_start()
+                                                                .gap_2()
+                                                                .children(
+                                                                    [
+                                                                        (
+                                                                            Glyph::FolderOpen,
+                                                                            tr("了解这个项目"),
+                                                                            tr("请梳理当前项目的结构、主要入口和运行方式。"),
+                                                                        ),
+                                                                        (
+                                                                            Glyph::Search,
+                                                                            tr("审查未提交的改动"),
+                                                                            tr("请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。"),
+                                                                        ),
+                                                                        (
+                                                                            Glyph::SquareTerminal,
+                                                                            tr("定位并修复问题"),
+                                                                            tr("请帮我重现并定位当前项目中的问题，给出根因分析和修复方案。"),
+                                                                        ),
+                                                                    ]
+                                                                    .into_iter()
+                                                                    .enumerate()
+                                                                    .map(|(i, (icon, label, prompt))| {
+                                                                        div()
+                                                                            .rounded_full()
+                                                                            .bg(Color::Card.get(cx))
+                                                                            .border_1()
+                                                                            .border_color(
+                                                                                Color::Divider
+                                                                                    .get(cx),
+                                                                            )
+                                                                            .child(
+                                                                                Button::new((
+                                                                                    "starter",
+                                                                                    i,
+                                                                                ))
+                                                                                .ghost()
+                                                                                .h(px(33.))
+                                                                                .rounded_full()
+                                                                                .text_color(
+                                                                                    Color::Secondary
+                                                                                        .get(cx),
+                                                                                )
+                                                                                .icon(icon)
+                                                                                .label(label)
+                                                                                .on_click(cx.listener(
+                                                                                    move |this, _, window, cx| {
+                                                                                        this.input.update(
+                                                                                            cx,
+                                                                                            |input, cx| {
+                                                                                                let current =
+                                                                                                    input.value();
+                                                                                                let value = if current
+                                                                                                    .is_empty()
+                                                                                                {
+                                                                                                    prompt.to_owned()
+                                                                                                } else {
+                                                                                                    format!("{current}\n{prompt}")
+                                                                                                };
+                                                                                                input.replace_all(
+                                                                                                    value, window,
+                                                                                                    cx,
+                                                                                                );
+                                                                                                input.focus(
+                                                                                                    window, cx,
+                                                                                                );
+                                                                                            },
+                                                                                        )
+                                                                                    },
+                                                                                )),
+                                                                            )
+                                                                    }),
+                                                                ),
+                                                        )
+                                                    }),
+                                            ),
+                                    )
+                                })
+                                .when(!welcome && open_failed, |surface| {
+                                    surface.child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_h_0()
+                                            .items_center()
+                                            .justify_center()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .child(tr("未能打开会话，草稿已保留。")),
+                                            )
+                                            .child(
+                                                self.render_agent_repair_actions(
+                                                    !self.connected || self.loading,
+                                                    cx,
+                                                ),
+                                            )
+                                            .child(
+                                                Button::new("retry-open-session")
+                                                    .label(tr("重新打开会话"))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        if let Some(session) = &this.session {
+                                                            this.error = None;
+                                                            this.show_session(
+                                                                session.id.clone(),
+                                                                cx,
+                                                            );
+                                                        }
+                                                    })),
+                                            ),
+                                    )
+                                })
+                                .when(
+                                    !welcome && !open_failed && self.session.is_some(),
+                                    |surface| {
+                                        surface.child(self.render_conversation_list(narrow, cx))
+                                    },
+                                )
+                                .when(!welcome, |surface| {
+                                    surface.child(
+                                        v_flex()
+                                            .w_full()
+                                            .min_w_0()
+                                            .min_h_0()
+                                            .max_h(window.viewport_size().height * 0.62)
+                                            .flex_shrink_0()
+                                            .gap_1p5()
+                                            .px_5()
+                                            .when(!narrow, |dock| dock.px(px(44.)))
+                                            .pt_1()
+                                            .pb_3()
+                                            .child(self.render_composer_card(
+                                                window,
+                                                welcome,
+                                                running,
+                                                can_submit && has_text,
+                                                cx,
+                                            ))
+                                            .child(self.render_composer_status(
+                                                running,
+                                                pending,
+                                                needs_pi_model,
+                                                cx,
+                                            )),
+                                    )
+                                })
+                                .into_any_element()
+                        })
+                    }),
+            )
     }
 }

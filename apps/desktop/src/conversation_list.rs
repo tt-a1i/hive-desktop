@@ -1,5 +1,5 @@
 mod view;
-pub(crate) const CHAT_COLUMN_WIDTH: f32 = 932.;
+pub(crate) const CHAT_COLUMN_WIDTH: f32 = 768.;
 use crate::app::HiveApp;
 use gpui_kit::{component::v_flex, prelude::FluentBuilder, *};
 use std::{cell::Cell, rc::Rc};
@@ -269,7 +269,7 @@ impl HiveApp {
                 );
                 v_flex()
                     .w_full()
-                    .px(if narrow { px(20.) } else { px(44.) })
+                    .px(if narrow { px(16.) } else { px(32.) })
                     .child(
                         v_flex()
                             .w_full()
@@ -278,16 +278,16 @@ impl HiveApp {
                             .pb(if matches!(row.kind, Kind::Tail) {
                                 px(0.)
                             } else if compact {
-                                px(4.)
+                                px(2.)
                             } else {
-                                px(20.)
+                                px(16.)
                             })
                             .child(
                                 v_flex()
                                     .min_w_0()
                                     .when(indented, |body| {
-                                        body.ml_3()
-                                            .pl_2()
+                                        body.ml_2p5()
+                                            .pl_2p5()
                                             .border_l_1()
                                             .border_color(crate::palette::Color::Divider.get(cx))
                                     })

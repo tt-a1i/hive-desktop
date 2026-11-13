@@ -1299,5 +1299,17 @@
   "工作区尚未移除，部分会话可能已停止；原有会话记录和待投递数据保留": "Workspace was not removed, though some conversations may have stopped; conversation records and queued deliveries are preserved",
   "内置": "Built-in",
   "连接已中断，任务保存结果尚未确认": "Connection interrupted; task save was not confirmed",
-  "请重新读取或再次保存以核对团队文档。": "Reload or save again to verify the team document."
+  "请重新读取或再次保存以核对团队文档。": "Reload or save again to verify the team document.",
+  "你的项目，你的 Agent。": "Your projects. Your Agents.",
+  "在本地工作区直接连接 Claude Code、Codex 或 Pi，专注对话、代码改动与执行过程。": "Connect Claude Code, Codex or Pi directly in your local workspace, focused on conversations, code changes and execution.",
+  "打开本地文件夹后即可选择 Agent 开始会话。": "Open a local folder to choose an Agent and start a conversation.",
+  "本地 Agent 环境": "Local Agent readiness",
+  "本机可用": "Ready locally",
+  "需检查": "Needs attention",
+  "待配置": "Not configured",
+  "新建会话": "New chat",
+  "先写下需求，再选择 Agent。草稿会带入新会话。": "Write your request first, then choose an Agent. Your draft carries into the new conversation.",
+  "定位并修复问题": "Investigate and fix an issue",
+  "请帮我重现并定位当前项目中的问题，给出根因分析和修复方案。": "Please help reproduce and pinpoint the issue in this project, then provide a root-cause analysis and fix.",
+  "在本地工作区直接连接 Agent，查看消息、代码改动与工具执行过程。": "Connect an Agent directly in your local workspace to follow messages, code changes and tool activity."
 }
