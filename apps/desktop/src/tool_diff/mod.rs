@@ -1,9 +1,12 @@
 pub(crate) mod data;
 use crate::{app::HiveApp, palette::Color, language::{english,tr}};
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
-        button::{Button, ButtonVariants},
-        diff::{Diff, DiffMode, DiffState},
+        button::{Button, ButtonCustomVariant, ButtonVariants},
+        diff::{
+            Diff, DiffChangeIndicator, DiffHoverHighlight, DiffHunkSeparator, DiffMode, DiffState,
+        },
         *,
     },
     prelude::FluentBuilder,
@@ -87,130 +90,311 @@ impl HiveApp {
         });
     }
 }
+fn segment_tab_variant(cx: &App) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .color(gpui::rgba(0).into())
+        .foreground(Color::Text.get(cx).into())
+        .hover(Color::Card.get(cx).opacity(0.65).into())
+        .active(Color::Card.get(cx).into())
+}
+
 impl Render for ToolDiff {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let height = (window.viewport_size().height - px(310.))
             .max(px(120.))
             .min(px(600.));
-        let rows = self
-            .state
-            .read(cx)
-            .files()
+        let files = self.state.read(cx).files();
+        let file_count = files.len();
+        let total_additions: usize = files.iter().map(|f| f.additions()).sum();
+        let total_deletions: usize = files.iter().map(|f| f.deletions()).sum();
+        let rows: usize = files
             .iter()
             .map(|f| f.additions() + f.deletions() + 10)
-            .sum::<usize>();
+            .sum();
         let diff_height = px((rows as f32 * 22.).max(180.)).min(height);
         let has_files = self.document.as_ref().is_some_and(|d| !d.files.is_empty());
+        let mode = self.state.read(cx).mode();
+        let status_failed = self.status == "失败";
+        let status_running = self.status == "执行中";
         v_flex()
             .min_w_0()
             .gap_3()
             .tab_group()
             .child(
-                div()
-                    .text_sm()
-                    .text_color(Color::Secondary.get(cx))
-                    .child(format!("{} · {}", tr(self.provenance), tr(self.status))),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(Color::Muted.get(cx))
-                    .child(tr("只读历史记录，与当前磁盘文件可能不同；不会应用或撤销改动。")),
+                v_flex()
+                    .gap_1()
+                    .pb_2p5()
+                    .border_b_1()
+                    .border_color(Color::Divider.get(cx))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .flex_wrap()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .min_w_0()
+                                    .child(
+                                        Icon::new(Glyph::FileDiff)
+                                            .size(px(14.))
+                                            .text_color(Color::Secondary.get(cx)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(Color::Text.get(cx))
+                                            .child(tr(self.provenance)),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py(px(2.))
+                                            .rounded_full()
+                                            .bg(if status_failed {
+                                                Color::ErrorSurface.get(cx)
+                                            } else if status_running {
+                                                Color::AccentSoft.get(cx)
+                                            } else {
+                                                Color::Inset.get(cx)
+                                            })
+                                            .text_size(px(11.))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(if status_failed {
+                                                Color::Error.get(cx)
+                                            } else if status_running {
+                                                Color::Accent.get(cx)
+                                            } else {
+                                                Color::Secondary.get(cx)
+                                            })
+                                            .child(tr(self.status)),
+                                    ),
+                            )
+                            .when(has_files, |header| {
+                                header.child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                        .text_xs()
+                                        .child(
+                                            div()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(if english() {
+                                                    format!(
+                                                        "{file_count} {}",
+                                                        if file_count == 1 { "file" } else { "files" }
+                                                    )
+                                                } else {
+                                                    format!("{file_count} 个文件")
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Success.get(cx))
+                                                .child(format!("+{total_additions}")),
+                                        )
+                                        .child(
+                                            div()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Error.get(cx))
+                                                .child(format!("−{total_deletions}")),
+                                        ),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(tr("只读历史记录，与当前磁盘文件可能不同；不会应用或撤销改动。")),
+                    ),
             )
             .child(
                 h_flex()
+                    .items_center()
+                    .justify_between()
                     .flex_wrap()
                     .gap_2()
                     .child(
-                        Button::new("diff-unified")
-                            .ghost()
-                            .compact()
-                            .label(tr("合并视图"))
-                            .selected(!self.raw && self.state.read(cx).mode() == DiffMode::Unified)
-                            .disabled(!has_files)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.raw = false;
-                                window.focus(&this.state.read(cx).focus_handle(cx), cx);
-                                this.state
-                                    .update(cx, |s, cx| s.set_mode(DiffMode::Unified, cx));
-                                cx.notify();
-                            })),
+                        h_flex()
+                            .items_center()
+                            .p(px(2.))
+                            .gap(px(2.))
+                            .rounded_lg()
+                            .bg(Color::Inset.get(cx))
+                            .border_1()
+                            .border_color(Color::Divider.get(cx))
+                            .child(
+                                Button::new("diff-unified")
+                                    .custom(segment_tab_variant(cx))
+                                    .compact()
+                                    .h(px(26.))
+                                    .px_2p5()
+                                    .rounded_md()
+                                    .icon(Glyph::Rows2)
+                                    .label(tr("合并视图"))
+                                    .selected(!self.raw && mode == DiffMode::Unified)
+                                    .disabled(!has_files)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.raw = false;
+                                        window.focus(&this.state.read(cx).focus_handle(cx), cx);
+                                        this.state
+                                            .update(cx, |s, cx| s.set_mode(DiffMode::Unified, cx));
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("diff-split")
+                                    .custom(segment_tab_variant(cx))
+                                    .compact()
+                                    .h(px(26.))
+                                    .px_2p5()
+                                    .rounded_md()
+                                    .icon(Glyph::Columns2)
+                                    .label(tr("并排视图"))
+                                    .selected(!self.raw && mode == DiffMode::Split)
+                                    .disabled(!has_files)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.raw = false;
+                                        window.focus(&this.state.read(cx).focus_handle(cx), cx);
+                                        this.state
+                                            .update(cx, |s, cx| s.set_mode(DiffMode::Split, cx));
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("diff-raw")
+                                    .custom(segment_tab_variant(cx))
+                                    .compact()
+                                    .h(px(26.))
+                                    .px_2p5()
+                                    .rounded_md()
+                                    .icon(Glyph::Code)
+                                    .label(tr("原始补丁"))
+                                    .selected(self.raw)
+                                    .disabled(self.loading)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.raw = true;
+                                        window.focus(&this.raw_focus, cx);
+                                        cx.notify();
+                                    })),
+                            ),
                     )
                     .child(
-                        Button::new("diff-split")
-                            .ghost()
-                            .compact()
-                            .label(tr("并排视图"))
-                            .selected(!self.raw && self.state.read(cx).mode() == DiffMode::Split)
-                            .disabled(!has_files)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.raw = false;
-                                window.focus(&this.state.read(cx).focus_handle(cx), cx);
-                                this.state
-                                    .update(cx, |s, cx| s.set_mode(DiffMode::Split, cx));
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("diff-previous")
-                            .ghost()
-                            .compact()
-                            .label(tr("上一处"))
-                            .disabled(!has_files || self.raw)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.state.update(cx, |s, cx| s.previous_change(cx))
-                            })),
-                    )
-                    .child(
-                        Button::new("diff-next")
-                            .ghost()
-                            .compact()
-                            .label(tr("下一处"))
-                            .disabled(!has_files || self.raw)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.state.update(cx, |s, cx| s.next_change(cx))
-                            })),
-                    )
-                    .child(
-                        Button::new("diff-raw")
-                            .ghost()
-                            .compact()
-                            .label(tr("原始补丁"))
-                            .selected(self.raw)
-                            .disabled(self.loading)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.raw = true;
-                                window.focus(&this.raw_focus, cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("diff-copy")
-                            .ghost()
-                            .compact()
-                            .label(tr("复制补丁"))
-                            .disabled(self.document.as_ref().is_none_or(|d| d.raw.is_empty()))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(d) = &this.document {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(d.raw.clone()));
-                                }
-                            })),
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .p(px(2.))
+                                    .gap(px(2.))
+                                    .rounded_lg()
+                                    .bg(Color::Inset.get(cx))
+                                    .border_1()
+                                    .border_color(Color::Divider.get(cx))
+                                    .child(
+                                        Button::new("diff-previous")
+                                            .custom(crate::palette::quiet_icon_variant(cx))
+                                            .compact()
+                                            .h(px(26.))
+                                            .px_2()
+                                            .rounded_md()
+                                            .icon(Glyph::ChevronUp)
+                                            .label(tr("上一处"))
+                                            .disabled(!has_files || self.raw)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.state
+                                                    .update(cx, |s, cx| s.previous_change(cx))
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("diff-next")
+                                            .custom(crate::palette::quiet_icon_variant(cx))
+                                            .compact()
+                                            .h(px(26.))
+                                            .px_2()
+                                            .rounded_md()
+                                            .icon(Glyph::ChevronDown)
+                                            .label(tr("下一处"))
+                                            .disabled(!has_files || self.raw)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.state.update(cx, |s, cx| s.next_change(cx))
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                Button::new("diff-copy")
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .h(px(30.))
+                                    .px_2p5()
+                                    .rounded_lg()
+                                    .icon(Glyph::Copy)
+                                    .label(tr("复制补丁"))
+                                    .disabled(self.document.as_ref().is_none_or(|d| d.raw.is_empty()))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(d) = &this.document {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                d.raw.clone(),
+                                            ));
+                                        }
+                                    })),
+                            ),
                     ),
             )
             .when(self.loading, |view| {
-                view.child(div().text_sm().child(tr("正在准备改动…")))
+                view.child(
+                    div()
+                        .p_4()
+                        .rounded_xl()
+                        .bg(Color::Inset.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .text_sm()
+                        .text_color(Color::Muted.get(cx))
+                        .child(tr("正在准备改动…")),
+                )
             })
             .when_some(
-                self.document.as_ref().and_then(|document|document.error.as_ref()).map(|error| match error {
-                    data::ParseFailure::NoFiles => tr("补丁未包含可显示的文件；下方保留原始内容。").to_owned(),
-                    data::ParseFailure::Invalid(error) => format!("{}: {error}",tr("无法解析补丁，保留原始内容")),
-                }),
+                self.document
+                    .as_ref()
+                    .and_then(|document| document.error.as_ref())
+                    .map(|error| match error {
+                        data::ParseFailure::NoFiles => {
+                            tr("补丁未包含可显示的文件；下方保留原始内容。").to_owned()
+                        }
+                        data::ParseFailure::Invalid(error) => {
+                            format!("{}: {error}", tr("无法解析补丁，保留原始内容"))
+                        }
+                    }),
                 |view, error| {
                     view.child(
-                        div()
-                            .text_sm()
-                            .text_color(Color::Error.get(cx))
-                            .child(error),
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .rounded_lg()
+                            .bg(Color::ErrorSurface.get(cx))
+                            .border_1()
+                            .border_color(Color::Error.get(cx).opacity(0.24))
+                            .child(
+                                Icon::new(Glyph::CircleAlert)
+                                    .size(px(14.))
+                                    .text_color(Color::Error.get(cx)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Error.get(cx))
+                                    .child(error),
+                            ),
                     )
                 },
             )
@@ -218,36 +402,69 @@ impl Render for ToolDiff {
                 !self.loading
                     && !has_files
                     && self.document.as_ref().is_some_and(|d| d.error.is_none()),
-                |view| view.child(div().text_sm().child(tr("这段记录没有文本差异。"))),
+                |view| {
+                    view.child(
+                        div()
+                            .p_4()
+                            .rounded_xl()
+                            .bg(Color::Inset.get(cx))
+                            .border_1()
+                            .border_color(Color::Divider.get(cx))
+                            .text_sm()
+                            .text_color(Color::Muted.get(cx))
+                            .child(tr("这段记录没有文本差异。")),
+                    )
+                },
             )
             .when(!self.raw && has_files, |view| {
                 view.child(
                     div()
                         .h(diff_height)
                         .min_w_0()
-                        .child(Diff::new(&self.state).soft_wrap(true)),
+                        .child(
+                            Diff::new(&self.state)
+                                .soft_wrap(true)
+                                .hover_highlight(DiffHoverHighlight::Both)
+                                .change_indicator(DiffChangeIndicator::Signs)
+                                .hunk_separator(DiffHunkSeparator::Metadata)
+                                .rounded_xl()
+                                .overflow_hidden()
+                                .border_color(Color::Divider.get(cx)),
+                        ),
                 )
             })
             .when(self.raw, |view| {
                 view.child(
-                    crate::text_reading::region(
-                        "tool-diff-raw".into(),
-                        tr("原始补丁，可用方向键或翻页键滚动").into(),
-                        &self.scroll,
-                        height,
-                        cx,
-                    )
-                    .track_focus(&self.raw_focus)
-                    .font_family(Theme::global(cx).mono_font_family.clone())
-                    .text_size(px(12.))
-                    .line_height(px(19.))
-                    .child(crate::text_reading::selectable_text(
-                        "tool-diff-source",
-                        self.document
-                            .as_ref()
-                            .map(|d| d.raw.clone())
-                            .unwrap_or_default(),
-                    )),
+                    div()
+                        .min_w_0()
+                        .rounded_xl()
+                        .bg(Color::Inset.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .overflow_hidden()
+                        .child(
+                            crate::text_reading::region(
+                                "tool-diff-raw".into(),
+                                tr("原始补丁，可用方向键或翻页键滚动").into(),
+                                &self.scroll,
+                                height,
+                                cx,
+                            )
+                            .border_0()
+                            .rounded_none()
+                            .p_3()
+                            .track_focus(&self.raw_focus)
+                            .font_family(Theme::global(cx).mono_font_family.clone())
+                            .text_size(px(12.))
+                            .line_height(px(19.))
+                            .child(crate::text_reading::selectable_text(
+                                "tool-diff-source",
+                                self.document
+                                    .as_ref()
+                                    .map(|d| d.raw.clone())
+                                    .unwrap_or_default(),
+                            )),
+                        ),
                 )
             })
     }

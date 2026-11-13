@@ -399,11 +399,15 @@ impl HiveApp {
                 }
                 let key = self.draft_target.clone();
                 let id = item.id.clone();
+                let name = item.name.clone();
+                let size = item.size_label();
+                let is_image = item.is_image();
                 v_flex()
-                    .w(px(128.))
+                    .w(px(116.))
                     .gap_1()
-                    .p_2()
+                    .p_1p5()
                     .rounded_lg()
+                    .bg(Color::Inset.get(cx))
                     .border_1()
                     .border_color(Color::Divider.get(cx))
                     .when_some(
@@ -414,19 +418,23 @@ impl HiveApp {
                                     "view-draft-image-{}",
                                     item.id
                                 )))
-                                .ghost()
-                                .w(px(112.))
-                                .h(px(84.))
-                                .accessibility_label(format!("{}: {}",tr("查看图片"),item.name))
+                                .custom(crate::palette::quiet_icon_variant(cx))
+                                .w_full()
+                                .h(px(64.))
+                                .p_0()
+                                .rounded_md()
+                                .overflow_hidden()
+                                .bg(Color::Card.get(cx))
+                                .accessibility_label(format!("{}: {}", tr("查看图片"), name))
                                 .child(
                                     img(image.render)
-                                        .w(px(112.))
-                                        .h(px(84.))
+                                        .w_full()
+                                        .h(px(64.))
                                         .object_fit(ObjectFit::Contain),
                                 )
                                 .on_click(cx.listener({
                                     let original = image.original;
-                                    let name = item.name.clone();
+                                    let name = name.clone();
                                     move |this, _, window, cx| {
                                         this.open_image(original.clone(), name.clone(), window, cx)
                                     }
@@ -435,29 +443,104 @@ impl HiveApp {
                         },
                     )
                     .when(
-                        item.is_image() && !self.attachments.previews.contains_key(&item.id),
+                        is_image && !self.attachments.previews.contains_key(&item.id),
                         |card| {
-                            card.child(div().text_xs().child(
-                                if self.attachments.failed.contains_key(&item.id) {
-                                    tr("预览失败")
-                                } else {
-                                    tr("读取图片…")
-                                },
-                            ))
+                            card.child(
+                                div()
+                                    .w_full()
+                                    .h(px(64.))
+                                    .rounded_md()
+                                    .bg(Color::Card.get(cx))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .px_1()
+                                    .text_xs()
+                                    .text_color(if self.attachments.failed.contains_key(&item.id) {
+                                        Color::Error.get(cx)
+                                    } else {
+                                        Color::Muted.get(cx)
+                                    })
+                                    .child(if self.attachments.failed.contains_key(&item.id) {
+                                        tr("预览失败")
+                                    } else {
+                                        tr("读取图片…")
+                                    }),
+                            )
                         },
                     )
-                    .child(div().text_xs().w_full().truncate().child(item.name.clone()))
                     .child(
-                        div()
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx))
-                            .child(item.size_label()),
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .items_center()
+                            .justify_between()
+                            .gap_1()
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .w_full()
+                                            .truncate()
+                                            .text_color(Color::Secondary.get(cx))
+                                            .child(name.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(10.5))
+                                            .text_color(Color::Muted.get(cx))
+                                            .child(size),
+                                    ),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!("remove-image-{}", item.id)))
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .h(px(22.))
+                                    .w(px(22.))
+                                    .rounded_md()
+                                    .icon(Glyph::X)
+                                    .accessibility_label(if english() {
+                                        format!(
+                                            "Remove {}: {}",
+                                            if is_image { tr("图片") } else { tr("附件") },
+                                            name
+                                        )
+                                    } else {
+                                        format!(
+                                            "移除{} {}",
+                                            if is_image { tr("图片") } else { tr("附件") },
+                                            name
+                                        )
+                                    })
+                                    .disabled(busy)
+                                    .on_click(cx.listener({
+                                        let remove_id = id.clone();
+                                        move |this, _, _, cx| {
+                                            if let Some(key) = &key {
+                                                if let Some(items) =
+                                                    this.attachments.drafts.get_mut(key)
+                                                {
+                                                    items.retain(|item| item.id != remove_id);
+                                                }
+                                            }
+                                            this.attachments.prune();
+                                            this.schedule_draft_save(cx);
+                                            cx.notify();
+                                        }
+                                    })),
+                            ),
                     )
                     .when_some(self.attachments.failed.get(&item.id), |card, error| {
                         card.child(
                             Button::new(SharedString::from(format!("reload-image-{}", item.id)))
-                                .ghost()
+                                .custom(crate::palette::subtle_icon_variant(cx))
                                 .compact()
+                                .h(px(22.))
+                                .rounded_md()
                                 .label(tr("重新读取"))
                                 .tooltip(error.clone())
                                 .on_click(cx.listener({
@@ -469,24 +552,6 @@ impl HiveApp {
                                 })),
                         )
                     })
-                    .child(
-                        Button::new(SharedString::from(format!("remove-image-{}", item.id)))
-                            .ghost()
-                            .compact()
-                            .icon(Glyph::X)
-                            .accessibility_label(if english() {format!("Remove {}: {}",if item.is_image() {tr("图片")} else {tr("附件")},item.name)} else {format!("移除{} {}",if item.is_image() {tr("图片")} else {tr("附件")},item.name)})
-                            .disabled(busy)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(key) = &key {
-                                    if let Some(items) = this.attachments.drafts.get_mut(key) {
-                                        items.retain(|item| item.id != id);
-                                    }
-                                }
-                                this.attachments.prune();
-                                this.schedule_draft_save(cx);
-                                cx.notify();
-                            })),
-                    )
                     .into_any_element()
             }));
         if empty
