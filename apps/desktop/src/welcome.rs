@@ -101,7 +101,8 @@ impl HiveApp {
             })
             .clone();
         let compact = window.viewport_size().width < px(760.);
-        let tall = window.viewport_size().height > px(700.);
+        let font_scale = cx.global::<crate::appearance::Appearance>().font_size() as f32 / 16.0;
+        let tall = window.viewport_size().height > px(740. * font_scale);
         let collapsed_sidebar = !self.sidebar_open;
         let left_inset = if collapsed_sidebar {
             chrome::traffic_light_inset(window)
