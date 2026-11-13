@@ -65,10 +65,13 @@ impl HiveApp {
                             .id(SharedString::from(format!("received-input-{}", input.delivery_id)))
                             .role(Role::Group)
                             .aria_label(format!("{label} · {detail}"))
+                            .items_center()
                             .min_w_0()
                             .gap_2()
                             .p_2()
                             .rounded_lg()
+                            .border_1()
+                            .border_color(Color::Divider.get(cx))
                             .bg(Color::Inset.get(cx))
                             .child(
                                 v_flex()

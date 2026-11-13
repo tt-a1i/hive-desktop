@@ -23,9 +23,12 @@ export class ExternalPiInteractions {
       nativeRequestId: params.id, state: 'pending', params: structuredClone(params), ...(expiresAt !== undefined && { expiresAt }) };
     const entry: Pending = { value, write };
     this.pending.set(value.id, entry);
-    if (expiresAt !== undefined) entry.timer = setTimeout(() => {
-      this.expireNative(value.nativeRequestId); this.remove(entry, 'expired');
-    }, Math.max(0, expiresAt - Date.now()));
+    if (expiresAt !== undefined) {
+      entry.timer = setTimeout(() => {
+        this.expireNative(value.nativeRequestId); this.remove(entry, 'expired');
+      }, Math.max(0, expiresAt - Date.now()));
+      entry.timer.unref?.();
+    }
     this.emit({ type: 'interaction', sessionId: this.sessionId(), interaction: structuredClone(value) });
   }
   async respond(id: string, response: unknown): Promise<void> {
@@ -47,7 +50,10 @@ export class ExternalPiInteractions {
     const entries = [...this.pending.values()];
     // Invalidate cards before asynchronous writes; native cancellation releases awaited command callbacks.
     for (const entry of entries) this.remove(entry, reason);
-    await Promise.all(entries.filter(entry => entry.value.state === 'pending').map(entry => entry.write({ cancelled: true })));
+    const results = await Promise.allSettled(entries.filter(entry => entry.value.state === 'pending').map(entry => entry.write({ cancelled: true })));
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Failed to cancel external Pi dialogs');
   }
   clear(reason: InteractionResolutionReason): void { for (const entry of this.pending.values()) this.remove(entry, reason); }
   private remove(entry: Pending, reason: InteractionResolutionReason): void {

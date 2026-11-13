@@ -44,13 +44,15 @@ export class PiAuth {
     const models = await this.runtime();
     return this.catalog(models);
   }
-  private async catalog(models: ModelRuntime) {
+  private async readCredentials(models: ModelRuntime) {
     // Pi's unsignalled read may return the previous snapshot after a disk error.
-    // An explicit account refresh must report that error instead of stale success.
-    const credentials = await models.listCredentials({ signal: this.catalogAbort.signal }).catch(error => {
-      // JSON parser errors may quote credential-file contents. Keep the cause local.
+    // Explicit account queries and logouts must report that error without quoting credential contents.
+    return models.listCredentials({ signal: this.catalogAbort.signal }).catch(error => {
       throw new Error('读取本机登录信息失败，请检查 Pi 的 auth.json 文件后重新读取。', { cause: error });
     });
+  }
+  private async catalog(models: ModelRuntime) {
+    const credentials = await this.readCredentials(models);
     const stored = new Map(credentials.map(info => [info.providerId, info.type]));
     const providers = models.getProviders().map(provider => ({
       id: provider.id, name: provider.name,
@@ -143,12 +145,13 @@ export class PiAuth {
     return structuredClone(login.view);
   }
   private assertIdle() {
+    if (this.closing) throw new Error('Pi authentication is closing');
     if (this.login?.view.state === 'running' || this.removal) throw new Error('请先完成或取消当前账号操作');
   }
   async logout(providerId: string) {
     const models = await this.runtime();
     this.assertIdle();
-    if (!models.getProvider(providerId) && !(await models.listCredentials()).some(info => info.providerId === providerId)) throw new Error('提供商不存在');
+    if (!models.getProvider(providerId) && !(await this.readCredentials(models)).some(info => info.providerId === providerId)) throw new Error('提供商不存在');
     this.assertIdle();
     this.removal = (async () => {
       let message = '已移除本机保存的凭据。环境变量等其他登录来源不受影响。';
@@ -165,9 +168,9 @@ export class PiAuth {
   }
   async close() {
     this.closing = true;
+    this.catalogAbort.abort(new Error('Pi authentication is closing'));
     this.login?.controller.abort(new Error('后台已关闭，登录已取消'));
     await this.login?.done;
     await Promise.allSettled(this.removal ? [this.removal] : []);
-    this.catalogAbort.abort(new Error('Pi authentication is closing'));
   }
 }

@@ -98,10 +98,18 @@ impl HiveApp {
                         .max_h(px(120.))
                         .overflow_y_scroll()
                         .p_2()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(Color::Error.get(cx).opacity(0.28))
                         .bg(Color::ErrorSurface.get(cx))
-                        .text_sm()
-                        .whitespace_normal()
-                        .child(terminal_error_text(error)),
+                        .child(
+                            crate::text_reading::selectable_text(
+                                "terminal-error-text",
+                                terminal_error_text(error),
+                            )
+                            .text_sm()
+                            .text_color(Color::Error.get(cx)),
+                        ),
                 )
             })
             .child(

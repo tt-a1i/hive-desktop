@@ -149,8 +149,9 @@ impl PiAccounts {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder(input_placeholder(None)));
         let search = cx
             .new(|cx| InputState::new(window, cx).placeholder(tr("搜索提供商，如 OpenAI、Anthropic…")));
-        let search_subscription = cx.subscribe(&search, |_, _, event: &InputEvent, cx| {
+        let search_subscription = cx.subscribe(&search, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
+                this.pi_accounts.scroll.set_offset(point(px(0.), px(0.)));
                 cx.notify();
             }
         });

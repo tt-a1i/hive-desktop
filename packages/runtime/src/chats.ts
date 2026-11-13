@@ -261,6 +261,7 @@ export class Chats implements StructuredSessionPort {
       if (record.backend === 'claude') {
         await handle.addContext(`Current Claude integration: use the registered ${(handle as ClaudeSessionHandle).teamToolName} MCP tool for every Hive team command. Older process tool names no longer exist. Pass CLI arguments as an array; team send takes task text as a positional argument. Use stdin only when the command supports --stdin. Omit --cli to inherit this backend and model. Never invoke team through bash. Native tool permissions and AskUserQuestion are presented in the desktop chat; wait for the user's response and do not bypass approval. Other native user dialogs and MCP elicitation are not supported.`, 'hive-desktop-claude');
       }
+      this.closeAbort.signal.throwIfAborted();
       const model = handle.currentModel();
       this.index.save({ ...this.index.get(record.id), ...(record.backend === 'codex'
         ? (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}

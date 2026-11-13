@@ -257,6 +257,8 @@ impl HiveApp {
             .p_3()
             .gap_2()
             .bg(Color::ErrorSurface.get(cx))
+            .border_1()
+            .border_color(Color::Error.get(cx).opacity(0.28))
             .rounded_lg()
             .child(
                 div()
@@ -495,18 +497,18 @@ impl Render for HiveApp {
                 .when_some(self.session.as_ref().and_then(|session| self.failed_drafts.get(&session.id).map(|drafts| (session.id.clone(), drafts))), |view, (session_id, drafts)| view.child(v_flex().gap_2().children(drafts.iter().enumerate().map(|(i, draft)| {
                     let session_id = session_id.clone();
                     let text = draft.clone();
-                    h_flex().gap_2().p_3().rounded_lg().bg(Color::ErrorSurface.get(cx))
+                    crate::focus_scroll::Reveal::new(("failed-draft-reveal", i), &self.composer_scroll, h_flex().items_center().gap_2().p_3().rounded_lg().border_1().border_color(Color::Error.get(cx).opacity(0.28)).bg(Color::ErrorSurface.get(cx))
                         .child(div().flex_1().min_w_0().text_sm().child(format!("{}: {draft}", tr("发送失败，内容已保留"))))
                         .child(Button::new(("copy-failed-draft", i)).label(tr("复制内容")).accessibility_label(tr("复制发送失败的内容")).on_click(cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(text.clone())))))
                         .child(Button::new(("dismiss-failed-draft", i)).label(tr("移除")).accessibility_label(tr("移除发送失败的内容")).on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(drafts) = this.failed_drafts.get_mut(&session_id) { if i < drafts.len() { drafts.remove(i); } }
                             this.schedule_draft_save(cx);
                             cx.notify();
-                        })))
+                        }))))
                 }))))
-                .when(!self.connected && self.runtime.is_some(), |view| view.child(Button::new("copy-disconnected-draft").label(tr("复制当前草稿")).on_click(cx.listener(|this, _, _, cx| {
+                .when(!self.connected && self.runtime.is_some(), |view| view.child(crate::focus_scroll::Reveal::new("disconnected-draft-reveal", &self.composer_scroll, Button::new("copy-disconnected-draft").label(tr("复制当前草稿")).on_click(cx.listener(|this, _, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(this.input.read(cx).value().to_string()));
-                }))))
+                })))))
                 .when(welcome && self.workspace.is_none(), |surface| surface.child(div().text_sm().p_2().text_color(Color::Secondary.get(cx)).child(tr("选择本地项目文件夹，开始与 Agent 协作。"))))
 
                 .when(self.command_picker.open, |view| view.child(deferred(anchored().anchor(Anchor::BottomLeft).snap_to_window().offset(point(px(11.),px(-8.))).child(self.render_commands(window,cx))).with_priority(1)))

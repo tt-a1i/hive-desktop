@@ -44,7 +44,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     removeWorkspace: (workspaceId: string) => chats.removeWorkspace(workspaceId, () => terminal.detachWorkspace(workspaceId)),
     requestHive: (method: string, path: string, body?: unknown) => {
       if (!['GET', 'HEAD'].includes(method.toUpperCase())) {
-        const match = /^\/api\/workspaces\/([^/?#]+)(?:[/?#]|$)/.exec(path);
+        const match = /^\/api\/(?:ui\/)?workspaces\/([^/?#]+)(?:[/?#]|$)/.exec(path);
         if (match) chats.assertWorkspaceAvailable(decodeURIComponent(match[1]!));
       }
       return hive.request(method, path, body);

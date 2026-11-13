@@ -115,8 +115,14 @@ export async function createHiveHost({
             if (closing) throw new Error("Hive host is closed");
             return runtime.store.readWorkspaceUpload(workspaceId, id);
         },
-        getNavigation: () => runtime.store.settings.getAppState("desktop_navigation")?.value ?? null,
-        saveNavigation: value => runtime.store.settings.setAppState("desktop_navigation", value),
+        getNavigation: () => {
+            if (closing) throw new Error("Hive host is closed");
+            return runtime.store.settings.getAppState("desktop_navigation")?.value ?? null;
+        },
+        saveNavigation: value => {
+            if (closing) throw new Error("Hive host is closed");
+            runtime.store.settings.setAppState("desktop_navigation", value);
+        },
 		async request(method, path, body) {
 			if (closing) throw new Error("Hive host is closed");
 			// Parse before attaching credentials: URL normalization must not escape

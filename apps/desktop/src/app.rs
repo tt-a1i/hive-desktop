@@ -361,16 +361,18 @@ impl HiveApp {
         let model_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索模型、提供商…"));
         let model_search_subscription =
-            cx.subscribe_in(&model_search, window, |_, _, event: &InputEvent, _, cx| {
+            cx.subscribe_in(&model_search, window, |this, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.reasoning_picker.model_scroll.set_offset(point(px(0.), px(0.)));
                     cx.notify();
                 }
             });
         let member_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索成员、职责、角色或 Agent…"));
         let member_search_subscription =
-            cx.subscribe_in(&member_search, window, |_, _, event: &InputEvent, _, cx| {
+            cx.subscribe_in(&member_search, window, |this, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.member_scroll.set_offset(point(px(0.), px(0.)));
                     cx.notify();
                 }
             });
@@ -379,8 +381,9 @@ impl HiveApp {
         let member_model_search_subscription = cx.subscribe_in(
             &member_model_search,
             window,
-            |_, _, event: &InputEvent, _, cx| {
+            |this, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
+                    this.member_model_scroll.set_offset(point(px(0.), px(0.)));
                     cx.notify();
                 }
             },

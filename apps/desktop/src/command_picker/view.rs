@@ -89,7 +89,9 @@ impl HiveApp {
                     )
                 },
             )
-            .child(
+            .child(crate::focus_scroll::Viewport::new(
+                "native-command-results-viewport",
+                &self.command_picker.scroll,
                 v_flex()
                     .id("native-command-results")
                     .max_h(px(176.))
@@ -108,57 +110,69 @@ impl HiveApp {
                             .get("path")
                             .and_then(Value::as_str)
                             .unwrap_or("");
-                        Button::new(("native-command", i))
-                            .ghost()
-                            .w_full()
-                            .h_auto()
-                            .py_2()
-                            .justify_start()
-                            .selected(i == self.command_picker.selected)
-                            .disabled(self.command_picker.loading)
-                            .accessibility_label(format!("{} /{}",tr("选择命令"),command.name))
-                            .tooltip(format!(
-                                "{}\n{}",
-                                command.description.as_deref().unwrap_or(""),
-                                path
-                            ))
-                            .child(
-                                v_flex()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .gap_1()
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .truncate()
-                                                    .child(format!("/{}", command.name)),
-                                            )
-                                            .child(
+                        crate::focus_scroll::Reveal::new(
+                            ("native-command-reveal", i),
+                            &self.command_picker.scroll,
+                            Button::new(("native-command", i))
+                                .ghost()
+                                .w_full()
+                                .h_auto()
+                                .py_2()
+                                .justify_start()
+                                .selected(i == self.command_picker.selected)
+                                .disabled(self.command_picker.loading)
+                                .accessibility_label(format!("{} /{}",tr("选择命令"),command.name))
+                                .tooltip(format!(
+                                    "{}\n{}",
+                                    command.description.as_deref().unwrap_or(""),
+                                    path
+                                ))
+                                .child(
+                                    v_flex()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .gap_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .truncate()
+                                                        .child(format!("/{}", command.name)),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .px(px(6.))
+                                                        .py(px(1.))
+                                                        .rounded_full()
+                                                        .bg(Color::Card.get(cx))
+                                                        .border_1()
+                                                        .border_color(Color::Divider.get(cx))
+                                                        .text_xs()
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(kind),
+                                                ),
+                                        )
+                                        .when_some(command.description.clone(), |view, text| {
+                                            view.child(
                                                 div()
                                                     .text_xs()
-                                                    .text_color(Color::Muted.get(cx))
-                                                    .child(kind),
-                                            ),
-                                    )
-                                    .when_some(command.description.clone(), |view, text| {
-                                        view.child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(Color::Secondary.get(cx))
-                                                .truncate()
-                                                .child(text),
-                                        )
-                                    }),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.accept_command(name.clone(), window, cx)
-                            }))
+                                                    .text_color(Color::Secondary.get(cx))
+                                                    .truncate()
+                                                    .child(text),
+                                            )
+                                        }),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.accept_command(name.clone(), window, cx)
+                                })),
+                        )
                     })),
-            )
+            ))
             .child(
                 div()
                     .text_xs()
