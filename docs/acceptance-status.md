@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 运行时关闭隔离、启动期握手即时取消与开发态远程命令路径（2026-11-13，源码）
+
+复现并修复 `AgentModels.close()` 与 `Chats.close()` 无法取消在途 `Codex` / `External Pi` / `Claude` 启动期握手（从 >30 秒卡死收敛至 `204 ms` / `384 ms` 回收子进程，同时严格保持 `removeWorkspace` 原有排空语义）、`Chats.close()` 与 `TerminalManager` 因 `Promise.all` 快错提前返回导致兄弟句柄未排空、`createDesktopRuntime().close()` 缺少子系统隔离且覆盖前序异常，以及 `remote-commands.ts` 在 `src/` 开发态指向不存在的 `src/remote-cli.js`。四组前后对照、d43f55e 真实三会话副本冷读及九组零推理运行时回归通过，见[实证与边界](validation/2026-11-13-runtime-shutdown-and-startup-cancellation.md)。无厂商推理/面板操作/正式测试改动，待随桌面端改进一并纳入下一开发包，完整目标继续。
+
 ## 当前开发包 4b3135d 与清理（2026-11-13）
 
 后台停止清理串行化、异常停止无泄漏回收与 Codex 账号探测即时取消（`cd32e9d`），以及桌面过期 `Runtime` 启动句柄回收、协作重连保留、记忆/角色面板 `Viewport` + `Reveal` 窄窗键盘显露、1,301 项双语闭合本地化与协作/成员/记忆/角色/工作流视觉层次打磨（`4b3135d`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `19e0ce4df703df3f840d44861d1409888c15ccf3b59a644f26148e9d77980d05`）。精确 13 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、并发清理与探测取消检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与欢迎页/Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`9e6a44a` 保留直接可运行回退，退役 `0a388b3` 解压树并清理重复/临时构建产物约 1.41 GB（1.31 GiB），见[包内证据与边界](validation/2026-11-13-teardown-panels-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

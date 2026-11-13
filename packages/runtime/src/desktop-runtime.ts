@@ -50,11 +50,12 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return hive.request(method, path, body);
     },
     close: () => closing ??= (async () => {
-      try { await settings.close(); }
-      finally {
-        try { await piModels.close(); await piAuth.close(); await terminal.close(); await agentModels.close(); }
-        finally { try { await hive.close(); } finally { await chats.close(); } }
-      }
+      const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), terminal.close(), agentModels.close()]);
+      const stage2 = await Promise.allSettled([hive.close()]);
+      const stage3 = await Promise.allSettled([chats.close()]);
+      const errors = [...stage1, ...stage2, ...stage3].flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, 'Desktop runtime close failed');
     })(),
   };
 }

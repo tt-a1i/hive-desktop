@@ -118,7 +118,7 @@ export class CodexTransport {
     }
     options.signal?.throwIfAborted();
     const transport = new CodexTransport(options);
-    const onAbort = () => { void transport.close().catch(() => {}); };
+    const onAbort = () => { void transport.close(200).catch(() => {}); };
     options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
       await transport.sendRequest('initialize', {
@@ -163,11 +163,11 @@ export class CodexTransport {
     });
   }
 
-  close(): Promise<void> {
+  close(graceMs = this.options.shutdownGraceMs ?? 1500): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.closing = true;
     this.rejectPending(new Error('Codex transport is closing'));
-    this.closeTask = this.process.close(this.options.shutdownGraceMs ?? 1500);
+    this.closeTask = this.process.close(graceMs);
     return this.closeTask;
   }
 

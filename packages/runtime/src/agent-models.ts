@@ -21,6 +21,7 @@ export class AgentModelsInputError extends Error {
 /** Read native catalogs without binding a Hive member, creating a desktop chat, or prompting. */
 export class AgentModels {
   private readonly pending = new Map<string, Promise<AgentModelCatalog>>();
+  private readonly closeAbort = new AbortController();
   private closing = false;
   private readonly removing = new Set<string>();
   constructor(private readonly hive: HiveHost, private readonly settings: DesktopSettings) {}
@@ -43,17 +44,20 @@ export class AgentModels {
     const workspace = workspaces.find(candidate => candidate.id === workspaceId);
     if (!workspace) throw new AgentModelsInputError('Workspace not found');
     const executables = backend === 'pi' ? undefined : (await this.settings.get()).effective;
+    this.closeAbort.signal.throwIfAborted();
     const directory = await mkdtemp(join(tmpdir(), 'hive-agent-models-'));
     let handle: PiSessionHandle | undefined;
     let failure: Error | undefined;
     const onEvent = (event: PiEvent) => { if (event.type === 'error') failure = new Error(event.message); };
     const onUnexpectedExit = (error: Error) => { failure = error; };
     try {
+      this.closeAbort.signal.throwIfAborted();
       const options = { cwd: workspace.path, sessionDir: directory, onEvent };
       handle = backend === 'pi' ? await createPiSession(options)
-        : backend === 'codex' ? await createCodexSession({ ...options, command: executables!.codex.command, onUnexpectedExit })
-        : backend === 'claude' ? await createClaudeSession({ ...options, command: executables!.claude.command, onUnexpectedExit })
-        : await createExternalPiSession({ ...options, command: executables!.pi.command, onUnexpectedExit });
+        : backend === 'codex' ? await createCodexSession({ ...options, command: executables!.codex.command, signal: this.closeAbort.signal, onUnexpectedExit })
+        : backend === 'claude' ? await createClaudeSession({ ...options, command: executables!.claude.command, signal: this.closeAbort.signal, onUnexpectedExit })
+        : await createExternalPiSession({ ...options, command: executables!.pi.command, signal: this.closeAbort.signal, onUnexpectedExit });
+      this.closeAbort.signal.throwIfAborted();
       if (failure) throw failure;
       const models = handle.listModels().map(model => ({ provider: model.provider, id: model.id, name: model.name, available: model.available }));
       const selected = handle.currentModel();
@@ -76,6 +80,7 @@ export class AgentModels {
   }
   async close(): Promise<void> {
     this.closing = true;
+    this.closeAbort.abort(new Error('Model catalog runtime is closing'));
     await Promise.allSettled(this.pending.values());
   }
 }

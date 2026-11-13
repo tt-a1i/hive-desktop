@@ -20,6 +20,7 @@ export interface ExternalPiSessionOptions {
   sessionFile?: string;
   model?: { provider: string; id: string };
   command?: string;
+  signal?: AbortSignal;
   onEvent: (event: PiEvent) => void;
   onUnexpectedExit?: (error: Error) => void;
   teamBinding?: () => ExternalPiTeamBinding | undefined;
@@ -157,7 +158,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     }
   };
   transport = await ExternalPiTransport.start({ cwd: options.cwd, sessionDir: options.sessionDir,
-    ...(options.sessionFile && { sessionFile: options.sessionFile }), ...(options.command && { command: options.command }), ...(options.model && { model: options.model }),
+    ...(options.sessionFile && { sessionFile: options.sessionFile }), ...(options.command && { command: options.command }), ...(options.signal && { signal: options.signal }), ...(options.model && { model: options.model }),
     extensionPath: fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './external-pi-extension.ts' : './external-pi-extension.js', import.meta.url)), onEvent,
     onDialogRequest(request, write) {
       if (!initialized) throw new Error('External Pi dialog arrived before the chat session was initialized');
@@ -176,12 +177,16 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     const model = await transport.request<Model>('set_model', { provider, modelId: id });
     if (state) state.model = {provider:model.provider,id:model.id,name:model.name,...(model.input && {input:[...model.input]})};
   };
+  const onInitAbort = () => { void transport.close(200).catch(() => {}); };
+  options.signal?.addEventListener('abort', onInitAbort, { once: true });
   try {
+    options.signal?.throwIfAborted();
     state = await transport.request<State>('get_state');
     if (options.model && (state.model?.provider !== options.model.provider || state.model?.id !== options.model.id)) await setModel(options.model.provider, options.model.id);
     models = (await transport.request<{ models: Model[] }>('get_available_models')).models;
-    await refresh(); initialized = true;
+    await refresh(); options.signal?.throwIfAborted(); initialized = true;
   } catch (error) { disposed = true; await transport.close(); throw error; }
+  finally { options.signal?.removeEventListener('abort', onInitAbort); }
   const reasoning = async () => {
     ensureOpen();
     const current = await transport.request<State & { thinkingLevel: string }>('get_state');

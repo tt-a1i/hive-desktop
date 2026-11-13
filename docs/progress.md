@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 运行时关闭隔离、启动期握手即时取消与开发态远程命令路径（2026-11-13，源码）
+
+继续逐模块审计 `packages/runtime/src/` 并复现修复四处退出与启动取消边界：(1) `Codex`、`External Pi`、`Claude` 传输与会话启动链路全流程接入可选 `AbortSignal`，并在 `AgentModels.close()` 与 `Chats.close()` 触发专属退出取消（保持 `removeWorkspace` 既有排空契约不变），使三路挂起初始化从 >30 秒卡死收敛至 `204 ms` / `384 ms` 即时回收子进程；(2) `Chats.close()` 与 `TerminalManager` 多连接关闭改用 `Promise.allSettled()` 排空全部在途句柄并聚合错误，消除单个快错导致兄弟会话未完成释放即提前返回的窗口；(3) `createDesktopRuntime().close()` 改为三阶段 `Promise.allSettled()` 子系统隔离，防止单子系统报错跳过 `terminal`/`agentModels` 关闭或覆盖前序错误；(4) `remote-commands.ts` 兼容 `src/` 开发态解析 `dist/remote-cli.js`。四组前后对照、d43f55e 真实三会话副本冷读及 `check:runtime`、`check:codex`、`check:external-pi`、`check:claude`、`check:workspace-removal`、`check:remote-settings`、`check:terminal` 等回归全部通过，见[实证与边界](validation/2026-11-13-runtime-shutdown-and-startup-cancellation.md)。无厂商推理或正式测试改动，待随桌面端改进一并入包，完整目标继续。
+
 ## 当前开发包 4b3135d 与清理（2026-11-13）
 
 会话停止清理串行化、异常停止无泄漏回收与 Codex 账号探测即时取消（`cd32e9d`），以及桌面过期后台启动句柄回收、协作重连状态保持、记忆/角色窄窗 `Viewport` + `Reveal` 焦点显露、1,301 项双语闭合本地化与次级面板界面层次打磨（`4b3135d`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 12 份后台 JS/map，28,869 项清单/29 链接、DMG 只读挂载与安装核对通过；包内四组正式包检查、停止清理串行化/异常停止回收/探测取消/`.tmp` 防护、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `9e6a44a` 直接可运行回退，退役 `0a388b3` 解压树并清理本批重复与临时构建产物约 1.41 GB（1.31 GiB），见[包内证据与边界](validation/2026-11-13-teardown-panels-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

@@ -40,6 +40,7 @@ export class Chats implements StructuredSessionPort {
   readonly attachments: ChatAttachments;
   private readonly sessionDir: string;
   private readonly queueDir: string;
+  private readonly closeAbort = new AbortController();
   private closing = false;
   private readonly removing = new Set<string>();
 
@@ -207,9 +208,10 @@ export class Chats implements StructuredSessionPort {
     const model = record.model && { provider: record.model.provider, id: record.model.id };
     const command = createTeamCommand(binding);
     const executables = record.backend === 'pi' ? undefined : (await this.settings.get()).effective;
+    this.closeAbort.signal.throwIfAborted();
     const handle = record.backend === 'codex'
       ? await createCodexSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'codex'),
-        command: executables!.codex.command,
+        command: executables!.codex.command, signal: this.closeAbort.signal,
         ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(model && { model }), onEvent,
         onUnexpectedExit,
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
@@ -218,16 +220,17 @@ export class Chats implements StructuredSessionPort {
       })
       : record.backend === 'claude'
       ? await createClaudeSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'claude'),
-        command: executables!.claude.command, ...(record.nativeclaudeSessionId && { sessionId: record.nativeclaudeSessionId }),
+        command: executables!.claude.command, signal: this.closeAbort.signal, ...(record.nativeclaudeSessionId && { sessionId: record.nativeclaudeSessionId }),
         ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
       : record.backend === 'pi-rpc'
       ? await createExternalPiSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'external-pi'),
-        command: executables!.pi.command,
+        command: executables!.pi.command, signal: this.closeAbort.signal,
         ...(sessionFile && { sessionFile }), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
       : await createPiSession({ cwd: workspace.path, sessionDir: this.sessionDir,
         ...(sessionFile && { sessionFile }), ...(model && { model }),
         customTools: [createTeamTool(binding)], onEvent, onUnexpectedExit });
     try {
+      this.closeAbort.signal.throwIfAborted();
       if (earlyFailure) throw earlyFailure;
       let reasoningFailure = recoveryFailure;
       if (!recoveryFailure && record.reasoning && handle.reasoning && handle.setReasoning) {
@@ -759,7 +762,11 @@ export class Chats implements StructuredSessionPort {
   }
   async close() {
     this.closing = true;
+    this.closeAbort.abort(new Error('Chat runtime is closing'));
     await Promise.allSettled(this.opening.values());
-    await Promise.all([...this.live.entries()].map(([id, chat]) => this.stopLive(id, chat)));
+    const results = await Promise.allSettled([...this.live.entries()].map(([id, chat]) => this.stopLive(id, chat)));
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Chat runtime close failed');
   }
 }

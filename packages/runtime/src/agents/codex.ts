@@ -25,6 +25,7 @@ export interface CodexSessionOptions {
   sessionDir: string;
   threadId?: string;
   command?: string;
+  signal?: AbortSignal;
   model?: { provider: string; id: string };
   customTools?: CodexTool[];
   onEvent: (event: PiEvent) => void;
@@ -104,6 +105,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   };
   transport = await CodexTransport.start({ cwd: options.cwd,
     ...(options.command && { command: options.command }),
+    ...(options.signal && { signal: options.signal }),
     onClose(info) {
       lifetime.abort(info.error);
       interactions.clear('disconnected');
@@ -273,7 +275,10 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     return turns;
   };
   const models: Model[] = [];
+  const onInitAbort = () => { void transport.close(200).catch(() => {}); };
+  options.signal?.addEventListener('abort', onInitAbort, { once: true });
   try {
+    options.signal?.throwIfAborted();
     let cursor: string | null = null;
     do {
       const page: { data: Model[]; nextCursor: string | null } = await transport.sendRequest('model/list', { cursor, includeHidden: true });
@@ -303,8 +308,10 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     });
     if (materialized) await recoverHistory(response!.thread);
     else if (!['legacy', 'paginated'].includes(response!.thread.historyMode)) throw new Error('Unsupported Codex history contract');
+    options.signal?.throwIfAborted();
     events.restore(projection.current());
   } catch (error) { await transport.close(); throw error; }
+  finally { options.signal?.removeEventListener('abort', onInitAbort); }
   const notifyMaterialized = async () => {
     if (materialized && !materializationNotified) {
       await options.onMaterialized?.(threadId);

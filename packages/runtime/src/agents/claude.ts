@@ -17,7 +17,7 @@ import { readClaudeMetadata, writeClaudeMetadata, type ClaudeMetadata } from './
 import { createClaudeTeamServer, type ClaudeTeamBinding } from './claude-team.js';
 import type { PiEvent, PiSessionHandle } from './types.js';
 export interface ClaudeSessionOptions {
-  cwd: string; sessionDir: string; sessionId?: string; command?: string;
+  cwd: string; sessionDir: string; sessionId?: string; command?: string; signal?: AbortSignal;
   model?: { provider: string; id: string }; onEvent: (event: PiEvent) => void;
   teamBinding?: () => ClaudeTeamBinding | undefined;
   onUnexpectedExit?: (error: Error) => void;
@@ -34,6 +34,7 @@ type Run = { uuid: UUID; cancelled: boolean; controller: AbortController; tools:
 /** Launches the user's original Claude Code with the official SDK; never handles its credentials. */
 export async function createClaudeSession(options: ClaudeSessionOptions): Promise<ClaudeSessionHandle> {
   if (options.model && options.model.provider !== 'claude') throw new Error('Unsupported Claude model provider');
+  options.signal?.throwIfAborted();
   const executable = resolveClaudeExecutable(options.command ?? process.env.HIVE_CLAUDE_COMMAND ?? 'claude');
   const sessionId = options.sessionId ?? randomUUID();
   let metadata = readClaudeMetadata(options.sessionDir, sessionId);
@@ -144,27 +145,31 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
       if (!disposed) fail(new Error('Claude SDK output ended unexpectedly'));
     } catch (error) { fail(asError(error)); }
   })();
-  const close = (): Promise<void> => {
+  const close = (graceMs = 5000): Promise<void> => {
     if (closeTask) return closeTask;
     disposed = true; interactions.clear('disposed');
     closeTask = (async () => {
       input.close(); running.close();
       if (child) {
-        try { await claudeDeadline(exited, 'shutdown', 5000); }
+        try { await claudeDeadline(exited, 'shutdown', graceMs); }
         catch { child.kill('SIGKILL'); await claudeDeadline(exited, 'forced shutdown', 2000); }
       }
       await consume;
     })();
     return closeTask;
   };
+  const onInitAbort = () => { controller.abort(options.signal?.reason); child?.kill(); void close(200).catch(() => {}); };
+  options.signal?.addEventListener('abort', onInitAbort, { once: true });
   try {
-    const init = await claudeDeadline(running.initializationResult(), 'initialization');
-    models = await claudeDeadline(running.supportedModels(), 'model catalog');
-    const servers = await claudeDeadline(running.mcpServerStatus(), 'MCP handshake');
+    options.signal?.throwIfAborted();
+    const init = await claudeDeadline(running.initializationResult(), 'initialization', 30000, options.signal);
+    models = await claudeDeadline(running.supportedModels(), 'model catalog', 30000, options.signal);
+    const servers = await claudeDeadline(running.mcpServerStatus(), 'MCP handshake', 30000, options.signal);
     if (!servers.some(server => server.name === team.name && server.status === 'connected')) throw new Error('Claude Hive MCP server did not connect');
     catalogs = { commands: init.commands.map(command => command.name), models: models.map(model => model.value), mcpServers: servers.map(server => ({ name: server.name, status: server.status })) };
-    await refresh(); check(); ready = true;
+    await refresh(); options.signal?.throwIfAborted(); check(); ready = true;
   } catch (error) { await close(); throw error; }
+  finally { options.signal?.removeEventListener('abort', onInitAbort); }
   const reasoning = async () => {check();const {modelId,...state} = await readClaudeReasoning(running,models);currentModel=modelId;return state;};
   return {
     sessionId, teamToolName: team.toolName, get processId() { return child?.pid; }, sessionFile: undefined,

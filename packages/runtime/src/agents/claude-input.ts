@@ -19,8 +19,24 @@ export class ClaudeInput implements AsyncIterable<SDKUserMessage> {
     } };
   }
 }
-export async function claudeDeadline<T>(operation: Promise<T>, label: string, timeoutMs = 30000): Promise<T> {
+export async function claudeDeadline<T>(operation: Promise<T>, label: string, timeoutMs = 30000, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  try { return await Promise.race([operation, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Claude ${label} timed out`)), timeoutMs); })]); }
-  finally { clearTimeout(timer); }
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Claude ${label} timed out`)), timeoutMs);
+        if (signal) {
+          onAbort = () => reject(signal.reason ?? new Error(`Claude ${label} aborted`));
+          signal.addEventListener('abort', onAbort, { once: true });
+          if (signal.aborted) onAbort();
+        }
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
+  }
 }

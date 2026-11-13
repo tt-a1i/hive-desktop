@@ -13,6 +13,7 @@ export interface ExternalPiTransportOptions {
   env?: NodeJS.ProcessEnv;
   requestTimeoutMs?: number;
   shutdownGraceMs?: number;
+  signal?: AbortSignal;
   onEvent?: (event: ExternalPiRecord) => void;
   onClose?: (error: Error) => void;
   onDialogRequest?: (request: ExternalPiRecord, write: (response: Record<string, unknown>) => Promise<void>) => void;
@@ -84,18 +85,25 @@ export class ExternalPiTransport {
     for (const ms of [options.requestTimeoutMs, options.shutdownGraceMs]) {
       if (ms !== undefined && (!Number.isFinite(ms) || ms <= 0 || ms > 2147483647)) throw new RangeError('Invalid external Pi timeout');
     }
+    options.signal?.throwIfAborted();
     const transport = new ExternalPiTransport(options);
+    const onAbort = () => { void transport.close(200).catch(() => {}); };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
       await transport.request('get_state');
+      options.signal?.throwIfAborted();
       transport.rpcReady = true;
       const result = await transport.request<{ commands: { name: string; source: string; sourceInfo?: { path?: string } }[] }>('get_commands');
+      options.signal?.throwIfAborted();
       const commands = result.commands.filter(command => command.name === transport.bridgeCommand);
       if (commands.length !== 1 || commands[0]?.source !== 'extension' || commands[0].sourceInfo?.path !== options.extensionPath) {
         throw new Error('External Pi Hive bridge command missing or colliding');
       }
       await transport.bridge({ action: 'initialize' });
+      options.signal?.throwIfAborted();
       return transport;
     } catch (error) { await transport.close(); throw error; }
+    finally { options.signal?.removeEventListener('abort', onAbort); }
   }
   get pid(): number | undefined { return this.child.pid; }
   get lifecycleDiagnostics() { return this.process.diagnostics; }
@@ -127,12 +135,12 @@ export class ExternalPiTransport {
       return result;
     } finally { unsubscribe(); }
   }
-  close(): Promise<void> {
+  close(graceMs = this.options.shutdownGraceMs ?? 1500): Promise<void> {
     if (this.closeTask) return this.closeTask;
     this.closing = true;
     this.clearUiRequests();
     this.rejectPending(new Error('External Pi transport is closing'));
-    this.closeTask = this.process.close(this.options.shutdownGraceMs ?? 1500); return this.closeTask;
+    this.closeTask = this.process.close(graceMs); return this.closeTask;
   }
   private write(record: unknown): Promise<void> {
     if (this.closing || this.ended) return Promise.reject(new Error('External Pi transport is closed'));

@@ -70,12 +70,22 @@ export class Terminals {
     const known = [...this.attachments.values()].some(connection => connection.attachment.workspaceId === input.workspaceId && connection.attachment.runId === input.runId);
     if (!known && !(await this.list(input.workspaceId)).runs.some(run => run.runId === input.runId)) throw new Error('Shell run does not belong to this workspace');
     await this.hive.request('DELETE', `/api/workspaces/${encodeURIComponent(input.workspaceId)}/shell/${encodeURIComponent(input.runId)}`);
-    await Promise.all([...this.attachments.values()].filter(connection => connection.attachment.workspaceId === input.workspaceId && connection.attachment.runId === input.runId).map(connection => connection.close('stopped')));
+    await this.closeConnections([...this.attachments.values()].filter(connection => connection.attachment.workspaceId === input.workspaceId && connection.attachment.runId === input.runId), 'stopped');
     return { ok: true };
   }
   async detachWorkspace(workspaceId: string): Promise<void> {
     await Promise.allSettled(this.pending.get(workspaceId) ?? []);
-    await Promise.all([...this.attachments.values()].filter(connection => connection.attachment.workspaceId === workspaceId).map(connection => connection.close('workspace-removed')));
+    await this.closeConnections([...this.attachments.values()].filter(connection => connection.attachment.workspaceId === workspaceId), 'workspace-removed');
   }
-  async close(): Promise<void> { this.closing = true; await Promise.allSettled([...this.pending.values()].flatMap(tasks => [...tasks])); await Promise.all([...this.attachments.values()].map(connection => connection.close('runtime-closed'))); }
+  async close(): Promise<void> {
+    this.closing = true;
+    await Promise.allSettled([...this.pending.values()].flatMap(tasks => [...tasks]));
+    await this.closeConnections([...this.attachments.values()], 'runtime-closed');
+  }
+  private async closeConnections(connections: TerminalConnection[], reason: string): Promise<void> {
+    const results = await Promise.allSettled(connections.map(connection => connection.close(reason)));
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Terminal connection close failed');
+  }
 }
