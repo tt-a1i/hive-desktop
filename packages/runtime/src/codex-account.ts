@@ -10,7 +10,7 @@ export type CodexAccountStatus =
 export async function probeCodexAccount(command:string, signal:AbortSignal):Promise<CodexAccountStatus> {
   if(signal.aborted) return {status:'cancelled'};
   let transport:CodexTransport|undefined;
-  const starting=CodexTransport.start({command,cwd:process.cwd(),requestTimeoutMs:5_000});
+  const starting=CodexTransport.start({command,cwd:process.cwd(),requestTimeoutMs:5_000,shutdownGraceMs:200,signal});
   const abort=()=>{void starting.then(value=>value.close(),()=>{}).catch(()=>{});};
   signal.addEventListener('abort',abort,{once:true});
   try {

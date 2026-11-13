@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { codexMetadataFile } from './codex-metadata.js';
 import type { CodexItem, CodexTurn } from './codex-history.js';
 
@@ -77,9 +77,13 @@ export class CodexProjection {
   }
   private save(entries: CodexDisplayEntry[], completedTurns = this.completedTurns): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
-    writeFileSync(temporary, JSON.stringify({ version: 1, entries, completedTurns }), { mode: 0o600 });
-    renameSync(temporary, this.file);
-    this.entries = entries;
-    this.completedTurns = completedTurns;
+    try {
+      writeFileSync(temporary, JSON.stringify({ version: 1, entries, completedTurns }), { mode: 0o600 });
+      renameSync(temporary, this.file);
+      this.entries = entries;
+      this.completedTurns = completedTurns;
+    } finally {
+      rmSync(temporary, { force: true });
+    }
   }
 }

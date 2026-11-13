@@ -10,6 +10,7 @@ export interface CodexTransportOptions {
   command?: string;
   requestTimeoutMs?: number;
   shutdownGraceMs?: number;
+  signal?: AbortSignal;
   onRequest?: (request: CodexServerRequest) => unknown | Promise<unknown>;
   onNotification?: (notification: CodexNotification) => void;
   onClose?: (info: CodexCloseInfo) => void;
@@ -115,13 +116,18 @@ export class CodexTransport {
         throw new RangeError('Codex timeouts must be positive finite milliseconds, at most 2147483647');
       }
     }
+    options.signal?.throwIfAborted();
     const transport = new CodexTransport(options);
+    const onAbort = () => { void transport.close().catch(() => {}); };
+    options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
       await transport.sendRequest('initialize', {
         clientInfo: { name: 'hive_desktop', title: 'Hive Desktop', version: '0.1.0' },
         capabilities: { experimentalApi: true, requestAttestation: false },
       });
+      options.signal?.throwIfAborted();
       await transport.write({ method: 'initialized' });
+      options.signal?.throwIfAborted();
       return transport;
     } catch (error) {
       await transport.close();
@@ -130,6 +136,8 @@ export class CodexTransport {
         throw new Error(`Codex 初始化失败（${options.command ?? 'codex'}）。请在「设置 → 外部程序」核对可执行文件。\n${error.message}\n${diagnostic}`, { cause: error });
       }
       throw error;
+    } finally {
+      options.signal?.removeEventListener('abort', onAbort);
     }
   }
 

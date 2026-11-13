@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 会话停止清理竞态、Codex 账号探测取消与显示日志原子写防护（2026-11-13，源码）
+
+继续审计 `packages/runtime/src/` 并复现修复四处并发与资源清理边界：(1) `chats.ts` 的 `stopLive()` 同步挂载 `chat.cleanup` 并在 `dispose()` 成功后、Promise 结算前同步触发单次 `onExit`，消除会话停止/退役期间并发 `open`/`reasoning`/`prompt` 命中销毁中句柄（`"Codex session is disposed"`）及微任务旧 `runId` 窗口；(2) `stopLive()` 将 `abort({ settleTools: true })` 纳入 `Promise.allSettled` + `finally { dispose() }`，修复 `stopAgentRun` 在 `abort` 抛错且连接未自发断开时泄漏子进程、令牌与 `running` 状态，同时用 `lastErrorMessage` 去重避免重复错误广播；(3) `CodexTransport.start()` 接入 `AbortSignal`，使 `probeCodexAccount` 在 `initialize` 挂起时的取消耗时从 `5,007 ms` 降至 `< 900 ms` 并确保回收子进程；(4) `CodexProjection.save()` 补齐 `.tmp` 异常清理，`team-tool.ts` 补齐子进程 `error` 分支的 `abort` 监听移除。五组前后对照、d43f55e 真实三会话副本冷读及 `check:codex`、`check:codex-account`、`check:workflow-shutdown`、`check:workspace-removal` 等回归通过，见[实证与边界](validation/2026-11-13-runtime-stop-and-probe-hardening.md)。无厂商推理或正式测试改动，待入下一开发包，完整目标继续。
+
 ## 当前开发包 9e6a44a 与项目存储治理（2026-11-13）
 
 暂停队列保持与可执行程序/元数据防护（`271082f`）、跨层本地化与双语会话搜索（`bf44928`）及桌面引导/输入框/协作过程界面打磨（`9e6a44a`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 8 份后台 JS/map，28,869 清单/29 链接、DMG 只读挂载与安装核对通过；包内队列保持/防护/双语搜索、d43f55e 真实 Terra 三会话 40 条冷读+冷态角色搜索→Rust、四组正式包检查，以及原生 macOS 中英文启动恢复与英文欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `0a388b3` 直接可运行回退，退役 `7b7940c` 解压树并清理 `experiments/gpui-chat/target` 等 132 项无用构建/临时副本（保留全部证据收据），合计回收约 11.03 GB（10.27 GiB），见[包内证据与存储](validation/2026-11-13-hardening-localization-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

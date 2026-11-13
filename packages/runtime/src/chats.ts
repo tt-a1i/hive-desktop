@@ -22,7 +22,7 @@ import { createTeamTool, createTeamCommand } from './team-tool.js';
 
 interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
-  failure?: Error; reasoningFailure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
+  failure?: Error; lastErrorMessage?: string; reasoningFailure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string };
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
@@ -197,6 +197,7 @@ export class Chats implements StructuredSessionPort {
     };
     const onEvent = (event: PiEvent) => {
       if (event.type === 'settled') { if (chat) chat.aborted = event.aborted; return; }
+      if (event.type === 'error' && chat) chat.lastErrorMessage = event.message;
       this.event(record.id, event);
     };
     const onUnexpectedExit = (error: Error) => {
@@ -428,7 +429,7 @@ export class Chats implements StructuredSessionPort {
         }
       },
       ready: () => { if (!this.keepingPaused.has(id)) chat.queue.resume(); },
-      stop: () => this.stopLive(id, chat),
+      stop: error => this.stopLive(id, chat, error),
     };
   }
   private launchConfig(record: ChatRecord) {
@@ -531,7 +532,6 @@ export class Chats implements StructuredSessionPort {
       // Reap this chat's owned app-server, then reopen its durable thread on
       // demand. Other chats own separate processes and keep their connections.
       await this.stopLive(id, chat);
-      chat.onExit?.();
     }
     return { ok: true };
   }
@@ -700,7 +700,9 @@ export class Chats implements StructuredSessionPort {
       try { await chat.handle.dispose(); }
       finally {
         if (this.live.get(id) === chat) this.live.delete(id);
-        chat.onExit?.(error);
+        const onExit = chat.onExit;
+        delete chat.onExit;
+        onExit?.(error);
       }
       // abort() rethrows the run's original error after awaiting owned tools.
       // It is already reported above; only a distinct cleanup failure is new.
@@ -710,19 +712,43 @@ export class Chats implements StructuredSessionPort {
     void chat.cleanup.catch(cleanupError => this.event(id, { type: 'error', sessionId: id,
       message: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }));
   }
-  private async stopLive(id: string, chat: LiveChat) {
+  private stopLive(id: string, chat: LiveChat, exitError?: unknown): Promise<void> {
     if (chat.cleanup) return chat.cleanup;
     const paused = chat.queue.pause();
-    await chat.handle.abort({ settleTools: true });
-    await paused;
-    try {
-      // Terminal dispatches no longer authorize work, even if retirement
-      // interrupts the native turn before it records a successful delivery.
-      if (!this.closing) this.pruneSettledDispatches(this.index.get(id), chat.queue);
-    } finally {
-      await chat.handle.dispose();
-      this.live.delete(id);
-    }
+    chat.cleanup = (async () => {
+      const [aborted, queuePaused] = await Promise.allSettled([chat.handle.abort({ settleTools: true }), paused]);
+      let abortError: Error | undefined;
+      if (aborted.status === 'rejected') {
+        abortError = aborted.reason instanceof Error ? aborted.reason : new Error(String(aborted.reason));
+        chat.failure ??= abortError;
+        if (chat.lastErrorMessage !== abortError.message) {
+          chat.lastErrorMessage = abortError.message;
+          this.event(id, { type: 'error', sessionId: id, message: abortError.message });
+        }
+      }
+      try {
+        // Terminal dispatches no longer authorize work, even if retirement
+        // interrupts the native turn before it records a successful delivery.
+        if (!abortError && !this.closing && this.index.peek(id)) {
+          this.pruneSettledDispatches(this.index.get(id), chat.queue);
+        }
+      } finally {
+        let disposed = false;
+        try {
+          await chat.handle.dispose();
+          disposed = true;
+        } finally {
+          if (this.live.get(id) === chat) this.live.delete(id);
+          if (disposed) {
+            const onExit = chat.onExit;
+            delete chat.onExit;
+            onExit?.(exitError ?? abortError);
+          }
+        }
+      }
+      if (queuePaused.status === 'rejected') throw queuePaused.reason;
+    })();
+    return chat.cleanup;
   }
   private pruneSettledDispatches(record: ChatRecord, queue: DeliveryQueue): void {
     if (!record.agentId) return;

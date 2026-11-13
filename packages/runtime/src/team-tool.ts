@@ -49,7 +49,10 @@ export function createTeamCommand(source: TeamToolOptions | (() => TeamToolOptio
         });
         const abort = () => child.kill();
         signal?.addEventListener('abort', abort, { once: true });
-        child.on('error', reject);
+        child.once('error', (error) => {
+          signal?.removeEventListener('abort', abort);
+          reject(error);
+        });
         child.on('close', (code) => {
           signal?.removeEventListener('abort', abort);
           if (signal?.aborted) return reject(new Error('Team command aborted'));

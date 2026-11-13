@@ -62,7 +62,7 @@ export function createStructuredLifecycle(
 	const stop = (run: StructuredRun, error?: unknown): Promise<void> => {
 		if (run.stopping) return run.stopping;
 		run.stopping = (async () => {
-			await run.handle?.stop();
+			await run.handle?.stop(error);
 			finish(run, error);
 		})();
 		return run.stopping;

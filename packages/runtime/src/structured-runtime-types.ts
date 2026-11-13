@@ -15,7 +15,7 @@ export interface StructuredSessionHandle {
 	deliver(text: string, options?: { triggerTurn?: boolean; presentation?: DeliveryPresentation; images?: readonly PromptImage[] }): Promise<void>;
 	/** Resume durable queued work after Hive startup/recovery becomes ready. */
 	ready?(): void;
-	stop(): Promise<void>;
+	stop(error?: unknown): Promise<void>;
 }
 export interface StructuredSessionPort {
 	start(input: {

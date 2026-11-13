@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 会话停止清理竞态、Codex 账号探测取消与显示日志原子写防护（2026-11-13，源码）
+
+复现并修复 `Chats.stopLive()` 未挂载 `chat.cleanup` 导致释放期并发请求抛 `"Codex session is disposed"`、`stopAgentRun()` 在 `abort` 抛错且传输层存活时泄漏子进程/令牌/`running` 状态、`probeCodexAccount()` 在 `initialize` 挂起时需等待 `5,007 ms` 超时才响应取消，以及 `CodexProjection.save()` 重命名失败残留 `.tmp` 与 `team-tool.ts` 启动报错泄漏 `abort` 监听器。五组前后对照、d43f55e 真实三会话副本冷读与 `check:codex`、`check:codex-account`、`check:workflow-shutdown`、`check:workspace-removal` 等回归通过，见[实证与边界](validation/2026-11-13-runtime-stop-and-probe-hardening.md)。无厂商推理/面板操作/正式测试改动，待随桌面端改进一并纳入下一开发包，完整目标继续。
+
 ## 当前开发包 9e6a44a 与项目存储治理（2026-11-13）
 
 暂停队列新输入保持与可执行程序/元数据防护（`271082f`）、跨层文案本地化与双语会话搜索（`bf44928`）及引导/输入框/协作卡片界面打磨（`9e6a44a`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `1924b6472632ae1657d719028fdb857fac15a1250158f620eebcafc2c040fb5b`）。精确 9 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、队列保持与双语别名检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与欢迎页/Terra 冷读正常退出（`exit 0`，子进程清空）通过，零新厂商推理。`0a388b3` 保留直接可运行回退，连同早期原型 `experiments/gpui-chat/target` 及过期临时副本共回收约 11.03 GB（10.27 GiB）无用存储（保留全部证据收据），见[包内证据与边界](validation/2026-11-13-hardening-localization-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
