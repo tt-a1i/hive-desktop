@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包 9e6a44a 与项目存储治理（2026-11-13）
+
+暂停队列保持与可执行程序/元数据防护（`271082f`）、跨层本地化与双语会话搜索（`bf44928`）及桌面引导/输入框/协作过程界面打磨（`9e6a44a`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 8 份后台 JS/map，28,869 清单/29 链接、DMG 只读挂载与安装核对通过；包内队列保持/防护/双语搜索、d43f55e 真实 Terra 三会话 40 条冷读+冷态角色搜索→Rust、四组正式包检查，以及原生 macOS 中英文启动恢复与英文欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `0a388b3` 直接可运行回退，退役 `7b7940c` 解压树并清理 `experiments/gpui-chat/target` 等 132 项无用构建/临时副本（保留全部证据收据），合计回收约 11.03 GB（10.27 GiB），见[包内证据与存储](validation/2026-11-13-hardening-localization-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
 ## 桌面引导、输入框与协作过程界面层次打磨（2026-11-13，源码）
 
 融合 Beluga、T3 Code 与 Cindy 的视觉层次打磨 `welcome`、`composer_controls`、`view`、`tool_message` 与 `conversation_list/view`：(1) 首屏 Agent 卡片升级为带图标徽章与本机状态圆点的 `Color::Card` 面板（严格保持本机检查免责声明），项目上下文栏与三步引导卡片分层呈现；(2) 修复未发送起始会话缺少当前后端标识的断层（新增 `composer-backend-badge` 并在对话态统一后端图标），升级起始建议胶囊边框对比度与空闲快捷键提示；(3) 工具组与单条工具行改用矢量折叠图标、计数胶囊与状态着色，协作投递/汇报卡片及恢复通知与助手正文清晰分层；(4) `settings/programs.rs` 补齐自有错误闭合翻译。Rust 测试、Windows 交叉检查与 Mac release 构建通过，见[说明与边界](validation/2026-11-13-desktop-surface-craft-polish.md)。不改既有元素 ID 或焦点滚动契约，即将随本批修改组装新安装包并做原生窗口核验。

@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 9e6a44a 与项目存储治理（2026-11-13）
+
+暂停队列新输入保持与可执行程序/元数据防护（`271082f`）、跨层文案本地化与双语会话搜索（`bf44928`）及引导/输入框/协作卡片界面打磨（`9e6a44a`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `1924b6472632ae1657d719028fdb857fac15a1250158f620eebcafc2c040fb5b`）。精确 9 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、队列保持与双语别名检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与欢迎页/Terra 冷读正常退出（`exit 0`，子进程清空）通过，零新厂商推理。`0a388b3` 保留直接可运行回退，连同早期原型 `experiments/gpui-chat/target` 及过期临时副本共回收约 11.03 GB（10.27 GiB）无用存储（保留全部证据收据），见[包内证据与边界](validation/2026-11-13-hardening-localization-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
 ## 桌面引导、输入框与协作过程界面层次打磨（2026-11-13，源码）
 
 融合 Beluga、T3 Code 与 Cindy 完善首屏 Agent 就绪卡片与三步引导、起始会话后端标识胶囊（`composer-backend-badge`）与建议胶囊对比度、工具过程矢量图标/计数胶囊及协作汇报卡片分层，同时保持全部既有元素 ID、无障碍标签与窄窗焦点滚动契约不变。Rust 测试、Windows 交叉检查与 Mac release 构建通过，见[说明与边界](validation/2026-11-13-desktop-surface-craft-polish.md)。即将随运行时与本地化修复一并组装新开发包并做原生窗口验证，完整目标继续。
