@@ -7,18 +7,19 @@ mod agents;
 impl HiveApp {
     pub(crate) fn render_project_context(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let project = self.workspaces.iter().find(|project| Some(&project.id) == self.workspace.as_ref());
-        h_flex().w_full().min_w_0().max_w(px(crate::conversation_list::CHAT_COLUMN_WIDTH)).mx_auto().gap_2()
+        h_flex().w_full().min_w_0().max_w(px(crate::conversation_list::CHAT_COLUMN_WIDTH)).mx_auto()
             .when_some(project, |row, project| {
                 let path = std::path::PathBuf::from(&project.path);
                 let identity = format!("{} · {}", project.name, project.path);
-                row.child(Button::new("home-project-folder").ghost().compact().icon(Glyph::FolderOpen)
-                    .accessibility_label(format!("{}: {identity}", tr("在文件管理器中打开项目")))
-                    .tooltip(project.path.clone()).on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&path))))
-                    .child(v_flex().min_w_0().flex_1().gap_1()
+                row.child(h_flex().w_full().min_w_0().items_center().gap_2().px_3().py_2().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
+                    .child(Button::new("home-project-folder").ghost().compact().icon(Glyph::FolderOpen)
+                        .accessibility_label(format!("{}: {identity}", tr("在文件管理器中打开项目")))
+                        .tooltip(project.path.clone()).on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&path))))
+                    .child(v_flex().min_w_0().flex_1().gap(px(2.))
                         .child(div().id("home-project-name").role(Role::Label).aria_label(project.name.clone())
                             .text_sm().font_weight(FontWeight::SEMIBOLD).truncate().child(project.name.clone()))
                         .child(div().id("home-project-path").role(Role::Label).aria_label(project.path.clone())
-                            .text_xs().text_color(Color::Muted.get(cx)).truncate().child(project.path.clone())))
+                            .text_xs().text_color(Color::Muted.get(cx)).truncate().child(project.path.clone()))))
             })
     }
 
@@ -75,17 +76,17 @@ impl HiveApp {
                         } else { tr("后台暂不可用 · 可在窗口顶部重新启动后台") })))
                     .child(self.render_welcome_agents(cx))
                     .child(v_flex().flex_shrink_0().gap_4().pt_5().border_t_1().border_color(Color::Divider.get(cx))
-                        .child(h_flex().flex_wrap().items_start().gap_4().children([
+                        .child(h_flex().flex_wrap().items_stretch().gap_3().children([
                             ("01", tr("打开项目"), tr("选择本地文件夹，已有项目和会话会留在侧栏。")),
                             ("02", tr("选择你的主控"), tr("内置 Pi、Claude Code、Codex 或外部 Pi，使用各自的模型与账号。")),
                             ("03", tr("和团队一起工作"), tr("从主会话安排任务，随时查看成员的对话、执行过程与汇报。")),
-                        ].into_iter().map(|(number, title, description)| v_flex().flex_1().min_w(px(160.)).gap_2()
+                        ].into_iter().map(|(number, title, description)| v_flex().flex_1().min_w(px(172.)).gap_2().p_3().rounded_xl().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx))
                             .id(SharedString::from(format!("welcome-step-{number}"))).role(Role::Label).aria_label(format!("{number} · {title} · {description}"))
                             .child(h_flex().items_center().gap_2()
-                                .child(div().text_xs().text_color(Color::Muted.get(cx)).child(number))
+                                .child(div().rounded_md().bg(Color::Inset.get(cx)).px(px(6.)).py(px(2.)).text_xs().font_weight(FontWeight::SEMIBOLD).text_color(Color::Secondary.get(cx)).child(number))
                                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title)))
                             .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(description)))))
-                        .child(Reveal::new("welcome-programs-reveal", &self.welcome_scroll, Button::new("welcome-programs").ghost().label(tr("检查外部 Agent 程序"))
+                        .child(Reveal::new("welcome-programs-reveal", &self.welcome_scroll, Button::new("welcome-programs").ghost().rounded_full().label(tr("检查外部 Agent 程序"))
                             .on_click(cx.listener(|this, _, window, cx| { this.settings_section = SettingsSection::Programs; this.open_settings(window, cx); })))))
             )))
     }

@@ -39,6 +39,7 @@ impl HiveApp {
                 }
                 .into()
             });
+        let find_matched = self.conversation_find_matches(&message.id);
         v_flex()
             .id(("message", i))
             .role(Role::Group)
@@ -47,11 +48,19 @@ impl HiveApp {
             .gap_2()
             .px_3()
             .py_2()
-            .rounded_lg()
-            .when(self.conversation_find_matches(&message.id), |view| {
+            .rounded_xl()
+            .when(!find_matched && message.delivery.is_some(), |view| {
+                view.bg(Color::Card.get(cx))
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
+            })
+            .when(!find_matched && message.delivery.is_none() && message.role == "notice", |view| {
+                view.bg(Color::Inset.get(cx))
+            })
+            .when(find_matched, |view| {
                 view.bg(Color::Attention.get(cx))
             })
-            .when(message.role == "user", |bubble| {
+            .when(message.role == "user" && message.delivery.is_none(), |bubble| {
                 bubble.ml_auto().max_w(px(680.))
             })
             .when(!message.explicit_user, |view| {
@@ -91,8 +100,12 @@ impl HiveApp {
                                         .id(("report-state", i))
                                         .role(Role::Label)
                                         .aria_label(state.to_owned())
+                                        .rounded_full()
+                                        .bg(Color::Inset.get(cx))
+                                        .px_2()
+                                        .py(px(2.))
                                         .text_xs()
-                                        .text_color(Color::Muted.get(cx))
+                                        .text_color(Color::Secondary.get(cx))
                                         .child(state),
                                 )
                             },
@@ -275,7 +288,7 @@ impl HiveApp {
                             .min_w_0()
                             .p_3()
                             .rounded_lg()
-                            .bg(Color::Card.get(cx))
+                            .bg(Color::Inset.get(cx))
                             .text_sm()
                             .child(
                                 message

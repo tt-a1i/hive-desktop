@@ -12,6 +12,7 @@ pub enum Color {
     Secondary,
     Inset,
     Attention,
+    Success,
     Error,
     ErrorSurface,
 }
@@ -28,6 +29,7 @@ impl Color {
             Self::Secondary => (0x535550, 0xb7bab4),
             Self::Inset => (0xf0f0ed, 0x292929),
             Self::Attention => (0xf1eee4, 0x332f25),
+            Self::Success => (0x267347, 0x6dd294),
             Self::Error => (0xab382b, 0xffa59a),
             Self::ErrorSurface => (0xffe9e4, 0x442a29),
         };

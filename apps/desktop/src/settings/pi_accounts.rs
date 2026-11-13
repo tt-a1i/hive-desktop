@@ -129,6 +129,17 @@ impl PiAccounts {
         } else { format!("本机已保存 {count} 个提供商的登录信息；打开项目后选择模型。") }
     }
 
+    pub(crate) fn local_check_state(&self) -> Option<bool> {
+        if self.loading || self.running() {
+            return None;
+        }
+        if matches!(self.message, Some(AccountNotice::Failed(_))) {
+            return Some(false);
+        }
+        let providers = self.providers.as_ref()?;
+        providers.iter().any(|provider| provider.stored_type.is_some()).then_some(true)
+    }
+
     pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
         self.search.update(cx, |input,cx| input.set_placeholder(tr("搜索提供商，如 OpenAI、Anthropic…"),window,cx));
         self.input.update(cx, |input,cx| input.set_placeholder(input_placeholder(self.login.as_ref().and_then(|login| login.prompt.as_ref())),window,cx));

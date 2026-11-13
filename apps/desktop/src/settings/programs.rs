@@ -74,7 +74,7 @@ impl HiveApp {
         if check.input_changed(&input.read(cx).value()) { return tr("输入已更改，请重新检查。").into(); }
         let message = match check.result.as_ref() {
             Some(Ok(result)) => result.message(),
-            Some(Err(error)) => error.clone(),
+            Some(Err(error)) => crate::language::localize_owned_error(error),
             None => tr("尚未检查程序版本").into(),
         };
         let saved = self.executable_settings.as_ref().and_then(|settings| match backend {
@@ -84,6 +84,18 @@ impl HiveApp {
         if !environment && input.read(cx).value().trim() != saved {
             format!("{}: {message}", tr("未保存的程序路径"))
         } else { message }
+    }
+
+    pub(crate) fn program_local_check_state(&self, backend: &'static str, cx: &Context<Self>) -> Option<bool> {
+        let input = match backend { "codex" => &self.codex_command, "claude" => &self.claude_command, _ => &self.pi_command };
+        let check = self.program_checks.get(backend)?;
+        if check.loading || check.input_changed(&input.read(cx).value()) {
+            return None;
+        }
+        match check.result.as_ref()? {
+            Ok(result) => Some(result.status == "available"),
+            Err(_) => Some(false),
+        }
     }
 
     pub(crate) fn render_program_settings(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
@@ -183,7 +195,7 @@ impl HiveApp {
             .when_some(effective,|row,value|row.child(readout("effective",value.label(tr("当前使用"))).text_xs().text_color(Color::Muted.get(cx))))
             .when(changed, |row|row.child(readout("changed",tr("输入已更改，请重新检查。").into()).text_xs().text_color(Color::Secondary.get(cx))))
             .when_some(check.filter(|_|!changed).and_then(|check|check.result.as_ref()),|row,result|match result {
-                Err(error)=>row.child(readout("error",error.clone()).text_sm().text_color(Color::Error.get(cx))),
+                Err(error)=>row.child(readout("error",crate::language::localize_owned_error(error)).text_sm().text_color(Color::Error.get(cx))),
                 Ok(result)=>row.child(v_flex().min_w_0().gap_1()
                     .child(readout("result",result.message()).text_sm().text_color(if result.status=="available" {Color::Text.get(cx)} else {Color::Error.get(cx)}))
                     .child(readout("checked",EffectiveCommand{command:result.command.clone(),source:result.source.clone()}.label(tr("本次检查"))).text_xs().text_color(Color::Muted.get(cx)))

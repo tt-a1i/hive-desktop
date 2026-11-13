@@ -473,7 +473,8 @@ impl Render for HiveApp {
                     .child(tr("先写下需求，再选择主控 Agent。草稿会带入新会话。"))))
                 .child(v_flex().w_full().min_w_0().min_h_0().max_h(window.viewport_size().height * 0.65).flex_shrink_0().gap_2().when(!welcome, |dock| dock.px_5().when(!narrow, |dock| dock.px(px(44.))))
                 .when(!welcome, |dock| dock.child(h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().items_center().gap_2()
-                    .child(div().rounded_full().bg(Color::Inset.get(cx)).px_2().py_1().text_xs().font_weight(FontWeight::SEMIBOLD)
+                    .child(h_flex().items_center().gap(px(5.)).rounded_full().bg(Color::Inset.get(cx)).px(px(10.)).py_1().text_xs().font_weight(FontWeight::SEMIBOLD)
+                        .when_some(self.session.as_ref(), |pill, s| pill.child(Icon::new(crate::composer_controls::backend_glyph(s.backend)).size_3().text_color(Color::Secondary.get(cx))))
                         .child(self.session.as_ref().map(|s| tr(s.backend.label())).unwrap_or("Hive")))
                     .when(has_session_failure, |row| row.child(Button::new("show-session-failure").ghost().compact().label(tr("错误详情"))
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -512,8 +513,8 @@ impl Render for HiveApp {
                 .when_some(self.render_input_attachments(cx), |body, attachments| body.child(crate::focus_scroll::Reveal::new("composer-attachments-reveal", &self.composer_scroll, attachments)))
                 .when(self.workspace.is_some(), |v| v.child(crate::focus_scroll::Reveal::new("composer-input-reveal", &self.composer_scroll, div().capture_action(cx.listener(Self::composer_enter)).capture_action(cx.listener(Self::command_up)).capture_action(cx.listener(Self::command_down)).capture_action(cx.listener(Self::command_escape)).child(Textarea::new(&self.input).appearance(false).bordered(false).aria_label(tr("聊天消息")).on_paste({ let app = cx.weak_entity(); move |item, _, cx| app.update(cx, |this, cx| this.paste_images(item, cx)).unwrap_or(false) })))))
                         )))
-                .child(div().flex_shrink_0().child(self.render_composer_controls(window, running, can_submit && has_text, cx)))
-                .when(!self.connected || running || pending > 0, |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { tr("后台暂不可用 · 可在窗口顶部重新启动后台") } else if running { tr("Agent 正在处理 · 新消息会按顺序排队") } else if pending > 0 { tr("有待处理消息，请先继续") } else { "" }))))
+                .child(div().flex_shrink_0().child(self.render_composer_controls(window, welcome, running, can_submit && has_text, cx)))
+                .when(!self.connected || running || pending > 0 || (self.workspace.is_some() && !needs_pi_model), |v| v.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if !self.connected { tr("后台暂不可用 · 可在窗口顶部重新启动后台") } else if running { tr("Agent 正在处理 · 新消息会按顺序排队") } else if pending > 0 { tr("有待处理消息，请先继续") } else { cx.global::<crate::composer::ComposerPreferences>().mode.hint() }))))
                 .when(needs_pi_model && self.connected, |surface| surface.child(
                     h_flex().w_full().max_w(px(CHAT_COLUMN_WIDTH)).mx_auto().min_w_0().flex_wrap().items_center().gap_2()
                         .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if let Some(model) = &self.unavailable_model {
@@ -533,13 +534,14 @@ impl Render for HiveApp {
                             (Glyph::Search, tr("审查未提交的改动"), tr("请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。")),
                             (Glyph::Network, tr("拆分团队任务"), tr("请先和我确认这次要达成的目标，再提出适合由成员并行处理的任务。")),
                         ].into_iter().enumerate().map(|(i,(icon,label,prompt))| {
-                            Button::new(("starter",i)).ghost().h(px(35.)).rounded_full().text_color(Color::Muted.get(cx)).icon(icon).label(label)
-                                .on_click(cx.listener(move |this, _, window, cx| this.input.update(cx, |input,cx| {
-                                    let current = input.value();
-                                    let value = if current.is_empty() { prompt.to_owned() } else { format!("{current}\n{prompt}") };
-                                    input.replace_all(value, window, cx);
-                                    input.focus(window,cx);
-                                })))
+                            div().rounded_full().bg(Color::Card.get(cx)).border_1().border_color(Color::Divider.get(cx)).child(
+                                Button::new(("starter",i)).ghost().h(px(34.)).rounded_full().text_color(Color::Secondary.get(cx)).icon(icon).label(label)
+                                    .on_click(cx.listener(move |this, _, window, cx| this.input.update(cx, |input,cx| {
+                                        let current = input.value();
+                                        let value = if current.is_empty() { prompt.to_owned() } else { format!("{current}\n{prompt}") };
+                                        input.replace_all(value, window, cx);
+                                        input.focus(window,cx);
+                                    }))))
                         }))
                 ))
                 .into_any_element() })))

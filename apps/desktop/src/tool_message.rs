@@ -71,16 +71,22 @@ impl HiveApp {
                 .child(
                     h_flex()
                         .flex_1()
+                        .items_center()
                         .gap_2()
-                        .child(div().text_sm().child(tr("工作过程")))
+                        .child(Icon::new(Glyph::Cpu).size_4().text_color(Color::Muted.get(cx)))
+                        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(tr("工作过程")))
                         .child(
                             div()
-                                .flex_1()
+                                .rounded_full()
+                                .bg(Color::Inset.get(cx))
+                                .px_2()
+                                .py(px(1.))
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
                                 .child(if english() {format!("{count} completed")} else {format!("{count} 项已完成")}),
                         )
-                        .child(if expanded { "▾" } else { "▸" }),
+                        .child(div().flex_1())
+                        .child(Icon::new(if expanded { Glyph::ChevronDown } else { Glyph::ChevronRight }).size_3().text_color(Color::Muted.get(cx))),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.prepare_conversation_expansion(&key);
@@ -118,6 +124,12 @@ impl HiveApp {
         let input = self.tool_inputs.get(&id).filter(|args| !args.is_null());
         let summary = input.and_then(input_summary);
         let failed = tool.status == "失败";
+        let status_color = match tool.status {
+            "失败" => Color::Error.get(cx),
+            "完成" => Color::Success.get(cx),
+            "执行中" => Color::Text.get(cx),
+            _ => Color::Secondary.get(cx),
+        };
         v_flex()
             .id(("tool-message-row", index))
             .when(self.conversation_find_matches(&message.id), |view| {
@@ -134,9 +146,10 @@ impl HiveApp {
                         h_flex()
                             .flex_1()
                             .min_w_0()
+                            .items_center()
                             .gap_2()
-                            .child(if tool.expanded { "▾" } else { "▸" })
-                            .child(div().flex_shrink_0().child(tool.name.clone()))
+                            .child(Icon::new(if tool.expanded { Glyph::ChevronDown } else { Glyph::ChevronRight }).size_3().text_color(Color::Muted.get(cx)))
+                            .child(div().flex_shrink_0().rounded_md().bg(Color::Inset.get(cx)).px(px(6.)).py(px(2.)).text_xs().font_weight(FontWeight::SEMIBOLD).child(tool.name.clone()))
                             .child(
                                 div()
                                     .min_w_0()
@@ -148,12 +161,9 @@ impl HiveApp {
                             )
                             .child(
                                 div()
+                                    .flex_shrink_0()
                                     .text_xs()
-                                    .text_color(if failed {
-                                        Color::Error.get(cx)
-                                    } else {
-                                        Color::Secondary.get(cx)
-                                    })
+                                    .text_color(status_color)
                                     .child(tr(tool.status)),
                             ),
                     )

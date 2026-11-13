@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 桌面引导、输入框与协作过程界面层次打磨（2026-11-13，源码）
+
+融合 Beluga、T3 Code 与 Cindy 完善首屏 Agent 就绪卡片与三步引导、起始会话后端标识胶囊（`composer-backend-badge`）与建议胶囊对比度、工具过程矢量图标/计数胶囊及协作汇报卡片分层，同时保持全部既有元素 ID、无障碍标签与窄窗焦点滚动契约不变。Rust 测试、Windows 交叉检查与 Mac release 构建通过，见[说明与边界](validation/2026-11-13-desktop-surface-craft-polish.md)。即将随运行时与本地化修复一并组装新开发包并做原生窗口验证，完整目标继续。
+
 ## 跨层文案本地化、动态回退与双语会话搜索索引（2026-11-13，源码）
 
 推进 `#17` 跨层文案与检索一致性：`chats.ts` 搜索索引补齐未绑定默认 `'New conversation'` 别名与绑定会话双语角色词（零 Agent 启动），`session_row.rs` / `search.rs` 对齐 `:__workflow__` 与角色副标题，缺来源投递提示、默认恢复摘要与空错误诊断改为渲染期动态本地化且不污染引用草稿，`language.rs` 闭合集 `localize_owned_error` 覆盖桌面与运行时自有错误并逐字节保留外部原文，`locales/en.json` 扩展至 1,298 条唯一键。`session-search`、双语别名与 d43f55e 真实三会话冷副本检索、Rust 测试及 Windows 交叉检查通过，见[实证与边界](validation/2026-11-13-cross-layer-localization-and-search-aliases.md)。未关闭 `#17`（仍待原生全表面/字号/VoiceOver/Windows 硬件核验），待入下一安装包，完整目标继续。

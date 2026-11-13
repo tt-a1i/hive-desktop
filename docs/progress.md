@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 桌面引导、输入框与协作过程界面层次打磨（2026-11-13，源码）
+
+融合 Beluga、T3 Code 与 Cindy 的视觉层次打磨 `welcome`、`composer_controls`、`view`、`tool_message` 与 `conversation_list/view`：(1) 首屏 Agent 卡片升级为带图标徽章与本机状态圆点的 `Color::Card` 面板（严格保持本机检查免责声明），项目上下文栏与三步引导卡片分层呈现；(2) 修复未发送起始会话缺少当前后端标识的断层（新增 `composer-backend-badge` 并在对话态统一后端图标），升级起始建议胶囊边框对比度与空闲快捷键提示；(3) 工具组与单条工具行改用矢量折叠图标、计数胶囊与状态着色，协作投递/汇报卡片及恢复通知与助手正文清晰分层；(4) `settings/programs.rs` 补齐自有错误闭合翻译。Rust 测试、Windows 交叉检查与 Mac release 构建通过，见[说明与边界](validation/2026-11-13-desktop-surface-craft-polish.md)。不改既有元素 ID 或焦点滚动契约，即将随本批修改组装新安装包并做原生窗口核验。
+
 ## 跨层文案本地化、动态回退与双语会话搜索索引（2026-11-13，源码）
 
 审计 `apps/desktop/src/` 与 `packages/runtime/src/` 补齐跨层中英文与检索一致性（推进 `#17`）：(1) `chats.ts` 搜索索引对未绑定默认 `'新会话'` 补充 `'New conversation'`（排除自定义同名会话），对绑定会话补充双语角色词（主控/工作流/成员），全程零 Agent 启动；(2) `navigation/session_row.rs` 与 `sessions/search.rs` 对齐 `:__workflow__` 及绑定角色副标题与无障碍描述；(3) 缺来源投递提示、默认恢复摘要与空错误诊断改为渲染期动态本地化，防止缺来源提示误入引用草稿并保留原文复制；(4) `language.rs` 新增闭合集 `localize_owned_error` 接入各面板自有错误展示（外部 CLI/OS/SDK 原文逐字节保留），补齐适配器标签、英文标点及 `locales/en.json` 至 1,298 条唯一键。`session-search`、双语别名与 d43f55e 真实三会话副本冷搜、Rust 单元/进程树测试及 Windows 交叉检查通过，见[实证与边界](validation/2026-11-13-cross-layer-localization-and-search-aliases.md)。待入下一安装包并做原生窗口核验，完整目标继续。

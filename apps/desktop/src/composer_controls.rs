@@ -1,14 +1,31 @@
-use crate::{app::HiveApp, language::tr};
+use crate::{app::HiveApp, language::tr, palette::Color, protocol::Backend};
 use gpui_kit::{assets::IconName as Glyph, component::{button::{Button, ButtonVariants}, *}, prelude::FluentBuilder, *};
 
+pub(crate) fn backend_glyph(backend: Backend) -> Glyph {
+    match backend {
+        Backend::Pi => Glyph::Sparkles,
+        Backend::Codex => Glyph::Cpu,
+        Backend::Claude => Glyph::Bot,
+        Backend::PiRpc => Glyph::SquareTerminal,
+    }
+}
+
 impl HiveApp {
-    pub(crate) fn render_composer_controls(&self, window: &Window, running: bool, can_send: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn render_composer_controls(&self, window: &Window, welcome: bool, running: bool, can_send: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let attachment_count = self.attachments.refs(self.draft_target.as_ref()).len();
         let can_resume = !running && self.session.as_ref().and_then(|session| self.pending.get(&session.id)).copied().unwrap_or(0) > 0
             && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some());
         h_flex().w_full().min_w_0().gap_2().items_end()
-            .child(h_flex().min_w_0().flex_wrap().gap_1()
+            .child(h_flex().min_w_0().flex_wrap().items_center().gap_1()
                 .when(self.session.is_none(), |row| row.child(self.new_chat_menu("home-agent", tr("选择 Agent"), None, cx)))
+                .when_some(self.session.as_ref().filter(|_| welcome), |row, session| {
+                    let label = tr(session.backend.label());
+                    row.child(div().id("composer-backend-badge").role(Role::Label).aria_label(label)
+                        .flex_shrink_0().h(px(26.)).px(px(10.)).rounded_full().bg(Color::Inset.get(cx))
+                        .flex().items_center().gap(px(5.)).text_xs().font_weight(FontWeight::SEMIBOLD)
+                        .child(Icon::new(backend_glyph(session.backend)).size_3().text_color(Color::Secondary.get(cx)))
+                        .child(label))
+                })
                 .child(Button::new("attach-images").ghost().compact().icon(Glyph::Plus).when(attachment_count == 0, |button| button.label(tr("附件")))
                     .accessibility_label(tr("添加文件或图片"))
                     .disabled(!self.connected || self.workspace.is_none() || self.loading || self.session.as_ref().is_some_and(|session| self.inflight_inputs.contains_key(&session.id)) || !self.attachments.ready(self.draft_target.as_ref()))
