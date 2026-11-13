@@ -56,7 +56,11 @@ impl RenderOnce for TerminalDrawer {
         } else if self.ready {
             Color::Success.get(cx)
         } else if self.loading {
-            Color::Attention.get(cx)
+            rgb(if Theme::global(cx).is_dark() {
+                0xfbbf24
+            } else {
+                0xd97706
+            })
         } else {
             Color::Muted.get(cx)
         };

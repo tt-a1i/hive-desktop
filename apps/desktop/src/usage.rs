@@ -121,6 +121,23 @@ impl HiveApp {
         })
         .detach();
     }
+}
+
+fn context_percent_color(percent: f64, cx: &App) -> Rgba {
+    if percent >= 90. {
+        Color::Error.get(cx)
+    } else if percent >= 75. {
+        rgb(if Theme::global(cx).is_dark() {
+            0xfbbf24
+        } else {
+            0xd97706
+        })
+    } else {
+        Color::Accent.get(cx)
+    }
+}
+
+impl HiveApp {
     pub(crate) fn usage_button(&self, window: &Window, running: bool, cx: &Context<Self>) -> impl IntoElement + use<> {
         let context_percent = self
             .usage
@@ -128,15 +145,7 @@ impl HiveApp {
             .as_ref()
             .and_then(|snapshot| snapshot.context.as_ref())
             .and_then(|context| context.percent);
-        let ring_color = context_percent.map(|percent| {
-            if percent >= 90. {
-                Color::Error.get(cx)
-            } else if percent >= 75. {
-                Color::Attention.get(cx)
-            } else {
-                Color::Accent.get(cx)
-            }
-        });
+        let ring_color = context_percent.map(|percent| context_percent_color(percent, cx));
         let trigger = Button::new("session-usage")
             .custom(crate::palette::quiet_icon_variant(cx))
             .compact()
@@ -370,15 +379,7 @@ impl HiveApp {
                                             }
                                         }
                                     };
-                                    let bar_color = context.percent.map(|p| {
-                                        if p >= 90. {
-                                            Color::Error.get(cx)
-                                        } else if p >= 75. {
-                                            Color::Attention.get(cx)
-                                        } else {
-                                            Color::Accent.get(cx)
-                                        }
-                                    });
+                                    let bar_color = context.percent.map(|p| context_percent_color(p, cx));
                                     view.child(
                                         v_flex()
                                             .id("usage-context")
