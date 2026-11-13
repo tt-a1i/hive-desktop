@@ -61,6 +61,11 @@ pub struct Remote {
     message: Option<Notice>,
     pub scroll: ScrollHandle,
 }
+impl Remote {
+    pub(super) fn message_is_error(&self) -> bool {
+        self.message.as_ref().is_some_and(Notice::is_error)
+    }
+}
 enum Notice {
     TicketError(String),
     Submitted,
@@ -69,6 +74,12 @@ enum Notice {
     DiagnosticsError(String),
 }
 impl Notice {
+    fn is_error(&self) -> bool {
+        matches!(
+            self,
+            Self::TicketError(_) | Self::ActionError(_) | Self::DiagnosticsError(_)
+        )
+    }
     fn text(&self) -> String {
         use crate::language::{localize_owned_error, tr};
         match self {

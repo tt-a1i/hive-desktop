@@ -4,61 +4,89 @@ use crate::{
     palette::Color,
 };
 use gpui_kit::{
-    component::{button::Button, *},
+    component::{
+        button::{Button, ButtonVariants},
+        *,
+    },
+    prelude::FluentBuilder,
     *,
 };
 
 impl HiveApp {
     pub(super) fn render_language_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = cx.global::<Language>().locale;
-        v_flex()
-            .gap_2()
-            .pb_4()
-            .border_b_1()
-            .border_color(Color::Divider.get(cx))
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(tr("界面语言")),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(Color::Secondary.get(cx))
-                    .child(tr(
-                        "切换应用界面语言，不翻译会话正文、工具结果或用户配置内容。",
-                    )),
-            )
-            .child(crate::focus_scroll::Reveal::new(
-                "appearance-language-reveal",
-                &self.appearance_scroll,
-                h_flex().gap_2().flex_wrap().children(
-                    [
-                        (Locale::Zh, "中文", "language-zh"),
-                        (Locale::En, "English", "language-en"),
-                    ]
-                    .into_iter()
-                    .map(|(locale, label, id)| {
-                        let active = selected == locale;
-                        Button::new(id)
-                            .outline()
-                            .small()
-                            .rounded_lg()
-                            .px_3()
-                            .label(label)
-                            .accessibility_label(label)
-                            .selected(active)
-                            .toggled(active)
-                            .disabled(!language::available(cx))
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                language::choose(locale, cx);
-                                cx.notify();
-                            }))
-                    }),
-                ),
-            ))
-            .children(language::message(cx).map(|message| div().text_sm().child(message)))
+        super::settings_row(false, cx).child(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .flex_wrap()
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w(px(220.))
+                                .gap_0p5()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(Color::Text.get(cx))
+                                        .child(tr("界面语言")),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(Color::Secondary.get(cx))
+                                        .child(tr(
+                                            "切换应用界面语言，不翻译会话正文、工具结果或用户配置内容。",
+                                        )),
+                                ),
+                        )
+                        .child(crate::focus_scroll::Reveal::new(
+                            "appearance-language-reveal",
+                            &self.appearance_scroll,
+                            super::settings_segmented_bar(cx).children(
+                                [
+                                    (Locale::Zh, "中文", "language-zh"),
+                                    (Locale::En, "English", "language-en"),
+                                ]
+                                .into_iter()
+                                .map(|(locale, label, id)| {
+                                    let active = selected == locale;
+                                    Button::new(id)
+                                        .when(active, |b| b.outline())
+                                        .when(!active, |b| b.ghost())
+                                        .small()
+                                        .h(px(26.))
+                                        .px_2p5()
+                                        .rounded_md()
+                                        .label(label)
+                                        .accessibility_label(label)
+                                        .selected(active)
+                                        .toggled(active)
+                                        .disabled(!language::available(cx))
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            language::choose(locale, cx);
+                                            cx.notify();
+                                        }))
+                                }),
+                            ),
+                        )),
+                )
+                .children(language::message(cx).map(|message| {
+                    div()
+                        .text_xs()
+                        .text_color(Color::Secondary.get(cx))
+                        .child(message)
+                })),
+        )
     }
     pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
         self.memory.localize_placeholder(window, cx);
