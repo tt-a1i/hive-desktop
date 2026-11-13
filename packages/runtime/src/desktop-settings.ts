@@ -77,8 +77,9 @@ export class DesktopSettings {
   async close(): Promise<void> {
     this.probeAbort.abort();
     const results = await Promise.allSettled([...this.probes]);
-    const failed = results.find(result => result.status === 'rejected');
-    if (failed?.status === 'rejected') throw failed.reason;
+    const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map(result => result.reason);
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Desktop settings probes failed to close');
   }
   async get(): Promise<DesktopSettingsSnapshot> {
     const stored = await this.hive.request('GET', path) as { value: string | null };

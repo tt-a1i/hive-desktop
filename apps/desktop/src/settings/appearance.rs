@@ -28,7 +28,9 @@ impl HiveApp {
                     .text_color(Color::Secondary.get(cx))
                     .child(tr("跟随系统自动切换，或固定使用浅色、深色外观。")),
             )
-            .child(
+            .child(crate::focus_scroll::Reveal::new(
+                "appearance-theme-reveal",
+                &self.appearance_scroll,
                 h_flex().gap_2().flex_wrap().children(
                     [
                         ("theme-system", tr("跟随系统"), Mode::System),
@@ -49,7 +51,7 @@ impl HiveApp {
                             }))
                     }),
                 ),
-            )
+            ))
             .child(
                 div()
                     .text_sm()
@@ -62,10 +64,13 @@ impl HiveApp {
                     .text_color(Color::Secondary.get(cx))
                     .child(tr("调整菜单、设置和普通聊天文字的大小，立即生效并保存在本机。")),
             )
-            .child(
+            .child(crate::focus_scroll::Reveal::new(
+                "appearance-font-reveal",
+                &self.appearance_scroll,
                 h_flex()
                     .gap_2()
                     .flex_wrap()
+                    .items_center()
                     .child(
                         Button::new("decrease-interface-font")
                             .label("A−")
@@ -109,7 +114,7 @@ impl HiveApp {
                                 )
                             })),
                     ),
-            )
+            ))
             .child(
                 v_flex()
                     .gap_2()

@@ -32,16 +32,16 @@ impl HiveApp {
                 .when_some(accounts.agent_dir.clone().or_else(|| self.pi_agent_dir.as_ref().map(|path| path.to_string_lossy().into_owned())), |row, dir| row.child(Button::new("open-pi-config-folder").ghost().compact().label(tr("打开 Pi 配置目录")).tooltip(dir.clone())
                     .on_click(move |_, _, cx| cx.reveal_path(std::path::Path::new(&dir)))))))
             .child(crate::focus_scroll::Reveal::new("pi-accounts-search-reveal", &accounts.scroll, Input::new(&accounts.search).aria_label(tr("搜索 Pi 提供商")).disabled(accounts.providers.is_none())))
-            .when(accounts.providers.is_some(), |view| view.child(h_flex().items_center().justify_between().gap_2()
+            .when(accounts.providers.is_some(), |view| view.child(crate::focus_scroll::Reveal::new("pi-accounts-count-reveal", &accounts.scroll, h_flex().items_center().justify_between().gap_2()
                 .child(crate::text_reading::selectable_text("pi-provider-count", if english() { format!("{} {}", matching.len(), if matching.len() == 1 { "provider" } else { "providers" }) } else { format!("{} 个提供商", matching.len()) }).text_xs().text_color(Color::Secondary.get(cx)))
-                .when(!query.is_empty(), |row| row.child(Button::new("clear-pi-provider-search").ghost().compact().label(tr("清除搜索")).on_click(cx.listener(|this, _, window, cx| this.pi_accounts.search.update(cx, |input, cx| { input.set_value("", window, cx); input.focus_handle(cx).focus(window, cx); })))))))
+                .when(!query.is_empty(), |row| row.child(Button::new("clear-pi-provider-search").ghost().compact().label(tr("清除搜索")).on_click(cx.listener(|this, _, window, cx| this.pi_accounts.search.update(cx, |input, cx| { input.set_value("", window, cx); input.focus_handle(cx).focus(window, cx); }))))))))
             .when_some(accounts.message.as_ref().map(|notice| notice.text()), |view, message| view.child(crate::text_reading::selectable_text("pi-accounts-notice", message).p_3().rounded_lg().bg(Color::Inset.get(cx)).text_sm()))
             .when_some(accounts.login.clone(), |view, login| {
                 let running = login.state == "running";
                 let api = login.auth_type == "api_key";
                 let provider = accounts.providers.as_ref().and_then(|providers| providers.iter().find(|provider| provider.id == login.provider_id)).map(|provider| provider.name.clone()).unwrap_or(login.provider_id.clone());
                 let login_id = login.id.clone();
-                view.child(v_flex().p_4().gap_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
+                view.child(crate::focus_scroll::Reveal::new("pi-accounts-login-reveal", &accounts.scroll, v_flex().p_4().gap_3().rounded_lg().border_1().border_color(Color::Divider.get(cx))
                     .child(h_flex().gap_2().items_center().flex_wrap()
                         .child(div().flex_1().min_w_0().text_sm().font_weight(FontWeight::SEMIBOLD).child(format!("{} · {}", provider, match login.state.as_str() { "running" => if api { tr("正在配置") } else { tr("正在登录") }, "succeeded" => tr("已保存"), "cancelled" => tr("已取消"), _ => tr("登录失败") })))
                         .when(running, |row| row.child(Button::new("cancel-pi-login").ghost().compact().label(if api { tr("取消配置") } else { tr("取消登录") }).disabled(disabled)
@@ -63,7 +63,7 @@ impl HiveApp {
                     })
                     .when_some(login.notice.as_ref().filter(|_| login.authorization.is_some()).and_then(|notice| notice.get("message")).and_then(Value::as_str).map(String::from), |view, message| view.child(div().text_sm().text_color(Color::Secondary.get(cx)).child(message)))
                     .when_some(login.prompt.filter(|_| running), |view, prompt| {
-                        view.child(v_flex().gap_2().child(div().text_sm().child(prompt.message.clone()))
+                        view.child(crate::focus_scroll::Reveal::new("pi-accounts-prompt-reveal", &accounts.scroll, v_flex().gap_2().child(div().text_sm().child(prompt.message.clone()))
                             .when(prompt.kind != "select", |view| view
                                 .child(Input::new(&accounts.input).aria_label(prompt.message).disabled(disabled).when(matches!(prompt.kind.as_str(), "secret" | "manual_code"), |input| input.mask_toggle()))
                                 .child(h_flex().child(Button::new("submit-pi-login").primary().rounded_full().label(if api { tr("继续") } else { tr("继续登录") }).disabled(disabled || (prompt.kind != "text" && accounts.input.read(cx).value().trim().is_empty()))
@@ -73,8 +73,8 @@ impl HiveApp {
                                 v_flex().gap_1().child(Button::new(SharedString::from(format!("pi-login-choice-{id}"))).label(choice.label).disabled(disabled)
                                     .on_click(cx.listener(move |this, _, window, cx| this.submit_pi_login(Some(id.clone()), window, cx))))
                                     .when_some(choice.description, |view, description| view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(description)))
-                            }))))
-                    }))
+                            })))))
+                    })))
             })
             .when(accounts.providers.is_none(), |view| view.child(crate::text_reading::selectable_text("pi-accounts-loading", if accounts.loading { tr("正在读取 Pi 账号…") } else { tr("点击刷新读取可连接的账号。") }).text_sm().text_color(Color::Secondary.get(cx))))
             .when(accounts.providers.is_some() && matching.is_empty(), |view| view.child(crate::text_reading::selectable_text("pi-accounts-empty", tr("没有匹配的提供商。可以换个名称搜索，或清除搜索查看全部。")).py_6().text_sm().text_color(Color::Secondary.get(cx))))

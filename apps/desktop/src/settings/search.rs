@@ -7,6 +7,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::Input,
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -161,60 +162,72 @@ impl HiveApp {
             .enumerate()
             .filter(|(_, entry)| matches(entry, &query))
             .collect();
-        v_flex()
-            .id("settings-search-results")
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .max_w(px(960.))
-            .mx_auto()
-            .px_5()
-            .py_6()
-            .gap_3()
-            .overflow_y_scroll()
-            .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(
-                if entries.is_empty() {
-                    tr("没有找到设置页面").to_string()
-                } else {
-                    if crate::language::english() { format!("{} settings pages · Enter opens the first", entries.len()) } else { format!("找到 {} 个设置页面 · Enter 打开首项", entries.len()) }
-                },
-            ))
-            .when(entries.is_empty(), |view| {
-                view.child(
-                    div()
-                        .py_6()
-                        .text_sm()
-                        .text_color(Color::Secondary.get(cx))
-                        .child(tr("没有匹配的设置。换个关键词，或清除搜索浏览全部设置。")),
-                )
-            })
-            .children(entries.into_iter().map(|(index, entry)| {
-                Button::new(("settings-search-result", index))
-                    .ghost()
-                    .w_full()
-                    .h_auto()
-                    .justify_start()
-                    .p_4()
-                    .rounded_lg()
-                    .accessibility_label(format!("{} · {}", tr(entry.title), tr(entry.description)))
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .min_w_0()
-                            .items_start()
-                            .text_left()
-                            .gap_1()
-                            .child(div().text_sm().child(tr(entry.title)))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Secondary.get(cx))
-                                    .child(tr(entry.description)),
-                            ),
+        let scroll = &self.settings_search_scroll;
+        crate::focus_scroll::Viewport::new(
+            "settings-search-viewport",
+            scroll,
+            v_flex()
+                .id("settings-search-results")
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .w_full()
+                .max_w(px(960.))
+                .mx_auto()
+                .px_5()
+                .py_6()
+                .gap_3()
+                .overflow_y_scroll()
+                .track_scroll(scroll)
+                .vertical_scrollbar(scroll)
+                .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(
+                    if entries.is_empty() {
+                        tr("没有找到设置页面").to_string()
+                    } else {
+                        if crate::language::english() { format!("{} settings pages · Enter opens the first", entries.len()) } else { format!("找到 {} 个设置页面 · Enter 打开首项", entries.len()) }
+                    },
+                ))
+                .when(entries.is_empty(), |view| {
+                    view.child(
+                        div()
+                            .py_6()
+                            .text_sm()
+                            .text_color(Color::Secondary.get(cx))
+                            .child(tr("没有匹配的设置。换个关键词，或清除搜索浏览全部设置。")),
                     )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_settings_match(index, window, cx)
-                    }))
-            }))
+                })
+                .children(entries.into_iter().map(|(index, entry)| {
+                    crate::focus_scroll::Reveal::new(
+                        ("settings-search-reveal", index),
+                        scroll,
+                        Button::new(("settings-search-result", index))
+                            .ghost()
+                            .w_full()
+                            .h_auto()
+                            .justify_start()
+                            .p_4()
+                            .rounded_lg()
+                            .accessibility_label(format!("{} · {}", tr(entry.title), tr(entry.description)))
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .items_start()
+                                    .text_left()
+                                    .gap_1()
+                                    .child(div().text_sm().child(tr(entry.title)))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(Color::Secondary.get(cx))
+                                            .child(tr(entry.description)),
+                                    ),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_settings_match(index, window, cx)
+                            })),
+                    )
+                })),
+        )
     }
 }

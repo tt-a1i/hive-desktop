@@ -5,6 +5,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::InputState,
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -332,23 +333,23 @@ impl HiveApp {
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
-                        SettingsSection::Remote => content.id("settings-remote-container").child(crate::focus_scroll::Viewport::new("remote-viewport", &self.remote.scroll, v_flex().flex_1().min_h_0().min_w_0().id("settings-remote-content").overflow_y_scroll().track_scroll(&self.remote.scroll).child(self.render_remote_settings(cx)))),
-                        SettingsSection::Chat => content.id("settings-chat-content").overflow_y_scroll().child(self.render_chat_settings(cx)),
+                        SettingsSection::Remote => content.id("settings-remote-container").child(crate::focus_scroll::Viewport::new("remote-viewport", &self.remote.scroll, v_flex().flex_1().min_h_0().min_w_0().id("settings-remote-content").overflow_y_scroll().track_scroll(&self.remote.scroll).vertical_scrollbar(&self.remote.scroll).pr_1().child(self.render_remote_settings(cx)))),
+                        SettingsSection::Chat => content.id("settings-chat-container").child(crate::focus_scroll::Viewport::new("chat-settings-viewport", &self.chat_settings_scroll, v_flex().id("settings-chat-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.chat_settings_scroll).vertical_scrollbar(&self.chat_settings_scroll).pr_1().child(self.render_chat_settings(cx)))),
                         SettingsSection::Models => content.id("settings-model-config-content").child(self.render_pi_models(cx)),
-                        SettingsSection::PiAccounts => content.id("settings-pi-accounts-container").child(crate::focus_scroll::Viewport::new("pi-accounts-viewport", &self.pi_accounts.scroll, v_flex().id("settings-pi-accounts").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.pi_accounts.scroll).child(self.render_pi_accounts(cx)))),
-                        SettingsSection::Appearance => content.id("settings-appearance-content").overflow_y_scroll().child(self.render_appearance_settings(cx)),
-                        SettingsSection::Team => content.id("settings-team-content").overflow_y_scroll()
-                    .child(h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))
+                        SettingsSection::PiAccounts => content.id("settings-pi-accounts-container").child(crate::focus_scroll::Viewport::new("pi-accounts-viewport", &self.pi_accounts.scroll, v_flex().id("settings-pi-accounts").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.pi_accounts.scroll).vertical_scrollbar(&self.pi_accounts.scroll).pr_1().child(self.render_pi_accounts(cx)))),
+                        SettingsSection::Appearance => content.id("settings-appearance-container").child(crate::focus_scroll::Viewport::new("appearance-settings-viewport", &self.appearance_scroll, v_flex().id("settings-appearance-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.appearance_scroll).vertical_scrollbar(&self.appearance_scroll).pr_1().child(self.render_appearance_settings(cx)))),
+                        SettingsSection::Team => content.id("settings-team-container").child(crate::focus_scroll::Viewport::new("team-settings-viewport", &self.team_settings_scroll, v_flex().id("settings-team-content").flex_1().min_h_0().min_w_0().gap_3().overflow_y_scroll().track_scroll(&self.team_settings_scroll).vertical_scrollbar(&self.team_settings_scroll).pr_1()
+                    .child(crate::focus_scroll::Reveal::new("team-autostaff-toggle-reveal", &self.team_settings_scroll, h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))
                         .child(v_flex().flex_1().min_w_0().gap_1()
                             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("自动组队引导")))
                             .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("在所有工作区引导主控按任务需要组建团队。"))))
                         .when_some(self.team_autostaff, |row, enabled| row.child(gpui_kit::component::switch::Switch::new("toggle-team-autostaff")
                             .accessibility_label(tr("自动组队引导")).checked(enabled).disabled(!self.connected || self.team_autostaff_loading)
-                            .on_change(cx.listener(|this, enabled, _, cx| this.team_autostaff_request(Some(*enabled), cx))))))
+                            .on_change(cx.listener(|this, enabled, _, cx| this.team_autostaff_request(Some(*enabled), cx)))))))
                     .when(self.team_autostaff_loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("正在同步设置…"))))
-                    .when(!self.team_autostaff_loading, |view| view.child(h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label(tr("重新读取")).disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx))))))
-                    .when_some(self.team_autostaff_message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().text_sm().child(message))),
-                        SettingsSection::Notifications => content.id("settings-notification-container").child(crate::focus_scroll::Viewport::new("notifications-viewport", &self.notification_scroll, v_flex().id("settings-notification-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.notification_scroll).child(self.render_notification_settings(cx)))),
+                    .when(!self.team_autostaff_loading, |view| view.child(crate::focus_scroll::Reveal::new("team-autostaff-reload-reveal", &self.team_settings_scroll, h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label(tr("重新读取")).disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx)))))))
+                    .when_some(self.team_autostaff_message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().text_sm().child(message))))),
+                        SettingsSection::Notifications => content.id("settings-notification-container").child(crate::focus_scroll::Viewport::new("notifications-viewport", &self.notification_scroll, v_flex().id("settings-notification-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.notification_scroll).vertical_scrollbar(&self.notification_scroll).pr_1().child(self.render_notification_settings(cx)))),
                         SettingsSection::Programs => content.id("settings-programs-container").child(self.render_program_settings(cx)),
                     }
                 }).into_any_element()

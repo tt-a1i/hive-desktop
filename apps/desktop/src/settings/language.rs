@@ -30,8 +30,10 @@ impl HiveApp {
                         "切换应用界面语言，不翻译会话正文、工具结果或用户配置内容。",
                     )),
             )
-            .child(
-                h_flex().gap_2().children(
+            .child(crate::focus_scroll::Reveal::new(
+                "appearance-language-reveal",
+                &self.appearance_scroll,
+                h_flex().gap_2().flex_wrap().children(
                     [
                         (Locale::Zh, "中文", "language-zh"),
                         (Locale::En, "English", "language-en"),
@@ -51,7 +53,7 @@ impl HiveApp {
                             }))
                     }),
                 ),
-            )
+            ))
             .children(language::message(cx).map(|message| div().text_sm().child(message)))
     }
     pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {

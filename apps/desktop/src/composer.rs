@@ -137,7 +137,7 @@ impl HiveApp {
         v_flex().gap_4()
             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("发送消息")))
             .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("选择习惯的发送方式。Shift+Enter 始终换行，点击发送按钮也可发送。适用于所有 Agent。")))
-            .child(h_flex().gap_2().flex_wrap().children([("send-mode-enter",tr("Enter 发送"),SendMode::Enter),("send-mode-modifier",modifier,SendMode::ModifierEnter)].into_iter().map(|(id,label,mode)|Button::new(id).rounded_full().label(label).accessibility_label(if crate::language::english() { format!("Send shortcut: {label}") } else { format!("发送快捷键：{label}") }).selected(saved.mode==mode).toggled(saved.mode==mode).disabled(saved.root.is_none()).on_click(move|_,_,cx|choose(mode,cx)))))
+            .child(crate::focus_scroll::Reveal::new("chat-send-mode-reveal", &self.chat_settings_scroll, h_flex().gap_2().flex_wrap().children([("send-mode-enter",tr("Enter 发送"),SendMode::Enter),("send-mode-modifier",modifier,SendMode::ModifierEnter)].into_iter().map(|(id,label,mode)|Button::new(id).rounded_full().label(label).accessibility_label(if crate::language::english() { format!("Send shortcut: {label}") } else { format!("发送快捷键：{label}") }).selected(saved.mode==mode).toggled(saved.mode==mode).disabled(saved.root.is_none()).on_click(move|_,_,cx|choose(mode,cx))))))
             .child(div().text_sm().text_color(Color::Muted.get(cx)).child(saved.mode.hint()))
             .children(saved.message().map(|message|div().text_sm().child(message)))
     }

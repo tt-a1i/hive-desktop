@@ -16,12 +16,19 @@ const protocolWrite = process.stdout.write.bind(process.stdout);
 // away from the desktop wire; only this captured writer sends protocol frames.
 process.stdout.write = process.stderr.write.bind(process.stderr);
 console.log = (...args: unknown[]) => { process.stderr.write(`${format(...args)}\n`); };
-const send = (message: unknown) => {
+const pendingWrites = new Set<Promise<void>>();
+const writeFrame = (message: unknown): Promise<void> => {
   // Keep legacy malformed text readable by Rust without rewriting stored history.
   const frame = JSON.stringify(message, (_key, value: unknown) =>
     typeof value === 'string' ? value.replace(/[\uD800-\uDFFF]/gu, '\uFFFD') : value);
-  return protocolWrite(`${frame}\n`);
+  let tracked!: Promise<void>;
+  tracked = new Promise<void>(resolve => {
+    protocolWrite(`${frame}\n`, () => resolve());
+  }).finally(() => { pendingWrites.delete(tracked); });
+  pendingWrites.add(tracked);
+  return tracked;
 };
+const send = (message: unknown) => { void writeFrame(message); };
 
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
@@ -171,24 +178,44 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
   }
 }
 
+const inFlight = new Set<Promise<void>>();
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on('line', line => {
   let id: number | string | null = null;
-  void (async () => {
-    const message = record(JSON.parse(line));
-    if (typeof message.id !== 'string' && typeof message.id !== 'number') throw new Error('Request id is required');
-    id = message.id;
-    const method = text(message, 'method');
-    const result = await dispatch(method, record(message.params ?? {}));
-    send({ id, result });
-    if (method === 'shutdown') input.close();
-  })().catch(error => send({ id, error: {
-    code: error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
-    message: error instanceof Error ? error.message : String(error),
-    ...(error instanceof HiveHttpError ? { details: error.body } : {}),
-  } }));
+  let method: string | undefined;
+  let task!: Promise<void>;
+  task = (async () => {
+    try {
+      const message = record(JSON.parse(line));
+      if (typeof message.id !== 'string' && typeof message.id !== 'number') throw new Error('Request id is required');
+      id = message.id;
+      method = text(message, 'method');
+      const result = await dispatch(method, record(message.params ?? {}));
+      await writeFrame({ id, result });
+    } catch (error) {
+      await writeFrame({ id, error: {
+        code: error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof HiveHttpError ? { details: error.body } : {}),
+      } });
+    } finally {
+      if (method === 'shutdown') input.close();
+    }
+  })().finally(() => { inFlight.delete(task); });
+  inFlight.add(task);
 });
-input.on('close', () => { void close().then(() => process.exit(0), error => { console.error(error); process.exit(1); }); });
+let exiting = false;
+input.on('close', () => {
+  if (exiting) return;
+  exiting = true;
+  const closed = close().then(() => true, error => { console.error(error); return false; });
+  void (async () => {
+    await Promise.allSettled([...inFlight]);
+    const ok = await closed;
+    await Promise.allSettled([...pendingWrites]);
+    process.exit(ok ? 0 : 1);
+  })();
+});
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => input.close());
 }

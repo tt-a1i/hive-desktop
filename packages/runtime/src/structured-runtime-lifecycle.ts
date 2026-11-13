@@ -259,8 +259,12 @@ export function createStructuredLifecycle(
 			const results = await Promise.allSettled(
 				[...runs.values()].filter((r) => !r.terminal).map((r) => stop(r)),
 			);
-			const failed = results.find((r) => r.status === "rejected");
-			if (failed?.status === "rejected") throw failed.reason;
+			const errors = results
+				.filter((r): r is PromiseRejectedResult => r.status === "rejected")
+				.map((r) => r.reason);
+			if (errors.length === 1) throw errors[0];
+			if (errors.length > 1)
+				throw new AggregateError(errors, "Structured agent lifecycle close failed");
 		},
 	};
 }

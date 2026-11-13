@@ -83,7 +83,7 @@ export class ChatIndex {
   private commit(next: ChatRecord[]): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600, flush: true });
       renameSync(temporary, this.file);
       this.records = next;
     } finally { rmSync(temporary, { force: true }); }

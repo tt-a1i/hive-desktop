@@ -259,6 +259,10 @@ pub struct HiveApp {
     pub navigation_scroll: ScrollHandle,
     pub focus_project_input: bool,
     pub program_scroll: ScrollHandle,
+    pub appearance_scroll: ScrollHandle,
+    pub chat_settings_scroll: ScrollHandle,
+    pub team_settings_scroll: ScrollHandle,
+    pub settings_search_scroll: ScrollHandle,
     events: Task<()>,
     pub(crate) workspace_updates: Task<()>,
     _quit: Subscription,
@@ -346,7 +350,10 @@ impl HiveApp {
         let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索设置，如模型、通知、快捷键…"));
         cx.subscribe_in(&settings_search, window, |this, _, event: &InputEvent, window, cx| {
             match event {
-                InputEvent::Change => cx.notify(),
+                InputEvent::Change => {
+                    this.settings_search_scroll.set_offset(point(px(0.), px(0.)));
+                    cx.notify();
+                }
                 InputEvent::PressEnter { secondary: false, shift: false } => this.open_first_settings_match(window, cx),
                 _ => {}
             }
@@ -576,6 +583,10 @@ impl HiveApp {
             navigation_scroll: ScrollHandle::new(),
             focus_project_input: false,
             program_scroll: ScrollHandle::new(),
+            appearance_scroll: ScrollHandle::new(),
+            chat_settings_scroll: ScrollHandle::new(),
+            team_settings_scroll: ScrollHandle::new(),
+            settings_search_scroll: ScrollHandle::new(),
             events: Task::ready(()),
             workspace_updates: Task::ready(()),
             _quit: cx.on_app_quit(|this: &mut Self, cx| {

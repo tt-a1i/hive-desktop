@@ -1,9 +1,11 @@
+use crate::focus_scroll::{Reveal, Viewport};
 use crate::language::{english, tr};
 use crate::{app::HiveApp, palette::Color, transport::Runtime};
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
+        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
@@ -240,106 +242,125 @@ impl Render for SessionSearch {
             .child(Input::new(&self.query).aria_label(tr("搜索会话名称、项目路径或 Agent")))
             .child(
                 div()
-                    .id("session-search-results")
+                    .w_full()
+                    .min_w_0()
                     .h(results_height)
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .when(self.loading, |list| {
-                        list.child(
-                            div()
-                                .p_3()
-                                .text_sm()
-                                .text_color(Color::Muted.get(cx))
-                                .child(tr("正在搜索…")),
-                        )
-                    })
-                    .when_some(self.error.as_ref().map(|error| error.text()), |list, error| {
-                        list.child(
-                            v_flex()
-                                .gap_2()
-                                .child(
+                    .flex()
+                    .child(Viewport::new(
+                        "session-search-viewport",
+                        &self.scroll,
+                        div()
+                            .id("session-search-results")
+                            .flex_1()
+                            .min_h_0()
+                            .min_w_0()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .vertical_scrollbar(&self.scroll)
+                            .pr_1()
+                            .when(self.loading, |list| {
+                                list.child(
                                     div()
+                                        .p_3()
                                         .text_sm()
-                                        .text_color(Color::Error.get(cx))
-                                        .child(error),
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(tr("正在搜索…")),
                                 )
-                                .child(
-                                    Button::new("retry-session-search")
-                                        .label(tr("重新搜索"))
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.load(false, cx)),
-                                        ),
-                                ),
-                        )
-                    })
-                    .when(
-                        !self.loading && self.error.is_none() && self.page.matches.is_empty(),
-                        |list| {
-                            list.child(
-                                div()
-                                    .p_3()
-                                    .text_sm()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(tr("没有匹配的会话")),
-                            )
-                        },
-                    )
-                    .children(self.page.matches.iter().enumerate().map(|(i, hit)| {
-                        let title = crate::view::untitled_session_label(&hit.session).unwrap_or(&hit.title);
-                        let role = hit.session.agent_id.as_deref().map(|agent| {
-                            if agent.ends_with(":orchestrator") {
-                                tr("主控")
-                            } else if agent.ends_with(":__workflow__") {
-                                tr("工作流")
-                            } else {
-                                tr("成员")
-                            }
-                        });
-                        let suffix = std::path::Path::new(&hit.workspace_path).components().rev().take(2).collect::<Vec<_>>()
-                            .into_iter().rev().map(|part| part.as_os_str().to_string_lossy()).collect::<Vec<_>>().join(std::path::MAIN_SEPARATOR_STR);
-                        let project = if suffix.is_empty() { hit.workspace_name.clone() } else { format!("{} · {suffix}", hit.workspace_name) };
-                        let identity = if hit.workspace_path.is_empty() { hit.workspace_name.clone() } else { format!("{} · {}", hit.workspace_name, hit.workspace_path) };
-                        let meta = match role {
-                            Some(role) => format!("{project} · {role} · {}", tr(hit.session.backend.label())),
-                            None => format!("{project} · {}", tr(hit.session.backend.label())),
-                        };
-                        let role_suffix = role.map(|role| format!(" · {role}")).unwrap_or_default();
-                        Button::new(("search-session", i))
-                            .ghost()
-                            .w_full()
-                            .h_auto()
-                            .py_2()
-                            .justify_start()
-                            .selected(i == self.selected)
-                            .accessibility_label(if english() { format!("Open {} · {}{} · {}", title, identity, role_suffix, tr(hit.session.backend.label())) } else { format!("打开 {} · {}{} · {}", title, identity, role_suffix, tr(hit.session.backend.label())) })
-                            .tooltip(format!("{title} · {identity}{role_suffix} · {}", tr(hit.session.backend.label())))
-                            .child(
-                                v_flex()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .items_start()
-                                    .gap_1()
-                                    .child(
+                            })
+                            .when_some(self.error.as_ref().map(|error| error.text()), |list, error| {
+                                list.child(
+                                    v_flex()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(Color::Error.get(cx))
+                                                .child(error),
+                                        )
+                                        .child(Reveal::new(
+                                            "retry-session-search-reveal",
+                                            &self.scroll,
+                                            Button::new("retry-session-search")
+                                                .label(tr("重新搜索"))
+                                                .on_click(
+                                                    cx.listener(|this, _, _, cx| this.load(false, cx)),
+                                                ),
+                                        )),
+                                )
+                            })
+                            .when(
+                                !self.loading && self.error.is_none() && self.page.matches.is_empty(),
+                                |list| {
+                                    list.child(
                                         div()
-                                            .truncate()
+                                            .p_3()
                                             .text_sm()
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(title.to_owned()),
-                                    )
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .text_xs()
                                             .text_color(Color::Muted.get(cx))
-                                            .child(meta),
-                                    ),
+                                            .child(tr("没有匹配的会话")),
+                                    )
+                                },
                             )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.selected = i;
-                                this.open_selected(window, cx);
-                            }))
-                    })),
+                            .children(self.page.matches.iter().enumerate().map(|(i, hit)| {
+                                let title = crate::view::untitled_session_label(&hit.session).unwrap_or(&hit.title);
+                                let role = hit.session.agent_id.as_deref().map(|agent| {
+                                    if agent.ends_with(":orchestrator") {
+                                        tr("主控")
+                                    } else if agent.ends_with(":__workflow__") {
+                                        tr("工作流")
+                                    } else {
+                                        tr("成员")
+                                    }
+                                });
+                                let suffix = std::path::Path::new(&hit.workspace_path).components().rev().take(2).collect::<Vec<_>>()
+                                    .into_iter().rev().map(|part| part.as_os_str().to_string_lossy()).collect::<Vec<_>>().join(std::path::MAIN_SEPARATOR_STR);
+                                let project = if suffix.is_empty() { hit.workspace_name.clone() } else { format!("{} · {suffix}", hit.workspace_name) };
+                                let identity = if hit.workspace_path.is_empty() { hit.workspace_name.clone() } else { format!("{} · {}", hit.workspace_name, hit.workspace_path) };
+                                let meta = match role {
+                                    Some(role) => format!("{project} · {role} · {}", tr(hit.session.backend.label())),
+                                    None => format!("{project} · {}", tr(hit.session.backend.label())),
+                                };
+                                let role_suffix = role.map(|role| format!(" · {role}")).unwrap_or_default();
+                                Reveal::new(
+                                    ("search-session-reveal", i),
+                                    &self.scroll,
+                                    Button::new(("search-session", i))
+                                        .ghost()
+                                        .w_full()
+                                        .h_auto()
+                                        .py_2()
+                                        .justify_start()
+                                        .selected(i == self.selected)
+                                        .accessibility_label(if english() { format!("Open {} · {}{} · {}", title, identity, role_suffix, tr(hit.session.backend.label())) } else { format!("打开 {} · {}{} · {}", title, identity, role_suffix, tr(hit.session.backend.label())) })
+                                        .tooltip(format!("{title} · {identity}{role_suffix} · {}", tr(hit.session.backend.label())))
+                                        .child(
+                                            v_flex()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .items_start()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_sm()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .child(title.to_owned()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .truncate()
+                                                        .text_xs()
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(meta),
+                                                ),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.selected = i;
+                                            this.open_selected(window, cx);
+                                        })),
+                                )
+                            })),
+                    )),
             )
             .child(
                 h_flex()

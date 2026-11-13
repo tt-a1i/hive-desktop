@@ -82,6 +82,20 @@ impl Viewport {
         }
     }
 }
+fn viewport_scroll_delta(target: Bounds<Pixels>, bounds: Bounds<Pixels>) -> Pixels {
+    // Current reveal groups place their controls after their explanatory text.
+    // When the group cannot fit, keep those trailing actions visible.
+    if target.size.height > bounds.size.height {
+        bounds.bottom() - target.bottom()
+    } else if target.top() < bounds.top() {
+        bounds.top() - target.top()
+    } else if target.bottom() > bounds.bottom() {
+        bounds.bottom() - target.bottom()
+    } else {
+        px(0.)
+    }
+}
+
 impl RenderOnce for Viewport {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let focus = window
@@ -103,17 +117,7 @@ impl RenderOnce for Viewport {
                     return;
                 };
                 let bounds = self.scroll.bounds();
-                // Current reveal groups place their controls after their explanatory text.
-                // When the group cannot fit, keep those trailing actions visible.
-                let delta = if target.size.height > bounds.size.height {
-                    bounds.bottom() - target.bottom()
-                } else if target.top() < bounds.top() {
-                    bounds.top() - target.top()
-                } else if target.bottom() > bounds.bottom() {
-                    bounds.bottom() - target.bottom()
-                } else {
-                    px(0.)
-                };
+                let delta = viewport_scroll_delta(target, bounds);
                 if delta != px(0.) {
                     let scroll = self.scroll.clone();
                     let offset = scroll.offset() + point(px(0.), delta);
@@ -125,5 +129,44 @@ impl RenderOnce for Viewport {
             })
             .child(self.child)
             .id(self.id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[core::prelude::v1::test]
+    fn viewport_scroll_delta_reveals_above_below_and_oversized_targets() {
+        let viewport = Bounds::new(point(px(0.), px(100.)), size(px(400.), px(240.)));
+        assert_eq!(
+            viewport_scroll_delta(
+                Bounds::new(point(px(0.), px(120.)), size(px(360.), px(80.))),
+                viewport,
+            ),
+            px(0.),
+        );
+        assert_eq!(
+            viewport_scroll_delta(
+                Bounds::new(point(px(0.), px(60.)), size(px(360.), px(64.))),
+                viewport,
+            ),
+            px(40.),
+        );
+        assert_eq!(
+            viewport_scroll_delta(
+                Bounds::new(point(px(0.), px(300.)), size(px(360.), px(70.))),
+                viewport,
+            ),
+            px(-30.),
+        );
+        // Oversized group taller than viewport keeps trailing actions visible at bottom
+        assert_eq!(
+            viewport_scroll_delta(
+                Bounds::new(point(px(0.), px(80.)), size(px(360.), px(320.))),
+                viewport,
+            ),
+            px(-60.),
+        );
     }
 }
