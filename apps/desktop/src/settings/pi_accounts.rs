@@ -100,6 +100,9 @@ fn runtime_message(message: &str) -> String {
 }
 enum AccountNotice { Disconnected, Runtime(String), Failed(String) }
 impl AccountNotice {
+    fn is_error(&self) -> bool {
+        matches!(self, Self::Disconnected | Self::Failed(_))
+    }
     fn text(&self) -> String {
         match self {
             Self::Disconnected => tr("后台连接已断开，请重新开始登录。").to_owned(),

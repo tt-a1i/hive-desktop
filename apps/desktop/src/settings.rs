@@ -1,9 +1,9 @@
-use crate::language::{english,tr};
+use crate::language::{english, tr};
 use crate::app::{HiveApp, SettingsSection};
 use crate::palette::Color;
 use gpui_kit::{
     component::{
-        button::{Button, ButtonVariants},
+        button::Button,
         input::InputState,
         scroll::ScrollableElement,
         *,
@@ -304,6 +304,114 @@ impl HiveApp {
     }
 }
 
+pub(super) fn settings_card(cx: &App) -> Div {
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .rounded_xl()
+        .bg(Color::Card.get(cx))
+        .border_1()
+        .border_color(Color::Divider.get(cx))
+        .overflow_hidden()
+}
+
+pub(super) fn settings_row(divider_top: bool, cx: &App) -> Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .px_4()
+        .py_3p5()
+        .when(divider_top, |row| {
+            row.border_t_1().border_color(Color::Divider.get(cx))
+        })
+}
+
+pub(super) fn settings_segmented_bar(cx: &App) -> Div {
+    h_flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap_1()
+        .p_0p5()
+        .rounded_lg()
+        .bg(Color::Inset.get(cx))
+        .border_1()
+        .border_color(Color::Divider.get(cx))
+}
+
+pub(super) fn settings_notice_box(
+    id: impl Into<SharedString>,
+    text: impl Into<SharedString>,
+    is_error: bool,
+    cx: &App,
+) -> Stateful<Div> {
+    let text = text.into();
+    div()
+        .id(id.into())
+        .role(Role::Status)
+        .aria_label(text.clone())
+        .w_full()
+        .min_w_0()
+        .px_3p5()
+        .py_2p5()
+        .rounded_xl()
+        .border_1()
+        .text_sm()
+        .when(is_error, |el| {
+            el.bg(Color::ErrorSurface.get(cx))
+                .border_color(Color::Error.get(cx).opacity(0.24))
+                .text_color(Color::Error.get(cx))
+        })
+        .when(!is_error, |el| {
+            el.bg(Color::Inset.get(cx))
+                .border_color(Color::Divider.get(cx))
+                .text_color(Color::Text.get(cx))
+        })
+        .child(text)
+}
+
+pub(super) fn status_pill(
+    dot_color: Rgba,
+    label: impl Into<SharedString>,
+    cx: &App,
+) -> Div {
+    h_flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap_1p5()
+        .px_2()
+        .py(px(2.))
+        .rounded_full()
+        .bg(Color::Inset.get(cx))
+        .child(div().size(px(6.)).rounded_full().bg(dot_color))
+        .child(
+            div()
+                .text_xs()
+                .text_color(Color::Secondary.get(cx))
+                .child(label.into()),
+        )
+}
+
+pub(super) fn amber_dot(cx: &App) -> Rgba {
+    rgb(if Theme::global(cx).is_dark() {
+        0xfbbf24
+    } else {
+        0xd97706
+    })
+}
+
+fn section_meta(section: SettingsSection) -> (&'static str, &'static str) {
+    match section {
+        SettingsSection::Appearance => ("外观", "主题、界面字号、语言与阅读预览"),
+        SettingsSection::Chat => ("聊天", "消息发送快捷键与输入方式"),
+        SettingsSection::PiAccounts => ("内置 Pi", "连接提供商、订阅登录与 API Key"),
+        SettingsSection::Models => ("模型与接口", "自定义接口、模型覆盖、上下文与能力"),
+        SettingsSection::Team => ("团队", "自动组队引导"),
+        SettingsSection::Notifications => ("通知", "本机系统提醒与 Webhook 通知地址"),
+        SettingsSection::Remote => ("远程接入", "账号连接、设备配对与访问记录"),
+        SettingsSection::Programs => ("外部程序", "外部 Pi、Codex 与 Claude Code 的路径和版本检查"),
+    }
+}
+
 impl HiveApp {
     pub fn leave_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_search.update(cx, |input, cx| input.set_value("", window, cx));
@@ -324,32 +432,163 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let (title_key, subtitle_key) = section_meta(self.settings_section);
         let content = if !self.settings_search.read(cx).value().trim().is_empty() {
             self.render_settings_results(cx).into_any_element()
         } else if self.roles.visible {
             self.render_roles(cx).into_any_element()
         } else {
-            v_flex().flex_1().w_full().max_w(px(900.)).mx_auto().min_h_0().min_w_0().px_5().py_3().gap_3().when(!compact_settings, |panel| panel.pl_6().pr_6().py_6().gap_5())
-                .when(!compact_settings, |panel| panel.child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(match self.settings_section { SettingsSection::Appearance => tr("外观"), SettingsSection::Chat => tr("聊天"), SettingsSection::PiAccounts => tr("内置 Pi"), SettingsSection::Models => tr("模型与接口"), SettingsSection::Team => tr("团队"), SettingsSection::Notifications => tr("通知"), SettingsSection::Remote => tr("远程接入"), SettingsSection::Programs => tr("外部程序") })))
+            v_flex()
+                .flex_1()
+                .w_full()
+                .max_w(px(720.))
+                .mx_auto()
+                .min_h_0()
+                .min_w_0()
+                .px_5()
+                .py_4()
+                .gap_4()
+                .when(!compact_settings, |panel| panel.px_6().py_6().gap_5())
+                .when(!compact_settings, |panel| {
+                    panel.child(
+                        v_flex()
+                            .flex_shrink_0()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(18.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(Color::Text.get(cx))
+                                    .child(tr(title_key)),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Secondary.get(cx))
+                                    .child(tr(subtitle_key)),
+                            ),
+                    )
+                })
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
                         SettingsSection::Remote => content.id("settings-remote-container").child(crate::focus_scroll::Viewport::new("remote-viewport", &self.remote.scroll, v_flex().flex_1().min_h_0().min_w_0().id("settings-remote-content").overflow_y_scroll().track_scroll(&self.remote.scroll).vertical_scrollbar(&self.remote.scroll).pr_1().child(self.render_remote_settings(cx)))),
-                        SettingsSection::Chat => content.id("settings-chat-container").child(crate::focus_scroll::Viewport::new("chat-settings-viewport", &self.chat_settings_scroll, v_flex().id("settings-chat-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.chat_settings_scroll).vertical_scrollbar(&self.chat_settings_scroll).pr_1().child(self.render_chat_settings(cx)))),
+                        SettingsSection::Chat => content.id("settings-chat-container").child(crate::focus_scroll::Viewport::new("chat-settings-viewport", &self.chat_settings_scroll, v_flex().id("settings-chat-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.chat_settings_scroll).vertical_scrollbar(&self.chat_settings_scroll).pr_1().child(settings_card(cx).p_4().child(self.render_chat_settings(cx))))),
                         SettingsSection::Models => content.id("settings-model-config-content").child(self.render_pi_models(cx)),
                         SettingsSection::PiAccounts => content.id("settings-pi-accounts-container").child(crate::focus_scroll::Viewport::new("pi-accounts-viewport", &self.pi_accounts.scroll, v_flex().id("settings-pi-accounts").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.pi_accounts.scroll).vertical_scrollbar(&self.pi_accounts.scroll).pr_1().child(self.render_pi_accounts(cx)))),
                         SettingsSection::Appearance => content.id("settings-appearance-container").child(crate::focus_scroll::Viewport::new("appearance-settings-viewport", &self.appearance_scroll, v_flex().id("settings-appearance-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.appearance_scroll).vertical_scrollbar(&self.appearance_scroll).pr_1().child(self.render_appearance_settings(cx)))),
-                        SettingsSection::Team => content.id("settings-team-container").child(crate::focus_scroll::Viewport::new("team-settings-viewport", &self.team_settings_scroll, v_flex().id("settings-team-content").flex_1().min_h_0().min_w_0().gap_3().overflow_y_scroll().track_scroll(&self.team_settings_scroll).vertical_scrollbar(&self.team_settings_scroll).pr_1()
-                    .child(crate::focus_scroll::Reveal::new("team-autostaff-toggle-reveal", &self.team_settings_scroll, h_flex().gap_3().items_center().pb_3().border_b_1().border_color(Color::Divider.get(cx))
-                        .child(v_flex().flex_1().min_w_0().gap_1()
-                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("自动组队引导")))
-                            .child(div().text_sm().text_color(Color::Secondary.get(cx)).child(tr("在所有工作区引导主控按任务需要组建团队。"))))
-                        .when_some(self.team_autostaff, |row, enabled| row.child(gpui_kit::component::switch::Switch::new("toggle-team-autostaff")
-                            .accessibility_label(tr("自动组队引导")).checked(enabled).disabled(!self.connected || self.team_autostaff_loading)
-                            .on_change(cx.listener(|this, enabled, _, cx| this.team_autostaff_request(Some(*enabled), cx)))))))
-                    .when(self.team_autostaff_loading, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("正在同步设置…"))))
-                    .when(!self.team_autostaff_loading, |view| view.child(crate::focus_scroll::Reveal::new("team-autostaff-reload-reveal", &self.team_settings_scroll, h_flex().child(Button::new("reload-team-autostaff").ghost().compact().label(tr("重新读取")).disabled(!self.connected).on_click(cx.listener(|this, _, _, cx| this.team_autostaff_request(None, cx)))))))
-                    .when_some(self.team_autostaff_message.as_ref().map(|notice| notice.text()), |view, message| view.child(div().text_sm().child(message))))),
+                        SettingsSection::Team => {
+                            let is_error = matches!(self.team_autostaff_message, Some(SettingsNotice::Error(..)));
+                            content.id("settings-team-container").child(crate::focus_scroll::Viewport::new(
+                                "team-settings-viewport",
+                                &self.team_settings_scroll,
+                                v_flex()
+                                    .id("settings-team-content")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .min_w_0()
+                                    .gap_3()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.team_settings_scroll)
+                                    .vertical_scrollbar(&self.team_settings_scroll)
+                                    .pr_1()
+                                    .child(
+                                        settings_card(cx)
+                                            .child(settings_row(false, cx).child(
+                                                crate::focus_scroll::Reveal::new(
+                                                    "team-autostaff-toggle-reveal",
+                                                    &self.team_settings_scroll,
+                                                    h_flex()
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .gap_4()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .child(
+                                                            v_flex()
+                                                                .flex_1()
+                                                                .min_w_0()
+                                                                .gap_0p5()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .font_weight(FontWeight::MEDIUM)
+                                                                        .text_color(Color::Text.get(cx))
+                                                                        .child(tr("自动组队引导")),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(Color::Secondary.get(cx))
+                                                                        .child(tr("在所有工作区引导主控按任务需要组建团队。")),
+                                                                ),
+                                                        )
+                                                        .when_some(self.team_autostaff, |row, enabled| {
+                                                            row.child(
+                                                                gpui_kit::component::switch::Switch::new("toggle-team-autostaff")
+                                                                    .accessibility_label(tr("自动组队引导"))
+                                                                    .checked(enabled)
+                                                                    .disabled(!self.connected || self.team_autostaff_loading)
+                                                                    .on_change(cx.listener(|this, enabled, _, cx| {
+                                                                        this.team_autostaff_request(Some(*enabled), cx)
+                                                                    })),
+                                                            )
+                                                        }),
+                                                ),
+                                            ))
+                                            .child(
+                                                settings_row(true, cx)
+                                                    .bg(Color::Inset.get(cx))
+                                                    .py_2p5()
+                                                    .child(
+                                                        h_flex()
+                                                            .w_full()
+                                                            .min_w_0()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .gap_3()
+                                                            .child(
+                                                                div()
+                                                                    .flex_1()
+                                                                    .min_w_0()
+                                                                    .text_xs()
+                                                                    .text_color(if is_error {
+                                                                        Color::Error.get(cx)
+                                                                    } else {
+                                                                        Color::Muted.get(cx)
+                                                                    })
+                                                                    .when(self.team_autostaff_loading, |el| {
+                                                                        el.child(tr("正在同步设置…"))
+                                                                    })
+                                                                    .when(!self.team_autostaff_loading, |el| {
+                                                                        el.when_some(
+                                                                            self.team_autostaff_message.as_ref().map(|notice| notice.text()),
+                                                                            |el, message| el.child(message),
+                                                                        )
+                                                                    }),
+                                                            )
+                                                            .when(!self.team_autostaff_loading, |row| {
+                                                                row.child(crate::focus_scroll::Reveal::new(
+                                                                    "team-autostaff-reload-reveal",
+                                                                    &self.team_settings_scroll,
+                                                                    Button::new("reload-team-autostaff")
+                                                                        .outline()
+                                                                        .small()
+                                                                        .h(px(28.))
+                                                                        .px_3()
+                                                                        .rounded_lg()
+                                                                        .label(tr("重新读取"))
+                                                                        .disabled(!self.connected)
+                                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                                            this.team_autostaff_request(None, cx)
+                                                                        })),
+                                                                ))
+                                                            }),
+                                                    ),
+                                            ),
+                                    ),
+                            ))
+                        }
                         SettingsSection::Notifications => content.id("settings-notification-container").child(crate::focus_scroll::Viewport::new("notifications-viewport", &self.notification_scroll, v_flex().id("settings-notification-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.notification_scroll).vertical_scrollbar(&self.notification_scroll).pr_1().child(self.render_notification_settings(cx)))),
                         SettingsSection::Programs => content.id("settings-programs-container").child(self.render_program_settings(cx)),
                     }
@@ -368,7 +607,16 @@ impl HiveApp {
             .flex_1()
             .min_w_0()
             .h_full()
+            .bg(Color::Surface.get(cx))
             .child(self.render_settings_tabs(compact_settings, window, cx))
-            .child(v_flex().flex_1().min_w_0().min_h_0().child(self.render_settings_search(compact_settings, window, cx)).child(content))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .bg(Color::Surface.get(cx))
+                    .child(self.render_settings_search(compact_settings, window, cx))
+                    .child(content),
+            )
     }
 }

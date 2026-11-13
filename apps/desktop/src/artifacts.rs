@@ -1,5 +1,5 @@
 use crate::language::tr;
-use crate::app::HiveApp;
+use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -64,18 +64,48 @@ impl HiveApp {
         h_flex()
             .w_full()
             .min_w_0()
-            .gap_1()
+            .items_center()
+            .gap_1p5()
+            .px_1p5()
+            .py_1()
+            .rounded_lg()
+            .bg(Color::Inset.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
             .child(
                 Button::new(SharedString::from(format!("artifact-{owner}-{index}")))
-                    .ghost()
+                    .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
+                    .h(px(24.))
+                    .px_1p5()
+                    .rounded_md()
                     .min_w_0()
                     .flex_1()
                     .justify_start()
-                    .icon(Glyph::FolderOpen)
                     .accessibility_label(detail.clone())
                     .tooltip(detail)
-                    .child(div().flex_1().min_w_0().truncate().child(path.to_owned()))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(Glyph::FolderOpen)
+                                    .size(px(13.))
+                                    .text_color(Color::Muted.get(cx)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_xs()
+                                    .font_family(Theme::global(cx).mono_font_family.clone())
+                                    .text_color(Color::Secondary.get(cx))
+                                    .child(path.to_owned()),
+                            ),
+                    )
                     .disabled(unavailable)
                     .on_click(cx.listener(move |_, _, _, cx| {
                         let Some(root) = root.clone() else { return };
@@ -103,10 +133,14 @@ impl HiveApp {
                 Button::new(SharedString::from(format!(
                     "preview-artifact-{owner}-{index}"
                 )))
-                .ghost()
+                .custom(crate::palette::subtle_icon_variant(cx))
                 .compact()
+                .h(px(24.))
+                .px_2()
+                .rounded_md()
+                .icon(Glyph::Eye)
                 .label(tr("预览"))
-                .accessibility_label(format!("{}: {path}",tr("预览文件")))
+                .accessibility_label(format!("{}: {path}", tr("预览文件")))
                 .disabled(unavailable)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.open_file_preview(preview.clone(), window, cx)

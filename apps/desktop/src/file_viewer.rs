@@ -1,6 +1,7 @@
 use crate::language::tr;
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
         *,
@@ -240,94 +241,207 @@ impl FileViewer {
 }
 impl Render for FileViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let path_label = self.source.label();
+        let file_name = Path::new(&path_label)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&path_label)
+            .to_owned();
+        let description = self.source.description();
+        let body_height = (window.viewport_size().height - px(300.))
+            .max(px(120.))
+            .min(px(520.));
         v_flex()
             .min_w_0()
             .gap_3()
             .tab_group()
             .child(
-                div()
-                    .id("file-preview-description").role(Role::Label).aria_label(self.source.description())
-                    .text_xs()
-                    .text_color(Color::Secondary.get(cx))
-                    .child(self.source.description()),
-            )
-            .child(
-                div()
-                    .id("file-preview-path").role(Role::Label).aria_label(self.source.label())
-                    .text_xs()
-                    .text_color(Color::Muted.get(cx))
-                    .child(crate::text_reading::selectable_text(
-                        "file-preview-path-text",
-                        self.source.label(),
-                    ).font_family(Theme::global(cx).mono_font_family.clone())),
-            )
-            .child(
-                h_flex()
-                    .flex_wrap()
+                v_flex()
                     .gap_2()
+                    .pb_2p5()
+                    .border_b_1()
+                    .border_color(Color::Divider.get(cx))
                     .child(
-                        Button::new("reload-file-preview")
-                            .ghost()
-                            .compact()
-                            .rounded_full()
-                            .label(if self.loading {
-                                tr("读取中…")
-                            } else {
-                                tr("重新读取")
-                            })
-                            .disabled(self.loading)
-                            .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
+                        h_flex()
+                            .items_start()
+                            .justify_between()
+                            .gap_3()
+                            .flex_wrap()
+                            .child(
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .items_center()
+                                    .gap_2p5()
+                                    .child(
+                                        div()
+                                            .size(px(30.))
+                                            .rounded_lg()
+                                            .bg(Color::Inset.get(cx))
+                                            .border_1()
+                                            .border_color(Color::Divider.get(cx))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .flex_shrink_0()
+                                            .child(
+                                                Icon::new(Glyph::FileCode)
+                                                    .size(px(15.))
+                                                    .text_color(Color::Secondary.get(cx)),
+                                            ),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap_0p5()
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(Color::Text.get(cx))
+                                                    .truncate()
+                                                    .child(file_name),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("file-preview-path")
+                                                    .role(Role::Label)
+                                                    .aria_label(path_label.clone())
+                                                    .min_w_0()
+                                                    .text_xs()
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child(
+                                                        crate::text_reading::selectable_text(
+                                                            "file-preview-path-text",
+                                                            path_label,
+                                                        )
+                                                        .font_family(
+                                                            Theme::global(cx)
+                                                                .mono_font_family
+                                                                .clone(),
+                                                        ),
+                                                    ),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_shrink_0()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("reload-file-preview")
+                                            .custom(crate::palette::quiet_icon_variant(cx))
+                                            .compact()
+                                            .h(px(28.))
+                                            .px_2()
+                                            .rounded_lg()
+                                            .icon(Glyph::RefreshCw)
+                                            .label(if self.loading {
+                                                tr("读取中…")
+                                            } else {
+                                                tr("重新读取")
+                                            })
+                                            .disabled(self.loading)
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| this.load(cx)),
+                                            ),
+                                    )
+                                    .child(
+                                        Button::new("copy-file-preview")
+                                            .custom(crate::palette::quiet_icon_variant(cx))
+                                            .compact()
+                                            .h(px(28.))
+                                            .px_2()
+                                            .rounded_lg()
+                                            .icon(Glyph::Copy)
+                                            .label(tr("复制全文"))
+                                            .disabled(self.text.is_none())
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                if let Some(text) = &this.text {
+                                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                                        text.clone(),
+                                                    ));
+                                                }
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("reveal-file-preview")
+                                            .custom(crate::palette::quiet_icon_variant(cx))
+                                            .compact()
+                                            .h(px(28.))
+                                            .px_2()
+                                            .rounded_lg()
+                                            .icon(Glyph::FolderOpen)
+                                            .label(tr("在文件管理器中显示"))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                let source = this.source.clone();
+                                                cx.spawn(async move |this, cx| {
+                                                    let result = source.path().await;
+                                                    let _ = this.update(cx, |this, cx| match result
+                                                    {
+                                                        Ok(path) => cx.reveal_path(&path),
+                                                        Err(error) => {
+                                                            this.error = Some(error);
+                                                            cx.notify();
+                                                        }
+                                                    });
+                                                })
+                                                .detach();
+                                            })),
+                                    ),
+                            ),
                     )
                     .child(
-                        Button::new("copy-file-preview")
-                            .ghost()
-                            .compact()
-                            .rounded_full()
-                            .label(tr("复制全文"))
-                            .disabled(self.text.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(text) = &this.text {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("reveal-file-preview")
-                            .ghost()
-                            .compact()
-                            .rounded_full()
-                            .label(tr("在文件管理器中显示"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let source = this.source.clone();
-                                cx.spawn(async move |this, cx| {
-                                    let result = source.path().await;
-                                    let _ = this.update(cx, |this, cx| match result {
-                                        Ok(path) => cx.reveal_path(&path),
-                                        Err(error) => {
-                                            this.error = Some(error);
-                                            cx.notify();
-                                        }
-                                    });
-                                })
-                                .detach();
-                            })),
+                        div()
+                            .id("file-preview-description")
+                            .role(Role::Label)
+                            .aria_label(description)
+                            .text_xs()
+                            .text_color(Color::Secondary.get(cx))
+                            .child(description),
                     ),
             )
-            .when_some(self.error.as_ref().map(|error|error.text()), |view, error| {
-                view.child(
-                    div()
-                        .id("file-preview-error").role(Role::Label).aria_label(error.clone())
-                        .text_sm()
-                        .text_color(Color::Error.get(cx))
-                        .child(error),
-                )
-            })
+            .when_some(
+                self.error.as_ref().map(|error| error.text()),
+                |view, error| {
+                    view.child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .rounded_lg()
+                            .bg(Color::ErrorSurface.get(cx))
+                            .border_1()
+                            .border_color(Color::Error.get(cx).opacity(0.24))
+                            .child(
+                                Icon::new(Glyph::CircleAlert)
+                                    .size(px(14.))
+                                    .text_color(Color::Error.get(cx)),
+                            )
+                            .child(
+                                div()
+                                    .id("file-preview-error")
+                                    .role(Role::Label)
+                                    .aria_label(error.clone())
+                                    .text_xs()
+                                    .text_color(Color::Error.get(cx))
+                                    .child(error),
+                            ),
+                    )
+                },
+            )
             .when(
                 self.text.is_some() && (self.loading || self.error.is_some()),
                 |view| {
                     view.child(
                         div()
-                            .id("file-preview-stale").role(Role::Label).aria_label(tr("仍显示上次成功读取的内容。"))
+                            .id("file-preview-stale")
+                            .role(Role::Label)
+                            .aria_label(tr("仍显示上次成功读取的内容。"))
                             .text_xs()
                             .text_color(Color::Muted.get(cx))
                             .child(tr("仍显示上次成功读取的内容。")),
@@ -335,32 +449,91 @@ impl Render for FileViewer {
                 },
             )
             .when_some(self.text.as_ref(), |view, text| {
+                let line_count = text.lines().count().max(1);
+                let digits = line_count.to_string().len().max(2);
+                let gutter = (1..=line_count)
+                    .map(|n| format!("{n:>digits$}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let gutter_width = px((digits as f32 * 8.0 + 18.0).max(38.0));
                 view.child(
-                    crate::text_reading::region(
-                        "file-preview-text".into(),
-                        tr("文件内容，可用方向键或翻页键滚动").into(),
-                        &self.scroll,
-                        (window.viewport_size().height - px(300.))
-                            .max(px(120.))
-                            .min(px(520.)),
-                        cx,
-                    )
-                    .font_family(Theme::global(cx).mono_font_family.clone())
-                    .text_size(px(12.))
-                    .line_height(px(19.))
-                    .when(text.is_empty(), |view| {
-                        view.child(
-                            div()
-                                .id("file-preview-empty").role(Role::Label).aria_label(tr("文件为空"))
-                                .text_xs()
-                                .text_color(Color::Muted.get(cx))
-                                .child(tr("文件为空")),
-                        )
-                    })
-                    .child(crate::text_reading::selectable_text(
-                        "file-preview-source",
-                        text.clone(),
-                    )),
+                    div()
+                        .min_w_0()
+                        .rounded_xl()
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .bg(Color::Inset.get(cx))
+                        .overflow_hidden()
+                        .child(
+                            crate::text_reading::region(
+                                "file-preview-text".into(),
+                                tr("文件内容，可用方向键或翻页键滚动").into(),
+                                &self.scroll,
+                                body_height,
+                                cx,
+                            )
+                            .border_0()
+                            .rounded_none()
+                            .p_0()
+                            .when(text.is_empty(), |view| {
+                                view.child(
+                                    div()
+                                        .id("file-preview-empty")
+                                        .role(Role::Label)
+                                        .aria_label(tr("文件为空"))
+                                        .p_4()
+                                        .text_xs()
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(tr("文件为空")),
+                                )
+                            })
+                            .when(!text.is_empty(), |view| {
+                                view.child(
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .items_start()
+                                        .child(
+                                            div()
+                                                .w(gutter_width)
+                                                .flex_shrink_0()
+                                                .py_2()
+                                                .px_2()
+                                                .border_r_1()
+                                                .border_color(Color::Divider.get(cx))
+                                                .bg(Color::Card.get(cx).opacity(0.45))
+                                                .font_family(
+                                                    Theme::global(cx).mono_font_family.clone(),
+                                                )
+                                                .text_size(px(12.))
+                                                .line_height(px(19.))
+                                                .text_right()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(gutter),
+                                        )
+                                        .child(
+                                            div()
+                                                .id("file-preview-code-x")
+                                                .flex_1()
+                                                .min_w_0()
+                                                .overflow_x_scroll()
+                                                .px_3()
+                                                .py_2()
+                                                .whitespace_nowrap()
+                                                .font_family(
+                                                    Theme::global(cx).mono_font_family.clone(),
+                                                )
+                                                .text_size(px(12.))
+                                                .line_height(px(19.))
+                                                .text_color(Color::Text.get(cx))
+                                                .child(crate::text_reading::selectable_text(
+                                                    "file-preview-source",
+                                                    text.clone(),
+                                                )),
+                                        ),
+                                )
+                            }),
+                        ),
                 )
             })
     }

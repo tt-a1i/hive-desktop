@@ -92,6 +92,9 @@ impl From<&'static str> for ModelNotice {
     fn from(key: &'static str) -> Self { Self::Message(key) }
 }
 impl ModelNotice {
+    fn is_error(&self) -> bool {
+        matches!(self, Self::Error(..))
+    }
     fn text(&self) -> String {
         match self {
             Self::Message(key) => tr(key).to_owned(),

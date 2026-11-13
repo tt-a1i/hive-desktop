@@ -34,12 +34,35 @@ impl HiveApp {
         } else {
             tr("思考过程")
         };
+        let preview = (!expanded && !block.redacted)
+            .then(|| {
+                block
+                    .text
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .map(str::to_owned)
+            })
+            .flatten();
+        let dot_color = if block.redacted {
+            Color::Muted.get(cx).opacity(0.6)
+        } else if block.running {
+            Color::Accent.get(cx)
+        } else if block.interrupted {
+            rgb(if Theme::global(cx).is_dark() {
+                0xfbbf24
+            } else {
+                0xd97706
+            })
+        } else {
+            Color::Muted.get(cx).opacity(0.75)
+        };
         v_flex()
             .min_w_0()
             .gap_1()
             .child(
                 Button::new(SharedString::from(format!("thinking-toggle-{row}-{index}")))
-                    .ghost()
+                    .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
                     .h(px(26.))
                     .px_1p5()
@@ -66,6 +89,7 @@ impl HiveApp {
                             .min_w_0()
                             .gap_1p5()
                             .items_center()
+                            .child(div().size(px(6.)).rounded_full().flex_shrink_0().bg(dot_color))
                             .child(
                                 Icon::new(if block.redacted {
                                     Glyph::Lock
@@ -81,6 +105,7 @@ impl HiveApp {
                             )
                             .child(
                                 div()
+                                    .flex_shrink_0()
                                     .text_xs()
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(if block.running {
@@ -90,6 +115,17 @@ impl HiveApp {
                                     })
                                     .child(label),
                             )
+                            .when_some(preview, |row, summary| {
+                                row.child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_xs()
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(summary),
+                                )
+                            })
                             .when(!block.redacted, |row| {
                                 row.child(
                                     Icon::new(if expanded {
@@ -124,14 +160,21 @@ impl HiveApp {
                 view.child(
                     v_flex()
                         .min_w_0()
-                        .ml_2p5()
+                        .ml_2()
                         .pl_3()
-                        .py_1()
-                        .gap_1()
-                        .border_l_2()
-                        .border_color(Color::Divider.get(cx))
-                        .text_sm()
-                        .line_height(rems(1.5))
+                        .pr_1()
+                        .py_1p5()
+                        .gap_1p5()
+                        .border_l_1()
+                        .border_color(if block.running {
+                            Color::Accent.get(cx).opacity(0.45)
+                        } else {
+                            Color::Divider.get(cx)
+                        })
+                        .rounded_r_lg()
+                        .bg(Color::Inset.get(cx).opacity(0.55))
+                        .text_size(px(12.5))
+                        .line_height(rems(1.55))
                         .text_color(Color::Secondary.get(cx))
                         .child(crate::text_reading::selectable_text(
                             SharedString::from(format!("thinking-body-{row}-{index}")),
@@ -142,10 +185,11 @@ impl HiveApp {
                                 Button::new(SharedString::from(format!(
                                     "copy-thinking-{row}-{index}"
                                 )))
-                                .ghost()
+                                .custom(crate::palette::subtle_icon_variant(cx))
                                 .compact()
                                 .h(px(24.))
                                 .w(px(24.))
+                                .rounded_md()
                                 .icon(Glyph::Copy)
                                 .accessibility_label(if english() {
                                     format!("Copy thinking block {}", index + 1)

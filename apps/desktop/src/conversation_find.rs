@@ -8,7 +8,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
-        *,
+        Icon, *,
     },
     *,
 };
@@ -233,60 +233,123 @@ impl HiveApp {
             .as_ref()
             .and_then(|id| find.hits.iter().position(|hit| hit == id))
             .map_or(0, |i| i + 1);
-        h_flex()
+        let no_match = !find.query.is_empty() && find.hits.is_empty();
+        let count_label = if find.query.is_empty() {
+            tr("输入关键词").into()
+        } else if find.hits.is_empty() {
+            tr("没有匹配").into()
+        } else if english() {
+            format!("{position}/{} messages", find.hits.len())
+        } else {
+            format!("{position}/{} 条消息", find.hits.len())
+        };
+        div()
             .px_5()
             .py_2()
-            .gap_2()
             .border_b_1()
             .border_color(Color::Divider.get(cx))
+            .bg(Color::Surface.get(cx))
             .child(
-                div()
-                    .flex_1()
+                h_flex()
+                    .w_full()
                     .min_w_0()
-                    .child(Input::new(&find.input).aria_label(tr("查找当前会话的消息和工具"))),
-            )
-            .child(div().text_xs().text_color(Color::Muted.get(cx)).child(
-                if find.query.is_empty() {
-                    tr("输入关键词").into()
-                } else if find.hits.is_empty() {
-                    tr("没有匹配").into()
-                } else {
-                    if english() {format!("{position}/{} messages",find.hits.len())} else {format!("{position}/{} 条消息",find.hits.len())}
-                },
-            ))
-            .child(
-                Button::new("previous-conversation-match")
-                    .ghost()
-                    .compact()
-                    .icon(Glyph::ArrowUp)
-                    .accessibility_label(tr("上一条匹配消息"))
-                    .tooltip(tr("上一条 · Shift+Enter"))
-                    .disabled(find.hits.is_empty())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.move_conversation_find(true, window, cx)
-                    })),
-            )
-            .child(
-                Button::new("next-conversation-match")
-                    .ghost()
-                    .compact()
-                    .icon(Glyph::ArrowDown)
-                    .accessibility_label(tr("下一条匹配消息"))
-                    .tooltip(tr("下一条 · Enter"))
-                    .disabled(find.hits.is_empty())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.move_conversation_find(false, window, cx)
-                    })),
-            )
-            .child(
-                Button::new("close-conversation-find")
-                    .ghost()
-                    .compact()
-                    .icon(Glyph::X)
-                    .accessibility_label(tr("关闭会话查找"))
-                    .tooltip(tr("关闭 · Escape"))
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.close_conversation_find(window, cx)),
+                    .items_center()
+                    .gap_1p5()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
+                    .bg(Color::Card.get(cx))
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Input::new(&find.input)
+                                .appearance(false)
+                                .bordered(false)
+                                .focus_bordered(false)
+                                .cleanable(true)
+                                .prefix(
+                                    Icon::new(Glyph::Search)
+                                        .size(px(14.))
+                                        .text_color(Color::Muted.get(cx)),
+                                )
+                                .aria_label(tr("查找当前会话的消息和工具")),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(if no_match {
+                                Color::ErrorSurface.get(cx)
+                            } else {
+                                Color::Inset.get(cx)
+                            })
+                            .text_size(px(11.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(if no_match {
+                                Color::Error.get(cx)
+                            } else {
+                                Color::Muted.get(cx)
+                            })
+                            .child(count_label),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .w(px(1.))
+                            .h(px(16.))
+                            .mx_0p5()
+                            .bg(Color::Divider.get(cx)),
+                    )
+                    .child(
+                        Button::new("previous-conversation-match")
+                            .custom(crate::palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(26.))
+                            .w(px(26.))
+                            .rounded_lg()
+                            .icon(Glyph::ArrowUp)
+                            .accessibility_label(tr("上一条匹配消息"))
+                            .tooltip(tr("上一条 · Shift+Enter"))
+                            .disabled(find.hits.is_empty())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.move_conversation_find(true, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("next-conversation-match")
+                            .custom(crate::palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(26.))
+                            .w(px(26.))
+                            .rounded_lg()
+                            .icon(Glyph::ArrowDown)
+                            .accessibility_label(tr("下一条匹配消息"))
+                            .tooltip(tr("下一条 · Enter"))
+                            .disabled(find.hits.is_empty())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.move_conversation_find(false, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("close-conversation-find")
+                            .custom(crate::palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(26.))
+                            .w(px(26.))
+                            .rounded_lg()
+                            .icon(Glyph::X)
+                            .accessibility_label(tr("关闭会话查找"))
+                            .tooltip(tr("关闭 · Escape"))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.close_conversation_find(window, cx)
+                            })),
                     ),
             )
     }

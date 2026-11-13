@@ -265,6 +265,7 @@ impl HiveApp {
             .workspace
             .as_ref()
             .and_then(|workspace| self.collaboration.task_drafts.get(workspace));
+        let scroll = &self.collaboration.detail_scroll;
         v_flex()
             .w_full()
             .min_w_0()
@@ -274,37 +275,64 @@ impl HiveApp {
             .bg(Color::Card.get(cx))
             .border_1()
             .border_color(Color::Divider.get(cx))
-            .child(Reveal::new("task-document-toolbar-reveal", &self.collaboration_scroll,
+            .child(Reveal::new(
+                "task-document-toolbar-reveal",
+                scroll,
                 h_flex()
                     .gap_2()
                     .flex_wrap()
                     .items_center()
                     .justify_between()
-                    .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(
-                        if draft.is_some() {
-                            tr("任务 · 编辑 Markdown")
-                        } else {
-                            tr("任务")
-                        },
-                    ))
-                    .when(draft.is_none() && !self.collaboration.task_text.is_empty(), |row| row.child(
-                        Button::new("toggle-task-document").ghost().compact()
-                            .label(if self.collaboration.task_expanded { tr("收起任务文档") } else { tr("展开任务文档") })
-                            .selected(self.collaboration.task_expanded)
-                            .on_click(cx.listener(|this, _, _, cx| { this.collaboration.task_expanded = !this.collaboration.task_expanded; cx.notify(); }))
-                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(Color::Text.get(cx))
+                            .child(if draft.is_some() {
+                                tr("任务 · 编辑 Markdown")
+                            } else {
+                                tr("任务")
+                            }),
+                    )
+                    .when(draft.is_none() && !self.collaboration.task_text.is_empty(), |row| {
+                        row.child(
+                            Button::new("toggle-task-document")
+                                .outline()
+                                .compact()
+                                .xsmall()
+                                .h(px(26.))
+                                .rounded_md()
+                                .label(if self.collaboration.task_expanded {
+                                    tr("收起任务文档")
+                                } else {
+                                    tr("展开任务文档")
+                                })
+                                .selected(self.collaboration.task_expanded)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.collaboration.task_expanded =
+                                        !this.collaboration.task_expanded;
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .when(draft.is_none(), |view| {
                         view.child(
                             Button::new("edit-tasks")
+                                .primary()
+                                .compact()
+                                .xsmall()
+                                .h(px(26.))
+                                .rounded_md()
                                 .label(tr("编辑任务"))
                                 .disabled(
                                     self.workspace.is_none()
                                         || self.collaboration.task_loading
                                         || self.collaboration.task_error.is_some(),
                                 )
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.edit_tasks(window, cx)),
-                                ),
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.edit_tasks(window, cx)
+                                })),
                         )
                     }),
             ))
@@ -318,21 +346,30 @@ impl HiveApp {
                             .gap_2()
                             .p_3()
                             .rounded_lg()
-                            .bg(Color::Inset.get(cx))
-                            .child(Reveal::new("task-conflict-copy-reveal", &self.collaboration_scroll,
+                            .bg(Color::ErrorSurface.get(cx))
+                            .border_1()
+                            .border_color(Color::Divider.get(cx))
+                            .child(Reveal::new(
+                                "task-conflict-copy-reveal",
+                                scroll,
                                 h_flex()
                                     .items_center()
                                     .justify_between()
+                                    .gap_2()
                                     .child(
                                         div()
-                                            .text_sm()
+                                            .text_xs()
                                             .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(Color::Error.get(cx))
                                             .child(tr("其他人已更新任务文档")),
                                     )
                                     .child(
                                         Button::new("copy-latest-tasks")
-                                            .ghost()
+                                            .outline()
                                             .compact()
+                                            .xsmall()
+                                            .h(px(24.))
+                                            .rounded_md()
                                             .label(tr("复制最新版"))
                                             .on_click(cx.listener(move |_, _, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
@@ -347,7 +384,11 @@ impl HiveApp {
                                     .min_w_0()
                                     .max_h(px(200.))
                                     .overflow_y_scroll()
-                                    .text_sm()
+                                    .p_2()
+                                    .rounded_md()
+                                    .bg(Color::Inset.get(cx))
+                                    .text_xs()
+                                    .text_color(Color::Secondary.get(cx))
                                     .child(if latest.is_empty() {
                                         SharedString::from(tr("（文档为空）"))
                                     } else {
@@ -355,7 +396,13 @@ impl HiveApp {
                                     }),
                             ),
                     )
-                    .child(div().text_sm().child(tr("你的草稿 · 对照上方版本编辑后保存")))
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(Color::Secondary.get(cx))
+                            .child(tr("你的草稿 · 对照上方版本编辑后保存")),
+                    )
                 })
                 .child(
                     div()
@@ -368,24 +415,41 @@ impl HiveApp {
                         .aria_label(tr("任务文档 Markdown"))
                         .disabled(draft.saving),
                 )
-                .when_some(draft.error.as_ref().map(|(key,error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, error| {
-                    view.child(
-                        div()
-                            .id("task-draft-error")
-                            .role(Role::Alert)
-                            .aria_label(error.clone())
-                            .text_sm()
-                            .text_color(Color::Error.get(cx))
-                            .child(error),
-                    )
-                })
-                .child(Reveal::new("task-draft-actions-reveal", &self.collaboration_scroll,
+                .when_some(
+                    draft.error.as_ref().map(|(key, error)| {
+                        format!(
+                            "{}: {}",
+                            tr(key),
+                            crate::language::localize_owned_error(error)
+                        )
+                    }),
+                    |view, error| {
+                        view.child(
+                            div()
+                                .id("task-draft-error")
+                                .role(Role::Alert)
+                                .aria_label(error.clone())
+                                .px_3()
+                                .py_2()
+                                .rounded_lg()
+                                .bg(Color::ErrorSurface.get(cx))
+                                .text_xs()
+                                .text_color(Color::Error.get(cx))
+                                .child(error),
+                        )
+                    },
+                )
+                .child(Reveal::new(
+                    "task-draft-actions-reveal",
+                    scroll,
                     h_flex()
                         .flex_wrap()
                         .gap_2()
                         .child(
                             Button::new("save-tasks")
                                 .primary()
+                                .small()
+                                .rounded_lg()
                                 .label(if draft.saving {
                                     tr("正在保存…")
                                 } else if draft.conflicting_content.is_some() {
@@ -396,53 +460,99 @@ impl HiveApp {
                                 .disabled(!self.connected || draft.saving)
                                 .on_click(cx.listener(|this, _, _, cx| this.save_tasks(cx))),
                         )
-                        .child(Button::new("copy-task-draft").label(tr("复制草稿")).on_click(
-                            cx.listener(move |_, _, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                    input.read(cx).value().to_string(),
-                                ))
-                            }),
-                        ))
+                        .child(
+                            Button::new("copy-task-draft")
+                                .outline()
+                                .small()
+                                .rounded_lg()
+                                .label(tr("复制草稿"))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        input.read(cx).value().to_string(),
+                                    ))
+                                })),
+                        )
                         .child(
                             Button::new("cancel-task-edit")
+                                .ghost()
+                                .small()
+                                .rounded_lg()
                                 .label(tr("取消编辑（丢弃改动）"))
                                 .disabled(draft.saving)
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.discard_task_draft(cx)),
-                                ),
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.discard_task_draft(cx)
+                                })),
                         ),
                 ))
             })
             .when(draft.is_none(), |view| {
                 view.when(self.collaboration.task_loading, |view| {
-                    view.child(div().text_sm().child(tr("正在读取任务…")))
-                })
-                .when_some(self.collaboration.task_error.as_ref().map(|(key,error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, error| {
                     view.child(
                         div()
-                            .text_sm()
-                            .text_color(Color::Error.get(cx))
-                            .child(error),
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(tr("正在读取任务…")),
                     )
                 })
+                .when_some(
+                    self.collaboration.task_error.as_ref().map(|(key, error)| {
+                        format!(
+                            "{}: {}",
+                            tr(key),
+                            crate::language::localize_owned_error(error)
+                        )
+                    }),
+                    |view, error| {
+                        view.child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .rounded_lg()
+                                .bg(Color::ErrorSurface.get(cx))
+                                .text_xs()
+                                .text_color(Color::Error.get(cx))
+                                .child(error),
+                        )
+                    },
+                )
                 .when(
                     !self.collaboration.task_loading
                         && self.collaboration.task_error.is_none()
                         && self.collaboration.task_text.is_empty(),
-                    |view| view.child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("任务文档为空"))),
+                    |view| {
+                        view.child(
+                            div()
+                                .py_4()
+                                .text_xs()
+                                .text_color(Color::Muted.get(cx))
+                                .child(tr("任务文档为空")),
+                        )
+                    },
                 )
-                .when(self.collaboration.task_expanded && !self.collaboration.task_text.is_empty(), |view| {
-                    view.child(
-                        div()
-                            .id("task-document-body")
-                            .role(Role::Label)
-                            .aria_label(self.collaboration.tasks.read(cx).rendered_text().as_str().to_string())
-                            .p_3()
-                            .rounded_lg()
-                            .bg(Color::Inset.get(cx))
-                            .child(TextView::new(&self.collaboration.tasks).selectable(true)),
-                    )
-                })
+                .when(
+                    self.collaboration.task_expanded && !self.collaboration.task_text.is_empty(),
+                    |view| {
+                        view.child(
+                            div()
+                                .id("task-document-body")
+                                .role(Role::Label)
+                                .aria_label(
+                                    self.collaboration
+                                        .tasks
+                                        .read(cx)
+                                        .rendered_text()
+                                        .as_str()
+                                        .to_string(),
+                                )
+                                .p_3p5()
+                                .rounded_lg()
+                                .bg(Color::Inset.get(cx))
+                                .border_1()
+                                .border_color(Color::Divider.get(cx))
+                                .child(TextView::new(&self.collaboration.tasks).selectable(true)),
+                        )
+                    },
+                )
             })
     }
 }

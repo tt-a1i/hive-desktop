@@ -1,5 +1,11 @@
-use crate::{app::{HiveApp, SettingsSection},focus_scroll::{Reveal,Viewport}, palette::Color,language::tr};
+use crate::{
+    app::{HiveApp, SettingsSection},
+    focus_scroll::{Reveal, Viewport},
+    language::tr,
+    palette::Color,
+};
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
         scroll::ScrollableElement,
@@ -39,63 +45,129 @@ fn details(owner: &str, message: &str, cx: &Context<HiveApp>) -> AnyElement {
                 .min_w_0()
                 .max_h(px(180.))
                 .overflow_y_scroll()
-                .p_2()
+                .p_2p5()
                 .rounded_lg()
                 .border_1()
                 .border_color(Color::Divider.get(cx))
-                .bg(Color::Inset.get(cx))
+                .bg(Color::Card.get(cx))
                 .font_family(Theme::global(cx).mono_font_family.clone())
                 .text_xs()
-                .child(crate::text_reading::selectable_text(format!("failure-text-{owner}"), display)),
+                .line_height(px(18.))
+                .text_color(Color::Secondary.get(cx))
+                .child(crate::text_reading::selectable_text(
+                    format!("failure-text-{owner}"),
+                    display,
+                )),
         )
         .child(
-            Button::new(SharedString::from(format!("copy-failure-{owner}")))
-                .ghost()
-                .compact()
-                .rounded_full()
-                .label(tr("复制错误详情"))
-                .accessibility_label(tr("复制错误详情"))
-                .on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
-                }),
+            h_flex().justify_end().child(
+                Button::new(SharedString::from(format!("copy-failure-{owner}")))
+                    .custom(crate::palette::subtle_icon_variant(cx))
+                    .compact()
+                    .h(px(26.))
+                    .px_2()
+                    .rounded_lg()
+                    .icon(Glyph::Copy)
+                    .label(tr("复制错误详情"))
+                    .accessibility_label(tr("复制错误详情"))
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+                    }),
+            ),
         )
         .into_any_element()
 }
 impl HiveApp {
-    pub(crate) fn render_agent_repair_actions(&self, disabled: bool, cx: &Context<Self>) -> AnyElement {
-        let Some(session) = &self.session else { return div().into_any_element(); };
+    pub(crate) fn render_agent_repair_actions(
+        &self,
+        disabled: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let Some(session) = &self.session else {
+            return div().into_any_element();
+        };
         self.render_backend_repair_actions(session.backend, disabled, cx)
     }
-    pub(crate) fn render_backend_repair_actions(&self, backend: crate::protocol::Backend, disabled: bool, cx: &Context<Self>) -> AnyElement {
+    pub(crate) fn render_backend_repair_actions(
+        &self,
+        backend: crate::protocol::Backend,
+        disabled: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let backend = match backend {
             crate::protocol::Backend::Pi => None,
             crate::protocol::Backend::Codex => Some("codex"),
             crate::protocol::Backend::Claude => Some("claude"),
             crate::protocol::Backend::PiRpc => Some("pi"),
         };
-        h_flex().min_w_0().gap_2().flex_wrap()
-            .when_some(backend, |row, backend| row.child(Button::new("repair-agent-program").track_focus(&self.repair_program_focus).ghost().compact()
-                .label(tr("外部程序设置")).disabled(disabled)
-                .on_click(cx.listener(move |this, _, window, cx| this.open_program_setup(backend, window, cx)))))
-            .when(backend.is_none(), |row| row.children([
-                ("repair-pi-accounts", SettingsSection::PiAccounts, tr("内置 Pi 账号"), self.repair_accounts_focus.clone()),
-                ("repair-pi-models", SettingsSection::Models, tr("模型与接口"), self.repair_models_focus.clone()),
-            ].into_iter().map(|(id, section, label, focus)| Button::new(id).track_focus(&focus).ghost().compact().label(label).disabled(disabled)
-                .on_click(cx.listener(move |this, _, window, cx| { this.settings_section = section; this.open_settings(window, cx); })))))
+        h_flex()
+            .min_w_0()
+            .gap_1p5()
+            .flex_wrap()
+            .when_some(backend, |row, backend| {
+                row.child(
+                    Button::new("repair-agent-program")
+                        .track_focus(&self.repair_program_focus)
+                        .custom(crate::palette::subtle_icon_variant(cx))
+                        .compact()
+                        .h(px(26.))
+                        .px_2()
+                        .rounded_lg()
+                        .label(tr("外部程序设置"))
+                        .disabled(disabled)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_program_setup(backend, window, cx)
+                        })),
+                )
+            })
+            .when(backend.is_none(), |row| {
+                row.children(
+                    [
+                        (
+                            "repair-pi-accounts",
+                            SettingsSection::PiAccounts,
+                            tr("内置 Pi 账号"),
+                            self.repair_accounts_focus.clone(),
+                        ),
+                        (
+                            "repair-pi-models",
+                            SettingsSection::Models,
+                            tr("模型与接口"),
+                            self.repair_models_focus.clone(),
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(id, section, label, focus)| {
+                        Button::new(id)
+                            .track_focus(&focus)
+                            .custom(crate::palette::subtle_icon_variant(cx))
+                            .compact()
+                            .h(px(26.))
+                            .px_2()
+                            .rounded_lg()
+                            .label(label)
+                            .disabled(disabled)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.settings_section = section;
+                                this.open_settings(window, cx);
+                            }))
+                    }),
+                )
+            })
             .into_any_element()
     }
     pub(crate) fn reset_reply_failures(&mut self) {
         if matches!(self.error, Some(crate::app::ErrorNotice::Conversation(_))) {
             self.error = None;
         }
-        self.failure_scroll.set_offset(point(px(0.),px(0.)));
+        self.failure_scroll.set_offset(point(px(0.), px(0.)));
         self.delivery_failure = None;
         self.delivery_failure_expanded = false;
         self.agent_diagnostic = None;
     }
     pub(crate) fn set_delivery_failure(&mut self, failure: Option<DeliveryFailure>) {
         if self.delivery_failure != failure {
-            self.failure_scroll.set_offset(point(px(0.),px(0.)));
+            self.failure_scroll.set_offset(point(px(0.), px(0.)));
             self.delivery_failure_expanded = false;
         }
         self.delivery_failure = failure;
@@ -124,26 +196,44 @@ impl HiveApp {
             .p_3()
             .rounded_xl()
             .border_1()
-            .border_color(Color::Divider.get(cx))
-            .bg(Color::Card.get(cx))
+            .border_color(Color::Error.get(cx).opacity(0.24))
+            .bg(Color::ErrorSurface.get(cx))
             .child(
                 h_flex()
                     .gap_2()
                     .flex_wrap()
                     .items_center()
                     .child(
-                        div()
+                        h_flex()
                             .flex_1()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(Color::Error.get(cx))
-                            .child(tr("这次回复未完成")),
+                            .min_w_0()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::new(Glyph::CircleAlert)
+                                    .size(px(14.))
+                                    .text_color(Color::Error.get(cx)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(Color::Error.get(cx))
+                                    .child(tr("这次回复未完成")),
+                            ),
                     )
                     .child(
                         Button::new(("reply-failure", index))
-                            .ghost()
+                            .custom(crate::palette::quiet_icon_variant(cx))
                             .compact()
-                            .rounded_full()
+                            .h(px(26.))
+                            .px_2()
+                            .rounded_lg()
+                            .icon(if failure.expanded {
+                                Glyph::ChevronDown
+                            } else {
+                                Glyph::ChevronRight
+                            })
                             .label(if failure.expanded {
                                 tr("收起详情")
                             } else {
@@ -164,18 +254,56 @@ impl HiveApp {
                     ),
             )
             .when(failure.expanded, |view| {
-                view.child(details(&format!("reply-{index}"), &failure.display_message(), cx))
+                view.child(details(
+                    &format!("reply-{index}"),
+                    &failure.display_message(),
+                    cx,
+                ))
             })
             .into_any_element()
     }
-    pub(crate) fn render_session_failure(&self, window: &Window, running: bool, cx: &Context<Self>) -> Option<AnyElement> {
-        if self.agent_diagnostic.is_none() && self.delivery_failure.is_none() { return None; }
-        let height = (window.viewport_size().height / 6.).min(px(180.)).max(px(64.));
-        Some(div().flex().items_stretch().flex_shrink_0().w_full().min_w_0().h(height).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
-            .child(Viewport::new("session-failure-viewport", &self.failure_scroll,
-                v_flex().id("session-failure-scroll").flex_1().min_w_0().min_h_0().h(height).overflow_y_scroll().track_scroll(&self.failure_scroll).vertical_scrollbar(&self.failure_scroll).p_3()
-                    .child(self.render_failure_notice(running,cx))))
-            .into_any_element())
+    pub(crate) fn render_session_failure(
+        &self,
+        window: &Window,
+        running: bool,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.agent_diagnostic.is_none() && self.delivery_failure.is_none() {
+            return None;
+        }
+        let height = (window.viewport_size().height / 6.)
+            .min(px(180.))
+            .max(px(64.));
+        Some(
+            div()
+                .flex()
+                .items_stretch()
+                .flex_shrink_0()
+                .w_full()
+                .min_w_0()
+                .max_h(height)
+                .rounded_xl()
+                .border_1()
+                .border_color(Color::Error.get(cx).opacity(0.26))
+                .bg(Color::ErrorSurface.get(cx))
+                .overflow_hidden()
+                .child(Viewport::new(
+                    "session-failure-viewport",
+                    &self.failure_scroll,
+                    v_flex()
+                        .id("session-failure-scroll")
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .max_h(height)
+                        .overflow_y_scroll()
+                        .track_scroll(&self.failure_scroll)
+                        .vertical_scrollbar(&self.failure_scroll)
+                        .p_3()
+                        .child(self.render_failure_notice(running, cx)),
+                ))
+                .into_any_element(),
+        )
     }
     fn render_failure_notice(&self, running: bool, cx: &Context<Self>) -> AnyElement {
         let transient = self.agent_diagnostic.as_ref();
@@ -184,26 +312,43 @@ impl HiveApp {
                 .flex_shrink_0()
                 .min_w_0()
                 .gap_2()
-                .child(
-                    Reveal::new("diagnostic-header-reveal", &self.failure_scroll, h_flex()
+                .child(Reveal::new(
+                    "diagnostic-header-reveal",
+                    &self.failure_scroll,
+                    h_flex()
                         .gap_2()
                         .flex_wrap()
                         .items_center()
                         .child(
-                            div()
+                            h_flex()
                                 .flex_1()
-                                .text_sm()
-                                .text_color(Color::Error.get(cx))
-                                .child(if failure.diagnostic_write_failed {
-                                    tr("失败详情未能保存，原消息仍保留")
-                                } else {
-                                    tr("Agent 报告了错误")
-                                }),
+                                .min_w_0()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    Icon::new(Glyph::TriangleAlert)
+                                        .size(px(14.))
+                                        .text_color(Color::Error.get(cx)),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(Color::Error.get(cx))
+                                        .child(if failure.diagnostic_write_failed {
+                                            tr("失败详情未能保存，原消息仍保留")
+                                        } else {
+                                            tr("Agent 报告了错误")
+                                        }),
+                                ),
                         )
                         .child(
                             Button::new("agent-diagnostic-details")
-                                .ghost()
+                                .custom(crate::palette::quiet_icon_variant(cx))
                                 .compact()
+                                .h(px(26.))
+                                .px_2()
+                                .rounded_lg()
                                 .label(if failure.expanded {
                                     tr("收起详情")
                                 } else {
@@ -219,18 +364,29 @@ impl HiveApp {
                         )
                         .child(
                             Button::new("dismiss-agent-diagnostic")
-                                .ghost()
+                                .custom(crate::palette::quiet_icon_variant(cx))
                                 .compact()
+                                .h(px(26.))
+                                .px_2()
+                                .rounded_lg()
                                 .label(tr("关闭"))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.agent_diagnostic = None;
                                     cx.notify();
                                 })),
-                        )),
-                )
-                .child(Reveal::new("failure-repair-reveal", &self.failure_scroll, self.render_agent_repair_actions(running || !self.connected, cx)))
+                        ),
+                ))
+                .child(Reveal::new(
+                    "failure-repair-reveal",
+                    &self.failure_scroll,
+                    self.render_agent_repair_actions(running || !self.connected, cx),
+                ))
                 .when(failure.expanded, |view| {
-                    view.child(Reveal::new("agent-details-reveal", &self.failure_scroll, details("agent", &failure.message, cx)))
+                    view.child(Reveal::new(
+                        "agent-details-reveal",
+                        &self.failure_scroll,
+                        details("agent", &failure.message, cx),
+                    ))
                 })
                 .into_any_element();
         }
@@ -246,26 +402,43 @@ impl HiveApp {
             .flex_shrink_0()
             .min_w_0()
             .gap_2()
-            .child(
-                Reveal::new("delivery-header-reveal", &self.failure_scroll, h_flex()
+            .child(Reveal::new(
+                "delivery-header-reveal",
+                &self.failure_scroll,
+                h_flex()
                     .gap_2()
                     .flex_wrap()
                     .items_center()
                     .child(
-                        div()
+                        h_flex()
                             .flex_1()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(if running {
-                                tr("正在重新处理原消息…")
-                            } else {
-                                tr("消息处理未完成")
-                            }),
+                            .min_w_0()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::new(Glyph::TriangleAlert)
+                                    .size(px(14.))
+                                    .text_color(Color::Error.get(cx)),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(Color::Error.get(cx))
+                                    .child(if running {
+                                        tr("正在重新处理原消息…")
+                                    } else {
+                                        tr("消息处理未完成")
+                                    }),
+                            ),
                     )
                     .child(
                         Button::new("delivery-failure-details")
-                            .ghost()
+                            .custom(crate::palette::quiet_icon_variant(cx))
                             .compact()
+                            .h(px(26.))
+                            .px_2()
+                            .rounded_lg()
                             .label(if self.delivery_failure_expanded {
                                 tr("收起详情")
                             } else {
@@ -279,22 +452,35 @@ impl HiveApp {
                     )
                     .child(
                         Button::new("retry-delivery-failure")
-                            .rounded_full()
+                            .primary()
+                            .compact()
+                            .h(px(28.))
+                            .px_3()
+                            .rounded_lg()
+                            .icon(Glyph::RotateCw)
                             .label(tr("重试原消息"))
                             .accessibility_label(tr("重试原消息及附件"))
                             .disabled(disabled)
                             .on_click(cx.listener(|this, _, _, cx| this.resume(cx))),
-                    )),
-            )
+                    ),
+            ))
             .child(
                 div()
                     .text_xs()
-                    .text_color(Color::Muted.get(cx))
+                    .text_color(Color::Secondary.get(cx))
                     .child(tr("待处理消息与附件已保留，重试将继续处理原来的内容。")),
             )
-            .child(Reveal::new("failure-repair-reveal", &self.failure_scroll, self.render_agent_repair_actions(running || !self.connected, cx)))
+            .child(Reveal::new(
+                "failure-repair-reveal",
+                &self.failure_scroll,
+                self.render_agent_repair_actions(running || !self.connected, cx),
+            ))
             .when(self.delivery_failure_expanded, |view| {
-                view.child(Reveal::new("delivery-details-reveal", &self.failure_scroll, details("delivery", &failure.message, cx)))
+                view.child(Reveal::new(
+                    "delivery-details-reveal",
+                    &self.failure_scroll,
+                    details("delivery", &failure.message, cx),
+                ))
             })
             .into_any_element()
     }

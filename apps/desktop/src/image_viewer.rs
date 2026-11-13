@@ -1,6 +1,7 @@
 use crate::file_save::save_file as save_original;
-use crate::{app::HiveApp, palette::Color, language::tr};
+use crate::{app::HiveApp, language::tr, palette::Color};
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
         *,
@@ -130,55 +131,103 @@ impl Render for ImageViewer {
             .gap_3()
             .child(
                 h_flex()
+                    .items_center()
+                    .justify_between()
                     .flex_wrap()
                     .gap_2()
-                    .items_center()
+                    .pb_2p5()
+                    .border_b_1()
+                    .border_color(Color::Divider.get(cx))
                     .child(
-                        Button::new("image-fit")
-                            .ghost()
-                            .label(if self.fit {
-                                tr("原尺寸")
-                            } else {
-                                tr("适应窗口")
-                            })
-                            .disabled(self.rendered.is_none())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.fit = !this.fit;
-                                cx.notify();
-                            })),
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .when(self.dimensions.0 > 0, |row| {
+                                row.child(
+                                    div()
+                                        .id("image-dimensions")
+                                        .role(Role::Label)
+                                        .aria_label(format!(
+                                            "{} × {}",
+                                            self.dimensions.0, self.dimensions.1
+                                        ))
+                                        .px_2()
+                                        .py(px(3.))
+                                        .rounded_full()
+                                        .bg(Color::Inset.get(cx))
+                                        .border_1()
+                                        .border_color(Color::Divider.get(cx))
+                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                        .text_xs()
+                                        .text_color(Color::Secondary.get(cx))
+                                        .child(format!(
+                                            "{} × {}",
+                                            self.dimensions.0, self.dimensions.1
+                                        )),
+                                )
+                            }),
                     )
                     .child(
-                        Button::new("copy-original-image")
-                            .ghost()
-                            .label(tr("复制原图"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_image(&this.original));
-                                this.notice = Some("已复制原图");
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("save-original-image")
-                            .ghost()
-                            .label(if self.saving {
-                                tr("正在保存…")
-                            } else {
-                                tr("另存为…")
-                            })
-                            .disabled(self.saving)
-                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
-                    )
-                    .when(self.dimensions.0 > 0, |row| {
-                        row.child(
-                            div()
-                                .id("image-dimensions")
-                                .role(Role::Label)
-                                .aria_label(format!("{} × {}", self.dimensions.0, self.dimensions.1))
-                                .text_xs()
-                                .text_color(Color::Muted.get(cx))
-                                .child(format!("{} × {}", self.dimensions.0, self.dimensions.1)),
-                        )
-                    }),
+                        h_flex()
+                            .items_center()
+                            .gap_1p5()
+                            .child(
+                                Button::new("image-fit")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .h(px(28.))
+                                    .px_2p5()
+                                    .rounded_lg()
+                                    .icon(if self.fit {
+                                        Glyph::Maximize2
+                                    } else {
+                                        Glyph::Minimize2
+                                    })
+                                    .label(if self.fit {
+                                        tr("原尺寸")
+                                    } else {
+                                        tr("适应窗口")
+                                    })
+                                    .disabled(self.rendered.is_none())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.fit = !this.fit;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("copy-original-image")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .h(px(28.))
+                                    .px_2p5()
+                                    .rounded_lg()
+                                    .icon(Glyph::Copy)
+                                    .label(tr("复制原图"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_image(
+                                            &this.original,
+                                        ));
+                                        this.notice = Some("已复制原图");
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("save-original-image")
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .h(px(28.))
+                                    .px_2p5()
+                                    .rounded_lg()
+                                    .icon(Glyph::Download)
+                                    .label(if self.saving {
+                                        tr("正在保存…")
+                                    } else {
+                                        tr("另存为…")
+                                    })
+                                    .disabled(self.saving)
+                                    .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -187,16 +236,24 @@ impl Render for ImageViewer {
                     .min_w_0()
                     .h(height)
                     .overflow_scroll()
+                    .p_3()
                     .rounded_xl()
                     .border_1()
                     .border_color(Color::Divider.get(cx))
-                    .bg(Color::Card.get(cx))
+                    .bg(Color::Inset.get(cx))
                     .when_some(self.rendered.clone(), |view, image| {
                         view.child(if self.fit {
-                            img(image)
-                                .w_full()
-                                .h(height)
-                                .object_fit(ObjectFit::Contain)
+                            div()
+                                .size_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    img(image)
+                                        .w_full()
+                                        .h_full()
+                                        .object_fit(ObjectFit::Contain),
+                                )
                                 .into_any_element()
                         } else {
                             img(image)
@@ -206,15 +263,60 @@ impl Render for ImageViewer {
                         })
                     })
                     .when(self.rendered.is_none() && self.error.is_none(), |view| {
-                        view.child(div().id("image-loading").role(Role::Label).aria_label(tr("正在读取原图…")).p_4().child(tr("正在读取原图…")))
+                        view.child(
+                            div()
+                                .id("image-loading")
+                                .role(Role::Label)
+                                .aria_label(tr("正在读取原图…"))
+                                .size_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .text_xs()
+                                .text_color(Color::Muted.get(cx))
+                                .child(tr("正在读取原图…")),
+                        )
                     }),
             )
             .when_some(self.notice.map(tr), |view, text| {
-                view.child(div().id("image-notice").role(Role::Label).aria_label(text).text_xs().child(text))
+                view.child(
+                    h_flex()
+                        .items_center()
+                        .gap_1p5()
+                        .id("image-notice")
+                        .role(Role::Label)
+                        .aria_label(text)
+                        .text_xs()
+                        .text_color(Color::Success.get(cx))
+                        .child(Icon::new(Glyph::Check).size(px(12.)).text_color(Color::Success.get(cx)))
+                        .child(text),
+                )
             })
-            .when_some(self.error.as_ref().map(|(key, error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, text| {
-                view.child(div().id("image-error").role(Role::Label).aria_label(text.clone()).text_xs().text_color(Color::Error.get(cx)).child(text))
-            })
+            .when_some(
+                self.error.as_ref().map(|(key, error)| {
+                    format!("{}: {}", tr(key), crate::language::localize_owned_error(error))
+                }),
+                |view, text| {
+                    view.child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .rounded_lg()
+                            .bg(Color::ErrorSurface.get(cx))
+                            .border_1()
+                            .border_color(Color::Error.get(cx).opacity(0.24))
+                            .id("image-error")
+                            .role(Role::Label)
+                            .aria_label(text.clone())
+                            .text_xs()
+                            .text_color(Color::Error.get(cx))
+                            .child(Icon::new(Glyph::CircleAlert).size(px(14.)).text_color(Color::Error.get(cx)))
+                            .child(text),
+                    )
+                },
+            )
     }
 }
 

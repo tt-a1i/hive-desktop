@@ -86,7 +86,7 @@ impl HiveApp {
         let count = messages.len();
         v_flex().min_w_0().child(
             Button::new(("tool-group", start))
-                .ghost()
+                .custom(crate::palette::quiet_icon_variant(cx))
                 .compact()
                 .h(px(28.))
                 .px_1p5()
@@ -106,8 +106,16 @@ impl HiveApp {
                 .child(
                     h_flex()
                         .flex_1()
+                        .min_w_0()
                         .items_center()
                         .gap_1p5()
+                        .child(
+                            div()
+                                .size(px(6.))
+                                .rounded_full()
+                                .flex_shrink_0()
+                                .bg(Color::Muted.get(cx).opacity(0.65)),
+                        )
                         .child(
                             Icon::new(Glyph::Cpu)
                                 .size(px(13.))
@@ -188,16 +196,25 @@ impl HiveApp {
             "执行中" => Color::Accent.get(cx),
             _ => Color::Secondary.get(cx),
         };
+        let status_bg = match tool.status {
+            "失败" => Color::ErrorSurface.get(cx),
+            "执行中" => Color::AccentSoft.get(cx),
+            _ => Color::Inset.get(cx),
+        };
         v_flex()
             .id(("tool-message-row", index))
             .when(self.conversation_find_matches(&message.id), |view| {
-                view.bg(Color::Attention.get(cx)).rounded_lg().px_1()
+                view.bg(Color::AccentSoft.get(cx))
+                    .border_1()
+                    .border_color(Color::Accent.get(cx).opacity(0.28))
+                    .rounded_lg()
+                    .px_1()
             })
             .min_w_0()
             .gap_1()
             .child(
                 Button::new(("tool-details", index))
-                    .ghost()
+                    .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
                     .h(px(26.))
                     .px_1p5()
@@ -224,6 +241,17 @@ impl HiveApp {
                             .min_w_0()
                             .items_center()
                             .gap_1p5()
+                            .child(
+                                div()
+                                    .size(px(6.))
+                                    .rounded_full()
+                                    .flex_shrink_0()
+                                    .bg(status_color.opacity(if tool.status == "完成" {
+                                        0.65
+                                    } else {
+                                        1.0
+                                    })),
+                            )
                             .child(
                                 Icon::new(tool_glyph(&tool.name))
                                     .size(px(13.))
@@ -258,7 +286,12 @@ impl HiveApp {
                                 row.child(
                                     div()
                                         .flex_shrink_0()
-                                        .text_xs()
+                                        .px_1p5()
+                                        .py(px(1.))
+                                        .rounded_full()
+                                        .bg(status_bg)
+                                        .text_size(px(10.5))
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(status_color)
                                         .child(tr(tool.status)),
                                 )
@@ -298,209 +331,348 @@ impl HiveApp {
                     Some(input) => input.clone(),
                     None => text.clone(),
                 };
+                let diff_available = crate::tool_diff::data::available(
+                    &tool.name,
+                    input.unwrap_or(&serde_json::Value::Null),
+                    tool.patch.as_deref(),
+                );
+                let paths = input
+                    .map(|value| crate::file_viewer::tool_paths(&tool.name, value))
+                    .unwrap_or_default();
+                let has_header_bar = !paths.is_empty() || diff_available || !details.is_empty();
+                let args_for_diff = input.cloned().unwrap_or_default();
+                let name_for_diff = tool.name.clone();
+                let patch_for_diff = tool.patch.clone();
+                let status_for_diff = tool.status;
+                let patch_match = self.conversation_find_patch_match(&id, tool.patch.as_deref());
                 view.child(
-                    v_flex()
-                        .tab_group()
-                        .gap_2()
-                        .p_3()
-                        .rounded_xl()
-                        .bg(Color::Inset.get(cx))
-                        .border_1()
-                        .border_color(Color::Divider.get(cx))
-                        .child({
-                            crate::text_reading::region(
-                                format!("tool-details-body-{id}"),
-                                if english() {
-                                    format!(
-                                        "{} tool input and output; scroll with arrow or page keys",
-                                        tool.name
-                                    )
-                                } else {
-                                    format!(
-                                        "{} 工具输入与输出，可用方向键或翻页键滚动",
-                                        tool.name
-                                    )
-                                },
-                                &tool.details_scroll,
-                                px(300.),
-                                cx,
-                            )
-                            .gap_2()
-                            .when_some(input, |card, value| {
-                                card.child(
-                                    h_flex().flex_wrap().gap_1p5().children(
-                                        crate::file_viewer::tool_paths(&tool.name, value)
-                                            .into_iter()
-                                            .enumerate()
-                                            .map(|(i, path)| {
-                                                let file = path.clone();
-                                                Button::new(SharedString::from(format!(
-                                                    "tool-file-{id}-{i}"
-                                                )))
-                                                .ghost()
-                                                .compact()
-                                                .max_w(px(360.))
-                                                .min_w_0()
-                                                .icon(Glyph::FileText)
-                                                .label(path.clone())
-                                                .accessibility_label(format!(
-                                                    "{}: {path}",
-                                                    tr("预览文件")
-                                                ))
-                                                .tooltip(format!(
-                                                    "{}: {path}",
-                                                    tr("预览当前磁盘内容")
-                                                ))
-                                                .on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        this.open_file_preview(
-                                                            file.clone(),
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    },
-                                                ))
-                                            }),
-                                    ),
-                                )
-                            })
-                            .when_some(args, |card, input| {
-                                card.child(
-                                    div()
-                                        .text_xs()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(Color::Muted.get(cx))
-                                        .child(tr("输入参数")),
-                                )
-                                .child(
-                                    div()
-                                        .id(SharedString::from(format!("tool-input-text-{id}")))
-                                        .role(Role::Label)
-                                        .aria_label(format!("{}: {input}", tr("输入参数")))
-                                        .min_w_0()
-                                        .font_family(Theme::global(cx).mono_font_family.clone())
-                                        .text_size(px(12.))
-                                        .line_height(px(19.))
-                                        .child(gpui_kit::base::SelectableText::new(
-                                            SharedString::from(format!("tool-input-{id}")),
-                                            input,
-                                        )),
-                                )
-                            })
-                            .when(!text.is_empty(), |card| {
-                                card.child(
-                                    div()
-                                        .text_xs()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(Color::Muted.get(cx))
-                                        .child(tr("输出")),
-                                )
-                                .child(
-                                    div()
-                                        .id(SharedString::from(format!("tool-output-text-{id}")))
-                                        .role(Role::Label)
-                                        .aria_label(format!("{}: {text}", tr("输出")))
-                                        .min_w_0()
-                                        .font_family(Theme::global(cx).mono_font_family.clone())
-                                        .text_size(px(12.))
-                                        .line_height(px(19.))
-                                        .child(gpui_kit::base::SelectableText::new(
-                                            SharedString::from(format!("tool-output-{id}")),
-                                            text,
-                                        )),
-                                )
-                            })
+                    div()
+                        .ml_2()
+                        .pl_3()
+                        .border_l_1()
+                        .border_color(if failed {
+                            Color::Error.get(cx).opacity(0.45)
+                        } else if in_progress {
+                            Color::Accent.get(cx).opacity(0.45)
+                        } else {
+                            Color::Divider.get(cx)
                         })
                         .child(
-                            h_flex()
-                                .justify_end()
-                                .gap_1p5()
-                                .when(
-                                    crate::tool_diff::data::available(
-                                        &tool.name,
-                                        input.unwrap_or(&serde_json::Value::Null),
-                                        tool.patch.as_deref(),
-                                    ),
-                                    |row| {
-                                        let args = input.cloned().unwrap_or_default();
-                                        let name = tool.name.clone();
-                                        let patch = tool.patch.clone();
-                                        let status = tool.status;
-                                        row.child(
-                                            Button::new(SharedString::from(format!(
-                                                "tool-diff-{id}"
-                                            )))
-                                            .ghost()
-                                            .compact()
-                                            .label(
-                                                if self.conversation_find_patch_match(
-                                                    &id,
-                                                    tool.patch.as_deref(),
-                                                ) {
-                                                    tr("查看改动 · 匹配")
-                                                } else {
-                                                    tr("查看改动")
-                                                },
+                            v_flex()
+                                .tab_group()
+                                .rounded_xl()
+                                .bg(Color::Inset.get(cx))
+                                .border_1()
+                                .border_color(Color::Divider.get(cx))
+                                .overflow_hidden()
+                                .when(has_header_bar, |card| {
+                                    card.child(
+                                        h_flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_2()
+                                            .px_2p5()
+                                            .py_1p5()
+                                            .border_b_1()
+                                            .border_color(Color::Divider.get(cx))
+                                            .bg(Color::Card.get(cx).opacity(0.55))
+                                            .child(
+                                                h_flex()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex_wrap()
+                                                    .gap_1()
+                                                    .children(paths.into_iter().enumerate().map(
+                                                        |(i, path)| {
+                                                            let file = path.clone();
+                                                            Button::new(SharedString::from(
+                                                                format!("tool-file-{id}-{i}"),
+                                                            ))
+                                                            .custom(
+                                                                crate::palette::subtle_icon_variant(
+                                                                    cx,
+                                                                ),
+                                                            )
+                                                            .compact()
+                                                            .h(px(22.))
+                                                            .px_1p5()
+                                                            .rounded_md()
+                                                            .max_w(px(360.))
+                                                            .min_w_0()
+                                                            .child(
+                                                                h_flex()
+                                                                    .min_w_0()
+                                                                    .items_center()
+                                                                    .gap_1()
+                                                                    .child(
+                                                                        Icon::new(Glyph::FileText)
+                                                                            .size(px(12.))
+                                                                            .text_color(
+                                                                                Color::Muted
+                                                                                    .get(cx),
+                                                                            ),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .min_w_0()
+                                                                            .truncate()
+                                                                            .text_xs()
+                                                                            .font_family(
+                                                                                Theme::global(cx)
+                                                                                    .mono_font_family
+                                                                                    .clone(),
+                                                                            )
+                                                                            .text_color(
+                                                                                Color::Secondary
+                                                                                    .get(cx),
+                                                                            )
+                                                                            .child(path.clone()),
+                                                                    ),
+                                                            )
+                                                            .accessibility_label(format!(
+                                                                "{}: {path}",
+                                                                tr("预览文件")
+                                                            ))
+                                                            .tooltip(format!(
+                                                                "{}: {path}",
+                                                                tr("预览当前磁盘内容")
+                                                            ))
+                                                            .on_click(cx.listener(
+                                                                move |this, _, window, cx| {
+                                                                    this.open_file_preview(
+                                                                        file.clone(),
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                },
+                                                            ))
+                                                        },
+                                                    )),
                                             )
-                                            .selected(self.conversation_find_patch_match(
-                                                &id,
-                                                tool.patch.as_deref(),
-                                            ))
-                                            .accessibility_label(format!(
-                                                "{}: {}{}",
-                                                tr("查看改动"),
-                                                tool.name,
-                                                if self.conversation_find_patch_match(
-                                                    &id,
-                                                    tool.patch.as_deref()
-                                                ) {
-                                                    if english() {
-                                                        ", includes search matches"
-                                                    } else {
-                                                        "，包含查找匹配"
-                                                    }
-                                                } else {
-                                                    ""
-                                                }
-                                            ))
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.open_tool_diff(
-                                                    name.clone(),
-                                                    args.clone(),
-                                                    patch.clone(),
-                                                    status,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })),
-                                        )
-                                    },
-                                )
-                                .child(
-                                    Button::new(("copy-tool", index))
-                                        .ghost()
-                                        .compact()
-                                        .icon(Glyph::Copy)
-                                        .disabled(details.is_empty())
-                                        .tooltip(tr("复制详情"))
-                                        .accessibility_label(if english() {
-                                            format!("Copy {} tool details", tool.name)
+                                            .child(
+                                                h_flex()
+                                                    .flex_shrink_0()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .when(diff_available, |row| {
+                                                        row.child(
+                                                            Button::new(SharedString::from(
+                                                                format!("tool-diff-{id}"),
+                                                            ))
+                                                            .custom(
+                                                                crate::palette::subtle_icon_variant(
+                                                                    cx,
+                                                                ),
+                                                            )
+                                                            .compact()
+                                                            .h(px(24.))
+                                                            .px_2()
+                                                            .rounded_md()
+                                                            .icon(Glyph::FileDiff)
+                                                            .label(if patch_match {
+                                                                tr("查看改动 · 匹配")
+                                                            } else {
+                                                                tr("查看改动")
+                                                            })
+                                                            .selected(patch_match)
+                                                            .accessibility_label(format!(
+                                                                "{}: {}{}",
+                                                                tr("查看改动"),
+                                                                tool.name,
+                                                                if patch_match {
+                                                                    if english() {
+                                                                        ", includes search matches"
+                                                                    } else {
+                                                                        "，包含查找匹配"
+                                                                    }
+                                                                } else {
+                                                                    ""
+                                                                }
+                                                            ))
+                                                            .on_click(cx.listener(
+                                                                move |this, _, window, cx| {
+                                                                    this.open_tool_diff(
+                                                                        name_for_diff.clone(),
+                                                                        args_for_diff.clone(),
+                                                                        patch_for_diff.clone(),
+                                                                        status_for_diff,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            )),
+                                                        )
+                                                    })
+                                                    .child(
+                                                        Button::new(("copy-tool", index))
+                                                            .custom(
+                                                                crate::palette::subtle_icon_variant(
+                                                                    cx,
+                                                                ),
+                                                            )
+                                                            .compact()
+                                                            .h(px(24.))
+                                                            .w(px(24.))
+                                                            .rounded_md()
+                                                            .icon(Glyph::Copy)
+                                                            .disabled(details.is_empty())
+                                                            .tooltip(tr("复制详情"))
+                                                            .accessibility_label(if english() {
+                                                                format!(
+                                                                    "Copy {} tool details",
+                                                                    tool.name
+                                                                )
+                                                            } else {
+                                                                format!(
+                                                                    "复制 {} 工具详情",
+                                                                    tool.name
+                                                                )
+                                                            })
+                                                            .on_click(cx.listener(
+                                                                move |_, _, _, cx| {
+                                                                    cx.write_to_clipboard(
+                                                                        ClipboardItem::new_string(
+                                                                            details.clone(),
+                                                                        ),
+                                                                    )
+                                                                },
+                                                            )),
+                                                    ),
+                                            ),
+                                    )
+                                })
+                                .child({
+                                    let has_args = args.is_some();
+                                    crate::text_reading::region(
+                                        format!("tool-details-body-{id}"),
+                                        if english() {
+                                            format!(
+                                                "{} tool input and output; scroll with arrow or page keys",
+                                                tool.name
+                                            )
                                         } else {
-                                            format!("复制 {} 工具详情", tool.name)
-                                        })
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                details.clone(),
-                                            ))
-                                        })),
-                                ),
+                                            format!(
+                                                "{} 工具输入与输出，可用方向键或翻页键滚动",
+                                                tool.name
+                                            )
+                                        },
+                                        &tool.details_scroll,
+                                        px(300.),
+                                        cx,
+                                    )
+                                    .border_0()
+                                    .rounded_none()
+                                    .p_2p5()
+                                    .gap_2()
+                                    .when_some(args, |card, input| {
+                                        card.child(
+                                            v_flex()
+                                                .min_w_0()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.))
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(tr("输入参数")),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id(SharedString::from(format!(
+                                                            "tool-input-text-{id}"
+                                                        )))
+                                                        .role(Role::Label)
+                                                        .aria_label(format!(
+                                                            "{}: {input}",
+                                                            tr("输入参数")
+                                                        ))
+                                                        .min_w_0()
+                                                        .font_family(
+                                                            Theme::global(cx)
+                                                                .mono_font_family
+                                                                .clone(),
+                                                        )
+                                                        .text_size(px(12.))
+                                                        .line_height(px(19.))
+                                                        .text_color(Color::Secondary.get(cx))
+                                                        .child(gpui_kit::base::SelectableText::new(
+                                                            SharedString::from(format!(
+                                                                "tool-input-{id}"
+                                                            )),
+                                                            input,
+                                                        )),
+                                                ),
+                                        )
+                                    })
+                                    .when(!text.is_empty(), |card| {
+                                        card.child(
+                                            v_flex()
+                                                .min_w_0()
+                                                .gap_1()
+                                                .when(has_args, |section| {
+                                                    section
+                                                        .pt_2()
+                                                        .border_t_1()
+                                                        .border_color(Color::Divider.get(cx).opacity(0.65))
+                                                })
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.))
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .text_color(if failed {
+                                                            Color::Error.get(cx)
+                                                        } else {
+                                                            Color::Muted.get(cx)
+                                                        })
+                                                        .child(tr("输出")),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .id(SharedString::from(format!(
+                                                            "tool-output-text-{id}"
+                                                        )))
+                                                        .role(Role::Label)
+                                                        .aria_label(format!(
+                                                            "{}: {text}",
+                                                            tr("输出")
+                                                        ))
+                                                        .min_w_0()
+                                                        .font_family(
+                                                            Theme::global(cx)
+                                                                .mono_font_family
+                                                                .clone(),
+                                                        )
+                                                        .text_size(px(12.))
+                                                        .line_height(px(19.))
+                                                        .text_color(if failed {
+                                                            Color::Error.get(cx)
+                                                        } else {
+                                                            Color::Text.get(cx)
+                                                        })
+                                                        .child(gpui_kit::base::SelectableText::new(
+                                                            SharedString::from(format!(
+                                                                "tool-output-{id}"
+                                                            )),
+                                                            text,
+                                                        )),
+                                                ),
+                                        )
+                                    })
+                                }),
                         ),
                 )
             })
             .when(failed && !tool.expanded, |view| {
                 view.child(
                     div()
-                        .px_2p5()
+                        .ml_2()
+                        .pl_2p5()
+                        .pr_2()
+                        .py_1()
+                        .border_l_2()
+                        .border_color(Color::Error.get(cx).opacity(0.5))
+                        .bg(Color::ErrorSurface.get(cx).opacity(0.6))
+                        .rounded_r_md()
                         .text_xs()
                         .text_color(Color::Error.get(cx))
                         .child(message.text.chars().take(160).collect::<String>()),
