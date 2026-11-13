@@ -1,5 +1,13 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 5bb7b0b 与清理（2026-11-13）
+
+内置 Pi 退出登录凭据脱敏读取与关闭信号 `0 ms` 即时取消、外部 Pi 交互并发取消写帧完整排空与 `AggregateError` 保留、内置 Pi 嵌套会话头目录初始化、会话装载上下文注入后的关闭中断检查、工作区移除 `/api/ui/workspaces/*` 写拦截与关闭态导航防护，以及 `/` 原生命令菜单及输入区卡片 `Viewport` + `Reveal` 焦点显露与搜索筛选滚动归零（`5bb7b0b`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `d87a68ea6618a32b113cc952500eac54d0207d01f24e21e2deb63e4033be065c`）。精确 13 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、六项后台边界与打开 `stdin` 流水线/异常关闭即时退出（`10 ms` / `6 ms`）、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文深色 `20 px` 欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`992aae6` 保留直接可运行回退，退役 `62e6a6e` 解压树并清理 Rust 中间构建缓存与重复产物约 5.75 GB（5.36 GiB），见[包内证据与边界](validation/2026-11-13-backend-hardening-and-picker-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
+## 后台凭据/交互/关闭边界加固与命令及搜索选择器焦点体验打磨（2026-11-13，源码）
+
+修复 `pi-auth.ts` 退出登录未挂载取消信号与凭据脱敏读取及 `close()` 延迟取消、`external-pi-interactions.ts` `Promise.all` 快错遗漏兄弟取消写与长定时器未 `unref`、`pi-session-manager.ts` 缺失父目录创建、`chats.ts` 装载期上下文注入后的关闭竞态、`hive-host.ts` / `desktop-runtime.ts` 关闭态导航与 `/api/ui/workspaces/*` 移除写拦截；补齐 `/` 原生命令菜单及输入区失败草稿/断线复制的 `Viewport` + `Reveal` 键盘焦点显露、四类筛选输入变更滚动归零，以及排队卡片/错误横幅/可复制终端错误框视觉层次。后台六项边界实测、四组零推理运行时回归、`LOCALE_AUDIT_OK`（1,301 键）、Rust 36 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查与 macOS release 构建通过，见[实证与边界](validation/2026-11-13-backend-hardening-and-picker-craft.md)。已纳入 `5bb7b0b` 开发包，完整目标继续。
+
 ## 当前开发包 992aae6 与清理（2026-11-13）
 
 Sidecar 协议帧完整排空与异常 `shutdown` 在打开 `stdin` 上即时退出、会话索引原子刷盘、多路关闭错误 `AggregateError` 保留，以及全设置面板（外观/聊天/团队/内置 Pi）、设置搜索与会话搜索/归档弹窗的 `Viewport` + `Reveal` 窄窗键盘显露闭环（`992aae6`）已入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`（ZIP SHA-256 `1c04393500e52e1b353866075fb20d6a9471457f9223091c8bda652072ae6d8f`）。精确 9 项变更、28,869 项清单/链接与 DMG/安装核对通过；包内四组正式包检查、协议排空与异常退出检查（`18 ms` / `13 ms`）、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文深色 `20 px` 欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`62e6a6e` 保留直接可运行回退，退役 `4b3135d` 解压树并清理 Rust 中间构建缓存与重复产物约 6.68 GB（6.23 GiB），见[包内证据与边界](validation/2026-11-13-sidecar-wire-and-settings-scroll-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

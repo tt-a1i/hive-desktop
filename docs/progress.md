@@ -1,5 +1,13 @@
 # Hive Desktop 进度
 
+## 当前开发包 5bb7b0b 与清理（2026-11-13）
+
+内置 Pi 退出登录凭据脱敏读取与关闭信号 `0 ms` 即时取消、外部 Pi 原生交互取消 `Promise.allSettled` 兄弟写帧排空与超时句柄解绑、内置 Pi 嵌套会话头目录 `0700`/`0600` 创建、会话装载期上下文注入后的关闭中断防护、工作区移除 `/api/ui/workspaces/*` 写拦截与宿主导航关闭防护，以及 `/` 原生命令菜单及输入区卡片 `Viewport` + `Reveal` 焦点显露与四类搜索滚动归零（`5bb7b0b`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 12 份后台 JS/map，28,869 项清单/29 链接、DMG 只读挂载与安装核对通过；包内四组正式包检查、后台六项边界与 sidecar 打开 `stdin` 流水线/异常关闭即时退出（`10 ms` / `6 ms`）、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文深色 `20 px` 欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `992aae6` 直接可运行回退，退役 `62e6a6e` 解压树并清理 Rust 中间构建缓存与重复产物约 5.75 GB（5.36 GiB），见[包内证据与边界](validation/2026-11-13-backend-hardening-and-picker-craft-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
+## 后台凭据/交互/关闭边界加固与命令及搜索选择器焦点体验打磨（2026-11-13，源码）
+
+围绕后端逻辑正确性最高优先级（推进 `#1`、`#3`、`#14`、`#17`、`#20`），复核 `packages/runtime/src/` 与 `apps/desktop/src/`：(1) `pi-auth.ts` 抽出带 `catalogAbort.signal` 与本地 `cause` 凭据脱敏包装的 `readCredentials()` 供 `catalog()` / `logout()` 共用，`assertIdle()` 拦截 `closing` 并在 `close()` 入口第一时间触发 `catalogAbort.abort()`；(2) `external-pi-interactions.ts` 为超时定时器补齐 `unref()` 并将 `cancel()` 改为 `Promise.allSettled` 排空兄弟取消写后再抛单错或 `AggregateError`；(3) `pi-session-manager.ts` 补齐会话父目录递归创建与 `EEXIST` 幂等容错，`chats.ts` 补齐 `load()` 上下文注入后的关闭中断检查，`hive-host.ts` / `desktop-runtime.ts` 补齐关闭态导航防护与 `/api/ui/workspaces/*` 移除期写拦截；(4) `command_picker/view.rs` 为 `/` 命令菜单接入 `Viewport` + `Reveal` 与胶囊徽标，会话模型/成员/成员模型/Pi 提供商搜索补齐输入变更滚动归零，失败草稿/断线复制补齐 `Reveal` 并统一排队/错误/可复制终端错误卡片层次。六组后台边界实测、四组运行时回归、`LOCALE_AUDIT_OK`（1,301 键）、Rust 36 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查与 macOS release 构建通过，见[实证与边界](validation/2026-11-13-backend-hardening-and-picker-craft.md)。
+
 ## 当前开发包 992aae6 与清理（2026-11-13）
 
 Node sidecar JSONL 协议帧完整排空与异常 `shutdown` 在打开 `stdin` 上即时退出、会话索引原子刷盘与多路关闭错误 `AggregateError` 保留，以及全设置面板（外观/聊天/团队/内置 Pi）、设置搜索与会话搜索/归档弹窗的 `Viewport` + `Reveal` 窄窗键盘显露闭环（`992aae6`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 8 份后台 JS/map，28,869 项清单/29 链接、DMG 只读挂载与安装核对通过；包内四组正式包检查、协议帧排空与异常关闭即时退出（`18 ms` / `13 ms`）、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文深色 `20 px` 欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `62e6a6e` 直接可运行回退，退役 `4b3135d` 解压树并清理 Rust 中间构建缓存与重复产物约 6.68 GB（6.23 GiB），见[包内证据与边界](validation/2026-11-13-sidecar-wire-and-settings-scroll-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
