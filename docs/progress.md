@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包 62e6a6e 与清理（2026-11-13）
+
+运行时三阶段关闭隔离、三后端启动期握手即时取消与多连接完整排空（`2abce78`），以及桌面跨边界自有诊断闭合本地化、会话资源窄窗 `Viewport` + `Reveal` 焦点显露与交互/预览/导出/终端表面打磨（`62e6a6e`）已合并入 current/candidate、DMG 和 `/Applications/Hive Desktop.app`。精确更新原生主程序与 22 份后台 JS/map，28,869 项清单/29 链接、DMG 只读挂载与安装核对通过；包内四组正式包检查、关闭隔离与三后端挂起启动即时取消（`207 ms` / `357 ms`）、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与英文欢迎页/中文 Terra 冷读正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `4b3135d` 直接可运行回退，退役 `9e6a44a` 解压树并清理本批重复与临时构建产物约 1.41 GB（1.31 GiB），见[包内证据与边界](validation/2026-11-13-shutdown-cancel-surfaces-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。
+
 ## 桌面端闭合错误本地化闭环、会话资源窄窗显露与交互/预览表面打磨（2026-11-13，源码）
 
 全量扫描 `packages/runtime/src/` 与 `apps/desktop/src/` 剩余跨边界提示与弹窗面板（推进 `#14`、`#16`、`#17`、`#20`）：(1) `language.rs`、`failures.rs`、`pi_accounts.rs` 与 `image_viewer.rs` 补齐 `"登录失败"`、Codex 启动失败首行引导、Claude 会话写入丢失提示、队列失败落盘告警及图片解码/保存错误的英文闭合本地化，`conversation_find.rs` 双匹配展示文本与原文字段，同时严格保留非自有 OS/SDK/CLI 原始诊断逐字节不变；(2) `command_picker/resources/view.rs` 为 `#session-resource-results` 接入 `Viewport` + `Reveal` 窄窗/矮窗键盘自动显露、纵向滚动条与等宽可选路径文本；(3) 融合 Beluga、T3 Code 与 Cindy 统一三后端交互卡片（命令/Diff/工具输入等宽可选面板）、文件预览路径选择、Markdown 导出工具条与终端视口层次，既有元素 ID 与无障碍语义不变。`LOCALE_AUDIT_OK`（1,301 键）、Rust 35 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查与 macOS release 构建全部通过，见[实证与边界](validation/2026-11-13-desktop-diagnostic-localization-and-surfaces.md)。即将连同 `2abce78` 组装最新 macOS ARM64 开发包并执行包内与原生窗口核验。
