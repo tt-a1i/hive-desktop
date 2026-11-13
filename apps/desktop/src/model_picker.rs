@@ -1,5 +1,16 @@
 use crate::{app::HiveApp, language::tr, palette::Color};
-use gpui_kit::{component::{button::{Button, ButtonVariants}, input::Input, popover::Popover, scroll::ScrollableElement, *}, prelude::FluentBuilder, *};
+use gpui_kit::{
+    assets::IconName as Glyph,
+    component::{
+        button::{Button, ButtonVariants},
+        input::Input,
+        popover::Popover,
+        scroll::ScrollableElement,
+        Icon, *,
+    },
+    prelude::FluentBuilder,
+    *,
+};
 
 impl HiveApp {
     pub(crate) fn model_picker(&self, window: &Window, running: bool, cx: &Context<Self>) -> AnyElement {
@@ -24,6 +35,7 @@ impl HiveApp {
             .h(px(28.))
             .px_2()
             .rounded_lg()
+            .selected(self.choosing_model)
             .min_w_0()
             .max_w(px(if window.viewport_size().width < px(900.) {
                 250.
@@ -48,7 +60,12 @@ impl HiveApp {
                         row.child(
                             div()
                                 .flex_shrink_0()
-                                .text_size(px(12.5))
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(Color::Inset.get(cx))
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::MEDIUM)
                                 .text_color(Color::Muted.get(cx))
                                 .child(level),
                         )
@@ -62,7 +79,14 @@ impl HiveApp {
             .disabled(unavailable);
         if unavailable { return trigger.into_any_element(); }
         Popover::new("session-model-picker").anchor(Anchor::BottomRight)
-            .w(px(600.).min(window.viewport_size().width - px(32.)))
+            .p_0()
+            .rounded_xl()
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .bg(Color::Card.get(cx))
+            .shadow_lg()
+            .overflow_hidden()
+            .w(px(620.).min(window.viewport_size().width - px(32.)))
             .open(self.choosing_model).track_focus(&self.model_search.read(cx).focus_handle(cx)).trigger(trigger)
             .on_open_change(cx.listener(|this, open, window, cx| {
                 this.choosing_model = *open;
@@ -82,30 +106,180 @@ impl HiveApp {
                 let empty = matching.is_empty();
                 let model_scroll = &self.reasoning_picker.model_scroll;
                 let reasoning_scroll = &self.reasoning_picker.scroll;
-                popover.child(h_flex().min_w_0().items_stretch().gap_3()
-                    .h((window.viewport_size().height - px(140.)).min(px(320.)).max(px(100.)))
-                    .child(v_flex().flex_1().min_w_0().min_h_0().gap_2()
-                        .child(Input::new(&self.model_search).aria_label(tr("搜索会话模型")))
-                        .child(crate::focus_scroll::Viewport::new("model-picker-viewport", model_scroll,
-                            v_flex().id("model-list").flex_1().min_w_0().min_h_0().p_1().overflow_y_scroll().track_scroll(model_scroll).vertical_scrollbar(model_scroll)
-                                .when(empty, |list| list.child(crate::text_reading::selectable_text("model-picker-empty", tr("没有匹配的可用模型")).p_3().text_sm().text_color(Color::Muted.get(cx))))
-                                .children(matching.into_iter().enumerate().map(|(i, model)| {
-                                    let selected = self.model.as_ref().is_some_and(|m| m.id == model.id && m.provider == model.provider);
-                                    let model = model.clone();
-                                    crate::focus_scroll::Reveal::new(("model-option-reveal",i), model_scroll,
-                                        Button::new(("model", i)).ghost().compact().justify_start().flex_shrink_0().w_full().min_w_0().h_auto().py_2()
-                                            .disabled(self.reasoning_picker.loading)
-                                            .accessibility_label(if crate::language::english() { format!("{}, {} / {}",model.name,model.provider,model.id) } else { format!("{}，{} / {}",model.name,model.provider,model.id) })
-                                            .tooltip(format!("{}\n{} / {}",model.name,model.provider,model.id))
-                                            .child(v_flex().flex_1().min_w_0().items_start().gap_1()
-                                                .child(div().w_full().truncate().text_sm().child(model.name.clone()))
-                                                .child(div().w_full().truncate().text_xs().text_color(Color::Muted.get(cx)).child(format!("{} / {}",model.provider,model.id))))
-                                            .selected(selected).on_click(cx.listener(move |this, _, _, cx| this.set_model(model.clone(),cx))))
-                                })))))
-                    .child(v_flex().flex_1().min_w_0().min_h_0().pl_3().border_l_1().border_color(Color::Divider.get(cx))
-                        .child(crate::focus_scroll::Viewport::new("reasoning-picker-viewport", reasoning_scroll,
-                            v_flex().id("reasoning-settings-list").flex_1().min_h_0().min_w_0().p_1().overflow_y_scroll().track_scroll(reasoning_scroll).vertical_scrollbar(reasoning_scroll)
-                                .child(self.render_reasoning_settings(running,cx))))))
-            }).into_any_element()
+                popover.child(
+                    h_flex()
+                        .min_w_0()
+                        .items_stretch()
+                        .h((window.viewport_size().height - px(140.)).min(px(340.)).max(px(120.)))
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .min_h_0()
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .px_2p5()
+                                        .py_1p5()
+                                        .border_b_1()
+                                        .border_color(Color::Divider.get(cx))
+                                        .child(
+                                            div().flex_1().min_w_0().child(
+                                                Input::new(&self.model_search)
+                                                    .appearance(false)
+                                                    .bordered(false)
+                                                    .focus_bordered(false)
+                                                    .cleanable(true)
+                                                    .prefix(
+                                                        Icon::new(Glyph::Search)
+                                                            .size(px(14.))
+                                                            .text_color(Color::Muted.get(cx)),
+                                                    )
+                                                    .aria_label(tr("搜索会话模型")),
+                                            ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .px_3()
+                                        .pt_2()
+                                        .pb_1()
+                                        .text_size(px(11.))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(Color::Muted.get(cx))
+                                        .child(tr("选择会话模型")),
+                                )
+                                .child(crate::focus_scroll::Viewport::new(
+                                    "model-picker-viewport",
+                                    model_scroll,
+                                    v_flex()
+                                        .id("model-list")
+                                        .flex_1()
+                                        .min_w_0()
+                                        .min_h_0()
+                                        .px_1p5()
+                                        .pb_1p5()
+                                        .gap_0p5()
+                                        .overflow_y_scroll()
+                                        .track_scroll(model_scroll)
+                                        .vertical_scrollbar(model_scroll)
+                                        .when(empty, |list| {
+                                            list.child(
+                                                div()
+                                                    .p_4()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .child(
+                                                        crate::text_reading::selectable_text(
+                                                            "model-picker-empty",
+                                                            tr("没有匹配的可用模型"),
+                                                        )
+                                                        .text_sm()
+                                                        .text_color(Color::Muted.get(cx)),
+                                                    ),
+                                            )
+                                        })
+                                        .children(matching.into_iter().enumerate().map(|(i, model)| {
+                                            let selected = self.model.as_ref().is_some_and(|m| m.id == model.id && m.provider == model.provider);
+                                            let model = model.clone();
+                                            crate::focus_scroll::Reveal::new(
+                                                ("model-option-reveal", i),
+                                                model_scroll,
+                                                Button::new(("model", i))
+                                                    .ghost()
+                                                    .compact()
+                                                    .justify_start()
+                                                    .flex_shrink_0()
+                                                    .w_full()
+                                                    .min_w_0()
+                                                    .h_auto()
+                                                    .px_2p5()
+                                                    .py_1p5()
+                                                    .rounded_lg()
+                                                    .disabled(self.reasoning_picker.loading)
+                                                    .accessibility_label(if crate::language::english() {
+                                                        format!("{}, {} / {}", model.name, model.provider, model.id)
+                                                    } else {
+                                                        format!("{}，{} / {}", model.name, model.provider, model.id)
+                                                    })
+                                                    .tooltip(format!("{}\n{} / {}", model.name, model.provider, model.id))
+                                                    .child(
+                                                        h_flex()
+                                                            .w_full()
+                                                            .min_w_0()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .gap_2()
+                                                            .child(
+                                                                v_flex()
+                                                                    .flex_1()
+                                                                    .min_w_0()
+                                                                    .items_start()
+                                                                    .gap_0p5()
+                                                                    .child(
+                                                                        div()
+                                                                            .w_full()
+                                                                            .truncate()
+                                                                            .text_size(px(13.))
+                                                                            .font_weight(if selected {
+                                                                                FontWeight::SEMIBOLD
+                                                                            } else {
+                                                                                FontWeight::MEDIUM
+                                                                            })
+                                                                            .text_color(Color::Text.get(cx))
+                                                                            .child(model.name.clone()),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .w_full()
+                                                                            .truncate()
+                                                                            .text_size(px(11.5))
+                                                                            .text_color(Color::Muted.get(cx))
+                                                                            .child(format!("{} / {}", model.provider, model.id)),
+                                                                    ),
+                                                            )
+                                                            .when(selected, |row| {
+                                                                row.child(
+                                                                    Icon::new(Glyph::Check)
+                                                                        .size(px(14.))
+                                                                        .text_color(Color::Accent.get(cx))
+                                                                        .flex_shrink_0(),
+                                                                )
+                                                            }),
+                                                    )
+                                                    .selected(selected)
+                                                    .on_click(cx.listener(move |this, _, _, cx| this.set_model(model.clone(), cx))),
+                                            )
+                                        })),
+                                )),
+                        )
+                        .child(
+                            v_flex()
+                                .w(px(230.))
+                                .flex_shrink_0()
+                                .min_w_0()
+                                .min_h_0()
+                                .bg(Color::Inset.get(cx).opacity(0.35))
+                                .border_l_1()
+                                .border_color(Color::Divider.get(cx))
+                                .child(crate::focus_scroll::Viewport::new(
+                                    "reasoning-picker-viewport",
+                                    reasoning_scroll,
+                                    v_flex()
+                                        .id("reasoning-settings-list")
+                                        .flex_1()
+                                        .min_h_0()
+                                        .min_w_0()
+                                        .p_2p5()
+                                        .overflow_y_scroll()
+                                        .track_scroll(reasoning_scroll)
+                                        .vertical_scrollbar(reasoning_scroll)
+                                        .child(self.render_reasoning_settings(running, cx)),
+                                )),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 }

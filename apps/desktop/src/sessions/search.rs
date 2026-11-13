@@ -2,11 +2,12 @@ use crate::focus_scroll::{Reveal, Viewport};
 use crate::language::{english, tr};
 use crate::{app::HiveApp, palette::Color, transport::Runtime};
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
         scroll::ScrollableElement,
-        *,
+        Icon, *,
     },
     prelude::FluentBuilder,
     *,
@@ -221,12 +222,17 @@ impl Render for SessionSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let locale = cx.global::<crate::language::Language>().locale;
         if self.placeholder_locale != Some(locale) {
-            let label = if self.archived { tr("搜索已归档会话、项目路径或 Agent…") } else { tr("搜索会话名称、项目路径或 Agent…") };
+            let label = if self.archived {
+                tr("搜索已归档会话、项目路径或 Agent…")
+            } else {
+                tr("搜索会话名称、项目路径或 Agent…")
+            };
             self.query.update(cx, |query, cx| query.set_placeholder(label, window, cx));
             self.placeholder_locale = Some(locale);
         }
-        let results_height = px((self.page.matches.len().max(1) * 64) as f32)
-            .min(px(360.))
+        let results_height = px((self.page.matches.len().max(1) * 58) as f32)
+            .max(px(140.))
+            .min(px(380.))
             .min(window.viewport_size().height * 0.55);
         v_flex()
             .key_context("HiveSessionSearch")
@@ -239,30 +245,65 @@ impl Render for SessionSearch {
                     this.move_selection(-1, cx)
                 }),
             )
-            .child(Input::new(&self.query).aria_label(tr("搜索会话名称、项目路径或 Agent")))
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .items_center()
+                    .px_2()
+                    .py_1()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
+                    .bg(Color::Card.get(cx))
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Input::new(&self.query)
+                                .appearance(false)
+                                .bordered(false)
+                                .focus_bordered(false)
+                                .cleanable(true)
+                                .prefix(
+                                    Icon::new(Glyph::Search)
+                                        .size(px(14.))
+                                        .text_color(Color::Muted.get(cx)),
+                                )
+                                .aria_label(tr("搜索会话名称、项目路径或 Agent")),
+                        ),
+                    ),
+            )
             .child(
                 div()
                     .w_full()
                     .min_w_0()
                     .h(results_height)
                     .min_h_0()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
+                    .bg(Color::Card.get(cx))
+                    .overflow_hidden()
                     .flex()
                     .child(Viewport::new(
                         "session-search-viewport",
                         &self.scroll,
-                        div()
+                        v_flex()
                             .id("session-search-results")
                             .flex_1()
                             .min_h_0()
                             .min_w_0()
+                            .p_1p5()
+                            .gap_0p5()
                             .overflow_y_scroll()
                             .track_scroll(&self.scroll)
                             .vertical_scrollbar(&self.scroll)
-                            .pr_1()
                             .when(self.loading, |list| {
                                 list.child(
-                                    div()
-                                        .p_3()
+                                    h_flex()
+                                        .p_4()
+                                        .items_center()
+                                        .justify_center()
+                                        .gap_2()
                                         .text_sm()
                                         .text_color(Color::Muted.get(cx))
                                         .child(tr("正在搜索…")),
@@ -271,10 +312,14 @@ impl Render for SessionSearch {
                             .when_some(self.error.as_ref().map(|error| error.text()), |list, error| {
                                 list.child(
                                     v_flex()
+                                        .p_3()
+                                        .m_1()
                                         .gap_2()
+                                        .rounded_lg()
+                                        .bg(Color::ErrorSurface.get(cx))
                                         .child(
                                             div()
-                                                .text_sm()
+                                                .text_xs()
                                                 .text_color(Color::Error.get(cx))
                                                 .child(error),
                                         )
@@ -282,6 +327,11 @@ impl Render for SessionSearch {
                                             "retry-session-search-reveal",
                                             &self.scroll,
                                             Button::new("retry-session-search")
+                                                .outline()
+                                                .compact()
+                                                .h(px(28.))
+                                                .px_2p5()
+                                                .rounded_lg()
                                                 .label(tr("重新搜索"))
                                                 .on_click(
                                                     cx.listener(|this, _, _, cx| this.load(false, cx)),
@@ -293,15 +343,33 @@ impl Render for SessionSearch {
                                 !self.loading && self.error.is_none() && self.page.matches.is_empty(),
                                 |list| {
                                     list.child(
-                                        div()
-                                            .p_3()
-                                            .text_sm()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child(tr("没有匹配的会话")),
+                                        v_flex()
+                                            .flex_1()
+                                            .py_8()
+                                            .px_4()
+                                            .items_center()
+                                            .justify_center()
+                                            .gap_2()
+                                            .child(
+                                                Icon::new(if self.archived {
+                                                    Glyph::Archive
+                                                } else {
+                                                    Glyph::Search
+                                                })
+                                                .size(px(20.))
+                                                .text_color(Color::Muted.get(cx).opacity(0.65)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child(tr("没有匹配的会话")),
+                                            ),
                                     )
                                 },
                             )
                             .children(self.page.matches.iter().enumerate().map(|(i, hit)| {
+                                let active = i == self.selected;
                                 let title = crate::view::untitled_session_label(&hit.session).unwrap_or(&hit.title);
                                 let role = hit.session.agent_id.as_deref().map(|agent| {
                                     if agent.ends_with(":orchestrator") {
@@ -312,46 +380,159 @@ impl Render for SessionSearch {
                                         tr("成员")
                                     }
                                 });
-                                let suffix = std::path::Path::new(&hit.workspace_path).components().rev().take(2).collect::<Vec<_>>()
-                                    .into_iter().rev().map(|part| part.as_os_str().to_string_lossy()).collect::<Vec<_>>().join(std::path::MAIN_SEPARATOR_STR);
-                                let project = if suffix.is_empty() { hit.workspace_name.clone() } else { format!("{} · {suffix}", hit.workspace_name) };
-                                let identity = if hit.workspace_path.is_empty() { hit.workspace_name.clone() } else { format!("{} · {}", hit.workspace_name, hit.workspace_path) };
-                                let meta = match role {
-                                    Some(role) => format!("{project} · {role} · {}", tr(hit.session.backend.label())),
-                                    None => format!("{project} · {}", tr(hit.session.backend.label())),
+                                let suffix = std::path::Path::new(&hit.workspace_path)
+                                    .components()
+                                    .rev()
+                                    .take(2)
+                                    .collect::<Vec<_>>()
+                                    .into_iter()
+                                    .rev()
+                                    .map(|part| part.as_os_str().to_string_lossy())
+                                    .collect::<Vec<_>>()
+                                    .join(std::path::MAIN_SEPARATOR_STR);
+                                let project = if suffix.is_empty() {
+                                    hit.workspace_name.clone()
+                                } else {
+                                    format!("{} · {suffix}", hit.workspace_name)
+                                };
+                                let identity = if hit.workspace_path.is_empty() {
+                                    hit.workspace_name.clone()
+                                } else {
+                                    format!("{} · {}", hit.workspace_name, hit.workspace_path)
                                 };
                                 let role_suffix = role.map(|role| format!(" · {role}")).unwrap_or_default();
+                                let time = crate::palette::compact_relative_time(
+                                    hit.session.updated_at,
+                                    english(),
+                                );
                                 Reveal::new(
                                     ("search-session-reveal", i),
                                     &self.scroll,
                                     Button::new(("search-session", i))
                                         .ghost()
+                                        .compact()
                                         .w_full()
                                         .h_auto()
+                                        .px_2p5()
                                         .py_2()
+                                        .rounded_lg()
                                         .justify_start()
-                                        .selected(i == self.selected)
-                                        .accessibility_label(if english() { format!("Open {} · {}{} · {}", title, identity, role_suffix, tr(hit.session.backend.label())) } else { format!("打开 {} · {}{} · {}", title, identity, role_suffix, tr(hit.session.backend.label())) })
-                                        .tooltip(format!("{title} · {identity}{role_suffix} · {}", tr(hit.session.backend.label())))
+                                        .selected(active)
+                                        .accessibility_label(if english() {
+                                            format!(
+                                                "Open {} · {}{} · {}",
+                                                title,
+                                                identity,
+                                                role_suffix,
+                                                tr(hit.session.backend.label())
+                                            )
+                                        } else {
+                                            format!(
+                                                "打开 {} · {}{} · {}",
+                                                title,
+                                                identity,
+                                                role_suffix,
+                                                tr(hit.session.backend.label())
+                                            )
+                                        })
+                                        .tooltip(format!(
+                                            "{title} · {identity}{role_suffix} · {}",
+                                            tr(hit.session.backend.label())
+                                        ))
                                         .child(
-                                            v_flex()
-                                                .flex_1()
+                                            h_flex()
+                                                .w_full()
                                                 .min_w_0()
-                                                .items_start()
-                                                .gap_1()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_2p5()
+                                                .child(crate::palette::project_badge(
+                                                    &hit.workspace_name,
+                                                    22.,
+                                                    cx,
+                                                ))
                                                 .child(
-                                                    div()
-                                                        .truncate()
-                                                        .text_sm()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .child(title.to_owned()),
+                                                    v_flex()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .items_start()
+                                                        .gap_0p5()
+                                                        .child(
+                                                            h_flex()
+                                                                .w_full()
+                                                                .min_w_0()
+                                                                .items_center()
+                                                                .gap_1p5()
+                                                                .child(
+                                                                    div()
+                                                                        .flex_1()
+                                                                        .min_w_0()
+                                                                        .truncate()
+                                                                        .text_size(px(13.))
+                                                                        .font_weight(if active {
+                                                                            FontWeight::SEMIBOLD
+                                                                        } else {
+                                                                            FontWeight::MEDIUM
+                                                                        })
+                                                                        .text_color(Color::Text.get(cx))
+                                                                        .child(title.to_owned()),
+                                                                )
+                                                                .when_some(role, |row, role_label| {
+                                                                    row.child(
+                                                                        div()
+                                                                            .flex_shrink_0()
+                                                                            .px_1p5()
+                                                                            .py(px(1.))
+                                                                            .rounded_md()
+                                                                            .bg(Color::Inset.get(cx))
+                                                                            .text_size(px(10.5))
+                                                                            .font_weight(FontWeight::MEDIUM)
+                                                                            .text_color(Color::Muted.get(cx))
+                                                                            .child(role_label),
+                                                                    )
+                                                                })
+                                                                .child(
+                                                                    div()
+                                                                        .flex_shrink_0()
+                                                                        .px_1p5()
+                                                                        .py(px(1.))
+                                                                        .rounded_md()
+                                                                        .bg(Color::Inset.get(cx))
+                                                                        .text_size(px(10.5))
+                                                                        .font_weight(FontWeight::MEDIUM)
+                                                                        .text_color(Color::Muted.get(cx))
+                                                                        .child(tr(hit.session.backend.label())),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .w_full()
+                                                                .truncate()
+                                                                .text_xs()
+                                                                .text_color(Color::Muted.get(cx))
+                                                                .child(project),
+                                                        ),
                                                 )
                                                 .child(
-                                                    div()
-                                                        .truncate()
-                                                        .text_xs()
-                                                        .text_color(Color::Muted.get(cx))
-                                                        .child(meta),
+                                                    h_flex()
+                                                        .flex_shrink_0()
+                                                        .items_center()
+                                                        .gap_1p5()
+                                                        .when_some(time, |row, time| {
+                                                            row.child(
+                                                                div()
+                                                                    .text_size(px(11.5))
+                                                                    .text_color(Color::Muted.get(cx))
+                                                                    .child(time),
+                                                            )
+                                                        })
+                                                        .when(active, |row| {
+                                                            row.child(
+                                                                Icon::new(Glyph::CornerDownLeft)
+                                                                    .size(px(13.))
+                                                                    .text_color(Color::Accent.get(cx)),
+                                                            )
+                                                        }),
                                                 ),
                                         )
                                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -365,61 +546,103 @@ impl Render for SessionSearch {
             .child(
                 h_flex()
                     .flex_wrap()
-                    .gap_2()
+                    .items_center()
                     .justify_between()
+                    .gap_2()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(Color::Divider.get(cx))
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
-                    .child(if self.page.total == 0 {
-                        tr("0 个会话").into()
-                    } else {
-                        if english() { format!("{}–{} of {} conversations", self.offset + 1, self.offset + self.page.matches.len(), self.page.total) } else { format!("第 {}–{} 个，共 {} 个", self.offset + 1, self.offset + self.page.matches.len(), self.page.total) }
-                    })
                     .child(
-                        Button::new("refresh-session-search")
-                            .ghost()
-                            .compact()
-                            .label(tr("刷新"))
-                            .disabled(self.loading)
-                            .on_click(cx.listener(|this, _, _, cx| this.load(false, cx))),
-                    )
-                    .child(tr("↑↓ 选择 · Enter 打开 · Esc 返回")),
-            )
-            .when(
-                self.offset > 0 || self.offset + self.page.matches.len() < self.page.total,
-                |view| {
-                    view.child(
                         h_flex()
+                            .items_center()
                             .gap_2()
+                            .child(if self.page.total == 0 {
+                                tr("0 个会话").into()
+                            } else if english() {
+                                format!(
+                                    "{}–{} of {} conversations",
+                                    self.offset + 1,
+                                    self.offset + self.page.matches.len(),
+                                    self.page.total
+                                )
+                            } else {
+                                format!(
+                                    "第 {}–{} 个，共 {} 个",
+                                    self.offset + 1,
+                                    self.offset + self.page.matches.len(),
+                                    self.page.total
+                                )
+                            })
                             .child(
-                                Button::new("session-search-previous")
-                                    .ghost()
-                                    .label(tr("上一页"))
-                                    .disabled(self.loading || self.offset == 0)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.offset = this.offset.saturating_sub(100);
-                                        this.load(false, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("session-search-next")
-                                    .ghost()
-                                    .label(tr("下一页"))
-                                    .disabled(
-                                        self.loading
-                                            || self.offset + self.page.matches.len()
-                                                >= self.page.total,
-                                    )
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.offset += 100;
-                                        this.load(false, cx);
-                                    })),
+                                Button::new("refresh-session-search")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(26.))
+                                    .px_2()
+                                    .rounded_lg()
+                                    .icon(Glyph::RefreshCw)
+                                    .label(tr("刷新"))
+                                    .disabled(self.loading)
+                                    .on_click(cx.listener(|this, _, _, cx| this.load(false, cx))),
                             ),
                     )
-                },
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(tr("↑↓ 选择 · Enter 打开 · Esc 返回"))
+                            .when(
+                                self.offset > 0
+                                    || self.offset + self.page.matches.len() < self.page.total,
+                                |row| {
+                                    row.child(
+                                        Button::new("session-search-previous")
+                                            .outline()
+                                            .compact()
+                                            .xsmall()
+                                            .h(px(26.))
+                                            .px_2()
+                                            .rounded_lg()
+                                            .label(tr("上一页"))
+                                            .disabled(self.loading || self.offset == 0)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.offset = this.offset.saturating_sub(100);
+                                                this.load(false, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("session-search-next")
+                                            .outline()
+                                            .compact()
+                                            .xsmall()
+                                            .h(px(26.))
+                                            .px_2()
+                                            .rounded_lg()
+                                            .label(tr("下一页"))
+                                            .disabled(
+                                                self.loading
+                                                    || self.offset + self.page.matches.len()
+                                                        >= self.page.total,
+                                            )
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.offset += 100;
+                                                this.load(false, cx);
+                                            })),
+                                    )
+                                },
+                            ),
+                    ),
             )
             .when(self.archived, |view| {
                 view.child(
                     div()
+                        .px_3()
+                        .py_2()
+                        .rounded_lg()
+                        .bg(Color::Inset.get(cx))
                         .text_xs()
                         .text_color(Color::Muted.get(cx))
                         .child(tr("历史和草稿均保留。打开会话后可恢复或继续发送。")),
