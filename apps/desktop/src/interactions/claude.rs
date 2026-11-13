@@ -158,7 +158,11 @@ impl HiveApp {
                                     .size(px(7.))
                                     .rounded_full()
                                     .flex_shrink_0()
-                                    .bg(Color::Attention.get(cx)),
+                                    .bg(rgb(if Theme::global(cx).is_dark() {
+                                        0xfbbf24
+                                    } else {
+                                        0xd97706
+                                    })),
                             )
                             .child(
                                 div()
@@ -265,7 +269,11 @@ impl HiveApp {
                                 .child(
                                     Icon::new(Glyph::Info)
                                         .size(px(13.))
-                                        .text_color(Color::Attention.get(cx)),
+                                        .text_color(rgb(if Theme::global(cx).is_dark() {
+                                            0xfbbf24
+                                        } else {
+                                            0xd97706
+                                        })),
                                 )
                                 .child(
                                     div()

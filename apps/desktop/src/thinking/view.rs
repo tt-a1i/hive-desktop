@@ -49,7 +49,11 @@ impl HiveApp {
         } else if block.running {
             Color::Accent.get(cx)
         } else if block.interrupted {
-            Color::Attention.get(cx)
+            rgb(if Theme::global(cx).is_dark() {
+                0xfbbf24
+            } else {
+                0xd97706
+            })
         } else {
             Color::Muted.get(cx).opacity(0.75)
         };
