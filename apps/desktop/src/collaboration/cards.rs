@@ -50,6 +50,9 @@ impl HiveApp {
             format!("dispatch-{}-reveal", dispatch.id),
             &self.collaboration_scroll,
             div()
+                .w_full()
+                .min_w_0()
+                .overflow_hidden()
                 .rounded_xl()
                 .bg(if is_selected {
                     Color::Inset.get(cx)
@@ -78,8 +81,10 @@ impl HiveApp {
                         ))
                         .child(
                             v_flex()
+                                .flex_1()
                                 .w_full()
                                 .min_w_0()
+                                .overflow_hidden()
                                 .items_start()
                                 .gap_1p5()
                                 .child(
@@ -166,7 +171,8 @@ impl HiveApp {
                                             div()
                                                 .w_full()
                                                 .min_w_0()
-                                                .line_clamp(1)
+                                                .overflow_hidden()
+                                                .truncate()
                                                 .text_left()
                                                 .text_xs()
                                                 .text_color(Color::Muted.get(cx))
