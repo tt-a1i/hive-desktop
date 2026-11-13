@@ -61,9 +61,13 @@ impl HiveApp {
 
     pub(crate) fn return_to_chat_button(&self, cx: &Context<Self>) -> Button {
         Button::new("return-chat")
-            .ghost()
+            .custom(palette::quiet_icon_variant(cx))
             .compact()
+            .small()
+            .h(px(28.))
+            .px_2()
             .rounded_lg()
+            .icon(Glyph::ArrowLeft)
             .label(tr("返回会话"))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.hide_terminal(cx);
@@ -148,10 +152,21 @@ impl HiveApp {
             )
             .when(!self.connected && self.runtime.is_some(), |view| {
                 view.child(
-                    div()
-                        .text_xs()
-                        .text_color(Color::Error.get(cx))
-                        .child(tr("后台未连接")),
+                    h_flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .gap_1()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_full()
+                        .bg(Color::ErrorSurface.get(cx))
+                        .child(div().size(px(6.)).rounded_full().bg(Color::Error.get(cx)))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(Color::Error.get(cx))
+                                .child(tr("后台未连接")),
+                        ),
                 )
             })
             .when(!self.viewing_conversation(), |view| {
@@ -201,7 +216,7 @@ impl HiveApp {
             button
                 .custom(palette::quiet_icon_variant(cx))
                 .compact()
-                .h(px(26.))
+                .h(px(28.))
                 .px_2()
                 .rounded_lg()
                 .dropdown_caret(true)
@@ -366,12 +381,10 @@ impl HiveApp {
                             Button::new("search-sessions")
                                 .custom(palette::quiet_icon_variant(cx))
                                 .compact()
-                                .xsmall()
                                 .h(px(28.))
+                                .px_1p5()
                                 .w_full()
-                                .justify_start()
                                 .rounded_md()
-                                .icon(Glyph::Search)
                                 .accessibility_label(tr("搜索会话"))
                                 .tooltip(if cfg!(target_os = "macos") {
                                     tr("搜索会话 (⌘K)")
@@ -379,12 +392,27 @@ impl HiveApp {
                                     tr("搜索会话 (Ctrl+K)")
                                 })
                                 .child(
-                                    div()
-                                        .flex_1()
-                                        .text_left()
-                                        .text_size(px(13.))
-                                        .text_color(Color::Muted.get(cx))
-                                        .child(tr("搜索")),
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            Icon::new(Glyph::Search)
+                                                .size(px(14.))
+                                                .flex_shrink_0()
+                                                .text_color(Color::Muted.get(cx)),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_left()
+                                                .text_size(px(13.))
+                                                .text_color(Color::Muted.get(cx))
+                                                .truncate()
+                                                .child(tr("搜索")),
+                                        ),
                                 )
                                 .disabled(!self.connected)
                                 .on_click(cx.listener(|this, _, window, cx| {
@@ -444,8 +472,8 @@ impl HiveApp {
                                 section.child(
                                     v_flex()
                                         .mb_1p5()
-                                        .p_2()
-                                        .gap_1p5()
+                                        .p_2p5()
+                                        .gap_2()
                                         .rounded_xl()
                                         .bg(Color::Card.get(cx))
                                         .border_1()
@@ -454,6 +482,7 @@ impl HiveApp {
                                             "workspace-folder-input-reveal",
                                             &self.navigation_scroll,
                                             Input::new(&self.folder)
+                                                .small()
                                                 .aria_label(tr("工作区文件夹的绝对路径")),
                                         ))
                                         .child(
@@ -463,8 +492,11 @@ impl HiveApp {
                                                     "workspace-folder-picker-reveal",
                                                     &self.navigation_scroll,
                                                     Button::new("choose-workspace-folder")
-                                                        .secondary()
+                                                        .outline()
                                                         .compact()
+                                                        .small()
+                                                        .h(px(28.))
+                                                        .rounded_lg()
                                                         .label(tr("选择文件夹…"))
                                                         .disabled(!self.connected)
                                                         .on_click(cx.listener(
@@ -481,6 +513,9 @@ impl HiveApp {
                                                     Button::new("add-workspace")
                                                         .primary()
                                                         .compact()
+                                                        .small()
+                                                        .h(px(28.))
+                                                        .rounded_lg()
                                                         .label(tr("添加文件夹"))
                                                         .disabled(
                                                             !self.connected
@@ -565,6 +600,9 @@ impl HiveApp {
                                         } else {
                                             self.project_sessions.get(&id)
                                         };
+                                        let ws_selected = self.workspace.as_ref() == Some(&workspace.id)
+                                            && self.session.is_none()
+                                            && self.viewing_conversation();
                                         v_flex()
                                             .min_w_0()
                                             .mt_0p5()
@@ -581,7 +619,7 @@ impl HiveApp {
                                                             .compact()
                                                             .xsmall()
                                                             .h(px(24.))
-                                                            .w(px(20.))
+                                                            .w(px(18.))
                                                             .rounded_md()
                                                             .icon(if expanded {
                                                                 Glyph::ChevronDown
@@ -624,7 +662,12 @@ impl HiveApp {
                                                     .child(
                                                         div().flex_1().min_w_0().child(
                                                             Button::new(("workspace", i))
-                                                                .ghost()
+                                                                .custom(
+                                                                    palette::sidebar_item_variant(
+                                                                        ws_selected,
+                                                                        cx,
+                                                                    ),
+                                                                )
                                                                 .compact()
                                                                 .rounded_md()
                                                                 .h(px(28.))
@@ -637,13 +680,14 @@ impl HiveApp {
                                                                 .child(
                                                                     h_flex()
                                                                         .flex_1()
+                                                                        .w_full()
                                                                         .min_w_0()
                                                                         .items_center()
                                                                         .gap_1p5()
                                                                         .child(
                                                                             palette::project_badge(
                                                                                 &workspace.name,
-                                                                                17.,
+                                                                                18.,
                                                                                 cx,
                                                                             ),
                                                                         )
@@ -656,6 +700,15 @@ impl HiveApp {
                                                                                 .font_weight(
                                                                                     FontWeight::MEDIUM,
                                                                                 )
+                                                                                .text_color(
+                                                                                    if ws_selected {
+                                                                                        Color::Text.get(cx)
+                                                                                    } else {
+                                                                                        Color::Text
+                                                                                            .get(cx)
+                                                                                            .opacity(0.9)
+                                                                                    },
+                                                                                )
                                                                                 .truncate()
                                                                                 .child(
                                                                                     workspace
@@ -665,13 +718,7 @@ impl HiveApp {
                                                                         ),
                                                                 )
                                                                 .tooltip(workspace.path.clone())
-                                                                .selected(
-                                                                    self.workspace.as_ref()
-                                                                        == Some(&workspace.id)
-                                                                        && self.session.is_none()
-                                                                        && self
-                                                                            .viewing_conversation(),
-                                                                )
+                                                                .selected(ws_selected)
                                                                 .disabled(
                                                                     self.workspace_removing.as_ref()
                                                                         == Some(&workspace.id),
@@ -704,10 +751,13 @@ impl HiveApp {
                                                                         workspace.id
                                                                     ),
                                                                 ))
-                                                                .ghost()
+                                                                .custom(palette::quiet_icon_variant(cx))
                                                                 .compact()
                                                                 .xsmall()
-                                                                .h(px(22.))
+                                                                .h(px(20.))
+                                                                .px_1p5()
+                                                                .rounded_full()
+                                                                .bg(Color::Inset.get(cx))
                                                                 .label(label)
                                                                 .accessibility_label(
                                                                     if crate::language::english() {
@@ -815,22 +865,47 @@ impl HiveApp {
                                 .gap_1()
                                 .child(
                                     Button::new("toggle-members")
-                                        .h(px(28.))
-                                        .rounded_lg()
-                                        .ghost()
+                                        .custom(palette::sidebar_item_variant(
+                                            self.member_panel,
+                                            cx,
+                                        ))
                                         .compact()
-                                        .icon(Glyph::Bot)
-                                        .justify_start()
+                                        .h(px(28.))
+                                        .px_2()
+                                        .rounded_lg()
                                         .flex_1()
                                         .min_w_0()
                                         .accessibility_label(tr("团队成员"))
                                         .child(
-                                            div()
-                                                .flex_1()
+                                            h_flex()
+                                                .w_full()
                                                 .min_w_0()
-                                                .truncate()
-                                                .text_xs()
-                                                .child(tr("团队成员")),
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(
+                                                    Icon::new(Glyph::Bot)
+                                                        .size(px(14.))
+                                                        .flex_shrink_0()
+                                                        .text_color(if self.member_panel {
+                                                            Color::Text.get(cx)
+                                                        } else {
+                                                            Color::Muted.get(cx)
+                                                        }),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .text_left()
+                                                        .truncate()
+                                                        .text_xs()
+                                                        .text_color(if self.member_panel {
+                                                            Color::Text.get(cx)
+                                                        } else {
+                                                            Color::Secondary.get(cx)
+                                                        })
+                                                        .child(tr("团队成员")),
+                                                ),
                                         )
                                         .selected(self.member_panel)
                                         .disabled(self.workspace.is_none())
@@ -840,22 +915,51 @@ impl HiveApp {
                                 )
                                 .child(
                                     Button::new("open-collaboration")
-                                        .h(px(28.))
-                                        .rounded_lg()
-                                        .ghost()
+                                        .custom(palette::sidebar_item_variant(
+                                            self.collaboration.visible,
+                                            cx,
+                                        ))
                                         .compact()
-                                        .icon(Glyph::Network)
-                                        .justify_start()
+                                        .h(px(28.))
+                                        .px_2()
+                                        .rounded_lg()
                                         .flex_1()
                                         .min_w_0()
                                         .accessibility_label(tr("协作概览"))
                                         .child(
-                                            div()
-                                                .flex_1()
+                                            h_flex()
+                                                .w_full()
                                                 .min_w_0()
-                                                .truncate()
-                                                .text_xs()
-                                                .child(tr("协作概览")),
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(
+                                                    Icon::new(Glyph::Network)
+                                                        .size(px(14.))
+                                                        .flex_shrink_0()
+                                                        .text_color(
+                                                            if self.collaboration.visible {
+                                                                Color::Text.get(cx)
+                                                            } else {
+                                                                Color::Muted.get(cx)
+                                                            },
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .text_left()
+                                                        .truncate()
+                                                        .text_xs()
+                                                        .text_color(
+                                                            if self.collaboration.visible {
+                                                                Color::Text.get(cx)
+                                                            } else {
+                                                                Color::Secondary.get(cx)
+                                                            },
+                                                        )
+                                                        .child(tr("协作概览")),
+                                                ),
                                         )
                                         .selected(self.collaboration.visible)
                                         .disabled(self.workspace.is_none())

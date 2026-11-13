@@ -51,35 +51,99 @@ impl HiveApp {
                 && i > 0
                 && (self.messages[i - 1].role == "assistant"
                     || self.messages[i - 1].tool.is_some()));
+        let is_delivery = message.delivery.is_some();
+        let mut delivery_actions = is_delivery.then(|| {
+            let expanded = message.delivery.as_ref().is_some_and(|d| d.expanded);
+            let dispatch_id = message
+                .delivery
+                .as_ref()
+                .and_then(|d| d.dispatch_id.as_deref());
+            let worker_id = message
+                .delivery
+                .as_ref()
+                .and_then(|card| card.worker_id.as_deref());
+            let message_id = message.id.clone();
+            h_flex()
+                .min_w_0()
+                .flex_wrap()
+                .items_center()
+                .gap_1()
+                .when_some(
+                    self.dispatch_link(&message.id, dispatch_id, cx),
+                    |links, link| links.child(link),
+                )
+                .when_some(
+                    self.member_session_link(&message.id, worker_id, tr("成员会话"), cx),
+                    |links, link| links.child(link),
+                )
+                .child(
+                    Button::new(("expand-delivery", i))
+                        .custom(crate::palette::quiet_icon_variant(cx))
+                        .compact()
+                        .xsmall()
+                        .h(px(22.))
+                        .px_1p5()
+                        .rounded_md()
+                        .accessibility_label(format!(
+                            "{} {}",
+                            if expanded { tr("收起") } else { tr("查看") },
+                            tr("消息原文")
+                        ))
+                        .label(if expanded {
+                            tr("收起原文")
+                        } else {
+                            tr("查看原文")
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.prepare_conversation_expansion(&message_id);
+                            if let Some(delivery) = this
+                                .messages
+                                .iter_mut()
+                                .find(|m| m.id == message_id)
+                                .and_then(|m| m.delivery.as_mut())
+                            {
+                                delivery.expanded = !delivery.expanded;
+                            }
+                            cx.notify();
+                        })),
+                )
+        });
         v_flex()
             .id(("message", i))
             .role(Role::Group)
             .aria_label(heading.clone())
             .min_w_0()
-            .gap_1p5()
-            .when(!is_plain_user, |view| view.px_1().py_0p5().rounded_xl())
-            .when(!find_matched && message.delivery.is_some(), |view| {
-                view.px_3p5()
-                    .py_2p5()
-                    .rounded_2xl()
+            .when(is_plain_user, |view| view.gap_1())
+            .when(!is_plain_user, |view| view.gap_2())
+            .when(!is_plain_user && !is_delivery, |view| {
+                view.px_1().py_1().rounded_xl()
+            })
+            .when(!find_matched && is_delivery, |view| {
+                view.px_4()
+                    .py_3()
+                    .rounded_xl()
                     .bg(Color::Card.get(cx))
                     .border_1()
                     .border_color(Color::Divider.get(cx))
             })
             .when(
-                !find_matched && message.delivery.is_none() && message.role == "notice",
+                !find_matched && !is_delivery && message.role == "notice",
                 |view| {
                     view.px_3p5()
-                        .py_2()
+                        .py_2p5()
                         .rounded_xl()
                         .bg(Color::Inset.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
                 },
             )
             .when(find_matched, |view| {
-                view.px_3()
-                    .py_2()
+                view.px_3p5()
+                    .py_2p5()
                     .rounded_xl()
                     .bg(Color::Attention.get(cx))
+                    .border_1()
+                    .border_color(Color::Accent.get(cx).opacity(0.28))
             })
             .when(is_plain_user, |bubble| {
                 bubble.ml_auto().max_w(px(560.)).items_end()
@@ -87,117 +151,80 @@ impl HiveApp {
             .when(!hide_speaker_header, |view| {
                 view.child(
                     h_flex()
+                        .w_full()
                         .min_w_0()
                         .flex_wrap()
                         .items_center()
                         .gap_2()
                         .justify_between()
+                        .when(is_delivery, |row| {
+                            row.pb_1p5()
+                                .border_b_1()
+                                .border_color(Color::Divider.get(cx).opacity(0.75))
+                        })
                         .child(
-                            div()
-                                .flex_1()
+                            h_flex()
                                 .min_w(px(120.))
-                                .whitespace_normal()
-                                .text_xs()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(Color::Muted.get(cx))
-                                .child(heading),
-                        )
-                        .when(
-                            message.delivery.as_ref().is_some_and(|card| card.report),
-                            |row| {
-                                let state = if self.completed_deliveries.contains(&message.id) {
-                                    tr("处理回合已完成")
-                                } else {
-                                    self.pending_reports
-                                        .iter()
-                                        .find(|report| report.delivery_id == message.id)
-                                        .map(|report| tr(report.status()))
-                                        .unwrap_or(tr("已进入会话"))
-                                };
-                                row.child(
+                                .flex_1()
+                                .flex_wrap()
+                                .items_center()
+                                .gap_2()
+                                .child(
                                     div()
-                                        .id(("report-state", i))
-                                        .role(Role::Label)
-                                        .aria_label(state.to_owned())
-                                        .rounded_full()
-                                        .bg(Color::Inset.get(cx))
-                                        .px_2()
-                                        .py(px(1.))
+                                        .whitespace_normal()
                                         .text_xs()
-                                        .text_color(Color::Secondary.get(cx))
-                                        .child(state),
-                                )
-                            },
-                        ),
-                )
-                .when(message.delivery.is_some(), |view| {
-                    view.child(
-                        h_flex()
-                            .min_w_0()
-                            .flex_wrap()
-                            .gap_1p5()
-                            .when_some(
-                                self.dispatch_link(
-                                    &message.id,
-                                    message
-                                        .delivery
-                                        .as_ref()
-                                        .and_then(|d| d.dispatch_id.as_deref()),
-                                    cx,
-                                ),
-                                |row, link| row.child(link),
-                            )
-                            .when_some(
-                                self.member_session_link(
-                                    &message.id,
-                                    message
-                                        .delivery
-                                        .as_ref()
-                                        .and_then(|card| card.worker_id.as_deref()),
-                                    tr("成员会话"),
-                                    cx,
-                                ),
-                                |row, link| row.child(link),
-                            )
-                            .child(
-                                Button::new(("expand-delivery", i))
-                                    .ghost()
-                                    .compact()
-                                    .accessibility_label(format!(
-                                        "{} {}",
-                                        if message.delivery.as_ref().is_some_and(|d| d.expanded) {
-                                            tr("收起")
+                                        .font_weight(if is_delivery {
+                                            FontWeight::SEMIBOLD
                                         } else {
-                                            tr("查看")
-                                        },
-                                        tr("消息原文")
-                                    ))
-                                    .label(
-                                        if message.delivery.as_ref().is_some_and(|d| d.expanded) {
-                                            tr("收起原文")
-                                        } else {
-                                            tr("查看原文")
-                                        },
-                                    )
-                                    .on_click({
-                                        let id = message.id.clone();
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.prepare_conversation_expansion(&id);
-                                            if let Some(delivery) = this
-                                                .messages
-                                                .iter_mut()
-                                                .find(|m| m.id == id)
-                                                .and_then(|m| m.delivery.as_mut())
-                                            {
-                                                delivery.expanded = !delivery.expanded;
-                                            }
-                                            cx.notify();
+                                            FontWeight::MEDIUM
                                         })
-                                    }),
-                            ),
-                    )
-                })
+                                        .text_color(if is_delivery {
+                                            Color::Secondary.get(cx)
+                                        } else {
+                                            Color::Muted.get(cx)
+                                        })
+                                        .child(heading),
+                                )
+                                .when(
+                                    message.delivery.as_ref().is_some_and(|card| card.report),
+                                    |row| {
+                                        let state = if self.completed_deliveries.contains(&message.id)
+                                        {
+                                            tr("处理回合已完成")
+                                        } else {
+                                            self.pending_reports
+                                                .iter()
+                                                .find(|report| report.delivery_id == message.id)
+                                                .map(|report| tr(report.status()))
+                                                .unwrap_or(tr("已进入会话"))
+                                        };
+                                        row.child(
+                                            div()
+                                                .id(("report-state", i))
+                                                .role(Role::Label)
+                                                .aria_label(state.to_owned())
+                                                .rounded_full()
+                                                .bg(Color::Inset.get(cx))
+                                                .px_2()
+                                                .py_0p5()
+                                                .text_xs()
+                                                .text_color(Color::Secondary.get(cx))
+                                                .child(state),
+                                        )
+                                    },
+                                ),
+                        )
+                        .when_some(delivery_actions.take(), |row, actions| row.child(actions)),
+                )
             })
+            .when_some(
+                if hide_speaker_header {
+                    delivery_actions.take()
+                } else {
+                    None
+                },
+                |view, actions| view.child(h_flex().w_full().justify_end().child(actions)),
+            )
             .when(
                 message.failure.is_some() && !self.hidden_current_failure(i),
                 |view| view.child(self.render_reply_failure(i, cx)),
@@ -233,8 +260,12 @@ impl HiveApp {
                             .role(Role::Label)
                             .aria_label(body.clone())
                             .min_w_0()
-                            .text_size(rems(15. / 16.))
-                            .line_height(rems(1.55))
+                            .when(is_delivery, |text| {
+                                text.text_sm().line_height(rems(1.5))
+                            })
+                            .when(!is_delivery, |text| {
+                                text.text_size(rems(15. / 16.)).line_height(rems(1.55))
+                            })
                             .when(is_plain_user, |bubble| {
                                 bubble
                                     .px_4()
@@ -443,52 +474,75 @@ impl HiveApp {
                             .aria_label(heading.clone())
                             .min_w_0()
                             .gap_2()
-                            .px_3p5()
-                            .py_2p5()
-                            .rounded_2xl()
+                            .px_4()
+                            .py_3()
+                            .rounded_xl()
                             .bg(Color::Card.get(cx))
                             .border_1()
                             .border_color(Color::Divider.get(cx))
                             .child(
                                 h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .flex_wrap()
                                     .gap_2()
                                     .items_center()
+                                    .justify_between()
+                                    .pb_1p5()
+                                    .border_b_1()
+                                    .border_color(Color::Divider.get(cx).opacity(0.75))
                                     .child(
-                                        div()
+                                        h_flex()
+                                            .min_w_0()
                                             .flex_1()
-                                            .text_xs()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(Color::Secondary.get(cx))
-                                            .child(heading),
+                                            .flex_wrap()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(Color::Secondary.get(cx))
+                                                    .child(heading),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id(SharedString::from(format!(
+                                                        "pending-report-state-{}",
+                                                        report.delivery_id
+                                                    )))
+                                                    .role(Role::Label)
+                                                    .aria_label(tr(report.status()).to_owned())
+                                                    .rounded_full()
+                                                    .bg(Color::Inset.get(cx))
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .text_xs()
+                                                    .text_color(Color::Secondary.get(cx))
+                                                    .child(tr(report.status())),
+                                            ),
                                     )
                                     .child(
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "pending-report-state-{}",
-                                                report.delivery_id
-                                            )))
-                                            .role(Role::Label)
-                                            .aria_label(tr(report.status()).to_owned())
-                                            .text_xs()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child(tr(report.status())),
-                                    )
-                                    .when_some(
-                                        self.dispatch_link(
-                                            &report.delivery_id,
-                                            report.dispatch_id.as_deref(),
-                                            cx,
-                                        ),
-                                        |row, link| row.child(link),
-                                    )
-                                    .when_some(
-                                        self.member_session_link(
-                                            &report.delivery_id,
-                                            report.worker_id.as_deref(),
-                                            tr("成员会话"),
-                                            cx,
-                                        ),
-                                        |row, link| row.child(link),
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .when_some(
+                                                self.dispatch_link(
+                                                    &report.delivery_id,
+                                                    report.dispatch_id.as_deref(),
+                                                    cx,
+                                                ),
+                                                |row, link| row.child(link),
+                                            )
+                                            .when_some(
+                                                self.member_session_link(
+                                                    &report.delivery_id,
+                                                    report.worker_id.as_deref(),
+                                                    tr("成员会话"),
+                                                    cx,
+                                                ),
+                                                |row, link| row.child(link),
+                                            ),
                                     ),
                             )
                             .child(
@@ -500,6 +554,7 @@ impl HiveApp {
                                     .role(Role::Label)
                                     .aria_label(report.text.clone())
                                     .text_sm()
+                                    .line_height(rems(1.5))
                                     .child(report.text.clone()),
                             )
                             .children(

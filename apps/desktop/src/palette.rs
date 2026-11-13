@@ -69,9 +69,51 @@ pub fn quiet_icon_variant(cx: &App) -> ButtonCustomVariant {
 pub fn subtle_icon_variant(cx: &App) -> ButtonCustomVariant {
     ButtonCustomVariant::new(cx)
         .color(gpui_kit::rgba(0).into())
-        .foreground(Color::Muted.get(cx).opacity(0.68).into())
+        .foreground(Color::Muted.get(cx).opacity(0.62).into())
         .hover(Color::Inset.get(cx).into())
         .active(Color::Divider.get(cx).into())
+}
+
+/// T3 Code–style sidebar navigation item variant: avoids gpui-component's heavy
+/// `Ghost` selected wash while keeping calm cool-zinc / obsidian contrast.
+pub fn sidebar_item_variant(selected: bool, cx: &App) -> ButtonCustomVariant {
+    let dark = Theme::global(cx).is_dark();
+    if selected {
+        let bg = rgb(if dark { 0x202028 } else { 0xe8e9ee });
+        let hover = rgb(if dark { 0x24242d } else { 0xe3e4ea });
+        ButtonCustomVariant::new(cx)
+            .color(bg.into())
+            .foreground(Color::Text.get(cx).into())
+            .hover(hover.into())
+            .active(bg.into())
+    } else {
+        let hover = rgb(if dark { 0x18181f } else { 0xeeeef2 });
+        let active = rgb(if dark { 0x202028 } else { 0xe8e9ee });
+        ButtonCustomVariant::new(cx)
+            .color(gpui_kit::rgba(0).into())
+            .foreground(Color::Secondary.get(cx).into())
+            .hover(hover.into())
+            .active(active.into())
+    }
+}
+
+/// Crisp idle/disabled fill color for the circular send button, applied via
+/// Button's instance style so `disabled` doesn't wash it out to 15% alpha.
+pub fn send_circle_disabled_bg(cx: &App) -> Rgba {
+    rgb(if Theme::global(cx).is_dark() {
+        0x282832
+    } else {
+        0xe5e6eb
+    })
+}
+
+/// Crisp idle/disabled icon color for the circular send button.
+pub fn send_circle_disabled_fg(cx: &App) -> Rgba {
+    rgb(if Theme::global(cx).is_dark() {
+        0x8e8e98
+    } else {
+        0x71717a
+    })
 }
 
 /// T3 Code circular send button: neutral zinc circle when idle/disabled,

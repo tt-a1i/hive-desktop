@@ -34,7 +34,7 @@ impl HiveApp {
                     .min_w_0()
                     .max_w_full()
                     .items_center()
-                    .gap_1()
+                    .gap_1p5()
                     .child(
                         Button::new("home-project-folder")
                             .custom(crate::palette::quiet_icon_variant(cx))

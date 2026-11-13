@@ -147,7 +147,7 @@ impl HiveApp {
             .child(
                 div().flex_1().min_w_0().child(
                     Button::new(SharedString::from(format!("{scope}-{id}")))
-                        .ghost()
+                        .custom(palette::sidebar_item_variant(is_selected, cx))
                         .compact()
                         .h(px(28.))
                         .px_1p5()
@@ -172,54 +172,81 @@ impl HiveApp {
                         ))
                         .w_full()
                         .min_w_0()
-                        .when_some(project_name.as_ref(), |row, name| {
-                            row.child(palette::project_badge(name, 16., cx))
-                        })
-                        .when_some(dot_color, |row, color| {
-                            row.child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(color))
-                        })
                         .child(
-                            div()
-                                .flex_1()
+                            h_flex()
+                                .w_full()
                                 .min_w_0()
-                                .text_left()
-                                .text_size(px(13.))
-                                .text_color(if is_selected {
-                                    Color::Text.get(cx)
-                                } else {
-                                    Color::Secondary.get(cx)
+                                .items_center()
+                                .gap_1p5()
+                                .when_some(project_name.as_ref(), |row, name| {
+                                    row.child(palette::project_badge(name, 16., cx))
                                 })
-                                .when(is_selected, |t| t.font_weight(FontWeight::MEDIUM))
-                                .truncate()
-                                .child(title.clone()),
-                        )
-                        .when(session.pinned && scope != "pinned" && activity_label.is_none(), |row| {
-                            row.child(
-                                Icon::new(Glyph::Pin)
-                                    .size(px(11.))
-                                    .text_color(Color::Muted.get(cx)),
-                            )
-                        })
-                        .when_some(activity_label, |row, label| {
-                            row.child(
-                                div()
-                                    .flex_shrink_0()
-                                    .text_size(px(11.))
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(label),
-                            )
-                        })
-                        .when(activity_label.is_none(), |row| {
-                            row.when_some(relative_time, |row, ts| {
-                                row.child(
+                                .when_some(dot_color, |row, color| {
+                                    row.child(
+                                        div()
+                                            .size(px(6.))
+                                            .flex_shrink_0()
+                                            .rounded_full()
+                                            .bg(color),
+                                    )
+                                })
+                                .child(
                                     div()
-                                        .flex_shrink_0()
-                                        .text_size(px(11.))
-                                        .text_color(Color::Muted.get(cx))
-                                        .child(ts),
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_left()
+                                        .text_size(px(13.))
+                                        .text_color(if is_selected {
+                                            Color::Text.get(cx)
+                                        } else {
+                                            Color::Secondary.get(cx)
+                                        })
+                                        .when(is_selected, |t| t.font_weight(FontWeight::MEDIUM))
+                                        .truncate()
+                                        .child(title.clone()),
                                 )
-                            })
-                        })
+                                .when(
+                                    session.pinned
+                                        && scope != "pinned"
+                                        && activity_label.is_none(),
+                                    |row| {
+                                        row.child(
+                                            Icon::new(Glyph::Pin)
+                                                .size(px(11.))
+                                                .flex_shrink_0()
+                                                .text_color(Color::Muted.get(cx).opacity(0.75)),
+                                        )
+                                    },
+                                )
+                                .when_some(activity_label, |row, label| {
+                                    row.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(px(11.))
+                                            .text_color(if is_selected {
+                                                Color::Secondary.get(cx)
+                                            } else {
+                                                Color::Muted.get(cx)
+                                            })
+                                            .child(label),
+                                    )
+                                })
+                                .when(activity_label.is_none(), |row| {
+                                    row.when_some(relative_time, |row, ts| {
+                                        row.child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .text_size(px(11.))
+                                                .text_color(if is_selected {
+                                                    Color::Secondary.get(cx)
+                                                } else {
+                                                    Color::Muted.get(cx)
+                                                })
+                                                .child(ts),
+                                        )
+                                    })
+                                }),
+                        )
                         .tooltip(format!(
                             "{} · {role} · {}{project_tooltip}",
                             title,
@@ -325,8 +352,8 @@ impl HiveApp {
                                     .custom(palette::subtle_icon_variant(cx))
                                     .compact()
                                     .xsmall()
-                                    .h(px(22.))
-                                    .w(px(22.))
+                                    .h(px(20.))
+                                    .w(px(20.))
                                     .rounded_md()
                                     .icon(Glyph::RefreshCw)
                                     .tooltip(tr("刷新置顶会话"))

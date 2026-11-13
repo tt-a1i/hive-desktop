@@ -120,12 +120,12 @@ impl HiveApp {
                                 .role(Role::Label)
                                 .aria_label(label)
                                 .flex_shrink_0()
-                                .h(px(26.))
-                                .px(px(7.))
+                                .h(px(28.))
+                                .px_2()
                                 .rounded_lg()
                                 .flex()
                                 .items_center()
-                                .gap(px(4.))
+                                .gap(px(5.))
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
                                 .child(
@@ -176,7 +176,9 @@ impl HiveApp {
                             actions.child(
                                 Button::new("resume")
                                     .primary()
+                                    .compact()
                                     .h(px(30.))
+                                    .px_3()
                                     .rounded_full()
                                     .label(tr("继续处理"))
                                     .disabled(
@@ -190,10 +192,15 @@ impl HiveApp {
                                 Button::new("send")
                                     .custom(palette::send_circle_variant(can_send, cx))
                                     .compact()
-                                    .h(px(32.))
-                                    .when(!running, |button| button.w(px(32.)))
+                                    .h(px(30.))
+                                    .when(!running, |button| button.w(px(30.)))
                                     .when(running, |button| button.px_3())
                                     .rounded_full()
+                                    .when(!can_send, |button| {
+                                        button
+                                            .bg(palette::send_circle_disabled_bg(cx))
+                                            .text_color(palette::send_circle_disabled_fg(cx))
+                                    })
                                     .icon(Glyph::ArrowUp)
                                     .when(running, |button| button.label(tr("排队")))
                                     .accessibility_label(if running {

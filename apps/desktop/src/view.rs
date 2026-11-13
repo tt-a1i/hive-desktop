@@ -162,8 +162,12 @@ impl HiveApp {
         }
         Some(
             Button::new(SharedString::from(format!("dispatch-link-{source}")))
-                .ghost()
+                .custom(crate::palette::quiet_icon_variant(cx))
                 .compact()
+                .xsmall()
+                .h(px(22.))
+                .px_1p5()
+                .rounded_md()
                 .label(tr("派单详情"))
                 .accessibility_label(tr("打开关联派单"))
                 .disabled(!self.connected)
@@ -188,8 +192,12 @@ impl HiveApp {
         let id = member_chat.id.clone();
         Some(
             Button::new(SharedString::from(format!("member-link-{source_id}")))
-                .ghost()
+                .custom(crate::palette::quiet_icon_variant(cx))
                 .compact()
+                .xsmall()
+                .h(px(22.))
+                .px_1p5()
+                .rounded_md()
                 .label(label)
                 .accessibility_label(format!(
                     "{}: {}",
@@ -292,11 +300,12 @@ impl HiveApp {
             .min_w_0()
             .flex_shrink_0()
             .items_start()
-            .p_3()
-            .gap_2()
+            .px_3p5()
+            .py_2p5()
+            .gap_2p5()
             .bg(Color::ErrorSurface.get(cx))
             .border_1()
-            .border_color(Color::Error.get(cx).opacity(0.28))
+            .border_color(Color::Error.get(cx).opacity(0.24))
             .rounded_xl()
             .child(
                 div()
@@ -323,6 +332,11 @@ impl HiveApp {
             )
             .child(
                 Button::new("dismiss-error")
+                    .outline()
+                    .compact()
+                    .small()
+                    .h(px(26.))
+                    .rounded_lg()
                     .flex_shrink_0()
                     .label(tr("关闭"))
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -340,6 +354,7 @@ impl HiveApp {
         can_send: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let composer_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
         v_flex()
             .relative()
             .w_full()
@@ -357,7 +372,11 @@ impl HiveApp {
             })
             .rounded_2xl()
             .border_1()
-            .border_color(Color::Divider.get(cx))
+            .border_color(if composer_focused {
+                Color::Muted.get(cx).opacity(0.42)
+            } else {
+                Color::Divider.get(cx)
+            })
             .bg(Color::Card.get(cx))
             .shadow_xs()
             .child(crate::focus_scroll::Viewport::new(
@@ -423,6 +442,11 @@ impl HiveApp {
                                                     )
                                                     .child(
                                                         Button::new(("copy-failed-draft", i))
+                                                            .outline()
+                                                            .compact()
+                                                            .small()
+                                                            .h(px(26.))
+                                                            .rounded_lg()
                                                             .label(tr("复制内容"))
                                                             .accessibility_label(tr(
                                                                 "复制发送失败的内容",
@@ -439,6 +463,15 @@ impl HiveApp {
                                                     )
                                                     .child(
                                                         Button::new(("dismiss-failed-draft", i))
+                                                            .custom(
+                                                                crate::palette::quiet_icon_variant(
+                                                                    cx,
+                                                                ),
+                                                            )
+                                                            .compact()
+                                                            .small()
+                                                            .h(px(26.))
+                                                            .rounded_lg()
                                                             .label(tr("移除"))
                                                             .accessibility_label(tr(
                                                                 "移除发送失败的内容",
@@ -783,18 +816,50 @@ impl Render for HiveApp {
                 view.child(
                     h_flex()
                         .flex_shrink_0()
-                        .items_center()
-                        .gap_3()
-                        .p_3()
-                        .when(inset > px(0.), |b| b.pl(inset + px(12.)))
-                        .bg(Color::Attention.get(cx))
-                        .child(div().flex_1().min_w_0().text_sm().child(if self.restarting {
-                            tr("正在重新启动后台，当前草稿已保留。")
+                        .min_h(px(if inset > px(0.) {
+                            chrome::TOPBAR_HEIGHT
                         } else {
-                            tr("后台未连接，当前草稿已保留。")
+                            40.
                         }))
+                        .items_center()
+                        .gap_2p5()
+                        .px_3()
+                        .py_1p5()
+                        .when(inset > px(0.), |b| b.pl(inset + px(8.)))
+                        .bg(Color::Sidebar.get(cx))
+                        .border_b_1()
+                        .border_color(Color::Divider.get(cx))
+                        .child(
+                            div()
+                                .size(px(6.))
+                                .flex_shrink_0()
+                                .rounded_full()
+                                .bg(if self.restarting {
+                                    Color::Accent.get(cx)
+                                } else {
+                                    Color::Error.get(cx)
+                                }),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(Color::Text.get(cx))
+                                .child(if self.restarting {
+                                    tr("正在重新启动后台，当前草稿已保留。")
+                                } else {
+                                    tr("后台未连接，当前草稿已保留。")
+                                }),
+                        )
                         .child(
                             Button::new("restart-backend")
+                                .outline()
+                                .compact()
+                                .small()
+                                .h(px(26.))
+                                .px_2p5()
+                                .rounded_lg()
                                 .label(tr("重新启动后台"))
                                 .disabled(self.restarting)
                                 .on_click(
@@ -809,24 +874,46 @@ impl Render for HiveApp {
                 view.child(
                     h_flex()
                         .flex_shrink_0()
+                        .min_h(px(if inset > px(0.) && !disconnected_banner {
+                            chrome::TOPBAR_HEIGHT
+                        } else {
+                            40.
+                        }))
                         .items_center()
-                        .gap_3()
-                        .p_3()
+                        .gap_2p5()
+                        .px_3()
+                        .py_1p5()
                         .when(inset > px(0.) && !disconnected_banner, |b| {
-                            b.pl(inset + px(12.))
+                            b.pl(inset + px(8.))
                         })
-                        .bg(Color::Attention.get(cx))
+                        .bg(Color::Sidebar.get(cx))
+                        .border_b_1()
+                        .border_color(Color::Divider.get(cx))
+                        .child(
+                            div()
+                                .size(px(6.))
+                                .flex_shrink_0()
+                                .rounded_full()
+                                .bg(Color::Accent.get(cx)),
+                        )
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .text_sm()
+                                .text_xs()
+                                .text_color(Color::Text.get(cx))
                                 .child(crate::language::tr(
                                     "有新设备等待配对，请核对两端安全短码后确认。",
                                 )),
                         )
                         .child(
                             Button::new("remote-pending-banner")
+                                .outline()
+                                .compact()
+                                .small()
+                                .h(px(26.))
+                                .px_2p5()
+                                .rounded_lg()
                                 .label(crate::language::tr("查看配对请求"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.select_settings_section(
@@ -838,10 +925,6 @@ impl Render for HiveApp {
                         ),
                 )
             })
-            .when(
-                !preferences && !self.sidebar_open && !self.viewing_conversation(),
-                |layout| layout.child(self.render_navigation_bar(false, window, cx)),
-            )
             .child(
                 h_flex()
                     .flex_1()
@@ -870,13 +953,6 @@ impl Render for HiveApp {
                                 .flex_1()
                                 .min_w_0()
                                 .h_full()
-                                .when(cfg!(target_os = "macos") && self.sidebar_open, |col| {
-                                    col.child(
-                                        chrome::drag_bar("subview-topbar", window, cx)
-                                            .min_h(px(22.))
-                                            .w_full(),
-                                    )
-                                })
                                 .child(div().flex_1().min_h_0().min_w_0().w_full().child(body))
                                 .into_any_element()
                         } else if self.workspace.is_none() && self.session.is_none() {
@@ -1104,7 +1180,7 @@ impl Render for HiveApp {
                                                                                 FontWeight::MEDIUM,
                                                                             )
                                                                             .text_color(
-                                                                                Color::Muted
+                                                                                Color::Secondary
                                                                                     .get(cx),
                                                                             )
                                                                             .truncate()
@@ -1117,7 +1193,7 @@ impl Render for HiveApp {
                                                                             .text_color(
                                                                                 Color::Muted
                                                                                     .get(cx)
-                                                                                    .opacity(0.55),
+                                                                                    .opacity(0.5),
                                                                             )
                                                                             .child("/"),
                                                                     )
@@ -1162,6 +1238,7 @@ impl Render for HiveApp {
                                                     .child(
                                                         div().flex_1().min_w_0().child(
                                                             Input::new(&self.session_name)
+                                                                .small()
                                                                 .aria_label(tr("会话名称"))
                                                                 .disabled(
                                                                     self.session_name_loading,
@@ -1171,7 +1248,9 @@ impl Render for HiveApp {
                                                     .child(
                                                         Button::new("save-session-name")
                                                             .primary()
-                                                            .compact()
+                                                            .small()
+                                                            .h(px(28.))
+                                                            .rounded_lg()
                                                             .label(tr("保存名称"))
                                                             .disabled(
                                                                 !self.connected
@@ -1185,8 +1264,10 @@ impl Render for HiveApp {
                                                     )
                                                     .child(
                                                         Button::new("cancel-session-name")
-                                                            .ghost()
-                                                            .compact()
+                                                            .outline()
+                                                            .small()
+                                                            .h(px(28.))
+                                                            .rounded_lg()
                                                             .label(tr("取消"))
                                                             .disabled(self.session_name_loading)
                                                             .on_click(cx.listener(
@@ -1200,8 +1281,13 @@ impl Render for HiveApp {
                                             .when(!renaming && has_session_failure, |header| {
                                                 header.child(
                                                     Button::new("show-session-failure")
-                                                        .ghost()
-                                                        .compact()
+                                                        .custom(
+                                                            crate::palette::quiet_icon_variant(cx),
+                                                        )
+                                                        .small()
+                                                        .h(px(26.))
+                                                        .px_2()
+                                                        .rounded_lg()
                                                         .label(tr("错误详情"))
                                                         .on_click(cx.listener(
                                                             |this, _, window, cx| {
@@ -1224,166 +1310,217 @@ impl Render for HiveApp {
                                                         || running),
                                                 |header| {
                                                     header.child(
-                                                        div()
-                                                            .px_2()
+                                                        h_flex()
+                                                            .flex_shrink_0()
+                                                            .items_center()
+                                                            .gap_1p5()
+                                                            .px_2p5()
                                                             .py_0p5()
                                                             .rounded_full()
                                                             .bg(Color::AccentSoft.get(cx))
-                                                            .text_xs()
-                                                            .font_weight(FontWeight::MEDIUM)
-                                                            .text_color(Color::Accent.get(cx))
                                                             .child(
-                                                                if running
-                                                                    && self
-                                                                        .status
-                                                                        .is_background_connected()
-                                                                {
-                                                                    tr("正在回复…").to_string()
-                                                                } else {
-                                                                    self.status.text()
-                                                                },
+                                                                div()
+                                                                    .w(px(6.))
+                                                                    .h(px(6.))
+                                                                    .rounded_full()
+                                                                    .bg(Color::Accent.get(cx)),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_xs()
+                                                                    .font_weight(FontWeight::MEDIUM)
+                                                                    .text_color(
+                                                                        Color::Accent.get(cx),
+                                                                    )
+                                                                    .child(
+                                                                        if running
+                                                                            && self
+                                                                                .status
+                                                                                .is_background_connected()
+                                                                        {
+                                                                            tr("正在回复…")
+                                                                                .to_string()
+                                                                        } else {
+                                                                            self.status.text()
+                                                                        },
+                                                                    ),
                                                             ),
                                                     )
                                                 },
                                             )
                                             .when(!renaming, |header| {
-                                                header.child(
-                                                    Button::new("rename-session")
-                                                        .custom(crate::palette::quiet_icon_variant(
-                                                            cx,
-                                                        ))
-                                                        .compact()
-                                                        .xsmall()
-                                                        .h(px(28.))
-                                                        .w(px(28.))
-                                                        .rounded_lg()
-                                                        .icon(Glyph::Pencil)
-                                                        .tooltip(tr("重命名会话"))
-                                                        .accessibility_label(tr("重命名当前会话"))
-                                                        .disabled(
-                                                            !self.connected
-                                                                || self.session_name_loading
-                                                                || !self.workspace_writes_allowed(),
-                                                        )
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.begin_session_rename(
-                                                                    window, cx,
-                                                                )
-                                                            },
-                                                        )),
-                                                )
-                                            })
-                                            .when(
-                                                !renaming
-                                                    && self.conversation_ready
+                                                let show_conv_tools = self.conversation_ready
                                                     && self.session.is_some()
-                                                    && !self.loading,
-                                                |header| {
-                                                    header
-                                                        .child(
-                                                            Button::new("find-in-conversation")
-                                                                .custom(
-                                                                    crate::palette::quiet_icon_variant(
-                                                                        cx,
-                                                                    ),
-                                                                )
-                                                                .compact()
-                                                                .xsmall()
-                                                                .h(px(28.))
-                                                                .w(px(28.))
-                                                                .rounded_lg()
-                                                                .icon(Glyph::Search)
-                                                                .accessibility_label(tr(
-                                                                    "查找当前会话",
-                                                                ))
-                                                                .tooltip(
-                                                                    if cfg!(target_os = "macos") {
-                                                                        tr("查找会话内容 · ⌘F")
-                                                                    } else {
-                                                                        tr("查找会话内容 · Ctrl+F")
-                                                                    },
-                                                                )
-                                                                .on_click(cx.listener(
-                                                                    |this, _, window, cx| {
-                                                                        this.open_conversation_find(
-                                                                            window, cx,
-                                                                        )
-                                                                    },
-                                                                )),
-                                                        )
-                                                        .child(
-                                                            Button::new("export-conversation")
-                                                                .custom(
-                                                                    crate::palette::quiet_icon_variant(
-                                                                        cx,
-                                                                    ),
-                                                                )
-                                                                .compact()
-                                                                .xsmall()
-                                                                .h(px(28.))
-                                                                .w(px(28.))
-                                                                .rounded_lg()
-                                                                .icon(Glyph::FileDown)
-                                                                .accessibility_label(tr(
-                                                                    "导出当前对话",
-                                                                ))
-                                                                .tooltip(tr("导出对话为 Markdown"))
-                                                                .disabled(self.messages.is_empty())
-                                                                .on_click(cx.listener(
-                                                                    |this, _, window, cx| {
-                                                                        this.open_conversation_export(
-                                                                            window, cx,
-                                                                        )
-                                                                    },
-                                                                )),
-                                                        )
-                                                },
-                                            )
-                                            .when(
-                                                !renaming && active_project.is_some(),
-                                                |header| {
-                                                    header.child(
-                                                        Button::new("topbar-quick-terminal")
-                                                            .custom(
-                                                                crate::palette::quiet_icon_variant(
-                                                                    cx,
-                                                                ),
-                                                            )
-                                                            .compact()
-                                                            .xsmall()
-                                                            .h(px(28.))
-                                                            .w(px(28.))
-                                                            .rounded_lg()
-                                                            .icon(Glyph::SquareTerminal)
-                                                            .tooltip(tr("打开工作区终端"))
-                                                            .accessibility_label(tr(
-                                                                "打开工作区终端",
-                                                            ))
-                                                            .disabled(!self.connected)
-                                                            .on_click(cx.listener(
-                                                                |this, _, window, cx| {
-                                                                    this.show_terminal(window, cx);
-                                                                    cx.notify();
-                                                                },
-                                                            )),
-                                                    )
-                                                },
-                                            )
-                                            .when(self.reading_above_latest(), |header| {
+                                                    && !self.loading;
                                                 header.child(
-                                                    Button::new("jump-to-latest")
-                                                        .ghost()
-                                                        .compact()
-                                                        .rounded_lg()
-                                                        .icon(Glyph::ArrowDown)
-                                                        .label(tr("回到最新"))
-                                                        .accessibility_label(tr("回到最新消息"))
-                                                        .on_click(cx.listener(
-                                                            |this, _, _, cx| {
-                                                                this.jump_to_latest(cx);
+                                                    h_flex()
+                                                        .flex_shrink_0()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .child(
+                                                            Button::new("rename-session")
+                                                                .custom(
+                                                                    crate::palette::quiet_icon_variant(
+                                                                        cx,
+                                                                    ),
+                                                                )
+                                                                .compact()
+                                                                .xsmall()
+                                                                .h(px(28.))
+                                                                .w(px(28.))
+                                                                .rounded_lg()
+                                                                .icon(Glyph::Pencil)
+                                                                .tooltip(tr("重命名会话"))
+                                                                .accessibility_label(tr(
+                                                                    "重命名当前会话",
+                                                                ))
+                                                                .disabled(
+                                                                    !self.connected
+                                                                        || self
+                                                                            .session_name_loading
+                                                                        || !self
+                                                                            .workspace_writes_allowed(),
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    |this, _, window, cx| {
+                                                                        this.begin_session_rename(
+                                                                            window, cx,
+                                                                        )
+                                                                    },
+                                                                )),
+                                                        )
+                                                        .when(show_conv_tools, |tools| {
+                                                            tools
+                                                                .child(
+                                                                    Button::new(
+                                                                        "find-in-conversation",
+                                                                    )
+                                                                    .custom(
+                                                                        crate::palette::quiet_icon_variant(
+                                                                            cx,
+                                                                        ),
+                                                                    )
+                                                                    .compact()
+                                                                    .xsmall()
+                                                                    .h(px(28.))
+                                                                    .w(px(28.))
+                                                                    .rounded_lg()
+                                                                    .icon(Glyph::Search)
+                                                                    .accessibility_label(tr(
+                                                                        "查找当前会话",
+                                                                    ))
+                                                                    .tooltip(
+                                                                        if cfg!(target_os = "macos")
+                                                                        {
+                                                                            tr("查找会话内容 · ⌘F")
+                                                                        } else {
+                                                                            tr("查找会话内容 · Ctrl+F")
+                                                                        },
+                                                                    )
+                                                                    .on_click(cx.listener(
+                                                                        |this, _, window, cx| {
+                                                                            this.open_conversation_find(
+                                                                                window, cx,
+                                                                            )
+                                                                        },
+                                                                    )),
+                                                                )
+                                                                .child(
+                                                                    Button::new(
+                                                                        "export-conversation",
+                                                                    )
+                                                                    .custom(
+                                                                        crate::palette::quiet_icon_variant(
+                                                                            cx,
+                                                                        ),
+                                                                    )
+                                                                    .compact()
+                                                                    .xsmall()
+                                                                    .h(px(28.))
+                                                                    .w(px(28.))
+                                                                    .rounded_lg()
+                                                                    .icon(Glyph::FileDown)
+                                                                    .accessibility_label(tr(
+                                                                        "导出当前对话",
+                                                                    ))
+                                                                    .tooltip(tr(
+                                                                        "导出对话为 Markdown",
+                                                                    ))
+                                                                    .disabled(
+                                                                        self.messages.is_empty(),
+                                                                    )
+                                                                    .on_click(cx.listener(
+                                                                        |this, _, window, cx| {
+                                                                            this.open_conversation_export(
+                                                                                window, cx,
+                                                                            )
+                                                                        },
+                                                                    )),
+                                                                )
+                                                        })
+                                                        .when_some(
+                                                            active_project.clone(),
+                                                            |tools, _| {
+                                                                tools.child(
+                                                                    Button::new(
+                                                                        "topbar-quick-terminal",
+                                                                    )
+                                                                    .custom(
+                                                                        crate::palette::quiet_icon_variant(
+                                                                            cx,
+                                                                        ),
+                                                                    )
+                                                                    .compact()
+                                                                    .xsmall()
+                                                                    .h(px(28.))
+                                                                    .w(px(28.))
+                                                                    .rounded_lg()
+                                                                    .icon(Glyph::SquareTerminal)
+                                                                    .tooltip(tr("打开工作区终端"))
+                                                                    .accessibility_label(tr(
+                                                                        "打开工作区终端",
+                                                                    ))
+                                                                    .disabled(!self.connected)
+                                                                    .on_click(cx.listener(
+                                                                        |this, _, window, cx| {
+                                                                            this.show_terminal(
+                                                                                window, cx,
+                                                                            );
+                                                                            cx.notify();
+                                                                        },
+                                                                    )),
+                                                                )
                                                             },
-                                                        )),
+                                                        )
+                                                        .when(
+                                                            self.reading_above_latest(),
+                                                            |tools| {
+                                                                tools.child(
+                                                                    Button::new("jump-to-latest")
+                                                                        .custom(
+                                                                            crate::palette::quiet_icon_variant(
+                                                                                cx,
+                                                                            ),
+                                                                        )
+                                                                        .small()
+                                                                        .h(px(28.))
+                                                                        .px_2()
+                                                                        .rounded_lg()
+                                                                        .icon(Glyph::ArrowDown)
+                                                                        .label(tr("回到最新"))
+                                                                        .accessibility_label(tr(
+                                                                            "回到最新消息",
+                                                                        ))
+                                                                        .on_click(cx.listener(
+                                                                            |this, _, _, cx| {
+                                                                                this.jump_to_latest(
+                                                                                    cx,
+                                                                                );
+                                                                            },
+                                                                        )),
+                                                                )
+                                                            },
+                                                        ),
                                                 )
                                             })
                                         }),
@@ -1410,6 +1547,11 @@ impl Render for HiveApp {
                                         view.child(
                                             div().px_5().pt_2().child(
                                                 Button::new("show-pending-interactions")
+                                                    .outline()
+                                                    .compact()
+                                                    .small()
+                                                    .h(px(28.))
+                                                    .px_3()
                                                     .rounded_full()
                                                     .label(if english() {
                                                         format!(
@@ -1510,14 +1652,13 @@ impl Render for HiveApp {
                                                     .w_full()
                                                     .max_w(px(CHAT_COLUMN_WIDTH))
                                                     .mx_auto()
-                                                    .gap_4()
+                                                    .gap_5()
                                                     .child(
                                                         v_flex()
                                                             .w_full()
                                                             .items_center()
                                                             .text_center()
                                                             .gap_1p5()
-                                                            .pb_1()
                                                             .child(
                                                                 div()
                                                                     .id("session-title")
@@ -1547,7 +1688,7 @@ impl Render for HiveApp {
                                                                                 )
                                                                                 .child(
                                                                                     div()
-                                                                                        .font_weight(FontWeight::BOLD)
+                                                                                        .font_weight(FontWeight::SEMIBOLD)
                                                                                         .text_color(Color::Text.get(cx))
                                                                                         .child(ws.name.clone()),
                                                                                 )
@@ -1582,7 +1723,7 @@ impl Render for HiveApp {
                                                                             .aria_label(tr(
                                                                                 "先写下需求，再选择 Agent。草稿会带入新会话。",
                                                                             ))
-                                                                            .text_xs()
+                                                                            .text_size(px(13.))
                                                                             .text_color(
                                                                                 Color::Muted
                                                                                     .get(cx),
@@ -1599,7 +1740,7 @@ impl Render for HiveApp {
                                                                 |hero| {
                                                                     hero.child(
                                                                         div()
-                                                                            .text_xs()
+                                                                            .text_size(px(13.))
                                                                             .text_color(
                                                                                 Color::Muted
                                                                                     .get(cx),

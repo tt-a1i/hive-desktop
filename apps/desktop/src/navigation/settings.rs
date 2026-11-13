@@ -123,8 +123,9 @@ impl HiveApp {
             .when(compact, |bar| {
                 bar.flex_row()
                     .items_center()
+                    .min_h(px(chrome::TOPBAR_HEIGHT))
                     .px_3()
-                    .py_2()
+                    .py_1p5()
                     .when(inset > px(0.), |b| b.pl(inset + px(8.)))
                     .border_b_1()
             })
@@ -132,8 +133,8 @@ impl HiveApp {
                 bar.flex_col()
                     .h_full()
                     .min_h_0()
-                    .w(px(248.))
-                    .px_3()
+                    .w(px(252.))
+                    .px_2()
                     .pb_3()
                     .border_r_1()
             })
@@ -141,6 +142,7 @@ impl HiveApp {
                 bar.child(
                     chrome::drag_bar("settings-sidebar-topbar", window, cx)
                         .w_full()
+                        .px_1()
                         .when(inset > px(0.), |b| b.pl(inset - px(4.)))
                         .gap_1p5()
                         .child(
@@ -148,9 +150,9 @@ impl HiveApp {
                                 .custom(crate::palette::quiet_icon_variant(cx))
                                 .compact()
                                 .xsmall()
-                                .h(px(28.))
-                                .w(px(28.))
-                                .rounded_lg()
+                                .h(px(26.))
+                                .w(px(26.))
+                                .rounded_md()
                                 .icon(Glyph::ArrowLeft)
                                 .accessibility_label(back)
                                 .tooltip(back)
@@ -161,7 +163,8 @@ impl HiveApp {
                         .child(
                             div()
                                 .text_sm()
-                                .font_weight(FontWeight::SEMIBOLD)
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(Color::Text.get(cx))
                                 .child(tr("设置")),
                         ),
                 )
@@ -169,8 +172,11 @@ impl HiveApp {
             .when(compact, |bar| {
                 bar.child(
                     Button::new("leave-preferences")
-                        .ghost()
+                        .custom(crate::palette::quiet_icon_variant(cx))
                         .compact()
+                        .xsmall()
+                        .h(px(28.))
+                        .w(px(28.))
                         .rounded_lg()
                         .icon(Glyph::ArrowLeft)
                         .accessibility_label(back)
@@ -181,15 +187,52 @@ impl HiveApp {
                 )
                 .child(
                     Button::new("settings-section-menu")
-                        .ghost()
-                        .h(px(34.))
+                        .custom(crate::palette::quiet_icon_variant(cx))
+                        .compact()
+                        .h(px(30.))
+                        .px_2()
                         .rounded_lg()
                         .flex_1()
                         .min_w_0()
-                        .icon(*current_glyph)
                         .accessibility_label(format!("{}: {current_label}", tr("设置")))
-                        .child(div().flex_1().min_w_0().truncate().child(*current_label))
-                        .child(Icon::new(Glyph::ChevronDown).size_4())
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    h_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            Icon::new(*current_glyph)
+                                                .size(px(14.))
+                                                .flex_shrink_0()
+                                                .text_color(Color::Secondary.get(cx)),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_left()
+                                                .text_size(px(13.))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .truncate()
+                                                .child(*current_label),
+                                        ),
+                                )
+                                .child(
+                                    Icon::new(Glyph::ChevronDown)
+                                        .size(px(14.))
+                                        .flex_shrink_0()
+                                        .text_color(Color::Muted.get(cx)),
+                                ),
+                        )
                         .dropdown_menu(move |mut menu, _, _| {
                             for (_, label, glyph, section) in menu_entries {
                                 let weak = weak.clone();
@@ -222,34 +265,59 @@ impl HiveApp {
                         .min_h_0()
                         .min_w_0()
                         .gap_0p5()
+                        .px_0p5()
                         .pt_1()
                         .overflow_y_scroll()
                         .track_scroll(&self.preferences_nav_scroll)
                         .vertical_scrollbar(&self.preferences_nav_scroll)
                         .children(entries.into_iter().map(|(id, label, glyph, section)| {
+                            let active = selected(section);
                             Reveal::new(
                                 SharedString::from(format!("{id}-reveal")),
                                 &self.preferences_nav_scroll,
                                 Button::new(id)
-                                    .ghost()
-                                    .h(px(32.))
+                                    .custom(crate::palette::sidebar_item_variant(active, cx))
+                                    .compact()
+                                    .h(px(30.))
+                                    .px_2()
                                     .flex_shrink_0()
                                     .rounded_lg()
-                                    .icon(glyph)
                                     .w_full()
-                                    .justify_start()
                                     .accessibility_label(label)
                                     .tooltip(label)
                                     .child(
-                                        div()
-                                            .flex_1()
+                                        h_flex()
+                                            .w_full()
                                             .min_w_0()
-                                            .text_left()
-                                            .text_sm()
-                                            .truncate()
-                                            .child(label),
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                Icon::new(glyph)
+                                                    .size(px(14.))
+                                                    .flex_shrink_0()
+                                                    .text_color(if active {
+                                                        Color::Text.get(cx)
+                                                    } else {
+                                                        Color::Muted.get(cx)
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .text_left()
+                                                    .text_size(px(13.))
+                                                    .when(active, |t| t.font_weight(FontWeight::MEDIUM))
+                                                    .text_color(if active {
+                                                        Color::Text.get(cx)
+                                                    } else {
+                                                        Color::Secondary.get(cx)
+                                                    })
+                                                    .truncate()
+                                                    .child(label),
+                                            ),
                                     )
-                                    .selected(selected(section))
+                                    .selected(active)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.select_preferences_target(section, window, cx)
                                     })),

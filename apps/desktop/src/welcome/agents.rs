@@ -77,10 +77,25 @@ impl HiveApp {
                         } else {
                             self.program_local_check_state(backend, cx)
                         };
-                        let (dot_color, badge_text) = match check_state {
-                            Some(true) => (Color::Success.get(cx), tr("本机可用")),
-                            Some(false) => (Color::Error.get(cx), tr("需检查")),
-                            None => (Color::Muted.get(cx), tr("待配置")),
+                        let (dot_color, badge_bg, badge_fg, badge_text) = match check_state {
+                            Some(true) => (
+                                Color::Success.get(cx),
+                                Color::Inset.get(cx),
+                                Color::Text.get(cx),
+                                tr("本机可用"),
+                            ),
+                            Some(false) => (
+                                Color::Error.get(cx),
+                                Color::ErrorSurface.get(cx),
+                                Color::Error.get(cx),
+                                tr("需检查"),
+                            ),
+                            None => (
+                                Color::Muted.get(cx),
+                                Color::Inset.get(cx),
+                                Color::Secondary.get(cx),
+                                tr("待配置"),
+                            ),
                         };
                         let account = (backend == "codex").then(|| self.codex_account_setup_status(cx));
                         let action = if english() {
@@ -129,7 +144,7 @@ impl HiveApp {
                                                 v_flex()
                                                     .flex_1()
                                                     .min_w_0()
-                                                    .gap(px(2.))
+                                                    .gap(px(3.))
                                                     .child(
                                                         h_flex()
                                                             .min_w_0()
@@ -148,9 +163,9 @@ impl HiveApp {
                                                                     .items_center()
                                                                     .gap_1()
                                                                     .px_2()
-                                                                    .py(px(1.))
+                                                                    .py(px(1.5))
                                                                     .rounded_full()
-                                                                    .bg(Color::Inset.get(cx))
+                                                                    .bg(badge_bg)
                                                                     .child(
                                                                         div()
                                                                             .size(px(6.))
@@ -160,10 +175,7 @@ impl HiveApp {
                                                                     .child(
                                                                         div()
                                                                             .text_xs()
-                                                                            .text_color(
-                                                                                Color::Secondary
-                                                                                    .get(cx),
-                                                                            )
+                                                                            .text_color(badge_fg)
                                                                             .child(badge_text),
                                                                     ),
                                                             ),
@@ -176,6 +188,7 @@ impl HiveApp {
                                                             .role(Role::Label)
                                                             .aria_label(description.clone())
                                                             .text_xs()
+                                                            .line_height(px(17.))
                                                             .text_color(Color::Muted.get(cx))
                                                             .child(description),
                                                     )
@@ -186,6 +199,7 @@ impl HiveApp {
                                                                 .role(Role::Label)
                                                                 .aria_label(description.clone())
                                                                 .text_xs()
+                                                                .line_height(px(17.))
                                                                 .text_color(Color::Muted.get(cx))
                                                                 .child(description),
                                                         )
