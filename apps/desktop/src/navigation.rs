@@ -169,7 +169,7 @@ impl HiveApp {
                         ),
                 )
             })
-            .when(!self.viewing_conversation(), |view| {
+            .when(!in_sidebar && !self.viewing_conversation(), |view| {
                 view.child(self.return_to_chat_button(cx))
             })
     }

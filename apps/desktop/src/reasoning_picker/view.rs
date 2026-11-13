@@ -110,6 +110,22 @@ impl HiveApp {
                         ),
                 )
             })
+            .when(
+                !self.reasoning_picker.loading
+                    && self.reasoning_picker.error.is_none()
+                    && self.reasoning_picker.state.is_none(),
+                |view| {
+                    view.child(
+                        crate::text_reading::selectable_text(
+                            "reasoning-empty",
+                            tr("当前模型没有可调推理选项。"),
+                        )
+                        .px_1()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx)),
+                    )
+                },
+            )
             .when_some(self.reasoning_picker.state.as_ref(), |view, state| {
                 view.when_some(state.description.as_ref(), |view, text| {
                     // Translate only metadata owned by Hive's native adapters.

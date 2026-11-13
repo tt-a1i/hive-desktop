@@ -153,17 +153,25 @@ impl HiveApp {
                 },
             )
             .when(!commands.is_empty(), |view| {
-                view.child(crate::focus_scroll::Viewport::new(
-                    "native-command-results-viewport",
-                    &self.command_picker.scroll,
-                    v_flex()
-                        .id("native-command-results")
-                        .max_h(px(220.))
-                        .p_1p5()
-                        .gap_0p5()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.command_picker.scroll)
-                        .vertical_scrollbar(&self.command_picker.scroll)
+                view.child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .child(crate::focus_scroll::Viewport::new(
+                            "native-command-results-viewport",
+                            &self.command_picker.scroll,
+                            v_flex()
+                                .id("native-command-results")
+                                .w_full()
+                                .flex_1()
+                                .min_w_0()
+                                .max_h(px(220.))
+                                .p_1p5()
+                                .gap_0p5()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.command_picker.scroll)
+                                .vertical_scrollbar(&self.command_picker.scroll)
                         .children(commands.iter().enumerate().map(|(i, command)| {
                             let name = command.name.clone();
                             let active = i == self.command_picker.selected;
@@ -184,6 +192,8 @@ impl HiveApp {
                                     .ghost()
                                     .compact()
                                     .w_full()
+                                    .min_w_0()
+                                    .overflow_hidden()
                                     .h_auto()
                                     .px_2p5()
                                     .py_1p5()
@@ -201,6 +211,7 @@ impl HiveApp {
                                         h_flex()
                                             .w_full()
                                             .min_w_0()
+                                            .overflow_hidden()
                                             .items_center()
                                             .justify_between()
                                             .gap_2p5()
@@ -208,6 +219,7 @@ impl HiveApp {
                                                 v_flex()
                                                     .min_w_0()
                                                     .flex_1()
+                                                    .overflow_hidden()
                                                     .items_start()
                                                     .gap_0p5()
                                                     .child(
@@ -218,6 +230,7 @@ impl HiveApp {
                                                             .gap_2()
                                                             .child(
                                                                 div()
+                                                                    .min_w_0()
                                                                     .font_family(Theme::global(cx).mono_font_family.clone())
                                                                     .text_size(px(12.5))
                                                                     .font_weight(FontWeight::SEMIBOLD)
@@ -242,6 +255,7 @@ impl HiveApp {
                                                         view.child(
                                                             div()
                                                                 .w_full()
+                                                                .min_w_0()
                                                                 .text_xs()
                                                                 .text_color(Color::Muted.get(cx))
                                                                 .truncate()
@@ -263,7 +277,9 @@ impl HiveApp {
                                     })),
                             )
                         })),
-                ))
+                        ),
+                    ),
+                )
             })
             .child(
                 div()
