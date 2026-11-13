@@ -1,7 +1,10 @@
 use super::*;
 use crate::palette::Color;
 use gpui_kit::{
-    component::{button::Button, *},
+    component::{
+        button::{Button, ButtonVariants},
+        *,
+    },
     prelude::FluentBuilder,
 };
 use serde_json::json;
@@ -129,7 +132,9 @@ impl HiveApp {
             .min_w_0()
             .gap_3()
             .p_4()
-            .rounded_lg()
+            .rounded_xl()
+            .border_1()
+            .border_color(Color::Divider.get(cx))
             .bg(Color::Attention.get(cx))
             .child(
                 div()
@@ -209,9 +214,16 @@ impl HiveApp {
                                                 .max_h(px(200.))
                                                 .overflow_y_scroll()
                                                 .p_2()
+                                                .rounded_lg()
+                                                .border_1()
+                                                .border_color(Color::Divider.get(cx))
                                                 .bg(Color::Card.get(cx))
-                                                .text_sm()
-                                                .child(text.to_string()),
+                                                .font_family(Theme::global(cx).mono_font_family.clone())
+                                                .text_xs()
+                                                .child(crate::text_reading::selectable_text(
+                                                    format!("claude-input-field-text-{i}-{j}"),
+                                                    text.to_string(),
+                                                )),
                                         )
                                 }),
                         )
@@ -221,12 +233,17 @@ impl HiveApp {
                                 .max_h(px(240.))
                                 .overflow_y_scroll()
                                 .p_3()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(Color::Divider.get(cx))
                                 .bg(Color::Card.get(cx))
-                                .text_sm()
-                                .child(
+                                .font_family(Theme::global(cx).mono_font_family.clone())
+                                .text_xs()
+                                .child(crate::text_reading::selectable_text(
+                                    format!("claude-native-input-text-{i}"),
                                     serde_json::to_string_pretty(&params["input"])
                                         .unwrap_or_else(|_| params["input"].to_string()),
-                                ),
+                                )),
                         ),
                 )
             })
@@ -246,6 +263,8 @@ impl HiveApp {
             .when(questions, |view| {
                 view.child(
                     Button::new(("claude-answer", i))
+                        .primary()
+                        .rounded_full()
                         .label(tr("提交回答"))
                         .disabled(disabled || card.questions.is_empty())
                         .on_click({
@@ -268,7 +287,10 @@ impl HiveApp {
                             .map(|(j, (decision, label))| {
                                 let session = session.clone();
                                 let id = id.clone();
+                                let primary = j == 0 && decision == "accept";
                                 Button::new(("claude-decision", i * 3 + j))
+                                    .when(primary, |btn| btn.primary())
+                                    .rounded_full()
                                     .label(tr(label))
                                     .disabled(disabled)
                                     .on_click(cx.listener(move |this, _, _, cx| {

@@ -187,6 +187,9 @@ impl Render for ImageViewer {
                     .min_w_0()
                     .h(height)
                     .overflow_scroll()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
                     .bg(Color::Card.get(cx))
                     .when_some(self.rendered.clone(), |view, image| {
                         view.child(if self.fit {
@@ -209,7 +212,7 @@ impl Render for ImageViewer {
             .when_some(self.notice.map(tr), |view, text| {
                 view.child(div().id("image-notice").role(Role::Label).aria_label(text).text_xs().child(text))
             })
-            .when_some(self.error.as_ref().map(|(key,error)|format!("{}: {error}",tr(key))), |view, text| {
+            .when_some(self.error.as_ref().map(|(key, error)| format!("{}: {}", tr(key), crate::language::localize_owned_error(error))), |view, text| {
                 view.child(div().id("image-error").role(Role::Label).aria_label(text.clone()).text_xs().text_color(Color::Error.get(cx)).child(text))
             })
     }

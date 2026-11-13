@@ -128,6 +128,9 @@ impl HiveApp {
                             )
                         };
                         Button::new(("terminal-run", i))
+                            .ghost()
+                            .compact()
+                            .rounded_full()
                             .label(label)
                             .selected(current)
                             .disabled(disabled)
@@ -142,7 +145,9 @@ impl HiveApp {
                     div()
                         .min_w_0()
                         .truncate()
+                        .font_family(Theme::global(cx).mono_font_family.clone())
                         .text_xs()
+                        .text_color(Color::Secondary.get(cx))
                         .child(self.terminal.title.clone()),
                 )
             })
@@ -152,7 +157,9 @@ impl HiveApp {
                     .min_w_0()
                     .min_h_0()
                     .overflow_hidden()
-                    .rounded_lg()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
                     .bg(rgb(0x181a1b))
                     .child(self.terminal.view.clone()),
             )

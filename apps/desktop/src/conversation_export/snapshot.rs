@@ -110,7 +110,7 @@ impl Snapshot {
                     failure: message
                         .failure
                         .as_ref()
-                        .map(|failure| failure.display_message().to_owned()),
+                        .map(|failure| failure.display_message().into_owned()),
                 })
                 .collect(),
         }

@@ -256,7 +256,10 @@ impl Render for FileViewer {
                     .id("file-preview-path").role(Role::Label).aria_label(self.source.label())
                     .text_xs()
                     .text_color(Color::Muted.get(cx))
-                    .child(self.source.label()),
+                    .child(crate::text_reading::selectable_text(
+                        "file-preview-path-text",
+                        self.source.label(),
+                    ).font_family(Theme::global(cx).mono_font_family.clone())),
             )
             .child(
                 h_flex()
@@ -266,6 +269,7 @@ impl Render for FileViewer {
                         Button::new("reload-file-preview")
                             .ghost()
                             .compact()
+                            .rounded_full()
                             .label(if self.loading {
                                 tr("读取中…")
                             } else {
@@ -278,6 +282,7 @@ impl Render for FileViewer {
                         Button::new("copy-file-preview")
                             .ghost()
                             .compact()
+                            .rounded_full()
                             .label(tr("复制全文"))
                             .disabled(self.text.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -290,6 +295,7 @@ impl Render for FileViewer {
                         Button::new("reveal-file-preview")
                             .ghost()
                             .compact()
+                            .rounded_full()
                             .label(tr("在文件管理器中显示"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 let source = this.source.clone();

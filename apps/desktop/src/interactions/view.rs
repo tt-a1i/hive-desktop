@@ -1,7 +1,10 @@
 use super::*;
 use crate::palette::Color;
 use gpui_kit::{
-    component::{button::Button, *},
+    component::{
+        button::{Button, ButtonVariants},
+        *,
+    },
     prelude::FluentBuilder,
 };
 
@@ -59,7 +62,9 @@ impl HiveApp {
             .min_w_0()
             .gap_3()
             .p_4()
-            .rounded_lg()
+            .rounded_xl()
+            .border_1()
+            .border_color(Color::Divider.get(cx))
             .bg(Color::Attention.get(cx))
             .child(
                 div()
@@ -86,20 +91,41 @@ impl HiveApp {
                 view.child(
                     div()
                         .p_3()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
                         .bg(Color::Card.get(cx))
+                        .font_family(Theme::global(cx).mono_font_family.clone())
                         .text_sm()
-                        .child(command.to_string()),
+                        .child(crate::text_reading::selectable_text(
+                            format!("interaction-command-{i}"),
+                            command.to_string(),
+                        )),
                 )
             })
             .when_some(params["cwd"].as_str(), |view, cwd| {
-                view.child(div().text_sm().child(format!("{}: {cwd}",tr("工作目录"))))
+                view.child(div().text_sm().child(if crate::language::english() {
+                    format!("{}: {cwd}", tr("工作目录"))
+                } else {
+                    format!("{}：{cwd}", tr("工作目录"))
+                }))
             })
             .when_some(params["reason"].as_str(), |view, reason| {
-                view.child(div().text_sm().child(format!("{}: {reason}",tr("理由"))))
+                view.child(div().text_sm().child(if crate::language::english() {
+                    format!("{}: {reason}", tr("理由"))
+                } else {
+                    format!("{}：{reason}", tr("理由"))
+                }))
             })
             .when_some(
                 params["networkApprovalContext"]["host"].as_str(),
-                |view, host| view.child(div().text_sm().child(format!("{}: {host}",tr("网络主机")))),
+                |view, host| {
+                    view.child(div().text_sm().child(if crate::language::english() {
+                        format!("{}: {host}", tr("网络主机"))
+                    } else {
+                        format!("{}：{host}", tr("网络主机"))
+                    }))
+                },
             )
             .when_some(
                 params
@@ -125,7 +151,11 @@ impl HiveApp {
                 },
             )
             .when_some(params["grantRoot"].as_str(), |view, root| {
-                view.child(div().text_sm().child(format!("{}: {root}",tr("请求写入目录"))))
+                view.child(div().text_sm().child(if crate::language::english() {
+                    format!("{}: {root}", tr("请求写入目录"))
+                } else {
+                    format!("{}：{root}", tr("请求写入目录"))
+                }))
             })
             .when(files, |view| {
                 view.when(!card.has_diff(), |view| {
@@ -160,7 +190,11 @@ impl HiveApp {
                                     ),
                                 ))
                                 .when_some(change["kind"]["move_path"].as_str(), |view, path| {
-                                    view.child(div().text_sm().child(format!("{}: {path}",tr("移动至"))))
+                                    view.child(div().text_sm().child(if crate::language::english() {
+                                        format!("{}: {path}", tr("移动至"))
+                                    } else {
+                                        format!("{}：{path}", tr("移动至"))
+                                    }))
                                 })
                                 .child(
                                     div()
@@ -168,14 +202,19 @@ impl HiveApp {
                                         .max_h(px(260.))
                                         .overflow_y_scroll()
                                         .p_3()
+                                        .rounded_lg()
+                                        .border_1()
+                                        .border_color(Color::Divider.get(cx))
                                         .bg(Color::Card.get(cx))
-                                        .text_sm()
-                                        .child(
+                                        .font_family(Theme::global(cx).mono_font_family.clone())
+                                        .text_xs()
+                                        .child(crate::text_reading::selectable_text(
+                                            format!("interaction-diff-text-{i}-{j}"),
                                             change["diff"]
                                                 .as_str()
                                                 .unwrap_or(tr("Codex 未提供此文件的差异文本"))
                                                 .to_string(),
-                                        ),
+                                        )),
                                 )
                         }),
                 )
@@ -200,6 +239,8 @@ impl HiveApp {
                         .gap_2()
                         .child(
                             Button::new(("submit-interaction-answers", i))
+                                .primary()
+                                .rounded_full()
                                 .label(tr("提交回答"))
                                 .disabled(disabled || card.questions.is_empty())
                                 .on_click({
@@ -217,6 +258,7 @@ impl HiveApp {
                         )
                         .child(
                             Button::new(("cancel-interaction-questions", i))
+                                .rounded_full()
                                 .label(tr("取消本轮"))
                                 .disabled(disabled)
                                 .on_click({
@@ -242,7 +284,10 @@ impl HiveApp {
                             .map(|(j, (decision, label))| {
                                 let session = session.clone();
                                 let id = id.clone();
+                                let primary = j == 0 && decision.starts_with("accept");
                                 Button::new(("interaction-decision", i * 3 + j))
+                                    .when(primary, |btn| btn.primary())
+                                    .rounded_full()
                                     .label(tr(label))
                                     .disabled(
                                         disabled

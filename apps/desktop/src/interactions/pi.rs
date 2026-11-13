@@ -2,7 +2,7 @@ use super::*;
 use crate::palette::Color;
 use gpui_kit::{
     component::{
-        button::Button,
+        button::{Button, ButtonVariants},
         input::{Input, Textarea, TextareaState},
         *,
     },
@@ -76,7 +76,9 @@ impl HiveApp {
             .min_w_0()
             .gap_3()
             .p_4()
-            .rounded_lg()
+            .rounded_xl()
+            .border_1()
+            .border_color(Color::Divider.get(cx))
             .bg(Color::Attention.get(cx))
             .child(
                 div()
@@ -123,6 +125,8 @@ impl HiveApp {
             .when(text_entry, |view| {
                 view.child(
                     Button::new(("pi-submit", i))
+                        .primary()
+                        .rounded_full()
                         .label(tr("提交回答"))
                         .disabled(disabled)
                         .on_click({

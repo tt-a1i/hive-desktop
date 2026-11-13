@@ -166,6 +166,7 @@ pub(crate) fn localize_owned_error(error: &str) -> String {
         "models.json 不是普通文件",
         "配置未通过 Pi 校验，未保存。请检查接口类型、地址、模型参数以及现有高级配置。",
         "请重新读取或再次保存以核对团队文档。",
+        "登录失败",
     ];
     if let Some(key) = OWNED_ERRORS.iter().find(|key| **key == error) {
         return tr(key).to_owned();
@@ -229,6 +230,48 @@ pub(crate) fn localize_owned_error(error: &str) -> String {
     {
         return format!(
             "Could not parse models.json (character offset {offset}); the original file was not changed"
+        );
+    }
+    if let Some(after_prefix) = error.strip_prefix("Codex 初始化失败（") {
+        let (first_line, rest) = after_prefix
+            .split_once('\n')
+            .map_or((after_prefix, None), |(head, tail)| (head, Some(tail)));
+        if let Some(command) = first_line.strip_suffix("）。请在「设置 → 外部程序」核对可执行文件。")
+        {
+            let header = format!(
+                "Codex initialization failed ({command}). Check the executable in Settings → External Programs."
+            );
+            return match rest {
+                Some(tail) => format!("{header}\n{tail}"),
+                None => header,
+            };
+        }
+    }
+    if let Some(code) = error
+        .strip_prefix("Claude 无法保存当前会话记录（")
+        .and_then(|rest| rest.strip_suffix('）'))
+        .filter(|code| !code.contains('\n'))
+    {
+        return format!("Claude could not save the current conversation transcript ({code})");
+    }
+    if let Some((code, lost)) = error
+        .strip_prefix("Claude 报告其他写入丢失（")
+        .and_then(|rest| rest.strip_suffix("）；当前会话未报告记录丢失。"))
+        .and_then(|inner| inner.split_once('，'))
+        .filter(|(code, lost)| !code.contains('\n') && !lost.contains('\n'))
+    {
+        return format!(
+            "Claude reported other lost writes ({code}, {}); the current conversation did not report transcript loss.",
+            lost.replace('、', ", ")
+        );
+    }
+    if let Some((cause, detail)) = error
+        .strip_prefix("处理失败：")
+        .and_then(|rest| rest.rsplit_once("\n失败原因无法保存；原消息仍在待处理队列。"))
+    {
+        return format!(
+            "Processing failed: {}\nCould not save failure details; the original message remains in the pending queue. {detail}",
+            localize_owned_error(cause)
         );
     }
     error.to_owned()
@@ -325,6 +368,25 @@ mod tests {
         assert_eq!(
             localize_owned_error("请重新读取或再次保存以核对团队文档。"),
             "Reload or save again to verify the team document."
+        );
+        assert_eq!(localize_owned_error("登录失败"), "Login failed");
+        assert_eq!(
+            localize_owned_error(
+                "Codex 初始化失败（/opt/bin/codex）。请在「设置 → 外部程序」核对可执行文件。\nspawn /opt/bin/codex ENOENT\nstderr: 原始诊断"
+            ),
+            "Codex initialization failed (/opt/bin/codex). Check the executable in Settings → External Programs.\nspawn /opt/bin/codex ENOENT\nstderr: 原始诊断"
+        );
+        assert_eq!(
+            localize_owned_error("Claude 无法保存当前会话记录（ENOSPC）"),
+            "Claude could not save the current conversation transcript (ENOSPC)"
+        );
+        assert_eq!(
+            localize_owned_error("Claude 报告其他写入丢失（EACCES，metrics、telemetry）；当前会话未报告记录丢失。"),
+            "Claude reported other lost writes (EACCES, metrics, telemetry); the current conversation did not report transcript loss."
+        );
+        assert_eq!(
+            localize_owned_error("处理失败：raw turn error\nline 2\n失败原因无法保存；原消息仍在待处理队列。EIO"),
+            "Processing failed: raw turn error\nline 2\nCould not save failure details; the original message remains in the pending queue. EIO"
         );
         assert_eq!(connected.text(), "Backend connected");
         assert_eq!(notice.text(), "Backend not connected");

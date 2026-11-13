@@ -95,6 +95,7 @@ fn runtime_message(message: &str) -> String {
         "凭据已移除，但模型列表更新失败。请返回会话刷新模型。",
         "后台已关闭，登录已取消",
         "读取本机登录信息失败，请检查 Pi 的 auth.json 文件后重新读取。",
+        "登录失败",
     ].into_iter().find(|key| *key == message).map(|key| tr(key).to_owned()).unwrap_or_else(|| crate::language::localize_owned_error(message))
 }
 enum AccountNotice { Disconnected, Runtime(String), Failed(String) }

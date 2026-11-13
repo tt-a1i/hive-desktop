@@ -19,12 +19,12 @@ impl Render for ConversationExport {
         v_flex().min_w_0().gap_3()
             .child(div().id("export-title").role(Role::Label).aria_label(self.snapshot.title.clone()).text_sm().font_weight(FontWeight::SEMIBOLD).child(self.snapshot.title.clone()))
             .child(div().id("export-description").role(Role::Label).aria_label(description.clone()).text_sm().text_color(Color::Secondary.get(cx)).child(description))
-            .child(h_flex().flex_wrap().gap_4().items_center()
-                .child(h_flex().items_center().gap_2().child(Switch::new("export-thinking").accessibility_label(tr("导出时包含思考过程")).checked(self.thinking).disabled(self.saving)
+            .child(h_flex().flex_wrap().gap_4().items_center().px_3().py_2p5().rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
+                .child(h_flex().items_center().gap_2().text_sm().child(Switch::new("export-thinking").accessibility_label(tr("导出时包含思考过程")).checked(self.thinking).disabled(self.saving)
                     .on_change(cx.listener(|this,value,_,cx|{this.thinking=*value;this.refresh(cx);}))).child(tr("包含思考过程")))
-                .child(h_flex().items_center().gap_2().child(Switch::new("export-tools").accessibility_label(tr("导出时包含工具过程")).checked(self.tools).disabled(self.saving)
+                .child(h_flex().items_center().gap_2().text_sm().child(Switch::new("export-tools").accessibility_label(tr("导出时包含工具过程")).checked(self.tools).disabled(self.saving)
                     .on_change(cx.listener(|this,value,_,cx|{this.tools=*value;this.refresh(cx);}))).child(tr("包含工具过程"))))
-            .child(crate::text_reading::region("export-preview".into(),tr("对话快照预览，可用方向键或翻页键滚动").into(),&self.scroll,height,cx).text_sm().child(crate::text_reading::selectable_text("export-preview-text", preview)))
+            .child(crate::text_reading::region("export-preview".into(),tr("对话快照预览，可用方向键或翻页键滚动").into(),&self.scroll,height,cx).font_family(Theme::global(cx).mono_font_family.clone()).text_xs().line_height(px(19.)).child(crate::text_reading::selectable_text("export-preview-text", preview)))
     }
 }
 impl Render for ExportFooter {

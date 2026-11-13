@@ -16,17 +16,20 @@ pub struct Diagnostic {
     pub diagnostic_write_failed: bool,
 }
 impl Diagnostic {
-    pub(crate) fn display_message(&self) -> &str {
+    pub(crate) fn display_message(&self) -> std::borrow::Cow<'_, str> {
         if self.message.trim().is_empty() {
-            tr("Agent 回复未完成。")
+            std::borrow::Cow::Borrowed(tr("Agent 回复未完成。"))
+        } else if crate::language::english() {
+            std::borrow::Cow::Owned(crate::language::localize_owned_error(&self.message))
         } else {
-            &self.message
+            std::borrow::Cow::Borrowed(&self.message)
         }
     }
 }
 
 fn details(owner: &str, message: &str, cx: &Context<HiveApp>) -> AnyElement {
-    let text = message.to_owned();
+    let display = crate::language::localize_owned_error(message);
+    let text = display.clone();
     v_flex()
         .min_w_0()
         .gap_2()
@@ -38,14 +41,18 @@ fn details(owner: &str, message: &str, cx: &Context<HiveApp>) -> AnyElement {
                 .overflow_y_scroll()
                 .p_2()
                 .rounded_lg()
-                .bg(Color::Card.get(cx))
+                .border_1()
+                .border_color(Color::Divider.get(cx))
+                .bg(Color::Inset.get(cx))
+                .font_family(Theme::global(cx).mono_font_family.clone())
                 .text_xs()
-                .child(crate::text_reading::selectable_text(format!("failure-text-{owner}"), message)),
+                .child(crate::text_reading::selectable_text(format!("failure-text-{owner}"), display)),
         )
         .child(
             Button::new(SharedString::from(format!("copy-failure-{owner}")))
                 .ghost()
                 .compact()
+                .rounded_full()
                 .label(tr("复制错误详情"))
                 .accessibility_label(tr("复制错误详情"))
                 .on_click(move |_, _, cx| {
@@ -115,9 +122,10 @@ impl HiveApp {
             .min_w_0()
             .gap_2()
             .p_3()
-            .rounded_lg()
+            .rounded_xl()
             .border_1()
             .border_color(Color::Divider.get(cx))
+            .bg(Color::Card.get(cx))
             .child(
                 h_flex()
                     .gap_2()
@@ -127,6 +135,7 @@ impl HiveApp {
                         div()
                             .flex_1()
                             .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
                             .text_color(Color::Error.get(cx))
                             .child(tr("这次回复未完成")),
                     )
@@ -134,6 +143,7 @@ impl HiveApp {
                         Button::new(("reply-failure", index))
                             .ghost()
                             .compact()
+                            .rounded_full()
                             .label(if failure.expanded {
                                 tr("收起详情")
                             } else {
@@ -154,14 +164,14 @@ impl HiveApp {
                     ),
             )
             .when(failure.expanded, |view| {
-                view.child(details(&format!("reply-{index}"), failure.display_message(), cx))
+                view.child(details(&format!("reply-{index}"), &failure.display_message(), cx))
             })
             .into_any_element()
     }
     pub(crate) fn render_session_failure(&self, window: &Window, running: bool, cx: &Context<Self>) -> Option<AnyElement> {
         if self.agent_diagnostic.is_none() && self.delivery_failure.is_none() { return None; }
         let height = (window.viewport_size().height / 6.).min(px(180.)).max(px(64.));
-        Some(div().flex().items_stretch().flex_shrink_0().w_full().min_w_0().h(height).rounded_lg().border_1().border_color(Color::Divider.get(cx))
+        Some(div().flex().items_stretch().flex_shrink_0().w_full().min_w_0().h(height).rounded_xl().border_1().border_color(Color::Divider.get(cx)).bg(Color::Card.get(cx))
             .child(Viewport::new("session-failure-viewport", &self.failure_scroll,
                 v_flex().id("session-failure-scroll").flex_1().min_w_0().min_h_0().h(height).overflow_y_scroll().track_scroll(&self.failure_scroll).vertical_scrollbar(&self.failure_scroll).p_3()
                     .child(self.render_failure_notice(running,cx))))

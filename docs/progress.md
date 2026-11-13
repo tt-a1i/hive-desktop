@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 桌面端闭合错误本地化闭环、会话资源窄窗显露与交互/预览表面打磨（2026-11-13，源码）
+
+全量扫描 `packages/runtime/src/` 与 `apps/desktop/src/` 剩余跨边界提示与弹窗面板（推进 `#14`、`#16`、`#17`、`#20`）：(1) `language.rs`、`failures.rs`、`pi_accounts.rs` 与 `image_viewer.rs` 补齐 `"登录失败"`、Codex 启动失败首行引导、Claude 会话写入丢失提示、队列失败落盘告警及图片解码/保存错误的英文闭合本地化，`conversation_find.rs` 双匹配展示文本与原文字段，同时严格保留非自有 OS/SDK/CLI 原始诊断逐字节不变；(2) `command_picker/resources/view.rs` 为 `#session-resource-results` 接入 `Viewport` + `Reveal` 窄窗/矮窗键盘自动显露、纵向滚动条与等宽可选路径文本；(3) 融合 Beluga、T3 Code 与 Cindy 统一三后端交互卡片（命令/Diff/工具输入等宽可选面板）、文件预览路径选择、Markdown 导出工具条与终端视口层次，既有元素 ID 与无障碍语义不变。`LOCALE_AUDIT_OK`（1,301 键）、Rust 35 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查与 macOS release 构建全部通过，见[实证与边界](validation/2026-11-13-desktop-diagnostic-localization-and-surfaces.md)。即将连同 `2abce78` 组装最新 macOS ARM64 开发包并执行包内与原生窗口核验。
+
 ## 运行时关闭隔离、启动期握手即时取消与开发态远程命令路径（2026-11-13，源码）
 
 继续逐模块审计 `packages/runtime/src/` 并复现修复四处退出与启动取消边界：(1) `Codex`、`External Pi`、`Claude` 传输与会话启动链路全流程接入可选 `AbortSignal`，并在 `AgentModels.close()` 与 `Chats.close()` 触发专属退出取消（保持 `removeWorkspace` 既有排空契约不变），使三路挂起初始化从 >30 秒卡死收敛至 `204 ms` / `384 ms` 即时回收子进程；(2) `Chats.close()` 与 `TerminalManager` 多连接关闭改用 `Promise.allSettled()` 排空全部在途句柄并聚合错误，消除单个快错导致兄弟会话未完成释放即提前返回的窗口；(3) `createDesktopRuntime().close()` 改为三阶段 `Promise.allSettled()` 子系统隔离，防止单子系统报错跳过 `terminal`/`agentModels` 关闭或覆盖前序错误；(4) `remote-commands.ts` 兼容 `src/` 开发态解析 `dist/remote-cli.js`。四组前后对照、d43f55e 真实三会话副本冷读及 `check:runtime`、`check:codex`、`check:external-pi`、`check:claude`、`check:workspace-removal`、`check:remote-settings`、`check:terminal` 等回归全部通过，见[实证与边界](validation/2026-11-13-runtime-shutdown-and-startup-cancellation.md)。无厂商推理或正式测试改动，待随桌面端改进一并入包，完整目标继续。

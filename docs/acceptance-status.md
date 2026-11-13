@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 桌面端闭合错误本地化闭环、会话资源窄窗显露与交互/预览表面打磨（2026-11-13，源码）
+
+补齐运行时跨边界剩余自有错误包装（`"登录失败"`、Codex 初始化失败首行引导、Claude 写入丢失提示、队列诊断落盘告警）与图片查看器自有错误的英文闭合本地化，且非自有 OS/SDK/CLI 原始多行诊断逐字节保持不变；为会话资源浏览弹窗（`#14` / `#20`）接入 `Viewport` + `Reveal` 窄窗键盘焦点显露、滚动条与等宽可选路径；统一 Codex/Claude/外部 Pi 交互卡片（等宽可选命令/Diff/JSON 输入）、文件预览、Markdown 导出（`#16`）与终端视口的视觉层次。`LOCALE_AUDIT_OK`（1,301 键）、Rust 35 项单元与 13 项进程监督测试、两项 Windows MSVC 交叉检查与 macOS release 构建通过，见[实证与边界](validation/2026-11-13-desktop-diagnostic-localization-and-surfaces.md)。即将连同 `2abce78` 纳入新开发包并执行包内与原生窗口核验，完整目标继续。
+
 ## 运行时关闭隔离、启动期握手即时取消与开发态远程命令路径（2026-11-13，源码）
 
 复现并修复 `AgentModels.close()` 与 `Chats.close()` 无法取消在途 `Codex` / `External Pi` / `Claude` 启动期握手（从 >30 秒卡死收敛至 `204 ms` / `384 ms` 回收子进程，同时严格保持 `removeWorkspace` 原有排空语义）、`Chats.close()` 与 `TerminalManager` 因 `Promise.all` 快错提前返回导致兄弟句柄未排空、`createDesktopRuntime().close()` 缺少子系统隔离且覆盖前序异常，以及 `remote-commands.ts` 在 `src/` 开发态指向不存在的 `src/remote-cli.js`。四组前后对照、d43f55e 真实三会话副本冷读及九组零推理运行时回归通过，见[实证与边界](validation/2026-11-13-runtime-shutdown-and-startup-cancellation.md)。无厂商推理/面板操作/正式测试改动，待随桌面端改进一并纳入下一开发包，完整目标继续。
