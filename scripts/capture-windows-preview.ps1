@@ -124,7 +124,9 @@ function Wait-Appearance([string] $Mode, [string] $Label) {
     do {
         if (Test-Path -LiteralPath $path) {
             $saved = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $path -Raw -Encoding UTF8)
-            if ($saved -ceq $Mode) {
+            # Theme changes must preserve the current font preference. The
+            # application now writes both fields rather than a legacy string.
+            if ($saved.mode -ceq $Mode -and $saved.font_size -eq 16) {
                 $statesMatch = $true
                 foreach ($choice in @('跟随系统', '浅色', '深色')) {
                     $control = Find-Action "外观：$choice"

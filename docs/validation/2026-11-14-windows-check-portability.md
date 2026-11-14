@@ -43,7 +43,11 @@ run [43560938873](https://github.com/tt-a1i/hive-desktop/actions/runs/4356093887
 
 run [43562367240](https://github.com/tt-a1i/hive-desktop/actions/runs/43562367240) 已完整通过上述图片对端/历史检查，路径修复得到 Windows 实机确认。下一项上传检查则暴露另一个跨平台陈旧期望：Pi 显式用户消息已保留为原生 `role=user`，旧检查仍找 `customType=hive-delivery`。现按附件 ID 与原生用户角色定位，首次及冷重开均要求恰好一条，保留原始图片/来源/HTTP/SQLite检查，并完整比较冷恢复的正文与展示元数据。Mac `check:attachments`（含编译后 JSONL）和收紧冷读数量后的定向检查均退出 0；未修改生产消息契约，也不是 Windows 产品丢失消息。
 
-不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功。现有 Mac 开发包无需因 test-only 改动重新组装。
+run [43563561289](https://github.com/tt-a1i/hive-desktop/actions/runs/43563561289) 已通过全部上述 Node 检查、Windows 优化版编译、位置/终端测试、部署/便携 ZIP/解压、包内 runtime/PTY、Codex 与 Windows 终端桥。原生窗口也已打开保存的项目并恢复失效会话选择；上传的 1040×760 窗口图显示真实应用。后续 UIAutomation 切换外观时仍比较旧 JSON 字符串，实际应用现在保存 `{mode,font_size}`，因此最终原生检查失败。当前修正脚本按模式及未变的16px字号核对，并保留三个原生 Toggle 状态检查；最终重启检查同样完整比较对象。没有修改产品设置格式、跳过窗口动作或放宽保存断言。
+
+独立检查还发现 `--language en` 与中文 Windows 截图动作不兼容，现于创建临时状态/启动窗口前明确拒绝该组合；英文仅启动检查可不设置截图环境变量运行。Node 语法检查通过；本机没有 PowerShell，实际 Windows 交互结果继续由下一次原生运行确认。
+
+不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功，也不将本次部分原生步骤通过称为完整 Windows 验收。现有 Mac 开发包无需因 test-only 改动重新组装。
 
 ## 本轮账号范围
 
