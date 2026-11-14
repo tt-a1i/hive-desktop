@@ -1,0 +1,8 @@
+@echo off
+echo one>terminal-relative.txt & echo HIVE5c68d3d0b36d46a79a8a76af0db9f52a_PWD:%CD% & echo HIVE5c68d3d0b36d46a79a8a76af0db9f52a_DATA & type same.txt & echo. & echo HIVE5c68d3d0b36d46a79a8a76af0db9f52a_END
+HIVE5c68d3d0b36d46a79a8a76af0db9f52a_PWD:C:\Users\runneradmin\AppData\Local\Temp\hive-session-terminals-win-usGEW0\state\worktrees\a593633a-c4da-4d0b-b647-0db43]0;Administrator: C:\Windows\system32\cmd.exe - echo  HIVE5c68d3d0b36d46a79a8a76af0db9f52a_PWD:C:\Users\runneradmin\AppData\Local\Temp\hive-session-terminals-win-usGEW0\state\worktrees\a593633a-c4da-4d0b-b647-0db43341290d\tree 
+[23;80H3341290d\tree
+HIVE5c68d3d0b36d46a79a8a76af0db9f52a_DATA]0;Administrator: C:\Windows\system32\cmd.exe - echo  HIVE5c68d3d0b36d46a79a8a76af0db9f52a_DATA 
+one]0;Administrator: C:\Windows\system32\cmd.exe - echo . 
+HIVE5c68d3d0b36d46a79a8a76af0db9f52a_END]0;Administrator: C:\Windows\system32\cmd.exe - echo  HIVE5c68d3d0b36d46a79a8a76af0db9f52a_END
+]0;Administrator: C:\Windows\system32\cmd.exe

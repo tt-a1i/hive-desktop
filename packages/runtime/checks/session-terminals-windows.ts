@@ -56,6 +56,17 @@ try {
  try { await feed(restoredSample, serializer.serialize()); assert.deepEqual(observation(restoredSample, 'T'), {cwd: 'C:\\long path\\tree', content: 'root'}); }
  finally { restoredSample.dispose(); }
 } finally { sample.dispose(); }
+// A real Windows stream captured before resize includes absolute 80x24 cursor
+// coordinates. Replay it without an initial snapshot and verify headless VT
+// handling; it must not be mistaken for a complete parsed observation.
+const rawRegression = newScreen(80, 24);
+try {
+ await feed(rawRegression, await readFile(new URL('./fixtures/windows-conpty-resize-80x24.bin', import.meta.url)));
+ const lines = screenLines(rawRegression);
+ assert.ok(lines.some(line => line.trim() === 'HIVE5c68d3d0b36d46a79a8a76af0db9f52a_DATA'));
+ assert.ok(lines.some(line => line.trim() === 'one'));
+ assert.equal(observation(rawRegression, 'HIVE5c68d3d0b36d46a79a8a76af0db9f52a'), undefined);
+} finally { rawRegression.dispose(); }
 
 const receiptArg = process.argv.indexOf('--receipt');
 if (receiptArg >= 0 && !process.argv[receiptArg + 1]) throw Error('--receipt requires a path');
@@ -82,6 +93,8 @@ if (process.platform !== 'win32') {
  const pids: number[] = [];
  const screens = new Map<string, InstanceType<typeof Terminal>>();
  const rawOutput = new Map<string, Buffer>();
+ const restoreOutput = new Map<string, Buffer>();
+ const resizeStatus = new Map<string, {cols: number; rows: number; sent: boolean}>();
  const wait = async <T>(read: () => T | Promise<T>, ready: (value: T) => boolean, label: string): Promise<T> => {
   const end = Date.now() + 15000;
   for (;;) { const value = await read(); if (ready(value)) return value; if (Date.now() > end) throw Error('Timed out: ' + label); await new Promise(resolve => setTimeout(resolve, 25)); }
@@ -121,9 +134,15 @@ if (process.platform !== 'win32') {
    await terminal.attach({workspaceId: workspace.id, ...(sessionId === undefined ? {} : {sessionId}), runId, attachmentId: id, cols: 120, rows: 35});
    const event = await wait(() => events.find(item => item.attachmentId === id && item.type === 'restore'), Boolean, 'restore');
    assert.ok(event?.type === 'restore'); assert.equal(event.workspaceId, workspace.id); assert.equal(event.sessionId, sessionId); assert.equal(event.runId, runId);
-   const screen = newScreen(); screens.set(id, screen);
-   await feed(screen, Buffer.from(event.bytes));
+   const screen = newScreen(event.cols, event.rows); screens.set(id, screen);
+   const snapshot = Buffer.from(event.bytes); restoreOutput.set(id, snapshot.subarray(-16000));
+   await feed(screen, snapshot);
    await terminal.restoreComplete({attachmentId: id, sequence: event.sequence});
+   // Match the desktop client: send the view dimensions after restore is ready.
+   // This is a socket-send acknowledgement, not proof that the PTY has applied it.
+   resizeStatus.set(id, {cols: event.cols, rows: event.rows, sent: false});
+   await terminal.resize({attachmentId: id, cols: event.cols, rows: event.rows});
+   resizeStatus.set(id, {cols: event.cols, rows: event.rows, sent: true});
    return {id, screen};
   }
   async function inspect(id: string, path: string, content: string) {
@@ -137,7 +156,7 @@ if (process.platform !== 'win32') {
     assert.equal(result.cwd.toLowerCase(), path.toLowerCase(), 'Shell must use the requested directory');
    } catch (error) {
     // This owned fixture contains only generated paths/commands, not account data.
-    console.error('WINDOWS_PTY_CWD_DIAGNOSTIC', JSON.stringify({tag, expected: path, rawBase64: (rawOutput.get(id) ?? Buffer.alloc(0)).toString('base64')}));
+    console.error('WINDOWS_PTY_CWD_DIAGNOSTIC', JSON.stringify({tag, expected: path, resize: resizeStatus.get(id), snapshotBase64: (restoreOutput.get(id) ?? Buffer.alloc(0)).toString('base64'), rawBase64: (rawOutput.get(id) ?? Buffer.alloc(0)).toString('base64'), screenLines: screenLines(screens.get(id)!).slice(-50).map(line => line.slice(0, 500))}));
     throw error;
    }
    assert.ok(result);
