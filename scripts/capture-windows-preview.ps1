@@ -153,6 +153,31 @@ function Show-FixtureMessageAccessibility([string] $Message) {
         }
     }
     Write-Host "Fixture name matches (up to 10): $([Math]::Min($count, 10))"
+    $quoteCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '引用消息到草稿')
+    $candidates = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $quoteCondition)
+    Write-Host "Quote candidate count: $($candidates.Count)"
+    for ($i = 0; $i -lt [Math]::Min(4, $candidates.Count); $i++) {
+        $parent = $walker.GetParent($candidates[$i])
+        for ($depth = 0; $null -ne $parent -and $depth -lt 4; $depth++) {
+            $state = $parent.Current
+            $name = $state.Name
+            if ($name.Length -gt 80) { $name = $name.Substring(0, 80) }
+            Write-Host "Quote $i ancestor $depth`: type=$($state.ControlType.ProgrammaticName), id=$($state.AutomationId), name=$name"
+            $sibling = $walker.GetFirstChild($parent)
+            $seen = 0
+            while ($null -ne $sibling -and $seen -lt 4) {
+                $item = $sibling.Current
+                if ($item.ControlType -eq [System.Windows.Automation.ControlType]::Edit) { $sibling = $walker.GetNextSibling($sibling); continue }
+                $itemName = $item.Name
+                if ($itemName.Length -gt 80) { $itemName = $itemName.Substring(0, 80) }
+                Write-Host "  child: type=$($item.ControlType.ProgrammaticName), id=$($item.AutomationId), name=$itemName"
+                $seen++
+                $sibling = $walker.GetNextSibling($sibling)
+            }
+            $parent = $walker.GetParent($parent)
+        }
+    }
 }
 function Find-MessageQuote([string] $Message) {
     $bodyCondition = New-Object System.Windows.Automation.PropertyCondition(
