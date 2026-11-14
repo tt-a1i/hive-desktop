@@ -40,6 +40,16 @@
 - Vendor新增测试只覆盖AccessKit元数据，不是GPUI渲染/焦点/平台适配测试；现有vendor harness缺上游依赖和字体，退出101前未执行，不记为通过。客户端实际编译和原生AX证据分别记录，未为运行该测试扩充生产依赖。
 - 四个独立角度复核：架构A、边界B、验证A−、范围B+。审查发现的初开Cmd-F、子确认父AX泄漏、模态内重启、Pi登录后返回未关闭外层已修复；前面三项完成实际原生复验。Pi返回仅源码/编译核对，没有登录。
 
+## 实际优化开发包
+
+本批已进入Mac current/candidate `0e478c2627ba015ff9c529f16028dadec7636d72`，默认优化release、无ui-preview。ZIP144,154,624字节，SHA-256为`2f556693bf28d555f930715263baa8a715593fafa7e5b40e688061cdfc864276`；DMG226,431,967字节，SHA-256为`d1decba4bed3aabebe6a18487f9b3ec887400bb35b6cdd2a717ec04272891d46`。28,872项清单/29链接逐项匹配，DMG只读挂载清单及Applications快捷方式核对后卸载。相较8cd9c84仅原生二进制、T3许可和vendor变更说明三项不同；118份runtime文件、Node和冻结生产依赖完全保持。
+
+四组正式包检查实际退出0，包含随包T3许可精确比对。包内Node冷读今日真实三会话36条完整历史、ID和冷态角色搜索一致；英文实际原生启动能恢复缺失的会话选择。没有新模型请求。
+
+同一优化二进制和Resources、仅QA身份不同、无Node/runtime覆盖的实际窗口，完成搜索/Enter/Esc、嵌套AX/Tab隔离和草稿抽查。英文700×503/20px下，保存成功与实际4096字符校验失败都可读且AX同文Status均为1；主线程独立SQLite确认alias保存、失败不写、最终全字段还原。主线程另比对实际运行二进制SHA和包内Node路径。真实结束owned Node43470后，在浮层内重启为47184，关于页实际显示0e478c2627ba/优化版及Node22.23.3/Hive2.2.1，原表单和聊天草稿保留；正常退出0，两Node均消失，最终冷读匹配baseline。主线程只读截图/AX核对了中文20px窄窗的真实模态和背景隔离。
+
+证据位于`.artifacts/release-0e478c2/{receipt,checks,wire-receipt,dmg-receipt,native-payload-identity,native-ui-verdict,program-*,sidecar-stop}.json`及实际日志。开发包已推广current，未替换用户安装实例，8cd9c84保留可运行回退。
+
 ## 尚未交付的范围
 
-当前是遮罩/阴影，尚无T3的真实背景模糊；新模态的Windows原生、完整辅助技术/输入法矩阵和优化安装包操作继续验证。当前开发包仍为8cd9c84，不含本页的新UI。不将源代码、构建或这批有限操作当成完整复刻或完整产品验收。
+当前是遮罩/阴影，尚无T3的真实背景模糊。新模态Windows原生、完整辅助技术/输入法矩阵、后续聊天/输入区及所有页面的完整复刻继续；复制诊断的退出附近剪贴板边界仍为[#35](https://github.com/tt-a1i/hive-desktop/issues/35)，本批未重复退出剪贴板实验。不将这批有限原生/包内验收当成完整T3复刻或完整产品验收。
