@@ -294,7 +294,7 @@ export function createStructuredRuntime(
 						workspaceId,
 						orchestrator(workspaceId),
 						buildOrchestratorUserInputPayload(text, context.getFlags()),
-						{ ...input, presentation: { version: 1, origin: "user", displayText: text } },
+						{ ...input, presentation: { version: 1, origin: "user", displayText: text, ...(input?.messageSequence !== undefined && { messageSequence: input.messageSequence }) } },
 					).then(() => {})
 				: fallback.deliverUserInputToOrchestrator(workspaceId, text, input);
 		},

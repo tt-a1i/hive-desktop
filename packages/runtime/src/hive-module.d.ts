@@ -19,6 +19,8 @@ declare module "@tt-a1i/hive/dist/src/cli/hive.js" {
         readWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUpload|null>;
         findReportPresentation(workspaceId: string, agentId: string, dispatchId: string, payload: string): unknown;
         getDispatch(workspaceId: string, dispatchId: string): { toAgentId: string; status: string } | undefined;
+        getDesktopUserInput(workspaceId: string, agentId: string, sequence: number): import('./hive-host.js').HiveUserInputRow | undefined;
+        mutateDesktopUserInput(workspaceId: string, agentId: string, sequence: number, expectedText: string, replacement: string | null, persistSpool: () => void): void;
         withWorkspaceWorkflowIdle<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
     } }>;
 }

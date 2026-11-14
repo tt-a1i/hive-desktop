@@ -3,7 +3,10 @@
  * Private queue access only pauses delivery to ensure the check cannot request a model.
  */
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
@@ -12,7 +15,28 @@ import type { DeliveryQueue } from '../src/delivery-queue.js';
 import { restoreHistoricalReport } from '../src/delivery-presentation.js';
 import type { Chats, ChatEvent } from '../src/chats.js';
 
+assert.ok(!process.argv.includes('--live-report'), 'This isolated fixture must not execute a model');
 const directory = await mkdtemp(join(tmpdir(), 'hive-team-runtime-'));
+const agentDir = join(directory, 'agent');
+await mkdir(agentDir);
+const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+const previousOffline = process.env.PI_OFFLINE;
+process.env.PI_CODING_AGENT_DIR = agentDir;
+process.env.PI_OFFLINE = '1';
+let modelRequests = 0;
+const modelServer = createServer((_request, response) => {
+  modelRequests++;
+  response.writeHead(500).end('Unexpected model request');
+});
+modelServer.listen(0, '127.0.0.1');
+await once(modelServer, 'listening');
+const address = modelServer.address();
+assert.ok(address && typeof address !== 'string');
+await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: { openai: {
+  api: 'openai-responses', baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: 'fixture-only',
+  models: [{ id: 'gpt-6.1-terra', name: 'Terra fixture metadata', input: ['text'] }],
+} } }));
+await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultProvider: 'openai', defaultModel: 'gpt-6.1-terra' }));
 type Runtime = Awaited<ReturnType<typeof createDesktopRuntime>>;
 const queues = (chats: Chats) => (chats as unknown as { live: Map<string, { queue: DeliveryQueue }> }).live;
 let runtime: Runtime | undefined;
@@ -37,9 +61,9 @@ try {
     && 'customType' in message && message.customType === 'hive-context'));
   await first.chats.resume(a.id);
 
-  // Select an explicit native test model, without invoking it or modifying global defaults.
+  // Select the locally configured fixture model without invoking it or modifying global defaults.
   const testModel = a.models.find(model => model.id === 'gpt-6.1-terra' && model.provider === 'openai');
-  assert.ok(testModel, 'Native OpenAI/Codex GPT-6.1 Terra must be registered');
+  assert.ok(testModel, 'Fixture OpenAI model must be registered');
   await first.chats.setModel(a.id, testModel.provider, testModel.id);
   const agentId = `${workspace.id}:orchestrator`;
   const token = first.agents.peekAgentToken(agentId);
@@ -94,8 +118,17 @@ try {
   assert.equal(first.chats.list(workspace.id).find(chat => chat.id === a.id)?.customTitle, true);
   assert.equal(first.chats.list(workspace.id).find(chat => chat.id === a.id)?.agentId, agentId);
   assert.ok(queues(first.chats).get(a.id)!.queue.pending.some(item => item.text.includes(userText)));
-  assert.deepEqual(queues(first.chats).get(a.id)!.queue.pending[0]?.presentation,
-    { version: 1, origin: 'user', displayText: userText });
+  const presentation = queues(first.chats).get(a.id)!.queue.pending[0]?.presentation;
+  assert.ok(presentation);
+  assert.equal(presentation.version, 1);
+  assert.equal(presentation.origin, 'user');
+  assert.equal(presentation.displayText, userText);
+  assert.ok(Number.isSafeInteger(presentation.messageSequence));
+  const db = new DatabaseSync(join(dataDir, 'hive/runtime.sqlite'), { readOnly: true });
+  try {
+    const row = db.prepare('SELECT workspace_id, worker_id, type, text FROM messages WHERE sequence = ?').get(presentation.messageSequence!);
+    assert.deepEqual({ ...row }, { workspace_id: workspace.id, worker_id: agentId, type: 'user_input', text: userText });
+  } finally { db.close(); }
   assert.equal((await first.chats.open(b.id)).pending, 0);
   // Exercise the installed npm runtime's actual send/report contract, with both
   // recipients paused so durable acceptance cannot invoke either model.
@@ -200,5 +233,11 @@ try {
   }
 } finally {
   await runtime?.close();
+  await new Promise<void>((resolve, reject) => modelServer.close(error => error ? reject(error) : resolve()));
+  if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  if (previousOffline === undefined) delete process.env.PI_OFFLINE;
+  else process.env.PI_OFFLINE = previousOffline;
   await rm(directory, { recursive: true, force: true });
+  assert.equal(modelRequests, 0, 'Fixture model must never receive a request');
 }

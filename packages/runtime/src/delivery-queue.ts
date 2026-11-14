@@ -2,6 +2,7 @@ import { promptImages, type PromptImage } from "./prompt-images.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { isDeliveryPresentation, type DeliveryPresentation } from "./delivery-presentation.js";
 
 export interface DeliveryItem {
@@ -12,6 +13,8 @@ export interface DeliveryItem {
  readonly images?: readonly PromptImage[];
 }
 
+type StoredItem = DeliveryItem & { readonly queueState?: "pending" | "started" | "canceled" };
+
 interface DeliveryQueueOptions {
  directory: string;
  sessionId: string;
@@ -19,6 +22,8 @@ interface DeliveryQueueOptions {
  execute(item: DeliveryItem): Promise<void>;
  steer?(item: DeliveryItem): Promise<boolean>;
  completedIds(): readonly string[];
+ /** Session-specific capability restrictions, also used by snapshots. */
+ userInputMutationReason?(item: DeliveryItem): string | undefined;
  onError(error: Error): void;
  onState?(busy: boolean, completedReportId?: string): void;
 }
@@ -27,7 +32,7 @@ function spoolPath(directory: string, sessionId: string): string {
  return join(directory, `${createHash("sha256").update(sessionId).digest("hex")}.json`);
 }
 
-function readSpool(path: string): DeliveryItem[] {
+function readSpool(path: string): StoredItem[] {
  let contents: string;
  try { contents = readFileSync(path, "utf8"); }
  catch (error) {
@@ -36,18 +41,20 @@ function readSpool(path: string): DeliveryItem[] {
  }
  const stored: unknown = JSON.parse(contents);
  if (!Array.isArray(stored) || !stored.every(item => item && typeof item.id === "string" && typeof item.text === "string" && typeof item.triggerTurn === "boolean"
-  && (item.presentation === undefined || isDeliveryPresentation(item.presentation)))) {
+  && (item.presentation === undefined || isDeliveryPresentation(item.presentation))
+  && (item.queueState === undefined || item.queueState === "pending" || item.queueState === "started" || item.queueState === "canceled"))) {
   throw new Error(`Invalid delivery spool: ${path}`);
  }
  for (const item of stored) { if (item.images !== undefined && promptImages(item.images).length && !item.triggerTurn) throw new TypeError("Invalid context-only image delivery"); }
- return stored;
+ return stored.map((item, index) => item.queueState === undefined && index > 0
+  ? { ...item, queueState: "pending" as const } : item);
 }
 
 /** A transport spool, not a task ledger. One owner per session is required. */
 export class DeliveryQueue {
  private readonly path: string;
  private readonly steering = new Map<string, Promise<void>>();
- private items: DeliveryItem[];
+ private items: StoredItem[];
  private running: Promise<void> | undefined;
  private paused = false;
  private attemptedId: string | undefined;
@@ -80,6 +87,8 @@ export class DeliveryQueue {
    deliveryId: item.id, text: item.presentation.displayText,
    attachments: structuredClone(item.presentation.attachments ?? []),
    processing: index === 0 && this.busy && !this.paused,
+   editable: this.mutationReason(item, index) === undefined,
+   ...(this.mutationReason(item, index) && { reason: this.mutationReason(item, index) }),
   }] : []);
  }
  get busy(): boolean { return this.running !== undefined; }
@@ -89,7 +98,7 @@ export class DeliveryQueue {
   if (presentation !== undefined && !isDeliveryPresentation(presentation)) throw new Error("Invalid delivery presentation");
   const images = promptImages(imageInput);
   if (images.length && !triggerTurn) throw new TypeError("不触发模型回合的投递暂不支持图片。");
-  this.replace([...this.items, { id: randomUUID(), text, triggerTurn, ...(images.length && {images}), ...(presentation && { presentation: structuredClone(presentation) }) }]);
+  this.replace([...this.items, { id: randomUUID(), text, triggerTurn, queueState: "pending", ...(images.length && {images}), ...(presentation && { presentation: structuredClone(presentation) }) }]);
   const item = this.items.at(-1)!;
   // Asynchronous system input and worker reports may join the current turn. Never overtake a
   // queued user/task input; persist first and retain until native completion.
@@ -105,6 +114,85 @@ export class DeliveryQueue {
   this.kick();
   this.emitState();
  }
+
+ private mutationReason(item: StoredItem, index: number): string | undefined {
+  if (item.presentation?.origin !== "user") return "not-user";
+  if (this.options.completedIds().includes(item.id)) return "completed";
+  if (this.steering.has(item.id) || (index === 0 && this.busy)) return "processing";
+  if (item.queueState === "canceled") return "canceled";
+  if (item.queueState !== "pending" || this.attemptedId === item.id) return "attempted";
+  return this.options.userInputMutationReason?.(item);
+ }
+
+ /** Replace only an unattempted explicit user delivery, keeping identity and metadata. */
+ editPendingUserInput(id: string, replacement: DeliveryItem, options: { notify?: boolean } = {}): void {
+  const index = this.items.findIndex(item => item.id === id);
+  if (index < 0) throw new Error("Pending delivery not found");
+  const original = this.items[index]!;
+  const reason = this.mutationReason(original, index);
+  if (reason) throw new Error(`Delivery cannot be edited: ${reason}`);
+  if (!replacement || replacement.id !== id || typeof replacement.text !== "string"
+   || replacement.triggerTurn !== original.triggerTurn || !isDeliveryPresentation(replacement.presentation)
+   || replacement.presentation.origin !== "user" || !isDeepStrictEqual(replacement.images, original.images)) {
+   throw new Error("Invalid replacement delivery");
+  }
+  const { displayText: _old, sourceText: _oldSource, ...oldMetadata } = original.presentation!;
+  const { displayText: _new, sourceText: _newSource, ...newMetadata } = replacement.presentation;
+  if (!isDeepStrictEqual(oldMetadata, newMetadata)) throw new Error("Replacement changed delivery metadata");
+  const updated = { ...original, text: replacement.text, presentation: structuredClone(replacement.presentation) };
+  const next = this.items.slice();
+  next[index] = updated;
+  this.replace(next);
+  if (options.notify !== false) this.emitState(undefined, true);
+ }
+
+ /** Remove only an unattempted explicit user delivery. */
+ cancelPendingUserInput(id: string, options: { retain?: boolean; notify?: boolean } = {}): void {
+  const index = this.items.findIndex(item => item.id === id);
+  if (index < 0) throw new Error("Pending delivery not found");
+  const reason = this.mutationReason(this.items[index]!, index);
+  if (reason) throw new Error(`Delivery cannot be cancelled: ${reason}`);
+  if (options.retain) {
+   const next = this.items.slice();
+   next[index] = { ...next[index]!, queueState: "canceled" };
+   this.replace(next);
+  } else this.replace(this.items.filter((_, at) => at !== index));
+  if (options.notify !== false) this.emitState(undefined, true);
+ }
+
+ /** Apply the authoritative user-input record before an entry may execute. */
+ reconcilePendingUserInput(id: string, replacement: DeliveryItem | null, options: { notify?: boolean } = {}): void {
+  const index = this.items.findIndex(item => item.id === id);
+  if (index < 0) throw new Error("Pending delivery not found");
+  const item = this.items[index]!;
+  if (item.presentation?.origin !== "user" || this.options.completedIds().includes(id)
+   || this.steering.has(id) || (index === 0 && this.busy) || this.attemptedId === id
+   || (item.queueState !== "pending" && item.queueState !== "canceled")) {
+   throw new Error("Delivery cannot be reconciled");
+  }
+  if (replacement === null) {
+   this.replace(this.items.filter((_, at) => at !== index));
+  } else {
+   // Use the same validation as a normal edit while preserving the tombstone
+   // until a single atomic replacement commits the authoritative contents.
+   if (replacement.id !== id || typeof replacement.text !== "string"
+    || replacement.triggerTurn !== item.triggerTurn || !isDeliveryPresentation(replacement.presentation)
+    || replacement.presentation.origin !== "user" || !isDeepStrictEqual(replacement.images, item.images)) {
+    throw new Error("Invalid replacement delivery");
+   }
+   const { displayText: _old, sourceText: _oldSource, ...oldMetadata } = item.presentation;
+   const { displayText: _new, sourceText: _newSource, ...newMetadata } = replacement.presentation;
+   if (!isDeepStrictEqual(oldMetadata, newMetadata)) throw new Error("Replacement changed delivery metadata");
+   const next = this.items.slice();
+   next[index] = { ...item, text: replacement.text, presentation: structuredClone(replacement.presentation), queueState: "pending" };
+   this.replace(next);
+  }
+  if (options.notify !== false) this.emitState(undefined, true);
+  this.kick();
+ }
+
+ /** Publish committed changes after an external ledger transaction. */
+ notifyPendingUserInputs(): void { this.emitState(undefined, true); }
 
  resume(): void { this.paused = false; this.kick(); this.emitState(); }
 
@@ -132,14 +220,14 @@ export class DeliveryQueue {
   this.emitState();
  }
 
- private emitState(completedReportId?: string): void {
+ private emitState(completedReportId?: string, force = false): void {
   const state = `${this.busy}:${this.items.length}`;
-  if (state === this.lastState && !completedReportId) return;
+  if (state === this.lastState && !completedReportId && !force) return;
   this.lastState = state;
   this.options.onState?.(this.busy, completedReportId);
  }
 
- private replace(items: DeliveryItem[]): void {
+ private replace(items: StoredItem[]): void {
   const temporary = `${this.path}.${randomUUID()}.tmp`;
   try {
    writeFileSync(temporary, JSON.stringify(items), { encoding: "utf8", mode: 0o600, flush: true });
@@ -150,7 +238,7 @@ export class DeliveryQueue {
  }
 
  private kick(): void {
-  if (this.paused || this.running || !this.items.length) return;
+  if (this.paused || this.running || !this.items.length || this.items[0]?.queueState === "canceled") return;
   // Set running before execute: an SDK tool can synchronously enqueue a reply.
   this.running = Promise.resolve().then(() => this.drain()).catch(error => {
    this.paused = true;
@@ -166,10 +254,13 @@ export class DeliveryQueue {
  private async drain(): Promise<void> {
   while (!this.paused && this.items.length) {
    const item = this.items[0]!;
+   if (item.queueState === "canceled") return;
    const steering = this.steering.get(item.id);
    this.steering.delete(item.id);
    if (steering) await steering;
    if (!this.options.completedIds().includes(item.id)) {
+    // Persist before the SDK can consume the delivery, including across crashes.
+    this.replace([{ ...item, queueState: "started" }, ...this.items.slice(1)]);
     this.attemptedId = item.id;
     await this.options.execute(item);
    }

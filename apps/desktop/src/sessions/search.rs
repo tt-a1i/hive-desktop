@@ -22,6 +22,29 @@ use crate::protocol::SessionHit as Hit;
 pub(crate) struct Page {
     pub(crate) matches: Vec<Hit>,
     pub(crate) total: usize,
+    #[serde(default, rename = "incompleteHistory")]
+    pub(crate) incomplete_history: Vec<crate::protocol::IncompleteHistory>,
+    #[serde(default, rename = "incompleteHistoryCount")]
+    pub(crate) incomplete_history_count: usize,
+}
+
+
+impl Page {
+    pub(crate) fn warning(&self) -> Option<String> {
+        if self.incomplete_history_count == 0 { return None; }
+        let mut text = if english() {
+            format!("Search incomplete in {} conversations:", self.incomplete_history_count)
+        } else {
+            format!("{} 个会话的历史未能完整搜索：", self.incomplete_history_count)
+        };
+        for item in &self.incomplete_history {
+            text.push_str(&format!("\n{} ({}): {}", item.title, item.session_id, item.message));
+        }
+        if self.incomplete_history_count > self.incomplete_history.len() {
+            text.push_str(if english() { "\nAdditional failures omitted." } else { "\n其余失败未列出。" });
+        }
+        Some(text)
+    }
 }
 
 /// Shared wire contract for the global browser and the scoped sidebar. None
@@ -41,6 +64,15 @@ pub(crate) async fn search_page(
         .request("chat.search", params)
         .await
         .and_then(|value| serde_json::from_value::<Page>(value).map_err(|error| error.to_string()))
+}
+
+fn search_placeholder(archived: bool) -> &'static str {
+    match (english(), archived) {
+        (true, true) => "Search archived conversations, messages, projects or agents…",
+        (true, false) => "Search conversations, messages, projects or agents…",
+        (false, true) => "搜索已归档会话、消息、项目或 Agent…",
+        (false, false) => "搜索会话、消息、项目或 Agent…",
+    }
 }
 
 struct SessionSearch {
@@ -99,11 +131,7 @@ impl HiveApp {
         let parent = cx.weak_entity();
         let search = cx.new(|cx| {
             let query = cx.new(|cx| {
-                InputState::new(window, cx).placeholder(if archived {
-                    tr("搜索已归档会话、项目路径或 Agent…")
-                } else {
-                    tr("搜索会话名称、项目路径或 Agent…")
-                })
+                InputState::new(window, cx).placeholder(search_placeholder(archived))
             });
             cx.subscribe_in(
                 &query,
@@ -226,7 +254,7 @@ impl SessionSearch {
         let opened = self
             .app
             .update(cx, |app, cx| {
-                app.navigate_to_session(hit.session, window, cx)
+                app.navigate_to_search_hit(hit, window, cx)
             })
             .unwrap_or(false);
         if opened {
@@ -242,16 +270,12 @@ impl Render for SessionSearch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let locale = cx.global::<crate::language::Language>().locale;
         if self.placeholder_locale != Some(locale) {
-            let label = if self.archived {
-                tr("搜索已归档会话、项目路径或 Agent…")
-            } else {
-                tr("搜索会话名称、项目路径或 Agent…")
-            };
+            let label = search_placeholder(self.archived);
             self.query
                 .update(cx, |query, cx| query.set_placeholder(label, window, cx));
             self.placeholder_locale = Some(locale);
         }
-        let results_height = px((self.page.matches.len().max(1) * 58) as f32)
+        let results_height = px((self.page.matches.len().max(1) * 76) as f32)
             .max(px(140.))
             .min(px(380.))
             .min(window.viewport_size().height * 0.55);
@@ -289,7 +313,7 @@ impl Render for SessionSearch {
                                         .size(px(14.))
                                         .text_color(Color::Muted.get(cx)),
                                 )
-                                .aria_label(tr("搜索会话名称、项目路径或 Agent")),
+                                .aria_label(search_placeholder(self.archived)),
                         ),
                     ),
             )
@@ -359,6 +383,9 @@ impl Render for SessionSearch {
                                                 ),
                                         )),
                                 )
+                            })
+                            .when_some(self.page.warning(), |list, warning| {
+                                list.child(div().id("session-search-incomplete").role(Role::Status).p_2().text_xs().text_color(Color::Error.get(cx)).child(warning))
                             })
                             .when(
                                 !self.loading && self.error.is_none() && self.page.matches.is_empty(),
@@ -532,7 +559,10 @@ impl Render for SessionSearch {
                                                                 .text_xs()
                                                                 .text_color(Color::Muted.get(cx))
                                                                 .child(project),
-                                                        ),
+                                                        )
+                                                        .when_some(hit.body_match.as_ref(), |row, body| {
+                                                            row.child(div().w_full().truncate().text_xs().text_color(Color::Muted.get(cx)).child(body.snippet.clone()))
+                                                        }),
                                                 )
                                                 .child(
                                                     h_flex()
@@ -669,5 +699,35 @@ impl Render for SessionSearch {
                         .child(tr("历史和草稿均保留。打开会话后可恢复或继续发送。")),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Page;
+    use serde_json::json;
+
+    #[test]
+    fn search_page_reads_body_and_incomplete_history_without_results() {
+        let page: Page = serde_json::from_value(json!({
+            "matches": [], "total": 0,
+            "incompleteHistory": [{"sessionId":"s1", "title":"Alpha", "message":"unreadable"}],
+            "incompleteHistoryCount": 2
+        })).unwrap();
+        let warning = page.warning().unwrap();
+        assert!(warning.contains("Alpha") && warning.contains("unreadable"));
+        assert_eq!(page.incomplete_history_count, 2);
+        assert_eq!(page.total, 0);
+
+        let page: Page = serde_json::from_value(json!({
+            "matches": [{
+                "session": {"id":"s1", "title":"Title", "workspaceId":"w1"},
+                "workspaceName":"Alpha", "title":"Title",
+                "bodyMatch":{"messageId":"m1", "snippet":"matching text"}
+            }], "total": 1
+        })).unwrap();
+        let body = page.matches[0].body_match.as_ref().unwrap();
+        assert_eq!((&*body.message_id, &*body.snippet), ("m1", "matching text"));
+        assert!(page.warning().is_none());
     }
 }

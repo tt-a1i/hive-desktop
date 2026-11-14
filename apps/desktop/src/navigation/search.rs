@@ -1,6 +1,5 @@
 use super::*;
 use crate::{
-    protocol::SessionHit,
     sessions::search::{Page, search_page},
     transport::Runtime,
 };
@@ -177,12 +176,12 @@ impl SidebarSearch {
             })
     }
     fn open(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(SessionHit { session, .. }) = self.page.matches.get(index).cloned() else {
+        let Some(hit) = self.page.matches.get(index).cloned() else {
             return;
         };
         if self
             .app
-            .update(cx, |app, cx| app.navigate_to_session(session, window, cx))
+            .update(cx, |app, cx| app.navigate_to_search_hit(hit, window, cx))
             .unwrap_or(false)
         {
             self.query
@@ -283,6 +282,9 @@ impl Render for SidebarSearch {
                                 ),
                         )
                     })
+                    .when_some(self.page.warning(), |list, warning| {
+                        list.child(div().id("sidebar-search-incomplete").role(Role::Status).p_2().text_xs().text_color(Color::Error.get(cx)).child(warning))
+                    })
                     .when(
                         !self.loading && self.error.is_none() && self.page.matches.is_empty(),
                         |list| {
@@ -353,7 +355,10 @@ impl Render for SidebarSearch {
                                                 .text_xs()
                                                 .text_color(Color::Muted.get(cx))
                                                 .child(identity),
-                                        ),
+                                        )
+                                        .when_some(hit.body_match.as_ref(), |row, body| {
+                                            row.child(div().min_w_0().w_full().truncate().text_xs().text_color(Color::Muted.get(cx)).child(body.snippet.clone()))
+                                        }),
                                 )
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.open(index, window, cx)

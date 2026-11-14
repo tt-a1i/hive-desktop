@@ -9,6 +9,14 @@ pub(crate) struct AttachmentRef {
     pub name: String,
     pub mime_type: String,
     pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_file: Option<ProjectFileReference>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectFileReference {
+    pub relative_path: String,
+    pub sha256: String,
 }
 #[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +57,21 @@ pub struct SessionHit {
     #[serde(default)]
     pub workspace_path: String,
     pub title: String,
+    #[serde(default)]
+    pub body_match: Option<SessionBodyMatch>,
+}
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionBodyMatch {
+    pub message_id: String,
+    pub snippet: String,
+}
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IncompleteHistory {
+    pub session_id: String,
+    pub title: String,
+    pub message: String,
 }
 #[derive(Clone, Copy, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -125,6 +148,10 @@ pub struct PendingUserInput {
     #[serde(default)]
     pub attachments: Vec<AttachmentRef>,
     pub processing: bool,
+    #[serde(default)]
+    pub editable: bool,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

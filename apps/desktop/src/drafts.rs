@@ -293,12 +293,34 @@ mod tests {
     }
 
     #[test]
+    fn project_reference_draft_cold_reopen_preserves_snapshot_metadata_and_text() {
+        let root = tempfile::tempdir().unwrap();
+        let key = "session:project-reference".to_owned();
+        let input = "保留普通草稿\n第二行".to_owned();
+        let attachment = crate::attachments::AttachmentRef {
+            id: "snapshot-id".into(), workspace_id: "project".into(),
+            name: "需求.md".into(), mime_type: "text/markdown".into(), size: 24,
+            project_file: Some(crate::protocol::ProjectFileReference {
+                relative_path: "docs/需求.md".into(), sha256: "ab".repeat(32),
+            }),
+        };
+        DraftStore::open(root.path()).unwrap().save(
+            &HashMap::from([(key.clone(), input.clone())]), &HashMap::new(),
+            &HashMap::from([(key.clone(), vec![attachment.clone()])]), &HashMap::new(),
+        ).unwrap();
+        let reopened = DraftStore::open(root.path()).unwrap();
+        assert_eq!(reopened.saved[&key].input, input);
+        assert_eq!(reopened.saved[&key].attachments, vec![attachment]);
+    }
+
+    #[test]
     fn image_only_draft_preserves_upload_identity_and_legacy_records() {
         let root = tempfile::tempdir().unwrap();
         let key = "session:images".to_owned();
         let refs = vec![crate::attachments::AttachmentRef {
             id: "image-id".into(),
             workspace_id: "workspace".into(),
+            project_file: None,
             name: "截图.png".into(),
             mime_type: "image/png".into(),
             size: 128,

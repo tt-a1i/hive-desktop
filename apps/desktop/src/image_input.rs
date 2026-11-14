@@ -6,6 +6,7 @@ use std::{io::Cursor, path::PathBuf};
 
 pub(crate) enum ImageSource {
     File(PathBuf),
+    ProjectFile { relative_path: String },
     Clipboard(Image),
 }
 
@@ -19,6 +20,7 @@ impl ImageSource {
     pub fn prepare(self) -> Result<(&'static str, Value), PrepareError> {
         match self {
             Self::File(path) => Ok(("chat.attachments.add", json!({"path":path}))),
+            Self::ProjectFile { relative_path } => Ok(("project.files.attach", json!({"relativePath":relative_path}))),
             Self::Clipboard(image) => {
                 // Windows DIB arrives as BMP; some macOS apps offer TIFF.
                 // Only these clipboard-only formats need conversion.

@@ -21,6 +21,7 @@ mod drafts;
 mod diagnostics;
 mod failures;
 mod image_input;
+mod project_files;
 mod image_viewer;
 mod interactions;
 mod members;

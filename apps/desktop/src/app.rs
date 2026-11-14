@@ -110,6 +110,7 @@ pub enum ConversationSource {
 
 pub struct HiveApp {
     pub conversation_find: Option<crate::conversation_find::ConversationFind>,
+    pub(crate) search_target: Option<(u64, String, String)>,
     pub conversation_sources: Vec<ConversationSource>,
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
@@ -481,6 +482,7 @@ impl HiveApp {
             codex_command,
             claude_command,
             conversation_find: None,
+            search_target: None,
             settings_panel: false,
             preferences_focus: cx.focus_handle(),
             preferences_modal_open: false,
@@ -709,7 +711,7 @@ impl HiveApp {
                     Err(error) => {
                         if this.open_request == open_request {
                             this.loading = false;
-                            if method == "chat.open" { this.status = "未能打开会话".into(); }
+                            if method == "chat.open" { this.status = "未能打开会话".into(); this.search_target = None; }
                             let error = error.into();
                             this.error = Some(if method == "chat.open" {
                                 ErrorNotice::Conversation(Box::new(error))

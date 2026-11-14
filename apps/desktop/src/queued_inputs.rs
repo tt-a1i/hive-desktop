@@ -1,3 +1,4 @@
+mod editor;
 use crate::{
     app::HiveApp,
     language::{english, tr},
@@ -9,6 +10,7 @@ use gpui_kit::{
         button::{Button, ButtonVariants},
         *,
     },
+    prelude::FluentBuilder,
     *,
 };
 
@@ -22,7 +24,10 @@ impl HiveApp {
             .pending_user_inputs
             .iter()
             .filter(|input| {
-                !self.messages.iter().any(|message| message.id == input.delivery_id)
+                !self
+                    .messages
+                    .iter()
+                    .any(|message| message.id == input.delivery_id)
             })
             .collect();
         if undisplayed.is_empty() {
@@ -76,85 +81,86 @@ impl HiveApp {
                                 .child(count.to_string()),
                         ),
                 )
-                .child(
-                    v_flex()
-                        .id("queued-user-inputs")
-                        .gap_1p5()
-                        .children(undisplayed.into_iter().map(|input| {
-                            let text = input.text.clone();
-                            let status = if input.processing {
-                                tr("已接收，正在处理")
-                            } else if running {
-                                tr("已入队，等待当前回复结束")
-                            } else {
-                                tr("已入队，等待继续处理")
-                            };
-                            let label = if input.text.is_empty() {
-                                tr("附件消息").to_string()
-                            } else {
-                                input.text.clone()
-                            };
-                            let detail = if input.attachments.is_empty() {
-                                status.to_string()
-                            } else {
-                                format!(
-                                    "{} · {}: {}",
-                                    status,
-                                    tr("附件"),
-                                    input
-                                        .attachments
-                                        .iter()
-                                        .map(|item| item.name.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join(if english() { ", " } else { "、" })
-                                )
-                            };
-                            crate::focus_scroll::Reveal::new(
-                                SharedString::from(format!(
-                                    "received-input-reveal-{}",
+                .child(v_flex().id("queued-user-inputs").gap_1p5().children(
+                    undisplayed.into_iter().map(|input| {
+                        let text = input.text.clone();
+                        let edit_input = input.clone();
+                        let cancel_input = input.clone();
+                        let status = match input.reason.as_deref() {
+                            Some("completed") => tr("消息已处理，不能编辑或撤回"),
+                            Some("attempted") => tr("消息已尝试发送，不能编辑或撤回"),
+                            Some("legacy") => tr("旧版待发消息缺少原始记录，不能编辑或撤回"),
+                            _ if input.processing => tr("已接收，正在处理"),
+                            _ if running => tr("已入队，等待当前回复结束"),
+                            _ => tr("已入队，等待继续处理"),
+                        };
+                        let label = if input.text.is_empty() {
+                            tr("附件消息").to_string()
+                        } else {
+                            input.text.clone()
+                        };
+                        let detail = if input.attachments.is_empty() {
+                            status.to_string()
+                        } else {
+                            format!(
+                                "{} · {}: {}",
+                                status,
+                                tr("附件"),
+                                input
+                                    .attachments
+                                    .iter()
+                                    .map(|item| item.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(if english() { ", " } else { "、" })
+                            )
+                        };
+                        crate::focus_scroll::Reveal::new(
+                            SharedString::from(format!(
+                                "received-input-reveal-{}",
+                                input.delivery_id
+                            )),
+                            &self.composer_scroll,
+                            h_flex()
+                                .id(SharedString::from(format!(
+                                    "received-input-{}",
                                     input.delivery_id
-                                )),
-                                &self.composer_scroll,
-                                h_flex()
-                                    .id(SharedString::from(format!(
-                                        "received-input-{}",
-                                        input.delivery_id
-                                    )))
-                                    .role(Role::Group)
-                                    .aria_label(format!("{label} · {detail}"))
-                                    .items_center()
-                                    .min_w_0()
-                                    .gap_2()
-                                    .px_2p5()
-                                    .py_1p5()
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(Color::Divider.get(cx))
-                                    .bg(Color::Card.get(cx))
-                                    .child(
-                                        v_flex()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .gap_0p5()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(Color::Text.get(cx))
-                                                    .truncate()
-                                                    .child(label),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(11.))
-                                                    .text_color(Color::Muted.get(cx))
-                                                    .truncate()
-                                                    .child(detail),
-                                            ),
-                                    )
-                                    .child(
+                                )))
+                                .role(Role::Group)
+                                .aria_label(format!("{label} · {detail}"))
+                                .items_center()
+                                .min_w_0()
+                                .gap_2()
+                                .px_2p5()
+                                .py_1p5()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(Color::Divider.get(cx))
+                                .bg(Color::Card.get(cx))
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .truncate()
+                                                .child(label),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .text_color(Color::Muted.get(cx))
+                                                .truncate()
+                                                .child(detail),
+                                        ),
+                                )
+                                .when(input.editable && !input.processing, |row| {
+                                    row.child(
                                         Button::new(SharedString::from(format!(
-                                            "copy-queued-{}",
+                                            "edit-queued-{}",
                                             input.delivery_id
                                         )))
                                         .custom(crate::palette::subtle_icon_variant(cx))
@@ -162,19 +168,72 @@ impl HiveApp {
                                         .h(px(24.))
                                         .w(px(24.))
                                         .rounded_md()
-                                        .icon(Glyph::Copy)
-                                        .tooltip(tr("复制"))
-                                        .accessibility_label(tr("复制已接收消息"))
-                                        .disabled(input.text.is_empty())
-                                        .on_click(move |_, _, cx| {
+                                        .icon(Glyph::Pencil)
+                                        .tooltip(tr("编辑待发消息"))
+                                        .accessibility_label(tr("编辑待发消息"))
+                                        .disabled(!self.connected || self.closing)
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.open_queue_editor(
+                                                    edit_input.clone(),
+                                                    false,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        Button::new(SharedString::from(format!(
+                                            "cancel-queued-{}",
+                                            input.delivery_id
+                                        )))
+                                        .custom(crate::palette::subtle_icon_variant(cx))
+                                        .compact()
+                                        .h(px(24.))
+                                        .w(px(24.))
+                                        .rounded_md()
+                                        .icon(Glyph::X)
+                                        .tooltip(tr("撤回待发消息"))
+                                        .accessibility_label(tr("撤回待发消息"))
+                                        .disabled(!self.connected || self.closing)
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.open_queue_editor(
+                                                    cancel_input.clone(),
+                                                    true,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }),
+                                        ),
+                                    )
+                                })
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "copy-queued-{}",
+                                        input.delivery_id
+                                    )))
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .h(px(24.))
+                                    .w(px(24.))
+                                    .rounded_md()
+                                    .icon(Glyph::Copy)
+                                    .tooltip(tr("复制"))
+                                    .accessibility_label(tr("复制已接收消息"))
+                                    .disabled(input.text.is_empty())
+                                    .on_click(
+                                        move |_, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
                                                 text.clone(),
                                             ))
-                                        }),
+                                        },
                                     ),
-                            )
-                        })),
-                )
+                                ),
+                        )
+                    }),
+                ))
                 .into_any_element(),
         )
     }

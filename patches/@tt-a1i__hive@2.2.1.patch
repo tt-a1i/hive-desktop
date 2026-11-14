@@ -602,7 +602,7 @@ index 389129f122892581215028f0cc8bfabd21a8ad3b..433439b07a6d293cb99fdc78c030597b
          openByWorker.set(dispatch.toAgentId, list);
      }
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
-index 531749345d132f9a9f93f4f5ad10c8f48e368acd..6576cae1f3286b5503e682784695792c081fbc9d 100644
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..5c46fa89dc8c96ac258fdf44b36d92b2b22f6b77 100644
 --- a/dist/src/server/runtime-store-contract.d.ts
 +++ b/dist/src/server/runtime-store-contract.d.ts
 @@ -55,6 +55,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
@@ -613,7 +613,16 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..6576cae1f3286b5503e682784695792c
      listDispatches: (workspaceId: string, options?: ListDispatchesOptions) => DispatchRecord[];
      listOpenDispatches: (workspaceId: string) => DispatchRecord[];
      listRecentDispatches: (workspaceId: string, limit?: number) => DispatchRecord[];
-@@ -138,6 +139,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -91,6 +92,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+     getActiveRunByAgentId: (workspaceId: string, agentId: string) => LiveAgentRun | undefined;
+     registerTasksListener: (listener: (workspaceId: string, content: string) => void) => () => void;
+     listAgentRuns: (agentId: string) => PersistedAgentRun[];
++    getDesktopUserInput: (workspaceId: string, agentId: string, sequence: number) => { type: 'user_input' | 'user_input_cancelled'; text: string } | undefined;
++    mutateDesktopUserInput: (workspaceId: string, agentId: string, sequence: number, expectedText: string, replacement: string | null, persistSpool: () => void) => void;
+     listMessagesForRecovery: (workspaceId: string, sinceMs: number) => RecoveryMessage[];
+     recallMessages: (workspaceId: string, query: string, options?: RecallOptions) => RecallResult[];
+     addMemoryEntry: (input: AddMemoryEntryInput) => MemoryEntryWithSources;
+@@ -138,6 +141,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      setRemoteEnabled: (enabled: boolean) => void;
      revokeRemoteDevice: (deviceId: string) => boolean;
      getWorkflowDispatchAwaiter: () => WorkflowDispatchAwaiter;
@@ -622,7 +631,7 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..6576cae1f3286b5503e682784695792c
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflowInline: (input: RunInlineWorkflowInput) => Promise<WorkflowRunRecord>;
-@@ -152,6 +155,10 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -152,6 +157,10 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      }>;
      saveWorkspaceUpload: (input: SaveWorkspaceUploadInput) => Promise<WorkspaceUploadRecord>;
      listWorkspaceUploads: (workspaceId: string, limit?: number) => WorkspaceUploadRecord[];
@@ -827,7 +836,7 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..9daaccb7b5e9d576b013ca5eb73c68b8
                  return `\nResult (workflow return value):\n${escapeHiveEnvelopeText(truncated)}`;
              })();
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..9b0be8c09af2b1b265447b54c021677f64e808c1 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..c4012b6d07ddb9348ecb7f090432aa67a8f52935 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
 @@ -37,6 +37,7 @@ export const createRuntimeStore = (options = {}) => {
@@ -854,7 +863,27 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..9b0be8c09af2b1b265447b54c021677f
          startAgent: lifecycle.startAgent,
          autostartConfiguredAgents: lifecycle.autostartConfiguredAgents,
          startWorkspaceWatch: lifecycle.startWorkspaceWatch,
-@@ -141,6 +144,8 @@ export const createRuntimeStore = (options = {}) => {
+@@ -123,6 +126,19 @@ export const createRuntimeStore = (options = {}) => {
+         registerTasksListener: lifecycle.registerTasksListener,
+         listAgentRuns: (agentId) => services.agentRuntime.listAgentRuns(agentId),
+         listMessagesForRecovery: (workspaceId, sinceMs) => services.messageLogStore.listMessagesForRecovery(workspaceId, sinceMs),
++        getDesktopUserInput(workspaceId, agentId, sequence) {
++            return services.db.prepare("SELECT type, text FROM messages WHERE workspace_id = ? AND worker_id = ? AND sequence = ? AND type IN ('user_input', 'user_input_cancelled')").get(workspaceId, agentId, sequence);
++        },
++        mutateDesktopUserInput(workspaceId, agentId, sequence, expectedText, replacement, persistSpool) {
++            return services.db.transaction(() => {
++                const row = store.getDesktopUserInput(workspaceId, agentId, sequence);
++                if (!row || row.type !== 'user_input' || row.text !== expectedText)
++                    throw new Error('Authoritative user input changed or is unavailable');
++                services.db.prepare('UPDATE messages SET text = ?, type = ? WHERE sequence = ?').run(replacement ?? row.text, replacement === null ? 'user_input_cancelled' : 'user_input', sequence);
++                services.messageLogStore.insertMessage({ workspaceId, workerId: agentId, type: replacement === null ? 'user_input_cancel_audit' : 'user_input_edit_audit', text: JSON.stringify({ sequence, before: row.text, after: replacement }), createdAt: Date.now() });
++                persistSpool();
++            })();
++        },
+         recallMessages: (workspaceId, query, options) => services.teamRecallStore.recallMessages(workspaceId, query, options),
+         ...createRuntimeStoreMemoryMethods(services),
+         ...createRuntimeStoreDreamMethods(services),
+@@ -141,6 +157,8 @@ export const createRuntimeStore = (options = {}) => {
          getRetentionSignals: () => services.protocolEventStats.getRetentionSignals(),
          ...createRuntimeStoreRemoteMethods(services),
          getWorkflowDispatchAwaiter: () => services.workflowDispatchAwaiter,
@@ -863,7 +892,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..9b0be8c09af2b1b265447b54c021677f
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
-@@ -155,6 +160,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -155,6 +173,7 @@ export const createRuntimeStore = (options = {}) => {
          })),
          saveWorkspaceUpload: (input) => services.workspaceUploadStore.saveUpload(input),
          listWorkspaceUploads: (workspaceId, limit) => services.workspaceUploadStore.listUploads(workspaceId, limit),
@@ -932,7 +961,7 @@ index f74fc2d4250e25025d2f7fb327cf49df8c1277a5..c7aad08d1f2e58f4660f04a98143b948
              void stop(workspaceId)
                  .catch((closeError) => logWatcherError(workspaceId, closeError))
 diff --git a/dist/src/server/team-operations.js b/dist/src/server/team-operations.js
-index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..b02631b15ec7fc0636f4bd22cede430f7eb2b43b 100644
+index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..c0d9df9abc48e52fd5d02dc78e78c58ffbb707d5 100644
 --- a/dist/src/server/team-operations.js
 +++ b/dist/src/server/team-operations.js
 @@ -33,7 +33,10 @@ export const formatUnknownWorkerError = (workerName, roster) => {
@@ -955,6 +984,14 @@ index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..b02631b15ec7fc0636f4bd22cede430f
                      requireActiveRun: true,
                  })
                      .then(() => {
+@@ -538,6 +542,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
+             const messageHandle = insertMessage(createUserInputMessage(workspaceId, orchestratorId, text));
+             try {
+                 await agentRuntime.deliverUserInputToOrchestrator(workspaceId, text, {
++                    messageSequence: messageHandle.sequence,
+                     requireActiveRun: true,
+                 });
+             }
 diff --git a/dist/src/server/terminal-state-mirror.js b/dist/src/server/terminal-state-mirror.js
 index 8bcdd5e1b51f9fbca0cde5022dbd39c134494bef..1917a7e2d80add22796c599969059011c2d967b8 100644
 --- a/dist/src/server/terminal-state-mirror.js

@@ -6,6 +6,7 @@ import {
   imageMimeType,
   type PromptImage,
 } from './prompt-images.js';
+import { ProjectFileReferences, type ProjectFileReference } from './project-file-references.js';
 import type { HiveHost } from './hive-host.js';
 
 export interface ChatAttachment {
@@ -14,6 +15,7 @@ export interface ChatAttachment {
   name: string;
   mimeType: string;
   size: number;
+  projectFile?: ProjectFileReference;
 }
 export interface StagedAttachment {
   attachment: ChatAttachment;
@@ -57,7 +59,7 @@ export function decodeImageInput(source: string): { text: string; ids: string[] 
   return { text, ids };
 }
 export class ChatAttachments {
-  constructor(private readonly hive: HiveHost) {}
+  constructor(private readonly hive: HiveHost, private readonly references?: ProjectFileReferences) {}
   async addClipboard(workspaceId: string, value: unknown): Promise<StagedAttachment> {
     const image = promptImages([value])[0]!;
     return this.store(
@@ -95,6 +97,17 @@ export class ChatAttachments {
     if (!saved || typeof saved.localPath !== 'string' || !isAbsolute(saved.localPath)) throw new Error('文件保存后无法定位，请重新选择。');
     return {attachment:this.ref(workspaceId,record.id,record.original_name,'application/octet-stream',record.size_bytes),filePath:saved.localPath};
   }
+  async addProjectFile(workspaceId: string, projectFile: ProjectFileReference, bytes: Buffer): Promise<StagedAttachment> {
+    if (!this.references) throw new Error('Project file registry unavailable');
+    const record = await this.upload(workspaceId, basename(projectFile.relativePath), 'application/octet-stream', bytes.toString('base64'));
+    const saved = await this.hive.locateUpload(workspaceId, record.id);
+    if (!saved || typeof saved.localPath !== 'string' || !isAbsolute(saved.localPath)) throw new Error('文件保存后无法定位，请重新选择。');
+    await this.references.put(workspaceId, record.id, projectFile);
+    return { attachment: { ...this.ref(workspaceId, record.id, record.original_name, 'application/octet-stream', record.size_bytes), projectFile }, filePath: saved.localPath };
+  }
+  async projectReference(workspaceId: string, id: string): Promise<ProjectFileReference | undefined> {
+    return this.references?.get(workspaceId, id);
+  }
   private ref(workspaceId:string,id:string,name:string,mimeType:string,size:number):ChatAttachment {
     return {id,workspaceId,name,mimeType,size};
   }
@@ -116,7 +129,8 @@ export class ChatAttachments {
       const bytes = nativeImage ? await this.hive.readUpload(workspaceId,id) : undefined;
       if (nativeImage && !bytes) throw new Error('图片附件无法读取，请重新选择。');
       const image = bytes ? promptImages([{type:'image',mimeType:upload.record.mimeType,data:bytes.data.toString('base64')}])[0] : undefined;
-      result.push({attachment:this.ref(workspaceId,id,upload.record.originalName,upload.record.mimeType,upload.record.sizeBytes),
+      const projectFile = await this.projectReference(workspaceId, id);
+      result.push({attachment:{...this.ref(workspaceId,id,upload.record.originalName,upload.record.mimeType,upload.record.sizeBytes), ...(projectFile ? {projectFile} : {})},
         ...(image ? {image} : {filePath:upload.localPath})});
     }
     promptImages(result.flatMap(item=>item.image ? [item.image] : []));

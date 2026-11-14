@@ -269,6 +269,7 @@ impl HiveApp {
         self.session = None;
         self.conversation_ready = false;
         self.conversation_find = None;
+        self.search_target = None;
         self.conversation_list.reset(None);
         self.messages.clear();
         self.tool_inputs.clear();
@@ -516,6 +517,7 @@ impl HiveApp {
     ) -> bool {
         if !self.connected
             || self.closing
+            || self.removed_sessions.contains(&session.id)
             || self.workspace_removing.as_ref() == Some(&session.workspace_id)
             || !self
                 .workspaces
@@ -542,6 +544,23 @@ impl HiveApp {
             self.sessions.push(session.clone());
         }
         self.open_session(session.id, cx);
+        true
+    }
+
+    pub(crate) fn navigate_to_search_hit(
+        &mut self,
+        hit: crate::protocol::SessionHit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let session_id = hit.session.id.clone();
+        let message_id = hit.body_match.map(|body| body.message_id);
+        if !self.navigate_to_session(hit.session, window, cx) {
+            return false;
+        }
+        if let Some(message_id) = message_id {
+            self.search_target = Some((self.open_request, session_id, message_id));
+        }
         true
     }
 
@@ -606,6 +625,7 @@ impl HiveApp {
             self.session = Some(session.clone());
         }
         self.conversation_find = None;
+        self.search_target = None;
         self.conversation_list.reset(None);
         self.messages.clear();
         self.tool_inputs.clear();
@@ -638,10 +658,12 @@ impl HiveApp {
                 match serde_json::from_value::<OpenSession>(value) {
                     Ok(open) => {
                         if open.session.id != id {
+                            this.search_target = None;
                             this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("打开响应中的会话身份不匹配".into())));
                             return;
                         }
                         if open.history_message_ids.len() != open.history.len() {
+                            this.search_target = None;
                             this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("会话快照中的消息身份数量不匹配".into())));
                             return;
                         }
@@ -683,8 +705,24 @@ impl HiveApp {
                             this.agent_event(event, cx);
                         }
                         this.restore_conversation_position(&id, cx);
+                        if let Some((target_request, target_session, message_id)) = this.search_target.take() {
+                            if target_request == request && target_session == id {
+                                if !this.scroll_to_conversation_message(&message_id, cx) {
+                                    this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(
+                                        if crate::language::english() {
+                                            "The matched message is no longer available. Search again.".to_owned()
+                                        } else {
+                                            "匹配的消息已不可用，请重新搜索。".to_owned()
+                                        }.into(),
+                                    )));
+                                }
+                            }
+                        }
                     }
-                    Err(error) => this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(crate::app::ErrorNotice::Detail("打开会话响应错误",error.to_string())))),
+                    Err(error) => {
+                        this.search_target = None;
+                        this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(crate::app::ErrorNotice::Detail("打开会话响应错误",error.to_string()))));
+                    }
                 }
             },
         );

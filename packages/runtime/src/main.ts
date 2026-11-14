@@ -144,6 +144,9 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       chats.assertWorkspaceAvailable(workspace);
       return chats.attachments.addClipboard(workspace, params.image);
     }
+    case 'project.files.search': return chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset);
+    case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath);
+    case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));
     case 'chat.search': return chats.search(params.query, params.archived, params.offset, params.workspaceId);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.createRecord':
@@ -166,6 +169,8 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       if (typeof params.text !== 'string') throw new TypeError('text must be a string');
       return chats.prompt(text(params, 'sessionId'), params.text, params.attachmentIds);
     }
+    case 'chat.queue.edit': return chats.mutateQueuedInput(text(params, 'sessionId'), text(params, 'deliveryId'), params.expectedText, text(params, 'text'));
+    case 'chat.queue.cancel': return chats.mutateQueuedInput(text(params, 'sessionId'), text(params, 'deliveryId'), params.expectedText);
     case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response);
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));
     case 'chat.resume': return chats.resume(text(params, 'sessionId'));

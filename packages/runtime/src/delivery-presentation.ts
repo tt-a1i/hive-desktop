@@ -9,6 +9,8 @@ export interface DeliveryPresentation {
   artifacts?: string[];
   attachments?: ChatAttachment[];
   sourceText?: string;
+  /** Exact authoritative Hive messages.sequence; absent for direct worker input. */
+  messageSequence?: number;
 }
 
 /** Only explicit, versioned metadata is a presentation contract. */
@@ -21,6 +23,7 @@ export function isDeliveryPresentation(value: unknown): value is DeliveryPresent
     && (record.dispatchId === undefined || typeof record.dispatchId === 'string')
     && (record.workerName === undefined || typeof record.workerName === 'string')
     && (record.workerId === undefined || typeof record.workerId === 'string')
+    && (record.messageSequence === undefined || (Number.isSafeInteger(record.messageSequence) && (record.messageSequence as number) > 0))
     && (record.sourceText === undefined || typeof record.sourceText === 'string')
     && (record.attachments === undefined || (Array.isArray(record.attachments) && record.attachments.every(item=>item && typeof item.id==='string' && typeof item.workspaceId==='string' && typeof item.name==='string' && typeof item.mimeType==='string' && typeof item.size==='number')))
     && (record.artifacts === undefined || (Array.isArray(record.artifacts) && record.artifacts.every(item => typeof item === 'string')));

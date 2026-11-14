@@ -226,7 +226,11 @@ impl HiveApp {
         }
     }
 
-    pub(crate) fn scroll_to_conversation_message(&mut self, id: &str, cx: &App) {
+    pub(crate) fn scroll_to_conversation_message(&mut self, id: &str, cx: &App) -> bool {
+        if let Some(group) = self.messages.chunk_by(|a, b| a.completed_tool() && b.completed_tool())
+            .find(|group| group.len() > 1 && group.iter().any(|message| message.id == id)) {
+            self.expanded_tool_groups.insert(group[0].id.clone());
+        }
         self.sync_conversation_list(cx);
         if let Some(index) = self
             .conversation_list
@@ -238,6 +242,9 @@ impl HiveApp {
                 item_ix: index,
                 offset_in_item: px(0.),
             });
+            true
+        } else {
+            false
         }
     }
 

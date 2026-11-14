@@ -227,7 +227,12 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     let nextSettledCursor = initialCursor;
     let allTailSettled = true;
     let cursor = initialCursor;
+    const seenCursors = new Set<string>();
     do {
+      if (cursor !== null) {
+        if (seenCursors.has(cursor)) throw new Error('Codex returned a repeated history cursor');
+        seenCursors.add(cursor);
+      }
       // Request one turn per page so multi-turn inline image histories never pack >32 MiB onto a single RPC line.
       const page: {data: (CodexTurn & {itemsView?: string})[]; nextCursor?: string | null} = await transport.sendRequest('thread/turns/list', {threadId, cursor, sortDirection: 'asc', itemsView: 'full', limit: 1});
       if (page.data.some(turn => turn.itemsView !== 'full')) throw new Error('Codex did not return complete turn items');
@@ -249,22 +254,19 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     return [...initialPrefix, ...tail];
   };
   const recoverHistory = async (thread: CodexThreadResponse['thread']) => {
+    projection!.invalidateHistory();
     if (thread.historyMode === 'legacy') { projection!.recover(thread.turns); return thread.turns; }
     if (thread.historyMode !== 'paginated') throw new Error('Unsupported Codex history contract');
-    let turns: CodexTurn[];
-    if (settledCursor !== null) {
-      try { turns = await fetchPaginatedTurns(settledTurns, settledCursor); }
-      catch (error) {
-        if (!(error instanceof CodexRpcError)) throw error;
-        settledTurns = [];
-        settledCursor = null;
-        turns = await fetchPaginatedTurns([], null);
-      }
-    } else turns = await fetchPaginatedTurns([], null);
+    // Re-read the complete current branch. An external rollback can invalidate a
+    // previously settled prefix without making its old cursor fail.
+    settledTurns = [];
+    settledCursor = null;
+    const turns = await fetchPaginatedTurns([], null);
     projection!.recover(turns, true);
     return turns;
   };
   const hydrate = async () => {
+    projection!.invalidateHistory();
     const read = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: false });
     let turns: CodexTurn[];
     if (read.thread.historyMode === 'legacy') {
@@ -279,20 +281,27 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   options.signal?.addEventListener('abort', onInitAbort, { once: true });
   try {
     options.signal?.throwIfAborted();
+    mkdirSync(options.sessionDir, { recursive: true, mode: 0o700 });
+    if (options.threadId) {
+      projection = new CodexProjection(options.sessionDir, options.threadId);
+      projection.invalidateHistory();
+    }
     let cursor: string | null = null;
     do {
       const page: { data: Model[]; nextCursor: string | null } = await transport.sendRequest('model/list', { cursor, includeHidden: true });
       models.push(...page.data); cursor = page.nextCursor;
     } while (cursor);
     const modelParams = options.model ? { model: options.model.id, modelProvider: options.model.provider } : {};
-    if (options.threadId) await resume(modelParams);
+    if (options.threadId) {
+      await resume(modelParams);
+      if (response!.thread.id !== options.threadId) throw new Error('Codex returned a different thread ID');
+    }
     else response = await transport.sendRequest<CodexThreadResponse>('thread/start', { cwd: options.cwd, allowProviderModelFallback: false, ...modelParams,
       dynamicTools: options.customTools?.map(tool => ({ type: 'function', name: tool.name, description: tool.description, inputSchema: tool.parameters })) ?? [] });
     if (options.model && (response!.model !== options.model.id || response!.modelProvider !== options.model.provider)) throw new Error('Codex did not select the requested model/provider');
     threadId = response!.thread.id;
     persist(metadata);
-    mkdirSync(options.sessionDir, { recursive: true, mode: 0o700 });
-    projection = new CodexProjection(options.sessionDir, threadId);
+    projection ??= new CodexProjection(options.sessionDir, threadId);
     events = new CodexEvents(threadId, emit, (id, itemId) => {
       if (!deliveryIndex) {
         deliveryIndex = new Map();

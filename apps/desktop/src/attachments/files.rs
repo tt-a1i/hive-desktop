@@ -1,5 +1,28 @@
-use crate::language::tr;
 use super::AttachmentRef;
+use crate::language::tr;
+
+fn labels(item: &AttachmentRef) -> (String, String, String) {
+    if let Some(reference) = &item.project_file {
+        (
+            reference.relative_path.clone(),
+            format!("{} · {}", tr("快照"), item.size_label()),
+            format!(
+                "{}: {} · SHA-256: {} · {}",
+                tr("项目文件快照"),
+                reference.relative_path,
+                reference.sha256,
+                tr("源文件变化不会改变保存的快照")
+            ),
+        )
+    } else {
+        (
+            item.name.clone(),
+            item.size_label(),
+            format!("{}: {}", tr("预览附件副本"), item.name),
+        )
+    }
+}
+
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -18,8 +41,7 @@ impl HiveApp {
     ) -> impl IntoElement + use<> {
         let key = self.draft_target.clone();
         let id = item.id.clone();
-        let size = item.size_label();
-        let name = item.name.clone();
+        let (name, size, hint) = labels(&item);
         h_flex()
             .h(px(30.))
             .max_w(px(280.))
@@ -70,11 +92,15 @@ impl HiveApp {
                                     .child(size),
                             ),
                     )
-                    .tooltip(format!("{}: {}", tr("预览附件副本"), name))
-                    .accessibility_label(format!("{}: {}", tr("预览附件副本"), name))
+                    .tooltip(hint.clone())
+                    .accessibility_label(hint)
                     .disabled(!self.connected)
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_attachment_preview(item.clone(), window, cx);
+                        if item.project_file.is_some() {
+                            this.open_project_file_details(item.clone(), window, cx);
+                        } else {
+                            this.open_attachment_preview(item.clone(), window, cx);
+                        }
                     })),
             )
             .child(
@@ -107,8 +133,7 @@ impl HiveApp {
         item: AttachmentRef,
         cx: &Context<Self>,
     ) -> Button {
-        let name = item.name.clone();
-        let size = item.size_label();
+        let (name, size, hint) = labels(&item);
         Button::new(SharedString::from(format!("file-{owner}-{}", item.id)))
             .custom(crate::palette::quiet_icon_variant(cx))
             .compact()
@@ -147,11 +172,15 @@ impl HiveApp {
                             .child(size),
                     ),
             )
-            .tooltip(format!("{}: {}", tr("预览附件副本"), name))
-            .accessibility_label(format!("{}: {}", tr("预览附件副本"), name))
+            .tooltip(hint.clone())
+            .accessibility_label(hint)
             .disabled(!self.connected)
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.open_attachment_preview(item.clone(), window, cx);
+                if item.project_file.is_some() {
+                    this.open_project_file_details(item.clone(), window, cx);
+                } else {
+                    this.open_attachment_preview(item.clone(), window, cx);
+                }
             }))
     }
 }

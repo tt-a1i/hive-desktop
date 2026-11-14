@@ -60,28 +60,47 @@ impl HiveApp {
             .items_center()
             .pt_1()
             .child(
-                h_flex().flex_shrink_0().items_center().child(
-                    Button::new("attach-images")
-                        .custom(palette::quiet_icon_variant(cx))
-                        .compact()
-                        .xsmall()
-                        .h(px(28.))
-                        .w(px(28.))
-                        .rounded_lg()
-                        .icon(Glyph::Paperclip)
-                        .tooltip(tr("添加文件或图片"))
-                        .accessibility_label(tr("添加文件或图片"))
-                        .disabled(
-                            !self.connected
-                                || self.workspace.is_none()
-                                || self.loading
-                                || self.session.as_ref().is_some_and(|session| {
-                                    self.inflight_inputs.contains_key(&session.id)
-                                })
-                                || !self.attachments.ready(self.draft_target.as_ref()),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| this.choose_images(cx))),
-                ),
+                h_flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .child(
+                        Button::new("attach-images")
+                            .custom(palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(28.))
+                            .w(px(28.))
+                            .rounded_lg()
+                            .icon(Glyph::Paperclip)
+                            .tooltip(tr("添加文件或图片"))
+                            .accessibility_label(tr("添加文件或图片"))
+                            .disabled(
+                                !self.connected
+                                    || self.workspace.is_none()
+                                    || self.loading
+                                    || self.session.as_ref().is_some_and(|session| {
+                                        self.inflight_inputs.contains_key(&session.id)
+                                    })
+                                    || !self.attachments.ready(self.draft_target.as_ref()),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.choose_images(cx))),
+                    )
+                    .child(
+                        Button::new("reference-project-file")
+                            .custom(palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(28.))
+                            .w(px(28.))
+                            .rounded_lg()
+                            .icon(Glyph::FileText)
+                            .tooltip(tr("引用项目文件"))
+                            .accessibility_label(tr("引用项目文件"))
+                            .disabled(!self.can_reference_project_file())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_project_file_picker(window, cx)
+                            })),
+                    ),
             )
             .child(
                 h_flex()

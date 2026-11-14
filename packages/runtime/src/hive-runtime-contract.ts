@@ -262,7 +262,7 @@ export interface HiveAgentRuntime {
 	deliverUserInputToOrchestrator: (
 		workspaceId: string,
 		text: string,
-		input?: { requireActiveRun?: boolean },
+		input?: { requireActiveRun?: boolean; messageSequence?: number },
 	) => Promise<void>;
 	/** Awaitable opaque delivery — used to drain the report outbox so an entry
 	 *  is marked delivered only after the PTY write resolves. */
