@@ -3625,7 +3625,12 @@ impl Interactivity {
         if let Some(keyshortcuts) = &self.aria.keyshortcuts {
             node.set_keyboard_shortcut(keyshortcuts.to_string());
         }
-        if let Some(selected) = self.aria.selected {
+        // Menu item selection is keyboard highlighting, not an ARIA selection.
+        // Windows otherwise removes Invoke while offering no SelectionItem for
+        // this role, leaving ordinary menus inaccessible to UI Automation.
+        if node.role() == accesskit::Role::MenuItem {
+            node.clear_selected();
+        } else if let Some(selected) = self.aria.selected {
             node.set_selected(selected);
         }
         if let Some(expanded) = self.aria.expanded {
@@ -5467,6 +5472,45 @@ mod tests {
         reused_node.set_hidden();
         wrapper.interactivity().write_a11y_info(&mut reused_node);
         assert!(!reused_node.is_hidden());
+    }
+
+    #[test]
+    fn menu_item_highlight_preserves_accessible_activation() {
+        for highlighted in [false, true] {
+            let mut item = div()
+                .role(accesskit::Role::MenuItem)
+                .aria_selected(highlighted)
+                .focusable()
+                .on_click(|_, _, _| {});
+            let mut node = accesskit::Node::new(accesskit::Role::MenuItem);
+            node.set_selected(!highlighted);
+            item.interactivity().write_a11y_info(&mut node);
+            assert_eq!(node.is_selected(), None);
+            assert!(node.supports_action(accesskit::Action::Click));
+            assert!(node.supports_action(accesskit::Action::Focus));
+
+            item.interactivity().aria.toggled = Some(accesskit::Toggled::True);
+            item.interactivity().write_a11y_info(&mut node);
+            assert_eq!(node.toggled(), Some(accesskit::Toggled::True));
+            assert_eq!(node.is_selected(), None);
+            assert!(node.supports_action(accesskit::Action::Click));
+        }
+        for role in [
+            accesskit::Role::MenuItemCheckBox,
+            accesskit::Role::MenuItemRadio,
+            accesskit::Role::ListBoxOption,
+        ] {
+            for selected in [false, true] {
+                let mut item = div()
+                    .role(role)
+                    .aria_selected(selected)
+                    .aria_toggled(accesskit::Toggled::True);
+                let mut node = accesskit::Node::new(role);
+                item.interactivity().write_a11y_info(&mut node);
+                assert_eq!(node.is_selected(), Some(selected));
+                assert_eq!(node.toggled(), Some(accesskit::Toggled::True));
+            }
+        }
     }
 
     #[test]

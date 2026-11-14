@@ -33,7 +33,15 @@ harness currently cannot execute locally. Client compilation and real native
 modal accessibility observations are recorded separately; the test is not claimed
 as passed.
 
+`Interactivity::write_a11y_info` in src/elements/div.rs omits `selected` for
+ordinary MenuItem nodes. gpui-component uses that value for keyboard highlighting,
+but AccessKit Windows then offers neither Invoke nor SelectionItem for the role.
+Click/Focus actions, toggle values and other roles' selected values are preserved.
+The regression test exercises both highlight values and checked/radio/listbox
+metadata. It shares the upstream test-harness limitation above and is not claimed
+as executed; actual Windows UIA menu activation must be verified separately.
+
 Cargo uses this directory through apps/desktop/Cargo.toml. Keep this delta narrow;
-remove the override once a pinned upstream release includes both capabilities.
+remove the override once a pinned upstream release includes these capabilities.
 The published license and all original crate files are preserved. Cargo's local
 `.cargo-ok` cache marker was excluded. No test-rendering hooks are shipped here.
