@@ -57,14 +57,15 @@ export class Chats implements StructuredSessionPort {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
   list(workspaceId: string) { return this.index.list(workspaceId); }
-  async search(query: unknown, archived: unknown = false, offset: unknown = 0) {
+  async search(query: unknown, archived: unknown = false, offset: unknown = 0, workspaceId?: unknown) {
+    if (workspaceId !== undefined && (typeof workspaceId !== 'string' || !workspaceId.trim())) throw new TypeError('workspaceId must be a nonempty string');
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
     if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new TypeError('Search offset must be a nonnegative integer');
     if (typeof query !== 'string' || Array.from(query).length > 200) {
       throw new TypeError('搜索内容需为 200 个字符以内的文本。');
     }
     const terms = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
-    const groups = await this.navigationEntries(false, archived);
+    const groups = await this.navigationEntries(false, archived, workspaceId as string | undefined);
     const matches = groups.flat().filter(hit => {
       const backendName = { pi: '内置 Pi Built-in Pi', codex: 'Codex', 'pi-rpc': '外部 Pi External Pi', claude: 'Claude Code' }[hit.session.backend];
       const defaultTitleAlias = !hit.session.customTitle && !hit.session.agentId && hit.session.title === '新会话' ? 'New conversation' : '';
@@ -77,10 +78,10 @@ export class Chats implements StructuredSessionPort {
     }).sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
     return { matches: matches.slice(offset, offset + 100), total: matches.length };
   }
-  private async navigationEntries(onlyPinned: boolean, archived = false) {
+  private async navigationEntries(onlyPinned: boolean, archived = false, workspaceId?: string) {
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
-    const groups = await Promise.all(workspaces.filter(workspace => !this.removing.has(workspace.id)).map(async workspace => {
+    const groups = await Promise.all(workspaces.filter(workspace => !this.removing.has(workspace.id) && (workspaceId === undefined || workspace.id === workspaceId)).map(async workspace => {
       const records = () => this.index.list(workspace.id).filter(session => !!session.archived === archived && (!onlyPinned || session.pinned));
       if (!records().length) return [];
       const members = await this.hive.request('GET', `/api/ui/workspaces/${workspace.id}/team`) as { id: string; name: string }[];
