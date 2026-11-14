@@ -29,6 +29,10 @@ run [43558093991](https://github.com/tt-a1i/hive-desktop/actions/runs/4355809399
 
 已读取 Windows `native-clis` 完整日志，确认 `FILE_ATTACHMENTS_OK`、`FILES_WIRE_OK`、`DELIVERY_FAILURES_OK`、`PI_REASONING_OK` 与 `PI_REASONING_WIRE_OK` 均实际输出；不是仅凭 job 绿色推断附件检查成功。
 
+run [43558667271](https://github.com/tt-a1i/hive-desktop/actions/runs/43558667271) 已完整通过 Codex 检查，另外两个 job 再次成功；随后在旧 Pi 账号夹具的关闭时序失败。生产 `PiAuth.close()` 会取消目录读取，而旧检查延后观察退出登录 Promise，并要求关闭后的读取成功。现以调度屏障控制真实 SDK 读取的时序，保留原 AbortSignal，立即观察拒绝，核对关闭原因、刷新/读取排空、实际落盘删除及另一提供商不受影响。清理先关闭屏障标志再释放已有等待，避免失败时新增阻塞。生产账号代码没有改动，未接触用户凭据。
+
+`check:pi-auth` 三组及最终 `pi-provider-config.ts` 定向执行均退出 0；记录在 `pi-auth-regression.log`、`pi-provider-close-final.log`。Codex 写盘故障另补原两条投递的完整比较、故障路径核对、修复后以原线程重建连接并显式重试、再次冷读原完成 ID，24 场景退出 0（`codex-steering-recovery.log`）。没有将复用故障连接即时重试称为通过。独立审查发现的注入前误清理与清理期间新建读取屏障两处问题均修复并复核。
+
 不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功。现有 Mac 开发包无需因 test-only 改动重新组装。
 
 ## 本轮账号范围

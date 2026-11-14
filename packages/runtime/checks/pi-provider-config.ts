@@ -21,6 +21,19 @@ let failSync = false;
 let holdRefresh = false;
 let refreshEntered = false;
 let releaseRefresh: (() => void) | undefined;
+let holdCredentialRead = false;
+let credentialReadEntered = false;
+let releaseCredentialRead: (() => void) | undefined;
+const listCredentials = runtime.listCredentials.bind(runtime);
+runtime.listCredentials = async options => {
+  // Control scheduling only; the real SDK still reads the actual store with
+  // the original AbortSignal after this barrier is released.
+  if (holdCredentialRead) {
+    credentialReadEntered = true;
+    await new Promise<void>(resolve => { releaseCredentialRead = resolve; });
+  }
+  return listCredentials(options);
+};
 runtime.registerNativeProvider({
   id, name: '多字段 API 配置', getModels: () => [{ ...terra, provider: id }],
   stream() { throw new Error('Model requests forbidden'); }, streamSimple() { throw new Error('Model requests forbidden'); },
@@ -135,7 +148,14 @@ try {
 
   await configure();
   holdRefresh = true;
+  holdCredentialRead = true;
   const removal = auth.logout(id);
+  const cancelledRemoval = assert.rejects(removal, (error: Error & { cause?: Error }) => {
+    assert.match(error.message, /读取本机登录信息失败/);
+    assert.equal(error.cause?.message, 'Pi authentication is closing');
+    return true;
+  });
+  void cancelledRemoval.catch(() => {});
   await waitFor(() => refreshEntered);
   await assert.rejects(auth.start(id, 'api_key'));
   await assert.rejects(auth.logout('anthropic'));
@@ -144,13 +164,19 @@ try {
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(closed, false, 'Runtime close must wait for the SDK removal already in progress');
   releaseRefresh!();
-  assert.equal((await removal).providers.find(provider => provider.id === id)?.storedType, null);
+  await waitFor(() => credentialReadEntered);
+  assert.equal(closed, false, 'Runtime close must drain the in-flight removal catalog read');
+  releaseCredentialRead!();
+  await cancelledRemoval;
   await close;
   assert.equal(readStoredCredential(id, authPath), undefined);
   assert.equal(readStoredCredential('anthropic', authPath)?.type, 'api_key', 'Another provider must remain saved');
   console.log('PI_PROVIDER_CONFIG_OK: real SDK/native Anthropic prompts, multi-field/empty text, persistence, cancel, removal, ambient auth, saved-removal warning and shutdown drain. No API/model requests.');
 } finally {
+  holdRefresh = false;
+  holdCredentialRead = false;
   releaseRefresh?.();
+  releaseCredentialRead?.();
   await auth.close();
   if (originalAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
   else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
