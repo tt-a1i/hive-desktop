@@ -425,14 +425,14 @@ Invoke-Action '取消'
 Write-Host 'Renamed the lead session without changing its draft or team binding.'
 
 Invoke-Action '搜索会话'
-$search = Wait-Action '搜索会话名称、项目或 Agent'
+$search = Wait-Action '搜索会话名称、项目路径或 Agent'
 $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('Reviewer')
 [void](Wait-Action '打开 Reviewer · Beta · Pi')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-session-search.png')
 Invoke-Action '打开 Reviewer · Beta · Pi'
 Wait-EditorText '聊天消息' $quoted
 Invoke-Action '搜索会话'
-$search = Wait-Action '搜索会话名称、项目或 Agent'
+$search = Wait-Action '搜索会话名称、项目路径或 Agent'
 $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('启动方式核验')
 Invoke-Action '打开 启动方式核验 · Beta · Pi'
 [void](Wait-Action '打开关联派单')
