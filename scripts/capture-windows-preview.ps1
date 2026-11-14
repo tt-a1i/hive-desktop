@@ -96,6 +96,16 @@ function Wait-Action([string] $Name, [int] $TimeoutSeconds = 8) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Could not reach the fixture action '$Name'."
 }
+function Wait-ActionsAbsent([string[]] $Names) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $remaining = @($Names | Where-Object { $null -ne (Find-Action $_) })
+        if ($remaining.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Fixture controls did not disappear: $($remaining -join ', ')."
+}
+
 function Test-VisibleControl($Control) {
     $state = $Control.Current
     $bounds = $state.BoundingRectangle
@@ -220,6 +230,7 @@ Invoke-Action '模型与接口'
 Wait-EditorText '提供商 ID' 'windows-provider-draft'
 Invoke-Action '关闭表单'
 Invoke-Action '放弃修改'
+Wait-ActionsAbsent @('放弃当前表单修改？', '放弃修改')
 [void](Wait-Action '添加提供商')
 Invoke-Action '外部程序'
 $programInput = Wait-Action 'Codex 可执行文件路径'
