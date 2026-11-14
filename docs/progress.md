@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 完整目标重启与固定协作入口、聊天设置（2026-11-14）
+
+已按用户最新确认，以 T3Code 为首要参考，结合 Cindy/Beluga，沿用 GPUI/Node 并持续补齐完整产品。常驻团队/协作/工作流入口、工具合并/逐项与思考默认展示已实现；历史偏好兼容、思考缓存及流式状态、真实写盘失败/重试和预览只读已验证。Rust 42 passed、Mac 原生窄窗/20px/中英文/冷开/草稿及两次最终进程 exit 0、Windows 交叉检查通过，无新模型推理。见[源码证据](validation/2026-11-14-workspace-chat-settings.md)、[完整顺序](product-completeness.md)、#29。开发包另行记录；下面的“当前”为各阶段历史状态，本轮开始时实际 current/candidate 是 `26ebdea`。完整目标继续。
+
 ## 当前开发包 c0c1163 与清理（2026-11-13）
 
 Beluga 风格首次引导与本地 Agent 就绪卡片 + T3 Code 风格主窗口骨架、macOS 沉浸式交通灯标题栏、紧凑工程侧栏、纯净会话流、单行可展开 `WorkLog` 思考/工具过程与 `rounded-2xl` 悬浮输入框重构（`c0c1163`，日常单 Agent 工作区默认收敛多 Agent 编排入口，底层协作与冷恢复完整保留）已合并入 current/candidate、DMG 与 `/Applications/Hive Desktop.app`。精确更新原生主程序 1 项，28,869 项清单/29 链接、DMG 只读挂载与 `/Applications` 安装清单核对全部通过；包内四组正式包检查、d43f55e 真实 Terra 三会话 40 条冷读+冷态双语角色搜索→Rust，以及原生 macOS 中英文启动恢复与浅色/深色 `20 px` Beluga 引导页、深色 T3 Code 主窗口 Terra 冷读三次独立运行正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。保留 `5bb7b0b` 直接可运行回退，退役 `992aae6` 解压树并清理临时参考克隆、安装备份与 Rust 中间构建缓存约 7.29 GB（6.79 GiB），见[包内证据与边界](validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

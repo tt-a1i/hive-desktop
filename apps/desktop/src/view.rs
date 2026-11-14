@@ -761,7 +761,7 @@ impl Render for HiveApp {
             self.workspace.is_none() && has_text && self.connected && !self.loading && !self.closing;
         self.composer_can_submit = can_submit || can_pick_project_to_send;
         let submit_on_enter = (can_submit || can_pick_project_to_send)
-            && cx.global::<crate::composer::ComposerPreferences>().mode
+            && cx.global::<crate::composer::ComposerPreferences>().settings.mode
                 == crate::composer::SendMode::Enter;
         if submit_on_enter != self.composer_submit_on_enter {
             self.composer_submit_on_enter = submit_on_enter;

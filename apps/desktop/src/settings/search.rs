@@ -31,8 +31,8 @@ const ENTRIES: &[Entry] = &[
     Entry {
         section: Some(SettingsSection::Chat),
         title: "聊天",
-        description: "消息发送快捷键与输入方式",
-        keywords: "enter shift cmd command 快捷键 发送 换行 键盘",
+        description: "发送快捷键、工具活动与思考展示",
+        keywords: "enter shift cmd command thinking tools activity group completed tools show individually collapsed by default expanded by default 快捷键 发送 换行 键盘 工具 活动 合并已完成工具 逐项展示 思考 默认展开 默认收起",
     },
     Entry {
         section: Some(SettingsSection::PiAccounts),
