@@ -1731,5 +1731,8 @@
   "时长未知": "Duration unknown",
   "重置时间未知": "Reset time unknown",
   "重置": "Reset",
-  "剩余": "remaining"
+  "剩余": "remaining",
+  "账号允许普通使用": "Account allows ordinary usage",
+  "当前普通使用受限": "Ordinary usage is currently restricted",
+  "普通使用状态未知": "Ordinary usage status is unknown"
 }

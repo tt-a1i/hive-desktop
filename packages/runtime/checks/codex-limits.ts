@@ -7,7 +7,13 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {parseCodexLimits, probeCodexLimits} from '../src/codex-limits.js';
 const date='2026-11-15T00:00:00.000Z';
 const valid={limitId:'codex',primary:{usedPercent:22,windowDurationMins:300,resetsAt:1800000000},secondary:null};
-assert.deepEqual(parseCodexLimits({rateLimitsByLimitId:{codex:valid},rateLimits:{limitId:'other',primary:{usedPercent:90}}},date),{status:'ok',checkedAt:date,windows:[{position:'primary',usedPercent:22,windowDurationMins:300,resetsAt:'2027-01-15T08:00:00.000Z'}]});
+assert.deepEqual(parseCodexLimits({rateLimitsByLimitId:{codex:valid},rateLimits:{limitId:'other',primary:{usedPercent:90}}},date),{status:'ok',checkedAt:date,ordinaryUsageAllowed:null,windows:[{position:'primary',usedPercent:22,windowDurationMins:300,resetsAt:'2027-01-15T08:00:00.000Z'}]});
+for(const [value,expected] of [[true,true],[false,false],[null,null],[undefined,null],['true',null],[1,null]] as const) {
+ const result=parseCodexLimits({ordinaryUsageAllowed:value,rateLimits:valid},date);
+ assert.equal(result.ordinaryUsageAllowed,expected);
+}
+assert.equal(parseCodexLimits({ordinaryUsageAllowed:false,rateLimits:valid},date).ordinaryUsageAllowed,false);
+assert.equal(parseCodexLimits({ordinaryUsageAllowed:false,rateLimits:null},date).ordinaryUsageAllowed,false);
 for(const value of [{rateLimits:{limitId:'other',primary:{usedPercent:10}}},{rateLimitsByLimitId:{codex:null},rateLimits:valid},{rateLimits:{limitId:'codex',primary:{usedPercent:-1}}},{rateLimits:{limitId:'codex',primary:{usedPercent:101}}},{rateLimits:{limitId:'codex',primary:null}}])assert.equal(parseCodexLimits(value,date).status,'unavailable');
 assert.equal(parseCodexLimits({rateLimits:{limitId:'codex',primary:{usedPercent:NaN}}},date).status,'unavailable');
 assert.deepEqual(parseCodexLimits({rateLimits:{limitId:'codex',primary:{usedPercent:1,windowDurationMins:-2,resetsAt:NaN}}},date).windows[0],{position:'primary',usedPercent:1,windowDurationMins:null,resetsAt:null});

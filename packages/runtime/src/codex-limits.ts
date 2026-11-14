@@ -1,16 +1,17 @@
 import { CodexTransport } from './agents/codex-transport.js';
 
 export type CodexLimitWindow = { position: 'primary' | 'secondary'; usedPercent: number; windowDurationMins: number | null; resetsAt: string | null };
-export type CodexLimits = { status: 'ok' | 'unavailable' | 'not_applicable' | 'signed_out' | 'failed' | 'cancelled'; checkedAt: string; windows: CodexLimitWindow[] };
+export type CodexLimits = { status: 'ok' | 'unavailable' | 'not_applicable' | 'signed_out' | 'failed' | 'cancelled'; checkedAt: string; ordinaryUsageAllowed: boolean | null; windows: CodexLimitWindow[] };
 const object = (value: unknown): Record<string, unknown> | undefined => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 /** The returned value is a strict whitelist; account identifiers, credit data and native errors never cross this boundary. */
 export function parseCodexLimits(value: unknown, checkedAt: string): CodexLimits {
   const response = object(value);
-  if (!response) return {status:'failed',checkedAt,windows:[]};
+  if (!response) return {status:'failed',checkedAt,ordinaryUsageAllowed:null,windows:[]};
+  const ordinaryUsageAllowed = typeof response.ordinaryUsageAllowed === 'boolean' ? response.ordinaryUsageAllowed : null;
   const buckets = object(response.rateLimitsByLimitId);
   const fallback = object(response.rateLimits);
   const bucket = buckets && 'codex' in buckets ? object(buckets.codex) : fallback && (fallback.limitId == null || fallback.limitId === 'codex') ? fallback : undefined;
-  if (!bucket || (bucket.limitId != null && bucket.limitId !== 'codex')) return {status:'unavailable',checkedAt,windows:[]};
+  if (!bucket || (bucket.limitId != null && bucket.limitId !== 'codex')) return {status:'unavailable',checkedAt,ordinaryUsageAllowed,windows:[]};
   const windows: CodexLimitWindow[] = [];
   for (const position of ['primary','secondary'] as const) {
     const item = object(bucket[position]);
@@ -19,10 +20,10 @@ export function parseCodexLimits(value: unknown, checkedAt: string): CodexLimits
     const reset = typeof item.resetsAt === 'number' && Number.isFinite(item.resetsAt) && item.resetsAt > 0 && item.resetsAt <= 253402300799 ? item.resetsAt : null;
     windows.push({position,usedPercent:item.usedPercent,windowDurationMins:duration,resetsAt:reset === null ? null : new Date(reset * 1000).toISOString()});
   }
-  return {status:windows.length ? 'ok' : 'unavailable',checkedAt,windows};
+  return {status:windows.length || ordinaryUsageAllowed !== null ? 'ok' : 'unavailable',checkedAt,ordinaryUsageAllowed,windows};
 }
 export async function probeCodexLimits(command:string,signal:AbortSignal):Promise<CodexLimits> {
-  const empty = (status:CodexLimits['status']):CodexLimits => ({status,checkedAt:new Date().toISOString(),windows:[]});
+  const empty = (status:CodexLimits['status']):CodexLimits => ({status,checkedAt:new Date().toISOString(),ordinaryUsageAllowed:null,windows:[]});
   if(signal.aborted)return empty('cancelled');
   let transport:CodexTransport|undefined;
   const starting=CodexTransport.start({command,cwd:process.cwd(),requestTimeoutMs:5000,shutdownGraceMs:200,signal});
