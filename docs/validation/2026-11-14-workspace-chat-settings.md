@@ -1,6 +1,6 @@
 # 固定协作入口与聊天阅读设置
 
-2026-11-14，[#29](https://github.com/tt-a1i/hive-desktop/issues/29)。从 main `26ebdea` 开始，在 `codex/product-completeness` 实施。本文记录源码与隔离 Mac 原生窗口验收；安装包另列。完整目标 #1 继续开放。
+2026-11-14，[#29](https://github.com/tt-a1i/hive-desktop/issues/29)。源码 `f9f3c2b`，从 main `26ebdea` 开始，在 `codex/product-completeness` 实施。本文记录源码与隔离 Mac 原生窗口验收；开发包见 [包内记录](2026-11-14-workspace-chat-settings-package.md)。完整目标 #1 继续开放。
 
 ## 已实现
 

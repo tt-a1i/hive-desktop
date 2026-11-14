@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 当前开发包 f9f3c2b（2026-11-14）
+
+固定协作入口与聊天阅读设置已进入 current/candidate ZIP 和新 DMG，28,869 项清单/29 链接、四组包内检查、旧真实三会话完整 40 条历史冷读与原生启动恢复通过；包内优化主程序/Node/runtime 的隔离窗口切换设置、草稿和正常退出通过。仅更新原生程序，未替换用户正在运行的安装实例，零新厂商推理。保留 26ebdea 可运行回退，清理重复组装 base 约 459 MB，保留持续开发缓存。见[包内范围](validation/2026-11-14-workspace-chat-settings-package.md)。完整目标继续。
+
 ## 完整目标重启与固定协作入口、聊天设置（2026-11-14）
 
 已按用户最新确认，以 T3Code 为首要参考，结合 Cindy/Beluga，沿用 GPUI/Node 并持续补齐完整产品。常驻团队/协作/工作流入口、工具合并/逐项与思考默认展示已实现；历史偏好兼容、思考缓存及流式状态、真实写盘失败/重试和预览只读已验证。Rust 42 passed、Mac 原生窄窗/20px/中英文/冷开/草稿及两次最终进程 exit 0、Windows 交叉检查通过，无新模型推理。见[源码证据](validation/2026-11-14-workspace-chat-settings.md)、[完整顺序](product-completeness.md)、#29。开发包另行记录；下面的“当前”为各阶段历史状态，本轮开始时实际 current/candidate 是 `26ebdea`。完整目标继续。

@@ -4,7 +4,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
-2026-11-14：以 T3 Code 为首要 UI/UX 与全部设置体验参考的完整产品目标已确认。源码已加入常驻团队/协作入口、工具活动和思考阅读设置，并完成隔离 Mac 原生操作、真实写盘失败与重试等定向验证，见 [本批记录](docs/validation/2026-11-14-workspace-chat-settings.md)。本轮开始时 current/candidate 实查为 `26ebdea` release；新源码、开发包和完整产品验收分别记录。
+2026-11-14：以 T3 Code 为首要 UI/UX 与全部设置体验参考的完整产品目标已确认。常驻团队/协作入口、工具活动和思考阅读设置已进入 `f9f3c2b` 开发包；Mac 原生操作、真实写盘失败/重试、包内四组检查和既有真实历史冷读通过，见 [源码记录](docs/validation/2026-11-14-workspace-chat-settings.md) 与 [当前开发包](docs/validation/2026-11-14-workspace-chat-settings-package.md)。当前已运行安装实例未替换，完整产品验收继续。
 
 2026-11-09：采用 GPUI + gpui-kit 构建 macOS / Windows 原生界面，复用 Hive Node 后台。macOS 已分别跑通内置 Pi、外部 Codex 和外部 Pi 主控创建 Worker、派单、文件执行、显式汇报、主控核验及会话恢复。外部 Pi 的范围见 [团队验证](docs/validation/2026-11-07-external-pi-team.md)，Codex 见 [原生接入验证](docs/validation/2026-11-07-codex.md)。成员管理、Claude 官方 SDK 接入、账号与模型配置、全局置顶和便携开发包已加入；Claude 真实模型协作、完整配置、界面打磨和跨平台正式发行仍在实施。
 

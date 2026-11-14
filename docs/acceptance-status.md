@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 f9f3c2b（2026-11-14）
+
+固定团队/协作入口、工具与思考阅读设置及故障反馈已进入 current/candidate ZIP、DMG。四组包检查、完整清单、真实历史副本冷读及优化主程序/包内 Node/runtime 实际窗口通过，零新厂商推理；正在运行的安装实例未替换。见[当前包精确范围](validation/2026-11-14-workspace-chat-settings-package.md)。下文为各阶段历史，完整目标继续。
+
 ## 2026-11-14：固定入口与聊天阅读设置（源码）
 
 按最新确认，T3Code 为首要 UI/UX 与所有设置参考，默认聊天工作台、团队/协作固定入口。已补齐常驻入口和工具/思考阅读设置，修复思考缓存、真实保存失败提示离屏及预览覆盖 README；Rust 42 passed、隔离 Mac 原生操作/故障重试/冷开/退出及 Windows 交叉检查通过，无新模型请求。见[精确证据与边界](validation/2026-11-14-workspace-chat-settings.md)。本轮开始时实查 current/candidate 为 `26ebdea` release，下面“当前”和“待入包”描述属于各阶段历史。新包另列，完整目标继续。
