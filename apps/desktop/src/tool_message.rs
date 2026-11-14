@@ -573,7 +573,7 @@ impl HiveApp {
                                                             "tool-input-text-{id}"
                                                         )))
                                                         .role(Role::Label)
-                                                        .aria_label(format!(
+                                                        .aria_value(format!(
                                                             "{}: {input}",
                                                             tr("输入参数")
                                                         ))
@@ -623,7 +623,7 @@ impl HiveApp {
                                                             "tool-output-text-{id}"
                                                         )))
                                                         .role(Role::Label)
-                                                        .aria_label(format!(
+                                                        .aria_value(format!(
                                                             "{}: {text}",
                                                             tr("输出")
                                                         ))
