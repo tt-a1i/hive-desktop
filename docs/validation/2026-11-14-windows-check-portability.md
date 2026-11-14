@@ -21,7 +21,15 @@ Windows run [43556960351](https://github.com/tt-a1i/hive-desktop/actions/runs/43
 
 四个独立 reviewer 检查覆盖、恢复语义、Windows 编码及范围；共同发现仅检查元数据缺失会放弱用户正文隔离断言，已改为固定完整消息比较并重跑。四者最终复核均无遗留发现，未把静态审查称为 Windows 实机验收。
 
-Windows 新运行结果待补，不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功。现有 Mac 开发包无需因 test-only 改动重新组装。
+## Windows 后续运行
+
+run [43558093991](https://github.com/tt-a1i/hive-desktop/actions/runs/43558093991) 的 `native-clis` 和 `native-supervision` 已成功。Windows 实际原始 Pi/Codex CLI、附件复制/队列失败重试等相应步骤通过。构建 job 越过原临时目录错误后，在 `codex-steering.ts` 的写盘故障夹具失败：Windows 的 `chmod(0500)` 没有禁止目录写入，未成功制造故障，导致预期保留的两条投递已正常消费。
+
+该故障注入改为先保留原 metadata 目录，再用普通文件阻塞同一路径，结束后恢复；所有平台都必须实际触发写入失败，仍要求两条投递和零完成回执，不修改产品代码或放宽断言。`pnpm --filter @hive-desktop/runtime exec tsx checks/codex-steering.ts` 已在本机退出 0，覆盖 system/report 各 12 种时序，日志为 `.artifacts/product-completeness-20261114/codex-steering-portable.log`；新 Windows 结果继续补充。
+
+已读取 Windows `native-clis` 完整日志，确认 `FILE_ATTACHMENTS_OK`、`FILES_WIRE_OK`、`DELIVERY_FAILURES_OK`、`PI_REASONING_OK` 与 `PI_REASONING_WIRE_OK` 均实际输出；不是仅凭 job 绿色推断附件检查成功。
+
+不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功。现有 Mac 开发包无需因 test-only 改动重新组装。
 
 ## 本轮账号范围
 

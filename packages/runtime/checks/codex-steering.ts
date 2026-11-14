@@ -1,6 +1,6 @@
 // Real owned JSONL subprocess + durable delivery spool; synthetic native peer, no model.
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile,rm,chmod} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,rm,rename,unlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Type} from 'typebox';
@@ -49,7 +49,12 @@ try{
   try{
    await queue.enqueue(mode,true,{version:1,origin:'user',displayText:mode});await atTool.promise;
    if(mode==='user-order')await queue.enqueue('queued user',true,{version:1,origin:'user',displayText:'queued user'});
-   if(mode==='write-failure')await chmod(join(cwd,'metadata'),0o500);
+   if(mode==='write-failure'){
+    // chmod does not remove directory write access on Windows. Preserve the
+    // real metadata and obstruct its directory path on every platform instead.
+    await rename(join(cwd,'metadata'),join(cwd,'metadata.saved'));
+    await writeFile(join(cwd,'metadata'),'Owned metadata write obstruction');
+   }
    await queue.enqueue('notice one',true,notice(1));
    if(mode==='normal'||mode==='before-ack')await queue.enqueue('notice two',true,notice(2));
    const accepted=queue.pending;assert.equal(DeliveryQueue.persistedCount(join(cwd,'spool'),'chat'),accepted.length);
@@ -90,7 +95,7 @@ try{
    }else if(mode==='disconnect'||mode==='write-failure'){
     assert.equal(queue.pendingCount,2);assert.equal(errors.length,1);assert.equal(session.completedDeliveryIds().length,0);
    }
-  }finally{releaseTool.release();if(mode==='write-failure')await chmod(join(cwd,'metadata'),0o700);await session.abort();await queue.pause();await session.dispose();}
+  }finally{releaseTool.release();if(mode==='write-failure'){await unlink(join(cwd,'metadata'));await rename(join(cwd,'metadata.saved'),join(cwd,'metadata'));}await session.abort();await queue.pause();await session.dispose();}
   if(mode==='normal'||mode==='before-ack'||mode==='interrupted'||mode==='no-ack'){
    const restored=await createCodexSession({...options,threadId:session.threadId});
    try{
