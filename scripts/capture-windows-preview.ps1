@@ -462,7 +462,13 @@ Write-Host 'Renamed the lead session without changing its draft or team binding.
 # The sidebar search is a real input; results are confined to its named list.
 # Bind both targets to the fixture's actual records before selecting by full identity.
 $searchInputName = '搜索会话、消息、项目或 Agent…'
-$fixtureRecords = @([System.IO.File]::ReadAllText((Join-Path $DataDirectory 'chats/index.json')) | ConvertFrom-Json)
+function Read-ChatRecords([string] $Path) {
+    # ConvertFrom-Json emits a JSON array as one pipeline object in Windows
+    # PowerShell; explicitly enumerate each record before applying filters.
+    $records = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($Path))
+    foreach ($record in $records) { Write-Output $record }
+}
+$fixtureRecords = @(Read-ChatRecords (Join-Path $DataDirectory 'chats/index.json'))
 $workerRecord = @($fixtureRecords | Where-Object { $_.sessionFile -ceq $WorkerFile })
 $leadRecord = @($fixtureRecords | Where-Object { $_.title -ceq '启动方式核验' })
 if ($workerRecord.Count -ne 1 -or $leadRecord.Count -ne 1) { throw 'Search targets did not identify exactly one fixture member and lead.' }
@@ -470,7 +476,6 @@ if ($workerRecord[0].title -cne 'Reviewer' -or $workerRecord[0].backend -cne 'pi
     [string]::IsNullOrEmpty($workerRecord[0].agentId) -or $workerRecord[0].agentId.EndsWith(':orchestrator') -or
     $workerRecord[0].workspaceId -cne $leadRecord[0].workspaceId -or
     $leadRecord[0].agentId -cne "$($leadRecord[0].workspaceId):orchestrator" -or $leadRecord[0].backend -cne 'pi') {
-    Write-Host ("Fixture search identity: workerTitle=$($workerRecord[0].title), workerBackend=$($workerRecord[0].backend), workerAgent=$($workerRecord[0].agentId), workerWorkspace=$($workerRecord[0].workspaceId), leadAgent=$($leadRecord[0].agentId), leadWorkspace=$($leadRecord[0].workspaceId), leadBackend=$($leadRecord[0].backend)")
     throw 'Search targets lost the fixture member/lead identity or backend binding.'
 }
 $betaPath = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($TasksFile)))
@@ -537,14 +542,14 @@ Write-Host 'Recovered the original lead session and draft after force-terminatin
 
 # Metadata-only actions must preserve the current chat and unsent draft.
 $chatIndex = Join-Path $DataDirectory 'chats/index.json'
-$pinRecord = @(Get-Content -Raw $chatIndex | ConvertFrom-Json | Where-Object { $_.title -eq '启动方式核验' })
+$pinRecord = @(Read-ChatRecords $chatIndex | Where-Object { $_.title -eq '启动方式核验' })
 if ($pinRecord.Count -ne 1) { throw 'Could not identify the named fixture conversation for pinning.' }
 $pinId = $pinRecord[0].id
 $pinTimestamp = $pinRecord[0].updatedAt
 function Wait-SessionPin([bool] $Expected) {
     $deadline = [DateTime]::UtcNow.AddSeconds(8)
     do {
-        $record = @(Get-Content -Raw $chatIndex | ConvertFrom-Json | Where-Object { $_.id -eq $pinId })
+        $record = @(Read-ChatRecords $chatIndex | Where-Object { $_.id -eq $pinId })
         if ($record.Count -eq 1 -and [bool]$record[0].pinned -eq $Expected) {
             if ($record[0].updatedAt -ne $pinTimestamp) { throw 'Pinning changed the activity timestamp.' }
             return
