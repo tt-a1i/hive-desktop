@@ -141,7 +141,16 @@ async function verifyIdentity(dataRoot: string, record: ManagedWorktree): Promis
   if (await git(expected, 'symbolic-ref', '--short', 'HEAD') !== record.branch) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree branch changed');
   const list = await git(expected, 'worktree', 'list', '--porcelain', '-z');
   const blocks = list.split('\0\0').map(block => block.split('\0'));
-  const item = blocks.find(block => block.includes(`worktree ${expected}`));
+  let item: string[] | undefined;
+  for (const block of blocks) {
+    const entry = block.find(line => line.startsWith('worktree '));
+    if (!entry) continue;
+    try {
+      if (await realpath(entry.slice('worktree '.length)) === expected) { item = block; break; }
+    } catch {
+      // An unrelated registered worktree may be missing or inaccessible.
+    }
+  }
   if (!item || !item.includes(`branch refs/heads/${record.branch}`)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree is not registered to this repository');
   return { root, intent, gitDir, locked: item.some(line => line === 'locked' || line.startsWith('locked ')) };
 }

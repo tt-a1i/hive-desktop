@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
@@ -36,6 +36,28 @@ try {
  assert.equal(a.kind, 'worktree'); assert.notEqual(a.path, b.path);
  assert.notEqual(one.execution!.branch, two.execution!.branch);
  assert.equal(await runtime.chats.executionDirectory(project.id, one.id), a.path);
+ // Git's registered path can be an alias of the same physical worktree.
+ // Repoint only the fixture's real Git registry entry, then verify ownership
+ // against the actual filesystem and reject a different existing worktree.
+ if (process.platform !== 'win32') {
+  const gitDir = execFileSync('git', ['-C', a.path, 'rev-parse', '--absolute-git-dir'], {encoding: 'utf8'}).trim();
+  const pointer = join(gitDir, 'gitdir'); const original = await readFile(pointer, 'utf8');
+  const alias = join(dir, 'worktree-alias'); await symlink(a.path, alias, 'dir');
+  const foreign = join(dir, 'foreign-worktree');
+  git('worktree', 'add', '-b', 'foreign-fixture', foreign); await rename(foreign, foreign + '.missing');
+  try {
+   await writeFile(pointer, join(alias, '.git') + '\n');
+   assert.ok(git('worktree', 'list', '--porcelain').includes(`worktree ${alias}`));
+   assert.equal(await runtime.chats.executionDirectory(project.id, one.id), a.path);
+   await writeFile(pointer, join(b.path, '.git') + '\n');
+   await assert.rejects(runtime.chats.executionDirectory(project.id, one.id), /not registered|工作树/i);
+  } finally {
+   await writeFile(pointer, original);
+   await rename(foreign + '.missing', foreign);
+   git('worktree', 'remove', '--', foreign);
+   await rm(alias);
+  }
+ }
  await writeFile(join(a.path, 'same.txt'), 'one'); await writeFile(join(b.path, 'same.txt'), 'two');
  assert.equal(await readFile(join(repo, 'same.txt'), 'utf8'), 'base');
  assert.equal(await readFile(join(a.path, 'same.txt'), 'utf8'), 'one'); assert.equal(await readFile(join(b.path, 'same.txt'), 'utf8'), 'two');
