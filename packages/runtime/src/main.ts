@@ -10,6 +10,7 @@ import { createDesktopRuntime } from './desktop-runtime.js';
 import { structuredCommand } from './structured-runtime.js';
 import { desktopDataDir } from './paths.js';
 import { remoteCommands } from './remote-commands.js';
+import { captureRuntimeInfo } from './runtime-info.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
 // The SDK and user extensions may log at any point. Keep ordinary stdout writes
@@ -30,6 +31,7 @@ const writeFrame = (message: unknown): Promise<void> => {
 };
 const send = (message: unknown) => { void writeFrame(message); };
 
+const runtimeInfo = captureRuntimeInfo();
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
 const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }), { onTerminalEvent: data => send({ event: 'terminal', data }) });
@@ -62,7 +64,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'pi.auth.cancel': return piAuth.cancel(text(params, 'loginId'));
     case 'pi.auth.logout': return piAuth.logout(text(params, 'providerId'));
     case 'initialize': {
-      return { version: '0.1.0', dataDir, remoteCommands: remoteCommands(dataDir), piAgentDir: getAgentDir(), hivePort: hive.port, navigation: hive.getNavigation() };
+      return { version: runtimeInfo.version ?? 'unknown', runtimeInfo, dataDir, remoteCommands: remoteCommands(dataDir), piAgentDir: getAgentDir(), hivePort: hive.port, navigation: hive.getNavigation() };
     }
     case 'desktop.navigation.save': {
       const sessions = record(params.sessions);

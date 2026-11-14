@@ -23,6 +23,12 @@ struct Entry {
 }
 const ENTRIES: &[Entry] = &[
     Entry {
+        section: Some(SettingsSection::About),
+        title: "关于与诊断",
+        description: "版本、构建与后台连接信息",
+        keywords: "about version build revision runtime node hive diagnostics support connection 版本 构建 标识 关于 诊断 反馈 后台 连接",
+    },
+    Entry {
         section: Some(SettingsSection::Appearance),
         title: "外观",
         description: "主题、界面字号、语言与阅读预览",

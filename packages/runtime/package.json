@@ -8,6 +8,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "check:hive": "tsx checks/hive-host.ts",
     "check:tasks-watcher": "tsx checks/tasks-watcher-lifecycle.ts",
+    "check:runtime-info": "pnpm build && tsx checks/runtime-info.ts",
     "check:runtime": "pnpm build && tsx checks/runtime.ts",
     "check:attachments": "pnpm build && tsx checks/image-attachments.ts && tsx checks/image-attachments-wire.ts",
     "check:images": "pnpm build && tsx checks/prompt-images.ts && tsx checks/prompt-images-peers.ts && tsx checks/prompt-images-pi.ts",

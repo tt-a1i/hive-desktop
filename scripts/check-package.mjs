@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import { createRequire } from 'node:module';
 
 const i = process.argv.indexOf('--bundle');
 if (i < 0 || !process.argv[i + 1]) throw new Error('Pass --bundle PATH to the portable output directory');
@@ -102,6 +103,15 @@ try {
   });
   progress('Initializing Hive runtime');
   const init = await request('initialize'); assert.ok(init.hivePort > 0);
+  const runtimeMetadata = JSON.parse(await readFile(join(runtime, 'package.json'), 'utf8'));
+  const runtimeRequire = createRequire(join(runtime, 'package.json'));
+  const hiveMetadata = JSON.parse(await readFile(runtimeRequire.resolve('@tt-a1i/hive/package.json'), 'utf8'));
+  assert.equal(runtimeMetadata.name, '@hive-desktop/runtime');
+  assert.equal(hiveMetadata.name, '@tt-a1i/hive');
+  const actualNode = spawnSync(node, ['-p', 'JSON.stringify({nodeVersion:process.version,platform:process.platform,arch:process.arch})'], { encoding: 'utf8', timeout: 10_000 });
+  assert.equal(actualNode.status, 0, actualNode.stderr);
+  assert.equal(init.version, runtimeMetadata.version);
+  assert.deepEqual(init.runtimeInfo, { version: runtimeMetadata.version, hiveVersion: hiveMetadata.version, ...JSON.parse(actualNode.stdout) });
   assert.equal(init.piAgentDir, piAgentDir);
   const accounts = await request('pi.auth.providers');
   assert.equal(accounts.agentDir, piAgentDir);

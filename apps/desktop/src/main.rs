@@ -18,6 +18,7 @@ mod file_save;
 mod focus_scroll;
 mod conversation_list;
 mod drafts;
+mod diagnostics;
 mod failures;
 mod image_input;
 mod image_viewer;

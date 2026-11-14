@@ -79,6 +79,7 @@ impl HiveApp {
                 Some(SettingsSection::Team),
             ),
             ("settings-roles-tab", tr("角色模板"), Glyph::Bot, None),
+            ("settings-about-tab", tr("关于与诊断"), Glyph::Info, Some(SettingsSection::About)),
         ];
         let selected = |section: Option<SettingsSection>| {
             if self.roles.visible {

@@ -14,6 +14,7 @@ use gpui_kit::{
 use serde::Deserialize;
 use serde_json::json;
 mod appearance;
+mod about;
 mod language;
 mod search;
 mod notification;
@@ -410,6 +411,7 @@ fn section_meta(section: SettingsSection) -> (&'static str, &'static str) {
         SettingsSection::Notifications => ("通知", "本机系统提醒与 Webhook 通知地址"),
         SettingsSection::Remote => ("远程接入", "账号连接、设备配对与访问记录"),
         SettingsSection::Programs => ("外部程序", "外部 Pi、Codex 与 Claude Code 的路径和版本检查"),
+        SettingsSection::About => ("关于与诊断", "版本、构建与后台连接信息"),
     }
 }
 
@@ -601,6 +603,11 @@ impl HiveApp {
                         }
                         SettingsSection::Notifications => content.id("settings-notification-container").child(crate::focus_scroll::Viewport::new("notifications-viewport", &self.notification_scroll, v_flex().id("settings-notification-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.notification_scroll).vertical_scrollbar(&self.notification_scroll).pr_1().child(self.render_notification_settings(cx)))),
                         SettingsSection::Programs => content.id("settings-programs-container").child(self.render_program_settings(cx)),
+                        SettingsSection::About => content.id("settings-about-container").child(crate::focus_scroll::Viewport::new(
+                            "about-viewport", &self.about_scroll,
+                            v_flex().id("settings-about-content").flex_1().min_h_0().min_w_0()
+                                .overflow_y_scroll().track_scroll(&self.about_scroll).vertical_scrollbar(&self.about_scroll).pr_1()
+                                .child(self.render_about_settings(cx)))),
                     }
                 }).into_any_element()
         };

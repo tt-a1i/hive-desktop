@@ -2,6 +2,8 @@ use super::*;
 
 impl HiveApp {
     pub fn start_backend(&mut self, settings_window: AnyWindowHandle, cx: &mut Context<Self>) {
+        self.backend_info = None;
+        self.diagnostics_copied = false;
         let connection = self.connection_generation;
         self.events = cx.spawn(async move |this, cx| {
             let runtime = match smol::unblock(Runtime::launch).await {
@@ -62,6 +64,7 @@ impl HiveApp {
                 }
                 match result {
                     Ok(info) => {
+                        this.backend_info = Some(crate::diagnostics::BackendInfo::from_initialize(&info));
                         if let Some(root) = info["dataDir"].as_str() {
                             crate::language::restore(std::path::Path::new(root), cx);
                             crate::appearance::restore(std::path::Path::new(root), cx);
@@ -114,6 +117,8 @@ impl HiveApp {
                         match event {
                             RuntimeEvent::Failed(error) => {
                                 this.connected = false;
+                                this.backend_info = None;
+                                this.diagnostics_copied = false;
                                 this.reset_pi_accounts(settings_window, cx);
                                 this.pi_models.reset_connection();
                                 this.terminal_disconnected(cx);
@@ -160,6 +165,8 @@ impl HiveApp {
         self.connection_generation += 1;
         self.remote = Default::default();
         self.restarting = true;
+        self.backend_info = None;
+        self.diagnostics_copied = false;
         self.loading = true;
         self.error = None;
         self.status = "正在清理旧后台…".into();

@@ -29,6 +29,7 @@ pub enum SettingsSection {
     Notifications,
     Remote,
     Programs,
+    About,
 }
 
 pub struct ToolPresentation {
@@ -201,6 +202,9 @@ pub struct HiveApp {
     pub member_details_open: HashMap<String, ScrollHandle>,
     pub deleting_member: Option<String>,
     pub runtime: Option<Arc<Runtime>>,
+    pub backend_info: Option<crate::diagnostics::BackendInfo>,
+    pub about_scroll: ScrollHandle,
+    pub diagnostics_copied: bool,
     pub workspaces: Vec<Workspace>,
     pub workspace: Option<String>,
     pub workspace_removing: Option<String>,
@@ -528,6 +532,9 @@ impl HiveApp {
             _member_model_search_subscription: member_model_search_subscription,
             _member_search_subscription: member_search_subscription,
             runtime: None,
+            backend_info: None,
+            about_scroll: ScrollHandle::new(),
+            diagnostics_copied: false,
             workspaces: vec![],
             workspace: None,
             workspace_removing: None,
