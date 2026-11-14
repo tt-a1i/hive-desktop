@@ -20,9 +20,13 @@ function observation(text: string, tag: string): {cwd: string; content: string} 
  const end = lines.findIndex(line => line.trim() === `${tag}_END`);
  if (end < 0 || end === lines.length - 1) return;
  const data = lines.findIndex(line => line.trim() === `${tag}_DATA`);
- const cwd = lines.find(line => line.startsWith(`${tag}_PWD:`));
- if (!cwd || data < 0 || data + 1 !== end - 1) return;
- return {cwd: cwd.slice(`${tag}_PWD:`.length).trim(), content: lines[data + 1]!.trim()};
+ const cwd = lines.findIndex(line => line.startsWith(`${tag}_PWD:`));
+ if (cwd < 0 || data <= cwd || data + 1 !== end - 1) return;
+ // A console may wrap a long cwd across physical output lines. Fixture paths
+ // contain no newline; join only the lines bounded by the unique markers.
+ const pathLines = lines.slice(cwd, data);
+ pathLines[0] = pathLines[0]!.slice(`${tag}_PWD:`.length);
+ return {cwd: pathLines.join('').trim(), content: lines[data + 1]!.trim()};
 }
 // Regression for a real ConPTY transcript: echoed markers are not proof of
 // completion and title sequences can occur between the marker and file data.
@@ -30,6 +34,7 @@ const sampleTag = 'HIVEFIXTURE';
 const echoed = `echo ${sampleTag}_DATA & type same.txt & echo ${sampleTag}_END\r\n`;
 assert.equal(observation(echoed, sampleTag), undefined);
 assert.deepEqual(observation(echoed + `${sampleTag}_PWD:C:\\fixture \r\n${sampleTag}_DATA \r\x1b]0;cmd.exe\x07\nroot\r\x1b]0;cmd.exe\x07\n${sampleTag}_END\r\n`, sampleTag), {cwd: 'C:\\fixture', content: 'root'});
+assert.deepEqual(observation(`${sampleTag}_PWD:C:\\long\r\n path\\tree \r\n${sampleTag}_DATA \r\nroot\r\n${sampleTag}_END\r\n`, sampleTag), {cwd: 'C:\\long path\\tree', content: 'root'});
 
 const receiptArg = process.argv.indexOf('--receipt');
 if (receiptArg >= 0 && !process.argv[receiptArg + 1]) throw Error('--receipt requires a path');
