@@ -122,11 +122,46 @@ try {
   const stored = JSON.parse(await readFile(join(directory, 'desktop/chats/index.json'), 'utf8'));
   assert.equal(stored.filter((chat: any) => chat.archived).length, 3);
   assert.ok(stored.every((chat: any) => chat.sessionFile === null));
+
+  const otherPath = join(directory, 'other-project');
+  await mkdir(otherPath);
+  const other = await rpc('hive.request', {
+    method: 'POST', path: '/api/workspaces',
+    body: { path: otherPath, name: 'Other project', autostart_orchestrator: false },
+  });
+  assert.equal(other.error, undefined);
+  const selectedIds = new Set<string>();
+  for (const [project, count] of [[workspaceId, 101], [other.result.id, 105]] as const) {
+    for (let i = 0; i < count; i++) {
+      const createdChat = await rpc('chat.createRecord', { workspaceId: project });
+      assert.equal(createdChat.error, undefined);
+      const sessionId = createdChat.result.id as string;
+      assert.equal((await rpc('chat.rename', { sessionId, title: 'Wire pagination ' + i })).error, undefined);
+      if (project === workspaceId) selectedIds.add(sessionId);
+    }
+  }
+  const legacy = await rpc('chat.search', { query: 'Wire pagination' });
+  assert.equal(legacy.error, undefined);
+  assert.equal(legacy.result.total, 206);
+  assert.equal(legacy.result.matches.length, 100);
+  const first = await rpc('chat.search', { query: 'Wire pagination', workspaceId, archived: false, offset: 0 });
+  const second = await rpc('chat.search', { query: 'Wire pagination', workspaceId, offset: 100 });
+  for (const page of [first, second]) {
+    assert.equal(page.error, undefined);
+    assert.equal(page.result.total, 101);
+    assert.ok(page.result.matches.every((hit: any) => hit.session.workspaceId === workspaceId));
+  }
+  assert.equal(first.result.matches.length, 100);
+  assert.equal(second.result.matches.length, 1);
+  const pageIds = [...first.result.matches, ...second.result.matches].map((hit: any) => hit.session.id);
+  assert.equal(new Set(pageIds).size, 101);
+  assert.deepEqual(new Set(pageIds), selectedIds);
+  assert.ok(notifications.every((event) => event.type === 'session_navigation'));
   assert.equal((await rpc('shutdown')).result.ok, true);
   await exited;
   assert.equal(child.exitCode, 0);
   console.log(
-    'SESSION_ARCHIVES_WIRE_OK: production JSONL four-backend archive/restore, strict flags and pagination, persisted identity, ordered metadata notifications and clean shutdown. No Agent/model initialization.',
+    'SESSION_ARCHIVES_WIRE_OK: production JSONL four-backend archive/restore, scoped cross-project pagination, persisted identity, ordered metadata notifications and clean shutdown. No Agent/model initialization.',
   );
 } finally {
   if (child.exitCode === null && child.signalCode === null) {
