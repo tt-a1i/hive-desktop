@@ -41,7 +41,15 @@ impl HiveApp {
                     .lines()
                     .map(str::trim)
                     .find(|line| !line.is_empty())
-                    .map(str::to_owned)
+                    .map(|line| {
+                        let mut chars = line.chars();
+                        let head: String = chars.by_ref().take(42).collect();
+                        if chars.next().is_some() {
+                            format!("{head}…")
+                        } else {
+                            head
+                        }
+                    })
             })
             .flatten();
         let accent_color = if block.redacted {
@@ -118,7 +126,6 @@ impl HiveApp {
                             .when_some(preview, |row, summary| {
                                 row.child(
                                     div()
-                                        .flex_1()
                                         .min_w_0()
                                         .text_left()
                                         .overflow_hidden()
@@ -139,7 +146,8 @@ impl HiveApp {
                                     .size(px(11.5))
                                     .text_color(Color::Muted.get(cx).opacity(0.8)),
                                 )
-                            }),
+                            })
+                            .child(div().flex_1()),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.prepare_conversation_expansion(&id);
