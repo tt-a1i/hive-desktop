@@ -25,33 +25,50 @@ impl HiveApp {
                 .render_tool_message(i, message, tool, cx)
                 .into_any_element();
         }
-        let heading = message
+        let is_delivery = message.delivery.is_some();
+        let is_plain_user = message.role == "user" && !is_delivery;
+        let is_team_context =
+            self.has_active_team_context() || self.messages.iter().any(|m| m.delivery.is_some());
+        let is_worker_session = self
+            .session
+            .as_ref()
+            .and_then(|s| s.agent_id.as_deref())
+            .is_some_and(|id| !id.ends_with(":orchestrator") && !id.ends_with(":__workflow__"));
+        let heading: SharedString = message
             .delivery
             .as_ref()
-            .map(|delivery| delivery.heading_text())
+            .map(|delivery| delivery.heading_text().into())
             .unwrap_or_else(|| {
                 match message.role.as_str() {
-                    "user" if message.explicit_user => tr("你"),
-                    "user" => tr("对话输入"),
+                    "user" if message.explicit_user => tr("你").into(),
+                    "user" => tr("对话输入").into(),
                     "assistant" => self
                         .session
                         .as_ref()
-                        .map(|s| tr(s.backend.label()))
-                        .unwrap_or(tr("助手")),
-                    "notice" => tr("会话通知"),
-                    _ => tr("工具"),
+                        .and_then(|s| s.agent_id.as_deref())
+                        .filter(|_| is_team_context)
+                        .map(|id| self.agent_name(id).into())
+                        .unwrap_or_else(|| {
+                            self.session
+                                .as_ref()
+                                .map(|s| tr(s.backend.label()))
+                                .unwrap_or(tr("助手"))
+                                .into()
+                        }),
+                    "notice" => tr("会话通知").into(),
+                    _ => tr("工具").into(),
                 }
-                .into()
             });
         let find_matched = self.conversation_find_matches(&message.id);
-        let is_plain_user = message.role == "user" && message.delivery.is_none();
         let hide_speaker_header = message.explicit_user
             || (message.role == "assistant"
-                && message.delivery.is_none()
-                && i > 0
-                && (self.messages[i - 1].role == "assistant"
-                    || self.messages[i - 1].tool.is_some()));
-        let is_delivery = message.delivery.is_some();
+                && !is_delivery
+                && (!is_team_context
+                    || !(i > 0 && self.messages[i - 1].delivery.is_some()
+                        || (is_worker_session
+                            && (i == 0
+                                || self.messages[i - 1].role == "user"
+                                || self.messages[i - 1].delivery.is_some())))));
         let mut delivery_actions = is_delivery.then(|| {
             let expanded = message.delivery.as_ref().is_some_and(|d| d.expanded);
             let dispatch_id = message
@@ -115,9 +132,7 @@ impl HiveApp {
             .min_w_0()
             .when(is_plain_user, |view| view.gap_1())
             .when(!is_plain_user, |view| view.gap_2())
-            .when(!is_plain_user && !is_delivery, |view| {
-                view.px_1().py_1().rounded_xl()
-            })
+            .when(!is_plain_user && !is_delivery, |view| view.py_0p5())
             .when(!find_matched && is_delivery, |view| {
                 view.px_4()
                     .py_3()
@@ -141,12 +156,12 @@ impl HiveApp {
                 view.px_3p5()
                     .py_2p5()
                     .rounded_xl()
-                    .bg(Color::Attention.get(cx))
+                    .bg(Color::AccentSoft.get(cx))
                     .border_1()
-                    .border_color(Color::Accent.get(cx).opacity(0.28))
+                    .border_color(Color::Accent.get(cx).opacity(0.32))
             })
             .when(is_plain_user, |bubble| {
-                bubble.ml_auto().max_w(px(560.)).items_end()
+                bubble.ml_auto().max_w(px(580.)).items_end()
             })
             .when(!hide_speaker_header, |view| {
                 view.child(
@@ -172,16 +187,27 @@ impl HiveApp {
                                 .child(
                                     div()
                                         .whitespace_normal()
-                                        .text_xs()
-                                        .font_weight(if is_delivery {
-                                            FontWeight::SEMIBOLD
-                                        } else {
-                                            FontWeight::MEDIUM
+                                        .when(!is_delivery && message.role == "assistant", |tag| {
+                                            tag.px_2()
+                                                .py(px(2.))
+                                                .rounded_md()
+                                                .bg(Color::Inset.get(cx))
+                                                .text_size(px(11.5))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Secondary.get(cx))
                                         })
-                                        .text_color(if is_delivery {
-                                            Color::Secondary.get(cx)
-                                        } else {
-                                            Color::Muted.get(cx)
+                                        .when(is_delivery || message.role != "assistant", |tag| {
+                                            tag.text_xs()
+                                                .font_weight(if is_delivery {
+                                                    FontWeight::SEMIBOLD
+                                                } else {
+                                                    FontWeight::MEDIUM
+                                                })
+                                                .text_color(if is_delivery {
+                                                    Color::Secondary.get(cx)
+                                                } else {
+                                                    Color::Muted.get(cx)
+                                                })
                                         })
                                         .child(heading),
                                 )
@@ -268,10 +294,11 @@ impl HiveApp {
                             })
                             .when(is_plain_user, |bubble| {
                                 bubble
-                                    .px_4()
+                                    .px_3p5()
                                     .py_2p5()
                                     .rounded_2xl()
                                     .bg(Color::Bubble.get(cx))
+                                    .text_color(Color::Text.get(cx))
                             })
                             .child(body),
                     )
@@ -401,7 +428,13 @@ impl HiveApp {
                 !message.text.is_empty()
                     || !message.images.is_empty()
                     || message.delivery.is_some(),
-                |view| view.child(self.message_actions(i, message, cx)),
+                |view| {
+                    view.child(
+                        div()
+                            .opacity(0.75)
+                            .child(self.message_actions(i, message, cx)),
+                    )
+                },
             )
             .into_any_element()
     }

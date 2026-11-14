@@ -44,8 +44,8 @@ impl HiveApp {
                     .map(str::to_owned)
             })
             .flatten();
-        let dot_color = if block.redacted {
-            Color::Muted.get(cx).opacity(0.6)
+        let accent_color = if block.redacted {
+            Color::Muted.get(cx).opacity(0.7)
         } else if block.running {
             Color::Accent.get(cx)
         } else if block.interrupted {
@@ -55,7 +55,7 @@ impl HiveApp {
                 0xd97706
             })
         } else {
-            Color::Muted.get(cx).opacity(0.75)
+            Color::Muted.get(cx)
         };
         v_flex()
             .min_w_0()
@@ -64,7 +64,7 @@ impl HiveApp {
                 Button::new(SharedString::from(format!("thinking-toggle-{row}-{index}")))
                     .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
-                    .h(px(26.))
+                    .h(px(24.))
                     .px_1p5()
                     .rounded_md()
                     .justify_start()
@@ -89,19 +89,14 @@ impl HiveApp {
                             .min_w_0()
                             .gap_1p5()
                             .items_center()
-                            .child(div().size(px(6.)).rounded_full().flex_shrink_0().bg(dot_color))
                             .child(
                                 Icon::new(if block.redacted {
                                     Glyph::Lock
                                 } else {
                                     Glyph::Sparkles
                                 })
-                                .size(px(13.))
-                                .text_color(if block.running {
-                                    Color::Accent.get(cx)
-                                } else {
-                                    Color::Muted.get(cx)
-                                }),
+                                .size(px(12.5))
+                                .text_color(accent_color),
                             )
                             .child(
                                 div()
@@ -110,8 +105,10 @@ impl HiveApp {
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(if block.running {
                                         Color::Text.get(cx)
-                                    } else {
+                                    } else if expanded {
                                         Color::Secondary.get(cx)
+                                    } else {
+                                        Color::Muted.get(cx)
                                     })
                                     .child(label),
                             )
@@ -122,7 +119,7 @@ impl HiveApp {
                                         .min_w_0()
                                         .truncate()
                                         .text_xs()
-                                        .text_color(Color::Muted.get(cx))
+                                        .text_color(Color::Muted.get(cx).opacity(0.8))
                                         .child(summary),
                                 )
                             })
@@ -133,8 +130,8 @@ impl HiveApp {
                                     } else {
                                         Glyph::ChevronRight
                                     })
-                                    .size(px(12.))
-                                    .text_color(Color::Muted.get(cx)),
+                                    .size(px(11.5))
+                                    .text_color(Color::Muted.get(cx).opacity(0.8)),
                                 )
                             }),
                     )
@@ -160,20 +157,20 @@ impl HiveApp {
                 view.child(
                     v_flex()
                         .min_w_0()
-                        .ml_2()
+                        .ml(px(12.))
                         .pl_3()
                         .pr_1()
-                        .py_1p5()
-                        .gap_1p5()
+                        .py_1()
+                        .gap_1()
                         .border_l_1()
                         .border_color(if block.running {
                             Color::Accent.get(cx).opacity(0.45)
+                        } else if block.interrupted {
+                            accent_color.opacity(0.45)
                         } else {
                             Color::Divider.get(cx)
                         })
-                        .rounded_r_lg()
-                        .bg(Color::Inset.get(cx).opacity(0.55))
-                        .text_size(px(12.5))
+                        .text_size(px(13.))
                         .line_height(rems(1.55))
                         .text_color(Color::Secondary.get(cx))
                         .child(crate::text_reading::selectable_text(
@@ -187,8 +184,8 @@ impl HiveApp {
                                 )))
                                 .custom(crate::palette::subtle_icon_variant(cx))
                                 .compact()
-                                .h(px(24.))
-                                .w(px(24.))
+                                .h(px(22.))
+                                .w(px(22.))
                                 .rounded_md()
                                 .icon(Glyph::Copy)
                                 .accessibility_label(if english() {

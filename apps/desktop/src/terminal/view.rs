@@ -134,15 +134,15 @@ impl RenderOnce for TerminalDrawer {
                             .gap_2()
                             .child(
                                 Icon::new(Glyph::SquareTerminal)
-                                    .size(px(15.))
-                                    .text_color(Color::Secondary.get(cx))
+                                    .size(px(14.))
+                                    .text_color(Color::Muted.get(cx))
                                     .flex_shrink_0(),
                             )
                             .child(
                                 div()
                                     .flex_shrink_0()
                                     .text_size(px(13.))
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(Color::Text.get(cx))
                                     .child(title),
                             )
@@ -161,8 +161,8 @@ impl RenderOnce for TerminalDrawer {
                                 div()
                                     .id("terminal-status-dot")
                                     .flex_shrink_0()
-                                    .w(px(7.))
-                                    .h(px(7.))
+                                    .w(px(6.))
+                                    .h(px(6.))
                                     .rounded_full()
                                     .bg(status_color)
                                     .tooltip(move |window, cx| {
@@ -278,7 +278,7 @@ impl RenderOnce for TerminalDrawer {
                         .py_1p5()
                         .border_b_1()
                         .border_color(Color::Divider.get(cx))
-                        .bg(Color::Inset.get(cx).opacity(0.45))
+                        .bg(Color::Sidebar.get(cx).opacity(0.65))
                         .child(
                             h_flex()
                                 .min_w_0()
@@ -306,7 +306,10 @@ impl RenderOnce for TerminalDrawer {
                                         )
                                     };
                                     Button::new(("terminal-run", i))
-                                        .ghost()
+                                        .custom(crate::palette::sidebar_item_variant(
+                                            run.current,
+                                            cx,
+                                        ))
                                         .compact()
                                         .xsmall()
                                         .h(px(24.))
@@ -342,7 +345,8 @@ impl RenderOnce for TerminalDrawer {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    .p_3()
+                    .px_4()
+                    .py_3()
                     .gap_2p5()
                     .when_some(self.app_error_banner, |col, banner| col.child(banner))
                     .when(!self.has_workspace || !self.workspace_writes_allowed, |col| {
