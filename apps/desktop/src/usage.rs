@@ -150,34 +150,57 @@ impl HiveApp {
             .custom(crate::palette::quiet_icon_variant(cx))
             .compact()
             .xsmall()
-            .h(px(28.))
-            .rounded_lg()
+            .h(px(22.))
+            .px_1p5()
+            .rounded_md()
             .tooltip(tr("查看原生用量和上下文"))
             .accessibility_label(tr("查看原生用量和上下文"))
             .selected(self.usage.visible)
             .disabled(!self.connected || !self.conversation_ready || self.loading);
+        let fallback_label = self
+            .session
+            .as_ref()
+            .map(|session| tr(session.backend.label()))
+            .unwrap_or_else(|| tr("用量"));
         let trigger = if let (Some(percent), Some(color)) = (context_percent, ring_color) {
-            trigger.px_2().child(
+            trigger.child(
                 h_flex()
                     .items_center()
-                    .gap_1p5()
+                    .gap_1()
                     .child(
                         ProgressCircle::new("session-usage-ring")
                             .xsmall()
-                            .size(px(14.))
+                            .size(px(12.))
                             .value(percent.clamp(0., 100.) as f32)
                             .color(color),
                     )
                     .child(
                         div()
-                            .text_size(px(11.5))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(Color::Secondary.get(cx))
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(Color::Muted.get(cx))
                             .child(format!("{percent:.0}%")),
                     ),
             )
         } else {
-            trigger.w(px(28.)).icon(Glyph::ChartNoAxesColumn)
+            trigger.child(
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Icon::new(Glyph::Gauge)
+                            .size(px(12.))
+                            .text_color(Color::Muted.get(cx))
+                            .flex_shrink_0(),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(Color::Muted.get(cx))
+                            .child(fallback_label),
+                    ),
+            )
         };
         Popover::new("session-usage-popover")
             .anchor(Anchor::BottomRight)

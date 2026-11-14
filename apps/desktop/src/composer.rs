@@ -124,6 +124,12 @@ impl HiveApp {
             input.marked_text_range(window, cx).is_some()
         });
         if !composing {
+            if self.workspace.is_none() {
+                if self.composer_has_text && self.connected && !self.loading && !self.closing {
+                    self.choose_workspace_folder(window, cx);
+                }
+                return;
+            }
             self.send(window, cx);
         }
     }

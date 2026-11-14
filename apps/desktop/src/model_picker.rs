@@ -28,50 +28,47 @@ impl HiveApp {
             .unwrap_or_else(|| tr("选择会话模型").into());
         let unavailable =
             !self.connected || !self.conversation_ready || running || self.loading || self.closing;
+        let backend_icon = self
+            .session
+            .as_ref()
+            .map(|session| crate::composer_controls::backend_glyph(session.backend));
         let trigger = Button::new("choose-model")
             .accessibility_label(tr("选择会话模型与推理强度"))
             .custom(crate::palette::quiet_icon_variant(cx))
             .compact()
-            .h(px(28.))
+            .h(px(26.))
             .px_2()
             .rounded_lg()
             .selected(self.choosing_model)
             .min_w_0()
             .max_w(px(if window.viewport_size().width < px(900.) {
-                250.
+                220.
             } else {
-                330.
+                280.
             }))
             .child(
                 h_flex()
                     .min_w_0()
                     .items_center()
                     .gap_1p5()
+                    .when_some(backend_icon, |row, glyph| {
+                        row.child(
+                            Icon::new(glyph)
+                                .size(px(14.))
+                                .text_color(Color::Muted.get(cx))
+                                .flex_shrink_0(),
+                        )
+                    })
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
                             .text_size(px(12.5))
                             .font_weight(FontWeight::MEDIUM)
-                            .text_color(Color::Secondary.get(cx))
+                            .text_color(Color::Text.get(cx))
                             .child(name.clone()),
-                    )
-                    .when_some(effort, |row, level| {
-                        row.child(
-                            div()
-                                .flex_shrink_0()
-                                .px_1p5()
-                                .py_0p5()
-                                .rounded_md()
-                                .bg(Color::Inset.get(cx))
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(Color::Muted.get(cx))
-                                .child(level),
-                        )
-                    }),
+                    ),
             )
-            .dropdown_caret(true)
             .tooltip(format!(
                 "{label}\n{identity}\n{}",
                 tr("只影响当前会话，不修改 Agent 全局默认")
