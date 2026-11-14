@@ -12,9 +12,14 @@ declare module "@tt-a1i/hive/dist/src/cli/hive.js" {
 		},
 	): Promise<{ port: number; close(): Promise<void>; store: {
         configureAgentLaunch: import("./hive-runtime-contract.js").HiveAgentRuntime["configureAgentLaunch"];
+        startSavedScript(workspaceId: string, context: import('./hive-host.js').SavedScriptContext, observer: import('./hive-host.js').SavedScriptObserver): Promise<{runId: string}>;
+        stopSavedScript(workspaceId: string, scriptRunId: string, nativeRunId: string): void;
         startSessionShell(workspaceId: string, context: {sessionId: string; cwd: string}): Promise<{runId: string}>;
         addWorkerWithLaunch(workspaceId: string, input: import('./hive-host.js').DesktopMemberInput & { avatar: null }, launch: import('./hive-runtime-contract.js').AgentLaunchConfigInput): import('./hive-runtime-contract.js').AgentSummary;
-        settings: { getAppState(key: string): { key: string; value: string | null } | undefined;
+        settings: {
+          readProjectScriptState(key: string, workspaceId: string): string | null;
+          compareAndSwapProjectScriptState(key: string, expected: string | null, next: string | null, workspaceId: string): boolean;
+          getAppState(key: string): { key: string; value: string | null } | undefined;
           setAppState(key: string, value: string): void };
         locateWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUploadLocation|undefined>;
         readWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUpload|null>;

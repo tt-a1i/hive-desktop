@@ -1,0 +1,11 @@
+import {createDesktopRuntime} from '../../src/desktop-runtime.js';
+import {randomUUID} from 'node:crypto';
+const [data, project] = process.argv.slice(2);
+if (!data || !project) throw new Error('Fixture paths required');
+const runtime = await createDesktopRuntime(data, () => {});
+const workspace = await runtime.hive.request('POST', '/api/workspaces', {path: project, name: 'crash-fixture', autostart_orchestrator: false}) as {id: string};
+const saved = await runtime.projectScripts.save(workspace.id, '0', {name: 'Crash', command: 'printf "NATIVE_PID=%s\\n" "$$"; printf once >> count; sleep 60; printf after'});
+const script = saved.scripts[0]!;
+const run = await runtime.scriptRuns.run({workspaceId: workspace.id, scriptId: script.id, expectedVersion: script.version, requestId: randomUUID()});
+process.send?.({workspaceId: workspace.id, run});
+setInterval(() => {}, 1000);

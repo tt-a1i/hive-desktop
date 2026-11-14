@@ -230,8 +230,20 @@ index 27e9ed2bafba640a2e6f710844e72e9e00548984..f6122d657edb8071464491dceeaf7c35
              dataDir,
          }),
          versionService,
+diff --git a/dist/src/server/agent-manager-support.d.ts b/dist/src/server/agent-manager-support.d.ts
+index dd5421b5d31fa756076b6f630adb83e7238eb889..4ee7b7d5c1d92a833002df0518d76f58f05eef83 100644
+--- a/dist/src/server/agent-manager-support.d.ts
++++ b/dist/src/server/agent-manager-support.d.ts
+@@ -31,6 +31,6 @@ export declare const withSilencedConptyConsoleListAgent: <T>(platform: NodeJS.Pl
+  */
+ export declare const taskkillProcessTree: (pid: number, platform?: NodeJS.Platform, runner?: ExecRunner, onFailure?: () => void) => boolean;
+ export declare const toAgentRunSnapshot: (run: AgentRunRecord) => AgentRunSnapshot;
+-export declare const finishAgentRun: (run: AgentRunRecord, exitCode: number | null, ptyOutputBus: PtyOutputBus) => void;
++export declare const finishAgentRun: (run: AgentRunRecord, exitCode: number | null, ptyOutputBus: PtyOutputBus, signal?: number) => void;
+ export declare const attachAgentPty: (run: AgentRunRecord, pty: IPty, ptyOutputBus: PtyOutputBus, platform?: NodeJS.Platform, execRunner?: ExecRunner) => void;
+ export {};
 diff --git a/dist/src/server/agent-manager-support.js b/dist/src/server/agent-manager-support.js
-index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..b9e27abce99157db799260327d5c793ab0d6e582 100644
+index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..fc6a28db849dc6ed4f53e67c8915512476cc4e0a 100644
 --- a/dist/src/server/agent-manager-support.js
 +++ b/dist/src/server/agent-manager-support.js
 @@ -43,7 +43,6 @@ const isPtyReadEofError = (error, platform = process.platform) => {
@@ -242,7 +254,33 @@ index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..b9e27abce99157db799260327d5c793a
  const defaultExecRunner = (cmd, args, done) => {
      let settled = false;
      const settle = (success) => {
-@@ -290,7 +289,8 @@ export const attachAgentPty = (run, pty, ptyOutputBus, platform = process.platfo
+@@ -104,13 +103,13 @@ export const toAgentRunSnapshot = (run) => ({
+     output: run.output,
+     exitCode: run.exitCode,
+ });
+-export const finishAgentRun = (run, exitCode, ptyOutputBus) => {
++export const finishAgentRun = (run, exitCode, ptyOutputBus, signal) => {
+     if (run.status === 'exited' || run.status === 'error')
+         return;
+     run.status = classifyCompletedRunStatus(exitCode);
+     run.exitCode = exitCode;
+     try {
+-        run.onExit?.({ runId: run.runId, exitCode });
++        run.onExit?.({ runId: run.runId, exitCode, ...(signal !== undefined ? {signal} : {}) });
+     }
+     finally {
+         ptyOutputBus.clear(run.runId);
+@@ -257,7 +256,8 @@ export const attachAgentPty = (run, pty, ptyOutputBus, platform = process.platfo
+         stdinClosed = true;
+         clearPtyReadEofTimer();
+         cleanupProcessGroup();
+-        finishAgentRun(run, event.exitCode, ptyOutputBus);
++        try { run.onNativeExit?.({runId: run.runId, exitCode: event.exitCode, ...(event.signal !== undefined ? {signal: event.signal} : {})}); }
++        finally { finishAgentRun(run, event.exitCode, ptyOutputBus, event.signal); }
+     });
+     run.process = {
+         isStopped() {
+@@ -290,7 +290,8 @@ export const attachAgentPty = (run, pty, ptyOutputBus, platform = process.platfo
              if (stdinClosed || run.status === 'exited' || run.status === 'error') {
                  throw new Error(`PTY is not active for run: ${run.runId}`);
              }
@@ -252,6 +290,50 @@ index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..b9e27abce99157db799260327d5c793a
          },
      };
      pty.onData((chunk) => {
+diff --git a/dist/src/server/agent-manager.d.ts b/dist/src/server/agent-manager.d.ts
+index 95a1262da48478905a04aa1a23ba0d3d4a7d87fa..163961279cf464b500436e3dcf66b58ae40857bc 100644
+--- a/dist/src/server/agent-manager.d.ts
++++ b/dist/src/server/agent-manager.d.ts
+@@ -7,9 +7,12 @@ interface StartAgentInput {
+     args?: string[];
+     cwd: string;
+     env?: NodeJS.ProcessEnv;
++    onCreated?: (event: {runId: string}) => void;
++    onNativeExit?: (event: {runId: string; exitCode: number | null; signal?: number}) => void;
+     onExit?: (event: {
+         runId: string;
+         exitCode: number | null;
++        signal?: number;
+     }) => void;
+ }
+ interface AgentRunSnapshot {
+@@ -30,9 +33,11 @@ interface AgentRunRecord extends AgentRunSnapshot {
+         stop: () => void;
+         write: (input: Buffer | string) => void;
+     };
++    onNativeExit?: (event: {runId: string; exitCode: number | null; signal?: number}) => void;
+     onExit?: (event: {
+         runId: string;
+         exitCode: number | null;
++        signal?: number;
+     }) => void;
+ }
+ interface AgentManager {
+diff --git a/dist/src/server/agent-manager.js b/dist/src/server/agent-manager.js
+index 747d27facfa9463001a04d97a296ff115f365b48..18a3cdcdf0a73d6beb5d9667c548407dbf071b93 100644
+--- a/dist/src/server/agent-manager.js
++++ b/dist/src/server/agent-manager.js
+@@ -81,8 +81,10 @@ export const createAgentManager = ({ ptyOutputBus = createPtyOutputBus(), } = {}
+             };
+             if (input.onExit)
+                 run.onExit = input.onExit;
++            if (input.onNativeExit) run.onNativeExit = input.onNativeExit;
+             runs.set(runId, run);
+             try {
++                input.onCreated?.({runId});
+                 attachAgentPty(run, spawn(spawnCommand.command, spawnCommand.args, buildAgentPtySpawnOptions(input.cwd, env)), ptyOutputBus);
+             }
+             catch (error) {
 diff --git a/dist/src/server/recovery-summary.js b/dist/src/server/recovery-summary.js
 index 018b3549ed6a693b59fe7a55927290c4f3e21da8..639181956485c778b636b6ccea0d0141fd031012 100644
 --- a/dist/src/server/recovery-summary.js
@@ -602,7 +684,7 @@ index 389129f122892581215028f0cc8bfabd21a8ad3b..433439b07a6d293cb99fdc78c030597b
          openByWorker.set(dispatch.toAgentId, list);
      }
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
-index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a8c050b14fc2d5f57b2575ee3b16e7ee91eb8f59 100644
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..eb7109ecacb8f074b04e6a04c32bfd3438d76560 100644
 --- a/dist/src/server/runtime-store-contract.d.ts
 +++ b/dist/src/server/runtime-store-contract.d.ts
 @@ -55,6 +55,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
@@ -613,15 +695,17 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a8c050b14fc2d5f57b2575ee3b16e7ee
      listDispatches: (workspaceId: string, options?: ListDispatchesOptions) => DispatchRecord[];
      listOpenDispatches: (workspaceId: string) => DispatchRecord[];
      listRecentDispatches: (workspaceId: string, limit?: number) => DispatchRecord[];
-@@ -73,6 +74,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -73,6 +74,9 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      getPtyOutputBus: () => PtyOutputBus;
      listTerminalRuns: (workspaceId: string) => TerminalRunSummary[];
      closeWorkspaceShell: (workspaceId: string, runId: string) => boolean;
++    startSavedScript: (workspaceId: string, context: {scriptRunId: string; cwd: string; command: string; sessionId?: string}, observer: {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}) => Promise<LiveAgentRun>;
++    stopSavedScript: (workspaceId: string, scriptRunId: string, runId: string) => void;
 +    startSessionShell: (workspaceId: string, context: {sessionId: string; cwd: string}) => Promise<LiveAgentRun>;
      startWorkspaceShell: (workspaceId: string) => Promise<LiveAgentRun>;
      configureAgentLaunch: (workspaceId: string, agentId: string, input: AgentLaunchConfigInput) => void;
      peekAgentLaunchConfig: (workspaceId: string, agentId: string) => AgentLaunchConfigInput | undefined;
-@@ -91,6 +93,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -91,6 +95,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      getActiveRunByAgentId: (workspaceId: string, agentId: string) => LiveAgentRun | undefined;
      registerTasksListener: (listener: (workspaceId: string, content: string) => void) => () => void;
      listAgentRuns: (agentId: string) => PersistedAgentRun[];
@@ -630,7 +714,7 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a8c050b14fc2d5f57b2575ee3b16e7ee
      listMessagesForRecovery: (workspaceId: string, sinceMs: number) => RecoveryMessage[];
      recallMessages: (workspaceId: string, query: string, options?: RecallOptions) => RecallResult[];
      addMemoryEntry: (input: AddMemoryEntryInput) => MemoryEntryWithSources;
-@@ -138,6 +142,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -138,6 +144,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      setRemoteEnabled: (enabled: boolean) => void;
      revokeRemoteDevice: (deviceId: string) => boolean;
      getWorkflowDispatchAwaiter: () => WorkflowDispatchAwaiter;
@@ -639,7 +723,7 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a8c050b14fc2d5f57b2575ee3b16e7ee
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflowInline: (input: RunInlineWorkflowInput) => Promise<WorkflowRunRecord>;
-@@ -152,6 +158,10 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -152,6 +160,10 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      }>;
      saveWorkspaceUpload: (input: SaveWorkspaceUploadInput) => Promise<WorkspaceUploadRecord>;
      listWorkspaceUploads: (workspaceId: string, limit?: number) => WorkspaceUploadRecord[];
@@ -651,10 +735,19 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a8c050b14fc2d5f57b2575ee3b16e7ee
          data: Buffer;
          record: WorkspaceUploadRecord;
 diff --git a/dist/src/server/runtime-store-helpers.d.ts b/dist/src/server/runtime-store-helpers.d.ts
-index b2d3be4da9ad56700ffec0ddb3031fc81fb64e20..cf03985fb16ce2c884bd310c19ec27d3feb4248a 100644
+index b2d3be4da9ad56700ffec0ddb3031fc81fb64e20..a05c03ee4bc414082a437e8e5950dd1c003dc687 100644
 --- a/dist/src/server/runtime-store-helpers.d.ts
 +++ b/dist/src/server/runtime-store-helpers.d.ts
-@@ -100,6 +100,8 @@ export declare const createRuntimeStoreLifecycle: ({ agentManager, services, }:
+@@ -93,13 +93,16 @@ export declare const createRuntimeStoreLifecycle: ({ agentManager, services, }:
+     close: () => Promise<void>;
+     configureAgentLaunch: (workspaceId: string, agentId: string, input: AgentLaunchConfigInput) => void;
+     peekAgentLaunchConfig: (workspaceId: string, agentId: string) => AgentLaunchConfigInput | undefined;
+-    deleteWorkspaceShell: (workspaceId: string) => void;
++    deleteWorkspaceShell: (workspaceId: string) => Promise<void>;
++    withWorkspaceShellDeletion: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
+     closeWorkspaceShell: (workspaceId: string, runId: string) => boolean;
+     findLiveRun: (runId: string) => LiveAgentRun | undefined;
+     getLiveRun: (runId: string) => LiveAgentRun;
      waitForRunExit: (runId: string, timeoutMs: number) => Promise<boolean>;
      getPtyOutputBus: () => PtyOutputBus;
      listTerminalRuns: (workspaceId: string) => ({
@@ -663,16 +756,18 @@ index b2d3be4da9ad56700ffec0ddb3031fc81fb64e20..cf03985fb16ce2c884bd310c19ec27d3
          agent_id: string;
          agent_name: string;
          run_id: string;
-@@ -117,6 +119,7 @@ export declare const createRuntimeStoreLifecycle: ({ agentManager, services, }:
+@@ -117,6 +120,9 @@ export declare const createRuntimeStoreLifecycle: ({ agentManager, services, }:
      startAgent: (workspaceId: string, agentId: string, input: {
          hivePort: string;
      }) => Promise<LiveAgentRun>;
++    startSavedScript: (workspaceId: string, context: {scriptRunId: string; cwd: string; command: string; sessionId?: string}, observer: {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}) => Promise<LiveAgentRun>;
++    stopSavedScript: (workspaceId: string, scriptRunId: string, runId: string) => void;
 +    startSessionShell: (workspaceId: string, context: {sessionId: string; cwd: string}) => Promise<LiveAgentRun>;
      startWorkspaceShell: (workspaceId: string) => Promise<LiveAgentRun>;
      autostartConfiguredAgents: (input: {
          hivePort: string;
 diff --git a/dist/src/server/runtime-store-helpers.js b/dist/src/server/runtime-store-helpers.js
-index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..653761f5c3caeb0b709aed6f53e761063eaca50b 100644
+index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..15d416323617ad01872e70ee8895c0413605a16f 100644
 --- a/dist/src/server/runtime-store-helpers.js
 +++ b/dist/src/server/runtime-store-helpers.js
 @@ -170,7 +170,7 @@ export const createRuntimeStoreServices = (options = {}) => {
@@ -705,10 +800,33 @@ index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..653761f5c3caeb0b709aed6f53e76106
      const dispatchMessageOps = createDispatchMessageOperations({
          db,
          ledger: dispatchLedgerStore,
-@@ -520,6 +532,7 @@ export const createRuntimeStoreLifecycle = ({ agentManager, services, }) => {
+@@ -458,7 +470,7 @@ export const createRuntimeStoreLifecycle = ({ agentManager, services, }) => {
+                 // instead of hanging on a Promise that can never resolve.
+                 await services.teamMemoryDreamScheduler.close();
+                 services.workflowDispatchAwaiter.cancelAll('runtime closing');
+-                services.shellRuntime.close();
++                await services.shellRuntime.close();
+                 await services.teamMemoryExport.close();
+                 await services.agentRuntime.close();
+                 await services.tasksFileWatcher.close();
+@@ -475,9 +487,8 @@ export const createRuntimeStoreLifecycle = ({ agentManager, services, }) => {
+             services.agentRuntime.configureAgentLaunch(workspaceId, agentId, input);
+         },
+         peekAgentLaunchConfig: (workspaceId, agentId) => services.agentRuntime.peekAgentLaunchConfig(workspaceId, agentId),
+-        deleteWorkspaceShell: (workspaceId) => {
+-            services.shellRuntime.deleteWorkspace(workspaceId);
+-        },
++        withWorkspaceShellDeletion: (workspaceId, operation) => services.shellRuntime.withWorkspaceDeletion(workspaceId, operation),
++        deleteWorkspaceShell: (workspaceId) => services.shellRuntime.deleteWorkspace(workspaceId),
+         closeWorkspaceShell: (workspaceId, runId) => services.shellRuntime.closeRun(workspaceId, runId),
+         findLiveRun,
+         getLiveRun: (runId) => {
+@@ -520,6 +531,9 @@ export const createRuntimeStoreLifecycle = ({ agentManager, services, }) => {
              ...services.shellRuntime.listTerminalRuns(workspaceId),
          ],
          startAgent,
++        startSavedScript: (workspaceId, context, observer) => services.shellRuntime.startSavedScript(services.workspaceStore.getWorkspaceSnapshot(workspaceId).summary, context, observer),
++        stopSavedScript: (workspaceId, scriptRunId, runId) => services.shellRuntime.stopSavedScript(workspaceId, scriptRunId, runId),
 +        startSessionShell: (workspaceId, context) => services.shellRuntime.start(services.workspaceStore.getWorkspaceSnapshot(workspaceId).summary, context),
          startWorkspaceShell: (workspaceId) => services.shellRuntime.start(services.workspaceStore.getWorkspaceSnapshot(workspaceId).summary),
          autostartConfiguredAgents,
@@ -873,7 +991,7 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..9daaccb7b5e9d576b013ca5eb73c68b8
                  return `\nResult (workflow return value):\n${escapeHiveEnvelopeText(truncated)}`;
              })();
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..e44109c4b426648e0a621229258a58ed32747f1c 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..695a7463d356c7b5610149cb61813316dfb3d655 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
 @@ -37,6 +37,7 @@ export const createRuntimeStore = (options = {}) => {
@@ -884,6 +1002,27 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..e44109c4b426648e0a621229258a58ed
              await services.teamMemoryDreamScheduler.close();
              await lifecycle.close();
          },
+@@ -48,9 +49,9 @@ export const createRuntimeStore = (options = {}) => {
+             return workspace;
+         },
+         listWorkspaces: () => services.workspaceStore.listWorkspaces(),
+-        deleteWorkspace: async (workspaceId) => {
++        deleteWorkspace: (workspaceId) => lifecycle.withWorkspaceShellDeletion(workspaceId, async () => {
+             const workspace = services.workspaceStore.getWorkspaceSnapshot(workspaceId);
+-            lifecycle.deleteWorkspaceShell(workspaceId);
++            await lifecycle.deleteWorkspaceShell(workspaceId);
+             for (const agent of workspace.agents) {
+                 const activeRun = services.agentRuntime.getActiveRunByAgentId(workspaceId, agent.id);
+                 if (activeRun)
+@@ -82,7 +83,7 @@ export const createRuntimeStore = (options = {}) => {
+             if (services.settings.getAppState('active_workspace_id')?.value === workspaceId) {
+                 services.settings.setAppState('active_workspace_id', null);
+             }
+-        },
++        }),
+         addWorker: (workspaceId, input) => services.workspaceStore.addWorker(workspaceId, input),
+         addWorkerWithLaunch: workerMutations.addWorkerWithLaunch,
+         updateWorkerProfile: (workspaceId, workerId, input) => services.workspaceStore.updateWorkerProfile(workspaceId, workerId, input),
 @@ -98,6 +99,7 @@ export const createRuntimeStore = (options = {}) => {
          drainReportOutbox: services.teamOps.drainReportOutbox,
          statusTask: controller.statusTask,
@@ -892,7 +1031,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..e44109c4b426648e0a621229258a58ed
          listDispatches: services.dispatchLedgerStore.listWorkspaceDispatches,
          listOpenDispatches: services.dispatchLedgerStore.listOpenWorkspaceDispatches,
          listRecentDispatches: services.dispatchLedgerStore.listRecentWorkspaceDispatches,
-@@ -112,10 +114,12 @@ export const createRuntimeStore = (options = {}) => {
+@@ -112,10 +114,14 @@ export const createRuntimeStore = (options = {}) => {
          closeWorkspaceShell: lifecycle.closeWorkspaceShell,
          configureAgentLaunch: lifecycle.configureAgentLaunch,
          peekAgentLaunchConfig: lifecycle.peekAgentLaunchConfig,
@@ -902,10 +1041,12 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..e44109c4b426648e0a621229258a58ed
          startWorkspaceWatch: lifecycle.startWorkspaceWatch,
          startWorkspaceShell: lifecycle.startWorkspaceShell,
 +        startSessionShell: lifecycle.startSessionShell,
++        startSavedScript: lifecycle.startSavedScript,
++        stopSavedScript: lifecycle.stopSavedScript,
          findLiveRun: lifecycle.findLiveRun,
          getLiveRun: lifecycle.getLiveRun,
          waitForRunExit: lifecycle.waitForRunExit,
-@@ -123,6 +127,19 @@ export const createRuntimeStore = (options = {}) => {
+@@ -123,6 +129,19 @@ export const createRuntimeStore = (options = {}) => {
          registerTasksListener: lifecycle.registerTasksListener,
          listAgentRuns: (agentId) => services.agentRuntime.listAgentRuns(agentId),
          listMessagesForRecovery: (workspaceId, sinceMs) => services.messageLogStore.listMessagesForRecovery(workspaceId, sinceMs),
@@ -925,7 +1066,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..e44109c4b426648e0a621229258a58ed
          recallMessages: (workspaceId, query, options) => services.teamRecallStore.recallMessages(workspaceId, query, options),
          ...createRuntimeStoreMemoryMethods(services),
          ...createRuntimeStoreDreamMethods(services),
-@@ -141,6 +158,8 @@ export const createRuntimeStore = (options = {}) => {
+@@ -141,6 +160,8 @@ export const createRuntimeStore = (options = {}) => {
          getRetentionSignals: () => services.protocolEventStats.getRetentionSignals(),
          ...createRuntimeStoreRemoteMethods(services),
          getWorkflowDispatchAwaiter: () => services.workflowDispatchAwaiter,
@@ -934,7 +1075,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..e44109c4b426648e0a621229258a58ed
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
-@@ -155,6 +174,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -155,6 +176,7 @@ export const createRuntimeStore = (options = {}) => {
          })),
          saveWorkspaceUpload: (input) => services.workspaceUploadStore.saveUpload(input),
          listWorkspaceUploads: (workspaceId, limit) => services.workspaceUploadStore.listUploads(workspaceId, limit),
@@ -942,6 +1083,55 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..e44109c4b426648e0a621229258a58ed
          readWorkspaceUpload: (workspaceId, uploadId) => services.workspaceUploadStore.readUpload(workspaceId, uploadId),
          createWorkflowSchedule: (input) => services.workflowScheduleStore.create(input),
          scheduleWorkflowInline: (input) => persistWorkflowSchedule({
+diff --git a/dist/src/server/settings-store.d.ts b/dist/src/server/settings-store.d.ts
+index 9e35255c7b035a95d418920f5337ca0af7b693a4..091d3a0f53a0fa08e3568bcbbfceee9bca1318d9 100644
+--- a/dist/src/server/settings-store.d.ts
++++ b/dist/src/server/settings-store.d.ts
+@@ -3,6 +3,8 @@ import { type CommandPresetInput, type CommandPresetRecord } from './command-pre
+ import { type RoleTemplateInput, type RoleTemplateRecord } from './role-template-store.js';
+ import type { Database } from './sqlite.js';
+ export interface SettingsStore {
++    readProjectScriptState(key: string, workspaceId: string): string | null;
++    compareAndSwapProjectScriptState(key: string, expectedRaw: string | null, nextRaw: string | null, workspaceId: string): boolean;
+     createCommandPreset: (input: CommandPresetInput) => CommandPresetRecord;
+     createRoleTemplate: (input: RoleTemplateInput) => RoleTemplateRecord;
+     deleteCommandPreset: (id: string) => void;
+diff --git a/dist/src/server/settings-store.js b/dist/src/server/settings-store.js
+index 00120d185d5d231494e011f920bcfad84ef45ad8..a27f0703648fb236830bfdc6eaa3480d84d13dc3 100644
+--- a/dist/src/server/settings-store.js
++++ b/dist/src/server/settings-store.js
+@@ -1,3 +1,4 @@
++import { createHash } from 'node:crypto';
+ import { createAppStateStore } from './app-state-store.js';
+ import { createCommandPresetStore, } from './command-preset-store.js';
+ import { createRoleTemplateStore, } from './role-template-store.js';
+@@ -5,7 +6,26 @@ export const createSettingsStore = (db) => {
+     const appStateStore = createAppStateStore(db);
+     const commandPresetStore = createCommandPresetStore(db);
+     const roleTemplateStore = createRoleTemplateStore(db);
++    const checkProjectScriptKey = (key, workspaceId) => {
++        if (typeof workspaceId !== 'string' || !workspaceId || key !== `desktop_project_scripts_v1_${createHash('sha256').update(workspaceId).digest('hex')}`)
++            throw new Error('[SCRIPT_STATE_INVALID] Invalid project script state identity');
++        if (!db.prepare('SELECT id FROM workspaces WHERE id = ?').get(workspaceId)) throw new Error('[SCRIPT_WORKSPACE_MISSING] Project no longer exists');
++    };
+     return {
++        readProjectScriptState(key, workspaceId) {
++            checkProjectScriptKey(key, workspaceId);
++            return appStateStore.get(key)?.value ?? null;
++        },
++        compareAndSwapProjectScriptState(key, expectedRaw, nextRaw, workspaceId) {
++            if (!(expectedRaw === null || typeof expectedRaw === 'string') || !(nextRaw === null || typeof nextRaw === 'string')) throw new Error('[SCRIPT_STATE_INVALID] Invalid state payload');
++            return db.transaction(() => {
++                checkProjectScriptKey(key, workspaceId);
++                if ((appStateStore.get(key)?.value ?? null) !== expectedRaw) return false;
++                if (nextRaw === null) db.prepare('DELETE FROM app_state WHERE key = ?').run(key);
++                else appStateStore.set(key, nextRaw);
++                return true;
++            })();
++        },
+         createCommandPreset: commandPresetStore.create,
+         createRoleTemplate: roleTemplateStore.create,
+         deleteCommandPreset: commandPresetStore.remove,
 diff --git a/dist/src/server/tasks-file-watcher.js b/dist/src/server/tasks-file-watcher.js
 index f74fc2d4250e25025d2f7fb327cf49df8c1277a5..c7aad08d1f2e58f4660f04a98143b948650f6e7c 100644
 --- a/dist/src/server/tasks-file-watcher.js
@@ -1508,10 +1698,19 @@ index 1c4e590c4b5bb16d583b08f7057ecdf9ccd5c31c..cc483ccd697c5dc9ad9894d8521f61da
      });
  });
 diff --git a/dist/src/server/workspace-shell-runtime.d.ts b/dist/src/server/workspace-shell-runtime.d.ts
-index a04c9f6e669d8fdb61d711ce0000d35d983824d7..208fcf66d4f2d0de9b14c7d18b3830c0dda9e3da 100644
+index a04c9f6e669d8fdb61d711ce0000d35d983824d7..c648cb2e73eadad1d71ac415b28da7920cbb69b0 100644
 --- a/dist/src/server/workspace-shell-runtime.d.ts
 +++ b/dist/src/server/workspace-shell-runtime.d.ts
-@@ -19,6 +19,8 @@ export declare const createWorkspaceShellRuntime: (agentManager: AgentManager |
+@@ -13,12 +13,15 @@ export declare const resolveWorkspaceShellStart: (workspacePath: string, env?: N
+     cwd: string;
+ };
+ export declare const createWorkspaceShellRuntime: (agentManager: AgentManager | undefined) => {
+-    close(): void;
++    close(): Promise<void>;
+     closeRun(workspaceId: string, runId: string): boolean;
+-    deleteWorkspace(workspaceId: string): void;
++    deleteWorkspace(workspaceId: string): Promise<void>;
++    withWorkspaceDeletion<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>;
      getLiveRun(runId: string): LiveAgentRun | undefined;
      hasRun: (runId: string) => boolean;
      listTerminalRuns(workspaceId: string): {
@@ -1520,68 +1719,294 @@ index a04c9f6e669d8fdb61d711ce0000d35d983824d7..208fcf66d4f2d0de9b14c7d18b3830c0
          agent_id: string;
          agent_name: string;
          run_id: string;
-@@ -28,7 +30,7 @@ export declare const createWorkspaceShellRuntime: (agentManager: AgentManager |
+@@ -28,8 +31,12 @@ export declare const createWorkspaceShellRuntime: (agentManager: AgentManager |
      pauseRun(runId: string): void;
      resizeRun(runId: string, cols: number, rows: number): void;
      resumeRun(runId: string): void;
 -    start(workspace: WorkspaceSummary): Promise<LiveAgentRun>;
++    startSavedScript(workspace: WorkspaceSummary, context: {scriptRunId: string; cwd: string; command: string; sessionId?: string}, observer: {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}): Promise<LiveAgentRun>;
++    stopSavedScript(workspaceId: string, scriptRunId: string, runId: string): void;
 +    start(workspace: WorkspaceSummary, context?: { sessionId?: string; cwd?: string }): Promise<LiveAgentRun>;
      stopRun(runId: string): void;
      writeInput(runId: string, input: Buffer | string): void;
  };
+ export type WorkspaceShellRuntime = ReturnType<typeof createWorkspaceShellRuntime>;
++
++export declare const resolveSavedScriptLaunch: (command: string, cwd: string, env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform) => {command: string; args: string[]; cwd: string};
 diff --git a/dist/src/server/workspace-shell-runtime.js b/dist/src/server/workspace-shell-runtime.js
-index d72f79531d2f6db3d28f878e69660965d3ba03f9..e5b5e5e8b9611c7608149c0d41dd740e629c0c65 100644
+index d72f79531d2f6db3d28f878e69660965d3ba03f9..48388ecefbc8cc5e5916a2973d4e2196c1339959 100644
 --- a/dist/src/server/workspace-shell-runtime.js
 +++ b/dist/src/server/workspace-shell-runtime.js
-@@ -45,6 +45,7 @@ export const resolveWorkspaceShellStart = (workspacePath, env = process.env, pla
+@@ -1,5 +1,13 @@
+ import { basename } from 'node:path';
+ import { escapeCmdToken } from './windows-command-line.js';
++// Saved scripts use a noninteractive native shell. No command is sent through PTY input.
++export const resolveSavedScriptLaunch = (command, cwd, env = process.env, platform = process.platform) => {
++    if (platform === 'win32') {
++        if (isWindowsUncPath(cwd, platform)) throw new Error('[SCRIPT_UNSUPPORTED_CWD] Windows command scripts require a local or mapped drive');
++        return {command: getEnvValue(env, 'ComSpec', platform) ?? 'cmd.exe', args: ['/d', '/s', '/c', command], cwd};
++    }
++    return {command: '/bin/sh', args: ['-c', command], cwd};
++};
+ const WORKSPACE_SHELL_SUFFIX = ':shell';
+ const WORKSPACE_SHELL_LABEL = 'Shell';
+ const EXITED_SHELL_RETENTION_MS = 5000;
+@@ -43,8 +51,26 @@ export const resolveWorkspaceShellStart = (workspacePath, env = process.env, pla
+     return { ...launch, cwd: workspacePath };
+ };
  export const createWorkspaceShellRuntime = (agentManager) => {
++    let closing = false;
++    const deletingWorkspaces = new Set();
++    const startsByWorkspaceId = new Map();
++    const nativeExitsByRunId = new Map();
++    const closingRunIds = new Set();
++    const withStart = (workspaceId, operation) => {
++        if (closing || deletingWorkspaces.has(workspaceId)) throw new Error('[SHELL_WORKSPACE_CLOSING] Project shell lifecycle is closing');
++        let pending = startsByWorkspaceId.get(workspaceId);
++        if (!pending) { pending = new Set(); startsByWorkspaceId.set(workspaceId, pending); }
++        const action = Promise.resolve().then(operation).finally(() => {
++            pending.delete(action);
++            if (!pending.size) startsByWorkspaceId.delete(workspaceId);
++        });
++        pending.add(action);
++        return action;
++    };
++    const nativeExited = runId => nativeExitsByRunId.get(runId)?.resolve();
      const labelsByRunId = new Map();
      const workspaceIdsByRunId = new Map();
 +    const contextsByRunId = new Map();
      const runIdsByWorkspaceId = new Map();
      const startedAtByRunId = new Map();
      const exitCleanupTimersByRunId = new Map();
-@@ -79,6 +80,7 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+@@ -79,11 +105,17 @@ export const createWorkspaceShellRuntime = (agentManager) => {
              else
                  runIdsByWorkspaceId.delete(workspaceId);
          }
++        nativeExitsByRunId.delete(runId);
++        closingRunIds.delete(runId);
 +        contextsByRunId.delete(runId);
          labelsByRunId.delete(runId);
          workspaceIdsByRunId.delete(runId);
          startedAtByRunId.delete(runId);
-@@ -171,7 +173,8 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+     };
+     const attachRun = (workspaceId, runId, label, startedAt) => {
++        let resolve;
++        const promise = new Promise(done => { resolve = done; });
++        nativeExitsByRunId.set(runId, {promise, resolve});
+         labelsByRunId.set(runId, label);
+         workspaceIdsByRunId.set(runId, workspaceId);
+         startedAtByRunId.set(runId, startedAt);
+@@ -113,50 +145,59 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+     const stopPtyRun = (runId) => {
+         requireManager().stopRun(runId);
+     };
++    // Retain ownership until the actual PTY exit, even when a viewer stops/detaches.
+     const closeRun = (runId) => {
+-        try {
++        closingRunIds.add(runId);
++        try {stopPtyRun(runId);} catch (error) {closingRunIds.delete(runId); throw error;}
++        const exit = nativeExitsByRunId.get(runId);
++        if (exit) void exit.promise.then(() => forgetShellRun(runId));
++        else forgetShellRun(runId);
++    };
++    const drainWorkspace = async workspaceId => {
++        await Promise.allSettled([...(startsByWorkspaceId.get(workspaceId) ?? [])]);
++        const runs = [...(runIdsByWorkspaceId.get(workspaceId) ?? [])];
++        const results = await Promise.allSettled(runs.map(async runId => {
++            const exit = nativeExitsByRunId.get(runId);
++            if (!exit) throw new Error('[SHELL_STOP_UNCONFIRMED] Native shell exit ownership is unavailable');
+             stopPtyRun(runId);
+-        }
+-        catch {
+-            // The shell may have already exited or been removed by the PTY manager.
+-        }
+-        try {
+-            requireManager().removeRun(runId);
+-        }
+-        catch {
+-            // The PTY manager may have already dropped the run.
+-        }
+-        detachRun(runId);
++            let timer;
++            try {
++                await Promise.race([exit.promise, new Promise((_, reject) => {
++                    timer = setTimeout(() => reject(new Error('[SHELL_STOP_UNCONFIRMED] Native shell exit was not confirmed')), 10000);
++                })]);
++            } finally { if (timer) clearTimeout(timer); }
++            forgetShellRun(runId);
++        }));
++        const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
++        if (errors.length) throw new AggregateError(errors, 'Owned project shells did not exit cleanly');
+     };
+     return {
+-        close() {
+-            for (const runId of Array.from(workspaceIdsByRunId.keys()))
+-                closeRun(runId);
+-            runIdsByWorkspaceId.clear();
+-            workspaceIdsByRunId.clear();
+-            startedAtByRunId.clear();
+-            labelsByRunId.clear();
+-            for (const timer of exitCleanupTimersByRunId.values())
+-                clearTimeout(timer);
+-            exitCleanupTimersByRunId.clear();
++        async close() {
++            closing = true;
++            const workspaceIds = new Set([...startsByWorkspaceId.keys(), ...runIdsByWorkspaceId.keys()]);
++            const results = await Promise.allSettled([...workspaceIds].map(drainWorkspace));
++            const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
++            if (errors.length) throw new AggregateError(errors, 'Owned shell shutdown was not confirmed');
+         },
+         closeRun(workspaceId, runId) {
+-            if (workspaceIdsByRunId.get(runId) !== workspaceId)
+-                return false;
++            if (workspaceIdsByRunId.get(runId) !== workspaceId) return false;
+             closeRun(runId);
+             return true;
+         },
+-        deleteWorkspace(workspaceId) {
+-            for (const runId of Array.from(runIdsByWorkspaceId.get(workspaceId) ?? [])) {
+-                try {
+-                    closeRun(runId);
+-                }
+-                catch {
+-                    // Workspace deletion should not fail because the shell already exited.
+-                }
++        async withWorkspaceDeletion(workspaceId, operation) {
++            if (closing || deletingWorkspaces.has(workspaceId)) throw new Error('[SHELL_WORKSPACE_CLOSING] Project shell lifecycle is closing');
++            // Synchronous gate before the caller reaches its first await.
++            deletingWorkspaces.add(workspaceId);
++            let failure;
++            try { return await operation(); }
++            catch (error) { failure = error; throw error; }
++            finally {
++                try { await drainWorkspace(workspaceId); }
++                catch (error) { throw failure ? new AggregateError([failure, error], 'Project deletion and shell cleanup failed') : error; }
++                finally { deletingWorkspaces.delete(workspaceId); }
+             }
+-            runIdsByWorkspaceId.delete(workspaceId);
+         },
++        deleteWorkspace: drainWorkspace,
+         getLiveRun(runId) {
+             if (!hasRun(runId))
+                 return undefined;
+@@ -167,11 +208,12 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+             return (runIdsByWorkspaceId.get(workspaceId) ?? []).flatMap((runId) => {
+                 try {
+                     const run = toLiveRun(runId);
+-                    if (!isListedRun(run))
++                    if (closingRunIds.has(runId) || !isListedRun(run))
                          return [];
                      return [
                          {
 -                            agent_id: getWorkspaceShellAgentId(workspaceId),
-+                            agent_id: contextsByRunId.get(runId)?.sessionId ? `${workspaceId}:session:${contextsByRunId.get(runId).sessionId}:shell` : getWorkspaceShellAgentId(workspaceId),
++                            agent_id: contextsByRunId.get(runId)?.scriptRunId ? `${workspaceId}:script:${contextsByRunId.get(runId).scriptRunId}:shell` : contextsByRunId.get(runId)?.sessionId ? `${workspaceId}:session:${contextsByRunId.get(runId).sessionId}:shell` : getWorkspaceShellAgentId(workspaceId),
 +                            ...(contextsByRunId.get(runId) ?? {}),
                              agent_name: labelsByRunId.get(runId) ?? 'Shell',
                              run_id: run.runId,
                              status: run.status,
-@@ -196,11 +199,11 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+@@ -196,25 +238,66 @@ export const createWorkspaceShellRuntime = (agentManager) => {
              if (hasRun(runId))
                  requireManager().resumeRun(runId);
          },
 -        async start(workspace) {
-+        async start(workspace, context = {}) {
++        async startSavedScript(workspace, context, observer) {
++          return withStart(workspace.id, async () => {
              const startedAt = Date.now();
 -            const launch = resolveWorkspaceShellStart(workspace.path);
-+            const launch = resolveWorkspaceShellStart(context.cwd ?? workspace.path);
-             const run = await requireManager().startAgent({
+-            const run = await requireManager().startAgent({
 -                agentId: getWorkspaceShellAgentId(workspace.id),
-+                agentId: context.sessionId ? `${workspace.id}:session:${context.sessionId}:shell` : getWorkspaceShellAgentId(workspace.id),
-                 args: launch.args,
-                 command: launch.command,
-                 cwd: launch.cwd,
-@@ -214,6 +217,7 @@ export const createWorkspaceShellRuntime = (agentManager) => {
-                 onExit: ({ runId }) => handleShellExit(runId),
-             });
-             attachRun(workspace.id, run.runId, WORKSPACE_SHELL_LABEL, startedAt);
-+            contextsByRunId.set(run.runId, { ...(context.sessionId ? { sessionId: context.sessionId } : {}), cwd: context.cwd ?? workspace.path });
-             return { ...run, startedAt };
+-                args: launch.args,
+-                command: launch.command,
+-                cwd: launch.cwd,
+-                env: {
+-                    COLORTERM: 'truecolor',
+-                    FORCE_COLOR: '1',
+-                    NO_COLOR: undefined,
+-                    TERM: 'xterm-256color',
+-                    TERM_PROGRAM: 'hive-shell',
+-                },
+-                onExit: ({ runId }) => handleShellExit(runId),
+-            });
+-            attachRun(workspace.id, run.runId, WORKSPACE_SHELL_LABEL, startedAt);
+-            return { ...run, startedAt };
++            const launch = resolveSavedScriptLaunch(context.command, context.cwd);
++            let createdId, unsubscribe;
++            try {
++                const run = await requireManager().startAgent({
++                    agentId: `${workspace.id}:script:${context.scriptRunId}:shell`,
++                    ...launch,
++                    env: {TERM: 'xterm-256color', TERM_PROGRAM: 'hive-script'},
++                    onCreated: ({runId}) => {
++                        createdId = runId;
++                        attachRun(workspace.id, runId, 'Project script', startedAt);
++                        contextsByRunId.set(runId, {scriptRunId: context.scriptRunId, cwd: context.cwd, ...(context.sessionId ? {sessionId: context.sessionId} : {})});
++                        unsubscribe = requireManager().getOutputBus().subscribe(runId, chunk => observer.onOutput(chunk));
++                        observer.onCreated(runId);
++                    },
++                    onNativeExit: event => {
++                        nativeExited(event.runId);
++                        unsubscribe?.();
++                        try { observer.onExit(event.exitCode, event.signal); }
++                        finally { handleShellExit(event.runId); }
++                    },
++                });
++                return {...run, startedAt};
++            } catch (error) {
++                unsubscribe?.();
++                if (createdId) {nativeExited(createdId); detachRun(createdId);}
++                throw error;
++            }
++          });
++        },
++        stopSavedScript(workspaceId, scriptRunId, runId) {
++            if (workspaceIdsByRunId.get(runId) !== workspaceId || contextsByRunId.get(runId)?.scriptRunId !== scriptRunId)
++                throw new Error('[SCRIPT_RUN_NOT_OWNED] Script process is not owned by this runtime');
++            requireManager().stopRun(runId);
++        },
++        async start(workspace, context = {}) {
++          return withStart(workspace.id, async () => {
++            const startedAt = Date.now();
++            const launch = resolveWorkspaceShellStart(context.cwd ?? workspace.path);
++            let createdId;
++            try {
++                const run = await requireManager().startAgent({
++                    agentId: context.sessionId ? `${workspace.id}:session:${context.sessionId}:shell` : getWorkspaceShellAgentId(workspace.id),
++                    args: launch.args, command: launch.command, cwd: launch.cwd,
++                    env: {COLORTERM: 'truecolor', FORCE_COLOR: '1', NO_COLOR: undefined, TERM: 'xterm-256color', TERM_PROGRAM: 'hive-shell'},
++                    onCreated: ({runId}) => {
++                        createdId = runId;
++                        attachRun(workspace.id, runId, WORKSPACE_SHELL_LABEL, startedAt);
++                        contextsByRunId.set(runId, {...(context.sessionId ? {sessionId: context.sessionId} : {}), cwd: context.cwd ?? workspace.path});
++                    },
++                    onNativeExit: ({runId}) => {nativeExited(runId); handleShellExit(runId);},
++                });
++                return {...run, startedAt};
++            } catch (error) {
++                if (createdId) {nativeExited(createdId); detachRun(createdId);}
++                throw error;
++            }
++          });
          },
          stopRun(runId) {
+             if (hasRun(runId))
+diff --git a/dist/src/server/workspace-store.js b/dist/src/server/workspace-store.js
+index 60ac07aa67821d497055334ab427774fc4eafd96..3b1e5665161fd64782d063f329131644a00f2975 100644
+--- a/dist/src/server/workspace-store.js
++++ b/dist/src/server/workspace-store.js
+@@ -1,4 +1,4 @@
+-import { randomUUID } from 'node:crypto';
++import { createHash, randomUUID } from 'node:crypto';
+ import { normalizeWorkerAvatar } from '../shared/worker-avatar.js';
+ import { ConflictError } from './http-errors.js';
+ import { sameFilesystemPath } from './path-canonicalization.js';
+@@ -73,6 +73,7 @@ export const createWorkspaceStore = (db, listOpenDispatchKindsInput) => {
+          WHERE run_id IN (SELECT id FROM workflow_runs WHERE workspace_id = ?)`).run(workspaceId);
+             db.prepare('DELETE FROM workflow_runs WHERE workspace_id = ?').run(workspaceId);
+             db.prepare('DELETE FROM dispatches WHERE workspace_id = ?').run(workspaceId);
++            db.prepare('DELETE FROM app_state WHERE key = ?').run(`desktop_project_scripts_v1_${createHash('sha256').update(workspaceId).digest('hex')}`);
+             db.prepare('DELETE FROM workspaces WHERE id = ?').run(workspaceId);
+         })();
+     };
 diff --git a/dist/src/server/workspace-upload-store.d.ts b/dist/src/server/workspace-upload-store.d.ts
 index f1bbab564e2124953bd376ccf33ff56ccf251337..d523ac7ad73fe8c3dc224253c39bdb6261695ee1 100644
 --- a/dist/src/server/workspace-upload-store.d.ts

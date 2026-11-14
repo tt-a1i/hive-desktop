@@ -23,7 +23,12 @@ export interface HiveUpload { record: { mimeType: string; originalName: string }
 export interface HiveUploadLocation {localPath:string;record:{mimeType:string;originalName:string;sizeBytes:number}}
 
 export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled'; text: string }
+export interface SavedScriptContext {scriptRunId: string; cwd: string; command: string; sessionId?: string}
+export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
+    readonly projectScriptState: import('./project-script-settings.js').ProjectScriptStatePort;
+    startSavedScript(workspaceId: string, context: SavedScriptContext, observer: SavedScriptObserver): Promise<{runId: string}>;
+    stopSavedScript(workspaceId: string, scriptRunId: string, nativeRunId: string): void;
     startSessionShell(workspaceId: string, context: {sessionId: string; cwd: string}): Promise<{runId: string}>;
     getUserInput(workspaceId: string, agentId: string, sequence: number): HiveUserInputRow | undefined;
     mutateUserInput(workspaceId: string, agentId: string, sequence: number, expectedText: string, replacement: string | null, persistSpool: () => void): void;
@@ -100,6 +105,18 @@ export async function createHiveHost({
 	let closing: Promise<void> | undefined;
 	return {
 		port: runtime.port,
+        projectScriptState: {
+            read(key, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.readProjectScriptState(key, workspaceId);},
+            compareAndSwap(key, expected, next, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.compareAndSwapProjectScriptState(key, expected, next, workspaceId);},
+        },
+        startSavedScript(workspaceId, context, observer) {
+            if (closing) throw new Error('Hive host is closed');
+            return runtime.store.startSavedScript(workspaceId, context, observer);
+        },
+        stopSavedScript(workspaceId, scriptRunId, nativeRunId) {
+            if (closing) throw new Error('Hive host is closed');
+            runtime.store.stopSavedScript(workspaceId, scriptRunId, nativeRunId);
+        },
         startSessionShell(workspaceId, context) {
             if (closing) throw new Error("Hive host is closed");
             return runtime.store.startSessionShell(workspaceId, context);

@@ -1,3 +1,5 @@
+import { ProjectScriptRunError } from './project-script-runs.js';
+import { ProjectScriptSettingsError } from './project-script-settings.js';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { format } from 'node:util';
 import { createHash } from 'node:crypto';
@@ -34,7 +36,7 @@ const send = (message: unknown) => { void writeFrame(message); };
 const runtimeInfo = captureRuntimeInfo();
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
-const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }), { onTerminalEvent: data => send({ event: 'terminal', data }) });
+const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }), { onTerminalEvent: data => send({ event: 'terminal', data }), onScriptEvent: data => send({ event: 'script', data }) });
 const { hive, chats, settings, agentModels, terminal, piAuth } = runtime;
 let closing: Promise<void> | undefined;
 const close = () => closing ??= runtime.close();
@@ -95,6 +97,13 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'desktop.settings.probe': return settings.probe(params.backend, params.command);
     case 'desktop.settings.get': return settings.get();
     case 'desktop.settings.update': return settings.update(params);
+    case 'script.settings.list': return runtime.projectScripts.list(text(params, 'workspaceId'));
+    case 'script.settings.save': return runtime.projectScripts.save(text(params, 'workspaceId'), text(params, 'expectedRevision'), record(params.script) as {id?: string; name: unknown; command: unknown});
+    case 'script.settings.remove': return runtime.projectScripts.remove(text(params, 'workspaceId'), text(params, 'expectedRevision'), text(params, 'scriptId'));
+    case 'script.run': return runtime.scriptRuns.run(params);
+    case 'script.runs': return runtime.scriptRuns.list(text(params, 'workspaceId'));
+    case 'script.get': return runtime.scriptRuns.get(text(params, 'workspaceId'), text(params, 'runId'), params.offset as number | undefined, params.limit as number | undefined);
+    case 'script.stop': return runtime.scriptRuns.stop(text(params, 'workspaceId'), text(params, 'runId'));
     case 'terminal.list': return terminal.list(text(params, 'workspaceId'), params.sessionId === undefined ? undefined : text(params, 'sessionId'));
     case 'terminal.start': return terminal.start(text(params, 'workspaceId'), params.sessionId === undefined ? undefined : text(params, 'sessionId'));
     case 'terminal.attach': return terminal.attach({ ...(params.sessionId === undefined ? {} : {sessionId: text(params, 'sessionId')}), attachmentId: text(params, 'attachmentId'), workspaceId: text(params, 'workspaceId'), runId: text(params, 'runId'), cols: params.cols as number, rows: params.rows as number });
@@ -230,7 +239,7 @@ input.on('line', line => {
       await writeFrame({ id, result });
     } catch (error) {
       await writeFrame({ id, error: {
-        code: error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+        code: error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });
