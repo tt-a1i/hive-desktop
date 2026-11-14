@@ -74,6 +74,19 @@ function Find-Action([string] $Name) {
         [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
     return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
+function Save-FixtureFailure([string] $Reason) {
+    Write-Host "Fixture interaction failed: $Reason"
+    foreach ($label in @('外部程序', '选择 外部 Pi 可执行文件', '选择 Codex 可执行文件', '选择 Claude Code 可执行文件', 'Codex 可执行文件路径', '重新读取', '保存设置')) {
+        try {
+            $control = Find-Action $label
+            if ($null -eq $control) { Write-Host "Control '$label': absent"; continue }
+            $state = $control.Current
+            Write-Host "Control '$label': enabled=$($state.IsEnabled), offscreen=$($state.IsOffscreen), bounds=$($state.BoundingRectangle)"
+        } catch { Write-Warning "Could not inspect fixture control '$label': $_" }
+    }
+    try { Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-native-failure.png') }
+    catch { Write-Warning "Could not capture the fixture failure: $_" }
+}
 function Wait-Action([string] $Name, [int] $TimeoutSeconds = 8) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
@@ -81,20 +94,32 @@ function Wait-Action([string] $Name, [int] $TimeoutSeconds = 8) {
         if ($null -ne $action -and $action.Current.IsEnabled) { return $action }
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
-    Write-Host "Unavailable fixture control: $Name"
-    foreach ($label in @($Name, '外部程序', '选择 外部 Pi 可执行文件', '选择 Codex 可执行文件', '选择 Claude Code 可执行文件', 'Codex 可执行文件路径', '重新读取', '保存设置')) {
-        $control = Find-Action $label
-        if ($null -eq $control) { Write-Host "Control '$label': absent"; continue }
-        $state = $control.Current
-        Write-Host "Control '$label': enabled=$($state.IsEnabled), offscreen=$($state.IsOffscreen), bounds=$($state.BoundingRectangle)"
-    }
-    try { Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-native-failure.png') }
-    catch { Write-Warning "Could not capture the fixture failure: $_" }
     throw "Could not reach the fixture action '$Name'."
+}
+function Test-VisibleControl($Control) {
+    $state = $Control.Current
+    $bounds = $state.BoundingRectangle
+    $windowBounds = $root.Current.BoundingRectangle
+    return (-not $state.IsOffscreen -and -not $bounds.IsEmpty -and $bounds.Width -gt 0 -and $bounds.Height -gt 0 -and
+        $windowBounds.Contains($bounds.X + $bounds.Width / 2, $bounds.Y + $bounds.Height / 2))
+}
+function Reveal-Action([string] $Name) {
+    $action = Wait-Action $Name
+    if (Test-VisibleControl $action) { return $action }
+    # GPUI's AX Invoke clicks the node's center. Focus first lets the actual
+    # viewport reveal an offscreen action before that coordinate click.
+    $action.SetFocus()
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $action = Find-Action $Name
+        if ($null -ne $action -and $action.Current.IsEnabled -and (Test-VisibleControl $action)) { return $action }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "The fixture action '$Name' did not enter the window after focus."
 }
 function Invoke-Action([string] $Name) {
     Write-Host "Invoking fixture control: $Name"
-    $action = Wait-Action $Name
+    $action = Reveal-Action $Name
     $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
@@ -152,6 +177,7 @@ function Wait-Appearance([string] $Mode, [string] $Label) {
     throw "Appearance '$Mode' was not persisted and selected in the native window."
 }
 
+try {
 # Only operate on this test app's window and the temporary Reviewer created by the startup check.
 Save-FixtureWindow $OutputPath
 [void](Wait-Action '打开或收起工作区与会话导航')
@@ -205,6 +231,9 @@ $codexPath = 'C:\Fixture Programs\codex.exe'
 $commandInput = Wait-Action 'Codex 可执行文件路径'
 $commandInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($codexPath)
 Invoke-Action '保存设置'
+# The busy action is named '处理中…'. A disabled '保存设置' means the actual
+# response has restored that name and the saved inputs are no longer modified.
+Wait-EnabledState '保存设置' $false
 Invoke-Action '角色模板'
 [void](Wait-Action '角色模板名称')
 Invoke-Action '外部程序'
@@ -394,3 +423,7 @@ Invoke-Action '取消置顶'
 Wait-SessionPin $false
 Wait-EditorText '聊天消息' '后台恢复核验草稿'
 Write-Host 'Pinned and unpinned the named conversation without changing its timestamp or draft.'
+} catch {
+    Save-FixtureFailure $_.Exception.Message
+    throw
+}
