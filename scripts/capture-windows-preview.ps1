@@ -174,7 +174,15 @@ function Invoke-MessageQuote([string] $Message) {
 function Invoke-Action([string] $Name) {
     Write-Host "Invoking fixture control: $Name"
     $action = Reveal-Action $Name
-    $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $pattern = $null
+    if (-not $action.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+        $expand = $null; $toggle = $null
+        $hasExpand = $action.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$expand)
+        $hasToggle = $action.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$toggle)
+        Write-Host "Fixture action unsupported: name=$Name, type=$($action.Current.ControlType.ProgrammaticName), enabled=$($action.Current.IsEnabled), offscreen=$($action.Current.IsOffscreen), expand=$hasExpand, toggle=$hasToggle"
+        throw "Fixture action '$Name' does not support Invoke."
+    }
+    $pattern.Invoke()
 }
 
 function Open-CurrentConversationMenu {
