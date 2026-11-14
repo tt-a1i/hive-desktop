@@ -18,7 +18,7 @@ const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-functional-'));
 const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queued-input-mutation', 'queued-input-wire',
   'conversation-search', 'conversation-search-codex', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity',
-  'member-worktrees-wire', 'project-script-settings',
+  'member-worktrees-wire', 'project-script-settings', 'codex-limits',
   process.platform === 'win32' ? 'session-terminals-windows' : 'session-terminals',
   // These two fixtures use POSIX executable peers/hooks. The Windows PTY and
   // JSONL Git checks above run natively rather than passing via a skipped peer.

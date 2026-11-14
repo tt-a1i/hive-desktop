@@ -101,6 +101,9 @@ jobs:
       - name: Check saved project script transactions without Agent requests
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime exec tsx checks/project-script-settings.ts
+      - name: Check Codex account limits with controlled native peers
+        timeout-minutes: 3
+        run: pnpm --filter @hive-desktop/runtime check:codex-limits
       - name: Check session terminals with native Windows PTYs
         timeout-minutes: 5
         run: pnpm --filter @hive-desktop/runtime exec tsx checks/session-terminals-windows.ts --receipt target/session-terminals-windows.json

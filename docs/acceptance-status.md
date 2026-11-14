@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 项目脚本、成员工作树与账号额度（2026-11-15，源码）
+
+手动项目脚本、成员独立工作树创建/恢复、Codex 账号额度已合入开发分支。真实 Hive/Git/SQLite/PTY、关闭和删除竞态、相同请求不重复执行、原始成员归属及冷恢复检查通过；额度完成一次真实原生只读读取，没有模型请求。合并后 Rust 为 94 passed、1 ignored。自动初始化、新入口真实协作、Mac 操作与 Windows 原生验证继续，见[本批证据与边界](validation/2026-11-15-project-scripts-worker-worktrees-account-limits.md)。current/candidate 仍为 `837abd1`；新源码和未推广的 `f545105` 包需分别核对，未替换用户安装实例。
+
 ## 当前开发包837abd1与输入、检索和项目引用（2026-11-14）
 
 用户已批准全部 T3 源码功能差距，按[#39](https://github.com/tt-a1i/hive-desktop/issues/39)实施，不继续视觉样式改造。待发用户消息的持久化编辑/撤回、全局与项目正文检索/定位、项目文件快照引用已进入 current/candidate ZIP 和 DMG。实际 Codex Terra 执行编辑后的请求、撤回不执行、源删除后读取副本、独立文件字节核对及正文搜索通过；原生编辑/草稿/引用/搜索跳转/冷开与仅附件消息通过。九项包内检查、28,851 个文件/29 个链接的解包和只读镜像逐项核验、实际包内启动退出通过，见[完整范围](validation/2026-11-14-functional-input-search-references.md)。保留9f010e2回退，未替换安装实例。
