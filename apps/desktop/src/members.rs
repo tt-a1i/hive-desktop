@@ -439,7 +439,7 @@ impl HiveApp {
                 div()
                     .id("member-status-explanation")
                     .role(Role::Label)
-                    .aria_label(tr("工作中表示有未完成派单；待命表示当前没有派单。"))
+                    .aria_value(tr("工作中表示有未完成派单；待命表示当前没有派单。"))
                     .text_xs()
                     .text_color(crate::palette::Color::Muted.get(cx))
                     .child(tr("工作中表示有未完成派单；待命表示当前没有派单。")),
@@ -449,7 +449,7 @@ impl HiveApp {
                     div()
                         .id("member-filter-result-count")
                         .role(Role::Label)
-                        .aria_label(if english() { format!("Showing {count} of {} members", self.members.len()) } else { format!("显示 {count} / {} 位成员", self.members.len()) })
+                        .aria_value(if english() { format!("Showing {count} of {} members", self.members.len()) } else { format!("显示 {count} / {} 位成员", self.members.len()) })
                         .text_xs()
                         .text_color(crate::palette::Color::Muted.get(cx))
                         .child(if english() { format!("Showing {count} of {} members", self.members.len()) } else { format!("显示 {count} / {} 位成员", self.members.len()) }),

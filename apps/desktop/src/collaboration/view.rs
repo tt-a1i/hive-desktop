@@ -184,7 +184,7 @@ impl HiveApp {
                                         h_flex()
                                             .id("dispatch-state")
                                             .role(Role::Label)
-                                            .aria_label(
+                                            .aria_value(
                                                 crate::collaboration::dispatch_state(&item.state)
                                                     .to_owned(),
                                             )
@@ -214,7 +214,7 @@ impl HiveApp {
                                         div()
                                             .id("dispatch-participants")
                                             .role(Role::Label)
-                                            .aria_label(format!(
+                                            .aria_value(format!(
                                                 "{} → {}",
                                                 item.from_agent_id
                                                     .as_ref()
@@ -308,7 +308,7 @@ impl HiveApp {
                                 div()
                                     .id("dispatch-task-text")
                                     .role(Role::Label)
-                                    .aria_label(format!("{}: {}", tr("任务"), item.text))
+                                    .aria_value(format!("{}: {}", tr("任务"), item.text))
                                     .p_3()
                                     .rounded_lg()
                                     .bg(Color::Inset.get(cx))
@@ -369,7 +369,7 @@ impl HiveApp {
                                     div()
                                         .id("dispatch-outcome-text")
                                         .role(Role::Label)
-                                        .aria_label(format!(
+                                        .aria_value(format!(
                                             "{}: {text}",
                                             if item.state == "cancelled" {
                                                 tr("取消原因")
@@ -461,7 +461,7 @@ impl HiveApp {
                                                     task.id
                                                 )))
                                                 .role(Role::Label)
-                                                .aria_label(format!(
+                                                .aria_value(format!(
                                                     "{} · {}: {}",
                                                     task.owner_name,
                                                     crate::collaboration::dispatch_state(
@@ -551,7 +551,7 @@ impl HiveApp {
                                         div()
                                             .id("dispatch-empty-messages")
                                             .role(Role::Label)
-                                            .aria_label(tr("没有消息"))
+                                            .aria_value(tr("没有消息"))
                                             .py_4()
                                             .text_xs()
                                             .text_color(Color::Muted.get(cx))
@@ -684,7 +684,7 @@ impl HiveApp {
                                                     message.id
                                                 )))
                                                 .role(Role::Label)
-                                                .aria_label(quote.clone())
+                                                .aria_value(quote.clone())
                                                 .border_l_2()
                                                 .border_color(Color::Accent.get(cx))
                                                 .pl_2()
@@ -700,7 +700,7 @@ impl HiveApp {
                                                 message.id
                                             )))
                                             .role(Role::Label)
-                                            .aria_label(message.text.clone())
+                                            .aria_value(message.text.clone())
                                             .text_sm()
                                             .text_color(Color::Text.get(cx))
                                             .child(message.text.clone()),
@@ -713,7 +713,7 @@ impl HiveApp {
                                                     message.id
                                                 )))
                                                 .role(Role::Label)
-                                                .aria_label(format!(
+                                                .aria_value(format!(
                                                     "{}: {error}",
                                                     tr("投递错误")
                                                 ))

@@ -310,7 +310,7 @@ impl HiveApp {
                 div()
                     .id("error-banner-text")
                     .role(Role::Label)
-                    .aria_label(
+                    .aria_value(
                         self.error
                             .as_ref()
                             .map(|error| error.text())
@@ -1153,7 +1153,7 @@ impl Render for HiveApp {
                                                                         div()
                                                                             .id("session-title")
                                                                             .role(Role::Label)
-                                                                            .aria_label(
+                                                                            .aria_value(
                                                                                 session_title
                                                                                     .clone(),
                                                                             )

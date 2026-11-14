@@ -537,7 +537,7 @@ impl HiveApp {
                             div()
                                 .id("task-document-body")
                                 .role(Role::Label)
-                                .aria_label(
+                                .aria_value(
                                     self.collaboration
                                         .tasks
                                         .read(cx)

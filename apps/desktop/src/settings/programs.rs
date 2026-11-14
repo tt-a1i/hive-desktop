@@ -371,7 +371,7 @@ impl HiveApp {
                                 div()
                                     .id(SharedString::from(format!("program-{backend}-name")))
                                     .role(Role::Label)
-                                    .aria_label(label)
+                                    .aria_value(label)
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(Color::Text.get(cx))

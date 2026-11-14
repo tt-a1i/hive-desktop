@@ -407,7 +407,7 @@ impl HiveApp {
                                         v_flex()
                                             .id("usage-context")
                                             .role(Role::Label)
-                                            .aria_label(format!("{title}: {amount}"))
+                                            .aria_value(format!("{title}: {amount}"))
                                             .p_3()
                                             .rounded_xl()
                                             .border_1()
@@ -486,7 +486,7 @@ impl HiveApp {
                                                             "usage-counter-{i}-{j}"
                                                         )))
                                                         .role(Role::Label)
-                                                        .aria_label(format!("{label}: {}", counter.tokens))
+                                                        .aria_value(format!("{label}: {}", counter.tokens))
                                                         .flex_1()
                                                         .min_w(px(108.))
                                                         .px_2p5()

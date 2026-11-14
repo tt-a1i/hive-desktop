@@ -382,7 +382,7 @@ impl HiveApp {
                                         div()
                                             .id("remote-pairing-code")
                                             .role(Role::Label)
-                                            .aria_label(if english() {
+                                            .aria_value(if english() {
                                                 format!("Pairing code: {code}")
                                             } else {
                                                 format!("配对码：{code}")
@@ -493,7 +493,7 @@ impl HiveApp {
                                                             "remote-pairing-name-{confirm_id}"
                                                         ))
                                                         .role(Role::Label)
-                                                        .aria_label(title.clone())
+                                                        .aria_value(title.clone())
                                                         .text_sm()
                                                         .font_weight(FontWeight::SEMIBOLD)
                                                         .text_color(Color::Text.get(cx))
@@ -520,7 +520,7 @@ impl HiveApp {
                                                         "remote-pairing-guidance-{confirm_id}"
                                                     ))
                                                     .role(Role::Label)
-                                                    .aria_label(guidance)
+                                                    .aria_value(guidance)
                                                     .text_sm()
                                                     .text_color(Color::Secondary.get(cx))
                                                     .child(guidance),
@@ -529,7 +529,7 @@ impl HiveApp {
                                                 div()
                                                     .id(format!("remote-pairing-sas-{confirm_id}"))
                                                     .role(Role::Label)
-                                                    .aria_label(if english() {
+                                                    .aria_value(if english() {
                                                         format!("Security code: {}", pending.sas)
                                                     } else {
                                                         format!("安全短码：{}", pending.sas)
