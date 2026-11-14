@@ -169,7 +169,10 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       if (typeof params.text !== 'string') throw new TypeError('text must be a string');
       return chats.prompt(text(params, 'sessionId'), params.text, params.attachmentIds);
     }
-    case 'chat.queue.edit': return chats.mutateQueuedInput(text(params, 'sessionId'), text(params, 'deliveryId'), params.expectedText, text(params, 'text'));
+    case 'chat.queue.edit': {
+      if (typeof params.text !== 'string') throw new TypeError('Queue text must be a string');
+      return chats.mutateQueuedInput(text(params, 'sessionId'), text(params, 'deliveryId'), params.expectedText, params.text);
+    }
     case 'chat.queue.cancel': return chats.mutateQueuedInput(text(params, 'sessionId'), text(params, 'deliveryId'), params.expectedText);
     case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response);
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));

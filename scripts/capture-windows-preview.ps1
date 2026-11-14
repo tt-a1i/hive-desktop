@@ -457,7 +457,7 @@ Write-Host 'Renamed the lead session without changing its draft or team binding.
 
 # The sidebar search is a real input; results are confined to its named list.
 # Bind both targets to the fixture's actual records before selecting by full identity.
-$searchInputName = '搜索会话名称、项目路径或 Agent'
+$searchInputName = '搜索会话、消息、项目或 Agent…'
 $fixtureRecords = @([System.IO.File]::ReadAllText((Join-Path $DataDirectory 'chats/index.json')) | ConvertFrom-Json)
 $workerRecord = @($fixtureRecords | Where-Object { $_.sessionFile -ceq $WorkerFile })
 $leadRecord = @($fixtureRecords | Where-Object { $_.title -ceq '启动方式核验' })

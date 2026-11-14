@@ -48,7 +48,7 @@
     "check:members": "pnpm build && tsx checks/member-creation.ts && tsx checks/deleted-member-session.ts",
     "check:codex-account": "tsx checks/codex-account.ts",
     "check:terminal-command": "tsx checks/terminal-command.ts",
-    "check:queue-mutations": "tsx checks/queued-input-mutations.ts && tsx checks/queued-input-mutation.ts && tsx checks/queued-input-failed-rollback.ts",
+    "check:queue-mutations": "pnpm build && tsx checks/queued-input-mutations.ts && tsx checks/queued-input-mutation.ts && tsx checks/queued-input-failed-rollback.ts && tsx checks/queued-input-wire.ts",
     "check:conversation-search": "tsx checks/conversation-search.ts && tsx checks/conversation-search-codex.ts && tsx checks/session-body-search.ts",
     "check:project-files": "tsx checks/project-files.ts && tsx checks/project-file-references.ts"
   },

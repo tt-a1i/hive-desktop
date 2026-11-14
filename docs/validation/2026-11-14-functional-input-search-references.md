@@ -53,4 +53,8 @@
 
 ## 交付边界
 
-本批源码、受控协议、真实 Codex 和 macOS 原生操作分别有上述证据。开发包仍需纳入本批源码并单独验证；原有 `9f010e2` 包不包含本批。Windows 原生流程、正式签名/公证与后续 Git/worktree 等范围保持开放。Claude/Antigravity 不进行账号或真实模型验收，Pi 登录未重试。
+最终通信检查发现 `7a02dde` 候选的编辑入口错误地拒绝空正文，尽管底层和界面允许保留附件。新增 `queued-input-wire.ts` 使用实际 JSONL、Hive/SQLite 和受控原生协议对端：新源码允许清空带附件的正文，拒绝无附件空消息，缺失 `text` 不会误触撤回。针对旧候选的负对照在清空附件消息时以 `text is required` 失败，新源码通过。该候选未提升为 current。
+
+新增 `scripts/check-packaged-functional.mjs` 将九项专项检查绑定到包内 Node、完整运行时和依赖，包含上述实际通信入口。Windows 工作流同步纳入这些检查，并将原生搜索定位名更新为功能当前的可访问名称。
+
+本批源码、受控协议、真实 Codex 和 macOS 原生操作分别有上述证据。修复后的开发包仍需单独验证；原有 `9f010e2` 包不包含本批。Windows 原生流程、正式签名/公证与后续 Git/worktree 等范围保持开放。Claude/Antigravity 不进行账号或真实模型验收，Pi 登录未重试。

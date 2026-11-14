@@ -73,6 +73,15 @@ jobs:
       - name: Check image upload and Hive message association
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:attachments
+      - name: Check queued input mutations and recovery
+        timeout-minutes: 5
+        run: pnpm --filter @hive-desktop/runtime check:queue-mutations
+      - name: Check conversation body search
+        timeout-minutes: 5
+        run: pnpm --filter @hive-desktop/runtime check:conversation-search
+      - name: Check project file references and snapshots
+        timeout-minutes: 5
+        run: pnpm --filter @hive-desktop/runtime check:project-files
       - name: Build desktop executable
         run: cargo build --locked --release --manifest-path apps/desktop/Cargo.toml --bin hive-desktop
       - name: Compile runtime location tests
@@ -95,6 +104,16 @@ jobs:
       - name: Check extracted Codex lifecycle without vendor requests
         timeout-minutes: 3
         run: node scripts/check-packaged-codex.mjs --bundle target/portable-windows-extracted
+      - name: Check extracted functional runtime
+        timeout-minutes: 10
+        run: node scripts/check-packaged-functional.mjs --bundle target/portable-windows-extracted --receipt target/functional-receipt.json
+      - name: Upload extracted functional receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-functional-receipt
+          path: target/functional-receipt.json
+          if-no-files-found: warn
       - name: Smoke extracted Windows terminal bridge
         timeout-minutes: 5
         shell: pwsh
