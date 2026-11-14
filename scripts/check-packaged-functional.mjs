@@ -29,6 +29,7 @@ try {
   await mkdir(join(directory, 'fixtures'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/codex-queue-peer.cjs'), join(directory, 'fixtures/codex-queue-peer.cjs'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/git-remotes-wire-peer.cjs'), join(directory, 'fixtures/git-remotes-wire-peer.cjs'));
+  await copyFile(join(root, 'packages/runtime/checks/fixtures/windows-conpty-resize-80x24.bin'), join(directory, 'fixtures/windows-conpty-resize-80x24.bin'));
   // Test-only package resolution: no source-workspace dependencies can satisfy
   // a bare import from these temporary checks.
   await symlink(join(runtime, 'node_modules'), join(directory, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
