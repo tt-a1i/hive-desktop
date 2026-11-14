@@ -39,6 +39,8 @@ run [43559892506](https://github.com/tt-a1i/hive-desktop/actions/runs/4355989250
 
 run [43560938873](https://github.com/tt-a1i/hive-desktop/actions/runs/43560938873) 已通过置顶与归档，图片受控对端检查遇到 `spawn EFTYPE`：临时生成的 `.cjs` 被官方 SDK 当作原生程序，在 Windows 直接启动失败。夹具改为其支持的 `.js` 入口，并明确临时目录为 CommonJS；保留原始图片字节/历史/完成回执/无效输入拒绝断言，不修改 Claude 适配器，也不登录或调用真实 Claude。Mac 定向检查退出 0（`image-peer-launch.log`），Windows 后续结果待记录。
 
+后续 [43561583272](https://github.com/tt-a1i/hive-desktop/actions/runs/43561583272) 已越过启动，夹具历史未被 SDK 读回，原耐久性断言如实失败。当前再将临时目录先 `realpath`，使传给 SDK 的目录与子进程实际 cwd 使用同一真实路径，避免 Windows 短路径差异；这是待 Windows 结果确认的路径修复，未删除历史或完成回执断言。Mac 定向退出 0（`image-peer-canonical-path.log`）。
+
 不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功。现有 Mac 开发包无需因 test-only 改动重新组装。
 
 ## 本轮账号范围

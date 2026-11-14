@@ -1084,6 +1084,7 @@ impl Render for HiveApp {
                                                     h_flex()
                                                         .flex_1()
                                                         .min_w_0()
+                                                        .overflow_hidden()
                                                         .items_center()
                                                         .gap_2()
                                                         .when_some(
@@ -1133,6 +1134,7 @@ impl Render for HiveApp {
                                                                     .h(px(26.))
                                                                     .px_1p5()
                                                                     .rounded_md()
+                                                                    .flex_1()
                                                                     .min_w_0()
                                                                     .max_w(px(420.))
                                                                     .tooltip(tr("重命名会话"))
@@ -1155,6 +1157,7 @@ impl Render for HiveApp {
                                                                                 session_title
                                                                                     .clone(),
                                                                             )
+                                                                            .flex_1()
                                                                             .min_w_0()
                                                                             .truncate()
                                                                             .text_size(px(13.))

@@ -1,10 +1,10 @@
 /** Actual adapters + JSONL subprocess/official SDK synthetic peers, no vendor inference. */
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCodexSession } from '../src/agents/codex.js';
-const directory=await mkdtemp(join(tmpdir(),'hive-images-peers-'));
+const directory=await realpath(await mkdtemp(join(tmpdir(),'hive-images-peers-')));
 const image={type:'image' as const,mimeType:'image/png',data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC'};
 const previous=process.env.CLAUDE_CONFIG_DIR;process.env.CLAUDE_CONFIG_DIR=join(directory,'claude-config');
 try{
