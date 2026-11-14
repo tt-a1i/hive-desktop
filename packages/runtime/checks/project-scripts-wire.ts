@@ -8,7 +8,7 @@ import {join,resolve} from 'node:path';
 import {createInterface} from 'node:readline';
 if(process.platform==='win32')throw new Error('POSIX native JSONL fixture only');
 const directory=await mkdtemp(join(tmpdir(),'hive-scripts-wire-')),project=join(directory,'project');await mkdir(project);
-const child=spawn(process.execPath,[resolve('dist/main.js')],{env:{...process.env,HIVE_DESKTOP_DATA_DIR:join(directory,'state')},stdio:['pipe','pipe','pipe']});
+const child=spawn(process.execPath,[process.env.HIVE_DESKTOP_TEST_RUNTIME ?? resolve('dist/main.js')],{env:{...process.env,HIVE_DESKTOP_DATA_DIR:join(directory,'state')},stdio:['pipe','pipe','pipe']});
 let sequence=0,stderr='';const pending=new Map<number,{resolve:(value:any)=>void;reject:(error:Error)=>void}>(),events:any[]=[];
 child.stderr.on('data',bytes=>stderr+=bytes.toString());
 createInterface({input:child.stdout}).on('line',line=>{const frame=JSON.parse(line);if(typeof frame.id==='number'){pending.get(frame.id)?.resolve(frame);pending.delete(frame.id);}else events.push(frame);});

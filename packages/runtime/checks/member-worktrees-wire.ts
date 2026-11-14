@@ -15,7 +15,7 @@ const git=(...args:string[])=>execFileSync('git',['-c','user.name=Fixture','-c',
 git('init','--template=');await writeFile(join(repo,'base.txt'),'base');git('add','.');git('commit','-qm','base');
 const guard='const original=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==="string"?input:input instanceof URL?input:input.url);if(!["127.0.0.1","localhost","::1"].includes(url.hostname))return Promise.reject(new Error("Fixture disallows external fetch"));return original(input,init);};';
 function start(){
- const child=spawn(process.execPath,['--import',`data:text/javascript,${encodeURIComponent(guard)}`,'dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:data,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1',GIT_CONFIG_GLOBAL:join(directory,'gitconfig'),GIT_CONFIG_NOSYSTEM:'1'},stdio:['pipe','pipe','pipe']});
+ const child=spawn(process.execPath,['--import',`data:text/javascript,${encodeURIComponent(guard)}`,process.env.HIVE_DESKTOP_TEST_RUNTIME ?? 'dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:data,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1',GIT_CONFIG_GLOBAL:join(directory,'gitconfig'),GIT_CONFIG_NOSYSTEM:'1'},stdio:['pipe','pipe','pipe']});
  const exited=once(child,'exit');let id=0,stderr='';child.stderr.on('data',chunk=>{stderr+=String(chunk);});
  const pending=new Map<number,{resolve(frame:Frame):void;reject(error:Error):void}>();const lines=createInterface({input:child.stdout});
  lines.on('line',line=>{const frame=JSON.parse(line) as Frame&{id:number};const request=pending.get(frame.id);if(request){pending.delete(frame.id);request.resolve(frame);}});

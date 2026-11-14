@@ -95,6 +95,12 @@ jobs:
       - name: Check immutable historical session identity
         timeout-minutes: 5
         run: pnpm --filter @hive-desktop/runtime check:session-identity
+      - name: Check Worker worktree creation and cold recovery through desktop JSONL
+        timeout-minutes: 5
+        run: pnpm --filter @hive-desktop/runtime exec tsx checks/member-worktrees-wire.ts
+      - name: Check saved project script transactions without Agent requests
+        timeout-minutes: 3
+        run: pnpm --filter @hive-desktop/runtime exec tsx checks/project-script-settings.ts
       - name: Check session terminals with native Windows PTYs
         timeout-minutes: 5
         run: pnpm --filter @hive-desktop/runtime exec tsx checks/session-terminals-windows.ts --receipt target/session-terminals-windows.json
