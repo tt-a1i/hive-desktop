@@ -1,3 +1,4 @@
+import {probeCodexLimits} from './codex-limits.js';
 import { probeExecutable } from './executable-probe.js';
 import {probeCodexAccount} from './codex-account.js';
 import {terminalCommand} from './terminal-command.js';
@@ -60,6 +61,16 @@ export class DesktopSettings {
     try {
       return {backend,...effective,source:effective.source === 'app' && candidate !== saved[key] ? 'draft' : effective.source,...await task,verifiedVersion:{pi:'1.4.0',codex:'0.167.0',claude:'2.1.317'}[backend]};
     } finally { this.probes.delete(task); }
+  }
+  async codexLimits(draft:unknown) {
+    const candidate=command(draft,'command');
+    const saved=await this.get();
+    if(this.probeAbort.signal.aborted) throw new Error('Desktop settings are closing');
+    const effective=this.snapshot({...saved,codexCommand:candidate}).effective.codex;
+    const task=probeCodexLimits(effective.command,this.probeAbort.signal);
+    this.probes.add(task);
+    try { return {...await task,source:effective.source === 'app' && candidate !== saved.codexCommand ? 'draft' : effective.source}; }
+    finally { this.probes.delete(task); }
   }
   async codexAccount(draft:unknown) {
     const candidate=command(draft,'command');

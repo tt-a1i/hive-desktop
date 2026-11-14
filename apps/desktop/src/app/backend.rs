@@ -121,6 +121,7 @@ impl HiveApp {
                                 this.connected = false;
                                 this.backend_info = None;
                                 this.diagnostics_copied = false;
+                                this.codex_account = Default::default();
                                 this.reset_pi_accounts(settings_window, cx);
                                 this.pi_models.reset_connection();
                                 this.terminal_disconnected(cx);

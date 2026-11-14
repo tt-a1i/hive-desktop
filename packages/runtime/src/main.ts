@@ -101,6 +101,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       });
     }
     case 'agent.models': return agentModels.list(text(params, 'workspaceId'), params.backend);
+    case 'desktop.settings.codexLimits': return settings.codexLimits(params.command);
     case 'desktop.settings.codexAccount': return settings.codexAccount(params.command);
     case 'desktop.settings.probe': return settings.probe(params.backend, params.command);
     case 'desktop.settings.get': return settings.get();
