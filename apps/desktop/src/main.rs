@@ -22,6 +22,7 @@ mod diagnostics;
 mod failures;
 mod image_input;
 mod project_files;
+mod git_workspace;
 mod image_viewer;
 mod interactions;
 mod members;

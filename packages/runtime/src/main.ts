@@ -144,6 +144,8 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       chats.assertWorkspaceAvailable(workspace);
       return chats.attachments.addClipboard(workspace, params.image);
     }
+    case 'git.status': return chats.gitStatus(text(params, 'workspaceId'), params.offset, params.limit);
+    case 'git.diff': return chats.gitDiff(text(params, 'workspaceId'), text(params, 'path'), params.comparison);
     case 'project.files.search': return chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath);
     case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));

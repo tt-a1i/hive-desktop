@@ -21,6 +21,7 @@ const isCode=(code:string)=>(error:unknown)=>error instanceof GitWorkspaceError&
 try{
  const repo=join(directory,'仓库 space\nroot');await init(repo);
  await put(repo,'old name.txt','alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\n');
+ await put(repo,'same before.txt','unchanged rename content\n');
  await put(repo,'delete.txt','remove me\n');await put(repo,'edit.txt','before\n');await put(repo,'binary.dat',Buffer.from([0,1,2,3]));
  await put(repo,'project/inside.txt','project before\n');await put(repo,'outside.txt','outside before\n');await put(repo,'.gitignore','ignored\n');
  await commit(repo);
@@ -34,6 +35,7 @@ try{
  const overridden=await getGitWorkspaceStatus(repo);assert.ok(overridden.entries.some(entry=>entry.path==='global-only'));assert.ok(!overridden.entries.some(entry=>entry.path==='local-only'));
  await git(repo,'config','--unset','core.excludesFile');await rm(join(repo,'global-only'));await rm(join(repo,'system-only'));await rm(join(repo,'local-only'));
  const clean=await getGitWorkspaceStatus(repo);assert.equal(clean.branch,'main');assert.equal(clean.detached,false);assert.equal(clean.unborn,false);assert.deepEqual(clean.entries,[]);assert.equal(clean.repositoryRoot,repo);
+ const sameRenamed='src/renamed 中文.txt';await mkdir(join(repo,'src'));await git(repo,'mv','same before.txt',sameRenamed);
  const renamed='重命名\nnew name.txt';await git(repo,'mv','old name.txt',renamed);await put(repo,renamed,'alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\nstaged\n');await git(repo,'add','--',renamed);await put(repo,renamed,'alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\nstaged\nworking\n');
  await put(repo,'edit.txt','staged edit\n');await git(repo,'add','--','edit.txt');await put(repo,'edit.txt','working edit\n');
  await rm(join(repo,'delete.txt'));await put(repo,'binary.dat',Buffer.from([0,9,8,7]));
@@ -50,6 +52,12 @@ try{
  const staged=await getGitFileDiff(repo,'edit.txt',{comparison:'staged'});assert.equal(staged.before.text,'before\n');assert.equal(staged.after.text,'staged edit\n');assert.ok(staged.patch?.includes('+staged edit'));
  const unstaged=await getGitFileDiff(repo,'edit.txt');assert.equal(unstaged.before.text,'staged edit\n');assert.equal(unstaged.after.text,'working edit\n');
  const renameDiff=await getGitFileDiff(repo,renamed,{comparison:'staged'});assert.equal(renameDiff.before.text,'alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\n');assert.ok(renameDiff.after.text?.includes('staged'));
+ assert.equal(renameDiff.beforePath,'old name.txt');assert.equal(renameDiff.afterPath,renamed);assert.equal(renameDiff.before.oid,rename.headOid);assert.equal(renameDiff.after.oid,rename.indexOid);assert.ok(renameDiff.patch?.includes('\n+staged\n'));assert.ok(!renameDiff.patch?.includes('\n+working\n'));
+ const renameWorking=await getGitFileDiff(repo,renamed,{comparison:'unstaged'});assert.equal(renameWorking.before.oid,rename.indexOid);assert.equal(renameWorking.beforePath,renamed);assert.equal(renameWorking.afterPath,renamed);assert.ok(renameWorking.before.text?.endsWith('staged\n'));assert.ok(renameWorking.after.text?.endsWith('staged\nworking\n'));assert.ok(renameWorking.patch?.includes('\n+working\n'));assert.ok(!renameWorking.patch?.includes('\n+staged\n'));
+ const renameCombined=await getGitFileDiff(repo,renamed,{comparison:'head-worktree'});assert.equal(renameCombined.before.oid,rename.headOid);assert.equal(renameCombined.before.text,renameDiff.before.text);assert.equal(renameCombined.after.text,renameWorking.after.text);assert.equal(renameCombined.beforePath,'old name.txt');assert.equal(renameCombined.afterPath,renamed);assert.ok(renameCombined.patch?.includes('\n+staged\n'));assert.ok(renameCombined.patch?.includes('\n+working\n'));
+ const sameRenameStatus=status.entries.find(entry=>entry.path===sameRenamed)!;assert.equal(sameRenameStatus.kind,'rename');assert.equal(sameRenameStatus.headOid,sameRenameStatus.indexOid);
+ for(const comparison of ['staged','unstaged','head-worktree'] as const){const same=await getGitFileDiff(repo,sameRenamed,{comparison});assert.equal(same.before.kind,'text');assert.equal(same.before.oid,sameRenameStatus.headOid);assert.equal(same.before.text,'unchanged rename content\n');assert.equal(same.after.text,same.before.text);assert.equal(same.patch,'');assert.equal(same.beforePath,comparison==='unstaged'?sameRenamed:'same before.txt');assert.equal(same.afterPath,sameRenamed);}
+
  const untracked=await getGitFileDiff(repo,'空 格\nnotes.txt');assert.equal(untracked.before.kind,'missing');assert.ok(untracked.patch?.includes('+untracked Unicode newline'));
  const deleted=await getGitFileDiff(repo,'delete.txt');assert.equal(deleted.after.kind,'missing');assert.ok(deleted.patch?.includes('-remove me'));
  const binary=await getGitFileDiff(repo,'binary.dat');assert.equal(binary.binary,true);assert.equal(binary.patch,undefined);assert.equal(binary.after.bytes,4);
@@ -72,6 +80,8 @@ try{
  assert.equal(crossing.entries.find(entry=>entry.path==='leaving.txt')!.pathRole,'rename-source');assert.equal(crossing.entries.find(entry=>entry.path==='entered.txt')!.pathRole,'target');
  await assert.rejects(getGitFileDiff(join(parent,'project'),'entered.txt',{comparison:'staged'}),isCode('OUTSIDE_PROJECT_RENAME'));
  await assert.rejects(getGitFileDiff(join(parent,'project'),'leaving.txt',{comparison:'staged'}),isCode('OUTSIDE_PROJECT_RENAME'));
+ await assert.rejects(getGitFileDiff(join(parent,'project'),'entered.txt',{comparison:'head-worktree'}),isCode('OUTSIDE_PROJECT_RENAME'));
+ await assert.rejects(getGitFileDiff(join(parent,'project'),'leaving.txt',{comparison:'head-worktree'}),isCode('OUTSIDE_PROJECT_RENAME'));
  assert.equal((await getGitFileDiff(parent,'project/entered.txt',{comparison:'staged'})).before.text,'entering content\n');
  // Unborn repositories and linked worktrees preserve actual Git identity.
  const unborn=join(directory,'unborn');await init(unborn);await put(unborn,'added.txt','first staged\n');await git(unborn,'add','--','added.txt');
@@ -80,6 +90,19 @@ try{
  const worktree=join(directory,'linked tree');await git(repo,'worktree','add','--detach',worktree,'HEAD');await put(worktree,'edit.txt','linked worktree edit\n');
  const linked=await getGitWorkspaceStatus(worktree);assert.equal(linked.linkedWorktree,true);assert.equal(linked.detached,true);assert.equal(linked.branch,null);assert.equal(linked.repositoryRoot,worktree);assert.notEqual(linked.gitDir,linked.commonDir);assert.equal(linked.entries[0]!.path,'edit.txt');
  await git(repo,'checkout','--detach','HEAD');assert.equal((await getGitWorkspaceStatus(repo)).detached,true);await git(repo,'checkout','main');
+ // Private status metadata preserves sparse-index and SHA-256 repository semantics.
+ const sparse=join(directory,'sparse');await init(sparse);await put(sparse,'kept/file.txt','kept before\n');await put(sparse,'hidden/file.txt','hidden before\n');await commit(sparse);
+ await git(sparse,'sparse-checkout','init','--cone','--sparse-index');await git(sparse,'sparse-checkout','set','kept');await put(sparse,'kept/file.txt','kept after\n');
+ const sparseIndex=await readFile(join(sparse,'.git','index'));const sparseStatus=await getGitWorkspaceStatus(sparse);assert.deepEqual(sparseStatus.entries.map(entry=>entry.path),['kept/file.txt']);assert.equal(sparseStatus.entries[0]!.worktreeStatus,'M');assert.deepEqual(await readFile(join(sparse,'.git','index')),sparseIndex);
+ const sha256=join(directory,'sha256');await mkdir(sha256);await git(sha256,'init','--initial-branch=main','--object-format=sha256');await put(sha256,'hash.txt','before\n');await commit(sha256);await put(sha256,'hash.txt','after\n');const shaStatus=await getGitWorkspaceStatus(sha256);assert.equal(shaStatus.headOid!.length,64);assert.equal(shaStatus.entries[0]!.headOid!.length,64);assert.equal(shaStatus.entries[0]!.worktreeStatus,'M');
+ // Common info files also apply to linked worktrees, including builtin content conversion.
+ await put(repo,'.git/info/exclude','common-ignored\n');await put(worktree,'common-ignored','ignored through common metadata');
+ assert.ok(!(await getGitWorkspaceStatus(worktree)).entries.some(entry=>entry.path==='common-ignored'));
+ const normalization=join(directory,'normalization');await init(normalization);
+ await put(normalization,'.git/info/attributes','info-ident.txt ident\n');const globalAttrs=join(directory,'global-attributes');await writeFile(globalAttrs,'global-ident.txt ident\n');await git(normalization,'config','core.attributesFile',globalAttrs);
+ await put(normalization,'info-ident.txt','$Id$\n');await put(normalization,'global-ident.txt','$Id$\n');await commit(normalization);await put(normalization,'info-ident.txt','$Id: expanded $\n');await put(normalization,'global-ident.txt','$Id: expanded $\n');
+ const ordinaryNormalized=(await git(normalization,'status','--porcelain=v2','-z')).stdout.split('\0').filter(Boolean).map(record=>{const parts=record.split(' ');return{path:parts.at(-1),indexStatus:parts[1]![0],worktreeStatus:parts[1]![1]};});
+ assert.deepEqual((await getGitWorkspaceStatus(normalization)).entries.map(({path,indexStatus,worktreeStatus})=>({path,indexStatus,worktreeStatus})),ordinaryNormalized,'Common/global attributes must match ordinary Git status, including its stat rules');
  // Actual unresolved merge: all index stages and working conflict text remain inspectable.
  const conflict=join(directory,'conflict');await init(conflict);await put(conflict,'conflict.txt','base\n');await commit(conflict);await git(conflict,'checkout','-b','other');await put(conflict,'conflict.txt','other\n');await commit(conflict);await git(conflict,'checkout','main');await put(conflict,'conflict.txt','main\n');await commit(conflict);
  await assert.rejects(git(conflict,'merge','other'));
@@ -88,6 +111,14 @@ try{
  // Every configured helper writes a sentinel if invoked. Only read APIs run now.
  const sentinel=join(directory,'HELPER_RAN'),helper=join(directory,'helper');
  await writeFile(helper,`#!/bin/sh\nprintf invoked > '${sentinel}'\nexit 0\n`);await chmod(helper,0o755);
+ // Common global drivers must not disable repositories that do not use them.
+ await git(repo,'config','--file',globalConfig,'filter.unused.clean',helper);await git(repo,'config','--file',globalConfig,'filter.unused.process',helper);await git(repo,'config','--file',globalConfig,'filter.unused.smudge',helper);
+ const globalFilterBefore=await readFile(globalConfig);const unusedDriver=await getGitWorkspaceStatus(repo);assert.ok(unusedDriver.entries.length>0);assert.deepEqual(await readFile(globalConfig),globalFilterBefore);await assert.rejects(access(sentinel));
+ // Smudge-only drivers are never used when status reads working file content.
+ await git(repo,'config','--file',globalConfig,'filter.smudge-only.smudge',helper);await put(repo,'.gitattributes','*.txt filter=smudge-only\n');await getGitWorkspaceStatus(repo);await assert.rejects(access(sentinel));
+ // Last local empty values override global clean/process commands safely.
+ await put(repo,'.gitattributes','*.txt filter=unused\n');await git(repo,'config','filter.unused.clean','');await git(repo,'config','filter.unused.process','');await getGitWorkspaceStatus(repo);await assert.rejects(access(sentinel));
+ await git(repo,'config','--remove-section','filter.unused');await assert.rejects(getGitWorkspaceStatus(repo),isCode('UNSUPPORTED_FILTER'));await assert.rejects(access(sentinel));await rm(join(repo,'.gitattributes'));
  // Staged gitlink commits remain changes even while nested file scans are disabled.
  const moduleSource=join(directory,'module-source'),gitlinkParent=join(directory,'gitlink-parent');
  await init(moduleSource);await put(moduleSource,'module.txt','commit A\n');await commit(moduleSource,'module A');const commitA=(await git(moduleSource,'rev-parse','HEAD')).stdout.trim();
@@ -115,9 +146,21 @@ try{
  await git(repo,'config','core.fsmonitor',helper);await git(repo,'config','core.hooksPath',hooks);await git(repo,'config','diff.external',helper);await git(repo,'config','diff.sentinel.textconv',helper);await put(repo,'.gitattributes','*.txt diff=sentinel filter=sentinel\n');
  await git(repo,'config','filter.sentinel.clean',helper);await git(repo,'config','filter.sentinel.smudge',helper);await git(repo,'config','filter.sentinel.process',helper);await git(repo,'config','filter.sentinel.required','true');
  await assert.rejects(getGitWorkspaceStatus(repo),isCode('UNSUPPORTED_FILTER'));
+ // Status classifies the whole scanned index, including a filtered path outside
+ // the selected subproject and filenames containing NUL-delimited newlines.
+ await put(repo,'.gitattributes','outside.txt filter=sentinel\n');await assert.rejects(getGitWorkspaceStatus(join(repo,'project')),isCode('UNSUPPORTED_FILTER'));await assert.rejects(access(sentinel));await put(repo,'.gitattributes','*.txt diff=sentinel filter=sentinel\n');
  assert.equal((await getGitFileDiff(repo,'edit.txt')).after.text,'working edit\n');assert.equal((await getGitFileDiff(repo,'edit.txt',{comparison:'staged'})).after.text,'staged edit\n');
  await assert.rejects(access(sentinel));
  await git(repo,'config','--remove-section','filter.sentinel');await getGitWorkspaceStatus(repo);await getGitFileDiff(repo,'edit.txt');await assert.rejects(access(sentinel));
+ // Deterministic actual races: an attribute (and optionally its command) appears
+ // after the real check-attr returns, before status starts. No helper may run.
+ for(const addDriver of [false,true]){
+  const racingAttrs=join(directory,addDriver?'race-new-driver':'race-attributes');await init(racingAttrs);await put(racingAttrs,'file.txt','before\n');await commit(racingAttrs);await put(racingAttrs,'file.txt','after!\n');
+  if(!addDriver)await git(racingAttrs,'config','filter.race.clean',helper);
+  const attrProxy=join(directory,addDriver?'git-new-driver-proxy':'git-attr-proxy');
+  await writeFile(attrProxy,`#!/usr/bin/env node\nconst{execFileSync}=require('node:child_process');const fs=require('node:fs');const args=process.argv.slice(2);const out=execFileSync(${JSON.stringify(gitPath)},args,{stdio:['pipe','pipe','inherit'],input:fs.readFileSync(0)});if(args.includes('check-attr')&&!fs.existsSync('.gitattributes')){fs.writeFileSync('.gitattributes','file.txt filter=race\\n');${addDriver?`execFileSync(${JSON.stringify(gitPath)},['config','filter.race.clean',${JSON.stringify(helper)}]);`:''}}process.stdout.write(out);\n`);await chmod(attrProxy,0o755);
+  await assert.rejects(getGitWorkspaceStatus(racingAttrs,{gitExecutable:attrProxy}),isCode('UNSUPPORTED_FILTER'));await assert.rejects(access(sentinel));
+ }
  // Missing promisor object must fail locally, never start a transport helper.
  const partial=join(directory,'partial');await init(partial);await put(partial,'partial.txt','missing blob content\n');await commit(partial);
  const blob=(await git(partial,'rev-parse','HEAD:partial.txt')).stdout.trim();await rm(join(partial,'.git','objects',blob.slice(0,2),blob.slice(2)));
@@ -127,7 +170,7 @@ try{
  const racing=join(directory,'racing');await init(racing);await put(racing,'file.txt','before\n');await commit(racing);await put(racing,'file.txt','after\n');
  const proxy=join(directory,'git-proxy');await writeFile(proxy,`#!/usr/bin/env node\nconst{execFileSync}=require('node:child_process');const args=process.argv.slice(2);const out=execFileSync(${JSON.stringify(gitPath)},args,{stdio:['ignore','pipe','inherit']});if(args.includes('status'))execFileSync(${JSON.stringify(gitPath)},['add','--','file.txt']);process.stdout.write(out);\n`);await chmod(proxy,0o755);
  await assert.rejects(getGitWorkspaceStatus(racing,{gitExecutable:proxy}),isCode('CONCURRENT_CHANGE'));
- console.log('GIT_WORKSPACE_READ_OK: real Git ordinary/staged/unstaged/rename/delete/untracked/binary/conflict/unborn/detached/worktree/project scopes; Unicode/newline paths; pagination/limits/errors; helper and lazy-fetch sentinels; concurrent index detection.');
+ console.log('GIT_WORKSPACE_READ_OK: real Git status/diff/rename/conflict/project scopes; split/sparse indexes and SHA256; ignore/attribute semantics; helper/lazy-fetch blocking; attrs and new-driver races safely rejected; actual index unchanged.');
 }finally{
  if(previousGlobal===undefined)delete process.env.GIT_CONFIG_GLOBAL;else process.env.GIT_CONFIG_GLOBAL=previousGlobal;
  if(previousSystem===undefined)delete process.env.GIT_CONFIG_SYSTEM;else process.env.GIT_CONFIG_SYSTEM=previousSystem;

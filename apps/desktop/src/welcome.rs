@@ -209,24 +209,32 @@ impl HiveApp {
                     .flex_shrink_0()
                     .items_center()
                     .gap_2p5()
-                    .when_some(branch, |row, branch| {
+                    .when(active_project.is_some(), |row| {
                         row.child(
-                            h_flex()
-                                .id("composer-git-branch")
-                                .role(Role::Label)
-                                .aria_value(format!("{}: {branch}", tr("当前 Git 分支")))
+                            Button::new("composer-git-branch")
+                                .custom(crate::palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(22.))
+                                .px_1p5()
+                                .rounded_md()
                                 .min_w_0()
-                                .items_center()
-                                .gap_1()
-                                .text_size(px(12.))
-                                .text_color(Color::Muted.get(cx))
+                                .icon(Glyph::GitBranch)
                                 .child(
-                                    Icon::new(Glyph::GitBranch)
-                                        .size(px(12.))
+                                    div()
+                                        .min_w_0()
+                                        .max_w(px(180.))
+                                        .truncate()
+                                        .text_size(px(12.))
                                         .text_color(Color::Muted.get(cx))
-                                        .flex_shrink_0(),
+                                        .child(branch.unwrap_or_else(|| tr("Git 状态").to_owned())),
                                 )
-                                .child(div().max_w(px(180.)).truncate().child(branch)),
+                                .tooltip(tr("查看项目 Git 状态与差异"))
+                                .accessibility_label(tr("查看项目 Git 状态与差异"))
+                                .disabled(!self.connected || self.closing)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_git_workspace(window, cx)
+                                })),
                         )
                     })
                     .when(self.session.is_some(), |row| {

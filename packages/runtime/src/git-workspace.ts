@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { lstat, open, realpath, readlink, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { lstat, open, realpath, readlink, mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const NULL_FILE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const MAX_OUTPUT = 8 * 1024 * 1024;
@@ -45,6 +45,8 @@ export interface GitDiffOptions extends GitReadOptions {
 }
 export interface GitFileDiff extends GitWorkspaceIdentity {
   path: string; repositoryPath: string; comparison: 'staged' | 'unstaged' | 'head-worktree';
+  /** Project-relative names for each comparison side, including staged rename origins. */
+  beforePath: string; afterPath: string;
   before: GitFileSnapshot; after: GitFileSnapshot;
   /** Content-only patch with neutral before/after names; modes and kinds are above. */
   patch?: string;
@@ -69,9 +71,9 @@ function environment(): NodeJS.ProcessEnv {
   return { ...env, ...configuration, LC_ALL:'C',
     GIT_OPTIONAL_LOCKS:'0', GIT_TERMINAL_PROMPT:'0', GIT_NO_LAZY_FETCH:'1', GIT_ALLOW_PROTOCOL:'', GIT_PROTOCOL_FROM_USER:'0', GIT_LITERAL_PATHSPECS:'1', GIT_PAGER:'cat', PAGER:'cat' };
 }
-async function command(git: string, cwd: string, env: NodeJS.ProcessEnv, timeout: number, args: string[], maxBuffer = MAX_OUTPUT, accepted = [0]): Promise<CommandResult> {
+async function command(git: string, cwd: string, env: NodeJS.ProcessEnv, timeout: number, args: string[], maxBuffer = MAX_OUTPUT, accepted = [0], input?: Buffer): Promise<CommandResult> {
   return new Promise((resolveResult, reject) => {
-    execFile(git, ['--no-pager', ...safeConfig, ...args], {cwd,env,timeout,maxBuffer,encoding:'buffer',windowsHide:true}, (error,stdout,stderr) => {
+    const child = execFile(git, ['--no-pager', ...safeConfig, ...args], {cwd,env,timeout,maxBuffer,encoding:'buffer',windowsHide:true}, (error,stdout,stderr) => {
       const detail = stderr.toString('utf8').slice(0, 1500).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
       const code = error && typeof error.code === 'number' ? error.code : 0;
       if (error && (typeof error.code !== 'number' || !accepted.includes(error.code))) {
@@ -80,6 +82,8 @@ async function command(git: string, cwd: string, env: NodeJS.ProcessEnv, timeout
         reject(new GitWorkspaceError(kind, kind === 'GIT_NOT_FOUND' ? 'Git executable was not found' : `Git read failed${detail ? `: ${detail}` : ''}`));
       } else resolveResult({stdout,stderr:detail,code});
     });
+    child.stdin?.on('error', error => { if ((error as NodeJS.ErrnoException).code !== 'EPIPE') reject(new GitWorkspaceError('GIT_COMMAND_FAILED','Could not supply paths to Git')); });
+    child.stdin?.end(input);
   });
 }
 function stripLine(value: Buffer): string { return value.toString('utf8').replace(/\n$/, ''); }
@@ -141,14 +145,30 @@ async function unchanged(c: Context): Promise<void> {
   if (JSON.stringify(identity(c))!==JSON.stringify(identity(next)) || c.indexFingerprint!==next.indexFingerprint || c.configFingerprint!==next.configFingerprint) throw new GitWorkspaceError('CONCURRENT_CHANGE','Repository HEAD, index, configuration or worktree changed; refresh and retry');
 }
 async function requireSafeStatus(c: Context): Promise<void> {
-  // Status may hash changed working files and invoke clean/process filters. Do
-  // not silently replace their semantics with raw-file status. Raw diffs remain
-  // available because cat-file never uses filters without an explicit option.
-  const filters = await command(c.git,c.projectRoot,c.env,c.timeout,['config','--null','--get-regexp','^filter\\..*\\.(clean|smudge|process)$'],256*1024,[0,1]);
-  if (filters.stdout.toString('utf8').split('\0').some(entry => { const at=entry.indexOf('\n'); return at>=0 && entry.slice(at+1).trim(); })) {
-    throw new GitWorkspaceError('UNSUPPORTED_FILTER','Git status is unavailable for this repository because configured content filters could run project commands. Raw file diffs remain available.');
+  // Only clean/process filters can execute while status hashes tracked files.
+  // Installed but unused drivers (for example a global LFS setup) are harmless.
+  const configured = await command(c.git,c.repositoryRoot,c.env,c.timeout,['config','--null','--get-regexp','^filter\\..*\\.(clean|process)$'],256*1024,[0,1]);
+  const effective = new Map<string,string>();
+  for (const entry of configured.stdout.toString('utf8').split('\0').filter(Boolean)) {
+    const at=entry.indexOf('\n'),key=entry.slice(0,at);
+    if(at<0||!/^filter\..+\.(clean|process)$/.test(key))throw new GitWorkspaceError('UNSUPPORTED_FILTER','Git filter configuration cannot be safely classified');
+    effective.set(key,entry.slice(at+1)); // Git uses the last configured value.
+  }
+  const drivers = new Set([...effective].filter(([,value])=>value.trim()).map(([key])=>key.slice('filter.'.length,key.lastIndexOf('.'))));
+  if(!drivers.size)return;
+  // Status scans the entire index before results are restricted to a project,
+  // so classify the whole index too. NUL-separated stdin preserves all paths.
+  const tracked = await command(c.git,c.repositoryRoot,c.env,c.timeout,['ls-files','--cached','-z']);
+  if(!tracked.stdout.length)return;
+  const attributes = await command(c.git,c.repositoryRoot,c.env,c.timeout,['check-attr','--stdin','-z','filter'],MAX_OUTPUT,[0],tracked.stdout);
+  const values=pathText(attributes.stdout).split('\0');
+  if(values.pop()!==''||values.length%3!==0)throw new GitWorkspaceError('INVALID_GIT_OUTPUT','Incomplete Git filter attribute result');
+  for(let i=0;i<values.length;i+=3){
+    if(values[i+1]!=='filter')throw new GitWorkspaceError('INVALID_GIT_OUTPUT','Unexpected Git filter attribute');
+    if(drivers.has(values[i+2]!))throw new GitWorkspaceError('UNSUPPORTED_FILTER','Git status is unavailable because a tracked file uses a configured external content filter. Raw file diffs remain available.');
   }
 }
+
 function fields(record: string, count: number): [string[],string] {
   const result: string[]=[];let at=0;
   for(let n=0;n<count;n++){const next=record.indexOf(' ',at);if(next<0)throw new GitWorkspaceError('INVALID_GIT_OUTPUT','Incomplete Git status record');result.push(record.slice(at,next));at=next+1;}
@@ -180,10 +200,41 @@ function parseStatus(data: Buffer, prefix: string): GitChange[] {
   }
   return entries;
 }
+/** Isolate executable configuration while retaining the actual read-only index.
+ * Attributes can change at any time. With no filter definitions in this private
+ * config, even a newly applied/newly configured driver cannot execute here. */
+async function safeStatus(c: Context): Promise<CommandResult> {
+  const directory=await mkdtemp(join(tmpdir(),'hive-git-status-'));
+  try {
+    await mkdir(join(directory,'objects'));await mkdir(join(directory,'refs'));await mkdir(join(directory,'info'));
+    const gitPath=async(name:string)=>resolve(c.repositoryRoot,stripLine((await command(c.git,c.repositoryRoot,c.env,c.timeout,['rev-parse','--git-path',name],4096)).stdout));
+    const index=await gitPath('index'),objects=await gitPath('objects');
+    const env={...c.env,GIT_DIR:directory,GIT_WORK_TREE:c.repositoryRoot,GIT_INDEX_FILE:index,GIT_OBJECT_DIRECTORY:objects,GIT_CONFIG_GLOBAL:NULL_FILE,GIT_CONFIG_SYSTEM:NULL_FILE,GIT_CONFIG_NOSYSTEM:'1'};
+    await writeFile(join(directory,'HEAD'),c.headOid ? c.headOid+'\n':'ref: refs/heads/desktop-unborn\n');
+    const configPath=join(directory,'config');await writeFile(configPath,'');
+    // These scalar/path settings affect normal index/worktree comparisons and
+    // ignore rules. Never copy includes, remotes, credentials, or helper commands.
+    const pattern='^(core\\.(repositoryformatversion|filemode|ignorecase|precomposeunicode|symlinks|ignorestat|trustctime|checkstat|autocrlf|eol|safecrlf|excludesfile|attributesfile|sparsecheckout|sparsecheckoutcone|longpaths)|extensions\\.objectformat|index\\.sparse|diff\\.renamelimit|status\\.renamelimit)$';
+    const configured=await command(c.git,c.repositoryRoot,c.env,c.timeout,['config','--null','--get-regexp',pattern],256*1024,[0,1]);
+    const effective=new Map<string,string>();
+    for(const entry of configured.stdout.toString('utf8').split('\0').filter(Boolean)){const at=entry.indexOf('\n');if(at<0)throw new GitWorkspaceError('INVALID_GIT_OUTPUT','Invalid status configuration');effective.set(entry.slice(0,at),entry.slice(at+1));}
+    for(const [key,value] of effective)await command(c.git,c.repositoryRoot,env,c.timeout,['config','--file',configPath,key,value],4096);
+    for(const name of ['info/exclude','info/attributes','info/sparse-checkout']){
+      try {await writeFile(join(directory,...name.split('/')),await boundedFile(await gitPath(name),1024*1024));}
+      catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+    }
+    const shared=stripLine((await command(c.git,c.repositoryRoot,c.env,c.timeout,['rev-parse','--shared-index-path'],4096)).stdout);
+    if(shared){const name=basename(shared);if(!/^sharedindex\.[a-f0-9]+$/.test(name))throw new GitWorkspaceError('INVALID_GIT_OUTPUT','Invalid shared index path');await writeFile(join(directory,name),await boundedFile(resolve(c.repositoryRoot,shared),MAX_INDEX));}
+    return await command(c.git,c.repositoryRoot,env,c.timeout,['-c','status.renames=true','status','--porcelain=v2','-z','--untracked-files=all','--ignore-submodules=dirty','--no-ahead-behind','--','.']);
+  }finally{await rm(directory,{recursive:true,force:true});}
+}
 export async function getGitWorkspaceStatus(projectRoot: string, options: GitStatusOptions = {}): Promise<GitWorkspaceStatus> {
   const offset=integer(options.offset,0,0,1_000_000,'offset'),limit=integer(options.limit,100,1,500,'limit');
   const c=await context(projectRoot,options);await requireSafeStatus(c);
-  const output=await command(c.git,c.repositoryRoot,c.env,c.timeout,['-c','status.renames=true','status','--porcelain=v2','-z','--untracked-files=all','--ignore-submodules=dirty','--no-ahead-behind','--','.']);
+  const output=await safeStatus(c);
+  // Reclassify the real attributes after the isolated scan. A newly active
+  // driver is an explicit unsupported result, never a raw-content status claim.
+  await requireSafeStatus(c);
   const entries=parseStatus(output.stdout,c.projectPrefix);await unchanged(c);
   const warnings=output.stderr?[output.stderr]:[];
   return {...identity(c),entries:entries.slice(offset,offset+limit),total:entries.length,offset,limit,hasMore:offset+limit<entries.length,complete:warnings.length===0,warnings,scope:'project',submoduleDetails:'not-scanned',globalConfiguration:'read-only'};
@@ -269,7 +320,7 @@ export async function getGitFileDiff(projectRoot: string,path: string,options: G
   const index=stages.find(stage=>stage.stage===0)?.snapshot??missing();
   const limitations:string[]=[];
   let headPath=repositoryPath;
-  if(comparison==='staged')headPath=await stagedSource(c,repositoryPath);
+  if(comparison!=='unstaged')headPath=await stagedSource(c,repositoryPath);
   if(projectPath(headPath,c.projectPrefix)===undefined)throw new GitWorkspaceError('OUTSIDE_PROJECT_RENAME','The rename source is outside the selected project; inspect it from the repository root');
   const before=comparison==='unstaged'?index:await headSnapshot(c,headPath,max);
   let after:Snapshot;
@@ -281,5 +332,5 @@ export async function getGitFileDiff(projectRoot: string,path: string,options: G
   const binary=before.meta.kind==='binary'||after.meta.kind==='binary';
   const output=!binary&&!limitations.length?await patch(c,before,after,diffMax):undefined;
   await unchanged(c);
-  return {...identity(c),path,repositoryPath,comparison,before:before.meta,after:after.meta,...(output!==undefined&&{patch:output}),binary,complete:limitations.length===0,limitations,content:'raw',...(conflicts.length&&{conflictStages:conflicts.map(stage=>({stage:stage.stage,snapshot:stage.snapshot.meta}))})};
+  return {...identity(c),path,repositoryPath,comparison,beforePath:comparison==='unstaged'?path:projectPath(headPath,c.projectPrefix)!,afterPath:path,before:before.meta,after:after.meta,...(output!==undefined&&{patch:output}),binary,complete:limitations.length===0,limitations,content:'raw',...(conflicts.length&&{conflictStages:conflicts.map(stage=>({stage:stage.stage,snapshot:stage.snapshot.meta}))})};
 }

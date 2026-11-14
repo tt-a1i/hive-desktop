@@ -15,6 +15,7 @@ import { createPiSession } from './agents/pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, type ChatRecord, type ChatBackend } from './chat-index.js';
 import { searchConversation, type ConversationSearchMatch } from './conversation-search.js';
+import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
 import { DeliveryQueue } from './delivery-queue.js';
@@ -62,6 +63,33 @@ export class Chats implements StructuredSessionPort {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
   list(workspaceId: string) { return this.index.list(workspaceId); }
+  async gitStatus(workspaceId: string, offset: unknown = 0, limit: unknown = 100) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const workspace = await this.workspace(workspaceId);
+    try {
+      const status = await getGitWorkspaceStatus(workspace.path, {offset: offset as number, limit: limit as number});
+      this.assertWorkspaceAvailable(workspaceId);
+      return {ok: true as const, status};
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+      throw error;
+    }
+  }
+  async gitDiff(workspaceId: string, path: string, comparison: unknown = 'unstaged') {
+    this.assertWorkspaceAvailable(workspaceId);
+    const workspace = await this.workspace(workspaceId);
+    try {
+      if (typeof comparison !== 'string' || !['staged', 'unstaged', 'head-worktree'].includes(comparison)) {
+        throw new GitWorkspaceError('INVALID_ARGUMENT', 'Invalid Git comparison');
+      }
+      const diff = await getGitFileDiff(workspace.path, path, {comparison: comparison as NonNullable<GitDiffOptions['comparison']>});
+      this.assertWorkspaceAvailable(workspaceId);
+      return {ok: true as const, diff};
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+      throw error;
+    }
+  }
   async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0) {
     this.assertWorkspaceAvailable(workspaceId);
     if (typeof query !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');

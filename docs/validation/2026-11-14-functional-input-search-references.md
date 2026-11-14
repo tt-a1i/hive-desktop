@@ -57,4 +57,13 @@
 
 新增 `scripts/check-packaged-functional.mjs` 将九项专项检查绑定到包内 Node、完整运行时和依赖，包含上述实际通信入口。Windows 工作流同步纳入这些检查，并将原生搜索定位名更新为功能当前的可访问名称。
 
-本批源码、受控协议、真实 Codex 和 macOS 原生操作分别有上述证据。修复后的开发包仍需单独验证；原有 `9f010e2` 包不包含本批。Windows 原生流程、正式签名/公证与后续 Git/worktree 等范围保持开放。Claude/Antigravity 不进行账号或真实模型验收，Pi 登录未重试。
+修复后的 `837abd1a8c94d8871221d2824249c89906dd2e97` 已进入 current/candidate。包内九项专项检查及通用 Node/PTY/Hive 检查通过，解包和只读 DMG 各有 28,851 个文件、29 个链接逐项一致；镜像中的原生应用实际恢复保存选择并退出，owned Node 已消失。生产 release/包内 Node 和运行时的独立原生 UI 另验证了正文清空后保留附件、保存成功及退出重开后的空正文、同一附件和普通草稿。收据见 `.artifacts/functional-parity/{extracted-functional-837abd1.json,dmg-manifest-837abd1.json,promotion-837abd1.json}` 与 `ui-qa/release-837abd1-verified.json`。
+
+- ZIP：`.artifacts/hive-desktop-macos-arm64-837abd1.zip`，158,348,907 字节，SHA-256 `4f21b66ee4d0e1c25119ecaa82173b66b98c193fe3b879ef8e19097f55e91f0e`。
+- DMG：`.artifacts/release-837abd1/Hive-Desktop-macos-arm64.dmg`，228,046,878 字节，SHA-256 `64d42ef45eb0eda7a81cc8eeca210ae404d6dac7fe2aafdb826e44ecdf2ca503`。
+- 冻结依赖来自本机同平台的完整 `7a02dde` deploy；核对锁、补丁、工作区配置和依赖声明均不变后，替换完整126个运行时文件及原生程序。未把开发脚本变更当作依赖变更。
+- 保留 `9f010e2` 回退与全部用户/测试数据。未提升的7a02dde组装目录和无用候选已清理，负对照入口代码与原始哈希另存；未声称逻辑体积等于实测释放空间。
+
+Windows [43597512720](https://github.com/tt-a1i/hive-desktop/actions/runs/43597512720) 的进程监督及原生CLI检查通过，新队列检查因空目录未注册测试模型而在执行前失败。仅修正自包含夹具、保留原断言并断言零模型请求后，在相同产品源码上运行 [43598849299](https://github.com/tt-a1i/hive-desktop/actions/runs/43598849299)：后端专项、Rust 构建、便携包、九项解包专项检查、PTY/终端、进程监督及官方 CLI 检查均通过。最后的原生工作区脚本失败；截图与操作树表明它试图点击设置浮层后面已隐藏的“返回派单详情”，需要先关闭浮层。两处脚本修正后，正以原 run 的同一 ZIP 重放，未重建或更换该产品包。不能把此前检查或本机 MSVC 结果当作完整 Windows 原生交互验收。
+
+本批源码、受控协议、真实 Codex、macOS 原生操作与开发包分别有上述证据。Windows 原生流程、正式签名/公证与后续 Git/worktree 等范围保持开放。Claude/Antigravity 不进行账号或真实模型验收，Pi 登录未重试。用户安装的应用实例未替换。

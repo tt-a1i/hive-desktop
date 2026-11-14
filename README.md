@@ -4,6 +4,8 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
+当前 Mac 开发包为 `837abd1`：待发消息编辑/撤回、历史正文搜索与项目文件引用已纳入 current/candidate ZIP 和 DMG。真实 Codex Terra、原生操作/冷重开、实际通信入口、解包与只读镜像检查已通过，具体范围及 Windows 进展见[功能验收记录](docs/validation/2026-11-14-functional-input-search-references.md)。保留 `9f010e2` 回退，未替换用户安装实例。Git 状态/Diff 正在下一批源码与实机阶段，尚未进入该开发包；以下早先“当前”描述为当时记录。
+
 2026-11-14 最新范围：用户已批准补齐 T3 Code 源码对比中的全部功能差距，按[功能总任务 #39](https://github.com/tt-a1i/hive-desktop/issues/39)持续实施。当前优先级为待发消息编辑/撤回、历史正文搜索和结构化项目文件引用，随后推进 Git/worktree、检查点/历史分叉、跨后端接续、配置扩展与桌面更新。暂停视觉样式改造，只补充功能所需的操作入口；下列早先 UI 计划不再代表当前执行顺序。现有协作契约和账号验收限制保持。
 
 2026-11-14 最新方向：UI/UX 先直接复刻 T3 Code，作为布局、视觉、交互和全部设置页的唯一基准。当前 Mac 开发包为 `9f010e2`，包含[设置浮层与真实配置反馈](docs/validation/2026-11-14-t3code-settings-modal.md)、[标题菜单/双击重命名及模型/推理合并工具栏](docs/validation/2026-11-14-t3code-chat-controls.md)。实际Terra工具停止/排队继续和完整冷恢复、优化包会话置顶/归档恢复及双语窄窗操作已验证。侧栏拖宽和直接搜索正在实施，背景模糊尚未实现。既有[真实协作](docs/validation/2026-11-14-collaboration-start-and-live.md)和[版本诊断](docs/validation/2026-11-14-build-diagnostics.md)证据保留。当前已运行安装实例未替换。Claude/Antigravity按用户要求本轮不验收；Pi当前账号invalid_grant，不重复登录。Windows静态文本可访问性修复及剩余原生流程、完整产品验收继续。

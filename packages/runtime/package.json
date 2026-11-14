@@ -50,7 +50,8 @@
     "check:terminal-command": "tsx checks/terminal-command.ts",
     "check:queue-mutations": "pnpm build && tsx checks/queued-input-mutations.ts && tsx checks/queued-input-mutation.ts && tsx checks/queued-input-failed-rollback.ts && tsx checks/queued-input-wire.ts",
     "check:conversation-search": "tsx checks/conversation-search.ts && tsx checks/conversation-search-codex.ts && tsx checks/session-body-search.ts",
-    "check:project-files": "tsx checks/project-files.ts && tsx checks/project-file-references.ts"
+    "check:project-files": "tsx checks/project-files.ts && tsx checks/project-file-references.ts",
+    "check:git-workspace": "tsx checks/git-workspace.ts && tsx checks/workspace-git.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.317",
