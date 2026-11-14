@@ -1026,7 +1026,7 @@
   "复制已接收消息": "Copy received message",
   "待处理消息": "Pending messages",
   "附件消息": "Message with attachments",
-  "新会话": "New conversation",
+  "新会话": "New thread",
   "已入队，等待当前回复结束": "Queued; waiting for the current response to finish",
   "已入队，等待继续处理": "Queued; waiting to continue processing",
   "复制待处理消息": "Copy pending message",
@@ -1307,7 +1307,7 @@
   "本机可用": "Ready locally",
   "需检查": "Needs attention",
   "待配置": "Not configured",
-  "新建会话": "New chat",
+  "新建会话": "New thread",
   "先写下需求，再选择 Agent。草稿会带入新会话。": "Write your request first, then choose an Agent. Your draft carries into the new conversation.",
   "定位并修复问题": "Investigate and fix an issue",
   "请帮我重现并定位当前项目中的问题，给出根因分析和修复方案。": "Please help reproduce and pinpoint the issue in this project, then provide a root-cause analysis and fix.",
@@ -1329,5 +1329,7 @@
   "点击切换项目文件夹": "Click to switch project folder",
   "选择项目文件夹，或在下方直接输入": "Open a project folder, or start typing below",
   "配置本地 Agent →": "Configure local Agents →",
-  "配置本地 Agent 与模型账号": "Configure local Agents and model accounts"
+  "配置本地 Agent 与模型账号": "Configure local Agents and model accounts",
+  "全部会话": "Threads",
+  "新建对话": "New thread"
 }

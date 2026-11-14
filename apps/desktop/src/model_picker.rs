@@ -16,8 +16,16 @@ impl HiveApp {
     pub(crate) fn model_picker(&self, window: &Window, running: bool, cx: &Context<Self>) -> AnyElement {
         let current = self.model.as_ref();
         let selected = current.and_then(|current| self.models.iter().find(|model| model.provider == current.provider && model.id == current.id));
-        let name = selected.filter(|model| !model.name.trim().is_empty()).map(|model| model.name.clone())
-            .or_else(|| current.map(|model| model.id.clone())).unwrap_or_else(|| tr("选择模型").into());
+        let raw_name = selected
+            .filter(|model| !model.name.trim().is_empty())
+            .map(|model| model.name.clone())
+            .or_else(|| current.map(|model| model.id.clone()))
+            .unwrap_or_else(|| tr("选择模型").into());
+        let name = ["Codex", "Claude", "Pi", "外部 Pi", tr("外部 Pi")]
+            .into_iter()
+            .find_map(|tag| raw_name.strip_suffix(&format!(" · {tag}")))
+            .map(str::to_owned)
+            .unwrap_or(raw_name);
         let effort = self.reasoning_label();
         let label = effort
             .as_ref()
@@ -37,7 +45,7 @@ impl HiveApp {
             .custom(crate::palette::quiet_icon_variant(cx))
             .compact()
             .h(px(26.))
-            .px_2()
+            .px_1p5()
             .rounded_lg()
             .selected(self.choosing_model)
             .min_w_0()

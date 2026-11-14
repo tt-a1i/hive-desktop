@@ -86,7 +86,7 @@ impl HiveApp {
                     .flex_wrap()
                     .justify_end()
                     .items_center()
-                    .gap_1()
+                    .gap_0p5()
                     .when(self.session.is_none(), |row| {
                         row.child(self.new_chat_menu("home-agent", tr("选择 Agent"), None, cx))
                     })
