@@ -46,12 +46,29 @@ pub struct Session {
     pub updated_at: i64,
     pub workspace_id: String,
     pub agent_id: Option<String>,
+    pub origin_agent_id: Option<String>,
+    pub identity_state: Option<String>,
     #[serde(default)]
     pub backend: Backend,
     #[serde(default)]
     pub execution: Option<SessionExecution>,
     #[serde(default)]
     pub execution_path: Option<String>,
+}
+impl Session {
+    /// Presentation only: original identity is never a live run or token credential.
+    pub(crate) fn display_agent_id(&self) -> Option<&str> {
+        self.origin_agent_id.as_deref().filter(|_| self.identity_state.as_deref() == Some("known"))
+            .or(self.agent_id.as_deref())
+    }
+    pub(crate) fn display_role_key(&self) -> &'static str {
+        match self.display_agent_id() {
+            Some(id) if id.ends_with(":orchestrator") => "主控",
+            Some(id) if id.ends_with(":__workflow__") => "工作流",
+            Some(_) => "成员",
+            None => "会话",
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

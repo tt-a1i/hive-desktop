@@ -27,13 +27,12 @@ impl HiveApp {
         }
         let is_delivery = message.delivery.is_some();
         let is_plain_user = message.role == "user" && !is_delivery;
-        let is_team_context =
-            self.has_active_team_context() || self.messages.iter().any(|m| m.delivery.is_some());
         let is_worker_session = self
             .session
             .as_ref()
-            .and_then(|s| s.agent_id.as_deref())
+            .and_then(|s| s.display_agent_id())
             .is_some_and(|id| !id.ends_with(":orchestrator") && !id.ends_with(":__workflow__"));
+        let is_team_context = self.has_active_team_context() || is_worker_session || self.messages.iter().any(|m| m.delivery.is_some());
         let heading: SharedString = message
             .delivery
             .as_ref()
@@ -45,7 +44,7 @@ impl HiveApp {
                     "assistant" => self
                         .session
                         .as_ref()
-                        .and_then(|s| s.agent_id.as_deref())
+                        .and_then(|s| s.display_agent_id())
                         .filter(|_| is_team_context)
                         .map(|id| self.agent_name(id).into())
                         .unwrap_or_else(|| {

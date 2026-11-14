@@ -567,6 +567,10 @@ impl HiveApp {
                                                     Color::Secondary.get(cx)
                                                 };
                                                 let workload_label = member.workload_label();
+                                                let worktree_member = id.clone();
+                                                let worktree_workspace = workspace.clone();
+                                                let history_member = id.clone();
+                                                let history_workspace = workspace.clone();
                                                 let start_id = id.clone();
                                                 let start_workspace = workspace.clone();
                                                 let picker_id = id.clone();
@@ -701,8 +705,8 @@ impl HiveApp {
                                                                                 .h(px(26.))
                                                                                 .rounded_md()
                                                                                 .icon(Glyph::MessagesSquare)
-                                                                                .label(tr("会话"))
-                                                                                .tooltip(tr("打开会话"))
+                                                                                .label(tr("当前会话"))
+                                                                                .tooltip(tr("打开当前绑定会话"))
                                                                                 .accessibility_label(if english() {
                                                                                     format!(
                                                                                         "Open {}’s member conversation",
@@ -725,6 +729,24 @@ impl HiveApp {
                                                                                 )),
                                                                         )
                                                                     })
+                                                                    .child(
+                                                                        Button::new(("member-new-worktree", i))
+                                                                            .outline().compact().xsmall().h(px(26.)).rounded_md()
+                                                                            .label(tr("新建独立会话"))
+                                                                            .disabled(!self.connected || self.member_loading || backend.is_none())
+                                                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                                                this.open_member_worktree(worktree_workspace.clone(), worktree_member.clone(), false, window, cx);
+                                                                            })),
+                                                                    )
+                                                                    .child(
+                                                                        Button::new(("member-worktree-history", i))
+                                                                            .outline().compact().xsmall().h(px(26.)).rounded_md()
+                                                                            .label(tr("独立会话历史"))
+                                                                            .disabled(!self.connected || self.member_loading)
+                                                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                                                this.open_member_worktree(history_workspace.clone(), history_member.clone(), true, window, cx);
+                                                                            })),
+                                                                    )
                                                                     .child(
                                                                         Button::new(("member-start-stop", i))
                                                                             .outline()

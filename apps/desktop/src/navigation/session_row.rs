@@ -222,19 +222,7 @@ impl HiveApp {
         let project = session.workspace_id.clone();
         let id = session.id.clone();
         let row_group = SharedString::from(format!("{scope}-row-{id}"));
-        let role = session
-            .agent_id
-            .as_deref()
-            .map(|agent| {
-                if agent.ends_with(":orchestrator") {
-                    tr("主控")
-                } else if agent.ends_with(":__workflow__") {
-                    tr("工作流")
-                } else {
-                    tr("成员")
-                }
-            })
-            .unwrap_or(tr("会话"));
+        let role = tr(session.display_role_key());
         let activity_label = self.session_activity(&id);
         let activity = activity_label
             .map(|label| format!(" · {label}"))

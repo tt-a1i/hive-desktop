@@ -17,10 +17,14 @@ use gpui_kit::{
 };
 
 pub(crate) fn untitled_session_label(session: &crate::protocol::Session) -> Option<&'static str> {
-    // New records bind to an agent before their first user turn. Keep actual
-    // conversation titles and explicit renames verbatim, even for this text.
-    (!session.custom_title && session.agent_id.is_none() && session.title == "新会话")
-        .then(|| tr("新会话"))
+    // Saved origin labels an unnamed Worker without implying a current binding.
+    // Keep conversation titles and explicit renames verbatim.
+    if session.custom_title || session.title != "新会话" { return None; }
+    match session.display_agent_id() {
+        Some(_) if session.display_role_key() == "成员" => Some(tr("成员会话")),
+        None => Some(tr("新会话")),
+        _ => None,
+    }
 }
 
 impl HiveApp {
@@ -1012,7 +1016,7 @@ impl Render for HiveApp {
                 .update(cx, |input, cx| input.set_submit_on_enter(submit_on_enter, cx));
         }
         self.sync_conversation_list(cx);
-        let welcome = self.session.as_ref().is_none_or(|s| s.agent_id.is_none())
+        let welcome = self.session.as_ref().is_none_or(|s| s.display_agent_id().is_none())
             && !open_failed
             && self.pending_reports.is_empty()
             && self.messages.is_empty()
