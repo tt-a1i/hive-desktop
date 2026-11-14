@@ -46,7 +46,7 @@ impl HiveApp {
             .custom(crate::palette::quiet_icon_variant(cx))
             .compact()
             .h(px(26.))
-            .px_2()
+            .px_1p5()
             .rounded_lg()
             .selected(open)
             .disabled(unavailable)

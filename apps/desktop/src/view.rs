@@ -354,6 +354,18 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let composer_focused = self.input.read(cx).focus_handle(cx).is_focused(window);
+        let is_dark = Theme::global(cx).is_dark();
+        let composer_border = if is_dark {
+            if composer_focused {
+                hsla(0., 0., 1., 0.13)
+            } else {
+                hsla(0., 0., 1., 0.08)
+            }
+        } else if composer_focused {
+            hsla(0., 0., 0., 0.11)
+        } else {
+            hsla(0., 0., 0., 0.08)
+        };
         v_flex()
             .relative()
             .w_full()
@@ -371,11 +383,7 @@ impl HiveApp {
             })
             .rounded_2xl()
             .border_1()
-            .border_color(if composer_focused {
-                Color::Muted.get(cx).opacity(0.42)
-            } else {
-                Color::Divider.get(cx)
-            })
+            .border_color(composer_border)
             .bg(Color::Card.get(cx))
             .shadow_xs()
             .child(crate::focus_scroll::Viewport::new(
