@@ -102,8 +102,14 @@ if (process.platform !== 'win32') {
    const tag = 'HIVE' + randomUUID().replaceAll('-', '');
    await input(id, '@echo off');
    await input(id, `echo ${content}>terminal-relative.txt & echo ${tag}_PWD:%CD% & echo ${tag}_DATA & type same.txt & echo. & echo ${tag}_END`);
-   const result = await wait(async () => observation(await drain(id), tag), Boolean, 'cmd directory and file');
+   let raw = '';
+   const result = await wait(async () => { raw = await drain(id); return observation(raw, tag); }, Boolean, 'cmd directory and file');
    assert.ok(result);
+   if (result.cwd.toLowerCase() !== path.toLowerCase()) {
+    // This owned fixture contains only generated paths/commands, not account data.
+    // Preserve control bytes and physical line boundaries for Windows diagnosis.
+    console.error('WINDOWS_PTY_CWD_DIAGNOSTIC', JSON.stringify({tag, expected: path, raw: raw.slice(-16000)}));
+   }
    assert.equal(result.cwd.toLowerCase(), path.toLowerCase(), 'Shell must use the requested directory');
    assert.equal(result.content, content, 'Shell must read its own same-named file');
    assert.equal((await readFile(join(path, 'terminal-relative.txt'), 'utf8')).trim(), content);
