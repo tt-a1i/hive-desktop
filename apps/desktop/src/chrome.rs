@@ -13,7 +13,7 @@ use gpui_kit::{
     *,
 };
 
-pub const TOPBAR_HEIGHT: f32 = 46.;
+pub const TOPBAR_HEIGHT: f32 = 52.;
 
 #[inline]
 pub(crate) fn attention_dot(cx: &App) -> Rgba {

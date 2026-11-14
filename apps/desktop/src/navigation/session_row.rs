@@ -2,28 +2,75 @@ use super::*;
 use crate::language::{english, tr};
 
 impl HiveApp {
+    fn session_activity(&self, id: &str) -> Option<&'static str> {
+        if self.interaction_count(id) > 0 {
+            Some(tr("待回应"))
+        } else if self.busy.contains(id) {
+            Some(tr("处理中"))
+        } else if self.pending.get(id).copied().unwrap_or(0) > 0 {
+            Some(tr("已暂停"))
+        } else if self.unread.contains(id) {
+            Some(tr("未读"))
+        } else {
+            None
+        }
+    }
+
+    fn workspace_display_name(&self, workspace_id: &str) -> String {
+        let matches = self
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.id == workspace_id)
+            .collect::<Vec<_>>();
+        let Some(workspace) = matches.first() else {
+            return "Hive".to_owned();
+        };
+        let duplicate = self
+            .workspaces
+            .iter()
+            .filter(|item| item.name == workspace.name)
+            .count()
+            > 1;
+        if duplicate {
+            std::path::Path::new(&workspace.path)
+                .components()
+                .rev()
+                .take(2)
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" · ")
+        } else {
+            workspace.name.clone()
+        }
+    }
+
     pub(super) fn render_session_link(
         &self,
         session: &crate::protocol::Session,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
-        self.render_session_row(session, self.session_title(session).to_owned(), None, cx)
+        let workspace_name = self.workspace_display_name(&session.workspace_id);
+        self.render_session_row(
+            session,
+            self.session_title(session).to_owned(),
+            workspace_name,
+            false,
+            cx,
+        )
     }
 
     fn render_session_row(
         &self,
         session: &crate::protocol::Session,
         title: String,
-        project_name: Option<String>,
+        workspace_name: String,
+        is_pinned_group: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
-        let scope = if project_name.is_some() {
-            "pinned"
-        } else {
-            "session"
-        };
+        let scope = if is_pinned_group { "pinned" } else { "session" };
         let project = session.workspace_id.clone();
         let id = session.id.clone();
+        let row_group = SharedString::from(format!("{scope}-row-{id}"));
         let role = session
             .agent_id
             .as_deref()
@@ -59,16 +106,12 @@ impl HiveApp {
         let weak = cx.weak_entity();
         let pinning =
             self.session_pin_loading.contains(&id) || self.session_archive_loading.contains(&id);
-        let project_tooltip = project_name
-            .as_ref()
-            .map(|name| {
-                self.workspaces
-                    .iter()
-                    .find(|workspace| workspace.id == project)
-                    .map(|workspace| format!(" · {name} · {}", workspace.path))
-                    .unwrap_or_else(|| format!(" · {name}"))
-            })
-            .unwrap_or_default();
+        let project_tooltip = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == project)
+            .map(|workspace| format!(" · {workspace_name} · {}", workspace.path))
+            .unwrap_or_else(|| format!(" · {workspace_name}"));
         let is_selected = self.viewing_conversation()
             && self.session.as_ref().is_some_and(|s| s.id == session.id);
         let relative_time = palette::compact_relative_time(session.updated_at, english());
@@ -81,24 +124,17 @@ impl HiveApp {
             .rounded_md()
             .icon(Glyph::Ellipsis)
             .tooltip(tr("会话操作"))
-            .accessibility_label(
-                project_name
-                    .as_ref()
-                    .map(|name| {
-                        if english() {
-                            format!("Pinned conversation actions: {title} · {name}")
-                        } else {
-                            format!("{title} · {name} 的置顶会话操作")
-                        }
-                    })
-                    .unwrap_or_else(|| {
-                        if english() {
-                            format!("Conversation actions: {title}")
-                        } else {
-                            format!("{title} 的会话操作")
-                        }
-                    }),
-            )
+            .accessibility_label(if is_pinned_group {
+                if english() {
+                    format!("Pinned conversation actions: {title} · {workspace_name}")
+                } else {
+                    format!("{title} · {workspace_name} 的置顶会话操作")
+                }
+            } else if english() {
+                format!("Conversation actions: {title}")
+            } else {
+                format!("{title} 的会话操作")
+            })
             .disabled(
                 !self.connected || pinning || self.workspace_removing.as_ref() == Some(&project),
             )
@@ -140,24 +176,26 @@ impl HiveApp {
                 )
             });
         h_flex()
+            .relative()
+            .group(row_group.clone())
             .min_w_0()
             .w_full()
             .items_center()
-            .gap_0p5()
             .child(
                 div().flex_1().min_w_0().child(
                     Button::new(SharedString::from(format!("{scope}-{id}")))
                         .custom(palette::sidebar_item_variant(is_selected, cx))
                         .compact()
-                        .h(px(28.))
-                        .px_1p5()
+                        .h(px(30.))
+                        .px_2()
                         .rounded_md()
                         .accessibility_label(format!(
                             "{}{} · {} · {role}{activity}{}",
-                            project_name
-                                .as_ref()
-                                .map(|name| format!("{} · {name} · ", tr("置顶")))
-                                .unwrap_or_default(),
+                            if is_pinned_group {
+                                format!("{} · {workspace_name} · ", tr("置顶"))
+                            } else {
+                                String::new()
+                            },
                             tr(session.backend.label()),
                             title,
                             if session.pinned {
@@ -177,14 +215,12 @@ impl HiveApp {
                                 .w_full()
                                 .min_w_0()
                                 .items_center()
-                                .gap_1p5()
-                                .when_some(project_name.as_ref(), |row, name| {
-                                    row.child(palette::project_badge(name, 16., cx))
-                                })
+                                .gap_2()
+                                .child(palette::project_badge(&workspace_name, 18., cx))
                                 .when_some(dot_color, |row, color| {
                                     row.child(
                                         div()
-                                            .size(px(6.))
+                                            .size(px(5.))
                                             .flex_shrink_0()
                                             .rounded_full()
                                             .bg(color),
@@ -205,47 +241,56 @@ impl HiveApp {
                                         .truncate()
                                         .child(title.clone()),
                                 )
-                                .when(
-                                    session.pinned
-                                        && scope != "pinned"
-                                        && activity_label.is_none(),
-                                    |row| {
-                                        row.child(
-                                            Icon::new(Glyph::Pin)
-                                                .size(px(11.))
-                                                .flex_shrink_0()
-                                                .text_color(Color::Muted.get(cx).opacity(0.75)),
+                                .child(
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap_1()
+                                        .group_hover(row_group.clone(), |s| s.invisible())
+                                        .when(
+                                            session.pinned
+                                                && !is_pinned_group
+                                                && activity_label.is_none(),
+                                            |row| {
+                                                row.child(
+                                                    Icon::new(Glyph::Pin)
+                                                        .size(px(11.))
+                                                        .flex_shrink_0()
+                                                        .text_color(
+                                                            Color::Muted.get(cx).opacity(0.65),
+                                                        ),
+                                                )
+                                            },
                                         )
-                                    },
-                                )
-                                .when_some(activity_label, |row, label| {
-                                    row.child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .text_size(px(11.))
-                                            .text_color(if is_selected {
-                                                Color::Secondary.get(cx)
-                                            } else {
-                                                Color::Muted.get(cx)
+                                        .when_some(activity_label, |row, label| {
+                                            row.child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .text_size(px(11.5))
+                                                    .text_color(if is_selected {
+                                                        Color::Secondary.get(cx)
+                                                    } else {
+                                                        Color::Muted.get(cx)
+                                                    })
+                                                    .child(label),
+                                            )
+                                        })
+                                        .when(activity_label.is_none(), |row| {
+                                            row.when_some(relative_time, |row, ts| {
+                                                row.child(
+                                                    div()
+                                                        .flex_shrink_0()
+                                                        .text_size(px(11.5))
+                                                        .text_color(if is_selected {
+                                                            Color::Secondary.get(cx)
+                                                        } else {
+                                                            Color::Muted.get(cx)
+                                                        })
+                                                        .child(ts),
+                                                )
                                             })
-                                            .child(label),
-                                    )
-                                })
-                                .when(activity_label.is_none(), |row| {
-                                    row.when_some(relative_time, |row, ts| {
-                                        row.child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .text_size(px(11.))
-                                                .text_color(if is_selected {
-                                                    Color::Secondary.get(cx)
-                                                } else {
-                                                    Color::Muted.get(cx)
-                                                })
-                                                .child(ts),
-                                        )
-                                    })
-                                }),
+                                        }),
+                                ),
                         )
                         .tooltip(format!(
                             "{} · {role} · {}{project_tooltip}",
@@ -267,7 +312,18 @@ impl HiveApp {
                         })),
                 ),
             )
-            .child(menu)
+            .child(
+                div()
+                    .absolute()
+                    .right_1()
+                    .top_0()
+                    .bottom_0()
+                    .flex()
+                    .items_center()
+                    .invisible()
+                    .group_hover(row_group, |s| s.visible())
+                    .child(menu),
+            )
     }
 
     pub(super) fn render_pinned_navigation(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
@@ -279,6 +335,7 @@ impl HiveApp {
                     .pb_2()
                     .child(
                         h_flex()
+                            .group("pinned-section-header")
                             .w_full()
                             .items_center()
                             .gap_0p5()
@@ -289,7 +346,7 @@ impl HiveApp {
                                         .compact()
                                         .xsmall()
                                         .h(px(24.))
-                                        .px_1p5()
+                                        .px_2()
                                         .w_full()
                                         .rounded_md()
                                         .accessibility_label(if state.collapsed {
@@ -317,7 +374,7 @@ impl HiveApp {
                                                         .when(!state.records.is_empty(), |r| {
                                                             r.child(
                                                                 div()
-                                                                    .text_size(px(11.))
+                                                                    .text_size(px(11.5))
                                                                     .text_color(
                                                                         Color::Muted.get(cx),
                                                                     )
@@ -348,21 +405,26 @@ impl HiveApp {
                                 ),
                             )
                             .child(
-                                Button::new("refresh-pinned-section")
-                                    .custom(palette::subtle_icon_variant(cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(20.))
-                                    .w(px(20.))
-                                    .rounded_md()
-                                    .icon(Glyph::RefreshCw)
-                                    .tooltip(tr("刷新置顶会话"))
-                                    .accessibility_label(tr("刷新置顶会话"))
-                                    .disabled(!self.connected || state.loading)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.refresh_pinned_sessions(cx);
-                                        cx.notify();
-                                    })),
+                                div()
+                                    .invisible()
+                                    .group_hover("pinned-section-header", |s| s.visible())
+                                    .child(
+                                        Button::new("refresh-pinned-section")
+                                            .custom(palette::subtle_icon_variant(cx))
+                                            .compact()
+                                            .xsmall()
+                                            .h(px(20.))
+                                            .w(px(20.))
+                                            .rounded_md()
+                                            .icon(Glyph::RefreshCw)
+                                            .tooltip(tr("刷新置顶会话"))
+                                            .accessibility_label(tr("刷新置顶会话"))
+                                            .disabled(!self.connected || state.loading)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.refresh_pinned_sessions(cx);
+                                                cx.notify();
+                                            })),
+                                    ),
                             ),
                     )
                     .when(!state.collapsed, |section| {
@@ -392,35 +454,14 @@ impl HiveApp {
                                 )
                             })
                             .children(state.records.iter().map(|hit| {
-                                let duplicate = self
-                                    .workspaces
-                                    .iter()
-                                    .filter(|workspace| workspace.name == hit.workspace_name)
-                                    .count()
-                                    > 1;
-                                let project = if duplicate {
-                                    self.workspaces
-                                        .iter()
-                                        .find(|workspace| workspace.id == hit.session.workspace_id)
-                                        .map(|workspace| {
-                                            std::path::Path::new(&workspace.path)
-                                                .components()
-                                                .rev()
-                                                .take(2)
-                                                .map(|part| part.as_os_str().to_string_lossy())
-                                                .collect::<Vec<_>>()
-                                                .join(" · ")
-                                        })
-                                        .unwrap_or_else(|| hit.workspace_name.clone())
-                                } else {
-                                    hit.workspace_name.clone()
-                                };
+                                let project = self.workspace_display_name(&hit.session.workspace_id);
                                 self.render_session_row(
                                     &hit.session,
                                     crate::view::untitled_session_label(&hit.session)
                                         .unwrap_or(&hit.title)
                                         .to_owned(),
-                                    Some(project),
+                                    project,
+                                    true,
                                     cx,
                                 )
                             }))
