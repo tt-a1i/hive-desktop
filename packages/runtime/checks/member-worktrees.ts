@@ -141,7 +141,7 @@ try{
  assert.equal(await readFile(join(orphan.path,'retain.txt'),'utf8'),'retained worker code');assert.equal((await readWorktreeIntent(data,orphan.sessionId)).creation!.originAgentId,worker.id);
  // Explicitly legacy generic ownership: no inferred Worker, visible recovery semantics.
  const legacyId='old-generic-intent';await createManagedWorktree({projectRoot:repo,dataRoot:data,chatId:legacyId});
- const legacyPending=(await first.chats.pendingWorktrees(ws.id)).pending.find(item=>item.sessionId===legacyId)!;assert.equal(legacyPending.legacy,true);assert.equal(legacyPending.identityRecorded,false);
+ const legacyPending=(await first.chats.pendingWorktrees(ws.id)).pending.find(item=>item.sessionId===legacyId)!;assert.equal(legacyPending.legacy,true);assert.equal(legacyPending.identityRecorded,false);assert.equal(legacyPending.recoveryKind,'new-orchestrator');
  await assert.rejects(first.chats.recoverWorktreeRecord(ws.id,legacyId,'pi',worker.id),/SESSION_IDENTITY_CONFLICT/);
  const legacy=await first.chats.recoverWorktreeRecord(ws.id,legacyId,'pi');assert.ok('legacy'in legacy && 'recoveryKind'in legacy);assert.equal(legacy.legacy,true);assert.equal(legacy.recoveryKind,'new-orchestrator');assert.equal(legacy.originAgentId,undefined);
  assert.equal(legacy.identityRecorded,false);

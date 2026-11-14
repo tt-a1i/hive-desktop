@@ -221,14 +221,14 @@ export class Chats implements StructuredSessionPort {
     let entries;
     try { entries = await readdir(join(this.dataDir, 'worktrees'), {withFileTypes: true}); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {pending: [], unreadable: 0}; throw error; }
-    const pending: {sessionId: string; branch: string; path: string; state: string; backend?: ChatBackend; originAgentId?: string; legacy?: true; identityRecorded?: false}[] = [];
+    const pending: {sessionId: string; branch: string; path: string; state: string; backend?: ChatBackend; originAgentId?: string; legacy?: true; identityRecorded?: false; recoveryKind?: 'new-orchestrator'}[] = [];
     let unreadable = 0;
     for (const entry of entries) {
       if (!entry.isDirectory() || this.index.peek(entry.name)) continue;
       try {
         const intent = await readWorktreeIntent(this.dataDir, entry.name);
         if (intent.record.projectRoot === projectRoot && (!intent.creation || intent.creation.workspaceId === workspaceId)) pending.push({sessionId: entry.name, branch: intent.record.branch,
-          path: intent.record.executionPath, state: intent.state, ...(intent.creation ? {backend: intent.creation.backend, ...(intent.creation.originAgentId && {originAgentId: intent.creation.originAgentId})} : {legacy: true as const, identityRecorded: false as const})});
+          path: intent.record.executionPath, state: intent.state, ...(intent.creation ? {backend: intent.creation.backend, ...(intent.creation.originAgentId && {originAgentId: intent.creation.originAgentId})} : {legacy: true as const, identityRecorded: false as const, recoveryKind: 'new-orchestrator' as const})});
       } catch { unreadable++; }
     }
     return {pending, unreadable};
