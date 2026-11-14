@@ -141,6 +141,7 @@ function Find-MessageQuote([string] $Message) {
         if ($quotes.Count -eq 0) { continue }
         if ($quotes.Count -ne 1) { throw 'Fixture message group has multiple quote actions.' }
         foreach ($body in $group.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textType)) {
+            if ($body.Current.Name -ceq $Message) { $matches += $quotes[0]; continue }
             $pattern = $null
             if ($body.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
                 if ($pattern.Current.IsReadOnly -and $pattern.Current.Value -ceq $Message) { $matches += $quotes[0] }
