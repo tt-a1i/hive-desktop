@@ -458,6 +458,48 @@ impl HiveApp {
             .as_ref()
             .filter(|id| self.workspaces.iter().any(|ws| &ws.id == *id))
             .cloned();
+        let preloaded_ws_state = window.use_keyed_state(
+            SharedString::from("sidebar-preloaded-workspaces"),
+            cx,
+            |_, _| std::collections::HashSet::<String>::new(),
+        );
+        if self.connected
+            && self.runtime.is_some()
+            && self.workspaces.len() > 1
+            && selected_filter.is_none()
+        {
+            let missing_ws: Vec<String> = {
+                let attempted = preloaded_ws_state.read(cx);
+                self.workspaces
+                    .iter()
+                    .filter(|ws| {
+                        self.workspace.as_ref() != Some(&ws.id)
+                            && !self.project_sessions.contains_key(&ws.id)
+                            && !self.expanded_projects.contains(&ws.id)
+                            && !attempted.contains(&ws.id)
+                    })
+                    .map(|ws| ws.id.clone())
+                    .collect()
+            };
+            if !missing_ws.is_empty() {
+                preloaded_ws_state.update(cx, |attempted, _| {
+                    attempted.extend(missing_ws.iter().cloned());
+                });
+                let weak = cx.weak_entity();
+                window.on_next_frame(move |_, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        for id in missing_ws {
+                            if this.workspace.as_ref() != Some(&id)
+                                && !this.project_sessions.contains_key(&id)
+                                && !this.expanded_projects.contains(&id)
+                            {
+                                this.toggle_project(id, cx);
+                            }
+                        }
+                    });
+                });
+            }
+        }
 
         // Collect flat unarchived sessions across workspaces (or filtered to a workspace).
         let mut flat_sessions: Vec<&crate::protocol::Session> = Vec::new();
@@ -498,6 +540,15 @@ impl HiveApp {
             .as_ref()
             .and_then(|id| self.workspaces.iter().find(|ws| &ws.id == id))
             .or_else(|| self.workspaces.first());
+        let filtered_workspace = selected_filter
+            .as_ref()
+            .and_then(|id| self.workspaces.iter().find(|ws| &ws.id == id));
+        let new_thread_workspace = filtered_workspace.or(active_workspace);
+        let in_new_thread = self.workspace.is_some()
+            && self.session.is_none()
+            && self.viewing_conversation();
+        let show_new_thread_row =
+            new_thread_workspace.is_some() && (in_new_thread || flat_sessions.is_empty());
 
         v_flex()
             .when(narrow, |view| view.flex_1().min_w_0())
@@ -663,30 +714,22 @@ impl HiveApp {
                                 ),
                         )
                     })
-                    .when(self.workspaces.len() > 1, |section| {
+                    .when_some(filtered_workspace, |section, ws| {
+                        let clear_filter = filter_ws_state.clone();
                         section.child(
                             h_flex()
                                 .w_full()
-                                .flex_wrap()
-                                .gap_1()
                                 .px_1()
-                                .pb_2()
-                                .children(self.workspaces.iter().enumerate().map(|(i, ws)| {
-                                    let ws_id = ws.id.clone();
-                                    let is_active = self.workspace.as_ref() == Some(&ws.id);
-                                    let filter_handle = filter_ws_state.clone();
-                                    Button::new(("workspace", i))
-                                        .custom(palette::sidebar_item_variant(is_active, cx))
+                                .pb_1p5()
+                                .child(
+                                    Button::new("clear-workspace-filter")
+                                        .custom(palette::sidebar_item_variant(true, cx))
                                         .compact()
                                         .h(px(24.))
-                                        .px_1p5()
+                                        .px_2()
                                         .rounded_md()
-                                        .accessibility_label(ws.name.clone())
-                                        .tooltip(ws.path.clone())
-                                        .disabled(
-                                            self.workspace_removing.as_ref() == Some(&ws.id),
-                                        )
-                                        .selected(is_active)
+                                        .tooltip(tr("清除筛选"))
+                                        .accessibility_label(tr("清除筛选"))
                                         .child(
                                             h_flex()
                                                 .items_center()
@@ -694,27 +737,25 @@ impl HiveApp {
                                                 .child(palette::project_badge(&ws.name, 14., cx))
                                                 .child(
                                                     div()
-                                                        .max_w(px(110.))
+                                                        .max_w(px(150.))
                                                         .text_size(px(12.))
-                                                        .when(is_active, |t| {
-                                                            t.font_weight(FontWeight::MEDIUM)
-                                                        })
+                                                        .font_weight(FontWeight::MEDIUM)
                                                         .truncate()
                                                         .child(ws.name.clone()),
+                                                )
+                                                .child(
+                                                    Icon::new(Glyph::X)
+                                                        .size(px(11.))
+                                                        .text_color(Color::Muted.get(cx)),
                                                 ),
                                         )
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            if this.terminal.visible {
-                                                this.remember_terminal_focus(window, cx);
-                                            }
-                                            filter_handle.update(cx, |state, _| {
-                                                if state.is_some() {
-                                                    *state = Some(ws_id.clone());
-                                                }
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            clear_filter.update(cx, |state, cx| {
+                                                *state = None;
+                                                cx.notify();
                                             });
-                                            this.select_workspace(ws_id.clone(), cx);
-                                        }))
-                                })),
+                                        })),
+                                ),
                         )
                     })
                     .child(self.render_pinned_navigation(cx))
@@ -748,7 +789,7 @@ impl HiveApp {
                                                     .text_xs()
                                                     .font_weight(FontWeight::MEDIUM)
                                                     .text_color(Color::Muted.get(cx))
-                                                    .child(tr("会话")),
+                                                    .child(tr("全部会话")),
                                             )
                                             .child(
                                                 h_flex()
@@ -821,82 +862,85 @@ impl HiveApp {
                                                 cx.notify();
                                             })),
                                     )
-                                } else if flat_sessions.is_empty() {
-                                    if let Some(ws) = active_workspace {
-                                        let ws_id = ws.id.clone();
-                                        let ws_selected = self.workspace.as_ref() == Some(&ws.id)
-                                            && self.session.is_none()
-                                            && self.viewing_conversation();
-                                        section.child(
-                                            Button::new("empty-project-new-thread")
-                                                .custom(palette::sidebar_item_variant(
-                                                    ws_selected,
-                                                    cx,
-                                                ))
-                                                .compact()
-                                                .h(px(30.))
-                                                .px_2()
-                                                .w_full()
-                                                .rounded_md()
-                                                .accessibility_label(format!(
-                                                    "{} · {}",
-                                                    ws.name,
-                                                    tr("新会话")
-                                                ))
-                                                .tooltip(ws.path.clone())
-                                                .selected(ws_selected)
-                                                .disabled(
-                                                    self.workspace_removing.as_ref()
-                                                        == Some(&ws.id),
-                                                )
-                                                .child(
-                                                    h_flex()
-                                                        .w_full()
-                                                        .min_w_0()
-                                                        .items_center()
-                                                        .gap_2()
-                                                        .child(palette::project_badge(
-                                                            &ws.name, 18., cx,
-                                                        ))
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .min_w_0()
-                                                                .text_left()
-                                                                .text_size(px(13.))
-                                                                .when(ws_selected, |t| {
-                                                                    t.font_weight(
-                                                                        FontWeight::MEDIUM,
-                                                                    )
-                                                                })
-                                                                .text_color(if ws_selected {
-                                                                    Color::Text.get(cx)
-                                                                } else {
-                                                                    Color::Secondary.get(cx)
-                                                                })
-                                                                .truncate()
-                                                                .child(format!(
-                                                                    "{} · {}",
-                                                                    ws.name,
-                                                                    tr("新会话")
-                                                                )),
-                                                        ),
-                                                )
-                                                .on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        if this.terminal.visible {
-                                                            this.remember_terminal_focus(
-                                                                window, cx,
+                                } else {
+                                    let section = if show_new_thread_row {
+                                        if let Some(ws) = new_thread_workspace {
+                                            let ws_id = ws.id.clone();
+                                            let ws_selected =
+                                                self.workspace.as_ref() == Some(&ws.id)
+                                                    && self.session.is_none()
+                                                    && self.viewing_conversation();
+                                            section.child(
+                                                Button::new("empty-project-new-thread")
+                                                    .custom(palette::sidebar_item_variant(
+                                                        ws_selected,
+                                                        cx,
+                                                    ))
+                                                    .compact()
+                                                    .h(px(30.))
+                                                    .px_2()
+                                                    .w_full()
+                                                    .rounded_md()
+                                                    .accessibility_label(format!(
+                                                        "{} · {}",
+                                                        ws.name,
+                                                        tr("新对话")
+                                                    ))
+                                                    .tooltip(ws.path.clone())
+                                                    .selected(ws_selected)
+                                                    .disabled(
+                                                        self.workspace_removing.as_ref()
+                                                            == Some(&ws.id),
+                                                    )
+                                                    .child(
+                                                        h_flex()
+                                                            .w_full()
+                                                            .min_w_0()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .child(palette::project_badge(
+                                                                &ws.name, 18., cx,
+                                                            ))
+                                                            .child(
+                                                                div()
+                                                                    .flex_1()
+                                                                    .min_w_0()
+                                                                    .text_left()
+                                                                    .text_size(px(13.))
+                                                                    .when(ws_selected, |t| {
+                                                                        t.font_weight(
+                                                                            FontWeight::MEDIUM,
+                                                                        )
+                                                                    })
+                                                                    .text_color(if ws_selected {
+                                                                        Color::Text.get(cx)
+                                                                    } else {
+                                                                        Color::Secondary.get(cx)
+                                                                    })
+                                                                    .truncate()
+                                                                    .child(tr("新对话")),
+                                                            ),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            if this.terminal.visible {
+                                                                this.remember_terminal_focus(
+                                                                    window, cx,
+                                                                );
+                                                            }
+                                                            this.select_workspace(
+                                                                ws_id.clone(),
+                                                                cx,
                                                             );
-                                                        }
-                                                        this.select_workspace(ws_id.clone(), cx);
-                                                    },
-                                                )),
-                                        )
+                                                        },
+                                                    )),
+                                            )
+                                        } else {
+                                            section
+                                        }
                                     } else {
                                         section
-                                    }
-                                } else {
+                                    };
                                     section.children(
                                         flat_sessions
                                             .into_iter()

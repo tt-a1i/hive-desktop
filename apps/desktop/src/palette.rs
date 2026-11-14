@@ -192,34 +192,32 @@ pub fn project_monogram(name: &str) -> String {
     "PR".to_owned()
 }
 
+const BADGE_TONES: &[(u32, u32)] = &[
+    (0xd97706, 0xfbbf24), // amber (warm gold)
+    (0x059669, 0x34d399), // emerald (sage green)
+    (0x0284c7, 0x38bdf8), // sky blue
+    (0xea580c, 0xfb923c), // coral orange
+    (0x4f46e5, 0x818cf8), // indigo
+    (0x0d9488, 0x2dd4bf), // teal
+    (0xe11d48, 0xfb7185), // rose
+    (0x16a34a, 0x4ade80), // green
+    (0x2563eb, 0x60a5fa), // blue
+    (0x7c3aed, 0xa78bfa), // violet
+];
+
+fn project_badge_tone_index(name: &str) -> usize {
+    let mut hash = 2166136261u32;
+    for byte in name.trim().to_lowercase().bytes() {
+        hash ^= byte as u32;
+        hash = hash.wrapping_mul(16777619);
+    }
+    (hash as usize) % BADGE_TONES.len()
+}
+
 /// Returns T3 Code–style ultra-low-saturation `(bg, fg)` badge colors for a project name.
 /// Light uses Tailwind 600 ink over a 14% tint; Dark uses Tailwind 400 ink over a 14% tint.
 pub fn project_badge_colors(name: &str, cx: &App) -> (Rgba, Rgba) {
-    const TONES: &[(u32, u32)] = &[
-        (0x52525b, 0xa1a1aa), // zinc / gray
-        (0xdc2626, 0xf87171), // red
-        (0xea580c, 0xfb923c), // orange
-        (0xd97706, 0xfbbf24), // amber
-        (0xd08700, 0xfdc700), // yellow
-        (0x65a30d, 0xa3e635), // lime
-        (0x16a34a, 0x4ade80), // green
-        (0x059669, 0x34d399), // emerald
-        (0x0d9488, 0x2dd4bf), // teal
-        (0x0891b2, 0x22d3ee), // cyan
-        (0x0284c7, 0x38bdf8), // sky
-        (0x2563eb, 0x60a5fa), // blue
-        (0x4f46e5, 0x818cf8), // indigo
-        (0x7c3aed, 0xa78bfa), // violet
-        (0x9333ea, 0xc084fc), // purple
-        (0xc026d3, 0xe879f9), // fuchsia
-        (0xdb2777, 0xf472b6), // pink
-        (0xe11d48, 0xfb7185), // rose
-    ];
-    let hash = name
-        .to_lowercase()
-        .chars()
-        .fold(0u32, |acc, ch| acc.wrapping_mul(31).wrapping_add(ch as u32));
-    let (light_fg, dark_fg) = TONES[(hash % TONES.len() as u32) as usize];
+    let (light_fg, dark_fg) = BADGE_TONES[project_badge_tone_index(name)];
     let fg = rgb(if Theme::global(cx).is_dark() {
         dark_fg
     } else {
@@ -312,5 +310,13 @@ mod tests {
         assert_eq!(project_monogram("CodeAnalysis"), "CA");
         assert_eq!(project_monogram("v2"), "V2");
         assert_eq!(project_monogram("桌面助手"), "桌");
+    }
+
+    #[test]
+    fn badge_colors_disperse_distinct_projects() {
+        assert_ne!(
+            project_badge_tone_index("archify"),
+            project_badge_tone_index("hive-desktop")
+        );
     }
 }
