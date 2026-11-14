@@ -232,6 +232,16 @@ impl HiveApp {
             cx.notify();
         }
     }
+    pub(crate) fn toggle_native_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_picker.open = !self.command_picker.open;
+        if self.command_picker.open {
+            self.load_commands(cx);
+            let focus = self.input.read(cx).focus_handle(cx);
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        }
+        cx.notify();
+    }
+
     pub(crate) fn command_button(&self, cx: &Context<Self>) -> AnyElement {
         Button::new("native-commands")
             .custom(crate::palette::quiet_icon_variant(cx))
@@ -245,13 +255,7 @@ impl HiveApp {
             .accessibility_label(tr("选择原生命令"))
             .selected(self.command_picker.open)
             .disabled(!self.connected || !self.conversation_ready || self.loading)
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.command_picker.open = !this.command_picker.open;
-                if this.command_picker.open {
-                    this.load_commands(cx);
-                }
-                cx.notify();
-            }))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_native_commands(window, cx)))
             .into_any_element()
     }
 }
