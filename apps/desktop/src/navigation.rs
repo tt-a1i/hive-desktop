@@ -1,7 +1,10 @@
 use crate::chrome;
 use crate::focus_scroll::{Reveal, Viewport};
 use crate::language::tr;
+mod search;
 mod session_row;
+mod width;
+pub(crate) use width::SidebarPreferences;
 mod settings;
 use crate::app::HiveApp;
 use crate::palette::{self, Color};
@@ -452,12 +455,31 @@ impl HiveApp {
             .as_ref()
             .filter(|id| self.workspaces.iter().any(|ws| &ws.id == *id))
             .cloned();
+        let weak = cx.weak_entity();
+        let search = window.use_keyed_state(
+            SharedString::from("sidebar-inline-search"),
+            cx,
+            |window, cx| search::SidebarSearch::new(weak, window, cx),
+        );
+        search.update(cx, |search, cx| {
+            search.sync(
+                self.runtime.clone().filter(|_| self.connected),
+                self.connection_generation,
+                selected_filter.clone(),
+                window,
+                cx,
+            )
+        });
+        let searching = search.read(cx).active(cx);
+        let query = search.read(cx).query.clone();
+        let search_keys = search.clone();
         let preloaded_ws_state = window.use_keyed_state(
             SharedString::from("sidebar-preloaded-workspaces"),
             cx,
             |_, _| std::collections::HashSet::<String>::new(),
         );
-        if self.connected
+        if !searching
+            && self.connected
             && self.runtime.is_some()
             && self.workspaces.len() > 1
             && selected_filter.is_none()
@@ -544,8 +566,12 @@ impl HiveApp {
             new_thread_workspace.is_some() && (in_new_thread || flat_sessions.is_empty());
 
         v_flex()
+            .relative()
             .when(narrow, |view| view.flex_1().min_w_0())
-            .when(!narrow, |view| view.w(px(256.)).flex_shrink_0())
+            .when(!narrow, |view| {
+                view.w(self.sidebar.resolved(window.viewport_size().width))
+                    .flex_shrink_0()
+            })
             .h_full()
             .bg(Color::Sidebar.get(cx))
             .border_r_1()
@@ -554,6 +580,8 @@ impl HiveApp {
             .pb_2()
             .gap_0p5()
             .child(self.render_navigation_bar(true, window, cx))
+            .child(self.render_sidebar_brand_probe(window, cx))
+            .children(self.render_sidebar_width_notice(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -564,46 +592,26 @@ impl HiveApp {
                     .gap_0p5()
                     .child(
                         div().flex_1().min_w_0().child(
-                            Button::new("search-sessions")
-                                .custom(palette::quiet_icon_variant(cx))
-                                .compact()
-                                .h(px(30.))
-                                .px_2()
-                                .w_full()
-                                .rounded_md()
-                                .accessibility_label(tr("搜索会话"))
-                                .tooltip(if cfg!(target_os = "macos") {
-                                    tr("搜索会话 (⌘K)")
-                                } else {
-                                    tr("搜索会话 (Ctrl+K)")
+                            div()
+                                .id("sidebar-inline-search-input")
+                                .capture_key_down(move |event, window, cx| {
+                                    search_keys
+                                        .update(cx, |search, cx| search.key(event, window, cx));
                                 })
                                 .child(
-                                    h_flex()
-                                        .w_full()
-                                        .min_w_0()
-                                        .items_center()
-                                        .gap_2()
-                                        .child(
+                                    Input::new(&query)
+                                        .small()
+                                        .appearance(false)
+                                        .bordered(false)
+                                        .focus_bordered(false)
+                                        .cleanable(true)
+                                        .prefix(
                                             Icon::new(Glyph::Search)
                                                 .size(px(14.))
-                                                .flex_shrink_0()
                                                 .text_color(Color::Muted.get(cx)),
                                         )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .text_left()
-                                                .text_size(px(13.))
-                                                .text_color(Color::Muted.get(cx))
-                                                .truncate()
-                                                .child(tr("搜索")),
-                                        ),
-                                )
-                                .disabled(!self.connected)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_session_search(window, cx)
-                                })),
+                                        .aria_label(tr("搜索会话名称、项目路径或 Agent")),
+                                ),
                         ),
                     )
                     .child(self.render_filter_navigation(
@@ -631,231 +639,245 @@ impl HiveApp {
                             } else {
                                 tr("添加工作区")
                             })
-                            .on_click(cx.listener(|this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                query.update(cx, |input, cx| input.set_value("", window, cx));
                                 this.add_workspace_open = !this.add_workspace_open;
                                 cx.notify();
                             })),
                     )
                     .child(self.new_chat_menu("new-session-menu", tr("新建会话"), None, cx)),
             )
-            .child(Viewport::new(
-                "workspace-navigation-viewport",
-                &self.navigation_scroll,
-                v_flex()
-                    .id("workspace-session-navigation")
-                    .mt_1p5()
-                    .flex_1()
-                    .min_w_0()
-                    .w_full()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.navigation_scroll)
-                    .px_0p5()
-                    .py_1()
-                    .when(self.add_workspace_open, |section| {
-                        section.child(
-                            v_flex()
-                                .mb_2()
-                                .p_2p5()
-                                .gap_2()
-                                .rounded_xl()
-                                .bg(Color::Card.get(cx))
-                                .border_1()
-                                .border_color(Color::Divider.get(cx))
-                                .child(Reveal::new(
-                                    "workspace-folder-input-reveal",
-                                    &self.navigation_scroll,
-                                    Input::new(&self.folder)
-                                        .small()
-                                        .aria_label(tr("工作区文件夹的绝对路径")),
-                                ))
-                                .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .child(Reveal::new(
-                                            "workspace-folder-picker-reveal",
-                                            &self.navigation_scroll,
-                                            Button::new("choose-workspace-folder")
-                                                .outline()
-                                                .compact()
-                                                .small()
-                                                .h(px(28.))
-                                                .rounded_lg()
-                                                .label(tr("选择文件夹…"))
-                                                .disabled(!self.connected)
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.choose_workspace_folder(window, cx)
-                                                })),
-                                        ))
-                                        .child(Reveal::new(
-                                            "workspace-folder-add-reveal",
-                                            &self.navigation_scroll,
-                                            Button::new("add-workspace")
-                                                .primary()
-                                                .compact()
-                                                .small()
-                                                .h(px(28.))
-                                                .rounded_lg()
-                                                .label(tr("添加文件夹"))
-                                                .disabled(!self.connected || self.runtime.is_none())
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.add_workspace(window, cx)
-                                                })),
-                                        )),
-                                ),
-                        )
-                    })
-                    .when_some(filtered_workspace, |section, ws| {
-                        let clear_filter = filter_ws_state.clone();
-                        section.child(
-                            h_flex().w_full().px_1().pb_1p5().child(
-                                Button::new("clear-workspace-filter")
-                                    .custom(palette::sidebar_item_variant(true, cx))
-                                    .compact()
-                                    .h(px(24.))
-                                    .px_2()
-                                    .rounded_md()
-                                    .tooltip(tr("清除筛选"))
-                                    .accessibility_label(tr("清除筛选"))
+            .when(searching, |sidebar| sidebar.child(search.clone()))
+            .when(!searching, |sidebar| {
+                sidebar.child(Viewport::new(
+                    "workspace-navigation-viewport",
+                    &self.navigation_scroll,
+                    v_flex()
+                        .id("workspace-session-navigation")
+                        .mt_1p5()
+                        .flex_1()
+                        .min_w_0()
+                        .w_full()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.navigation_scroll)
+                        .px_0p5()
+                        .py_1()
+                        .when(self.add_workspace_open, |section| {
+                            section.child(
+                                v_flex()
+                                    .mb_2()
+                                    .p_2p5()
+                                    .gap_2()
+                                    .rounded_xl()
+                                    .bg(Color::Card.get(cx))
+                                    .border_1()
+                                    .border_color(Color::Divider.get(cx))
+                                    .child(Reveal::new(
+                                        "workspace-folder-input-reveal",
+                                        &self.navigation_scroll,
+                                        Input::new(&self.folder)
+                                            .small()
+                                            .aria_label(tr("工作区文件夹的绝对路径")),
+                                    ))
                                     .child(
                                         h_flex()
-                                            .items_center()
                                             .gap_1p5()
-                                            .child(palette::project_badge(&ws.name, 14., cx))
-                                            .child(
-                                                div()
-                                                    .max_w(px(150.))
-                                                    .text_size(px(12.))
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .truncate()
-                                                    .child(ws.name.clone()),
-                                            )
-                                            .child(
-                                                Icon::new(Glyph::X)
-                                                    .size(px(11.))
-                                                    .text_color(Color::Muted.get(cx)),
-                                            ),
-                                    )
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        clear_filter.update(cx, |state, cx| {
-                                            *state = None;
-                                            cx.notify();
-                                        });
-                                    })),
-                            ),
-                        )
-                    })
-                    .child(self.render_pinned_navigation(cx))
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .flex_shrink_0()
-                            .gap_0p5()
-                            .child(
-                                Button::new("toggle-project-section")
-                                    .custom(palette::quiet_icon_variant(cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(24.))
-                                    .px_2()
-                                    .w_full()
-                                    .rounded_md()
-                                    .accessibility_label(if self.projects_collapsed {
-                                        tr("展开工作区列表")
-                                    } else {
-                                        tr("收起工作区列表")
-                                    })
-                                    .child(
-                                        h_flex()
-                                            .flex_1()
-                                            .w_full()
-                                            .items_center()
-                                            .justify_between()
-                                            .child(
-                                                div()
-                                                    .text_xs()
-                                                    .font_weight(FontWeight::MEDIUM)
-                                                    .text_color(Color::Muted.get(cx))
-                                                    .child(tr("全部会话")),
-                                            )
-                                            .child(
-                                                h_flex()
-                                                    .items_center()
-                                                    .gap_1()
-                                                    .when(!flat_sessions.is_empty(), |r| {
-                                                        r.child(
-                                                            div()
-                                                                .text_size(px(11.5))
-                                                                .text_color(Color::Muted.get(cx))
-                                                                .child(
-                                                                    flat_sessions.len().to_string(),
-                                                                ),
-                                                        )
-                                                    })
-                                                    .child(
-                                                        Icon::new(if self.projects_collapsed {
-                                                            Glyph::ChevronRight
-                                                        } else {
-                                                            Glyph::ChevronDown
-                                                        })
-                                                        .size(px(12.))
-                                                        .text_color(Color::Muted.get(cx)),
-                                                    ),
-                                            ),
-                                    )
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.projects_collapsed = !this.projects_collapsed;
-                                        cx.notify();
-                                    })),
-                            )
-                            .when(!self.projects_collapsed, |section| {
-                                if self.workspaces.is_empty() {
-                                    section.child(
-                                        Button::new("empty-open-workspace")
-                                            .custom(palette::sidebar_item_variant(false, cx))
-                                            .compact()
-                                            .h(px(30.))
-                                            .px_2()
-                                            .w_full()
-                                            .rounded_md()
-                                            .accessibility_label(tr("添加工作区"))
-                                            .child(
-                                                h_flex()
-                                                    .w_full()
-                                                    .min_w_0()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .child(
-                                                        Icon::new(Glyph::FolderPlus)
-                                                            .size(px(14.))
-                                                            .flex_shrink_0()
-                                                            .text_color(Color::Muted.get(cx)),
+                                            .child(Reveal::new(
+                                                "workspace-folder-picker-reveal",
+                                                &self.navigation_scroll,
+                                                Button::new("choose-workspace-folder")
+                                                    .outline()
+                                                    .compact()
+                                                    .small()
+                                                    .h(px(28.))
+                                                    .rounded_lg()
+                                                    .label(tr("选择文件夹…"))
+                                                    .disabled(!self.connected)
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.choose_workspace_folder(window, cx)
+                                                        },
+                                                    )),
+                                            ))
+                                            .child(Reveal::new(
+                                                "workspace-folder-add-reveal",
+                                                &self.navigation_scroll,
+                                                Button::new("add-workspace")
+                                                    .primary()
+                                                    .compact()
+                                                    .small()
+                                                    .h(px(28.))
+                                                    .rounded_lg()
+                                                    .label(tr("添加文件夹"))
+                                                    .disabled(
+                                                        !self.connected || self.runtime.is_none(),
                                                     )
-                                                    .child(
-                                                        div()
-                                                            .flex_1()
-                                                            .min_w_0()
-                                                            .text_left()
-                                                            .text_size(px(13.))
-                                                            .text_color(Color::Muted.get(cx))
-                                                            .truncate()
-                                                            .child(tr("添加工作区")),
-                                                    ),
-                                            )
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.add_workspace_open = true;
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.add_workspace(window, cx)
+                                                        },
+                                                    )),
+                                            )),
+                                    ),
+                            )
+                        })
+                        .when_some(filtered_workspace, |section, ws| {
+                            let clear_filter = filter_ws_state.clone();
+                            section.child(
+                                h_flex().w_full().px_1().pb_1p5().child(
+                                    Button::new("clear-workspace-filter")
+                                        .custom(palette::sidebar_item_variant(true, cx))
+                                        .compact()
+                                        .h(px(24.))
+                                        .px_2()
+                                        .rounded_md()
+                                        .tooltip(tr("清除筛选"))
+                                        .accessibility_label(tr("清除筛选"))
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(palette::project_badge(&ws.name, 14., cx))
+                                                .child(
+                                                    div()
+                                                        .max_w(px(150.))
+                                                        .text_size(px(12.))
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .truncate()
+                                                        .child(ws.name.clone()),
+                                                )
+                                                .child(
+                                                    Icon::new(Glyph::X)
+                                                        .size(px(11.))
+                                                        .text_color(Color::Muted.get(cx)),
+                                                ),
+                                        )
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            clear_filter.update(cx, |state, cx| {
+                                                *state = None;
                                                 cx.notify();
-                                            })),
-                                    )
-                                } else {
-                                    let section = if show_new_thread_row {
-                                        if let Some(ws) = new_thread_workspace {
-                                            let ws_id = ws.id.clone();
-                                            let ws_selected = self.workspace.as_ref()
-                                                == Some(&ws.id)
-                                                && self.session.is_none()
-                                                && self.viewing_conversation();
-                                            section.child(
+                                            });
+                                        })),
+                                ),
+                            )
+                        })
+                        .child(self.render_pinned_navigation(cx))
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .flex_shrink_0()
+                                .gap_0p5()
+                                .child(
+                                    Button::new("toggle-project-section")
+                                        .custom(palette::quiet_icon_variant(cx))
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(24.))
+                                        .px_2()
+                                        .w_full()
+                                        .rounded_md()
+                                        .accessibility_label(if self.projects_collapsed {
+                                            tr("展开工作区列表")
+                                        } else {
+                                            tr("收起工作区列表")
+                                        })
+                                        .child(
+                                            h_flex()
+                                                .flex_1()
+                                                .w_full()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(tr("全部会话")),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .when(!flat_sessions.is_empty(), |r| {
+                                                            r.child(
+                                                                div()
+                                                                    .text_size(px(11.5))
+                                                                    .text_color(
+                                                                        Color::Muted.get(cx),
+                                                                    )
+                                                                    .child(
+                                                                        flat_sessions
+                                                                            .len()
+                                                                            .to_string(),
+                                                                    ),
+                                                            )
+                                                        })
+                                                        .child(
+                                                            Icon::new(if self.projects_collapsed {
+                                                                Glyph::ChevronRight
+                                                            } else {
+                                                                Glyph::ChevronDown
+                                                            })
+                                                            .size(px(12.))
+                                                            .text_color(Color::Muted.get(cx)),
+                                                        ),
+                                                ),
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.projects_collapsed = !this.projects_collapsed;
+                                            cx.notify();
+                                        })),
+                                )
+                                .when(!self.projects_collapsed, |section| {
+                                    if self.workspaces.is_empty() {
+                                        section.child(
+                                            Button::new("empty-open-workspace")
+                                                .custom(palette::sidebar_item_variant(false, cx))
+                                                .compact()
+                                                .h(px(30.))
+                                                .px_2()
+                                                .w_full()
+                                                .rounded_md()
+                                                .accessibility_label(tr("添加工作区"))
+                                                .child(
+                                                    h_flex()
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            Icon::new(Glyph::FolderPlus)
+                                                                .size(px(14.))
+                                                                .flex_shrink_0()
+                                                                .text_color(Color::Muted.get(cx)),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .min_w_0()
+                                                                .text_left()
+                                                                .text_size(px(13.))
+                                                                .text_color(Color::Muted.get(cx))
+                                                                .truncate()
+                                                                .child(tr("添加工作区")),
+                                                        ),
+                                                )
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.add_workspace_open = true;
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    } else {
+                                        let section =
+                                            if show_new_thread_row {
+                                                if let Some(ws) = new_thread_workspace {
+                                                    let ws_id = ws.id.clone();
+                                                    let ws_selected = self.workspace.as_ref()
+                                                        == Some(&ws.id)
+                                                        && self.session.is_none()
+                                                        && self.viewing_conversation();
+                                                    section.child(
                                                 Button::new("empty-project-new-thread")
                                                     .custom(palette::sidebar_item_variant(
                                                         ws_selected,
@@ -920,21 +942,22 @@ impl HiveApp {
                                                         },
                                                     )),
                                             )
-                                        } else {
-                                            section
-                                        }
-                                    } else {
-                                        section
-                                    };
-                                    section.children(
-                                        flat_sessions
-                                            .into_iter()
-                                            .map(|session| self.render_session_link(session, cx)),
-                                    )
-                                }
-                            }),
-                    ),
-            ))
+                                                } else {
+                                                    section
+                                                }
+                                            } else {
+                                                section
+                                            };
+                                        section.children(
+                                            flat_sessions.into_iter().map(|session| {
+                                                self.render_session_link(session, cx)
+                                            }),
+                                        )
+                                    }
+                                }),
+                        ),
+                ))
+            })
             .child(
                 v_flex()
                     .flex_shrink_0()
@@ -1076,5 +1099,8 @@ impl HiveApp {
                         )
                     }),
             )
+            .when(!narrow, |sidebar| {
+                sidebar.child(self.render_sidebar_resize(window, cx))
+            })
     }
 }

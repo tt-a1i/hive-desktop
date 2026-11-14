@@ -69,6 +69,7 @@ impl HiveApp {
                             crate::language::restore(std::path::Path::new(root), cx);
                             crate::appearance::restore(std::path::Path::new(root), cx);
                             crate::composer::restore(std::path::Path::new(root), cx);
+                            this.sidebar.restore(std::path::Path::new(root));
                             crate::local_notifications::restore(std::path::Path::new(root), cx);
                         }
                         this.remote.commands = info["remoteCommands"].clone();
