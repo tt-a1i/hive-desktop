@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {ChatIndex} from '../src/chat-index.js';
+import {assertFileReference} from './helpers/file-references.js';
 
 const dir=await mkdtemp(join(tmpdir(),'hive-delivery-failures-'));
 const pi=join(dir,'pi');await mkdir(pi);
@@ -61,7 +62,7 @@ try{
  const success=await runtime.chats.open(chat.id);assert.equal(success.pending,0);assert.equal(success.deliveryFailure,undefined);assert.deepEqual(await queued(),[]);
  assert.ok(success.history.some((m:any)=>m.role==='assistant'&&m.stopReason==='stop'&&JSON.stringify(m.content).includes('Retry completed with original input.')));
  const attempts=success.history.filter((m:any)=>m.presentation?.deliveryId===originalQueue[0].id) as any[];assert.equal(attempts.length,2);assert.ok(attempts.every(m=>m.presentation.displayText===text));assert.equal(new Set(attempts.map(m=>m.presentation.deliveryId)).size,1,'Native attempts retain the same logical delivery identity');
- assert.ok(JSON.stringify(requests[1]).includes(attachment.filePath!));assert.ok(JSON.stringify(requests[1]).includes('input_image'));
+ assertFileReference(requests[1],attachment);assert.ok(JSON.stringify(requests[1]).includes('input_image'));
  assert.equal(await readFile(attachment.filePath!,'utf8'),'Original attachment bytes');
  // Persisting diagnostics fails at the actual atomic rename; the accepted queue must survive.
  const beforeSecond=requests.length;mode='reject';duringRequest=async()=>{duringRequest=undefined;await rename(indexPath,`${indexPath}.saved`);await mkdir(indexPath);};

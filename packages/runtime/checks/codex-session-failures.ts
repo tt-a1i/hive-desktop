@@ -7,7 +7,9 @@ import { createCodexSession } from '../src/agents/codex.js';
 
 // A real JSONL subprocess with synthetic server behavior. No model requests and
 // no claim this fixture verifies the installed Codex backend's protocol details.
-const directory = await mkdtemp(resolve('.artifacts/codex-session-failures-'));
+const artifacts = resolve('.artifacts');
+await mkdir(artifacts, { recursive: true });
+const directory = await mkdtemp(join(artifacts, 'codex-session-failures-'));
 await writeFile(join(directory, 'package.json'), JSON.stringify({ type: 'commonjs' }));
 const fixture = `const {createInterface}=require('node:readline');
 const {existsSync}=require('node:fs');

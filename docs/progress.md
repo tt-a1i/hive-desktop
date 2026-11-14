@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## Windows 检查程序可移植性（2026-11-14）
+
+修复干净目录下 Codex 失败检查缺少父目录、Windows 非法附件文件名及双层 JSON 路径断言。真实上传/队列失败重试/冷恢复和空 cwd 子进程检查本机均通过，四角度独立审查发现的用户正文断言放弱已修复并重跑；Windows 新运行待补。仅修改测试，Mac 开发包不变，见[证据与范围](validation/2026-11-14-windows-check-portability.md)。用户明确 Claude 与 Antigravity 本轮无需验收，不尝试登录或配置，继续其他功能。
+
 ## 当前开发包 f9f3c2b（2026-11-14）
 
 固定协作入口与聊天阅读设置已进入 current/candidate ZIP 和新 DMG，28,869 项清单/29 链接、四组包内检查、旧真实三会话完整 40 条历史冷读与原生启动恢复通过；包内优化主程序/Node/runtime 的隔离窗口切换设置、草稿和正常退出通过。仅更新原生程序，未替换用户正在运行的安装实例，零新厂商推理。保留 26ebdea 可运行回退，清理重复组装 base 约 459 MB，保留持续开发缓存。见[包内范围](validation/2026-11-14-workspace-chat-settings-package.md)。完整目标继续。
