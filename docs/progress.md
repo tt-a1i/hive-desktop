@@ -1,5 +1,9 @@
 # Hive Desktop 进度
 
+## 协作起步与原生 Codex 闭环（2026-11-14）
+
+协作空页已提供成员/已有主控/新主控入口及筛选恢复；修复窄窗主要按钮离屏、任务编辑输入未自动显露，并保持宽窄草稿。实际 Mac 窗口创建 Codex 成员、Terra 启动、主控派单、成员真实文件执行/显式汇报、主控只读字节核验及两次完整冷恢复通过；原草稿保留，四次退出正常。一个主控/一个成员，结构化产物数组为空，平台与中文输入边界单列，见[记录](validation/2026-11-14-collaboration-start-and-live.md)。Pi 当前原生账号 invalid_grant，本轮不重试；Claude/Antigravity 不验。待本批新包，完整目标继续。
+
 ## Windows 检查程序可移植性（2026-11-14）
 
 修复干净目录下 Codex 失败检查缺少父目录、Windows 非法附件文件名及双层 JSON 路径断言。真实上传/队列失败重试/冷恢复和空 cwd 子进程检查本机均通过，四角度独立审查发现的用户正文断言放弱已修复并重跑；Windows 新运行待补。仅修改测试，Mac 开发包不变，见[证据与范围](validation/2026-11-14-windows-check-portability.md)。用户明确 Claude 与 Antigravity 本轮无需验收，不尝试登录或配置，继续其他功能。

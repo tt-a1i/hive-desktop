@@ -33,6 +33,10 @@ run [43558667271](https://github.com/tt-a1i/hive-desktop/actions/runs/4355866727
 
 `check:pi-auth` 三组及最终 `pi-provider-config.ts` 定向执行均退出 0；记录在 `pi-auth-regression.log`、`pi-provider-close-final.log`。Codex 写盘故障另补原两条投递的完整比较、故障路径核对、修复后以原线程重建连接并显式重试、再次冷读原完成 ID，24 场景退出 0（`codex-steering-recovery.log`）。没有将复用故障连接即时重试称为通过。独立审查发现的注入前误清理与清理期间新建读取屏障两处问题均修复并复核。
 
+上述 Pi 关闭检查最终另对另一提供商的完整测试凭据作前后 `deepEqual`，不只比较类型，定向执行退出 0（`pi-provider-close-exact.log`）。Codex 全组回归一次命中本地夹具的 1 秒初始化超时；隔离定向与随后完整回归均退出 0，未改变超时或产品代码，记录在 `codex-regression.log`、`codex-transport-isolated.log`、`codex-regression-final.log`。
+
+run [43559892506](https://github.com/tt-a1i/hive-desktop/actions/runs/43559892506) 越过 Pi 账号和模型检查后，在置顶检查暴露陈旧的返回值期望：现在的全局命中包含 `workspacePath`，旧期望漏了该字段。已补充与实际创建目录独立 `realpath` 的精确比较，不删除返回字段或放宽 deepEqual；该问题也影响 Mac，不属于 Windows 产品缺陷。`session-pins.ts` 本机退出 0，保留四后端元数据、真实 HTTP/SQLite/JSONL、写盘失败/冷恢复及零 Agent 请求检查（`session-pins-final.log`）。新 Windows 结果继续记录。
+
 不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功。现有 Mac 开发包无需因 test-only 改动重新组装。
 
 ## 本轮账号范围

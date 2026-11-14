@@ -1342,5 +1342,11 @@
   "配置本地 Agent →": "Configure local Agents →",
   "配置本地 Agent 与模型账号": "Configure local Agents and model accounts",
   "全部会话": "Threads",
-  "新建对话": "New thread"
+  "新建对话": "New thread",
+  "开始团队协作": "Start team collaboration",
+  "添加成员后，向主控描述任务。主控负责派单，成员显式汇报后，结果会回到来源会话。": "Add members, then describe the task to your orchestrator. It assigns work and receives each member’s explicit report in the originating conversation.",
+  "管理成员": "Manage members",
+  "继续主控会话": "Open orchestrator",
+  "新建主控会话": "New orchestrator",
+  "查看全部派单": "View all dispatches"
 }

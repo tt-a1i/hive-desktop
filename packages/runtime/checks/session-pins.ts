@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline';
@@ -22,6 +22,7 @@ try {
     projects.push(await runtime.hive.request('POST', '/api/workspaces', { path, name, autostart_orchestrator: false }) as { id: string });
   }
   const alpha = projects[0]!.id; const beta = projects[1]!.id;
+  const alphaPath = await realpath(join(directory, 'Alpha'));
   const records = [];
   for (const backend of ['pi', 'codex', 'pi-rpc', 'claude'] satisfies ChatBackend[]) {
     records.push(await runtime.chats.createRecord(alpha, backend));
@@ -33,7 +34,7 @@ try {
     assert.equal(runtime.chats.list(alpha)[0]!.id, original.id, 'A sole pin must sort before all unpinned sessions');
     const global = await runtime.chats.pinned();
     assert.equal(global.length, 1);
-    assert.deepEqual(global[0], {session: result, workspaceName:'Alpha', title:original.title});
+    assert.deepEqual(global[0], {session: result, workspaceName:'Alpha', workspacePath:alphaPath, title:original.title});
     assert.deepEqual(runtime.chats.setPinned(original.id, true), result);
     assert.deepEqual(runtime.chats.setPinned(original.id, false), { ...original, pinned: false });
     assert.deepEqual(await runtime.chats.pinned(), []);

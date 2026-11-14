@@ -2,6 +2,7 @@ mod view;
 mod cards;
 mod live;
 mod tasks;
+mod empty;
 pub(crate) use tasks::SavedTaskDraft;
 
 use crate::{app::HiveApp, language::tr};

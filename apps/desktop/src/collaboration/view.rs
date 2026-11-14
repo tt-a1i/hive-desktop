@@ -18,8 +18,9 @@ use gpui_kit::{
 };
 
 impl HiveApp {
-    pub(crate) fn render_collaboration(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_collaboration(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let selected = self.collaboration.selected.as_ref();
+        let narrow_overview = window.viewport_size().width < px(880.) && selected.is_none();
         let deep_link_detail = selected.is_some()
             && (self.collaboration.chat_origin.is_some() || self.collaboration.workflow_origin);
 
@@ -768,7 +769,7 @@ impl HiveApp {
                             .w_full()
                             .max_w(px(760.))
                             .mx_auto()
-                            .child(self.render_tasks(cx)),
+                            .child(self.render_tasks(detail_scroll, cx)),
                     ),
             )
             .into_any_element()
@@ -888,20 +889,7 @@ impl HiveApp {
                                     && self.collaboration.list_error.is_none()
                                     && self.collaboration.dispatches.is_empty(),
                                 |view| {
-                                    view.child(
-                                        v_flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .py_10()
-                                            .px_4()
-                                            .rounded_xl()
-                                            .bg(Color::Card.get(cx))
-                                            .border_1()
-                                            .border_color(Color::Divider.get(cx))
-                                            .text_xs()
-                                            .text_color(Color::Muted.get(cx))
-                                            .child(tr("此页没有派单")),
-                                    )
+                                    view.child(self.render_dispatch_empty_state(cx))
                                 },
                             )
                             .children(
@@ -974,7 +962,11 @@ impl HiveApp {
                                                 this.load_dispatches(cx);
                                             })),
                                     ),
-                            )),
+                            ))
+                            .when(narrow_overview, |list| {
+                                list.child(div().id("collaboration-inline-tasks").pt_3()
+                                    .child(self.render_tasks(left_scroll, cx)))
+                            }),
                     ),
             ));
 
@@ -1001,7 +993,6 @@ impl HiveApp {
                 ResponsivePane::new(list_pane, detail_view)
                     .left_width(px(370.))
                     .detail_active(selected.is_some())
-                    .stack_right_on_narrow()
                     .into_any_element()
             })
             .into_any_element()

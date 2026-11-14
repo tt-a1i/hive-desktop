@@ -979,7 +979,7 @@ impl Render for HiveApp {
                             } else if self.workflows.visible {
                                 self.render_workflows(window, cx)
                             } else if self.collaboration.visible {
-                                self.render_collaboration(cx)
+                                self.render_collaboration(window, cx)
                             } else if self.member_panel {
                                 self.render_members(window, narrow, cx)
                             } else {

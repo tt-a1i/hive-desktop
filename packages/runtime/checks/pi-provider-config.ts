@@ -130,7 +130,8 @@ try {
   auth.respond(native.id, native.prompt!.id, 'fixture-anthropic-value');
   await waitFor(() => auth.status()?.state !== 'running');
   assert.equal(auth.status()!.state, 'succeeded');
-  assert.equal(readStoredCredential('anthropic', authPath)?.type, 'api_key');
+  const otherCredential = readStoredCredential('anthropic', authPath);
+  assert.equal(otherCredential?.type, 'api_key');
 
   await configure();
   ambient = true;
@@ -170,7 +171,7 @@ try {
   await cancelledRemoval;
   await close;
   assert.equal(readStoredCredential(id, authPath), undefined);
-  assert.equal(readStoredCredential('anthropic', authPath)?.type, 'api_key', 'Another provider must remain saved');
+  assert.deepEqual(readStoredCredential('anthropic', authPath), otherCredential, 'Another provider must remain unchanged');
   console.log('PI_PROVIDER_CONFIG_OK: real SDK/native Anthropic prompts, multi-field/empty text, persistence, cancel, removal, ambient auth, saved-removal warning and shutdown drain. No API/model requests.');
 } finally {
   holdRefresh = false;

@@ -260,12 +260,11 @@ impl HiveApp {
         .detach();
     }
 
-    pub fn render_tasks(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_tasks(&self, scroll: &ScrollHandle, cx: &mut Context<Self>) -> impl IntoElement {
         let draft = self
             .workspace
             .as_ref()
             .and_then(|workspace| self.collaboration.task_drafts.get(workspace));
-        let scroll = &self.collaboration.detail_scroll;
         v_flex()
             .w_full()
             .min_w_0()
@@ -410,11 +409,13 @@ impl HiveApp {
                         .text_color(Color::Muted.get(cx))
                         .child(tr("草稿保留在本机；点击“保存任务”后才会更新团队文档。")),
                 )
-                .child(
+                .child(Reveal::new(
+                    "task-document-editor-reveal",
+                    scroll,
                     Textarea::new(&draft.input)
                         .aria_label(tr("任务文档 Markdown"))
                         .disabled(draft.saving),
-                )
+                ))
                 .when_some(
                     draft.error.as_ref().map(|(key, error)| {
                         format!(

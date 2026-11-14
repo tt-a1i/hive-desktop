@@ -224,7 +224,6 @@ pub(crate) struct ResponsivePane {
     breakpoint: Pixels,
     left_width: Pixels,
     detail_active: bool,
-    stack_right_on_narrow: bool,
     left: AnyElement,
     right: AnyElement,
 }
@@ -235,7 +234,6 @@ impl ResponsivePane {
             breakpoint: px(880.),
             left_width: px(360.),
             detail_active: false,
-            stack_right_on_narrow: false,
             left: left.into_any_element(),
             right: right.into_any_element(),
         }
@@ -251,10 +249,6 @@ impl ResponsivePane {
         self
     }
 
-    pub(crate) fn stack_right_on_narrow(mut self) -> Self {
-        self.stack_right_on_narrow = true;
-        self
-    }
 }
 
 impl RenderOnce for ResponsivePane {
@@ -296,34 +290,6 @@ impl RenderOnce for ResponsivePane {
                 .flex()
                 .flex_col()
                 .child(self.right)
-                .into_any_element()
-        } else if self.stack_right_on_narrow {
-            v_flex()
-                .flex_1()
-                .min_h_0()
-                .w_full()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .id("responsive-right-stacked")
-                        .flex()
-                        .flex_col()
-                        .flex_shrink_0()
-                        .max_h(px(340.))
-                        .overflow_hidden()
-                        .border_b_1()
-                        .border_color(Color::Divider.get(cx))
-                        .child(self.right),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .child(self.left),
-                )
                 .into_any_element()
         } else {
             div()
