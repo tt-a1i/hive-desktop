@@ -1373,5 +1373,9 @@
   "协作": "Collaboration",
   "应用": "Application",
   "返回设置": "Back to settings",
-  "更多输入选项": "More composer options"
+  "更多输入选项": "More composer options",
+  "调整侧栏宽度，双击恢复默认": "Resize sidebar; double-click to reset",
+  "读取侧栏宽度失败": "Could not load sidebar width",
+  "保存侧栏宽度失败，原宽度仍生效": "Could not save sidebar width; the previous width is still active",
+  "搜索内容不能超过 200 个字符": "Search cannot exceed 200 characters"
 }

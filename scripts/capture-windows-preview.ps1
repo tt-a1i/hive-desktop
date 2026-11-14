@@ -455,17 +455,60 @@ Wait-EditorText '会话名称' '启动方式核验'
 Invoke-Action '取消'
 Write-Host 'Renamed the lead session without changing its draft or team binding.'
 
-Invoke-Action '搜索会话'
-$search = Wait-Action '搜索会话名称、项目或 Agent'
+# The sidebar search is a real input; results are confined to its named list.
+# Bind both targets to the fixture's actual records before selecting by full identity.
+$searchInputName = '搜索会话名称、项目路径或 Agent'
+$fixtureRecords = @([System.IO.File]::ReadAllText((Join-Path $DataDirectory 'chats/index.json')) | ConvertFrom-Json)
+$workerRecord = @($fixtureRecords | Where-Object { $_.sessionFile -ceq $WorkerFile })
+$leadRecord = @($fixtureRecords | Where-Object { $_.title -ceq '启动方式核验' })
+if ($workerRecord.Count -ne 1 -or $leadRecord.Count -ne 1) { throw 'Search targets did not identify exactly one fixture member and lead.' }
+if ($workerRecord[0].title -cne 'Reviewer' -or $workerRecord[0].backend -cne 'pi' -or
+    [string]::IsNullOrEmpty($workerRecord[0].agentId) -or $workerRecord[0].agentId.EndsWith(':orchestrator') -or
+    $workerRecord[0].workspaceId -cne $leadRecord[0].workspaceId -or
+    $leadRecord[0].agentId -cne "$($leadRecord[0].workspaceId):orchestrator" -or $leadRecord[0].backend -cne 'pi') {
+    throw 'Search targets lost the fixture member/lead identity or backend binding.'
+}
+$betaPath = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($TasksFile)))
+$memberResultName = "Reviewer · Beta · $betaPath · 成员 · Pi"
+$leadResultName = "启动方式核验 · Beta · $betaPath · 主控 · Pi"
+$leadDraftBeforeSearch = ((Wait-Action '聊天消息').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -replace "`r`n", "`n")
+function Wait-UniqueSidebarResult([string] $Name) {
+    $listCondition = New-Object System.Windows.Automation.AndCondition(
+        (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '搜索会话')),
+        (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::List)))
+    $buttonCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $lists = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $listCondition)
+        if ($lists.Count -gt 1) { throw 'Sidebar search exposed duplicate result lists.' }
+        if ($lists.Count -eq 1) {
+            $buttons = $lists[0].FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+            if ($buttons.Count -eq 1 -and $buttons[0].Current.Name -ceq $Name -and $buttons[0].Current.IsEnabled) { return }
+        }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Sidebar search did not expose exactly one enabled fixture result '$Name'."
+}
+$search = Wait-Action $searchInputName
+$search.SetFocus()
 $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('Reviewer')
-[void](Wait-Action '打开 Reviewer · Beta · Pi')
+Wait-EditorText $searchInputName 'Reviewer'
+Wait-UniqueSidebarResult $memberResultName
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-session-search.png')
-Invoke-Action '打开 Reviewer · Beta · Pi'
+Invoke-Action $memberResultName
+[void](Wait-Action '当前会话操作：Reviewer')
+Wait-EditorText $searchInputName ''
 Wait-EditorText '聊天消息' $quoted
-Invoke-Action '搜索会话'
-$search = Wait-Action '搜索会话名称、项目或 Agent'
+$search = Wait-Action $searchInputName
+$search.SetFocus()
 $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('启动方式核验')
-Invoke-Action '打开 启动方式核验 · Beta · Pi'
+Wait-EditorText $searchInputName '启动方式核验'
+Wait-UniqueSidebarResult $leadResultName
+Invoke-Action $leadResultName
+[void](Wait-Action '当前会话操作：启动方式核验')
+Wait-EditorText $searchInputName ''
+Wait-EditorText '聊天消息' $leadDraftBeforeSearch
 [void](Wait-Action '打开关联派单')
 Write-Host 'Searched member and lead conversations and preserved the isolated member draft.'
 
@@ -477,7 +520,8 @@ $previousNodeId = [int]$ownedNode[0].ProcessId
 Stop-Process -Id $previousNodeId -Force
 [void](Wait-Action '重新启动后台')
 Invoke-Action '重新启动后台'
-[void](Wait-Action '搜索会话' 20)
+[void](Wait-Action $searchInputName 20)
+Wait-EditorText $searchInputName ''
 [void](Wait-Action '打开关联派单' 20)
 Wait-EditorText '聊天消息' '后台恢复核验草稿'
 $replacement = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $AppProcessId" | Where-Object { $_.Name -eq 'node.exe' })

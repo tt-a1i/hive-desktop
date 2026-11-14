@@ -2,7 +2,7 @@ mod archiving;
 mod naming;
 mod pinning;
 pub(crate) use pinning::PinnedSessions;
-mod search;
+pub(crate) mod search;
 use crate::{app::HiveApp, protocol::*};
 use gpui_kit::*;
 use serde_json::json;

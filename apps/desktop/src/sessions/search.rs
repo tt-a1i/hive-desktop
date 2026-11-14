@@ -4,10 +4,11 @@ use crate::{app::HiveApp, palette::Color, transport::Runtime};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
+        Icon,
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
         scroll::ScrollableElement,
-        Icon, *,
+        *,
     },
     prelude::FluentBuilder,
     *,
@@ -18,10 +19,30 @@ use std::{sync::Arc, time::Duration};
 
 use crate::protocol::SessionHit as Hit;
 #[derive(Default, Deserialize)]
-struct Page {
-    matches: Vec<Hit>,
-    total: usize,
+pub(crate) struct Page {
+    pub(crate) matches: Vec<Hit>,
+    pub(crate) total: usize,
 }
+
+/// Shared wire contract for the global browser and the scoped sidebar. None
+/// deliberately omits workspaceId to preserve the global browser contract.
+pub(crate) async fn search_page(
+    runtime: &Runtime,
+    query: String,
+    archived: bool,
+    offset: usize,
+    workspace: Option<String>,
+) -> Result<Page, String> {
+    let mut params = json!({"query":query,"archived":archived,"offset":offset});
+    if let Some(workspace) = workspace {
+        params["workspaceId"] = json!(workspace);
+    }
+    runtime
+        .request("chat.search", params)
+        .await
+        .and_then(|value| serde_json::from_value::<Page>(value).map_err(|error| error.to_string()))
+}
+
 struct SessionSearch {
     archived: bool,
     offset: usize,
@@ -37,12 +58,19 @@ struct SessionSearch {
     scroll: ScrollHandle,
 }
 
-enum SearchError { Request(String), WorkspaceMissing }
+enum SearchError {
+    Request(String),
+    WorkspaceMissing,
+}
 impl SearchError {
     fn text(&self) -> String {
         match self {
             Self::Request(error) => {
-                format!("{}: {}", tr("搜索失败"), crate::language::localize_owned_error(error))
+                format!(
+                    "{}: {}",
+                    tr("搜索失败"),
+                    crate::language::localize_owned_error(error)
+                )
             }
             Self::WorkspaceMissing => tr("工作区正在移除或已不存在，请重新搜索。").to_owned(),
         }
@@ -153,15 +181,7 @@ impl SessionSearch {
             {
                 return;
             }
-            let result = runtime
-                .request(
-                    "chat.search",
-                    json!({"query":query,"archived":archived,"offset":offset}),
-                )
-                .await
-                .and_then(|value| {
-                    serde_json::from_value::<Page>(value).map_err(|error| error.to_string())
-                });
+            let result = search_page(&runtime, query, archived, offset, None).await;
             let _ = this.update(cx, |this, cx| {
                 if this.generation != generation {
                     return;
@@ -227,7 +247,8 @@ impl Render for SessionSearch {
             } else {
                 tr("搜索会话名称、项目路径或 Agent…")
             };
-            self.query.update(cx, |query, cx| query.set_placeholder(label, window, cx));
+            self.query
+                .update(cx, |query, cx| query.set_placeholder(label, window, cx));
             self.placeholder_locale = Some(locale);
         }
         let results_height = px((self.page.matches.len().max(1) * 58) as f32)
