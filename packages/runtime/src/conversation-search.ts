@@ -16,6 +16,8 @@ export type ConversationSearchMatch = { messageId: string; snippet: string };
 export type ConversationSearchResult = { matches: ConversationSearchMatch[]; complete: boolean; warning?: string };
 export type ConversationSearchOptions = {
   workspacePath: string;
+  /** Runtime currently processing a turn; some providers emit tool updates outside snapshots. */
+  liveBusy?: boolean;
   codexDirectory: string;
   claudeDirectory: string;
   /** A live snapshot supplies native message IDs; delivery IDs are normalized here. */
@@ -24,7 +26,7 @@ export type ConversationSearchOptions = {
 type Row = { id: string; message: unknown };
 // Cache only successfully parsed durable snapshots. A small LRU bounds retained
 // transcripts; every lookup stats all dependent files before using a snapshot.
-const rowCache = new Map<string, { fingerprint: string; rows: Row[]; bytes: number; complete: boolean }>();
+const rowCache = new Map<string, { fingerprint: string; rows: Row[]; bytes: number; complete: boolean; truncated: boolean; unresolved: boolean }>();
 const CACHE_LIMIT = 24;
 const CACHE_BYTES = 32 * 1024 * 1024;
 async function fingerprint(paths: string[]): Promise<string> {
@@ -38,22 +40,23 @@ async function fingerprint(paths: string[]): Promise<string> {
     }
   })));
 }
-async function cachedRows(key: string, paths: string[], load: () => Promise<{ rows: Row[]; complete: boolean }>): Promise<{ rows: Row[]; complete: boolean }> {
+async function cachedRows(key: string, paths: string[], load: () => Promise<{ rows: Row[]; complete: boolean }>): Promise<{ rows: Row[]; complete: boolean; truncated: boolean; unresolved: boolean }> {
   const before = await fingerprint(paths);
   const cached = rowCache.get(key);
   if (cached?.fingerprint === before) {
     rowCache.delete(key);
     rowCache.set(key, cached);
-    return { rows: cached.rows, complete: cached.complete };
+    return { rows: cached.rows, complete: cached.complete, truncated: cached.truncated, unresolved: cached.unresolved };
   }
   rowCache.delete(key);
   const loaded = await load();
   if (before !== await fingerprint(paths)) throw new Error('Conversation history changed while being read; retry search');
   // Retain only searchable text, never raw images/provider payloads.
-  const compact = loaded.rows.map(row => ({ id: desktopMessageId(row.id, row.message), message: { role: 'assistant', content: messageText(row.message) } }));
+  const projected = searchableRows(loaded.rows);
+  const compact = projected.rows.map(row => ({ id: row.id, message: { role: 'assistant', content: row.text } }));
   const bytes = compact.reduce((sum, row) => sum + Buffer.byteLength(row.message.content, 'utf8') + Buffer.byteLength(row.id, 'utf8'), 0);
   if (bytes <= CACHE_BYTES) {
-    rowCache.set(key, { fingerprint: before, rows: compact, bytes, complete: loaded.complete });
+    rowCache.set(key, { fingerprint: before, rows: compact, bytes, complete: loaded.complete, truncated: projected.truncated, unresolved: projected.unresolved });
     let total = [...rowCache.values()].reduce((sum, item) => sum + item.bytes, 0);
     while (rowCache.size > CACHE_LIMIT || total > CACHE_BYTES) {
       const oldest = rowCache.keys().next().value!;
@@ -61,7 +64,7 @@ async function cachedRows(key: string, paths: string[], load: () => Promise<{ ro
       rowCache.delete(oldest);
     }
   }
-  return { rows: compact, complete: loaded.complete };
+  return { rows: compact, complete: loaded.complete, truncated: projected.truncated, unresolved: projected.unresolved };
 }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function fold(value: string): string { return value.normalize('NFC').toLocaleLowerCase(); }
@@ -88,15 +91,61 @@ function desktopMessageId(id: string, message: unknown): string {
   return id;
 }
 
-// Search user-visible conversation fields only. Do not search raw provider metadata,
-// base64 images, hidden startup instructions, or arbitrary object serialization.
-function messageText(value: unknown): string {
+// Bound traversal before serializing the explicitly displayed tool input. Never
+// traverse provider envelopes, image data or arbitrary hidden metadata.
+function boundedInput(value: unknown, state: { truncated: boolean }): string {
+  const parts: string[] = [];
+  let budget = 32_768;
+  let nodes = 1_000;
+  const append = (text: string) => {
+    if (budget <= 0) { if (text.length) state.truncated = true; return; }
+    let piece = '';
+    for (const character of text) {
+      if (budget === 0) { state.truncated = true; break; }
+      piece += character;
+      budget--;
+    }
+    parts.push(piece);
+  };
+  const visit = (item: unknown, depth: number) => {
+    if (item == null) return;
+    if (--nodes < 0 || budget <= 0 || depth > 8) { state.truncated = true; return; }
+    if (typeof item === 'string') { append(item); return; }
+    if (typeof item === 'number' || typeof item === 'boolean') { append(String(item)); return; }
+    if (Array.isArray(item)) {
+      for (const child of item) {
+        if (nodes <= 0 || budget <= 0) { state.truncated = true; break; }
+        visit(child, depth + 1);
+      }
+      return;
+    }
+    if (object(item)) for (const key in item) {
+      if (!Object.hasOwn(item, key)) continue;
+      if (nodes <= 0 || budget <= 0) { state.truncated = true; break; }
+      append(key);
+      visit(item[key], depth + 1);
+    }
+  };
+  visit(value, 0);
+  return parts.join(' ');
+}
+function codexFallbackOutput(value: Record<string, unknown>): boolean {
+  const raw = value.rawBackendItem;
+  if (value.role !== 'toolResult' || object(value.source) || !object(raw) || typeof raw.type !== 'string') return false;
+  if (typeof raw.aggregatedOutput === 'string') return false;
+  if (raw.type === 'dynamicToolCall' && Array.isArray(raw.contentItems) && raw.contentItems.every(part => object(part) && part.type === 'inputText' && typeof part.text === 'string')) return false;
+  if (raw.type === 'mcpToolCall' && (raw.error != null || raw.result != null)) return false;
+  return true;
+}
+// Search visible fields only. Some Codex normalized tool outputs are fallback
+// JSON of the whole native item, which must not enter the search index.
+function messageText(value: unknown, state: { truncated: boolean }): string {
   if (!object(value)) return '';
   const presentation = desktopPresentation(value.presentation);
   if (value.role === 'custom' && !presentation) return '';
   const parts: string[] = [];
   if (presentation && typeof presentation.displayText === 'string') parts.push(presentation.displayText);
-  else {
+  else if (!codexFallbackOutput(value)) {
     const content = value.content;
     if (typeof content === 'string') parts.push(content);
     else if (Array.isArray(content)) for (const block of content) {
@@ -105,12 +154,52 @@ function messageText(value: unknown): string {
       if (block.type === 'thinking' && typeof block.thinking === 'string') parts.push(block.thinking);
     }
   }
+  if (value.role === 'toolResult') {
+    if (typeof value.toolName === 'string') parts.push(value.toolName);
+    const input = boundedInput(value.toolInput, state);
+    if (input) parts.push(input);
+    if (object(value.details) && typeof value.details.patch === 'string') parts.push(value.details.patch);
+  }
   return parts.join('\n');
 }
-function find(rows: readonly Row[], terms: string[]): ConversationSearchMatch[] {
+// Assistant tool calls carry inputs separately from the result rendered by the
+// desktop. Attach those fields to that result's actual ID, not the assistant ID.
+function searchableRows(rows: readonly Row[]): { rows: { id: string; text: string }[]; truncated: boolean; unresolved: boolean } {
+  const state = { truncated: false };
+  const calls = new Map<string, { name?: string; input?: unknown }>();
+  for (const row of rows) {
+    const message = row.message;
+    if (!object(message) || message.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const block of message.content) if (object(block) && block.type === 'toolCall' && typeof block.id === 'string') {
+      calls.set(block.id, { ...(typeof block.name === 'string' ? {name:block.name} : {}), ...(block.arguments !== undefined ? {input:block.arguments} : {}) });
+    }
+  }
+  const results = new Set<string>();
+  const projected = rows.map(row => {
+    const message = row.message;
+    const id = desktopMessageId(row.id, message);
+    let text = messageText(message, state);
+    if (object(message) && message.role === 'toolResult') {
+      results.add(id);
+      const call = calls.get(id);
+      const extra = [call?.name ?? '', message.toolInput == null ? boundedInput(call?.input, state) : ''].filter(Boolean).join('\n');
+      if (extra) text = [text, extra].filter(Boolean).join('\n');
+    }
+    return {id, text};
+  });
+  let unresolved = false;
+  for (const [id, call] of calls) {
+    if (results.has(id)) continue;
+    unresolved = true;
+    const text = [call.name ?? '', boundedInput(call.input, state)].filter(Boolean).join('\n');
+    if (text) projected.push({ id, text });
+  }
+  return { rows: projected, truncated: state.truncated, unresolved };
+}
+function find(rows: readonly { id: string; text: string }[], terms: string[]): ConversationSearchMatch[] {
   const matches: ConversationSearchMatch[] = [];
   for (const row of rows) {
-    const text = messageText(row.message);
+    const text = row.text;
     const folded = fold(text);
     if (!terms.every(term => folded.includes(term))) continue;
     // Locate using code points; normalization can change offsets, so the snippet is
@@ -164,7 +253,7 @@ async function codexRows(record: ChatRecord, directory: string): Promise<{ rows:
   const data: unknown = JSON.parse(await readFile(`${codexMetadataFile(directory, record.codexThreadId)}.display.json`, 'utf8'));
   if (!object(data) || data.version !== 1 || !Array.isArray(data.entries)) throw new Error('Invalid Codex display journal');
   const metadata = readCodexMetadata(directory, record.codexThreadId);
-  const complete = data.completeHistory === true && Array.isArray(data.searchEntries);
+  const complete = data.completeHistory === true && data.searchVersion === 2 && Array.isArray(data.searchEntries);
   const entries: unknown[] = complete ? data.searchEntries as unknown[] : data.entries;
   const seenIds = new Set<string>();
   const rows = entries.map((entry: unknown) => {
@@ -186,11 +275,16 @@ export async function searchConversation(record: ChatRecord, query: string, opti
   let rows: Row[] = [];
   let warning: string | undefined;
   let codexSynced = false;
+  let truncated = false;
+  let unresolved = false;
   try {
     if (record.backend === 'pi' || record.backend === 'pi-rpc') {
       if (record.sessionFile) {
         const file = record.sessionFile;
-        rows = (await cachedRows(`${record.backend}:${file}`, [file], async () => ({ rows: await piRows(file, record.backend as 'pi' | 'pi-rpc'), complete: true }))).rows;
+        const loaded = await cachedRows(`${record.backend}:${file}`, [file], async () => ({ rows: await piRows(file, record.backend as 'pi' | 'pi-rpc'), complete: true }));
+        rows = loaded.rows;
+        truncated = loaded.truncated;
+        unresolved = loaded.unresolved;
       }
       else if (record.piSessionId || record.externalPiSessionId) warning = 'Pi transcript path is unavailable';
     } else if (record.backend === 'claude') {
@@ -211,6 +305,8 @@ export async function searchConversation(record: ChatRecord, query: string, opti
       const loaded = await cachedRows(`codex:${metadata}`, [metadata, `${metadata}.display.json`], () => codexRows(record, options.codexDirectory));
       rows = loaded.rows;
       codexSynced = loaded.complete;
+      truncated = loaded.truncated;
+      unresolved = loaded.unresolved;
       if (!loaded.complete) warning = 'Codex display journal may omit native history';
     }
   } catch (error) {
@@ -223,6 +319,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
     } else {
       // Pi snapshots are the current native branch; merging older on-disk rows
       // could expose an abandoned branch after an in-memory branch switch.
+      if (record.backend === 'pi' || record.backend === 'pi-rpc') { truncated = false; unresolved = false; }
       const byId = new Map((record.backend === 'pi' || record.backend === 'pi-rpc' ? [] : rows).map(row => [row.id, row]));
       // A synchronized native Codex snapshot is authoritative. Its display
       // journal can contain older items; never reintroduce them by merging.
@@ -237,5 +334,8 @@ export async function searchConversation(record: ChatRecord, query: string, opti
       rows = [...byId.values()];
     }
   }
-  return { matches: find(rows, terms), complete: !warning, ...(warning ? { warning } : {}) };
+  const projected = searchableRows(rows);
+  if ((truncated || projected.truncated) && !warning) warning = 'Some tool inputs exceed the search limit';
+  if ((unresolved || projected.unresolved || (options.liveBusy && record.backend !== 'codex')) && !warning) warning = 'Live or unfinished tool output may be missing from search';
+  return { matches: find(projected.rows, terms), complete: !warning, ...(warning ? { warning } : {}) };
 }

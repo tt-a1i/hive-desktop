@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-export type ProjectFileReference = { relativePath: string; sha256: string };
+export type ProjectFileReference = { relativePath: string; sha256: string; sourceSessionId?: string };
 export class ProjectFileReferences {
   constructor(private readonly directory: string) {}
   private path(id: string): string {
@@ -27,6 +27,7 @@ export class ProjectFileReferences {
     if (value.workspaceId !== workspaceId) throw new Error('Attachment does not belong to this workspace');
     const file = value.projectFile;
     if (!file || typeof file !== 'object' || !('relativePath' in file) || typeof file.relativePath !== 'string' || !('sha256' in file) || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)) throw new Error('Invalid project file reference');
-    return { relativePath: file.relativePath, sha256: file.sha256 };
+    if ('sourceSessionId' in file && (typeof file.sourceSessionId !== 'string' || !file.sourceSessionId)) throw new Error('Invalid project file reference source');
+    return { relativePath: file.relativePath, sha256: file.sha256, ...('sourceSessionId' in file ? {sourceSessionId: file.sourceSessionId as string} : {}) };
   }
 }

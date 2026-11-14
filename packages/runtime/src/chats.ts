@@ -1,4 +1,6 @@
 import { ProjectFileReferences } from './project-file-references.js';
+import { DispatchExecutionOrigins, DispatchOriginError } from './dispatch-execution-origins.js';
+import { artifactSourceRequest, ArtifactSourceError, resolveArtifactFile, type ResolvedArtifact } from './artifact-files.js';
 import { searchProjectFiles, readProjectFile } from './project-files.js';
 import { ChatAttachments, attachmentIds, encodeImageInput, decodeImageInput } from './image-attachments.js';
 import { promptImages } from './prompt-images.js';
@@ -16,6 +18,9 @@ import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, type ChatRecord, type ChatBackend } from './chat-index.js';
 import { searchConversation, type ConversationSearchMatch } from './conversation-search.js';
 import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
+import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
+import { createManagedWorktree, readWorktreeIntent, recoverManagedWorktree, validateManagedWorktree, type ManagedWorktree } from './git-worktrees.js';
+import { readdir, realpath } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
 import { DeliveryQueue } from './delivery-queue.js';
@@ -27,6 +32,7 @@ import { createTeamTool, createTeamCommand } from './team-tool.js';
 
 interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
+  executionPath: string;
   failure?: Error; lastErrorMessage?: string; reasoningFailure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string };
@@ -45,17 +51,20 @@ export class Chats implements StructuredSessionPort {
   readonly attachments: ChatAttachments;
   private readonly sessionDir: string;
   private readonly queueDir: string;
+  private readonly dispatchOrigins: DispatchExecutionOrigins;
   private readonly closeAbort = new AbortController();
   private closing = false;
   private readonly mutatingQueues = new Set<string>();
   private readonly removing = new Set<string>();
+  private readonly gitWrites = new Set<Promise<unknown>>();
 
-  constructor(private readonly hive: HiveHost, dataDir: string, private readonly emit: (event: ChatEvent) => void,
+  constructor(private readonly hive: HiveHost, private readonly dataDir: string, private readonly emit: (event: ChatEvent) => void,
     private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels) {
     const directory = join(dataDir, 'chats');
     this.attachments=new ChatAttachments(hive, new ProjectFileReferences(join(directory, 'project-file-references')));
     this.sessionDir = join(directory, 'pi');
     this.queueDir = join(directory, 'deliveries');
+    this.dispatchOrigins = new DispatchExecutionOrigins(join(directory, 'dispatch-execution-origins'));
     mkdirSync(this.sessionDir, { recursive: true });
     this.index = new ChatIndex(directory);
   }
@@ -63,11 +72,128 @@ export class Chats implements StructuredSessionPort {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
   list(workspaceId: string) { return this.index.list(workspaceId); }
-  async gitStatus(workspaceId: string, offset: unknown = 0, limit: unknown = 100) {
+  private async withGitWrite<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const action = operation();
+    this.gitWrites.add(action);
+    try { return await action; }
+    finally { this.gitWrites.delete(action); }
+  }
+  /** Resolve only persisted ownership. A missing worktree never falls back to the team root. */
+  private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
+    if (!record.execution) return workspace.path;
+    const {record: owned} = await readWorktreeIntent(this.dataDir, record.id);
+    const original = await realpath(workspace.path);
+    if (owned.projectRoot !== original || owned.executionPath !== record.execution.path || owned.branch !== record.execution.branch) {
+      throw new Error('会话工作树与团队项目或保存的执行目录不匹配；已停止恢复，请检查工作树。');
+    }
+    return validateManagedWorktree(this.dataDir, owned);
+  }
+  async sessionExecution(id: string) {
+    const record = this.index.get(id);
+    this.assertWorkspaceAvailable(record.workspaceId);
+    const workspace = await this.workspace(record.workspaceId);
+    return {sessionId: id, workspaceId: record.workspaceId, path: await this.executionPath(record, workspace), kind: record.execution?.kind ?? 'project'};
+  }
+  async executionDirectory(workspaceId: string, sessionId?: unknown): Promise<string> {
     this.assertWorkspaceAvailable(workspaceId);
     const workspace = await this.workspace(workspaceId);
+    if (sessionId === undefined) return workspace.path;
+    if (typeof sessionId !== 'string' || !sessionId) throw new TypeError('Invalid session ID');
+    const record = this.index.get(sessionId);
+    if (record.workspaceId !== workspaceId) throw new Error('会话不属于当前工作区。');
+    return this.executionPath(record, workspace);
+  }
+  async resolveArtifact(workspaceId: string, input: unknown): Promise<ResolvedArtifact> {
+    const request = artifactSourceRequest(input);
+    this.assertWorkspaceAvailable(workspaceId);
+    if (this.closing) throw new ArtifactSourceError('ARTIFACT_SOURCE_UNAVAILABLE', 'Chat runtime is closing');
+    return this.withWorkspace(workspaceId, async () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      const origin = request.dispatchId ? this.dispatchOrigins.get(workspaceId, request.dispatchId) : undefined;
+      if (origin && ((request.sourceAgentId && request.sourceAgentId !== origin.sourceAgentId)
+        || (request.sourceSessionId && request.sourceSessionId !== origin.sourceSessionId))) {
+        throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact source does not match the dispatch execution session');
+      }
+      if (request.dispatchId && !origin && request.sourceSessionId) {
+        throw new ArtifactSourceError('ARTIFACT_SOURCE_UNKNOWN', 'This dispatch has no saved execution source; an explicit session cannot replace its historical source');
+      }
+      const sourceSessionId = origin?.sourceSessionId ?? request.sourceSessionId;
+      let legacy = false;
+      if (sourceSessionId) {
+        const source = this.index.peek(sourceSessionId);
+        if (!source || source.workspaceId !== workspaceId) throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact session is missing or belongs to another workspace');
+        // Dispatch origins retain the historical agent identity even after the
+        // same worker is rebound. Direct tool links normally specify just session.
+        if (!origin && request.sourceAgentId && source.agentId !== request.sourceAgentId)
+          throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact agent cannot be verified for this session');
+      } else {
+        const pending = await this.pendingWorktrees(workspaceId);
+        if (this.index.list(workspaceId).some(record => record.execution) || pending.pending.length || pending.unreadable) {
+          throw new ArtifactSourceError('ARTIFACT_SOURCE_UNKNOWN', 'Artifact has no saved execution source; this workspace contains isolated sessions. Select a source session or restore the dispatch source metadata');
+        }
+        legacy = true;
+      }
+      let root: string;
+      try { root = await this.executionDirectory(workspaceId, sourceSessionId); }
+      catch (error) { throw new ArtifactSourceError('ARTIFACT_SOURCE_UNAVAILABLE', 'The original artifact execution directory cannot be verified; no other session or project directory was used', {cause: error}); }
+      const resolved = await resolveArtifactFile(root, request.path);
+      this.assertWorkspaceAvailable(workspaceId);
+      return {...resolved, ...(sourceSessionId && {sourceSessionId}), ...(legacy && {legacy: true,
+        warning: 'Legacy artifact has no saved execution source. Resolved only against the original shared workspace directory; no current worker session was inferred.'})};
+    }).catch((error: unknown) => {
+      if (error instanceof ArtifactSourceError || error instanceof DispatchOriginError) throw error;
+      throw new ArtifactSourceError('ARTIFACT_SOURCE_UNAVAILABLE', 'Artifact source metadata or workspace is unavailable; restore the original source before opening this artifact', {cause: error});
+    });
+  }
+  async pendingWorktrees(workspaceId: string) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const projectRoot = await realpath((await this.workspace(workspaceId)).path);
+    let entries;
+    try { entries = await readdir(join(this.dataDir, 'worktrees'), {withFileTypes: true}); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {pending: [], unreadable: 0}; throw error; }
+    const pending: {sessionId: string; branch: string; path: string; state: string}[] = [];
+    let unreadable = 0;
+    for (const entry of entries) {
+      if (!entry.isDirectory() || this.index.peek(entry.name)) continue;
+      try {
+        const intent = await readWorktreeIntent(this.dataDir, entry.name);
+        if (intent.record.projectRoot === projectRoot) pending.push({sessionId: entry.name, branch: intent.record.branch,
+          path: intent.record.executionPath, state: intent.state});
+      } catch { unreadable++; }
+    }
+    return {pending, unreadable};
+  }
+  async recoverWorktreeRecord(workspaceId: string, id: string, backend: ChatBackend = 'pi') {
+    return this.withWorkspace(workspaceId, async () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error('Chat runtime is closing');
+      const existing = this.index.peek(id);
+      if (existing) {
+        if (existing.workspaceId !== workspaceId || !existing.execution) throw new Error('会话身份已被使用，未覆盖现有记录。');
+        await this.sessionExecution(id);
+        return existing;
+      }
+      const workspace = await this.workspace(workspaceId);
+      const {record: owned} = await readWorktreeIntent(this.dataDir, id);
+      if (owned.projectRoot !== await realpath(workspace.path)) throw new Error('待恢复的工作树不属于当前项目。');
+      const recovered = await recoverManagedWorktree(this.dataDir, owned);
+      const record: ChatRecord = {id, workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(),
+        execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error('Chat runtime is closing');
+      this.index.save(record);
+      return record;
+    });
+  }
+  private executionGuidance(workspace: WorkspaceSummary, path: string): string {
+    return `Hive team workspace: ${JSON.stringify(workspace.path)}. This session's code execution directory is ${JSON.stringify(path)}. Read and modify project code in the session execution directory. The team workspace remains the shared task and member scope. Use the registered team tool and its guide for team protocol; do not assume .hive exists in the execution directory. Report artifact paths from this execution directory explicitly.`;
+  }
+  async gitStatus(workspaceId: string, offset: unknown = 0, limit: unknown = 100, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const path = await this.executionDirectory(workspaceId, sessionId);
     try {
-      const status = await getGitWorkspaceStatus(workspace.path, {offset: offset as number, limit: limit as number});
+      const status = await getGitWorkspaceStatus(path, {offset: offset as number, limit: limit as number});
       this.assertWorkspaceAvailable(workspaceId);
       return {ok: true as const, status};
     } catch (error) {
@@ -75,14 +201,14 @@ export class Chats implements StructuredSessionPort {
       throw error;
     }
   }
-  async gitDiff(workspaceId: string, path: string, comparison: unknown = 'unstaged') {
+  async gitDiff(workspaceId: string, path: string, comparison: unknown = 'unstaged', sessionId?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
-    const workspace = await this.workspace(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
     try {
       if (typeof comparison !== 'string' || !['staged', 'unstaged', 'head-worktree'].includes(comparison)) {
         throw new GitWorkspaceError('INVALID_ARGUMENT', 'Invalid Git comparison');
       }
-      const diff = await getGitFileDiff(workspace.path, path, {comparison: comparison as NonNullable<GitDiffOptions['comparison']>});
+      const diff = await getGitFileDiff(directory, path, {comparison: comparison as NonNullable<GitDiffOptions['comparison']>});
       this.assertWorkspaceAvailable(workspaceId);
       return {ok: true as const, diff};
     } catch (error) {
@@ -90,28 +216,87 @@ export class Chats implements StructuredSessionPort {
       throw error;
     }
   }
-  async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0) {
+  async gitIndexPreview(workspaceId: string, operation: unknown, paths: unknown, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      if (operation !== 'stage' && operation !== 'unstage') throw new GitMutationError('INVALID_ARGUMENT', 'Choose stage or unstage');
+      const preview = await (operation === 'stage' ? previewGitStage : previewGitUnstage)(directory, paths as string[]);
+      this.assertWorkspaceAvailable(workspaceId);
+      return {ok: true as const, preview};
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+      throw error;
+    }
+  }
+  async gitIndexApply(workspaceId: string, operation: unknown, paths: unknown, expectedVersion: unknown, sessionId?: unknown) {
+    return this.withGitWrite(async () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        if (operation !== 'stage' && operation !== 'unstage') throw new GitMutationError('INVALID_ARGUMENT', 'Choose stage or unstage');
+        const result = await (operation === 'stage' ? stageGitPaths : unstageGitPaths)(directory, {
+          paths: paths as string[], expectedVersion: expectedVersion as string,
+        });
+        this.assertWorkspaceAvailable(workspaceId);
+        return result;
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return {
+          ok: false as const, error: {code: error.code, message: error.message},
+          applied: 'applied' in error && error.applied === true,
+        };
+        throw error;
+      }
+    });
+  }
+  async gitCommitPreview(workspaceId: string, sessionId?: unknown) {
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const preview = await previewGitCommit(directory);
+      this.assertWorkspaceAvailable(workspaceId);
+      return {ok: true as const, preview};
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+      throw error;
+    }
+  }
+  async gitCommitApply(workspaceId: string, expectedVersion: unknown, message: unknown, includeOutsideProject: unknown, sessionId?: unknown) {
+    return this.withGitWrite(async () => {
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        if (includeOutsideProject !== undefined && typeof includeOutsideProject !== 'boolean') throw new GitMutationError('INVALID_ARGUMENT', 'Outside-project confirmation must be a boolean');
+        return await commitGitIndex(directory, {expectedVersion: expectedVersion as string, message: message as string,
+          ...(typeof includeOutsideProject === 'boolean' && {includeOutsideProject})});
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return {ok: false as const, committed: false as const, applied: false as const,
+          commitOid: null, indexUpdated: false, error: {code: error.code, message: error.message}};
+        throw error;
+      }
+    });
+  }
+  async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
     if (typeof query !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');
-    const workspace = await this.workspace(workspaceId);
-    return searchProjectFiles(workspace.path, query, offset);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    return searchProjectFiles(directory, query, offset);
   }
-  async projectFilesAttach(workspaceId: string, relativePath: unknown) {
+  async projectFilesAttach(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
     if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
-    const workspace = await this.workspace(workspaceId);
-    const snapshot = await readProjectFile(workspace.path, relativePath);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    const snapshot = await readProjectFile(directory, relativePath);
+    if (await this.executionDirectory(workspaceId, sessionId) !== directory) throw new Error('Session execution directory changed during attachment');
     this.assertWorkspaceAvailable(workspaceId);
-    return this.attachments.addProjectFile(workspaceId, { relativePath: snapshot.relativePath, sha256: snapshot.sha256 }, snapshot.bytes);
+    return this.attachments.addProjectFile(workspaceId, { relativePath: snapshot.relativePath, sha256: snapshot.sha256, ...(typeof sessionId === 'string' ? {sourceSessionId: sessionId} : {}) }, snapshot.bytes);
   }
   async projectFileStatus(workspaceId: string, id: string) {
     this.assertWorkspaceAvailable(workspaceId);
     const items = await this.attachments.get(workspaceId, [id]);
     const reference = items[0]?.attachment.projectFile;
     if (!reference) throw new Error('Attachment is not a project file reference');
-    const workspace = await this.workspace(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, reference.sourceSessionId);
     try {
-      const snapshot = await readProjectFile(workspace.path, reference.relativePath);
+      const snapshot = await readProjectFile(directory, reference.relativePath);
       return { state: snapshot.sha256 === reference.sha256 ? 'unchanged' : 'changed' };
     } catch (error) {
       if (['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return { state: 'missing' };
@@ -140,12 +325,18 @@ export class Chats implements StructuredSessionPort {
           const hit = candidates[next++];
           if (!hit) break;
           const live = this.live.get(hit.session.id);
-          const result = await searchConversation(hit.session, query, {
-            workspacePath: hit.workspacePath,
-            codexDirectory: join(this.sessionDir, '..', 'codex'),
-            claudeDirectory: join(this.sessionDir, '..', 'claude'),
-            ...(live && !live.failure && !live.cleanup && {liveHistory: live.handle.snapshot()}),
-          });
+          let result: Awaited<ReturnType<typeof searchConversation>>;
+          try {
+            const directory = hit.session.execution ? await this.executionDirectory(hit.session.workspaceId, hit.session.id) : hit.workspacePath;
+            result = await searchConversation(hit.session, query, {
+              workspacePath: directory,
+              codexDirectory: join(this.sessionDir, '..', 'codex'),
+              claudeDirectory: join(this.sessionDir, '..', 'claude'),
+              ...(live && !live.failure && !live.cleanup && {liveHistory: live.handle.snapshot(), liveBusy: live.queue.busy}),
+            });
+          } catch (error) {
+            result = {matches: [], complete: false, warning: error instanceof Error ? error.message : String(error)};
+          }
           if (result.matches[0]) bodyMatches.set(hit.session.id, result.matches[0]);
           if (!result.complete) incompleteHistory.push({sessionId: hit.session.id, title: hit.title,
             message: result.warning ?? 'Conversation history is incomplete'});
@@ -275,6 +466,7 @@ export class Chats implements StructuredSessionPort {
   }
   private async load(record: ChatRecord, recoveryFailure?: Error): Promise<LiveChat> {
     const workspace = await this.workspace(record.workspaceId);
+    const executionPath = await this.executionPath(record, workspace);
     const sessionFile = record.sessionFile;
     if (sessionFile && !existsSync(sessionFile)) {
       throw new Error(`找不到已保存的 Pi 会话文件。恢复文件后可重新打开会话：${sessionFile}`);
@@ -302,7 +494,7 @@ export class Chats implements StructuredSessionPort {
     const executables = record.backend === 'pi' ? undefined : (await this.settings.get()).effective;
     this.closeAbort.signal.throwIfAborted();
     const handle = record.backend === 'codex'
-      ? await createCodexSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'codex'),
+      ? await createCodexSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'codex'),
         command: executables!.codex.command, signal: this.closeAbort.signal,
         ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(model && { model }), onEvent,
         onUnexpectedExit,
@@ -311,14 +503,14 @@ export class Chats implements StructuredSessionPort {
           execute: (id, args, signal) => command.execute(id, args as { args: string[]; stdin?: string }, signal) }],
       })
       : record.backend === 'claude'
-      ? await createClaudeSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'claude'),
+      ? await createClaudeSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'claude'),
         command: executables!.claude.command, signal: this.closeAbort.signal, ...(record.nativeclaudeSessionId && { sessionId: record.nativeclaudeSessionId }),
         ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
       : record.backend === 'pi-rpc'
-      ? await createExternalPiSession({ cwd: workspace.path, sessionDir: join(this.sessionDir, '..', 'external-pi'),
+      ? await createExternalPiSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'external-pi'),
         command: executables!.pi.command, signal: this.closeAbort.signal,
         ...(sessionFile && { sessionFile }), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
-      : await createPiSession({ cwd: workspace.path, sessionDir: this.sessionDir,
+      : await createPiSession({ cwd: executionPath, sessionDir: this.sessionDir,
         ...(sessionFile && { sessionFile }), ...(model && { model }),
         customTools: [createTeamTool(binding)], onEvent, onUnexpectedExit });
     try {
@@ -346,6 +538,9 @@ export class Chats implements StructuredSessionPort {
       if (!handle.hasContext('hive-context') && record.startupContext) await handle.addContext(record.startupContext);
       if (!handle.hasContext('hive-desktop')) {
         await handle.addContext(toolGuidance, 'hive-desktop');
+      }
+      if (record.execution && !handle.hasContext('hive-desktop-execution')) {
+        await handle.addContext(this.executionGuidance(workspace, executionPath), 'hive-desktop-execution');
       }
       if (record.backend === 'pi-rpc') {
         await handle.addContext(`Current external Pi integration: use the registered ${(handle as ExternalPiSessionHandle).teamToolName} tool for every Hive team command. This is the current process's team tool; older process tool names no longer exist. Pass CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Omit --cli to inherit this backend and model. Never invoke team through bash.`, 'hive-desktop-external');
@@ -382,7 +577,7 @@ export class Chats implements StructuredSessionPort {
       this.reconcileUserInputs(record, queue);
       this.pruneSettledDispatches(record, queue);
       if (earlyFailure) throw earlyFailure;
-      chat = { handle, queue, aborted: false, ...(reasoningFailure && {reasoningFailure}) };
+      chat = { handle, queue, executionPath, aborted: false, ...(reasoningFailure && {reasoningFailure}) };
       this.live.set(record.id, chat);
       return chat;
     } catch (error) { await handle.dispose(); throw error; }
@@ -410,7 +605,7 @@ export class Chats implements StructuredSessionPort {
     const history = agentId ? snapshot.history.map(message => restoreHistoricalReport(message,
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
     return {
-      ...record, ...(record.backend === 'pi' && { model, unavailableModel: model ? undefined : record.model }), ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
+      ...record, executionPath: chat.executionPath, ...(record.backend === 'pi' && { model, unavailableModel: model ? undefined : record.model }), ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
       busy: chat.queue.busy, pending: chat.queue.pendingCount, pendingReports: chat.queue.pendingReports, pendingUserInputs: chat.queue.pendingUserInputs, deliveryFailure:this.deliveryFailure(id,chat.queue),
       completedDeliveryIds: chat.handle.completedDeliveryIds(),
       runId: record.agentId ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId)?.runId ?? null : null,
@@ -432,18 +627,33 @@ export class Chats implements StructuredSessionPort {
     this.opening.set(id, opening);
     return opening;
   }
-  async createRecord(workspaceId: string, backend: ChatBackend = 'pi') {
+  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string} = {}) {
+    return this.withWorkspace(workspaceId, async () => {
     this.assertWorkspaceAvailable(workspaceId);
     if (this.closing) throw new Error('Chat runtime is closing');
-    await this.workspace(workspaceId);
+    const workspace = await this.workspace(workspaceId);
     this.assertWorkspaceAvailable(workspaceId);
     if (this.closing) throw new Error('Chat runtime is closing');
     const record: ChatRecord = { id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now() };
-    this.index.save(record);
+    if (options.isolation === 'worktree') {
+      const owned: ManagedWorktree = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id,
+        ...(options.branch !== undefined && {branch: options.branch})});
+      record.execution = {kind: 'worktree', path: owned.executionPath, branch: owned.branch};
+      // Keep the private intent/worktree if this final save fails. Never remove
+      // code that a configured checkout hook may already have created.
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error(`会话创建已停止；工作树仍保留，可按会话 ${record.id} 恢复。`);
+    }
+    try { this.index.save(record); }
+    catch (error) {
+      if (record.execution) throw new Error(`工作树已保留，但会话记录保存失败。请从待恢复工作树找回会话 ${record.id}。`, {cause: error});
+      throw error;
+    }
     return record;
+    });
   }
-  async create(workspaceId: string, backend: ChatBackend = 'pi') {
-    const record = await this.createRecord(workspaceId, backend);
+  async create(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string} = {}) {
+    const record = await this.createRecord(workspaceId, backend, options);
     return this.open(record.id);
   }
   async open(id: string) { return this.snapshot(id, await this.require(id)); }
@@ -515,10 +725,10 @@ export class Chats implements StructuredSessionPort {
           && (this.startingForInput.has(id) || chat.queue.pendingCount > 0 || chat.handle.history().every(message =>
             message !== null && typeof message === 'object' && 'role' in message && message.role === 'custom'
             && 'customType' in message && typeof message.customType === 'string'
-            && ['hive-context', 'hive-desktop', 'hive-desktop-external', 'hive-desktop-claude'].includes(message.customType)));
+            && ['hive-context', 'hive-desktop', 'hive-desktop-execution', 'hive-desktop-external', 'hive-desktop-claude'].includes(message.customType)));
         if (options?.triggerTurn === false || recoveringWithoutWakeup) {
           if (images.length) throw new TypeError('不触发模型回合的投递暂不支持图片。');
-          const startupContext = text;
+          const startupContext = record.execution ? `${text}\n\n${this.executionGuidance(input.workspace, chat.executionPath)}` : text;
           this.index.save({ ...this.index.get(id), startupContext });
           await chat.handle.addContext(startupContext);
         } else {
@@ -527,6 +737,10 @@ export class Chats implements StructuredSessionPort {
             const visible = { ...current, archived: false, updatedAt: Date.now() };
             this.index.save(visible);
             this.navigationChanged(visible);
+          }
+          if (presentation?.origin === 'dispatch' && presentation.dispatchId) {
+            this.dispatchOrigins.put({workspaceId: record.workspaceId, dispatchId: presentation.dispatchId,
+              sourceSessionId: record.id, sourceAgentId: input.agentId});
           }
           await chat.queue.enqueue(text, true, presentation, images);
         }
@@ -934,6 +1148,7 @@ export class Chats implements StructuredSessionPort {
   async close() {
     this.closing = true;
     this.closeAbort.abort(new Error('Chat runtime is closing'));
+    await Promise.allSettled([...this.activating.values(), ...this.gitWrites]);
     await Promise.allSettled(this.opening.values());
     const results = await Promise.allSettled([...this.live.entries()].map(([id, chat]) => this.stopLive(id, chat)));
     const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);

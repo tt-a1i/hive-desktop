@@ -4,7 +4,7 @@ import { codexMetadataFile } from './codex-metadata.js';
 import { isCodexToolItem, type CodexItem, type CodexTurn } from './codex-history.js';
 
 export type CodexDisplayEntry = { turnId: string; item: CodexItem };
-type Projection = { version: 1; entries: CodexDisplayEntry[]; completedTurns: string[]; completeHistory?: boolean; searchEntries?: CodexDisplayEntry[] };
+type Projection = { version: 1; entries: CodexDisplayEntry[]; completedTurns: string[]; completeHistory?: boolean; searchEntries?: CodexDisplayEntry[]; searchVersion?: number };
 /** A UI event journal only. Never supplied to thread/resume, turn/start, or a model. */
 export class CodexProjection {
   private readonly file: string;
@@ -25,7 +25,7 @@ export class CodexProjection {
       throw new Error('Invalid Codex UI projection');
     }
     this.entries = saved.entries;
-    this.completeHistory = saved.completeHistory === true && Array.isArray(saved.searchEntries)
+    this.completeHistory = saved.completeHistory === true && saved.searchVersion === 2 && Array.isArray(saved.searchEntries)
       && saved.searchEntries.every(entry => typeof entry.turnId === 'string' && typeof entry.item?.id === 'string' && typeof entry.item.type === 'string');
     this.searchEntries = this.completeHistory ? saved.searchEntries : undefined;
     this.completedTurns = saved.completedTurns ?? [];
@@ -117,6 +117,7 @@ export class CodexProjection {
       this.completeHistory = false;
       this.searchEntries = undefined;
     }
+    if (this.completeHistory) this.searchEntries = next;
     const terminal = new Set(turns.filter(turn => turn.status === 'interrupted' || turn.status === 'failed').map(turn => turn.id));
     this.save(next.map(entry => terminal.has(entry.turnId) && entry.item.status === 'inProgress'
       ? { ...entry, item: { ...entry.item, hiveInterrupted: true } } : entry), mergedCompletions ? [...completed] : this.completedTurns);
@@ -124,7 +125,7 @@ export class CodexProjection {
   private save(entries: CodexDisplayEntry[], completedTurns = this.completedTurns): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, JSON.stringify({ version: 1, entries, completedTurns, ...(this.completeHistory && this.searchEntries ? { completeHistory: true, searchEntries: this.searchEntries } : {}) }), { mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify({ version: 1, entries, completedTurns, ...(this.completeHistory && this.searchEntries ? { completeHistory: true, searchVersion: 2, searchEntries: this.searchEntries } : {}) }), { mode: 0o600 });
       renameSync(temporary, this.file);
       this.entries = entries;
       this.completedTurns = completedTurns;

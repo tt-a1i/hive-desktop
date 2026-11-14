@@ -139,23 +139,40 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return {path:items[0].filePath};
     }
     case 'chat.attachments.get': return chats.attachments.get(text(params, 'workspaceId'), params.ids);
+    case 'artifact.resolve': {
+      const {workspaceId: _workspaceId, ...source} = params;
+      return chats.resolveArtifact(text(params, 'workspaceId'), source);
+    }
     case 'chat.attachments.clipboard': {
       const workspace = text(params, 'workspaceId');
       chats.assertWorkspaceAvailable(workspace);
       return chats.attachments.addClipboard(workspace, params.image);
     }
-    case 'git.status': return chats.gitStatus(text(params, 'workspaceId'), params.offset, params.limit);
-    case 'git.diff': return chats.gitDiff(text(params, 'workspaceId'), text(params, 'path'), params.comparison);
-    case 'project.files.search': return chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset);
-    case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath);
+    case 'git.status': return chats.gitStatus(text(params, 'workspaceId'), params.offset, params.limit, params.sessionId);
+    case 'git.diff': return chats.gitDiff(text(params, 'workspaceId'), text(params, 'path'), params.comparison, params.sessionId);
+    case 'git.index.preview': return chats.gitIndexPreview(text(params, 'workspaceId'), params.operation, params.paths, params.sessionId);
+    case 'git.index.apply': return chats.gitIndexApply(text(params, 'workspaceId'), params.operation, params.paths, params.expectedVersion, params.sessionId);
+    case 'git.commit.preview': return chats.gitCommitPreview(text(params, 'workspaceId'), params.sessionId);
+    case 'git.commit.apply': return chats.gitCommitApply(text(params, 'workspaceId'), params.expectedVersion, params.message, params.includeOutsideProject, params.sessionId);
+    case 'project.files.search': return chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId);
+    case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));
     case 'chat.search': return chats.search(params.query, params.archived, params.offset, params.workspaceId);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
+    case 'chat.execution': return chats.sessionExecution(text(params, 'sessionId'));
+    case 'chat.worktrees.pending': return chats.pendingWorktrees(text(params, 'workspaceId'));
+    case 'chat.worktrees.recover': {
+      if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');
+      return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend);
+    }
     case 'chat.createRecord':
     case 'chat.create': {
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');
+      if (params.isolation !== undefined && params.isolation !== 'worktree') throw new Error('Unsupported session isolation');
+      if (params.branch !== undefined && (params.isolation !== 'worktree' || typeof params.branch !== 'string')) throw new Error('A branch is only valid for a new worktree session');
       const workspace = text(params, 'workspaceId');
-      return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend) : chats.create(workspace, params.backend);
+      const options = {...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch})};
+      return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend, options) : chats.create(workspace, params.backend, options);
     }
     case 'chat.pin': {
       const session = chats.setPinned(text(params, 'sessionId'), params.pinned);

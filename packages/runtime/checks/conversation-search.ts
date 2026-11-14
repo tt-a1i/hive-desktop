@@ -58,7 +58,7 @@ try {
   const presentation = {version: 1 as const, origin: 'user' as const, displayText: 'cedar searchable'};
   const nativeUser = {id:'native-user', type:'userMessage', content:[{type:'text', text:'cedar searchable'}]};
   writeCodexMetadata(dir, 'thread', {version:1, context:[], completed:[], deliveries:[{turnId:'t', itemId:'native-user', deliveryId:'delivery-codex', presentation}]});
-  await writeFile(`${codexMetadataFile(dir, 'thread')}.display.json`, JSON.stringify({version:1, entries:[{turnId:'t', item:nativeUser}], completedTurns:['t'], completeHistory:true, searchEntries:[{turnId:'t', item:nativeUser}]}));
+  await writeFile(`${codexMetadataFile(dir, 'thread')}.display.json`, JSON.stringify({version:1, entries:[{turnId:'t', item:nativeUser}], completedTurns:['t'], completeHistory:true, searchVersion:2, searchEntries:[{turnId:'t', item:nativeUser}]}));
   for (let i=0; i<2; i++) {
     result = await searchConversation(codex, 'cedar searchable', options);
     assert.equal(result.matches[0]?.messageId, 'delivery-codex', 'cold and cached Codex delivery use desktop ID');

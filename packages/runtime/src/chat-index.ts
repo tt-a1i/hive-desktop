@@ -10,9 +10,11 @@ export function isUnsetPiModel(model: { provider: string; id: string } | undefin
 }
 
 export interface DeliveryFailure {deliveryId:string;message:string}
+export interface ChatExecution { kind: 'worktree'; path: string; branch: string }
 
 export interface ChatRecord {
   backend: ChatBackend;
+  execution?: ChatExecution;
   codexThreadId?: string;
   nativeclaudeSessionId?: string;
   id: string;
@@ -97,6 +99,12 @@ function isChatRecord(value: unknown): value is ChatRecord {
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
   if (record.pinned !== undefined && typeof record.pinned !== 'boolean') return false;
   if (record.archived !== undefined && typeof record.archived !== 'boolean') return false;
+  if (record.execution !== undefined) {
+    const execution = record.execution as Record<string, unknown> | null;
+    if (!execution || typeof execution !== 'object' || Array.isArray(execution)
+      || execution.kind !== 'worktree' || typeof execution.path !== 'string' || !execution.path
+      || typeof execution.branch !== 'string' || !execution.branch) return false;
+  }
   if (record.lastDeliveryFailure !== undefined) {
     const failure=record.lastDeliveryFailure as Record<string,unknown>|null;
     if (!failure || typeof failure!=='object' || Array.isArray(failure) || typeof failure.deliveryId!=='string' || !failure.deliveryId || typeof failure.message!=='string') return false;

@@ -228,6 +228,15 @@ async function safeStatus(c: Context): Promise<CommandResult> {
     return await command(c.git,c.repositoryRoot,env,c.timeout,['-c','status.renames=true','status','--porcelain=v2','-z','--untracked-files=all','--ignore-submodules=dirty','--no-ahead-behind','--','.']);
   }finally{await rm(directory,{recursive:true,force:true});}
 }
+/** Optimistic version for explicit local index operations; no write is performed. */
+export interface GitWorkspaceVersion extends GitWorkspaceIdentity {
+  indexPath: string; indexFingerprint: string; configFingerprint: string;
+}
+export async function getGitWorkspaceVersion(projectRoot: string, options: GitReadOptions = {}): Promise<GitWorkspaceVersion> {
+  const c=await context(projectRoot,options);
+  const indexPath=resolve(c.repositoryRoot,stripLine((await command(c.git,c.repositoryRoot,c.env,c.timeout,['rev-parse','--git-path','index'],4096)).stdout));
+  return {...identity(c),indexPath,indexFingerprint:c.indexFingerprint,configFingerprint:c.configFingerprint};
+}
 export async function getGitWorkspaceStatus(projectRoot: string, options: GitStatusOptions = {}): Promise<GitWorkspaceStatus> {
   const offset=integer(options.offset,0,0,1_000_000,'offset'),limit=integer(options.limit,100,1,500,'limit');
   const c=await context(projectRoot,options);await requireSafeStatus(c);
