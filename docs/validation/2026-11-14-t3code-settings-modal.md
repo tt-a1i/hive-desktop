@@ -50,6 +50,8 @@
 
 证据位于`.artifacts/release-0e478c2/{receipt,checks,wire-receipt,dmg-receipt,native-payload-identity,native-ui-verdict,program-*,sidecar-stop}.json`及实际日志。开发包已推广current，未替换用户安装实例，8cd9c84保留可运行回退。
 
+Windows运行[43579738250](https://github.com/tt-a1i/hive-desktop/actions/runs/43579738250)同为0e478c2：优化编译、便携包及后台检查通过，原生脚本完成外观切换、Pi账号目录只读、模型表单草稿/放弃、程序路径实际保存及唯一可见Status断言、角色切页和关闭设置，继续到成员会话。随后旧通用引用选择器选中末尾助手消息，未满足目标用户消息的完整草稿断言；日志和截图已核实，并由#30继续诊断。后续窗口步骤未执行，不能把该运行称为Windows整体验收通过。
+
 ## 尚未交付的范围
 
-当前是遮罩/阴影，尚无T3的真实背景模糊。新模态Windows原生、完整辅助技术/输入法矩阵、后续聊天/输入区及所有页面的完整复刻继续；复制诊断的退出附近剪贴板边界仍为[#35](https://github.com/tt-a1i/hive-desktop/issues/35)，本批未重复退出剪贴板实验。不将这批有限原生/包内验收当成完整T3复刻或完整产品验收。
+当前是遮罩/阴影，尚无T3的真实背景模糊。Windows剩余流程、完整辅助技术/输入法矩阵、后续聊天/输入区及所有页面的完整复刻继续；复制诊断的退出附近剪贴板边界仍为[#35](https://github.com/tt-a1i/hive-desktop/issues/35)，本批未重复退出剪贴板实验。不将这批有限原生/包内验收当成完整T3复刻或完整产品验收。
