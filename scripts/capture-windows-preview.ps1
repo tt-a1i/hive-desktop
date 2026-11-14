@@ -470,7 +470,7 @@ if ($workerRecord[0].title -cne 'Reviewer' -or $workerRecord[0].backend -cne 'pi
     [string]::IsNullOrEmpty($workerRecord[0].agentId) -or $workerRecord[0].agentId.EndsWith(':orchestrator') -or
     $workerRecord[0].workspaceId -cne $leadRecord[0].workspaceId -or
     $leadRecord[0].agentId -cne "$($leadRecord[0].workspaceId):orchestrator" -or $leadRecord[0].backend -cne 'pi') {
-    Write-Host ("Fixture search identity: workerTitle=$($workerRecord[0].title), workerBackend=$($workerRecord[0].backend), workerAgentPresent=$(-not [string]::IsNullOrEmpty($workerRecord[0].agentId)), workerIsOrchestrator=$($workerRecord[0].agentId -and $workerRecord[0].agentId.EndsWith(':orchestrator')), sameWorkspace=$($workerRecord[0].workspaceId -ceq $leadRecord[0].workspaceId), leadIsOrchestrator=$($leadRecord[0].agentId -ceq "$($leadRecord[0].workspaceId):orchestrator"), leadBackend=$($leadRecord[0].backend)")
+    Write-Host ("Fixture search identity: workerTitle=$($workerRecord[0].title), workerBackend=$($workerRecord[0].backend), workerAgent=$($workerRecord[0].agentId), workerWorkspace=$($workerRecord[0].workspaceId), leadAgent=$($leadRecord[0].agentId), leadWorkspace=$($leadRecord[0].workspaceId), leadBackend=$($leadRecord[0].backend)")
     throw 'Search targets lost the fixture member/lead identity or backend binding.'
 }
 $betaPath = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($TasksFile)))
