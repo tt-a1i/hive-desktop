@@ -28,6 +28,7 @@ impl HiveApp {
         can_send: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let can_send = can_send && !self.conversation_is_read_only();
         let footer_width = window.use_keyed_state("composer-footer-width", cx, |_, _| px(0.));
         let width = *footer_width.read(cx);
         let compact = if width > px(0.) {
@@ -36,7 +37,7 @@ impl HiveApp {
             window.viewport_size().width < px(900.)
         };
         let native_commands = self.pi_commands_available();
-        let can_resume = !running
+        let can_resume = !self.conversation_is_read_only() && !running
             && self
                 .session
                 .as_ref()
@@ -118,7 +119,7 @@ impl HiveApp {
                                 .flex_1()
                                 .min_w_0()
                                 .max_w(px(300.))
-                                .child(self.model_picker(window, running, cx)),
+                                .child(self.model_picker(window, running || self.conversation_is_read_only(), cx)),
                         )
                         .when(native_commands && !compact, |row| {
                             row.child(self.command_button(cx))

@@ -286,7 +286,17 @@ impl HiveApp {
                     });
                 }));
             }
-            menu
+            let isolated = weak.clone();
+            let isolated_project = target.clone();
+            let pending = weak.clone();
+            let pending_project = target.clone();
+            menu.separator()
+                .item(PopupMenuItem::new(tr("新建独立工作树会话…")).on_click(move |_, window, cx| {
+                    let _ = isolated.update(cx, |this, cx| this.open_session_execution(isolated_project.clone(), false, window, cx));
+                }))
+                .item(PopupMenuItem::new(tr("查看待恢复工作树…")).on_click(move |_, window, cx| {
+                    let _ = pending.update(cx, |this, cx| this.open_session_execution(pending_project.clone(), true, window, cx));
+                }))
         })
     }
 
@@ -1030,11 +1040,7 @@ impl HiveApp {
                             .w(px(28.))
                             .rounded_md()
                             .icon(Glyph::Settings)
-                            .tooltip(if cfg!(target_os = "macos") {
-                                tr("设置 (⌘,)")
-                            } else {
-                                tr("设置 (Ctrl+,)")
-                            })
+                            .tooltip(crate::keybindings::hint(crate::keybindings::Target::Preferences, "设置", cx))
                             .accessibility_label(tr("设置"))
                             .selected(self.settings_panel || self.roles.visible)
                             .on_click(cx.listener(|this, _, window, cx| {

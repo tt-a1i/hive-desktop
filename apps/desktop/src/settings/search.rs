@@ -35,6 +35,11 @@ const ENTRIES: &[Entry] = &[
         keywords: "theme appearance light dark font size text language locale english chinese 中文 英文 语言 主题 颜色 字体 字号 大小 阅读 缩放",
     },
     Entry {
+        section: Some(SettingsSection::Keybindings), title: "快捷键",
+        description: "录制、停用与恢复全局快捷键，保存后重启应用生效",
+        keywords: "keybinding shortcut keyboard record custom disable reset restart 快捷键 键盘 自定义 录制 停用 恢复 重启",
+    },
+    Entry {
         section: Some(SettingsSection::Chat),
         title: "聊天",
         description: "发送快捷键、工具活动与思考展示",

@@ -49,6 +49,10 @@ impl HiveApp {
                         Some(SettingsSection::Chat),
                     ),
                     (
+                        "settings-keybindings-tab", tr("快捷键"), Glyph::Keyboard,
+                        Some(SettingsSection::Keybindings),
+                    ),
+                    (
                         "settings-notifications-tab",
                         tr("通知"),
                         Glyph::Bell,

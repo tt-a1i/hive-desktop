@@ -23,6 +23,8 @@ mod failures;
 mod image_input;
 mod project_files;
 mod git_workspace;
+mod history_navigation;
+mod keybindings;
 mod image_viewer;
 mod interactions;
 mod members;
@@ -36,6 +38,7 @@ mod reasoning_picker;
 mod roles;
 mod runtime_location;
 mod sessions;
+mod session_execution;
 mod settings;
 #[cfg(target_os = "macos")]
 mod shell_owner;
@@ -83,6 +86,7 @@ fn main() {
             cx.set_global(language::Language::default());
             component::set_locale("zh-CN");
             cx.set_global(composer::ComposerPreferences::default());
+            keybindings::init(cx);
             appearance::apply(None, cx);
             cx.bind_keys([
                 KeyBinding::new(

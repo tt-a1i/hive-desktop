@@ -3,8 +3,13 @@ use serde_json::Value;
 
 impl HiveApp {
     pub fn terminal_wire_event(&mut self, event: TerminalWireEvent, cx: &mut Context<Self>) {
-        let (attachment, workspace, run) = (event.attachment_id, event.workspace_id, event.run_id);
-        if !self.terminal_identity(&attachment, &workspace, &run) {
+        let (attachment, workspace, session, run) = (
+            event.attachment_id,
+            event.workspace_id,
+            event.session_id,
+            event.run_id,
+        );
+        if !self.terminal_identity(&attachment, &workspace, session.as_deref(), &run) {
             return;
         }
         match event.frame {
@@ -65,8 +70,13 @@ impl HiveApp {
             TerminalFrame::Error { message } => self.terminal_fault(message, cx),
             TerminalFrame::Closed { reason } => {
                 self.detach_terminal(cx);
-                self.terminal.status =
-                    TerminalStatus::Detached(reason);
+                if reason == "stopped" {
+                    self.terminal.runs.retain(|record| record.run_id != run);
+                    self.terminal.run_id = None;
+                    self.terminal.status = "Shell 已停止".into();
+                } else {
+                    self.terminal.status = TerminalStatus::Detached(reason);
+                }
             }
         }
         cx.notify();
@@ -83,7 +93,8 @@ impl HiveApp {
                 };
                 if !self.connected
                     || !self.terminal.visible
-                    || self.terminal.workspace != self.workspace
+                    || !self.terminal_scope_current()
+                    || self.terminal.source_unavailable.is_some()
                     || (*user_input && !self.can_type_in_terminal())
                 {
                     return;
@@ -113,6 +124,9 @@ impl HiveApp {
                 }
             }
             TerminalEvent::Title(title) => {
+                if !self.terminal_scope_current() {
+                    return;
+                }
                 self.terminal.title = title.clone();
                 cx.notify();
             }
@@ -134,11 +148,15 @@ impl HiveApp {
         ) else {
             return;
         };
+        let Some(request) = self.terminal_request_target() else {
+            return;
+        };
+        let session = request.target.session_id.clone();
         let reply = runtime.begin_request(method, params);
         cx.spawn(async move |this, cx| {
             let result = reply.await;
             let _ = this.update(cx, |this, cx| {
-                if !this.terminal_identity(&attachment, &workspace, &run) {
+                if !this.terminal_request_current(&request) || !this.terminal_identity(&attachment, &workspace, session.as_deref(), &run) {
                     return;
                 }
                 match result {

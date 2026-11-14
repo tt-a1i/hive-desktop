@@ -109,9 +109,14 @@ impl HiveApp {
             .iter()
             .find(|ws| Some(&ws.id) == self.workspace.as_ref())
             .cloned();
-        let branch = active_project
-            .as_ref()
-            .and_then(|ws| cached_git_branch(&ws.path));
+        let execution = self.session.as_ref().and_then(|session| session.execution.as_ref());
+        let execution_path = execution.map(|execution| execution.path.clone())
+            .or_else(|| self.session.as_ref().and_then(|session| session.execution_path.clone()))
+            .or_else(|| active_project.as_ref().map(|workspace| workspace.path.clone()));
+        let branch = execution.map(|execution| execution.branch.clone())
+            .or_else(|| execution_path.as_deref().and_then(cached_git_branch));
+        let execution_tooltip = execution_path.as_ref().map(|path| format!("{} · {}", tr(if execution.is_some() {"独立工作树执行目录"} else {"会话执行目录"}), path))
+            .unwrap_or_else(|| tr("查看项目 Git 状态与差异").to_owned());
         let member_badge = self
             .session
             .as_ref()
@@ -229,7 +234,7 @@ impl HiveApp {
                                         .text_color(Color::Muted.get(cx))
                                         .child(branch.unwrap_or_else(|| tr("Git 状态").to_owned())),
                                 )
-                                .tooltip(tr("查看项目 Git 状态与差异"))
+                                .tooltip(execution_tooltip)
                                 .accessibility_label(tr("查看项目 Git 状态与差异"))
                                 .disabled(!self.connected || self.closing)
                                 .on_click(cx.listener(|this, _, window, cx| {

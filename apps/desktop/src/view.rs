@@ -418,35 +418,29 @@ impl HiveApp {
         )
     }
 
-    pub(crate) fn member_session_link(
+    pub(crate) fn history_member_session_link(
         &self,
         source_id: &str,
+        dispatch_id: Option<&str>,
         worker_id: Option<&str>,
         label: &'static str,
         cx: &Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
-        let worker = worker_id?;
-        let member_chat = self
-            .sessions
-            .iter()
-            .find(|s| s.agent_id.as_deref() == Some(worker))?;
-        let id = member_chat.id.clone();
+        let target = self.history_link_target();
+        let dispatch = dispatch_id.map(str::to_owned);
+        let worker = worker_id.map(str::to_owned);
         Some(
-            Button::new(SharedString::from(format!("member-link-{source_id}")))
+            Button::new(SharedString::from(format!("historical-member-link-{source_id}")))
                 .custom(crate::palette::quiet_icon_variant(cx))
-                .compact()
-                .xsmall()
-                .h(px(22.))
-                .px_1p5()
-                .rounded_md()
+                .compact().xsmall().h(px(22.)).px_1p5().rounded_md()
                 .label(label)
-                .accessibility_label(format!(
-                    "{}: {}",
-                    tr("打开成员会话"),
-                    self.session_title(member_chat)
-                ))
+                .accessibility_label(tr("打开原成员会话"))
+                .disabled(!self.connected || self.closing)
+                .tooltip(if self.history_navigation.loading { tr("正在查询原成员会话…") } else { tr("打开原成员会话") })
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.open_member_session(id.clone(), window, cx)
+                    if target.as_ref().is_some_and(|target| target.current(this)) {
+                        this.open_historical_member_session(dispatch.clone(), worker.clone(), window, cx);
+                    }
                 })),
         )
     }
@@ -823,6 +817,13 @@ impl HiveApp {
             .max_w(px(CHAT_COLUMN_WIDTH))
             .mx_auto()
             .gap_1p5()
+            .when_some(self.current_history_access(), |surface, access| {
+                surface
+                    .when(self.conversation_is_read_only(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("此历史会话仅供阅读；草稿已保留，不能发送、继续或更改模型。"))))
+                    .when(self.conversation_is_read_only(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
+                    .when_some(access.identity_error.as_ref(), |surface, error| surface.child(div().px_1().text_xs().text_color(Color::Error.get(cx)).child(format!("{}: {}", error.code, error.message))))
+                    .when(access.history_incomplete || access.history_warning.is_some(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(access.history_warning.clone().unwrap_or_else(|| tr("此会话的历史记录不完整。").to_owned()))))
+            })
             .when(
                 !self.connected || running || pending > 0 || !self.status.is_background_connected(),
                 |v| {
@@ -897,7 +898,7 @@ impl HiveApp {
                                 } else {
                                     tr("刷新模型")
                                 })
-                                .disabled(self.refreshing_models || running)
+                                .disabled(self.conversation_is_read_only() || self.refreshing_models || running)
                                 .on_click(cx.listener(|this, _, _, cx| this.refresh_pi_models(cx))),
                         ),
                 )
@@ -983,7 +984,7 @@ impl Render for HiveApp {
             && self.model.is_none()
             && !self.loading;
         self.ensure_attachment_previews(cx);
-        let can_submit = self.attachments.ready(self.draft_target.as_ref())
+        let can_submit = !self.conversation_is_read_only() && self.attachments.ready(self.draft_target.as_ref())
             && self.conversation_ready
             && self.session.is_some()
             && !needs_pi_model
@@ -1029,7 +1030,7 @@ impl Render for HiveApp {
             .session
             .as_ref()
             .filter(|_| {
-                self.conversation_ready && self.connected && !self.loading && !self.closing
+                !self.conversation_is_read_only() && self.conversation_ready && self.connected && !self.loading && !self.closing
             })
             .map(|session| {
                 (
@@ -1391,15 +1392,7 @@ impl Render for HiveApp {
                                                                         .accessibility_label(tr(
                                                                             "查找当前会话",
                                                                         ))
-                                                                        .tooltip(
-                                                                            if cfg!(
-                                                                                target_os = "macos"
-                                                                            ) {
-                                                                                tr("查找会话内容 · ⌘F")
-                                                                            } else {
-                                                                                tr("查找会话内容 · Ctrl+F")
-                                                                            },
-                                                                        )
+                                                                        .tooltip(crate::keybindings::hint(crate::keybindings::Target::Find, "查找当前会话", cx))
                                                                         .on_click(cx.listener(
                                                                             |this, _, window, cx| {
                                                                                 this.open_conversation_find(

@@ -66,7 +66,7 @@ impl HiveApp {
         self.usage.dirty = false;
     }
     pub(crate) fn load_usage(&mut self, cx: &mut Context<Self>) {
-        if !self.usage.visible
+        if self.conversation_is_read_only() || !self.usage.visible
             || !self.conversation_ready
             || self.loading
             || !self.connected
@@ -156,7 +156,7 @@ impl HiveApp {
             .tooltip(tr("查看原生用量和上下文"))
             .accessibility_label(tr("查看原生用量和上下文"))
             .selected(self.usage.visible)
-            .disabled(!self.connected || !self.conversation_ready || self.loading);
+            .disabled(self.conversation_is_read_only() || !self.connected || !self.conversation_ready || self.loading);
         let fallback_label = self
             .session
             .as_ref()
@@ -282,7 +282,7 @@ impl HiveApp {
                                 tr("刷新")
                             })
                             .accessibility_label(tr("刷新原生用量"))
-                            .disabled(!self.connected || self.usage.loading)
+                            .disabled(self.conversation_is_read_only() || !self.connected || self.usage.loading)
                             .on_click(cx.listener(|this, _, _, cx| this.load_usage(cx))),
                     )
                     .child(

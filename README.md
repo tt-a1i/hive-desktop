@@ -4,7 +4,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
-当前 Mac 开发包为 `837abd1`：待发消息编辑/撤回、历史正文搜索与项目文件引用已纳入 current/candidate ZIP 和 DMG。真实 Codex Terra、原生操作/冷重开、实际通信入口、解包与只读镜像检查已通过，具体范围及 Windows 进展见[功能验收记录](docs/validation/2026-11-14-functional-input-search-references.md)。保留 `9f010e2` 回退，未替换用户安装实例。Git 状态/Diff 正在下一批源码与实机阶段，尚未进入该开发包；以下早先“当前”描述为当时记录。
+当前 Mac 开发包为 `837abd1`：待发消息编辑/撤回、历史正文搜索与项目文件引用已纳入 current/candidate ZIP 和 DMG。真实 Codex Terra、原生操作/冷重开、实际通信入口、解包与只读镜像检查已通过，具体范围及 Windows 进展见[功能验收记录](docs/validation/2026-11-14-functional-input-search-references.md)。保留 `9f010e2` 回退，未替换用户安装实例。后续[本地 Git 写操作、快捷键与独立工作树](docs/validation/2026-11-14-git-writes-keybindings-worktrees.md)已取得源码、限定原生流程及真实 Codex 协作证据，仍待相应入口/平台和新包验收，尚未进入该开发包。[历史归属和远端工作流程](docs/validation/2026-11-15-session-origins-git-remotes.md)另记录最新身份保护、实际推送通信、受控 PR 及验收边界；以下早先“当前”描述为当时记录。
 
 2026-11-14 最新范围：用户已批准补齐 T3 Code 源码对比中的全部功能差距，按[功能总任务 #39](https://github.com/tt-a1i/hive-desktop/issues/39)持续实施。当前优先级为待发消息编辑/撤回、历史正文搜索和结构化项目文件引用，随后推进 Git/worktree、检查点/历史分叉、跨后端接续、配置扩展与桌面更新。暂停视觉样式改造，只补充功能所需的操作入口；下列早先 UI 计划不再代表当前执行顺序。现有协作契约和账号验收限制保持。
 

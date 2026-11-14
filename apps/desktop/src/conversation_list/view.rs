@@ -90,7 +90,7 @@ impl HiveApp {
                     |links, link| links.child(link),
                 )
                 .when_some(
-                    self.member_session_link(&message.id, worker_id, tr("成员会话"), cx),
+                    self.history_member_session_link(&message.id, dispatch_id, worker_id, tr("成员会话"), cx),
                     |links, link| links.child(link),
                 )
                 .child(
@@ -390,7 +390,7 @@ impl HiveApp {
                         .artifacts
                         .iter()
                         .enumerate()
-                        .map(|(i, path)| self.artifact_link(&message.id, i, path, cx)),
+                        .map(|(i, path)| self.artifact_link(&message.id, i, path, delivery.dispatch_id.as_deref(), delivery.worker_id.as_deref(), cx)),
                 )
             })
             .when(
@@ -568,8 +568,9 @@ impl HiveApp {
                                                 |row, link| row.child(link),
                                             )
                                             .when_some(
-                                                self.member_session_link(
+                                                self.history_member_session_link(
                                                     &report.delivery_id,
+                                                    report.dispatch_id.as_deref(),
                                                     report.worker_id.as_deref(),
                                                     tr("成员会话"),
                                                     cx,
@@ -595,7 +596,7 @@ impl HiveApp {
                                     .artifacts
                                     .iter()
                                     .enumerate()
-                                    .map(|(i, path)| self.artifact_link(&report.delivery_id, i, path, cx)),
+                                    .map(|(i, path)| self.artifact_link(&report.delivery_id, i, path, report.dispatch_id.as_deref(), report.worker_id.as_deref(), cx)),
                             )
                     }),
             )

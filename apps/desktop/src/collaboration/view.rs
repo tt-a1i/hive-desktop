@@ -235,8 +235,9 @@ impl HiveApp {
                                             )),
                                     )
                                     .when_some(
-                                        self.member_session_link(
+                                        self.history_member_session_link(
                                             &item.id,
+                                            Some(&item.id),
                                             Some(&item.to_agent_id),
                                             tr("负责人的会话"),
                                             cx,
@@ -400,7 +401,7 @@ impl HiveApp {
                                     Reveal::new(
                                         format!("dispatch-{}-artifact-{i}-reveal", item.id),
                                         detail_scroll,
-                                        h_flex().child(self.artifact_link(&item.id, i, path, cx)),
+                                        h_flex().child(self.artifact_link(&item.id, i, path, Some(&item.id), Some(&item.to_agent_id), cx)),
                                     )
                                 }))
                             })
@@ -444,8 +445,9 @@ impl HiveApp {
                                                 )
                                                 .when(task.id != item.id, |row| {
                                                     row.when_some(
-                                                        self.member_session_link(
+                                                        self.history_member_session_link(
                                                             &task.id,
+                                                            Some(&task.id),
                                                             Some(&task.to_agent_id),
                                                             tr("成员会话"),
                                                             cx,

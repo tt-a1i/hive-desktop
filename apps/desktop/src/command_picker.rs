@@ -50,7 +50,7 @@ impl CatalogNotice {
 }
 impl HiveApp {
     pub(crate) fn pi_commands_available(&self) -> bool {
-        self.session
+        !self.conversation_is_read_only() && self.session
             .as_ref()
             .is_some_and(|s| matches!(s.backend, Backend::Pi | Backend::PiRpc))
     }
@@ -98,7 +98,7 @@ impl HiveApp {
             .collect()
     }
     pub(crate) fn load_commands(&mut self, cx: &mut Context<Self>) {
-        if self.command_picker.loading
+        if self.conversation_is_read_only() || self.command_picker.loading
             || !self.connected
             || !self.conversation_ready
             || !self.pi_commands_available()

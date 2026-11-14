@@ -6,7 +6,7 @@ use gpui_kit::{component::text::TextViewState, *};
 use serde_json::{Value, json};
 impl HiveApp {
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.conversation_ready || !self.workspace_writes_allowed() {
+        if self.conversation_is_read_only() || !self.conversation_ready || !self.workspace_writes_allowed() {
             return;
         }
         let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {
@@ -113,7 +113,7 @@ impl HiveApp {
         cx.notify();
     }
     pub fn resume(&mut self, cx: &mut Context<Self>) {
-        if !self.conversation_ready || !self.workspace_writes_allowed() {
+        if self.conversation_is_read_only() || !self.conversation_ready || !self.workspace_writes_allowed() {
             return;
         }
         let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {
@@ -198,7 +198,7 @@ impl HiveApp {
         }
     }
     pub fn refresh_pi_models(&mut self, cx: &mut Context<Self>) {
-        if self.refreshing_models || !self.connected {
+        if self.conversation_is_read_only() || !self.conversation_ready || self.refreshing_models || !self.connected {
             return;
         }
         let (Some(session), Some(runtime)) = (&self.session, self.runtime.clone()) else {
@@ -261,7 +261,7 @@ impl HiveApp {
         .detach();
     }
     pub fn set_model(&mut self, model: Model, cx: &mut Context<Self>) {
-        if !self.workspace_writes_allowed() {
+        if self.conversation_is_read_only() || !self.conversation_ready || !self.workspace_writes_allowed() {
             return;
         }
         if let Some(session) = &self.session {

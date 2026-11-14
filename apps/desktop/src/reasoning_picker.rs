@@ -19,7 +19,8 @@ pub struct ReasoningPicker {
 }
 impl HiveApp {
     pub(crate) fn load_reasoning(&mut self, level: Option<String>, cx: &mut Context<Self>) {
-        if self.reasoning_picker.loading
+        if self.conversation_is_read_only()
+            || self.reasoning_picker.loading
             || !self.conversation_ready
             || self.loading
             || !self.connected

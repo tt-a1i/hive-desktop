@@ -515,11 +515,9 @@ impl HiveApp {
             report_text: dispatch.report_text.clone(),
             artifacts: dispatch.artifacts.clone(),
         };
-        let session = self
-            .sessions
-            .iter()
-            .find(|session| session.agent_id.as_ref() == Some(&dispatch.to_agent_id))
-            .map(|session| session.id.clone());
+        let history_target = self.history_link_target();
+        let dispatch_id = dispatch.id.clone();
+        let source_agent_id = dispatch.to_agent_id.clone();
         let (_badge_bg, badge_fg, badge_dot) =
             crate::collaboration::dispatch_badge_colors(&dispatch.status, cx);
         let dot_color = badge_dot.unwrap_or_else(|| match dispatch.status.as_str() {
@@ -623,7 +621,7 @@ impl HiveApp {
                         dispatch.id
                     )),
                     &self.workflows.detail_scroll,
-                    self.artifact_link(&dispatch.id, index, path, cx),
+                    self.artifact_link(&dispatch.id, index, path, Some(&dispatch.id), Some(&dispatch.to_agent_id), cx),
                 )
             }))
             .child(Reveal::new(
@@ -658,9 +656,8 @@ impl HiveApp {
                             this.collaboration.workflow_origin = true;
                         })),
                     )
-                    .when_some(session, |row, session| {
-                        row.child(
-                            Button::new(SharedString::from(format!(
+                    .child({
+                        Button::new(SharedString::from(format!(
                                 "workflow-chat-{}",
                                 dispatch.id
                             )))
@@ -671,9 +668,10 @@ impl HiveApp {
                             .rounded_md()
                             .label(tr("成员会话"))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_member_session(session.clone(), window, cx)
-                            })),
-                        )
+                                if history_target.as_ref().is_some_and(|target| target.current(this)) {
+                                    this.open_historical_member_session(Some(dispatch_id.clone()), Some(source_agent_id.clone()), window, cx);
+                                }
+                            }))
                     }),
             ))
             .into_any_element()

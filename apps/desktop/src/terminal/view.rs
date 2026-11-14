@@ -23,6 +23,11 @@ struct TerminalDrawer {
     sidebar_open: bool,
     connected: bool,
     has_workspace: bool,
+    mode: TerminalMode,
+    has_session: bool,
+    target: Option<TerminalRequestTarget>,
+    scope_confirmed: bool,
+    source_unavailable: bool,
     workspace_name: Option<String>,
     workspace_path: Option<String>,
     workspace_writes_allowed: bool,
@@ -39,8 +44,10 @@ struct TerminalDrawer {
 
 impl RenderOnce for TerminalDrawer {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let disabled =
-            !self.connected || !self.has_workspace || !self.workspace_writes_allowed || self.loading;
+        let disabled = !self.connected
+            || !self.has_workspace
+            || !self.workspace_writes_allowed
+            || self.loading;
         let topbar_inset = if self.sidebar_open {
             px(16.)
         } else {
@@ -85,11 +92,16 @@ impl RenderOnce for TerminalDrawer {
             .clone()
             .unwrap_or_else(|| tr("工作区终端").to_owned());
 
+        let refresh_target = self.target.clone();
+        let start_target = self.target.clone();
+        let stop_target = self.target.clone();
+        let clear_target = self.target.clone();
         let app_nav = self.app.clone();
         let app_refresh = self.app.clone();
         let app_start = self.app.clone();
         let app_stop = self.app.clone();
         let app_hide = self.app.clone();
+        let app_clear = self.app.clone();
         let term_clear = self.terminal_view.clone();
 
         v_flex()
@@ -149,12 +161,14 @@ impl RenderOnce for TerminalDrawer {
                             .when_some(subtitle, |row, dir| {
                                 row.child(
                                     div()
+                                        .id("terminal-execution-directory")
                                         .min_w_0()
                                         .truncate()
                                         .font_family(Theme::global(cx).mono_font_family.clone())
                                         .text_size(px(11.5))
                                         .text_color(Color::Muted.get(cx))
-                                        .child(dir),
+                                        .child(dir.clone())
+                                        .tooltip(move |window, cx| Tooltip::new(dir.clone()).build(window, cx)),
                                 )
                             })
                             .child(
@@ -175,6 +189,16 @@ impl RenderOnce for TerminalDrawer {
                             .flex_shrink_0()
                             .items_center()
                             .gap_1()
+                            .children([(TerminalMode::Auto, "自动"), (TerminalMode::Workspace, "工作区终端"), (TerminalMode::Session, "当前会话终端")].into_iter().enumerate().map(|(i, (mode, label))| {
+                                let app = self.app.clone();
+                                Button::new(("terminal-scope", i))
+                                    .custom(crate::palette::sidebar_item_variant(self.mode == mode, cx))
+                                    .compact().xsmall().h(px(28.)).px_2().rounded_lg()
+                                    .label(tr(label)).selected(self.mode == mode)
+                                    .disabled(mode == TerminalMode::Session && !self.has_session)
+                                    .tooltip(tr("自动选择：工作树会话使用独立终端，其他会话使用工作区终端"))
+                                    .on_click(move |_, _, cx| { app.update(cx, |this, cx| this.select_terminal_mode(mode, cx)); })
+                            }))
                             .child(
                                 Button::new("terminal-refresh")
                                     .custom(crate::palette::quiet_icon_variant(cx))
@@ -189,7 +213,7 @@ impl RenderOnce for TerminalDrawer {
                                     .disabled(disabled)
                                     .on_click(move |_, _, cx| {
                                         app_refresh.update(cx, |this, cx| {
-                                            this.load_terminals(false, cx);
+                                            if refresh_target.as_ref().is_some_and(|target| this.terminal_request_current(target)) { this.load_terminals(false, cx); }
                                         });
                                     }),
                             )
@@ -205,7 +229,7 @@ impl RenderOnce for TerminalDrawer {
                                     .tooltip(tr("清除"))
                                     .accessibility_label(tr("清除"))
                                     .on_click(move |_, _, cx| {
-                                        term_clear.update(cx, |view, cx| view.reset(cx));
+                                        app_clear.update(cx, |this, cx| { if clear_target.as_ref().is_some_and(|target| this.terminal_request_current(target)) { term_clear.update(cx, |view, cx| view.reset(cx)); } });
                                     }),
                             )
                             .child({
@@ -218,11 +242,13 @@ impl RenderOnce for TerminalDrawer {
                                     .icon(Glyph::Play)
                                     .tooltip(tr("启动 Shell"))
                                     .accessibility_label(tr("启动 Shell"))
-                                    .disabled(disabled)
+                                    .disabled(disabled || self.source_unavailable || (self.target.as_ref().is_some_and(|target| target.target.session_id.is_some()) && !self.scope_confirmed))
                                     .on_click(move |_, window, cx| {
                                         app_start.update(cx, |this, cx| {
-                                            this.remember_terminal_focus(window, cx);
-                                            this.start_terminal(cx);
+                                            if start_target.as_ref().is_some_and(|target| this.terminal_request_current(target)) {
+                                                this.remember_terminal_focus(window, cx);
+                                                this.start_terminal(cx);
+                                            }
                                         });
                                     });
                                 if self.has_run {
@@ -242,9 +268,9 @@ impl RenderOnce for TerminalDrawer {
                                     .icon(Glyph::Square)
                                     .tooltip(tr("停止 Shell"))
                                     .accessibility_label(tr("停止 Shell"))
-                                    .disabled(disabled || !self.has_run)
+                                    .disabled(disabled || !self.scope_confirmed || !self.has_run)
                                     .on_click(move |_, _, cx| {
-                                        app_stop.update(cx, |this, cx| this.stop_terminal(cx));
+                                        app_stop.update(cx, |this, cx| { if stop_target.as_ref().is_some_and(|target| this.terminal_request_current(target)) { this.stop_terminal(cx); } });
                                     }),
                             )
                             .child(
@@ -287,6 +313,7 @@ impl RenderOnce for TerminalDrawer {
                                 .children(self.runs.into_iter().enumerate().map(|(i, run)| {
                                     let id = run.run_id;
                                     let app = self.app.clone();
+                                    let target = self.target.clone();
                                     let label = if run.current && self.ready {
                                         if english() {
                                             format!("Current {} · Connected", run.name)
@@ -296,7 +323,7 @@ impl RenderOnce for TerminalDrawer {
                                     } else {
                                         format!(
                                             "{} {} · {}",
-                                            tr("连接"),
+                                            tr(if self.source_unavailable { "选择" } else { "连接" }),
                                             run.name,
                                             match run.status.as_str() {
                                                 "running" => tr("运行中"),
@@ -321,8 +348,10 @@ impl RenderOnce for TerminalDrawer {
                                         .on_click(move |_, window, cx| {
                                             let id = id.clone();
                                             app.update(cx, |this, cx| {
-                                                this.remember_terminal_focus(window, cx);
-                                                this.attach_terminal(id, cx);
+                                                if target.as_ref().is_some_and(|target| this.terminal_request_current(target)) {
+                                                    this.remember_terminal_focus(window, cx);
+                                                    this.attach_terminal(id, cx);
+                                                }
                                             });
                                         })
                                 })),
@@ -413,8 +442,31 @@ impl HiveApp {
             .workspaces
             .iter()
             .find(|ws| Some(&ws.id) == self.workspace.as_ref());
-        let workspace_name = workspace.map(|ws| ws.name.clone());
-        let workspace_path = workspace.map(|ws| crate::palette::display_path(&ws.path));
+        let target = self.desired_terminal_target();
+        let session_scope = target
+            .as_ref()
+            .is_some_and(|target| target.session_id.is_some());
+        let workspace_name = Some(
+            tr(if session_scope {
+                "当前会话终端"
+            } else {
+                "工作区终端"
+            })
+            .to_owned(),
+        );
+        let workspace_path = if session_scope {
+            self.session
+                .as_ref()
+                .and_then(|session| {
+                    session
+                        .execution_path
+                        .as_ref()
+                        .or_else(|| session.execution.as_ref().map(|execution| &execution.path))
+                })
+                .map(|path| crate::palette::display_path(path))
+        } else {
+            workspace.map(|ws| crate::palette::display_path(&ws.path))
+        };
         let runs = self
             .terminal
             .runs
@@ -424,14 +476,23 @@ impl HiveApp {
                 name: run.name.clone(),
                 status: run.status.clone(),
                 current: self.terminal.run_id.as_ref() == Some(&run.run_id)
-                    && self.terminal.attachment.is_some(),
+                    && (self.terminal.attachment.is_some()
+                        || self.terminal.source_unavailable.is_some()),
             })
             .collect();
         TerminalDrawer {
             app: cx.entity(),
             sidebar_open: self.sidebar_open,
             connected: self.connected,
-            has_workspace: self.workspace.is_some(),
+            has_workspace: target.is_some(),
+            mode: self.terminal.mode,
+            has_session: self
+                .session
+                .as_ref()
+                .is_some_and(|session| Some(&session.workspace_id) == self.workspace.as_ref()),
+            target: self.terminal_request_target(),
+            scope_confirmed: self.terminal.scope_confirmed,
+            source_unavailable: self.terminal.source_unavailable.is_some(),
             workspace_name,
             workspace_path,
             workspace_writes_allowed: self.workspace_writes_allowed(),

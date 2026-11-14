@@ -28,7 +28,7 @@ struct Resources {
 }
 impl HiveApp {
     pub(crate) fn open_session_resources(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.connected
+        if self.conversation_is_read_only() || !self.connected
             || !self.conversation_ready
             || !self.pi_commands_available()
             || window.has_active_dialog(cx)
@@ -83,6 +83,7 @@ impl HiveApp {
 impl Resources {
     fn matches_app(&self, app: &HiveApp) -> bool {
         app.connected
+            && !app.conversation_is_read_only()
             && app.conversation_ready
             && app.connection_generation == self.connection
             && app.open_request == self.open_request

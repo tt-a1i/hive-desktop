@@ -1,3 +1,4 @@
+use crate::artifacts::{ArtifactSource, ArtifactTarget, ResolvedArtifact};
 use crate::language::tr;
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
@@ -17,19 +18,30 @@ use std::{
 };
 #[derive(Debug)]
 enum PreviewError {
-    NotFile, TooLarge, Binary, Encoding, InvalidAttachmentPath,
-    Source(String), Io(&'static str, String),
+    NotFile,
+    TooLarge,
+    Binary,
+    Encoding,
+    InvalidAttachmentPath,
+    Source(String),
+    Io(&'static str, String),
 }
 impl PreviewError {
     fn text(&self) -> String {
         match self {
             Self::NotFile => tr("只能预览普通文本文件。").to_owned(),
-            Self::TooLarge => tr("文件超过 1 MiB，暂不在窗口中预览；可在文件管理器中查看。").to_owned(),
+            Self::TooLarge => {
+                tr("文件超过 1 MiB，暂不在窗口中预览；可在文件管理器中查看。").to_owned()
+            }
             Self::Binary => tr("文件包含二进制内容，无法作为文本预览。").to_owned(),
             Self::Encoding => tr("文件不是 UTF-8 文本，暂不支持此编码的预览。").to_owned(),
             Self::InvalidAttachmentPath => tr("附件没有返回有效的本地路径。").to_owned(),
             Self::Source(error) => crate::language::localize_owned_error(error),
-            Self::Io(key,error) => format!("{}: {}",tr(key),crate::language::localize_owned_error(error)),
+            Self::Io(key, error) => format!(
+                "{}: {}",
+                tr(key),
+                crate::language::localize_owned_error(error)
+            ),
         }
     }
 }
@@ -40,16 +52,16 @@ fn read_file(root: &Path, reported: &str) -> Result<String, PreviewError> {
 }
 fn read_text(path: &Path) -> Result<String, PreviewError> {
     if !std::fs::metadata(&path)
-        .map_err(|e| PreviewError::Io("无法读取文件信息",e.to_string()))?
+        .map_err(|e| PreviewError::Io("无法读取文件信息", e.to_string()))?
         .is_file()
     {
         return Err(PreviewError::NotFile);
     }
-    let file = File::open(&path).map_err(|e| PreviewError::Io("无法读取文件",e.to_string()))?;
+    let file = File::open(&path).map_err(|e| PreviewError::Io("无法读取文件", e.to_string()))?;
     let mut bytes = Vec::new();
     file.take(LIMIT + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| PreviewError::Io("读取失败",e.to_string()))?;
+        .map_err(|e| PreviewError::Io("读取失败", e.to_string()))?;
     if bytes.len() as u64 > LIMIT {
         return Err(PreviewError::TooLarge);
     }
@@ -58,11 +70,30 @@ fn read_text(path: &Path) -> Result<String, PreviewError> {
     }
     String::from_utf8(bytes).map_err(|_| PreviewError::Encoding)
 }
+fn read_resolved_text(
+    resolved: ResolvedArtifact,
+) -> Result<(String, String, Option<String>), PreviewError> {
+    let path = if let Some(root) = resolved.root {
+        let reported = resolved
+            .path
+            .to_str()
+            .ok_or_else(|| PreviewError::Source(tr("文件路径无效").to_owned()))?;
+        crate::artifacts::artifact_path(&root, reported).map_err(PreviewError::Source)?
+    } else {
+        resolved.path
+    };
+    let text = read_text(&path)?;
+    Ok((text, path.display().to_string(), resolved.warning))
+}
 #[derive(Clone)]
 enum FileSource {
-    Workspace {
-        root: PathBuf,
-        reported: String,
+    Artifact {
+        runtime: Arc<crate::transport::Runtime>,
+        source: ArtifactSource,
+    },
+    Session {
+        runtime: Arc<crate::transport::Runtime>,
+        source: ArtifactSource,
     },
     Resource {
         root: PathBuf,
@@ -74,10 +105,22 @@ enum FileSource {
     },
 }
 impl FileSource {
-    async fn path(self) -> Result<PathBuf, PreviewError> {
+    async fn path(self) -> Result<ResolvedArtifact, PreviewError> {
         match self {
-            Self::Workspace { root, reported } | Self::Resource { root, reported } => {
-                smol::unblock(move || crate::artifacts::artifact_path(&root, &reported)).await.map_err(PreviewError::Source)
+            Self::Artifact { runtime, source } | Self::Session { runtime, source } => {
+                crate::artifacts::resolve_artifact(&runtime, &source)
+                    .await
+                    .map_err(PreviewError::Source)
+            }
+            Self::Resource { root, reported } => {
+                smol::unblock(move || crate::artifacts::artifact_path(&root, &reported))
+                    .await
+                    .map(|path| ResolvedArtifact {
+                        path,
+                        root: None,
+                        warning: None,
+                    })
+                    .map_err(PreviewError::Source)
             }
             Self::Attachment { runtime, item } => {
                 let value = runtime
@@ -85,28 +128,34 @@ impl FileSource {
                         "chat.attachments.path",
                         serde_json::json!({"workspaceId":item.workspace_id,"id":item.id}),
                     )
-                    .await.map_err(PreviewError::Source)?;
+                    .await
+                    .map_err(PreviewError::Source)?;
                 value["path"]
                     .as_str()
                     .map(PathBuf::from)
                     .filter(|path| path.is_absolute())
+                    .map(|path| ResolvedArtifact {
+                        path,
+                        root: None,
+                        warning: None,
+                    })
                     .ok_or(PreviewError::InvalidAttachmentPath)
             }
         }
     }
     fn label(&self) -> String {
         match self {
-            Self::Workspace { root, reported } | Self::Resource { root, reported } => {
-                root.join(reported).display().to_string()
-            }
+            Self::Artifact { source, .. } | Self::Session { source, .. } => source.path.clone(),
+            Self::Resource { root, reported } => root.join(reported).display().to_string(),
             Self::Attachment { item, .. } => {
-                format!("{} · {} · {}",item.name,item.size_label(),tr("上传副本"))
+                format!("{} · {} · {}", item.name, item.size_label(), tr("上传副本"))
             }
         }
     }
     fn description(&self) -> &'static str {
         match self {
-            Self::Workspace { .. } => tr("只读预览 · 当前磁盘内容，不代表工具调用时的版本"),
+            Self::Artifact { .. } => tr("报告产物 · 按原派单的执行来源读取当前磁盘内容"),
+            Self::Session { .. } => tr("工具文件 · 按原会话的执行目录读取当前磁盘内容"),
             Self::Resource { .. } => tr("原生资源 · 当前磁盘内容；会话加载的版本可能不同"),
             Self::Attachment { .. } => tr("只读预览 · Hive 保存的附件副本，独立于原始文件"),
         }
@@ -114,32 +163,64 @@ impl FileSource {
 }
 struct FileViewer {
     source: FileSource,
+    target: Option<ArtifactTarget>,
+    generation: u64,
+    reveal_generation: u64,
+    warning: Option<String>,
+    resolved_path: Option<String>,
     text: Option<String>,
     error: Option<PreviewError>,
     loading: bool,
     scroll: ScrollHandle,
 }
 impl HiveApp {
-    pub(crate) fn open_file_preview(
+    pub(crate) fn open_artifact_preview(
         &mut self,
-        reported: String,
+        source: ArtifactSource,
+        target: ArtifactTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(root) = self
-            .workspaces
-            .iter()
-            .find(|w| Some(&w.id) == self.workspace.as_ref())
-            .map(|w| PathBuf::from(&w.path))
-        else {
+        if !target.current(self) {
             return;
-        };
-        let title = Path::new(&reported)
+        }
+        let title = Path::new(&source.path)
             .file_name()
-            .and_then(|v| v.to_str())
-            .unwrap_or(&reported)
+            .and_then(|name| name.to_str())
+            .unwrap_or(&source.path)
             .to_owned();
-        open_viewer(title, FileSource::Workspace { root, reported }, window, cx);
+        let runtime = target.runtime.clone();
+        open_viewer(
+            title,
+            FileSource::Artifact { runtime, source },
+            Some(target),
+            window,
+            cx,
+        );
+    }
+    pub(crate) fn open_session_file_preview(
+        &mut self,
+        source: ArtifactSource,
+        target: ArtifactTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !target.current(self) {
+            return;
+        }
+        let title = Path::new(&source.path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&source.path)
+            .to_owned();
+        let runtime = target.runtime.clone();
+        open_viewer(
+            title,
+            FileSource::Session { runtime, source },
+            Some(target),
+            window,
+            cx,
+        );
     }
     // Native catalog paths are explicitly chosen by the user and can be outside the workspace.
     // Use the existing bounded reader; ordinary report previews retain their workspace boundary.
@@ -169,6 +250,7 @@ impl HiveApp {
                 root: parent.to_owned(),
                 reported: name.to_owned(),
             },
+            None,
             window,
             cx,
         );
@@ -188,21 +270,38 @@ impl HiveApp {
         open_viewer(
             item.name.clone(),
             FileSource::Attachment { runtime, item },
+            None,
             window,
             cx,
         );
     }
 }
-fn open_viewer(title: String, source: FileSource, window: &mut Window, cx: &mut Context<HiveApp>) {
+fn open_viewer(
+    title: String,
+    source: FileSource,
+    target: Option<ArtifactTarget>,
+    window: &mut Window,
+    cx: &mut Context<HiveApp>,
+) {
     let viewer = cx.new(|cx| {
-        let mut viewer = FileViewer {
+        let viewer = FileViewer {
             source,
+            target,
+            generation: 0,
+            reveal_generation: 0,
+            warning: None,
+            resolved_path: None,
             text: None,
             error: None,
             loading: false,
             scroll: ScrollHandle::new(),
         };
-        viewer.load(cx);
+        // HiveApp is still borrowed by the click handler. Read its target only
+        // after that update finishes, as with the other child dialogs.
+        let pending: WeakEntity<FileViewer> = cx.weak_entity();
+        cx.defer(move |cx| {
+            let _ = pending.update(cx, |viewer, cx| viewer.load(cx));
+        });
         viewer
     });
     let width = (window.viewport_size().width - px(48.)).min(px(960.));
@@ -211,24 +310,71 @@ fn open_viewer(title: String, source: FileSource, window: &mut Window, cx: &mut 
     });
 }
 impl FileViewer {
+    fn current(&self, cx: &App) -> bool {
+        self.target
+            .as_ref()
+            .is_none_or(|target| target.current_owner(cx))
+    }
+    fn stale(&mut self) {
+        self.loading = false;
+        self.text = None;
+        self.error = Some(PreviewError::Source(
+            tr("预览来源已变化，请关闭后重新打开。").to_owned(),
+        ));
+    }
     fn load(&mut self, cx: &mut Context<Self>) {
         if self.loading {
             return;
         }
+        if !self.current(cx) {
+            self.stale();
+            cx.notify();
+            return;
+        }
+        self.generation += 1;
+        let generation = self.generation;
         self.loading = true;
         self.error = None;
+        self.warning = None;
         let source = self.source.clone();
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = match source.path().await {
-                Ok(path) => smol::unblock(move || read_text(&path)).await,
+            let resolved = source.path().await;
+            let current = this
+                .update(cx, |this, cx| {
+                    if this.generation != generation {
+                        return false;
+                    }
+                    if !this.current(cx) {
+                        this.stale();
+                        cx.notify();
+                        return false;
+                    }
+                    true
+                })
+                .unwrap_or(false);
+            if !current {
+                return;
+            }
+            let result = match resolved {
+                Ok(resolved) => smol::unblock(move || read_resolved_text(resolved)).await,
                 Err(error) => Err(error),
             };
             let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                if !this.current(cx) {
+                    this.stale();
+                    cx.notify();
+                    return;
+                }
                 this.loading = false;
                 match result {
-                    Ok(text) => {
+                    Ok((text, path, warning)) => {
                         this.text = Some(text);
+                        this.resolved_path = Some(path);
+                        this.warning = warning;
                         this.scroll.set_offset(point(px(0.), px(0.)));
                     }
                     Err(error) => this.error = Some(error),
@@ -238,10 +384,48 @@ impl FileViewer {
         })
         .detach();
     }
+    fn reveal(&mut self, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            self.stale();
+            cx.notify();
+            return;
+        }
+        self.reveal_generation += 1;
+        let generation = self.reveal_generation;
+        let read_generation = self.generation;
+        let source = self.source.clone();
+        cx.spawn(async move |this, cx| {
+            let result = source.path().await;
+            let _ = this.update(cx, |this, cx| {
+                if this.reveal_generation != generation || this.generation != read_generation {
+                    return;
+                }
+                if !this.current(cx) {
+                    this.stale();
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(resolved) => {
+                        this.resolved_path = Some(resolved.path.display().to_string());
+                        this.warning = resolved.warning;
+                        cx.reveal_path(&resolved.path);
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
 }
+
 impl Render for FileViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let path_label = self.source.label();
+        let path_label = self
+            .resolved_path
+            .clone()
+            .unwrap_or_else(|| self.source.label());
         let file_name = Path::new(&path_label)
             .file_name()
             .and_then(|name| name.to_str())
@@ -345,9 +529,7 @@ impl Render for FileViewer {
                                                 tr("重新读取")
                                             })
                                             .disabled(self.loading)
-                                            .on_click(
-                                                cx.listener(|this, _, _, cx| this.load(cx)),
-                                            ),
+                                            .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                                     )
                                     .child(
                                         Button::new("copy-file-preview")
@@ -361,9 +543,9 @@ impl Render for FileViewer {
                                             .disabled(self.text.is_none())
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 if let Some(text) = &this.text {
-                                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                                        text.clone(),
-                                                    ));
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(text.clone()),
+                                                    );
                                                 }
                                             })),
                                     )
@@ -376,21 +558,9 @@ impl Render for FileViewer {
                                             .rounded_lg()
                                             .icon(Glyph::FolderOpen)
                                             .label(tr("在文件管理器中显示"))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                let source = this.source.clone();
-                                                cx.spawn(async move |this, cx| {
-                                                    let result = source.path().await;
-                                                    let _ = this.update(cx, |this, cx| match result
-                                                    {
-                                                        Ok(path) => cx.reveal_path(&path),
-                                                        Err(error) => {
-                                                            this.error = Some(error);
-                                                            cx.notify();
-                                                        }
-                                                    });
-                                                })
-                                                .detach();
-                                            })),
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| this.reveal(cx)),
+                                            ),
                                     ),
                             ),
                     )
@@ -404,6 +574,21 @@ impl Render for FileViewer {
                             .child(description),
                     ),
             )
+            .when_some(self.warning.as_ref(), |view, warning| {
+                view.child(
+                    div()
+                        .id("file-preview-source-warning")
+                        .role(Role::Label)
+                        .aria_value(warning.clone())
+                        .text_xs()
+                        .text_color(Color::Secondary.get(cx))
+                        .child(format!(
+                            "{}: {}",
+                            tr("产物来源提示"),
+                            crate::language::localize_owned_error(warning)
+                        )),
+                )
+            })
             .when_some(
                 self.error.as_ref().map(|error| error.text()),
                 |view, error| {
@@ -569,7 +754,7 @@ pub(crate) fn tool_paths(name: &str, args: &serde_json::Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LIMIT, read_file, PreviewError};
+    use super::{LIMIT, PreviewError, read_file, read_resolved_text};
     #[test]
     fn reads_exact_utf8_and_refuses_missing_binary_directories_and_large_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -595,11 +780,20 @@ mod tests {
         assert!(read_file(root, "missing.txt").is_err());
         assert!(read_file(root, ".").is_err());
         std::fs::write(root.join("binary"), [0, 1, 2]).unwrap();
-        assert!(matches!(read_file(root,"binary"),Err(PreviewError::Binary)));
+        assert!(matches!(
+            read_file(root, "binary"),
+            Err(PreviewError::Binary)
+        ));
         std::fs::write(root.join("encoding"), [255, 254, 255]).unwrap();
-        assert!(matches!(read_file(root,"encoding"),Err(PreviewError::Encoding)));
+        assert!(matches!(
+            read_file(root, "encoding"),
+            Err(PreviewError::Encoding)
+        ));
         std::fs::write(root.join("large"), vec![b'x'; LIMIT as usize + 1]).unwrap();
-        assert!(matches!(read_file(root,"large"),Err(PreviewError::TooLarge)));
+        assert!(matches!(
+            read_file(root, "large"),
+            Err(PreviewError::TooLarge)
+        ));
         std::fs::write(root.join("limit"), vec![b'x'; LIMIT as usize]).unwrap();
         assert_eq!(
             read_file(root, "limit").unwrap(),
@@ -607,5 +801,31 @@ mod tests {
         );
         std::fs::write(root.join("empty"), b"").unwrap();
         assert_eq!(read_file(root, "empty").unwrap(), "");
+    }
+    #[test]
+    fn artifact_reader_rechecks_the_resolved_root_before_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("proof.txt");
+        std::fs::write(&path, "worker proof").unwrap();
+        let source = || crate::artifacts::ResolvedArtifact {
+            path: path.clone(),
+            root: Some(dir.path().to_owned()),
+            warning: Some("source notice".into()),
+        };
+        let (text, _, warning) = read_resolved_text(source()).unwrap();
+        assert_eq!(text, "worker proof");
+        assert_eq!(warning.as_deref(), Some("source notice"));
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            let external = outside.path().join("outside.txt");
+            std::fs::write(&external, "outside bytes").unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(external, &path).unwrap();
+            assert!(matches!(
+                read_resolved_text(source()),
+                Err(PreviewError::Source(_))
+            ));
+        }
     }
 }

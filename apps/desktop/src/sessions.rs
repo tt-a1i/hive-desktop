@@ -268,6 +268,7 @@ impl HiveApp {
         self.conversation_sources.clear();
         self.session = None;
         self.conversation_ready = false;
+        self.history_navigation.invalidate();
         self.conversation_find = None;
         self.search_target = None;
         self.conversation_list.reset(None);
@@ -509,6 +510,26 @@ impl HiveApp {
         })
         .detach();
     }
+    pub(crate) fn accept_created_session(&mut self, session: Session, cx: &mut Context<Self>) -> bool {
+        if self.workspace.as_ref() != Some(&session.workspace_id) || !self.workspace_writes_allowed() {
+            return false;
+        }
+        self.sessions.retain(|existing| existing.id != session.id);
+        self.sessions.insert(0, session.clone());
+        self.close_collaboration();
+        let workspace_draft = format!("workspace:{}", session.workspace_id);
+        let transfer = self.session.is_none() && self.draft_owner.as_ref() == Some(&workspace_draft);
+        let session_key = format!("session:{}", session.id);
+        self.open_session(session.id, cx);
+        self.focus_project_input = true;
+        if transfer {
+            self.attachments.transfer(&workspace_draft, session_key.clone());
+            if let Some(text) = self.drafts.remove(&workspace_draft) {
+                self.drafts.insert(session_key, text);
+            }
+        }
+        true
+    }
     pub(crate) fn navigate_to_session(
         &mut self,
         session: Session,
@@ -602,6 +623,7 @@ impl HiveApp {
     }
 
     pub(crate) fn show_session(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(request_workspace) = self.workspace.clone() else { return; };
         self.focus_project_input = false;
         self.close_workflows();
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
@@ -615,6 +637,7 @@ impl HiveApp {
         self.member_panel = false;
         self.open_request += 1;
         self.conversation_ready = false;
+        self.history_navigation.invalidate();
         self.unread.remove(&id);
         self.choosing_model = false;
         self.reasoning_picker = Default::default();
@@ -649,7 +672,7 @@ impl HiveApp {
             json!({"sessionId":id}),
             cx,
             move |this, value, cx| {
-                if this.open_request != request || this.session.as_ref().map(|s| &s.id) != Some(&id)
+                if this.open_request != request || this.workspace.as_ref() != Some(&request_workspace) || this.session.as_ref().map(|s| &s.id) != Some(&id)
                 {
                     return;
                 }
@@ -657,7 +680,7 @@ impl HiveApp {
                 this.status = "未能打开会话".into();
                 match serde_json::from_value::<OpenSession>(value) {
                     Ok(open) => {
-                        if open.session.id != id {
+                        if !crate::history_navigation::open_session_identity_matches(&open.session, &id, &request_workspace) {
                             this.search_target = None;
                             this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("打开响应中的会话身份不匹配".into())));
                             return;
@@ -667,6 +690,7 @@ impl HiveApp {
                             this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("会话快照中的消息身份数量不匹配".into())));
                             return;
                         }
+                        this.history_navigation.access = crate::history_navigation::HistoryAccess::snapshot(&open);
                         this.conversation_ready = true;
                         this.status = "后台已连接".into();
                         if open.busy {

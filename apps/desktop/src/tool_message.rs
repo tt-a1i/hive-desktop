@@ -374,7 +374,9 @@ impl HiveApp {
                                                     .gap_1()
                                                     .children(paths.into_iter().enumerate().map(
                                                         |(i, path)| {
-                                                            let file = path.clone();
+                                                            let source = self.session.as_ref().map(|session| crate::artifacts::ArtifactSource::session(&session.workspace_id, &session.id, &path));
+                                                            let target = source.as_ref().and_then(|source| self.artifact_target(&source.workspace_id, cx));
+                                                            let unavailable = target.is_none();
                                                             Button::new(SharedString::from(
                                                                 format!("tool-file-{id}-{i}"),
                                                             ))
@@ -427,13 +429,12 @@ impl HiveApp {
                                                                 "{}: {path}",
                                                                 tr("预览当前磁盘内容")
                                                             ))
+                                                            .disabled(unavailable)
                                                             .on_click(cx.listener(
                                                                 move |this, _, window, cx| {
-                                                                    this.open_file_preview(
-                                                                        file.clone(),
-                                                                        window,
-                                                                        cx,
-                                                                    )
+                                                                    if let (Some(source), Some(target)) = (source.clone(), target.clone()) {
+                                                                        this.open_session_file_preview(source, target, window, cx);
+                                                                    }
                                                                 },
                                                             ))
                                                         },

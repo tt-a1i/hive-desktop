@@ -48,6 +48,17 @@ pub struct Session {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub backend: Backend,
+    #[serde(default)]
+    pub execution: Option<SessionExecution>,
+    #[serde(default)]
+    pub execution_path: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionExecution {
+    pub kind: String,
+    pub path: String,
+    pub branch: String,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,6 +168,12 @@ pub struct PendingUserInput {
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
     #[serde(default)]
+    pub read_only: bool,
+    pub identity_error: Option<SnapshotIdentityError>,
+    #[serde(default)]
+    pub history_incomplete: bool,
+    pub history_warning: Option<String>,
+    #[serde(default)]
     pub interactions: Vec<AgentInteraction>,
     pub history_message_ids: Vec<String>,
     pub active_message: Option<ActiveMessage>,
@@ -180,6 +197,11 @@ pub struct OpenSession {
     pub models: Vec<Model>,
     pub model: Option<ModelIdentity>,
     pub unavailable_model: Option<ModelIdentity>,
+}
+#[derive(Clone, Deserialize)]
+pub struct SnapshotIdentityError {
+    pub code: String,
+    pub message: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -356,6 +378,8 @@ impl PiEvent {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalRun {
     pub run_id: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub name: String,
     pub status: String,
 }
@@ -364,6 +388,8 @@ pub struct TerminalRun {
 pub struct TerminalWireEvent {
     pub attachment_id: String,
     pub workspace_id: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub run_id: String,
     #[serde(flatten)]
     pub frame: TerminalFrame,
