@@ -602,7 +602,7 @@ index 389129f122892581215028f0cc8bfabd21a8ad3b..433439b07a6d293cb99fdc78c030597b
          openByWorker.set(dispatch.toAgentId, list);
      }
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
-index 531749345d132f9a9f93f4f5ad10c8f48e368acd..5c46fa89dc8c96ac258fdf44b36d92b2b22f6b77 100644
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a8c050b14fc2d5f57b2575ee3b16e7ee91eb8f59 100644
 --- a/dist/src/server/runtime-store-contract.d.ts
 +++ b/dist/src/server/runtime-store-contract.d.ts
 @@ -55,6 +55,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
@@ -613,7 +613,15 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..5c46fa89dc8c96ac258fdf44b36d92b2
      listDispatches: (workspaceId: string, options?: ListDispatchesOptions) => DispatchRecord[];
      listOpenDispatches: (workspaceId: string) => DispatchRecord[];
      listRecentDispatches: (workspaceId: string, limit?: number) => DispatchRecord[];
-@@ -91,6 +92,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -73,6 +74,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+     getPtyOutputBus: () => PtyOutputBus;
+     listTerminalRuns: (workspaceId: string) => TerminalRunSummary[];
+     closeWorkspaceShell: (workspaceId: string, runId: string) => boolean;
++    startSessionShell: (workspaceId: string, context: {sessionId: string; cwd: string}) => Promise<LiveAgentRun>;
+     startWorkspaceShell: (workspaceId: string) => Promise<LiveAgentRun>;
+     configureAgentLaunch: (workspaceId: string, agentId: string, input: AgentLaunchConfigInput) => void;
+     peekAgentLaunchConfig: (workspaceId: string, agentId: string) => AgentLaunchConfigInput | undefined;
+@@ -91,6 +93,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      getActiveRunByAgentId: (workspaceId: string, agentId: string) => LiveAgentRun | undefined;
      registerTasksListener: (listener: (workspaceId: string, content: string) => void) => () => void;
      listAgentRuns: (agentId: string) => PersistedAgentRun[];
@@ -622,7 +630,7 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..5c46fa89dc8c96ac258fdf44b36d92b2
      listMessagesForRecovery: (workspaceId: string, sinceMs: number) => RecoveryMessage[];
      recallMessages: (workspaceId: string, query: string, options?: RecallOptions) => RecallResult[];
      addMemoryEntry: (input: AddMemoryEntryInput) => MemoryEntryWithSources;
-@@ -138,6 +141,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -138,6 +142,8 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      setRemoteEnabled: (enabled: boolean) => void;
      revokeRemoteDevice: (deviceId: string) => boolean;
      getWorkflowDispatchAwaiter: () => WorkflowDispatchAwaiter;
@@ -631,7 +639,7 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..5c46fa89dc8c96ac258fdf44b36d92b2
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflowInline: (input: RunInlineWorkflowInput) => Promise<WorkflowRunRecord>;
-@@ -152,6 +157,10 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -152,6 +158,10 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
      }>;
      saveWorkspaceUpload: (input: SaveWorkspaceUploadInput) => Promise<WorkspaceUploadRecord>;
      listWorkspaceUploads: (workspaceId: string, limit?: number) => WorkspaceUploadRecord[];
@@ -642,8 +650,29 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..5c46fa89dc8c96ac258fdf44b36d92b2
      readWorkspaceUpload: (workspaceId: string, uploadId: string) => Promise<{
          data: Buffer;
          record: WorkspaceUploadRecord;
+diff --git a/dist/src/server/runtime-store-helpers.d.ts b/dist/src/server/runtime-store-helpers.d.ts
+index b2d3be4da9ad56700ffec0ddb3031fc81fb64e20..cf03985fb16ce2c884bd310c19ec27d3feb4248a 100644
+--- a/dist/src/server/runtime-store-helpers.d.ts
++++ b/dist/src/server/runtime-store-helpers.d.ts
+@@ -100,6 +100,8 @@ export declare const createRuntimeStoreLifecycle: ({ agentManager, services, }:
+     waitForRunExit: (runId: string, timeoutMs: number) => Promise<boolean>;
+     getPtyOutputBus: () => PtyOutputBus;
+     listTerminalRuns: (workspaceId: string) => ({
++        sessionId?: string;
++        cwd: string;
+         agent_id: string;
+         agent_name: string;
+         run_id: string;
+@@ -117,6 +119,7 @@ export declare const createRuntimeStoreLifecycle: ({ agentManager, services, }:
+     startAgent: (workspaceId: string, agentId: string, input: {
+         hivePort: string;
+     }) => Promise<LiveAgentRun>;
++    startSessionShell: (workspaceId: string, context: {sessionId: string; cwd: string}) => Promise<LiveAgentRun>;
+     startWorkspaceShell: (workspaceId: string) => Promise<LiveAgentRun>;
+     autostartConfiguredAgents: (input: {
+         hivePort: string;
 diff --git a/dist/src/server/runtime-store-helpers.js b/dist/src/server/runtime-store-helpers.js
-index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959ccac1d890 100644
+index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..653761f5c3caeb0b709aed6f53e761063eaca50b 100644
 --- a/dist/src/server/runtime-store-helpers.js
 +++ b/dist/src/server/runtime-store-helpers.js
 @@ -170,7 +170,7 @@ export const createRuntimeStoreServices = (options = {}) => {
@@ -676,6 +705,14 @@ index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..318f310bb149815a226a196cb901959c
      const dispatchMessageOps = createDispatchMessageOperations({
          db,
          ledger: dispatchLedgerStore,
+@@ -520,6 +532,7 @@ export const createRuntimeStoreLifecycle = ({ agentManager, services, }) => {
+             ...services.shellRuntime.listTerminalRuns(workspaceId),
+         ],
+         startAgent,
++        startSessionShell: (workspaceId, context) => services.shellRuntime.start(services.workspaceStore.getWorkspaceSnapshot(workspaceId).summary, context),
+         startWorkspaceShell: (workspaceId) => services.shellRuntime.start(services.workspaceStore.getWorkspaceSnapshot(workspaceId).summary),
+         autostartConfiguredAgents,
+         registerTasksListener: (listener) => {
 diff --git a/dist/src/server/runtime-store-remote.js b/dist/src/server/runtime-store-remote.js
 index c4bdd2dfcaace3dae5dbce091695f94785d036c5..d4c3fcd350d90850ca4f416da5c2fa2234ec5730 100644
 --- a/dist/src/server/runtime-store-remote.js
@@ -836,7 +873,7 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..9daaccb7b5e9d576b013ca5eb73c68b8
                  return `\nResult (workflow return value):\n${escapeHiveEnvelopeText(truncated)}`;
              })();
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..c4012b6d07ddb9348ecb7f090432aa67a8f52935 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..e44109c4b426648e0a621229258a58ed32747f1c 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
 @@ -37,6 +37,7 @@ export const createRuntimeStore = (options = {}) => {
@@ -855,7 +892,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..c4012b6d07ddb9348ecb7f090432aa67
          listDispatches: services.dispatchLedgerStore.listWorkspaceDispatches,
          listOpenDispatches: services.dispatchLedgerStore.listOpenWorkspaceDispatches,
          listRecentDispatches: services.dispatchLedgerStore.listRecentWorkspaceDispatches,
-@@ -112,6 +114,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -112,10 +114,12 @@ export const createRuntimeStore = (options = {}) => {
          closeWorkspaceShell: lifecycle.closeWorkspaceShell,
          configureAgentLaunch: lifecycle.configureAgentLaunch,
          peekAgentLaunchConfig: lifecycle.peekAgentLaunchConfig,
@@ -863,7 +900,12 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..c4012b6d07ddb9348ecb7f090432aa67
          startAgent: lifecycle.startAgent,
          autostartConfiguredAgents: lifecycle.autostartConfiguredAgents,
          startWorkspaceWatch: lifecycle.startWorkspaceWatch,
-@@ -123,6 +126,19 @@ export const createRuntimeStore = (options = {}) => {
+         startWorkspaceShell: lifecycle.startWorkspaceShell,
++        startSessionShell: lifecycle.startSessionShell,
+         findLiveRun: lifecycle.findLiveRun,
+         getLiveRun: lifecycle.getLiveRun,
+         waitForRunExit: lifecycle.waitForRunExit,
+@@ -123,6 +127,19 @@ export const createRuntimeStore = (options = {}) => {
          registerTasksListener: lifecycle.registerTasksListener,
          listAgentRuns: (agentId) => services.agentRuntime.listAgentRuns(agentId),
          listMessagesForRecovery: (workspaceId, sinceMs) => services.messageLogStore.listMessagesForRecovery(workspaceId, sinceMs),
@@ -883,7 +925,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..c4012b6d07ddb9348ecb7f090432aa67
          recallMessages: (workspaceId, query, options) => services.teamRecallStore.recallMessages(workspaceId, query, options),
          ...createRuntimeStoreMemoryMethods(services),
          ...createRuntimeStoreDreamMethods(services),
-@@ -141,6 +157,8 @@ export const createRuntimeStore = (options = {}) => {
+@@ -141,6 +158,8 @@ export const createRuntimeStore = (options = {}) => {
          getRetentionSignals: () => services.protocolEventStats.getRetentionSignals(),
          ...createRuntimeStoreRemoteMethods(services),
          getWorkflowDispatchAwaiter: () => services.workflowDispatchAwaiter,
@@ -892,7 +934,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..c4012b6d07ddb9348ecb7f090432aa67
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
-@@ -155,6 +173,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -155,6 +174,7 @@ export const createRuntimeStore = (options = {}) => {
          })),
          saveWorkspaceUpload: (input) => services.workspaceUploadStore.saveUpload(input),
          listWorkspaceUploads: (workspaceId, limit) => services.workspaceUploadStore.listUploads(workspaceId, limit),
@@ -992,6 +1034,19 @@ index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..c0d9df9abc48e52fd5d02dc78e78c58f
                      requireActiveRun: true,
                  });
              }
+diff --git a/dist/src/server/terminal-input-profile.d.ts b/dist/src/server/terminal-input-profile.d.ts
+index 8664b7cbdd8ba543ce6c81a0c4533360cd153cc7..b75ab921de88c534659bda5e73ae33f3cc552150 100644
+--- a/dist/src/server/terminal-input-profile.d.ts
++++ b/dist/src/server/terminal-input-profile.d.ts
+@@ -1,6 +1,8 @@
+ import type { AgentLaunchConfigInput } from './agent-run-store.js';
+ export type TerminalInputProfile = 'codex' | 'default' | 'grok' | 'opencode';
+ export interface TerminalRunSummary {
++    sessionId?: string;
++    cwd?: string;
+     agent_id: string;
+     agent_name: string;
+     has_user_input_since_start?: boolean | null;
 diff --git a/dist/src/server/terminal-state-mirror.js b/dist/src/server/terminal-state-mirror.js
 index 8bcdd5e1b51f9fbca0cde5022dbd39c134494bef..1917a7e2d80add22796c599969059011c2d967b8 100644
 --- a/dist/src/server/terminal-state-mirror.js
@@ -1452,6 +1507,81 @@ index 1c4e590c4b5bb16d583b08f7057ecdf9ccd5c31c..cc483ccd697c5dc9ad9894d8521f61da
 +        releaseOwnership();
      });
  });
+diff --git a/dist/src/server/workspace-shell-runtime.d.ts b/dist/src/server/workspace-shell-runtime.d.ts
+index a04c9f6e669d8fdb61d711ce0000d35d983824d7..208fcf66d4f2d0de9b14c7d18b3830c0dda9e3da 100644
+--- a/dist/src/server/workspace-shell-runtime.d.ts
++++ b/dist/src/server/workspace-shell-runtime.d.ts
+@@ -19,6 +19,8 @@ export declare const createWorkspaceShellRuntime: (agentManager: AgentManager |
+     getLiveRun(runId: string): LiveAgentRun | undefined;
+     hasRun: (runId: string) => boolean;
+     listTerminalRuns(workspaceId: string): {
++        sessionId?: string;
++        cwd: string;
+         agent_id: string;
+         agent_name: string;
+         run_id: string;
+@@ -28,7 +30,7 @@ export declare const createWorkspaceShellRuntime: (agentManager: AgentManager |
+     pauseRun(runId: string): void;
+     resizeRun(runId: string, cols: number, rows: number): void;
+     resumeRun(runId: string): void;
+-    start(workspace: WorkspaceSummary): Promise<LiveAgentRun>;
++    start(workspace: WorkspaceSummary, context?: { sessionId?: string; cwd?: string }): Promise<LiveAgentRun>;
+     stopRun(runId: string): void;
+     writeInput(runId: string, input: Buffer | string): void;
+ };
+diff --git a/dist/src/server/workspace-shell-runtime.js b/dist/src/server/workspace-shell-runtime.js
+index d72f79531d2f6db3d28f878e69660965d3ba03f9..e5b5e5e8b9611c7608149c0d41dd740e629c0c65 100644
+--- a/dist/src/server/workspace-shell-runtime.js
++++ b/dist/src/server/workspace-shell-runtime.js
+@@ -45,6 +45,7 @@ export const resolveWorkspaceShellStart = (workspacePath, env = process.env, pla
+ export const createWorkspaceShellRuntime = (agentManager) => {
+     const labelsByRunId = new Map();
+     const workspaceIdsByRunId = new Map();
++    const contextsByRunId = new Map();
+     const runIdsByWorkspaceId = new Map();
+     const startedAtByRunId = new Map();
+     const exitCleanupTimersByRunId = new Map();
+@@ -79,6 +80,7 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+             else
+                 runIdsByWorkspaceId.delete(workspaceId);
+         }
++        contextsByRunId.delete(runId);
+         labelsByRunId.delete(runId);
+         workspaceIdsByRunId.delete(runId);
+         startedAtByRunId.delete(runId);
+@@ -171,7 +173,8 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+                         return [];
+                     return [
+                         {
+-                            agent_id: getWorkspaceShellAgentId(workspaceId),
++                            agent_id: contextsByRunId.get(runId)?.sessionId ? `${workspaceId}:session:${contextsByRunId.get(runId).sessionId}:shell` : getWorkspaceShellAgentId(workspaceId),
++                            ...(contextsByRunId.get(runId) ?? {}),
+                             agent_name: labelsByRunId.get(runId) ?? 'Shell',
+                             run_id: run.runId,
+                             status: run.status,
+@@ -196,11 +199,11 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+             if (hasRun(runId))
+                 requireManager().resumeRun(runId);
+         },
+-        async start(workspace) {
++        async start(workspace, context = {}) {
+             const startedAt = Date.now();
+-            const launch = resolveWorkspaceShellStart(workspace.path);
++            const launch = resolveWorkspaceShellStart(context.cwd ?? workspace.path);
+             const run = await requireManager().startAgent({
+-                agentId: getWorkspaceShellAgentId(workspace.id),
++                agentId: context.sessionId ? `${workspace.id}:session:${context.sessionId}:shell` : getWorkspaceShellAgentId(workspace.id),
+                 args: launch.args,
+                 command: launch.command,
+                 cwd: launch.cwd,
+@@ -214,6 +217,7 @@ export const createWorkspaceShellRuntime = (agentManager) => {
+                 onExit: ({ runId }) => handleShellExit(runId),
+             });
+             attachRun(workspace.id, run.runId, WORKSPACE_SHELL_LABEL, startedAt);
++            contextsByRunId.set(run.runId, { ...(context.sessionId ? { sessionId: context.sessionId } : {}), cwd: context.cwd ?? workspace.path });
+             return { ...run, startedAt };
+         },
+         stopRun(runId) {
 diff --git a/dist/src/server/workspace-upload-store.d.ts b/dist/src/server/workspace-upload-store.d.ts
 index f1bbab564e2124953bd376ccf33ff56ccf251337..d523ac7ad73fe8c3dc224253c39bdb6261695ee1 100644
 --- a/dist/src/server/workspace-upload-store.d.ts

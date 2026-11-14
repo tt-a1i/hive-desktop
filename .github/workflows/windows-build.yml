@@ -89,6 +89,22 @@ jobs:
       - name: Check project file references and snapshots
         timeout-minutes: 5
         run: pnpm --filter @hive-desktop/runtime check:project-files
+      - name: Check Git index writes and worktree scope through desktop JSONL
+        timeout-minutes: 5
+        run: pnpm --filter @hive-desktop/runtime exec tsx checks/git-index-wire.ts
+      - name: Check immutable historical session identity
+        timeout-minutes: 5
+        run: pnpm --filter @hive-desktop/runtime check:session-identity
+      - name: Check session terminals with native Windows PTYs
+        timeout-minutes: 5
+        run: pnpm --filter @hive-desktop/runtime exec tsx checks/session-terminals-windows.ts --receipt target/session-terminals-windows.json
+      - name: Upload session terminal receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-session-terminals-receipt
+          path: packages/runtime/target/session-terminals-windows.json
+          if-no-files-found: warn
       - name: Build desktop executable
         run: cargo build --locked --release --manifest-path apps/desktop/Cargo.toml --bin hive-desktop
       - name: Compile runtime location tests

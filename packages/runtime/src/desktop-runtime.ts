@@ -30,7 +30,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     if (!agents) throw new Error('Hive runtime factory was not installed');
     chats = new Chats(hive, dataDir, emit, agents, settings, agentModels);
   } catch (error) { await hive.close(); throw error; }
-  const terminal = new Terminals(hive, workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onTerminalEvent ?? (() => {}));
+  const terminal = new Terminals(hive, workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onTerminalEvent ?? (() => {}), (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId));
   let closing: Promise<void> | undefined;
   return { hive, chats, agents, settings, agentModels, terminal, piAuth, piModels,
     createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; description?: unknown }) => {

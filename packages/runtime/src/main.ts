@@ -95,15 +95,15 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'desktop.settings.probe': return settings.probe(params.backend, params.command);
     case 'desktop.settings.get': return settings.get();
     case 'desktop.settings.update': return settings.update(params);
-    case 'terminal.list': return terminal.list(text(params, 'workspaceId'));
-    case 'terminal.start': return terminal.start(text(params, 'workspaceId'));
-    case 'terminal.attach': return terminal.attach({ attachmentId: text(params, 'attachmentId'), workspaceId: text(params, 'workspaceId'), runId: text(params, 'runId'), cols: params.cols as number, rows: params.rows as number });
+    case 'terminal.list': return terminal.list(text(params, 'workspaceId'), params.sessionId === undefined ? undefined : text(params, 'sessionId'));
+    case 'terminal.start': return terminal.start(text(params, 'workspaceId'), params.sessionId === undefined ? undefined : text(params, 'sessionId'));
+    case 'terminal.attach': return terminal.attach({ ...(params.sessionId === undefined ? {} : {sessionId: text(params, 'sessionId')}), attachmentId: text(params, 'attachmentId'), workspaceId: text(params, 'workspaceId'), runId: text(params, 'runId'), cols: params.cols as number, rows: params.rows as number });
     case 'terminal.restoreComplete': return terminal.restoreComplete({ attachmentId: text(params, 'attachmentId'), sequence: params.sequence as number });
     case 'terminal.ack': return terminal.ack({ attachmentId: text(params, 'attachmentId'), sequence: params.sequence as number, bytes: params.bytes as number });
     case 'terminal.input': return terminal.input({ attachmentId: text(params, 'attachmentId'), bytes: params.bytes, ...(params.userInput !== undefined && { userInput: params.userInput as boolean }) });
     case 'terminal.resize': return terminal.resize({ attachmentId: text(params, 'attachmentId'), cols: params.cols as number, rows: params.rows as number });
     case 'terminal.detach': return terminal.detach({ attachmentId: text(params, 'attachmentId') });
-    case 'terminal.stop': return terminal.stop({ workspaceId: text(params, 'workspaceId'), runId: text(params, 'runId') });
+    case 'terminal.stop': return terminal.stop({ ...(params.sessionId === undefined ? {} : {sessionId: text(params, 'sessionId')}), workspaceId: text(params, 'workspaceId'), runId: text(params, 'runId') });
     case 'workspace.saveTasks': {
       const workspace = text(params, 'workspaceId');
       if (typeof params.base !== 'string' || typeof params.content !== 'string') throw new Error('Expected task document text');
@@ -143,6 +143,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       const {workspaceId: _workspaceId, ...source} = params;
       return chats.resolveArtifact(text(params, 'workspaceId'), source);
     }
+    case 'dispatch.session': return chats.dispatchSession(text(params, 'workspaceId'), params.dispatchId, params.sourceAgentId);
     case 'chat.attachments.clipboard': {
       const workspace = text(params, 'workspaceId');
       chats.assertWorkspaceAvailable(workspace);
@@ -154,6 +155,12 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'git.index.apply': return chats.gitIndexApply(text(params, 'workspaceId'), params.operation, params.paths, params.expectedVersion, params.sessionId);
     case 'git.commit.preview': return chats.gitCommitPreview(text(params, 'workspaceId'), params.sessionId);
     case 'git.commit.apply': return chats.gitCommitApply(text(params, 'workspaceId'), params.expectedVersion, params.message, params.includeOutsideProject, params.sessionId);
+    case 'git.remotes': return chats.gitRemotes(text(params, 'workspaceId'), params.sessionId);
+    case 'git.push.preview': return chats.gitPushPreview(text(params, 'workspaceId'), params.remote, params.branch, params.sessionId);
+    case 'git.push.apply': return chats.gitPushApply(text(params, 'workspaceId'), params.remote, params.branch, params.expectedVersion, params.sessionId);
+    case 'git.pr.preview': return chats.gitPrPreview(text(params, 'workspaceId'), params);
+    case 'git.pr.create': return chats.gitPrApply(text(params, 'workspaceId'), 'create', params);
+    case 'git.pr.update': return chats.gitPrApply(text(params, 'workspaceId'), 'update', params);
     case 'project.files.search': return chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));

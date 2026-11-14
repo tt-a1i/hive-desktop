@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants, closeSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readSync, rmSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Source identity only. Hive remains the dispatch/task authority. */
@@ -31,7 +31,28 @@ export class DispatchExecutionOrigins {
     return join(this.directory, `${createHash('sha256').update(JSON.stringify([workspaceId, dispatchId])).digest('hex')}.json`);
   }
   get(workspaceId: string, dispatchId: string): DispatchExecutionOrigin | undefined {
-    const path = this.path(workspaceId, dispatchId);
+    const value = this.read(this.path(workspaceId, dispatchId));
+    if (value && (value.workspaceId !== workspaceId || value.dispatchId !== dispatchId))
+      throw new DispatchOriginError('DISPATCH_ORIGIN_UNREADABLE', 'Saved dispatch source identity does not match its key');
+    return value;
+  }
+  /** Exact reverse provenance only; no current worker binding or timestamp inference. */
+  sourceAgentForSession(workspaceId: string, sessionId: string): string | undefined {
+    let files: string[];
+    try { files = readdirSync(this.directory); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw new DispatchOriginError('DISPATCH_ORIGIN_UNREADABLE', 'Dispatch source records cannot be read', {cause: error}); }
+    const agents = new Set<string>();
+    for (const file of files) {
+      if (!/^[a-f0-9]{64}\.json$/.test(file)) continue;
+      const value = this.read(join(this.directory, file));
+      if (!value) throw new DispatchOriginError('DISPATCH_ORIGIN_UNREADABLE', 'Dispatch source record disappeared while reading');
+      if (this.path(value.workspaceId, value.dispatchId) !== join(this.directory, file)) throw new DispatchOriginError('DISPATCH_ORIGIN_UNREADABLE', 'Dispatch source record has an invalid key');
+      if (value.workspaceId === workspaceId && value.sourceSessionId === sessionId) agents.add(value.sourceAgentId);
+    }
+    if (agents.size > 1) throw new DispatchOriginError('DISPATCH_ORIGIN_CONFLICT', 'Saved dispatch sources disagree about the original agent for this conversation');
+    return agents.values().next().value;
+  }
+  private read(path: string): DispatchExecutionOrigin | undefined {
     let fd: number;
     try {
       const directory = lstatSync(this.directory);
@@ -49,8 +70,7 @@ export class DispatchExecutionOrigins {
       while (length < bytes.length) { const count = readSync(fd, bytes, length, bytes.length - length, null); if (!count) break; length += count; }
       if (length > 32768 || length !== info.size) throw new Error('Source file changed');
       const value: unknown = JSON.parse(bytes.subarray(0, length).toString('utf8'));
-      if (!value || typeof value !== 'object' || !('version' in value) || value.version !== 1 || !('origin' in value) || !origin(value.origin)
-        || value.origin.workspaceId !== workspaceId || value.origin.dispatchId !== dispatchId) throw new Error('Invalid source record');
+      if (!value || typeof value !== 'object' || !('version' in value) || value.version !== 1 || !('origin' in value) || !origin(value.origin)) throw new Error('Invalid source record');
       const {workspaceId: storedWorkspaceId, dispatchId: storedDispatchId, sourceSessionId, sourceAgentId} = value.origin;
       return {workspaceId: storedWorkspaceId, dispatchId: storedDispatchId, sourceSessionId, sourceAgentId};
     } catch (error) {

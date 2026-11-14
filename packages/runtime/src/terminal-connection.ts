@@ -7,8 +7,8 @@ type TerminalPayload =
   | { type: 'exit'; code: number | null }
   | { type: 'error'; message: string }
   | { type: 'closed'; reason: string };
-export type TerminalEvent = { attachmentId: string; workspaceId: string; runId: string } & TerminalPayload;
-export interface TerminalAttachment { attachmentId: string; workspaceId: string; runId: string; cols: number; rows: number }
+export type TerminalEvent = { attachmentId: string; workspaceId: string; sessionId?: string; runId: string } & TerminalPayload;
+export interface TerminalAttachment { attachmentId: string; workspaceId: string; sessionId?: string; runId: string; cols: number; rows: number }
 const MAX_PENDING_BYTES = 1024 * 1024;
 const MAX_SYSTEM_INPUT = 4096;
 const buffer = (data: RawData): Buffer => Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data);
@@ -35,7 +35,7 @@ export class TerminalConnection {
   constructor(readonly attachment: TerminalAttachment, private readonly hive: HiveHost,
     private readonly emit: (event: TerminalEvent) => void, private readonly onClosed: () => void) {}
   private event(event: TerminalPayload): void {
-    this.emit({ attachmentId: this.attachment.attachmentId, workspaceId: this.attachment.workspaceId, runId: this.attachment.runId, ...event } as TerminalEvent);
+    this.emit({ attachmentId: this.attachment.attachmentId, workspaceId: this.attachment.workspaceId, ...(this.attachment.sessionId !== undefined && {sessionId: this.attachment.sessionId}), runId: this.attachment.runId, ...event } as TerminalEvent);
   }
   async connect(): Promise<void> {
     // IO captures the opt-in native snapshot boundary before any live chunk; control consumes that same generation's snapshot.

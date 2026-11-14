@@ -8,17 +8,28 @@ import { restoreHistoricalReport } from './delivery-presentation.js';
 import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createClaudeSession, type ClaudeSessionHandle } from './agents/claude.js';
 import { createCodexSession, type CodexSessionHandle } from './agents/codex.js';
 import { createExternalPiSession, type ExternalPiSessionHandle } from './agents/external-pi.js';
 import { createPiSession } from './agents/pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
-import { ChatIndex, type ChatRecord, type ChatBackend } from './chat-index.js';
+import { ChatIndex, SessionIdentityError, type ChatRecord, type ChatBackend } from './chat-index.js';
+import type { SessionEntry } from '@earendil-works/pi-coding-agent';
+import { externalPiBranch, externalPiMessage } from './agents/external-pi-history.js';
+import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
+import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
+import { ClaudeProjection } from './agents/claude-projection.js';
+import { readClaudeMetadata } from './agents/claude-metadata.js';
+import { CodexProjection } from './agents/codex-projection.js';
+import { codexMetadataFile, readCodexMetadata } from './agents/codex-metadata.js';
+import { normalizeCodexItem } from './agents/codex-history.js';
 import { searchConversation, type ConversationSearchMatch } from './conversation-search.js';
 import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
+import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
+import { previewGithubPr, createGithubPr, updateGithubPr, type GithubPrTarget, type GithubPrWriteRequest } from './github-prs.js';
 import { createManagedWorktree, readWorktreeIntent, recoverManagedWorktree, validateManagedWorktree, type ManagedWorktree } from './git-worktrees.js';
 import { readdir, realpath } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
@@ -40,6 +51,15 @@ type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived
 export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & { sequence: number };
 const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
 
+function gitText(value: unknown, field: string, allowEmpty = false): string {
+  if (typeof value !== 'string' || !allowEmpty && !value.trim()) throw new GitWorkspaceError('INVALID_ARGUMENT', `${field} must be ${allowEmpty ? 'text' : 'nonempty text'}`);
+  return value;
+}
+function githubTarget(params: Record<string, unknown>): GithubPrTarget {
+  return {remote: gitText(params.remote, 'remote'), base: gitText(params.base, 'base'),
+    ...(params.headBranch !== undefined && {headBranch: gitText(params.headBranch, 'headBranch')})};
+}
+
 export class Chats implements StructuredSessionPort {
   private readonly index: ChatIndex;
   private readonly live = new Map<string, LiveChat>();
@@ -56,7 +76,7 @@ export class Chats implements StructuredSessionPort {
   private closing = false;
   private readonly mutatingQueues = new Set<string>();
   private readonly removing = new Set<string>();
-  private readonly gitWrites = new Set<Promise<unknown>>();
+  private readonly gitOperations = new Set<Promise<unknown>>();
 
   constructor(private readonly hive: HiveHost, private readonly dataDir: string, private readonly emit: (event: ChatEvent) => void,
     private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels) {
@@ -72,12 +92,58 @@ export class Chats implements StructuredSessionPort {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
   list(workspaceId: string) { return this.index.list(workspaceId); }
-  private async withGitWrite<T>(operation: () => Promise<T>): Promise<T> {
+  private originIdentity(record: ChatRecord): ChatRecord {
+    const current = this.index.get(record.id);
+    const source = this.dispatchOrigins.sourceAgentForSession(current.workspaceId, current.id);
+    if (source && current.originAgentId && source !== current.originAgentId)
+      throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'The saved binding and exact dispatch sources disagree. History is read-only; no agent was activated.');
+    return source ? this.index.establishOrigin(current.id, source) : current;
+  }
+  private async runnableIdentity(record: ChatRecord): Promise<ChatRecord> {
+    const current = this.originIdentity(record);
+    if (current.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its saved history is read-only; create a new conversation to continue.');
+    if (current.identityState === 'new') return current;
+    if (!current.originAgentId || current.agentId && current.agentId !== current.originAgentId)
+      throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'The conversation current and original agent identities disagree.');
+    if (current.originAgentId !== `${current.workspaceId}:orchestrator`) {
+      const team = await this.hive.request('GET', `/api/ui/workspaces/${current.workspaceId}/team`) as {id: string}[];
+      const workflow = current.originAgentId === `${current.workspaceId}:__workflow__`
+        && this.runtime.peekAgentLaunchConfig(current.workspaceId, current.originAgentId);
+      if (!workflow && !team.some(member => member.id === current.originAgentId)) throw new SessionIdentityError('SESSION_ORIGIN_DELETED', 'The original member no longer exists. Saved history is read-only; this conversation cannot become the orchestrator or another member.');
+    }
+    return current;
+  }
+  private publicSession(record: ChatRecord, executionPath: string) {
+    return {id: record.id, title: record.title, workspaceId: record.workspaceId, backend: record.backend,
+      pinned: !!record.pinned, archived: !!record.archived, updatedAt: record.updatedAt,
+      ...(record.customTitle !== undefined && {customTitle: record.customTitle}), ...(record.agentId && {agentId: record.agentId}),
+      ...(record.execution && {execution: {kind: record.execution.kind, path: record.execution.path, branch: record.execution.branch}}), executionPath,
+      ...(record.originAgentId && {originAgentId: record.originAgentId}), identityState: record.identityState ?? 'unknown'};
+  }
+  async dispatchSession(workspaceId: string, dispatchId: unknown, sourceAgentId?: unknown) {
+    if (typeof dispatchId !== 'string' || !dispatchId || sourceAgentId !== undefined && (typeof sourceAgentId !== 'string' || !sourceAgentId))
+      throw new SessionIdentityError('DISPATCH_SOURCE_INVALID', 'Supply a dispatch identity and optional original member identity.');
+    this.assertWorkspaceAvailable(workspaceId);
+    return this.withWorkspace(workspaceId, async () => {
+      const source = this.dispatchOrigins.get(workspaceId, dispatchId);
+      if (!source) throw new SessionIdentityError('DISPATCH_SOURCE_UNKNOWN', 'The original conversation was not recorded for this dispatch; no current worker conversation was substituted.');
+      if (sourceAgentId !== undefined && source.sourceAgentId !== sourceAgentId) throw new SessionIdentityError('DISPATCH_SOURCE_MISMATCH', 'Dispatch source does not match the requested original member.');
+      let record = this.index.peek(source.sourceSessionId);
+      if (!record || record.workspaceId !== workspaceId) throw new SessionIdentityError('DISPATCH_SOURCE_MISMATCH', 'The original dispatch conversation is missing or belongs to another workspace.');
+      if (record.originAgentId && record.originAgentId !== source.sourceAgentId) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Dispatch source and original conversation identity disagree.');
+      record = this.index.establishOrigin(record.id, source.sourceAgentId);
+      let directory: string;
+      try { directory = await this.executionDirectory(workspaceId, record.id); }
+      catch (error) { throw new ArtifactSourceError('DISPATCH_SOURCE_UNAVAILABLE', 'The original dispatch execution directory is unavailable; no other conversation was substituted.', {cause: error}); }
+      return {session: this.publicSession(record, directory), sourceSessionId: record.id, sourceAgentId: source.sourceAgentId};
+    });
+  }
+  private async withGitOperation<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const action = operation();
-    this.gitWrites.add(action);
+    this.gitOperations.add(action);
     try { return await action; }
-    finally { this.gitWrites.delete(action); }
+    finally { this.gitOperations.delete(action); }
   }
   /** Resolve only persisted ownership. A missing worktree never falls back to the team root. */
   private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
@@ -178,7 +244,7 @@ export class Chats implements StructuredSessionPort {
       const {record: owned} = await readWorktreeIntent(this.dataDir, id);
       if (owned.projectRoot !== await realpath(workspace.path)) throw new Error('待恢复的工作树不属于当前项目。');
       const recovered = await recoverManagedWorktree(this.dataDir, owned);
-      const record: ChatRecord = {id, workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(),
+      const record: ChatRecord = {id, workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new',
         execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
@@ -230,7 +296,7 @@ export class Chats implements StructuredSessionPort {
     }
   }
   async gitIndexApply(workspaceId: string, operation: unknown, paths: unknown, expectedVersion: unknown, sessionId?: unknown) {
-    return this.withGitWrite(async () => {
+    return this.withGitOperation(async () => {
       this.assertWorkspaceAvailable(workspaceId);
       const directory = await this.executionDirectory(workspaceId, sessionId);
       try {
@@ -261,7 +327,7 @@ export class Chats implements StructuredSessionPort {
     }
   }
   async gitCommitApply(workspaceId: string, expectedVersion: unknown, message: unknown, includeOutsideProject: unknown, sessionId?: unknown) {
-    return this.withGitWrite(async () => {
+    return this.withGitOperation(async () => {
       const directory = await this.executionDirectory(workspaceId, sessionId);
       try {
         if (includeOutsideProject !== undefined && typeof includeOutsideProject !== 'boolean') throw new GitMutationError('INVALID_ARGUMENT', 'Outside-project confirmation must be a boolean');
@@ -270,6 +336,83 @@ export class Chats implements StructuredSessionPort {
       } catch (error) {
         if (error instanceof GitWorkspaceError) return {ok: false as const, committed: false as const, applied: false as const,
           commitOid: null, indexUpdated: false, error: {code: error.code, message: error.message}};
+        throw error;
+      }
+    });
+  }
+  async gitRemotes(workspaceId: string, sessionId?: unknown) {
+    // Remote reads also own native processes (credentials/network). Keep them
+    // alive through orderly shutdown just like explicit Git writes.
+    return this.withGitOperation(async () => {
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const result = await listGitRemotes(directory);
+        this.assertWorkspaceAvailable(workspaceId);
+        return {ok: true as const, ...result};
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+        throw error;
+      }
+    });
+  }
+  async gitPushPreview(workspaceId: string, remote: unknown, branch: unknown, sessionId?: unknown) {
+    return this.withGitOperation(async () => {
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        const preview = await previewGitPush(directory, {remote: gitText(remote, 'remote'), branch: gitText(branch, 'branch')});
+        this.assertWorkspaceAvailable(workspaceId);
+        return {ok: true as const, preview};
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+        throw error;
+      }
+    });
+  }
+  async gitPushApply(workspaceId: string, remote: unknown, branch: unknown, expectedVersion: unknown, sessionId?: unknown) {
+    return this.withGitOperation(async () => {
+      const directory = await this.executionDirectory(workspaceId, sessionId);
+      try {
+        return await pushGitBranch(directory, {remote: gitText(remote, 'remote'), branch: gitText(branch, 'branch'),
+          expectedVersion: gitText(expectedVersion, 'expectedVersion')});
+      } catch (error) {
+        // The native push helper returns its own uncertain result after a
+        // write attempt. Exceptions here are validation/preview failures.
+        if (error instanceof GitWorkspaceError) return {ok: false as const, pushed: false as const, applied: false as const,
+          error: {code: error.code, message: error.message}};
+        throw error;
+      }
+    });
+  }
+  async gitPrPreview(workspaceId: string, params: Record<string, unknown>) {
+    return this.withGitOperation(async () => {
+      const directory = await this.executionDirectory(workspaceId, params.sessionId);
+      try {
+        const preview = await previewGithubPr(directory, githubTarget(params));
+        this.assertWorkspaceAvailable(workspaceId);
+        return {ok: true as const, preview};
+      } catch (error) {
+        if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+        throw error;
+      }
+    });
+  }
+  async gitPrApply(workspaceId: string, operation: 'create' | 'update', params: Record<string, unknown>) {
+    return this.withGitOperation(async () => {
+      const directory = await this.executionDirectory(workspaceId, params.sessionId);
+      try {
+        const request: GithubPrWriteRequest = {...githubTarget(params), expectedVersion: gitText(params.expectedVersion, 'expectedVersion'),
+          title: gitText(params.title, 'title'), body: gitText(params.body, 'body', true)};
+        if (operation === 'create') {
+          if (params.draft !== undefined && typeof params.draft !== 'boolean') throw new GitWorkspaceError('INVALID_ARGUMENT', 'draft must be boolean');
+          return await createGithubPr(directory, {...request, ...(typeof params.draft === 'boolean' && {draft: params.draft})});
+        }
+        if (typeof params.number !== 'number' || !Number.isSafeInteger(params.number) || params.number <= 0) throw new GitWorkspaceError('INVALID_ARGUMENT', 'number must identify a pull request from the preview');
+        return await updateGithubPr(directory, {...request, number: params.number});
+      } catch (error) {
+        // Creation/update failures after gh starts are returned as unknown by
+        // the native helper; never describe them as an unapplied request.
+        if (error instanceof GitWorkspaceError) return {ok: false as const, applied: false as const, operation,
+          error: {code: error.code, message: error.message}};
         throw error;
       }
     });
@@ -465,6 +608,7 @@ export class Chats implements StructuredSessionPort {
     return workspace;
   }
   private async load(record: ChatRecord, recoveryFailure?: Error): Promise<LiveChat> {
+    record = await this.runnableIdentity(record);
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = await this.executionPath(record, workspace);
     const sessionFile = record.sessionFile;
@@ -601,7 +745,7 @@ export class Chats implements StructuredSessionPort {
     const record = this.index.get(id);
     const snapshot = chat.handle.snapshot();
     const model = chat.handle.currentModel();
-    const agentId = record.agentId;
+    const agentId = record.agentId ?? record.originAgentId;
     const history = agentId ? snapshot.history.map(message => restoreHistoricalReport(message,
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
     return {
@@ -612,9 +756,71 @@ export class Chats implements StructuredSessionPort {
       eventSequence: this.sequences.get(id) ?? 0,
     };
   }
+  /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
+  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError) {
+    const workspace = await this.workspace(record.workspaceId);
+    let history: unknown[] = [], historyMessageIds: string[] = [];
+    let historyWarning: string | undefined;
+    const hasDurableSource = record.backend === 'pi' || record.backend === 'pi-rpc' ? !!record.sessionFile
+      : record.backend === 'codex' ? !!record.codexThreadId : !!record.nativeclaudeSessionId;
+    if (!hasDurableSource) historyWarning = 'No durable native history source is recorded for this older conversation; history completeness cannot be verified';
+    try {
+      if (record.backend === 'pi' || record.backend === 'pi-rpc') {
+        if (record.sessionFile) {
+          const lines = readFileSync(record.sessionFile, 'utf8').split('\n').filter(line => line.trim());
+          const values = lines.map(line => { try { return JSON.parse(line) as Record<string, unknown>; } catch { throw new Error('Saved Pi transcript contains malformed JSON; the original file was not changed'); } });
+          const header = values.shift();
+          if (header?.type !== 'session' || typeof header.id !== 'string') throw new Error('Saved Pi transcript header is invalid');
+          const entries = values.map(value => {
+            if (typeof value.type !== 'string' || typeof value.id !== 'string' || !(value.parentId === null || typeof value.parentId === 'string')) throw new Error('Saved Pi transcript entry is invalid');
+            return value as unknown as SessionEntry;
+          });
+          const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null), sources = piUserInputSources(branch);
+          for (const entry of branch) {
+            const note = sources.notes.get(entry.id);
+            if (note) { history.push(piUserInputNote(entry, note, record.backend)); historyMessageIds.push(note.deliveryId); }
+            const message = externalPiMessage(entry, sources.users.get(entry.id), record.backend);
+            if (message) { history.push(message); historyMessageIds.push(message.role === 'toolResult' && typeof message.toolCallId === 'string' ? message.toolCallId : entry.id); }
+          }
+        } else if (record.piSessionId || record.externalPiSessionId) throw new Error('Saved Pi transcript path is unavailable');
+      } else if (record.backend === 'codex' && record.codexThreadId) {
+        const directory = join(this.sessionDir, '..', 'codex'), metadata = readCodexMetadata(directory, record.codexThreadId);
+        const journal: unknown = JSON.parse(readFileSync(`${codexMetadataFile(directory, record.codexThreadId)}.display.json`, 'utf8'));
+        const projection = new CodexProjection(directory, record.codexThreadId);
+        for (const {item, turnId} of projection.current()) {
+          const delivery = metadata.deliveries.find(entry => entry.turnId === turnId && entry.itemId === item.id)
+            ?? metadata.deliveries.find(entry => entry.turnId === turnId && entry.itemId === undefined && item.type === 'userMessage');
+          history.push(normalizeCodexItem(item, delivery)); historyMessageIds.push(item.id);
+        }
+        if (!journal || typeof journal !== 'object' || !('completeHistory' in journal) || journal.completeHistory !== true
+          || !('searchVersion' in journal) || journal.searchVersion !== 2)
+          historyWarning = 'Saved Codex display history may omit native items; no native process was opened to fill the gap';
+      } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
+        const metadata = readClaudeMetadata(join(this.sessionDir, '..', 'claude'), record.nativeclaudeSessionId);
+        const projection = new ClaudeProjection(() => metadata);
+        const messages = await getSessionMessages(record.nativeclaudeSessionId, {dir: record.execution?.path ?? workspace.path});
+        for (const message of messages) projection.put(message);
+        const snapshot = projection.snapshot(); history = snapshot.history; historyMessageIds = snapshot.historyMessageIds;
+        historyWarning = 'Claude SDK history completeness cannot be verified; no native process was opened';
+      }
+    } catch (error) { historyWarning = `Saved history could not be fully read: ${error instanceof Error ? error.message : String(error)}`; }
+    const sourceAgent = record.originAgentId ?? record.agentId;
+    if (sourceAgent) history = history.map(message => restoreHistoricalReport(message,
+      (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, sourceAgent, dispatchId, payload)));
+    const queue = new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
+      completedIds: () => [], userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }});
+    return {...record, executionPath: record.execution?.path ?? workspace.path, history, historyMessageIds,
+      readOnly: true, identityError: {code: identityError.code, message: identityError.message},
+      ...(historyWarning && {historyIncomplete: true, historyWarning}),
+      interactions: [], models: [], model: record.model, busy: false, pending: queue.pendingCount,
+      pendingReports: queue.pendingReports, pendingUserInputs: queue.pendingUserInputs,
+      deliveryFailure: this.deliveryFailure(record.id, queue), completedDeliveryIds: [], runId: null,
+      eventSequence: this.sequences.get(record.id) ?? 0};
+  }
   private async require(id: string): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
+    await this.runnableIdentity(this.index.get(id));
     const existing = this.live.get(id);
     if (existing?.cleanup) {
       await existing.cleanup;
@@ -634,7 +840,7 @@ export class Chats implements StructuredSessionPort {
     const workspace = await this.workspace(workspaceId);
     this.assertWorkspaceAvailable(workspaceId);
     if (this.closing) throw new Error('Chat runtime is closing');
-    const record: ChatRecord = { id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now() };
+    const record: ChatRecord = { id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new' };
     if (options.isolation === 'worktree') {
       const owned: ManagedWorktree = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id,
         ...(options.branch !== undefined && {branch: options.branch})});
@@ -656,7 +862,15 @@ export class Chats implements StructuredSessionPort {
     const record = await this.createRecord(workspaceId, backend, options);
     return this.open(record.id);
   }
-  async open(id: string) { return this.snapshot(id, await this.require(id)); }
+  async open(id: string) {
+    try { return this.snapshot(id, await this.require(id)); }
+    catch (error) {
+      if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError)) throw error;
+      const live = this.live.get(id);
+      if (live) await this.stopLive(id, live);
+      return this.readOnlySnapshot(this.index.get(id), error);
+    }
+  }
 
   /** Hive invokes this for both the selected orchestrator and spawned workers. */
   async start(input: Parameters<StructuredSessionPort['start']>[0]): Promise<StructuredSessionHandle> {
@@ -676,7 +890,7 @@ export class Chats implements StructuredSessionPort {
     if (!record) {
       const members = await this.hive.request('GET', `/api/ui/workspaces/${input.workspace.id}/team`) as { id: string; name: string }[];
       this.assertWorkspaceAvailable(input.workspace.id);
-      record = { id: randomUUID(), workspaceId: input.workspace.id, agentId: input.agentId, backend,
+      record = { id: randomUUID(), workspaceId: input.workspace.id, agentId: input.agentId, originAgentId: input.agentId, identityState: 'known', backend,
         title: input.agentId.endsWith(':orchestrator') ? '主会话' : members.find(member => member.id === input.agentId)?.name ?? '成员会话', sessionFile: null, updatedAt: Date.now(),
         ...(args.includes('--provider') && args.includes('--model') && provider && modelId ? { model: { provider, id: modelId, name: modelId } } : {}),
       };
@@ -761,24 +975,31 @@ export class Chats implements StructuredSessionPort {
     try { return await action; }
     finally { if (this.activating.get(workspaceId) === barrier) this.activating.delete(workspaceId); }
   }
-  private async activateOnce(id: string, forUserInput = false) {
-    const record = this.index.get(id);
+  private async activationAvailable(id: string) {
+    const record = await this.runnableIdentity(this.index.get(id));
     this.assertWorkspaceAvailable(record.workspaceId);
-    const agentId = record.agentId ?? `${record.workspaceId}:orchestrator`;
+    const agentId = record.originAgentId ?? (record.identityState === 'new' ? `${record.workspaceId}:orchestrator` : undefined);
+    if (!agentId) throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'The original conversation identity is not known; no agent was activated.');
     const previous = this.index.forAgent(record.workspaceId, agentId);
     if (previous && previous.id !== id) {
-      const team = await this.hive.request('GET', `/api/ui/workspaces/${record.workspaceId}/team`) as { pending_task_count: number; open_dispatches?: unknown[] }[];
+      const team = await this.hive.request('GET', `/api/ui/workspaces/${record.workspaceId}/team`) as {id: string; pending_task_count: number; open_dispatches?: unknown[] }[];
       const queue = this.live.get(previous.id)?.queue;
       const pending = queue?.pendingCount ?? DeliveryQueue.persistedCount(this.queueDir, previous.id);
-      if (queue?.busy || pending || team.some(member => member.pending_task_count > 0 || member.open_dispatches?.length)) {
-        throw new Error('当前主会话仍有执行或未结派单，请先完成或停止相关任务，再切换主会话。');
+      const relevant = agentId === `${record.workspaceId}:orchestrator` ? team : team.filter(member => member.id === agentId);
+      if (queue?.busy || pending || relevant.some(member => member.pending_task_count > 0 || member.open_dispatches?.length)) {
+        throw new SessionIdentityError('SESSION_ORIGIN_BUSY', 'The original member is currently using another conversation with running, queued or unsettled work. Finish or stop that work before continuing this historical conversation.');
       }
     }
+    return {record, agentId, previous};
+  }
+  private async activateOnce(id: string, forUserInput = false) {
+    const {record, agentId, previous} = await this.activationAvailable(id);
     const active = this.runtime.getActiveRunByAgentId(record.workspaceId, agentId);
     if (previous?.id !== id && active) {
       this.runtime.stopAgentRun(active.runId);
       if (!await this.runtime.waitForRunExit(active.runId, 30_000)) throw new Error('Previous team session is still stopping');
     }
+    await this.activationAvailable(id);
     this.assertWorkspaceAvailable(record.workspaceId);
     this.index.bind(id, agentId);
     this.hive.configureAgentLaunch(record.workspaceId, agentId, this.launchConfig(this.index.get(id)));
@@ -796,6 +1017,7 @@ export class Chats implements StructuredSessionPort {
     if (!text.trim() && !ids.length) throw new Error('Message cannot be empty');
     const inputText = encodeImageInput(text, ids);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
+      await this.activationAvailable(id);
       const opened = await this.require(id);
       if (opened.reasoningFailure) throw new Error(`原推理设置未能恢复，请重新选择强度后发送：${opened.reasoningFailure.message}`);
       if (this.index.get(id).backend === 'pi' && !opened.handle.currentModel()) {
@@ -830,7 +1052,7 @@ export class Chats implements StructuredSessionPort {
     for (const item of queue.pending) {
       const sequence = item.presentation?.messageSequence;
       if (sequence === undefined) continue;
-      const row = this.hive.getUserInput(record.workspaceId, record.agentId!, sequence);
+      const row = this.hive.getUserInput(record.workspaceId, (record.agentId ?? record.originAgentId)!, sequence);
       if (!row) throw new Error('Queued input authoritative source is unavailable');
       const canceled = queue.pendingUserInputs.find(input => input.deliveryId === item.id)?.reason === 'canceled';
       if (!canceled && row.type === 'user_input' && row.text === (item.presentation!.sourceText ?? item.presentation!.displayText)) continue;
@@ -858,7 +1080,7 @@ export class Chats implements StructuredSessionPort {
       if (item.presentation!.displayText !== expectedText) throw new Error('Queued input changed; reopen the editor');
       if (text !== undefined && !(text as string).trim() && !item.presentation!.attachments?.length) throw new Error('Message cannot be empty');
       const sequence = item.presentation!.messageSequence;
-      const orchestrator = record.agentId === `${record.workspaceId}:orchestrator`;
+      const orchestrator = (record.agentId ?? record.originAgentId) === `${record.workspaceId}:orchestrator`;
       if (orchestrator && sequence === undefined) throw new Error('This older queued input has no authoritative source identity');
       const replacement = text === undefined ? null : replaceQueuedInput(item, text as string);
       this.mutatingQueues.add(id);
@@ -868,7 +1090,7 @@ export class Chats implements StructuredSessionPort {
           else chat.queue.cancelPendingUserInput(deliveryId, { retain: sequence !== undefined });
         };
         if (sequence !== undefined) {
-          this.hive.mutateUserInput(record.workspaceId, record.agentId!, sequence,
+          this.hive.mutateUserInput(record.workspaceId, (record.agentId ?? record.originAgentId)!, sequence,
             item.presentation!.sourceText ?? item.presentation!.displayText,
             replacement ? replacement.presentation!.sourceText ?? replacement.presentation!.displayText : null, persist);
           // SQL COMMIT succeeded. A canceled source remains a non-executable tombstone
@@ -900,7 +1122,7 @@ export class Chats implements StructuredSessionPort {
     return { accepted: true };
   }
   async abort(id: string) {
-    const chat = this.removing.has(this.index.get(id).workspaceId) ? this.live.get(id) : await this.require(id);
+    const chat = this.live.get(id) ?? (this.removing.has(this.index.get(id).workspaceId) ? undefined : await this.require(id));
     if (!chat) throw workspaceRemovalBlocked(this.index.get(id).workspaceId);
     const paused = chat.queue.pause();
     await chat.handle.abort();
@@ -919,6 +1141,7 @@ export class Chats implements StructuredSessionPort {
   async resume(id: string) {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
+      await this.activationAvailable(id);
       // Drain failed native ownership and reload/reconcile the spool before an
       // existing active Hive run can take activateOnce's fast path.
       const chat = await this.require(id);
@@ -1139,16 +1362,17 @@ export class Chats implements StructuredSessionPort {
     return chat.cleanup;
   }
   private pruneSettledDispatches(record: ChatRecord, queue: DeliveryQueue): void {
-    if (!record.agentId) return;
+    const sourceAgent = record.agentId ?? record.originAgentId;
+    if (!sourceAgent) return;
     const settled = queue.pending.filter(item => item.presentation?.origin === 'dispatch'
       && item.presentation.dispatchId
-      && this.hive.isSettledDispatch(record.workspaceId, record.agentId!, item.presentation.dispatchId));
+      && this.hive.isSettledDispatch(record.workspaceId, sourceAgent, item.presentation.dispatchId));
     queue.discardPending(new Set(settled.map(item => item.id)));
   }
   async close() {
     this.closing = true;
     this.closeAbort.abort(new Error('Chat runtime is closing'));
-    await Promise.allSettled([...this.activating.values(), ...this.gitWrites]);
+    await Promise.allSettled([...this.activating.values(), ...this.gitOperations]);
     await Promise.allSettled(this.opening.values());
     const results = await Promise.allSettled([...this.live.entries()].map(([id, chat]) => this.stopLive(id, chat)));
     const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);

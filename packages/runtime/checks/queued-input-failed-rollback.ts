@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Chats } from '../src/chats.js';
 import { DeliveryQueue } from '../src/delivery-queue.js';
+import { DispatchExecutionOrigins } from '../src/dispatch-execution-origins.js';
 const directory = mkdtempSync(join(tmpdir(), 'hive-failed-rollback-'));
 try {
  for (const mode of ['edit', 'edit-busy', 'cancel-committed'] as const) {
-  const id = mode, record = { id, workspaceId: 'workspace', agentId: 'workspace:orchestrator' };
+  const id = mode, record = { id, workspaceId: 'workspace', agentId: 'workspace:orchestrator', originAgentId: 'workspace:orchestrator', identityState: 'known' as const };
   const executed: string[] = [], completed: string[] = [];
   let releaseHead!: () => void, enteredHead!: () => void;
   const headEntered = new Promise<void>(resolve => { enteredHead = resolve; });
@@ -17,7 +18,8 @@ try {
   const rows = new Map<number, { type: 'user_input' | 'user_input_cancelled'; text: string }>([[1, {type:'user_input',text:'head'}], [2, {type:'user_input',text:'original'}]]);
   const chats: any = Object.create(Chats.prototype);
   Object.assign(chats, { closing: false, removing: new Set(), activating: new Map(), live: new Map(), opening: new Map(), mutatingQueues: new Set(), sequences: new Map(), emit: () => {},
-   index: { get: () => record, peek: () => record },
+   dispatchOrigins: new DispatchExecutionOrigins(join(directory, id + '-origins')),
+   index: { get: () => record, peek: () => record, forAgent: () => record },
    hive: { getUserInput: (_w: string,_a: string,s: number) => rows.get(s), mutateUserInput: (_w: string,_a: string,s: number,_e: string,replacement: string | null,persist: () => void) => {
     const before = rows.get(s)!;
     rows.set(s, {type:replacement === null ? 'user_input_cancelled' : 'user_input',text:replacement ?? before.text});

@@ -1,0 +1,43 @@
+/** Real Git metadata plus controlled git network/gh peers. No hosted account or network calls. */
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { access, chmod, copyFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createGithubPr, previewGithubPr, updateGithubPr, githubRepositoryFromRemote } from '../src/github-prs.js';
+const directory = await mkdtemp(join(tmpdir(), 'hive-github-prs-')); console.log('GITHUB_PRS_EVIDENCE', directory);
+const repo = join(directory, 'repo'), statePath = join(directory, 'state.json'), proxy = join(directory, 'git-network-peer'), gh = join(directory, 'gh-peer');
+const gitPath = execFileSync('/usr/bin/which', ['git'], {encoding: 'utf8'}).trim();
+const git = (...args: string[]) => execFileSync(gitPath, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgSign=false', ...args], {cwd: repo, stdio: 'pipe', encoding: 'utf8'}).trim();
+const keys = ['GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','GH_REPO','GH_HOST','GIT_DIR','GIT_WORK_TREE','GIT_CONFIG_COUNT','HIVE_GH_FIXTURE_STATE']; const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+try {
+ await mkdir(repo); await writeFile(join(directory, 'gitconfig'), ''); process.env.GIT_CONFIG_GLOBAL = join(directory, 'gitconfig'); process.env.GIT_CONFIG_NOSYSTEM = '1';
+ git('init', '--template='); git('commit', '--allow-empty', '-m', 'base'); const baseOid = git('rev-parse', 'HEAD'); git('commit', '--allow-empty', '-m', 'head'); const headOid = git('rev-parse', 'HEAD');
+ git('remote', 'add', 'origin', 'https://user:fixture-secret@github.com/owner/repo.git');
+ let state: any = {headOid, remoteOid: headOid, baseOid, exists: false, mode: 'normal'};
+ const save = () => writeFile(statePath, JSON.stringify(state)); const load = async () => {state = JSON.parse(await readFile(statePath, 'utf8'));}; await save();
+ await writeFile(proxy, `#!/usr/bin/env node\nconst fs=require('node:fs'),cp=require('node:child_process'),a=process.argv.slice(2),s=JSON.parse(fs.readFileSync(${JSON.stringify(statePath)},'utf8'));if(a.includes('ls-remote')){const ref=a.at(-1);if(ref!=='refs/heads/published')throw Error('unexpected network query');if(s.remoteOid){console.log(s.remoteOid+'\\t'+ref);process.exit(0);}process.exit(2);}if(a.includes('push')||a.includes('fetch'))throw Error('fixture forbids all network writes');const r=cp.spawnSync(${JSON.stringify(gitPath)},a,{stdio:'inherit'});process.exit(r.status??1);\n`); await chmod(proxy, 0o700);
+ await copyFile(fileURLToPath(new URL('./fixtures/github-pr-peer.cjs', import.meta.url)), gh); await writeFile(gh, '#!/usr/bin/env node\n' + await readFile(gh, 'utf8')); await chmod(gh, 0o700);
+ process.env.HIVE_GH_FIXTURE_STATE = statePath; process.env.GH_REPO = 'wrong/target'; process.env.GH_HOST = 'wrong.example'; process.env.GIT_DIR = '/wrong'; process.env.GIT_WORK_TREE = '/wrong'; process.env.GIT_CONFIG_COUNT = '0';
+ const options = {gitExecutable: proxy, ghExecutable: gh}, target = {remote: 'origin', base: 'main', headBranch: 'published'};
+ const preview = await previewGithubPr(repo, target, options); assert.equal(preview.pushed, true); assert.equal(preview.headBranch, 'published'); assert.equal(preview.existing.length, 0); assert.ok(!JSON.stringify(preview).includes('fixture-secret'));
+ const title = 'Literal $(touch SHOULD_NOT_EXIST) `echo no`'; const body = 'First line\n\n第二行: $HOME and `literal`\n';
+ const created = await createGithubPr(repo, {...target, expectedVersion: preview.version, title, body, draft: true}, options); assert.equal(created.ok, true); assert.equal(created.url, 'https://github.com/owner/repo/pull/7');
+ await load(); assert.equal(state.body, body); assert.equal(state.title, title); assert.ok(state.calls.some((call: any) => call.args.includes('--draft'))); await assert.rejects(access(state.bodyFile)); await assert.rejects(access(join(repo, 'SHOULD_NOT_EXIST')));
+ const existing = await previewGithubPr(repo, target, options); assert.equal(existing.existing[0]!.number, 7); await assert.rejects(createGithubPr(repo, {...target, expectedVersion: existing.version, title, body}, options), (e: any) => e.code === 'PR_ALREADY_EXISTS');
+ const updated = await updateGithubPr(repo, {...target, expectedVersion: existing.version, number: 7, title: 'updated', body: 'multi\nline\n'}, options); assert.equal(updated.ok, true);
+ state.exists = false; state.remoteOid = null; await save(); const notPushed = await previewGithubPr(repo, target, options); assert.equal(notPushed.pushed, false); await assert.rejects(createGithubPr(repo, {...target, expectedVersion: notPushed.version, title, body}, options), (e: any) => e.code === 'PUSH_REQUIRED');
+ state.remoteOid = headOid; state.mode = 'wrong-repo'; await save(); await assert.rejects(previewGithubPr(repo, target, options), (e: any) => e.code === 'WRONG_GITHUB_REPOSITORY');
+ state.mode = 'fork'; state.exists = true; await save(); await assert.rejects(previewGithubPr(repo, target, options), (e: any) => e.code === 'WRONG_GITHUB_REPOSITORY');
+ state.exists = false; state.mode = 'auth-failure'; await save(); await assert.rejects(previewGithubPr(repo, target, options), (e: any) => ['fixture-secret', 'fixture-query', 'remaining-secret', 'fixture-private-access-token', 'fixture-private-basic-value'].every(secret => !e.message.includes(secret)) && e.message.includes('HTTP 401 Unauthorized') && e.message.includes('GitHub authentication failed') && e.message.includes('[redacted]'));
+ state.mode = 'wrong-url'; state.exists = false; await save(); let next = await previewGithubPr(repo, target, options); const wrong = await createGithubPr(repo, {...target, expectedVersion: next.version, title, body}, options); assert.equal(wrong.ok, false); assert.equal(wrong.applied, 'unknown'); assert.equal(wrong.url, undefined);
+ state.mode = 'nonzero-after-write'; state.exists = false; await save(); next = await previewGithubPr(repo, target, options); const partial = await createGithubPr(repo, {...target, expectedVersion: next.version, title, body}, options); assert.equal(partial.applied, 'unknown'); assert.ok(!JSON.stringify(partial).includes('fixture-secret')); assert.ok(!JSON.stringify(partial).includes('fixture-query'));
+ state.mode = 'timeout'; state.exists = false; await save(); next = await previewGithubPr(repo, target, options);
+ const timed = await createGithubPr(repo, {...target, expectedVersion: next.version, title, body}, {...options, timeoutMs: 1500}); assert.equal(timed.ok, false); assert.equal(timed.applied, 'unknown');
+ await load(); await assert.rejects(access(state.bodyFile));
+ assert.throws(() => githubRepositoryFromRemote('https://enterprise.example/owner/repo'), (e: any) => e.code === 'NOT_GITHUB_REMOTE'); assert.throws(() => githubRepositoryFromRemote('https://github.com/owner/repo?token=hidden')); assert.equal(githubRepositoryFromRemote('git@github.com:owner/repo.git').fullName, 'owner/repo');
+ const missing = join(directory, 'no-gh'); await assert.rejects(previewGithubPr(repo, target, {...options, ghExecutable: missing}), (e: any) => e.code === 'GH_NOT_FOUND');
+ await writeFile(join(directory, 'receipt.json'), JSON.stringify({pass: true, realGitMetadata: true, controlledGhOnly: true, noNetworkOrAccount: true, explicitRepoHostHeadBase: true, inheritedRoutingCleared: true, privateMultilineBodyFile: true, createAndUpdate: true, existingPr: true, pushRequired: true, wrongRepoAndUrlRejected: true, uncertainAfterWriteFailure: true, timeoutUnknown: true, secretsRedacted: true, fullAuthorizationAndUserinfoRedacted: true}, null, 2));
+ console.log('GITHUB_PRS_OK', directory);
+} finally {for (const [key, value] of Object.entries(old)) {if (value === undefined) delete process.env[key]; else process.env[key] = value;}}

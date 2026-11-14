@@ -24,6 +24,7 @@ export interface HiveUploadLocation {localPath:string;record:{mimeType:string;or
 
 export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled'; text: string }
 export interface HiveHost {
+    startSessionShell(workspaceId: string, context: {sessionId: string; cwd: string}): Promise<{runId: string}>;
     getUserInput(workspaceId: string, agentId: string, sequence: number): HiveUserInputRow | undefined;
     mutateUserInput(workspaceId: string, agentId: string, sequence: number, expectedText: string, replacement: string | null, persistSpool: () => void): void;
     configureAgentLaunch: import("./hive-runtime-contract.js").HiveAgentRuntime["configureAgentLaunch"];
@@ -99,6 +100,10 @@ export async function createHiveHost({
 	let closing: Promise<void> | undefined;
 	return {
 		port: runtime.port,
+        startSessionShell(workspaceId, context) {
+            if (closing) throw new Error("Hive host is closed");
+            return runtime.store.startSessionShell(workspaceId, context);
+        },
         getUserInput(workspaceId, agentId, sequence) {
             if (closing) throw new Error('Hive host is closed');
             return runtime.store.getDesktopUserInput(workspaceId, agentId, sequence);

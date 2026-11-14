@@ -11,6 +11,9 @@ export function isUnsetPiModel(model: { provider: string; id: string } | undefin
 
 export interface DeliveryFailure {deliveryId:string;message:string}
 export interface ChatExecution { kind: 'worktree'; path: string; branch: string }
+export class SessionIdentityError extends Error {
+  constructor(readonly code: string, message: string) { super(`[${code}] ${message}`); this.name = 'SessionIdentityError'; }
+}
 
 export interface ChatRecord {
   backend: ChatBackend;
@@ -27,6 +30,9 @@ export interface ChatRecord {
   reasoning?: {provider:string;modelId:string;level:string};
   sessionFile: string | null;
   agentId?: string;
+  /** The first binding is immutable; agentId remains only the current binding. */
+  originAgentId?: string;
+  identityState?: 'new' | 'known' | 'unknown';
   piSessionId?: string;
   externalPiSessionId?: string;
   startupContext?: string;
@@ -48,10 +54,11 @@ export class ChatIndex {
       // Older automatic titles could end with half an emoji after UTF-16 slicing.
       // With /u, this range matches only unpaired surrogates, preserving valid emoji.
       const title = record.customTitle ? record.title : record.title.replace(/[\uD800-\uDFFF]/gu, '');
-      const normalized = { ...record, title, backend: record.backend ?? 'pi' };
+      const normalized = normalizeIdentity({ ...record, title, backend: record.backend ?? 'pi' });
       if (normalized.backend === 'pi' && isUnsetPiModel(normalized.model)) delete normalized.model;
       return normalized;
     });
+    if (JSON.stringify(value) !== JSON.stringify(this.records)) this.commit(this.records);
   }
   list(workspaceId: string): ChatRecord[] {
     return this.records.filter(record => record.workspaceId === workspaceId).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
@@ -66,7 +73,10 @@ export class ChatIndex {
     return this.records.find(record => record.workspaceId === workspaceId && record.agentId === agentId);
   }
   bind(id: string, agentId: string): ChatRecord {
-    const bound = { ...this.get(id), agentId };
+    const original = this.get(id);
+    if (original.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its history is read-only; create a new conversation to continue.');
+    if (original.originAgentId && original.originAgentId !== agentId) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'A historical conversation cannot be rebound to a different agent.');
+    const bound: ChatRecord = { ...original, agentId, originAgentId: original.originAgentId ?? agentId, identityState: 'known' };
     const next = this.records.map(record => {
       if (record.id === id) return bound;
       if (record.workspaceId !== bound.workspaceId || record.agentId !== agentId) return record;
@@ -77,7 +87,25 @@ export class ChatIndex {
     return bound;
   }
   save(record: ChatRecord): void {
-    this.commit([...this.records.filter(item => item.id !== record.id), record]);
+    const existing = this.peek(record.id);
+    if (existing?.identityState === 'unknown' && (record.agentId || record.originAgentId) && !existing.originAgentId)
+      throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'An older unknown conversation needs exact persisted source evidence before it can be bound.');
+    if (existing?.originAgentId && ((record.originAgentId && record.originAgentId !== existing.originAgentId)
+      || (record.agentId && record.agentId !== existing.originAgentId))) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'The original agent identity cannot be changed.');
+    const normalized = normalizeIdentity(existing?.originAgentId
+      ? {...record, originAgentId: existing.originAgentId, identityState: 'known'}
+      : existing ? {...record, identityState: existing.identityState ?? 'unknown'} : record);
+    this.commit([...this.records.filter(item => item.id !== record.id), normalized]);
+  }
+  /** Only precise persisted provenance may repair a legacy unknown identity. */
+  establishOrigin(id: string, agentId: string): ChatRecord {
+    const original = this.get(id);
+    if (original.originAgentId && original.originAgentId !== agentId || original.agentId && original.agentId !== agentId)
+      throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Persisted execution sources disagree about the original agent.');
+    if (original.originAgentId === agentId) return original;
+    const recovered: ChatRecord = {...original, originAgentId: agentId, identityState: 'known'};
+    this.commit(this.records.map(record => record.id === id ? recovered : record));
+    return recovered;
   }
   removeWorkspace(workspaceId: string): void {
     this.commit(this.records.filter(record => record.workspaceId !== workspaceId));
@@ -90,6 +118,15 @@ export class ChatIndex {
       this.records = next;
     } finally { rmSync(temporary, { force: true }); }
   }
+}
+
+function normalizeIdentity(record: ChatRecord): ChatRecord {
+  if (record.originAgentId) {
+    if (record.agentId && record.agentId !== record.originAgentId) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Current and original conversation agent identities disagree.');
+    return {...record, identityState: 'known'};
+  }
+  if (record.agentId) return {...record, identityState: 'known', originAgentId: record.agentId};
+  return {...record, identityState: record.identityState === 'new' ? 'new' : 'unknown'};
 }
 
 function isChatRecord(value: unknown): value is ChatRecord {
@@ -118,6 +155,9 @@ function isChatRecord(value: unknown): value is ChatRecord {
   if (record.nativeclaudeSessionId !== undefined && typeof record.nativeclaudeSessionId !== 'string') return false;
   if (record.codexThreadId !== undefined && typeof record.codexThreadId !== 'string') return false;
   if (record.agentId !== undefined && typeof record.agentId !== 'string') return false;
+  if (record.originAgentId !== undefined && (typeof record.originAgentId !== 'string' || !record.originAgentId)) return false;
+  if (record.identityState !== undefined && !['new','known','unknown'].includes(record.identityState as string)) return false;
+  if (record.identityState === 'known' && !record.originAgentId && !record.agentId) return false;
   if (record.externalPiSessionId !== undefined && typeof record.externalPiSessionId !== 'string') return false;
   if (record.piSessionId !== undefined && typeof record.piSessionId !== 'string') return false;
   if (record.startupContext !== undefined && typeof record.startupContext !== 'string') return false;
