@@ -245,6 +245,14 @@ Invoke-Action '保存设置'
 # The busy action is named '处理中…'. A disabled '保存设置' means the actual
 # response has restored that name and the saved inputs are no longer modified.
 Wait-EnabledState '保存设置' $false
+$savedNoticeName = '设置已保存。新启动的外部进程将使用更新后的配置。'
+$savedNotice = Wait-Action $savedNoticeName
+if (-not (Test-VisibleControl $savedNotice)) { throw 'The saved program settings feedback is outside the native window.' }
+$savedNoticeCondition = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::NameProperty, $savedNoticeName)
+if ($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $savedNoticeCondition).Count -ne 1) {
+    throw 'Program settings save feedback must be announced exactly once.'
+}
 Invoke-Action '角色模板'
 [void](Wait-Action '角色模板名称')
 Invoke-Action '外部程序'
@@ -254,7 +262,8 @@ $save = Find-Action '保存设置'
 if ($null -eq $save -or $save.Current.IsEnabled) { throw 'Saved paths still appear modified after returning from another section.' }
 Invoke-Action '角色模板'
 [void](Wait-Action '角色模板名称')
-Invoke-Action '返回会话'
+Invoke-Action '关闭设置'
+Wait-ActionsAbsent @('关闭设置', '搜索设置')
 [void](Wait-Action '聊天消息')
 Invoke-Action '团队成员'
 [void](Wait-Action '打开 Reviewer 的成员会话')
