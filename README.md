@@ -4,7 +4,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
-2026-11-14：以 T3 Code 为首要 UI/UX 与全部设置体验参考的完整产品目标已确认。固定团队/协作入口、聊天阅读设置、协作起步、窄窗任务输入与长标题修复已进入 `c24069c` 开发包。Mac 原生真实 Codex 协作、包内实际停止/排队/显式继续、冷恢复、写盘失败/重试与四组包检查通过，见 [真实协作](docs/validation/2026-11-14-collaboration-start-and-live.md) 和 [当前开发包](docs/validation/2026-11-14-collaboration-start-package.md)。当前已运行安装实例未替换。Claude/Antigravity 按用户要求本轮不验收；Pi 当前账号 invalid_grant，不重复登录。Windows 优化版编译、便携包与包内检查通过，原生窗口交互检查和完整产品验收继续。
+2026-11-14 最新方向：UI/UX 先直接复刻 T3 Code，作为布局、视觉、交互和全部设置页的唯一基准。当前 Mac 开发包为 `8cd9c84`，已加入实际构建/后台版本诊断及外部程序页裁切修复；T3 设置浮层与后续逐页复刻正在实施。既有真实协作、停止/恢复和包内检查证据分别保留，见 [真实协作](docs/validation/2026-11-14-collaboration-start-and-live.md) 与 [版本诊断](docs/validation/2026-11-14-build-diagnostics.md)。当前已运行安装实例未替换。Claude/Antigravity 按用户要求本轮不验收；Pi 当前账号 invalid_grant，不重复登录。Windows 原生交互与完整产品验收继续。
 
 2026-11-09：采用 GPUI + gpui-kit 构建 macOS / Windows 原生界面，复用 Hive Node 后台。macOS 已分别跑通内置 Pi、外部 Codex 和外部 Pi 主控创建 Worker、派单、文件执行、显式汇报、主控核验及会话恢复。外部 Pi 的范围见 [团队验证](docs/validation/2026-11-07-external-pi-team.md)，Codex 见 [原生接入验证](docs/validation/2026-11-07-codex.md)。成员管理、Claude 官方 SDK 接入、账号与模型配置、全局置顶和便携开发包已加入；Claude 真实模型协作、完整配置、界面打磨和跨平台正式发行仍在实施。
 
@@ -21,7 +21,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 - 内置 Pi 和已接入的外部 Agent 均可担任 Orchestrator 或 Worker；选择外部主控时，由该 Agent 直接决策和处理汇报。
 - 首版提供统一聊天界面，包括消息流、工具执行和成员会话；终端作为辅助能力。
 - 接入层允许原生 SDK、原生 RPC 和 ACP 并存，具体后端按实际能力选型。
-- T3 Code 是整体 UI/UX 和全部设置体验的首要参考，结合 Cindy、Beluga 的实际操作及开源实现，形成统一的 Hive 风格；Raven 和 Maka 继续作为接入架构参考。
+- UI/UX 先复刻 T3 Code，主窗口、侧栏、聊天、输入区、菜单、设置与引导均采用同一基准；这取代此前融合 Cindy、Beluga 的安排。Hive 特有的成员和协作功能沿用同套组件与交互。
 - 默认进入聊天工作台，团队成员与协作保留固定入口；协作主页、成员管理及全部设置先形成完整可用流程，再持续打磨。2026-11-14 的确认取代早期普通工作区隐藏团队入口的安排，具体实施与验收见 [完整产品计划](docs/product-completeness.md)。
 - 桌面界面使用 Rust、GPUI 与 gpui-kit；macOS 和 Windows 均为首版目标。保留 Node 后台，避免因 UI 选型重写已验证的协作业务。
 - 在本目录独立推进桌面项目，现有 Hive 仓库作为复用来源。

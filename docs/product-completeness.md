@@ -4,7 +4,7 @@
 
 ## 产品约定
 
-- T3 Code 是整体界面、交互和所有设置页面的首要参考，结合 Cindy、Beluga。比较真实操作和固定提交源码，不将参考项目的未实现功能直接变成 Hive 的占位选项。
+- 用户最新明确：UI/UX 先复刻 T3 Code，作为主窗口、侧栏、聊天/输入区、菜单、全部设置和引导的唯一基准。此前结合 Cindy、Beluga 的安排由此取代。逐页核对真实操作与对应源码，不添加没有实际功能的占位选项；Hive 专属成员/协作功能采用相同组件和交互。
 - 默认进入聊天工作台；团队成员、协作与工作流可从空项目发现和进入。团队与协作保留固定入口，替代 11 月 13 日普通工作区隐藏入口的安排。
 - 后端正确性优先。复用 Hive 的身份、派单、显式汇报、消息水位、投递和恢复语义，内置 Pi 不新增审批。四后端均需覆盖主控和成员，分别记录混合后端组合。
 - 账号验收范围：用户于本轮明确 Claude 尚未登录/配置，无需验收 Claude；Antigravity 同样无需验收。不尝试登录、配置或调用其真实模型，保留未验证边界并继续其他工作。当前真实模型验证只用已授权的 Terra。
@@ -17,11 +17,14 @@
 - Hive 权威仓库：已刷新 origin/main，为 `6b4e83feffd87e7c5e389c9cba879948998150c0`。只读核对，不修改另一个正在实施的 Hive 工作区。当前 Desktop 仍固定 `@tt-a1i/hive@2.2.1` 与既有补丁；升级依赖须另验兼容。
 - T3 Code 源码：`e5835c993a6af969088d1c8fe62278f711852b0a`。已读 [SettingsPanels.tsx](https://github.com/pingdotgg/t3code/blob/e5835c993a6af969088d1c8fe62278f711852b0a/apps/web/src/components/settings/SettingsPanels.tsx) 和 [settingsLayout.tsx](https://github.com/pingdotgg/t3code/blob/e5835c993a6af969088d1c8fe62278f711852b0a/apps/web/src/components/settings/settingsLayout.tsx)：聊天显示选项、设置范围及搜索目标的焦点/滚动处理作为实现参考。
 - T3 Code 0.1.9 原生窗口：实际观察新会话、已有会话和 20 个设置分类首页，包括 Providers、Threads、Chat、Projects、Keybindings 等。未发送模型消息、未改设置，因此不声称验证其保存行为。
+- 最新唯一参考实查：T3 Code 0.1.9 / `24e77473ecf4`，约256px侧栏、居中限宽聊天/输入区；设置是背景模糊上的居中圆角浮层，带左侧分组搜索导航、右侧分类面包屑与关闭按钮。下一步先复刻设置浮层与导航，再逐页收口主窗口、聊天和输入区；现有 Hive 后台能力与草稿/保存语义保留。Cindy/Beluga 以下记录仅作历史证据。
 - Cindy：`3a474759524e8bf804bda4ddf6d2f4c3188918e2` 的 [SettingsSidebarNav.tsx](https://github.com/makecindy/cindy/blob/3a474759524e8bf804bda4ddf6d2f4c3188918e2/apps/desktop/src/renderer/components/settings/SettingsSidebarNav.tsx)，核对搜索导航、选中状态与可访问语义。
 - Beluga 原仓库现重定向至 `beluga-labs/beluga`，本轮 main `c5c991aa99fd25ff47e3d8a80a5e9698bc30a036`；原生窗口仍在欢迎引导，仅观察该页面，未跳过引导或推断后续流程。
 - 本批独立实现 Rust/GPUI 行为，不复制上述 TypeScript、CSS、图像或其他资源。
 
 ## 按完整流程推进
+
+界面实施以 T3 Code 为唯一基准贯穿下表。先将当前整页设置调整为 T3 的设置浮层及分组导航，再按主窗口/侧栏、聊天与输入区、具体设置与引导逐页复刻；同时继续修复实际后端和 Windows 验证问题。
 
 | 顺序 | 缺口与结果要求 | 核验方式 |
 | --- | --- | --- |
