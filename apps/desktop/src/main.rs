@@ -22,6 +22,7 @@ mod diagnostics;
 mod failures;
 mod image_input;
 mod project_files;
+mod project_scripts;
 mod git_workspace;
 mod history_navigation;
 mod keybindings;

@@ -24,6 +24,7 @@ pub enum SettingsSection {
     Appearance,
     Chat,
     Keybindings,
+    ProjectScripts,
     PiAccounts,
     Models,
     Team,
@@ -166,6 +167,7 @@ pub struct HiveApp {
     pub repair_program_focus: FocusHandle,
     pub preferences_nav_scroll: ScrollHandle,
     pub settings_section: SettingsSection,
+    pub(crate) project_scripts: Entity<crate::project_scripts::Page>,
     pub(crate) keybinding_settings: Entity<crate::keybindings::Editor>,
     pub settings_search: Entity<InputState>,
     pub pi_accounts: crate::settings::pi_accounts::PiAccounts,
@@ -431,6 +433,7 @@ impl HiveApp {
                 _ => {}
             },
         );
+        let scripts_owner = cx.weak_entity();
         let mut app = Self {
             conversation_sources: Vec::new(),
             navigation: NavigationSelection::default(),
@@ -497,6 +500,7 @@ impl HiveApp {
             repair_program_focus: cx.focus_handle(),
             preferences_nav_scroll: ScrollHandle::new(),
             settings_section: SettingsSection::Appearance,
+            project_scripts: cx.new(|cx| crate::project_scripts::Page::new(scripts_owner, window, cx)),
             keybinding_settings: cx.new(|cx| crate::keybindings::Editor::new(window, cx)),
             settings_search,
             pi_accounts: crate::settings::pi_accounts::PiAccounts::new(window, cx),

@@ -411,6 +411,7 @@ fn section_meta(section: SettingsSection) -> (&'static str, &'static str) {
     match section {
         SettingsSection::Appearance => ("外观", "主题、界面字号、语言与阅读预览"),
         SettingsSection::Chat => ("聊天", "发送快捷键、工具活动与思考展示"),
+        SettingsSection::ProjectScripts => ("项目脚本", "保存项目命令，手动运行并查看后台执行记录与输出"),
         SettingsSection::Keybindings => ("快捷键", "录制、停用与恢复全局快捷键，保存后重启应用生效"),
         SettingsSection::PiAccounts => ("内置 Pi", "连接提供商、订阅登录与 API Key"),
         SettingsSection::Models => ("模型与接口", "自定义接口、模型覆盖、上下文与能力"),
@@ -480,6 +481,7 @@ impl HiveApp {
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
                         SettingsSection::Remote => content.id("settings-remote-container").child(crate::focus_scroll::Viewport::new("remote-viewport", &self.remote.scroll, v_flex().flex_1().min_h_0().min_w_0().id("settings-remote-content").overflow_y_scroll().track_scroll(&self.remote.scroll).vertical_scrollbar(&self.remote.scroll).pr_1().child(self.render_remote_settings(cx)))),
+                        SettingsSection::ProjectScripts => content.id("settings-project-scripts-container").child(self.render_project_scripts(window, cx)),
                         SettingsSection::Keybindings => content.id("settings-keybindings-container").child(self.keybinding_settings.clone()),
                         SettingsSection::Chat => content.id("settings-chat-container")
                             .child(crate::focus_scroll::Viewport::new(

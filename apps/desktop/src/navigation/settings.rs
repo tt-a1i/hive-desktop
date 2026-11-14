@@ -75,6 +75,7 @@ impl HiveApp {
                         Glyph::Cpu,
                         Some(SettingsSection::Models),
                     ),
+                    ("settings-project-scripts-tab", tr("项目脚本"), Glyph::SquareTerminal, Some(SettingsSection::ProjectScripts)),
                     (
                         "settings-programs-tab",
                         tr("外部程序"),

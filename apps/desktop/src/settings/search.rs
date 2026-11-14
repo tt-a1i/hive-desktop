@@ -22,6 +22,7 @@ struct Entry {
     keywords: &'static str,
 }
 const ENTRIES: &[Entry] = &[
+    Entry { section: Some(SettingsSection::ProjectScripts), title: "项目脚本", description: "保存项目命令，手动运行并查看后台执行记录与输出", keywords: "project scripts command run stop output logs 项目 脚本 命令 运行 停止 输出 日志" },
     Entry {
         section: Some(SettingsSection::About),
         title: "关于与诊断",
