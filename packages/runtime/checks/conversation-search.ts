@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
-import { mkdtemp, writeFile, appendFile, rm, mkdir } from 'node:fs/promises';
+import fsPromises, { mkdtemp, writeFile, appendFile, rm, mkdir } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { searchConversation } from '../src/conversation-search.js';
@@ -28,9 +29,28 @@ try {
   await appendFile(file, JSON.stringify(entry('new', 'current', 'Fresh content')) + '\n');
   assert.equal((await search('fresh')).matches[0]?.messageId, 'new', 'appends are read on next search');
   const replaced = [...lines, entry('new', 'current', 'Other content')];
-  await writeFile(file, replaced.map(v => JSON.stringify(v)).join('\n') + '\n');
-  assert.equal((await search('other')).matches[0]?.messageId, 'new', 'same-size rewrites invalidate cached text');
-  assert.equal((await search('fresh')).matches.length, 0);
+  // Hold only this fixture's metadata constant while the actual file bytes
+  // change; this reproduces filesystems with indistinguishable stat values.
+  const originalStat = fsPromises.stat;
+  const frozenNumber = await originalStat(file);
+  const frozenBigInt = await originalStat(file, { bigint: true });
+  let frozenReads = 0;
+  fsPromises.stat = (async (path: Parameters<typeof originalStat>[0], options?: { bigint?: boolean }) => {
+    if (path === file) { frozenReads++; return options?.bigint ? frozenBigInt : frozenNumber; }
+    return originalStat(path, options as never);
+  }) as typeof fsPromises.stat;
+  syncBuiltinESMExports();
+  try {
+    assert.equal((await search('fresh')).matches[0]?.messageId, 'new');
+    await writeFile(file, replaced.map(v => JSON.stringify(v)).join('\n') + '\n');
+    assert.equal((await originalStat(file)).size, frozenNumber.size, 'fixture rewrite must keep the same size');
+    assert.equal((await search('other')).matches[0]?.messageId, 'new', 'same-size rewrites invalidate cached text');
+    assert.equal((await search('fresh')).matches.length, 0);
+    assert.ok(frozenReads > 0, 'search must receive the frozen fixture metadata');
+  } finally {
+    fsPromises.stat = originalStat;
+    syncBuiltinESMExports();
+  }
   await appendFile(file, '{broken\n');
   result = await search('missing');
   assert.equal(result.complete, false);

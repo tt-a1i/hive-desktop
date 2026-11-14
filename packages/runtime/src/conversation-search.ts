@@ -24,11 +24,6 @@ export type ConversationSearchOptions = {
   liveHistory?: { history: readonly unknown[]; historyMessageIds: readonly string[]; activeMessage?: { messageId: string; message: unknown } };
 };
 type Row = { id: string; message: unknown };
-// Cache only successfully parsed durable snapshots. A small LRU bounds retained
-// transcripts; every lookup stats all dependent files before using a snapshot.
-const rowCache = new Map<string, { fingerprint: string; rows: Row[]; bytes: number; complete: boolean; truncated: boolean; unresolved: boolean }>();
-const CACHE_LIMIT = 24;
-const CACHE_BYTES = 32 * 1024 * 1024;
 async function fingerprint(paths: string[]): Promise<string> {
   return JSON.stringify(await Promise.all(paths.map(async path => {
     try {
@@ -40,30 +35,14 @@ async function fingerprint(paths: string[]): Promise<string> {
     }
   })));
 }
-async function cachedRows(key: string, paths: string[], load: () => Promise<{ rows: Row[]; complete: boolean }>): Promise<{ rows: Row[]; complete: boolean; truncated: boolean; unresolved: boolean }> {
+async function freshRows(paths: string[], load: () => Promise<{ rows: Row[]; complete: boolean }>): Promise<{ rows: Row[]; complete: boolean; truncated: boolean; unresolved: boolean }> {
   const before = await fingerprint(paths);
-  const cached = rowCache.get(key);
-  if (cached?.fingerprint === before) {
-    rowCache.delete(key);
-    rowCache.set(key, cached);
-    return { rows: cached.rows, complete: cached.complete, truncated: cached.truncated, unresolved: cached.unresolved };
-  }
-  rowCache.delete(key);
   const loaded = await load();
   if (before !== await fingerprint(paths)) throw new Error('Conversation history changed while being read; retry search');
-  // Retain only searchable text, never raw images/provider payloads.
+  // Do not cache by stat metadata: same-size rewrites can preserve timestamps.
+  // Every search parses the durable source again; raw provider payloads are not retained.
   const projected = searchableRows(loaded.rows);
   const compact = projected.rows.map(row => ({ id: row.id, message: { role: 'assistant', content: row.text } }));
-  const bytes = compact.reduce((sum, row) => sum + Buffer.byteLength(row.message.content, 'utf8') + Buffer.byteLength(row.id, 'utf8'), 0);
-  if (bytes <= CACHE_BYTES) {
-    rowCache.set(key, { fingerprint: before, rows: compact, bytes, complete: loaded.complete, truncated: projected.truncated, unresolved: projected.unresolved });
-    let total = [...rowCache.values()].reduce((sum, item) => sum + item.bytes, 0);
-    while (rowCache.size > CACHE_LIMIT || total > CACHE_BYTES) {
-      const oldest = rowCache.keys().next().value!;
-      total -= rowCache.get(oldest)!.bytes;
-      rowCache.delete(oldest);
-    }
-  }
   return { rows: compact, complete: loaded.complete, truncated: projected.truncated, unresolved: projected.unresolved };
 }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -281,7 +260,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
     if (record.backend === 'pi' || record.backend === 'pi-rpc') {
       if (record.sessionFile) {
         const file = record.sessionFile;
-        const loaded = await cachedRows(`${record.backend}:${file}`, [file], async () => ({ rows: await piRows(file, record.backend as 'pi' | 'pi-rpc'), complete: true }));
+        const loaded = await freshRows([file], async () => ({ rows: await piRows(file, record.backend as 'pi' | 'pi-rpc'), complete: true }));
         rows = loaded.rows;
         truncated = loaded.truncated;
         unresolved = loaded.unresolved;
@@ -302,7 +281,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
       }
     } else if (record.codexThreadId) {
       const metadata = codexMetadataFile(options.codexDirectory, record.codexThreadId);
-      const loaded = await cachedRows(`codex:${metadata}`, [metadata, `${metadata}.display.json`], () => codexRows(record, options.codexDirectory));
+      const loaded = await freshRows([metadata, `${metadata}.display.json`], () => codexRows(record, options.codexDirectory));
       rows = loaded.rows;
       codexSynced = loaded.complete;
       truncated = loaded.truncated;
