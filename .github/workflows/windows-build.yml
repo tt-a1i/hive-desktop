@@ -2,6 +2,11 @@ name: Windows desktop build
 
 on:
   workflow_dispatch:
+    inputs:
+      replay_run:
+        description: Existing Windows run ID whose portable artifact will be replayed
+        required: false
+        type: string
   push:
     paths:
       - 'apps/desktop/**'
@@ -29,9 +34,11 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.replay_run }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -147,6 +154,7 @@ jobs:
             target/windows-*.png
           if-no-files-found: warn
   native-supervision:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.replay_run }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -166,6 +174,7 @@ jobs:
       - name: Test native process supervision
         run: cargo test --locked --manifest-path apps/desktop/Cargo.toml --no-default-features --features process-supervisor-check --bin process-supervisor-check -- --nocapture
   native-clis:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.replay_run }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -209,4 +218,57 @@ jobs:
             .artifacts/program-check/*.json
             .artifacts/file-attachments/core-receipt.json
             .artifacts/file-attachments/wire-receipt.json
+          if-no-files-found: warn
+  replay:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.replay_run != '' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      REPLAY_RUN: ${{ inputs.replay_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.3
+      - name: Validate original run ID
+        shell: pwsh
+        run: |
+          if ($env:REPLAY_RUN -cnotmatch '^[1-9][0-9]*$') { throw 'replay_run must be a positive integer.' }
+      - name: Download original portable artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hive-desktop-windows-portable
+          path: target/replay-download
+          run-id: ${{ env.REPLAY_RUN }}
+          github-token: ${{ github.token }}
+      - name: Extract and record provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $archive = 'target/replay-download/hive-desktop-windows-portable.zip'
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'Original portable zip is missing from artifact.' }
+          $origin = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:REPLAY_RUN" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $null -eq $origin.head_sha) { throw 'Could not read original run provenance.' }
+          New-Item -ItemType Directory -Force -Path target | Out-Null
+          [ordered]@{ originalRun = $env:REPLAY_RUN; originalHead = $origin.head_sha; fixtureHead = $env:GITHUB_SHA; archiveSha256 = (Get-FileHash -Algorithm SHA256 $archive).Hash } | ConvertTo-Json | Set-Content -Encoding utf8 target/replay-provenance.json
+          Expand-Archive -LiteralPath $archive -DestinationPath target/replay-extracted
+          if (-not (Test-Path -LiteralPath 'target/replay-extracted/hive-desktop.exe' -PathType Leaf)) { throw 'Extracted artifact is not a portable desktop bundle.' }
+      - name: Replay native window fixture
+        timeout-minutes: 4
+        shell: pwsh
+        env:
+          HIVE_WINDOWS_PREVIEW_PATH: target/windows-replay-workspace.png
+        run: |
+          node scripts/check-desktop-startup.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-replay.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload replay evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-replay-evidence
+          path: |
+            target/windows-*.png
+            target/windows-replay.log
+            target/replay-provenance.json
           if-no-files-found: warn
