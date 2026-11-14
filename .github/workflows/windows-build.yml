@@ -107,6 +107,16 @@ jobs:
       - name: Check session terminals with native Windows PTYs
         timeout-minutes: 5
         run: pnpm --filter @hive-desktop/runtime exec tsx checks/session-terminals-windows.ts --receipt target/session-terminals-windows.json
+      - name: Check saved project scripts with native Windows processes
+        timeout-minutes: 5
+        run: pnpm --filter @hive-desktop/runtime exec tsx checks/project-scripts-windows.ts --receipt target/project-scripts-windows.json
+      - name: Upload project script receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-project-scripts-receipt
+          path: packages/runtime/target/project-scripts-windows.json
+          if-no-files-found: warn
       - name: Upload session terminal receipt
         if: always()
         uses: actions/upload-artifact@v4
