@@ -127,6 +127,39 @@ function Reveal-Action([string] $Name) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "The fixture action '$Name' did not enter the window after focus."
 }
+function Find-MessageQuote([string] $Message) {
+    $bodyCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, $Message)
+    $quoteCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '引用消息到草稿')
+    $bodies = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $bodyCondition)
+    if ($bodies.Count -ne 1) { throw "Expected exactly one fixture message body; found $($bodies.Count)." }
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    $group = $walker.GetParent($bodies[0])
+    while ($null -ne $group -and $group.Current.ControlType -ne [System.Windows.Automation.ControlType]::Group) {
+        $group = $walker.GetParent($group)
+    }
+    if ($null -eq $group) { throw 'Fixture message group is absent.' }
+    $quotes = $group.FindAll([System.Windows.Automation.TreeScope]::Descendants, $quoteCondition)
+    if ($quotes.Count -ne 1) { throw "Expected exactly one quote action in fixture message; found $($quotes.Count)." }
+    return $quotes[0]
+}
+function Invoke-MessageQuote([string] $Message) {
+    $quote = Find-MessageQuote $Message
+    if (-not $quote.Current.IsEnabled) { throw 'Fixture message quote action is disabled.' }
+    if (-not (Test-VisibleControl $quote)) {
+        $quote.SetFocus()
+        $deadline = [DateTime]::UtcNow.AddSeconds(8)
+        do {
+            $quote = Find-MessageQuote $Message
+            if ($quote.Current.IsEnabled -and (Test-VisibleControl $quote)) { break }
+            Start-Sleep -Milliseconds 120
+        } while ([DateTime]::UtcNow -lt $deadline)
+    }
+    if (-not (Test-VisibleControl $quote)) { throw 'Fixture message quote action did not become visible.' }
+    $quote.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
+
 function Invoke-Action([string] $Name) {
     Write-Host "Invoking fixture control: $Name"
     $action = Reveal-Action $Name
@@ -312,7 +345,13 @@ Invoke-Action '展开 read 工具详情，完成 README.md'
 [void](Wait-Action '收起 read 工具详情，完成 README.md')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-tool-details.png')
 Wait-EditorText '聊天消息' $ExistingDraft
-Invoke-Action '引用消息到草稿'
+# Revisit the fixture message before locating its own quote action.
+Invoke-Action '查找当前会话'
+$query = Wait-Action '查找当前会话的消息和工具'
+$query.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($WorkerPrompt)
+Wait-EnabledState '下一条匹配消息' $true
+Invoke-Action '关闭会话查找'
+Invoke-MessageQuote $WorkerPrompt
 $quoted = "> $WorkerPrompt`n`n$ExistingDraft"
 Wait-EditorText '聊天消息' $quoted
 Invoke-Action '返回团队成员'
