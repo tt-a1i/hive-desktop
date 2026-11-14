@@ -304,38 +304,61 @@ impl HiveApp {
                                     .line_height(px(34.))
                                     .whitespace_normal()
                                     .child(if let Some(ws) = active_project.as_ref() {
-                                        h_flex()
-                                            .flex_wrap()
-                                            .justify_center()
-                                            .items_baseline()
-                                            .gap_1p5()
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight::NORMAL)
-                                                    .text_color(Color::Text.get(cx))
-                                                    .child(if english() {
-                                                        "What should we build in"
-                                                    } else {
-                                                        "在"
-                                                    }),
-                                            )
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(Color::Text.get(cx))
-                                                    .child(ws.name.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight::NORMAL)
-                                                    .text_color(Color::Text.get(cx))
-                                                    .child(if english() {
-                                                        "?"
-                                                    } else {
-                                                        "中构建什么？"
-                                                    }),
-                                            )
-                                            .into_any_element()
+                                        if english() {
+                                            h_flex()
+                                                .flex_wrap()
+                                                .justify_center()
+                                                .items_baseline()
+                                                .gap_1p5()
+                                                .child(
+                                                    div()
+                                                        .font_weight(FontWeight::NORMAL)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child("What should we build in"),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .items_baseline()
+                                                        .child(
+                                                            div()
+                                                                .font_weight(FontWeight::SEMIBOLD)
+                                                                .text_color(Color::Text.get(cx))
+                                                                .child(ws.name.clone()),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .font_weight(FontWeight::NORMAL)
+                                                                .text_color(Color::Text.get(cx))
+                                                                .child("?"),
+                                                        ),
+                                                )
+                                                .into_any_element()
+                                        } else {
+                                            h_flex()
+                                                .flex_wrap()
+                                                .justify_center()
+                                                .items_baseline()
+                                                .gap_1p5()
+                                                .child(
+                                                    div()
+                                                        .font_weight(FontWeight::NORMAL)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child("在"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child(ws.name.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .font_weight(FontWeight::NORMAL)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child("中构建什么？"),
+                                                )
+                                                .into_any_element()
+                                        }
                                     } else {
                                         div()
                                             .font_weight(FontWeight::MEDIUM)
