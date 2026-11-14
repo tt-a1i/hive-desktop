@@ -124,18 +124,9 @@ fn apply_screen(
             );
         }
         "chat:file-viewer" => {
-            let sample = app
-                .workspaces
-                .iter()
-                .find(|w| Some(&w.id) == app.workspace.as_ref())
-                .map(|w| std::path::PathBuf::from(&w.path).join("README.md"));
-            if let Some(path) = sample {
-                let _ = std::fs::write(
-                    &path,
-                    "# archify\n\nMinimal preview sample file for FileViewer QA.\n",
-                );
-                app.open_file_preview("README.md".to_owned(), window, cx);
-            }
+            // Preview the selected project's actual file. Route selection must
+            // never create or replace files in a user's workspace.
+            app.open_file_preview("README.md".to_owned(), window, cx);
         }
         _ => {}
     }

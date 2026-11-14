@@ -4,6 +4,8 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
+2026-11-14：以 T3 Code 为首要 UI/UX 与全部设置体验参考的完整产品目标已确认。固定团队/协作入口、聊天阅读设置、协作起步、窄窗任务输入与长标题修复已进入 `c24069c` 开发包。Mac 原生真实 Codex 协作、包内实际停止/排队/显式继续、冷恢复、写盘失败/重试与四组包检查通过，见 [真实协作](docs/validation/2026-11-14-collaboration-start-and-live.md) 和 [当前开发包](docs/validation/2026-11-14-collaboration-start-package.md)。当前已运行安装实例未替换。Claude/Antigravity 按用户要求本轮不验收；Pi 当前账号 invalid_grant，不重复登录。Windows 优化版编译、便携包与包内检查通过，原生窗口交互检查和完整产品验收继续。
+
 2026-11-09：采用 GPUI + gpui-kit 构建 macOS / Windows 原生界面，复用 Hive Node 后台。macOS 已分别跑通内置 Pi、外部 Codex 和外部 Pi 主控创建 Worker、派单、文件执行、显式汇报、主控核验及会话恢复。外部 Pi 的范围见 [团队验证](docs/validation/2026-11-07-external-pi-team.md)，Codex 见 [原生接入验证](docs/validation/2026-11-07-codex.md)。成员管理、Claude 官方 SDK 接入、账号与模型配置、全局置顶和便携开发包已加入；Claude 真实模型协作、完整配置、界面打磨和跨平台正式发行仍在实施。
 
 内置及外部 Pi 已接入原生技能/提示模板输入与会话命令选择器；历史压缩及写盘故障已做定向修复，当前验收状态见 [#3](https://github.com/tt-a1i/hive-desktop/issues/3) 和 [输入语义记录](docs/research/2026-11-08-pi-command-parity.md)。
@@ -19,7 +21,8 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 - 内置 Pi 和已接入的外部 Agent 均可担任 Orchestrator 或 Worker；选择外部主控时，由该 Agent 直接决策和处理汇报。
 - 首版提供统一聊天界面，包括消息流、工具执行和成员会话；终端作为辅助能力。
 - 接入层允许原生 SDK、原生 RPC 和 ACP 并存，具体后端按实际能力选型。
-- UI、配置体验结合 T3 Code、Beluga 与 Cindy 的合适设计，以 T3 Code / Beluga 的视觉与操作体验为重点，形成 Hive 自己的风格；Raven 和 Maka 继续作为接入架构参考。
+- T3 Code 是整体 UI/UX 和全部设置体验的首要参考，结合 Cindy、Beluga 的实际操作及开源实现，形成统一的 Hive 风格；Raven 和 Maka 继续作为接入架构参考。
+- 默认进入聊天工作台，团队成员与协作保留固定入口；协作主页、成员管理及全部设置先形成完整可用流程，再持续打磨。2026-11-14 的确认取代早期普通工作区隐藏团队入口的安排，具体实施与验收见 [完整产品计划](docs/product-completeness.md)。
 - 桌面界面使用 Rust、GPUI 与 gpui-kit；macOS 和 Windows 均为首版目标。保留 Node 后台，避免因 UI 选型重写已验证的协作业务。
 - 在本目录独立推进桌面项目，现有 Hive 仓库作为复用来源。
 
@@ -49,7 +52,7 @@ pnpm --filter @hive-desktop/runtime check:team
 
 这些检查使用临时数据目录，其中团队集成会运行真实 Hive HTTP / SQLite、Pi SDK 和 team CLI，但暂停模型执行。真实模型验证固定使用 Pi 原生 OpenAI / ChatGPT 接入的 `gpt-6.1-terra`，不依赖 Magpie；见 [协作验收记录](docs/validation/2026-11-07-structured-team.md)。
 
-当前 Mac 开发包及其验证边界见 [当前开发包](docs/validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)（上一版开发包见 [5bb7b0b 开发包](docs/validation/2026-11-13-backend-hardening-and-picker-craft-package.md)）。普通文件草稿使用紧凑文件行，草稿和历史中的文本附件可直接只读预览、复制、重新读取，见 [附件阅读](docs/validation/2026-11-08-attachment-preview.md)。普通文件和图片可选择/粘贴文件/拖放、混合或单独发送，并保留草稿和历史；普通文件通过 Hive 上传副本路径交给 Agent 按需读取。原始 Codex Terra 已实际读取删除源文件后的副本，并在桌面恢复工具记录和文件卡片，见 [文件验证](docs/validation/2026-11-08-file-attachments.md)。图片的原图查看、复制/保存已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。内置 Pi 的真实识图曾因 OAuth grant 失效失败；原生 Codex Terra 的真实识图、原图字节与完整后台重开恢复已通过，见 [Codex 图片实证](docs/validation/2026-11-09-codex-image-live.md)。Mac 系统图片选择/保存、取消与覆盖已补真实操作，原图字节及草稿冷读保持，见 [系统保存](docs/validation/2026-11-10-image-system-save.md)；外部 Pi 与 Codex 的合规多图历史增量读取/冷重开已入包，桌面长图片历史渲染性能和 Windows 原生体验仍待验收。
+Mac 开发包的历史验证边界见 [c0c1163 开发包](docs/validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)（上一版开发包见 [5bb7b0b 开发包](docs/validation/2026-11-13-backend-hardening-and-picker-craft-package.md)）。普通文件草稿使用紧凑文件行，草稿和历史中的文本附件可直接只读预览、复制、重新读取，见 [附件阅读](docs/validation/2026-11-08-attachment-preview.md)。普通文件和图片可选择/粘贴文件/拖放、混合或单独发送，并保留草稿和历史；普通文件通过 Hive 上传副本路径交给 Agent 按需读取。原始 Codex Terra 已实际读取删除源文件后的副本，并在桌面恢复工具记录和文件卡片，见 [文件验证](docs/validation/2026-11-08-file-attachments.md)。图片的原图查看、复制/保存已接入现有 Hive 用户消息及投递队列，验证边界见 [图片附件](docs/validation/2026-11-08-image-attachments.md)。内置 Pi 的真实识图曾因 OAuth grant 失效失败；原生 Codex Terra 的真实识图、原图字节与完整后台重开恢复已通过，见 [Codex 图片实证](docs/validation/2026-11-09-codex-image-live.md)。Mac 系统图片选择/保存、取消与覆盖已补真实操作，原图字节及草稿冷读保持，见 [系统保存](docs/validation/2026-11-10-image-system-save.md)；外部 Pi 与 Codex 的合规多图历史增量读取/冷重开已入包，桌面长图片历史渲染性能和 Windows 原生体验仍待验收。
 
 Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令处理，协作派单、汇报及恢复文本保持原有非交互投递。原始输入、实际后端消息及来源分开保留，见 [Pi 输入验证](docs/validation/2026-11-08-pi-user-input.md)。输入 `/` 或使用输入区命令按钮可筛选当前原生会话实际加载的技能、模板和扩展命令，选择只补入草稿，见 [命令选择验证](docs/validation/2026-11-08-pi-command-picker.md)。上述开发 ZIP 已纳入原生输入、选择器和历史/持久化修复；Windows 与正式发行边界单列。
 
@@ -93,4 +96,4 @@ Pi 显式用户输入已接入原生技能、提示模板与扩展 input/命令�
 
 进展与剩余范围见 [进度记录](docs/progress.md)，实际验收证据见 [基础阶段收据](docs/validation/2026-11-07-foundation.md)。早期 [选型原型](experiments/gpui-chat/README.md) 仅用于保留选型证据，正式应用位于 `apps/desktop`。
 
-当前 Mac 开发包为 c0c1163 优化 release，完成 Beluga 风格首次进入引导/本地 Agent 环境就绪面板与 T3 Code 风格主窗口骨架（macOS 沉浸式交通灯无割裂标题栏、256px 紧凑工程侧栏与 6px 语义状态圆点、768px 纯净会话流、26–28px 单行可折叠 WorkLog 思考/工具过程、空项目居中起草页与 `rounded-2xl` 悬浮输入框，以及冷调中性浅色/曜石石墨深色 `Theme` 令牌同步），并按产品结论暂缓日常单 Agent 工作区中的多 Agent 编排显式入口（底层协作与冷恢复完整保留）；精确更新原生主程序、1,313 键双语词条闭合检查、最新真实 Terra 三会话完整历史副本冷读与中英文三场景原生窗口启动/退出、四组包检查及 DMG 清单核对全部通过，见 [最新包记录](docs/validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)。本批无新厂商模型推理；通知送达/点击仍待授权，未签名/未公证，Windows 原生与完整目标继续开放。
+2026-11-13 历史开发包 c0c1163 为优化 release，完成 Beluga 风格首次进入引导/本地 Agent 环境就绪面板与 T3 Code 风格主窗口骨架（macOS 沉浸式交通灯无割裂标题栏、256px 紧凑工程侧栏与 6px 语义状态圆点、768px 纯净会话流、26–28px 单行可折叠 WorkLog 思考/工具过程、空项目居中起草页与 `rounded-2xl` 悬浮输入框，以及冷调中性浅色/曜石石墨深色 `Theme` 令牌同步），并按产品结论暂缓日常单 Agent 工作区中的多 Agent 编排显式入口（底层协作与冷恢复完整保留）；精确更新原生主程序、1,313 键双语词条闭合检查、最新真实 Terra 三会话完整历史副本冷读与中英文三场景原生窗口启动/退出、四组包检查及 DMG 清单核对全部通过，见 [最新包记录](docs/validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)。本批无新厂商模型推理；通知送达/点击仍待授权，未签名/未公证，Windows 原生与完整目标继续开放。

@@ -1,6 +1,8 @@
 use crate::app::HiveApp;
+mod position;
 mod view;
 use gpui_kit::*;
+pub(crate) use position::ThinkingPosition;
 use serde_json::Value;
 
 pub struct ThinkingBlock {
@@ -12,6 +14,22 @@ pub struct ThinkingBlock {
     pub redacted: bool,
 }
 
+fn reconcile_blocks(
+    mut blocks: Vec<ThinkingBlock>,
+    previous: &[ThinkingBlock],
+    default_expanded: bool,
+) -> Vec<ThinkingBlock> {
+    for block in &mut blocks {
+        block.expanded = !block.redacted
+            && previous
+                .iter()
+                .find(|old| old.index == block.index)
+                .map(|old| old.expanded)
+                .unwrap_or(default_expanded);
+    }
+    blocks
+}
+
 impl HiveApp {
     pub(crate) fn sync_thinking(
         &mut self,
@@ -20,6 +38,10 @@ impl HiveApp {
         running: bool,
         cx: &mut Context<Self>,
     ) {
+        let default_expanded = cx
+            .global::<crate::composer::ComposerPreferences>()
+            .settings
+            .expand_thinking;
         let blocks = value["content"]
             .as_array()
             .into_iter()
@@ -35,7 +57,7 @@ impl HiveApp {
                 (redacted || !text.is_empty()).then(|| ThinkingBlock {
                     index,
                     text: text.into(),
-                    expanded: false,
+                    expanded: default_expanded && !redacted,
                     running: running
                         && !redacted
                         && value["content"]
@@ -52,16 +74,7 @@ impl HiveApp {
         }
         if let Some(message) = self.messages.iter_mut().find(|message| message.id == id) {
             let previous = std::mem::take(&mut message.thinking);
-            message.thinking = blocks
-                .into_iter()
-                .map(|mut block| {
-                    block.expanded = !block.redacted
-                        && previous
-                            .iter()
-                            .any(|old| old.index == block.index && old.expanded);
-                    block
-                })
-                .collect();
+            message.thinking = reconcile_blocks(blocks, &previous, default_expanded);
             message.layout_revision += 1;
         }
         self.refresh_conversation_find(id, cx);
@@ -81,6 +94,10 @@ impl HiveApp {
             self.push_message(id.clone(), "assistant".into(), String::new(), cx);
         }
         self.finish_thinking_before(&id, index);
+        let default_expanded = cx
+            .global::<crate::composer::ComposerPreferences>()
+            .settings
+            .expand_thinking;
         let message = self
             .messages
             .iter_mut()
@@ -98,7 +115,7 @@ impl HiveApp {
             message.thinking.push(ThinkingBlock {
                 index,
                 text: delta,
-                expanded: false,
+                expanded: default_expanded,
                 running: true,
                 interrupted: false,
                 redacted: false,
@@ -130,5 +147,44 @@ impl HiveApp {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ThinkingBlock, reconcile_blocks};
+    fn block(index: usize, text: &str, expanded: bool, redacted: bool) -> ThinkingBlock {
+        ThinkingBlock {
+            index,
+            text: text.into(),
+            expanded,
+            running: false,
+            interrupted: false,
+            redacted,
+        }
+    }
+    #[test]
+    fn streamed_snapshot_keeps_manual_choice_and_new_text_without_exposing_redacted_blocks() {
+        let previous = [
+            block(0, "first delta", false, false),
+            block(1, "opened", true, false),
+        ];
+        let next = reconcile_blocks(
+            vec![
+                block(0, "first delta plus final delta", true, false),
+                block(1, "opened plus final delta", false, false),
+                block(2, "new block", false, false),
+            ],
+            &previous,
+            true,
+        );
+        assert!(!next[0].expanded);
+        assert_eq!(next[0].text, "first delta plus final delta");
+        assert!(next[1].expanded);
+        assert_eq!(next[1].text, "opened plus final delta");
+        assert!(next[2].expanded);
+        let hidden = reconcile_blocks(vec![block(1, "", true, true)], &next, true);
+        assert!(!hidden[0].expanded);
+        assert!(hidden[0].redacted);
     }
 }

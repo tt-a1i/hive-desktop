@@ -81,7 +81,9 @@ impl HiveApp {
             .messages
             .chunk_by(|a, b| a.completed_tool() && b.completed_tool())
         {
-            let grouped = group.len() > 1;
+            let grouped = group.len() > 1
+                && cx.global::<crate::composer::ComposerPreferences>().settings.tool_activity
+                    == crate::composer::ToolActivity::Grouped;
             let expanded = grouped
                 && (self.expanded_tool_groups.contains(&group[0].id)
                     || group

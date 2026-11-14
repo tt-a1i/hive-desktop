@@ -158,6 +158,7 @@ impl HiveApp {
                                     tr("加入队列，当前回复结束后按顺序处理").into()
                                 } else {
                                     cx.global::<crate::composer::ComposerPreferences>()
+                                        .settings
                                         .mode
                                         .hint()
                                 })

@@ -1,5 +1,21 @@
 # 完整目标的当前验收状态
 
+## 当前开发包 c24069c（2026-11-14）
+
+协作起步/窄窗任务编辑与长标题修复已进入 current/candidate ZIP、DMG。28,869项清单/29链接、四组包检查、今日真实三会话36条冷读、实际优化 payload 操作及真实 Codex 停止/队列冷开暂停/显式继续通过；原草稿和历史保持，进程清空。未替换用户运行中的安装实例。f9f3c2b 可回退，清理重复产物约1.62GB逻辑大小，见[包精确范围](validation/2026-11-14-collaboration-start-package.md)。下文为各阶段历史，完整目标继续。
+
+2026-11-14 账号范围：用户明确本轮无需验收尚未登录/配置的 Claude，Antigravity 同样无需验收。不尝试其登录或配置，也不把受控协议检查当成真实模型验收；其他产品开发继续。下文历史中的 Claude 账号待决项由此更新。
+
+协作起步、空筛选恢复及窄窗任务编辑已补实际 Mac 操作；从窗口创建/配置成员到真实 Codex/Terra 派单、显式汇报、独立文件断言与两次完整冷恢复通过。Pi 当前一次检查为 invalid_grant，不重复登录或推理；一主控/一成员、结构化产物及输入边界见[本批证据](validation/2026-11-14-collaboration-start-and-live.md)。新包和 Windows 完整运行另列，完整产品未完成。
+
+## 上一开发包 f9f3c2b（2026-11-14）
+
+固定团队/协作入口、工具与思考阅读设置及故障反馈已进入 current/candidate ZIP、DMG。四组包检查、完整清单、真实历史副本冷读及优化主程序/包内 Node/runtime 实际窗口通过，零新厂商推理；正在运行的安装实例未替换。见[当前包精确范围](validation/2026-11-14-workspace-chat-settings-package.md)。下文为各阶段历史，完整目标继续。
+
+## 2026-11-14：固定入口与聊天阅读设置（源码）
+
+按最新确认，T3Code 为首要 UI/UX 与所有设置参考，默认聊天工作台、团队/协作固定入口。已补齐常驻入口和工具/思考阅读设置，修复思考缓存、真实保存失败提示离屏及预览覆盖 README；Rust 42 passed、隔离 Mac 原生操作/故障重试/冷开/退出及 Windows 交叉检查通过，无新模型请求。见[精确证据与边界](validation/2026-11-14-workspace-chat-settings.md)。本轮开始时实查 current/candidate 为 `26ebdea` release，下面“当前”和“待入包”描述属于各阶段历史。新包另列，完整目标继续。
+
 ## 当前开发包 c0c1163 与清理（2026-11-13）
 
 Beluga 风格首次引导/本地 Agent 就绪面板与 T3 Code 风格主窗口骨架、macOS 沉浸式交通灯标题栏、256px 紧凑侧栏、768px 纯净会话流、单行 `WorkLog` 思考/工具过程与 `rounded-2xl` 悬浮输入框重构（`c0c1163`，按产品决策暂缓日常单 Agent 工作区中的多 Agent 编排显式入口，底层协作与冷恢复完整保留）已入 current/candidate、DMG 与 `/Applications/Hive Desktop.app`（ZIP SHA-256 `3ba3e9ccff339dac1a0498fc3f2d54aaf0feb6f83de5945b6611660f7c80241f`）。精确 1 项原生二进制变更、28,869 项清单/链接与 DMG/安装核对全部通过；包内四组正式包检查、d43f55e 真实三会话 40 条历史冷读+角色搜索→Rust，以及原生 macOS 中英文启动恢复与浅色/深色 `20 px` Beluga 引导页、深色 T3 Code 主窗口 Terra 冷读三次运行正常退出（`exit 0`，子进程清空）全部通过，零新厂商推理。`5bb7b0b` 保留直接可运行回退，退役 `992aae6` 解压树并清理临时参考克隆、安装备份与 Rust 中间构建缓存约 7.29 GB（6.79 GiB），见[包内证据与边界](validation/2026-11-13-beluga-t3code-ui-overhaul-package.md)。下文待入包/当前为各阶段历史状态，完整目标继续。

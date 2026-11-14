@@ -49,7 +49,8 @@ pub(crate) fn region(
         })
 }
 
-/// Preserve the native selection run while exposing its visible plain text.
+/// Preserve native selection. AccessKit Label text belongs in its value, which
+/// Windows exposes as the static text name and macOS exposes as AXValue.
 pub(crate) fn selectable_text(
     id: impl Into<SharedString>,
     text: impl Into<SharedString>,
@@ -59,7 +60,7 @@ pub(crate) fn selectable_text(
     div()
         .id(SharedString::from(format!("{id}-accessible")))
         .role(Role::Label)
-        .aria_label(text.clone())
+        .aria_value(text.clone())
         .min_w_0()
         .child(gpui_kit::base::SelectableText::new(id, text))
 }

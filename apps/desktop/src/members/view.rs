@@ -499,7 +499,7 @@ impl HiveApp {
                                             div()
                                                 .id("members-no-matches")
                                                 .role(Role::Label)
-                                                .aria_label(tr("没有匹配的成员"))
+                                                .aria_value(tr("没有匹配的成员"))
                                                 .text_sm()
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(Color::Text.get(cx))
@@ -509,7 +509,7 @@ impl HiveApp {
                                             div()
                                                 .id("members-no-matches-help")
                                                 .role(Role::Label)
-                                                .aria_label(tr(
+                                                .aria_value(tr(
                                                     "尝试其他名称、职责、角色或 Agent，或清除筛选。",
                                                 ))
                                                 .text_xs()
@@ -666,7 +666,7 @@ impl HiveApp {
                                                                                 "member-workload-{id}"
                                                                             )))
                                                                             .role(Role::Label)
-                                                                            .aria_label(
+                                                                            .aria_value(
                                                                                 workload_label.clone(),
                                                                             )
                                                                             .items_center()
@@ -1109,7 +1109,7 @@ impl HiveApp {
                                                                             "member-{id}-delete-prompt"
                                                                         )))
                                                                         .role(Role::Label)
-                                                                        .aria_label(if english() {
+                                                                        .aria_value(if english() {
                                                                             format!("Delete member {}?", member.name)
                                                                         } else {
                                                                             format!("删除成员 {}？", member.name)

@@ -1,6 +1,7 @@
 // Real owned JSONL subprocess + durable delivery spool; synthetic native peer, no model.
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile,rm,chmod} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';
+import {renameSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {Type} from 'typebox';
@@ -42,17 +43,24 @@ try{
   const cwd=join(root,`${origin}-${mode}`);await mkdir(cwd);await writeFile(join(cwd,'package.json'),'{"type":"commonjs"}');await writeFile(join(cwd,'app-server'),peer);
   const atTool=barrier(),releaseTool=barrier();const observed:any[]=[];let signal:AbortSignal|undefined;
   const options={cwd,sessionDir:join(cwd,'metadata'),command:process.execPath,model:{provider:'openai',id:'gpt-6.1-terra'},onEvent(event:any){observed.push(event);},customTools:[{name:'hold',description:'held host tool',parameters:Type.Object({}),execute:async(_id:string,_args:unknown,input?:AbortSignal)=>{signal=input;atTool.release();await releaseTool.promise;return {content:[{type:'text' as const,text:'verified'}]};}}]};
-  const session=await createCodexSession(options);const errors:Error[]=[];const completedReports:string[]=[];
+  let session=await createCodexSession(options);const errors:Error[]=[];const completedReports:string[]=[];const acceptedIds:string[]=[];
+  const metadataDirectory=join(cwd,'metadata');let metadataSaved=false;
+  const restoreMetadata=()=>{if(metadataSaved){rmSync(metadataDirectory,{force:true});renameSync(join(cwd,'metadata.saved'),metadataDirectory);metadataSaved=false;}};
   const notice=(index:number)=>({version:1 as const,origin,displayText:index===1?'first notice':'second notice',...(origin==='report'&&{dispatchId:`dispatch-${index}`,workerId:`worker-${index}`,workerName:`proof-${index}`,artifacts:[`proof-${index}.txt`]})});
   const queue=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',completedIds:()=>session.completedDeliveryIds(),onError:error=>errors.push(error),onState:(_busy,id)=>{if(id){assert.ok(session.completedDeliveryIds().includes(id));completedReports.push(id);}},
    execute:item=>session.prompt(item.text,{deliveryId:item.id,presentation:item.presentation}),steer:item=>session.steer!(item.text,{deliveryId:item.id,presentation:item.presentation!})});
   try{
    await queue.enqueue(mode,true,{version:1,origin:'user',displayText:mode});await atTool.promise;
    if(mode==='user-order')await queue.enqueue('queued user',true,{version:1,origin:'user',displayText:'queued user'});
-   if(mode==='write-failure')await chmod(join(cwd,'metadata'),0o500);
+   if(mode==='write-failure'){
+    // chmod does not remove directory write access on Windows. Preserve the
+    // real metadata and obstruct its directory path on every platform instead.
+    renameSync(metadataDirectory,join(cwd,'metadata.saved'));metadataSaved=true;
+    writeFileSync(metadataDirectory,'Owned metadata write obstruction');
+   }
    await queue.enqueue('notice one',true,notice(1));
    if(mode==='normal'||mode==='before-ack')await queue.enqueue('notice two',true,notice(2));
-   const accepted=queue.pending;assert.equal(DeliveryQueue.persistedCount(join(cwd,'spool'),'chat'),accepted.length);
+   const accepted=queue.pending;acceptedIds.push(...accepted.map(item=>item.id));assert.equal(DeliveryQueue.persistedCount(join(cwd,'spool'),'chat'),accepted.length);
    if(origin==='report'&&(mode==='normal'||mode==='before-ack')){assert.deepEqual(queue.pendingReports.map(r=>r.processing),[true,true],'Reports appended to an active turn must show processing');assert.deepEqual(completedReports,[],'Processing is not durable completion');}
    if(origin==='report'&&mode==='user-order')assert.deepEqual(queue.pendingReports.map(r=>r.processing),[false]);
    if(mode==='interrupted'||mode==='consumed-interrupted'||mode==='no-ack'){
@@ -89,18 +97,29 @@ try{
     if(mode==='user-order')await assert.rejects(readFile(join(cwd,'steers.log')),{code:'ENOENT'});
    }else if(mode==='disconnect'||mode==='write-failure'){
     assert.equal(queue.pendingCount,2);assert.equal(errors.length,1);assert.equal(session.completedDeliveryIds().length,0);
+    assert.deepEqual(queue.pending,accepted,'Native failure must retain both exact original deliveries');
+    if(mode==='write-failure'){
+     assert.ok(errors[0]!.message.includes(metadataDirectory),'The obstructed metadata path must cause the failure');
+     restoreMetadata();await session.abort();await session.dispose();
+     session=await createCodexSession({...options,threadId:session.threadId});
+     assert.deepEqual(queue.pending,accepted,'Reconnecting after disk repair must not change accepted deliveries');
+     queue.resume();await queue.idle();
+     assert.equal(queue.pendingCount,0,`Explicit retry must consume the original deliveries after disk repair: ${errors.at(-1)?.message}`);
+     assert.equal(errors.length,1);assert.deepEqual(new Set(session.completedDeliveryIds()),new Set(acceptedIds));
+    }
    }
-  }finally{releaseTool.release();if(mode==='write-failure')await chmod(join(cwd,'metadata'),0o700);await session.abort();await queue.pause();await session.dispose();}
-  if(mode==='normal'||mode==='before-ack'||mode==='interrupted'||mode==='no-ack'){
+  }finally{releaseTool.release();try{restoreMetadata();}finally{await session.abort();await queue.pause();await session.dispose();}}
+  if(mode==='normal'||mode==='before-ack'||mode==='interrupted'||mode==='no-ack'||mode==='write-failure'){
    const restored=await createCodexSession({...options,threadId:session.threadId});
    try{
     const cold=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',startPaused:true,completedIds:()=>restored.completedDeliveryIds(),onError:error=>errors.push(error),execute:async()=>{throw new Error('Cold check must not invoke a model');}});
-    assert.equal(cold.pendingCount,(mode==='normal'||mode==='before-ack')?0:1);
+    assert.equal(cold.pendingCount,(mode==='normal'||mode==='before-ack'||mode==='write-failure')?0:1);
     if(origin==='report')assert.ok(cold.pendingReports.every(r=>!r.processing));
     const restoredMessages=restored.snapshot().history.filter((x:any)=>x.customType==='hive-delivery') as any[];
     const origins=restoredMessages.map(x=>x.presentation.origin);
     if(mode==='normal'||mode==='before-ack')assert.deepEqual(restoredMessages.slice(1).map(({presentation:{deliveryId,...presentation}}:any)=>presentation),[notice(1),notice(2)]);
-    assert.deepEqual(origins,(mode==='normal'||mode==='before-ack')?['user',origin,origin]:['user']);
+    if(mode==='write-failure')assert.deepEqual(new Set(restored.completedDeliveryIds()),new Set(acceptedIds),'Disk repair receipts must survive a cold reopen');
+    else assert.deepEqual(origins,(mode==='normal'||mode==='before-ack')?['user',origin,origin]:['user']);
    }finally{await restored.dispose();}
   }
  }

@@ -90,7 +90,7 @@ pub struct ConversationPosition {
     pub anchor: Option<crate::conversation_list::ReadingAnchor>,
     pub expanded: HashSet<String>,
     pub expanded_tool_groups: HashSet<String>,
-    pub expanded_thinking: HashSet<(String, usize)>,
+    pub thinking: crate::thinking::ThinkingPosition,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -402,7 +402,7 @@ impl HiveApp {
                     secondary: false,
                     shift: false,
                 } if this.composer_can_submit
-                    && cx.global::<crate::composer::ComposerPreferences>().mode
+                    && cx.global::<crate::composer::ComposerPreferences>().settings.mode
                         == crate::composer::SendMode::Enter =>
                 {
                     this.submit_composer_key(window, cx)

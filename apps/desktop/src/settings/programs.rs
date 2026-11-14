@@ -170,7 +170,7 @@ impl HiveApp {
                         ))
                     },
                 )
-                .child(super::settings_card(cx).children(entries.into_iter().enumerate().map(
+                .child(super::settings_card(cx).flex_shrink_0().children(entries.into_iter().enumerate().map(
                     |(index, (backend, label, input, effective))| {
                         div()
                             .w_full()
@@ -371,7 +371,7 @@ impl HiveApp {
                                 div()
                                     .id(SharedString::from(format!("program-{backend}-name")))
                                     .role(Role::Label)
-                                    .aria_label(label)
+                                    .aria_value(label)
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(Color::Text.get(cx))

@@ -7,7 +7,7 @@ use crate::{app::HiveApp, protocol::*};
 use gpui_kit::*;
 use serde_json::json;
 impl HiveApp {
-    fn remember_conversation_position(&mut self) {
+    fn remember_conversation_position(&mut self, cx: &App) {
         let Some(session) = self.session.as_ref() else {
             return;
         };
@@ -36,22 +36,23 @@ impl HiveApp {
                 anchor,
                 expanded,
                 expanded_tool_groups: self.expanded_tool_groups.clone(),
-                expanded_thinking: self
+                thinking: crate::thinking::ThinkingPosition::new(
+                    cx.global::<crate::composer::ComposerPreferences>().settings.expand_thinking,
+                    self
                     .messages
                     .iter()
                     .flat_map(|message| {
                         message
                             .thinking
                             .iter()
-                            .filter(|block| block.expanded)
-                            .map(|block| (message.id.clone(), block.index))
+                            .map(|block| ((message.id.clone(), block.index), block.expanded))
                     })
-                    .collect(),
+                ),
             },
         );
     }
 
-    fn restore_conversation_position(&mut self, id: &str) {
+    fn restore_conversation_position(&mut self, id: &str, cx: &App) {
         let position = self.positions.get(id);
         if let Some(position) = position {
             self.expanded_tool_groups
@@ -72,9 +73,10 @@ impl HiveApp {
         if let Some(position) = position {
             for message in &mut self.messages {
                 for block in &mut message.thinking {
-                    block.expanded = position
-                        .expanded_thinking
-                        .contains(&(message.id.clone(), block.index));
+                    block.expanded = position.thinking.expanded(
+                        cx.global::<crate::composer::ComposerPreferences>().settings.expand_thinking,
+                        &message.id, block.index, block.redacted,
+                    );
                 }
             }
         }
@@ -178,7 +180,7 @@ impl HiveApp {
         if self.workspace_removing.as_ref() == Some(&id) {
             return;
         }
-        self.remember_conversation_position();
+        self.remember_conversation_position(cx);
         self.close_roles();
         self.switch_draft(Some(format!("workspace:{id}")), cx);
         if let Some(previous) = &self.workspace {
@@ -586,7 +588,7 @@ impl HiveApp {
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
             return;
         }
-        self.remember_conversation_position();
+        self.remember_conversation_position(cx);
         self.close_memory();
         self.close_roles();
         self.switch_draft(Some(format!("session:{id}")), cx);
@@ -680,7 +682,7 @@ impl HiveApp {
                         for event in std::mem::take(&mut this.pending_events) {
                             this.agent_event(event, cx);
                         }
-                        this.restore_conversation_position(&id);
+                        this.restore_conversation_position(&id, cx);
                     }
                     Err(error) => this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(crate::app::ErrorNotice::Detail("打开会话响应错误",error.to_string())))),
                 }

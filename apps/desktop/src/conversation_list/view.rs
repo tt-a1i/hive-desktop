@@ -228,7 +228,7 @@ impl HiveApp {
                                             div()
                                                 .id(("report-state", i))
                                                 .role(Role::Label)
-                                                .aria_label(state.to_owned())
+                                                .aria_value(state.to_owned())
                                                 .rounded_full()
                                                 .bg(Color::Inset.get(cx))
                                                 .px_2()
@@ -271,7 +271,7 @@ impl HiveApp {
                         div()
                             .id(("message-body", i))
                             .role(Role::Label)
-                            .aria_label(markdown.read(cx).rendered_text().as_str().to_string())
+                            .aria_value(markdown.read(cx).rendered_text().as_str().to_string())
                             .child(TextView::new(markdown).selectable(true).stream_fade(true)),
                     )
                 },
@@ -284,7 +284,7 @@ impl HiveApp {
                         div()
                             .id(("message-body", i))
                             .role(Role::Label)
-                            .aria_label(body.clone())
+                            .aria_value(body.clone())
                             .min_w_0()
                             .when(is_delivery, |text| {
                                 text.text_sm().line_height(rems(1.5))
@@ -400,7 +400,7 @@ impl HiveApp {
                         div()
                             .id(("delivery-raw", i))
                             .role(Role::Label)
-                            .aria_label(
+                            .aria_value(
                                 message
                                     .delivery
                                     .as_ref()
@@ -545,7 +545,7 @@ impl HiveApp {
                                                         report.delivery_id
                                                     )))
                                                     .role(Role::Label)
-                                                    .aria_label(tr(report.status()).to_owned())
+                                                    .aria_value(tr(report.status()).to_owned())
                                                     .rounded_full()
                                                     .bg(Color::Inset.get(cx))
                                                     .px_2()
@@ -585,7 +585,7 @@ impl HiveApp {
                                         report.delivery_id
                                     )))
                                     .role(Role::Label)
-                                    .aria_label(report.text.clone())
+                                    .aria_value(report.text.clone())
                                     .text_sm()
                                     .line_height(rems(1.5))
                                     .child(report.text.clone()),

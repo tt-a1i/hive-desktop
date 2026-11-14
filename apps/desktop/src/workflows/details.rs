@@ -100,7 +100,7 @@ impl HiveApp {
                                 div()
                                     .id("workflow-detail-name")
                                     .role(Role::Label)
-                                    .aria_label(run.name.clone())
+                                    .aria_value(run.name.clone())
                                     .flex_1()
                                     .min_w_0()
                                     .text_base()
@@ -254,7 +254,7 @@ impl HiveApp {
                             div()
                                 .id("workflow-result-text")
                                 .role(Role::Label)
-                                .aria_label(format!("{result_heading}: {result}"))
+                                .aria_value(format!("{result_heading}: {result}"))
                                 .p_3()
                                 .rounded_lg()
                                 .bg(Color::Inset.get(cx))
@@ -275,7 +275,7 @@ impl HiveApp {
                 div()
                     .id("workflow-dispatch-count")
                     .role(Role::Label)
-                    .aria_label(format!(
+                    .aria_value(format!(
                         "{} · {}",
                         tr("关联派单"),
                         self.workflows.dispatches.len()
@@ -339,7 +339,7 @@ impl HiveApp {
                         div()
                             .id("workflow-log-count")
                             .role(Role::Label)
-                            .aria_label(format!(
+                            .aria_value(format!(
                                 "{} · {}",
                                 tr("运行日志"),
                                 self.workflows.logs.len()
@@ -485,7 +485,7 @@ impl HiveApp {
                         div()
                             .id("workflow-source-metadata")
                             .role(Role::Label)
-                            .aria_label(metadata.clone())
+                            .aria_value(metadata.clone())
                             .min_w_0()
                             .whitespace_normal()
                             .p_3()
@@ -597,7 +597,7 @@ impl HiveApp {
                             dispatch.id
                         )))
                         .role(Role::Label)
-                        .aria_label(format!("{label}: {text}"))
+                        .aria_value(format!("{label}: {text}"))
                         .p_2p5()
                         .rounded_lg()
                         .bg(Color::Inset.get(cx))

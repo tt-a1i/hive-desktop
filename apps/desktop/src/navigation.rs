@@ -19,8 +19,7 @@ use gpui_kit::{
 
 impl HiveApp {
     pub(crate) fn has_active_team_context(&self) -> bool {
-        let is_worker =
-            |id: &str| !id.ends_with(":orchestrator") && !id.ends_with(":__workflow__");
+        let is_worker = |id: &str| !id.ends_with(":orchestrator") && !id.ends_with(":__workflow__");
         self.member_panel
             || self.collaboration.visible
             || !self.pending_reports.is_empty()
@@ -102,8 +101,7 @@ impl HiveApp {
             .w_full()
             .gap_1p5()
             .when(in_sidebar, |bar| {
-                bar.px_1()
-                    .when(inset > px(0.), |b| b.pl(inset - px(4.)))
+                bar.px_1().when(inset > px(0.), |b| b.pl(inset - px(4.)))
             })
             .when(!in_sidebar, |bar| {
                 bar.px_3()
@@ -300,10 +298,7 @@ impl HiveApp {
         let workspaces = self.workspaces.clone();
         let active_workspace = self.workspace.clone();
         let connected = self.connected;
-        let selected = [
-            self.workflows.visible,
-            self.memory.visible,
-        ];
+        let selected = [self.workflows.visible, self.memory.visible];
         let filter_active = selected_filter.is_some() || selected.into_iter().any(|active| active);
         Button::new("navigation-more")
             .custom(palette::quiet_icon_variant(cx))
@@ -355,7 +350,11 @@ impl HiveApp {
                         let is_checked = selected_filter.as_deref() == Some(ws_id.as_str());
                         menu = menu.item(
                             PopupMenuItem::new(ws.name.clone())
-                                .icon(if is_checked { Glyph::Check } else { Glyph::Folder })
+                                .icon(if is_checked {
+                                    Glyph::Check
+                                } else {
+                                    Glyph::Folder
+                                })
                                 .checked(is_checked)
                                 .on_click(move |_, _, cx| {
                                     ws_state.update(cx, |state, cx| {
@@ -422,14 +421,14 @@ impl HiveApp {
                         }));
                     }
                     let weak = weak.clone();
-                    menu = menu.separator().item(
-                        PopupMenuItem::new(tr("移除当前工作区…")).on_click(
-                            move |_, window, cx| {
-                                let _ =
-                                    weak.update(cx, |this, cx| this.remove_workspace(window, cx));
-                            },
-                        ),
-                    );
+                    menu =
+                        menu.separator()
+                            .item(PopupMenuItem::new(tr("移除当前工作区…")).on_click(
+                                move |_, window, cx| {
+                                    let _ = weak
+                                        .update(cx, |this, cx| this.remove_workspace(window, cx));
+                                },
+                            ));
                 }
                 menu
             })
@@ -441,18 +440,13 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let show_team_footer = self.has_active_team_context();
         let terminal_enabled =
             self.connected && self.workspace.is_some() && self.workspace_writes_allowed();
-        let has_running_workflow = self
-            .workflows
-            .runs
-            .iter()
-            .any(|run| run.status == "running" || run.status == "queued");
-        let filter_ws_state =
-            window.use_keyed_state(SharedString::from("sidebar-workspace-filter"), cx, |_, _| {
-                None::<String>
-            });
+        let filter_ws_state = window.use_keyed_state(
+            SharedString::from("sidebar-workspace-filter"),
+            cx,
+            |_, _| None::<String>,
+        );
         let selected_filter = filter_ws_state
             .read(cx)
             .as_ref()
@@ -504,8 +498,8 @@ impl HiveApp {
         // Collect flat unarchived sessions across workspaces (or filtered to a workspace).
         let mut flat_sessions: Vec<&crate::protocol::Session> = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        let include_active = selected_filter.is_none()
-            || selected_filter.as_ref() == self.workspace.as_ref();
+        let include_active =
+            selected_filter.is_none() || selected_filter.as_ref() == self.workspace.as_ref();
         if include_active {
             for session in &self.sessions {
                 if !session.archived && seen_ids.insert(session.id.as_str()) {
@@ -544,9 +538,8 @@ impl HiveApp {
             .as_ref()
             .and_then(|id| self.workspaces.iter().find(|ws| &ws.id == id));
         let new_thread_workspace = filtered_workspace.or(active_workspace);
-        let in_new_thread = self.workspace.is_some()
-            && self.session.is_none()
-            && self.viewing_conversation();
+        let in_new_thread =
+            self.workspace.is_some() && self.session.is_none() && self.viewing_conversation();
         let show_new_thread_row =
             new_thread_workspace.is_some() && (in_new_thread || flat_sessions.is_empty());
 
@@ -704,9 +697,7 @@ impl HiveApp {
                                                 .h(px(28.))
                                                 .rounded_lg()
                                                 .label(tr("添加文件夹"))
-                                                .disabled(
-                                                    !self.connected || self.runtime.is_none(),
-                                                )
+                                                .disabled(!self.connected || self.runtime.is_none())
                                                 .on_click(cx.listener(|this, _, window, cx| {
                                                     this.add_workspace(window, cx)
                                                 })),
@@ -717,45 +708,41 @@ impl HiveApp {
                     .when_some(filtered_workspace, |section, ws| {
                         let clear_filter = filter_ws_state.clone();
                         section.child(
-                            h_flex()
-                                .w_full()
-                                .px_1()
-                                .pb_1p5()
-                                .child(
-                                    Button::new("clear-workspace-filter")
-                                        .custom(palette::sidebar_item_variant(true, cx))
-                                        .compact()
-                                        .h(px(24.))
-                                        .px_2()
-                                        .rounded_md()
-                                        .tooltip(tr("清除筛选"))
-                                        .accessibility_label(tr("清除筛选"))
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_1p5()
-                                                .child(palette::project_badge(&ws.name, 14., cx))
-                                                .child(
-                                                    div()
-                                                        .max_w(px(150.))
-                                                        .text_size(px(12.))
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .truncate()
-                                                        .child(ws.name.clone()),
-                                                )
-                                                .child(
-                                                    Icon::new(Glyph::X)
-                                                        .size(px(11.))
-                                                        .text_color(Color::Muted.get(cx)),
-                                                ),
-                                        )
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            clear_filter.update(cx, |state, cx| {
-                                                *state = None;
-                                                cx.notify();
-                                            });
-                                        })),
-                                ),
+                            h_flex().w_full().px_1().pb_1p5().child(
+                                Button::new("clear-workspace-filter")
+                                    .custom(palette::sidebar_item_variant(true, cx))
+                                    .compact()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .tooltip(tr("清除筛选"))
+                                    .accessibility_label(tr("清除筛选"))
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(palette::project_badge(&ws.name, 14., cx))
+                                            .child(
+                                                div()
+                                                    .max_w(px(150.))
+                                                    .text_size(px(12.))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .truncate()
+                                                    .child(ws.name.clone()),
+                                            )
+                                            .child(
+                                                Icon::new(Glyph::X)
+                                                    .size(px(11.))
+                                                    .text_color(Color::Muted.get(cx)),
+                                            ),
+                                    )
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        clear_filter.update(cx, |state, cx| {
+                                            *state = None;
+                                            cx.notify();
+                                        });
+                                    })),
+                            ),
                         )
                     })
                     .child(self.render_pinned_navigation(cx))
@@ -801,9 +788,7 @@ impl HiveApp {
                                                                 .text_size(px(11.5))
                                                                 .text_color(Color::Muted.get(cx))
                                                                 .child(
-                                                                    flat_sessions
-                                                                        .len()
-                                                                        .to_string(),
+                                                                    flat_sessions.len().to_string(),
                                                                 ),
                                                         )
                                                     })
@@ -866,10 +851,10 @@ impl HiveApp {
                                     let section = if show_new_thread_row {
                                         if let Some(ws) = new_thread_workspace {
                                             let ws_id = ws.id.clone();
-                                            let ws_selected =
-                                                self.workspace.as_ref() == Some(&ws.id)
-                                                    && self.session.is_none()
-                                                    && self.viewing_conversation();
+                                            let ws_selected = self.workspace.as_ref()
+                                                == Some(&ws.id)
+                                                && self.session.is_none()
+                                                && self.viewing_conversation();
                                             section.child(
                                                 Button::new("empty-project-new-thread")
                                                     .custom(palette::sidebar_item_variant(
@@ -949,7 +934,61 @@ impl HiveApp {
                                 }
                             }),
                     ),
-                ),
+            ))
+            .child(
+                v_flex()
+                    .flex_shrink_0()
+                    .w_full()
+                    .gap_1()
+                    .py_1()
+                    .border_t_1()
+                    .border_color(Color::Divider.get(cx))
+                    .child(
+                        Button::new("toggle-members")
+                            .custom(palette::sidebar_item_variant(self.member_panel, cx))
+                            .compact()
+                            .small()
+                            .h(px(30.))
+                            .w_full()
+                            .justify_start()
+                            .rounded_md()
+                            .icon(Glyph::Bot)
+                            .label(tr("团队成员"))
+                            .tooltip(tr("团队成员"))
+                            .accessibility_label(tr("团队成员"))
+                            .selected(self.member_panel)
+                            .disabled(!terminal_enabled)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.show_team(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("open-collaboration")
+                            .custom(palette::sidebar_item_variant(
+                                self.collaboration.visible,
+                                cx,
+                            ))
+                            .compact()
+                            .small()
+                            .h(px(30.))
+                            .w_full()
+                            .justify_start()
+                            .rounded_md()
+                            .icon(Glyph::Network)
+                            .label(tr("协作概览"))
+                            .tooltip(tr("协作概览"))
+                            .accessibility_label(tr("协作概览"))
+                            .selected(self.collaboration.visible)
+                            .disabled(!terminal_enabled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.hide_terminal(cx);
+                                this.open_collaboration(cx);
+                                if window.viewport_size().width < px(820.) {
+                                    this.sidebar_open = false;
+                                }
+                                cx.notify();
+                            })),
+                    ),
             )
             .child(
                 h_flex()
@@ -1005,66 +1044,23 @@ impl HiveApp {
                                 cx.notify();
                             })),
                     )
-                    .when(show_team_footer, |row| {
-                        row.child(
-                            Button::new("toggle-members")
-                                .custom(palette::quiet_icon_variant(cx))
-                                .compact()
-                                .xsmall()
-                                .h(px(28.))
-                                .w(px(28.))
-                                .rounded_md()
-                                .icon(Glyph::Bot)
-                                .tooltip(tr("团队成员"))
-                                .accessibility_label(tr("团队成员"))
-                                .selected(self.member_panel)
-                                .disabled(self.workspace.is_none())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.show_team(window, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("open-collaboration")
-                                .custom(palette::quiet_icon_variant(cx))
-                                .compact()
-                                .xsmall()
-                                .h(px(28.))
-                                .w(px(28.))
-                                .rounded_md()
-                                .icon(Glyph::Network)
-                                .tooltip(tr("协作概览"))
-                                .accessibility_label(tr("协作概览"))
-                                .selected(self.collaboration.visible)
-                                .disabled(self.workspace.is_none())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.hide_terminal(cx);
-                                    this.open_collaboration(cx);
-                                    if window.viewport_size().width < px(820.) {
-                                        this.sidebar_open = false;
-                                    }
-                                    cx.notify();
-                                })),
-                        )
-                    })
-                    .when(has_running_workflow || self.workflows.visible, |row| {
-                        row.child(
-                            Button::new("sidebar-workflows")
-                                .custom(palette::quiet_icon_variant(cx))
-                                .compact()
-                                .xsmall()
-                                .h(px(28.))
-                                .w(px(28.))
-                                .rounded_md()
-                                .icon(Glyph::Workflow)
-                                .tooltip(tr("工作流"))
-                                .accessibility_label(tr("工作流"))
-                                .selected(self.workflows.visible)
-                                .disabled(self.workspace.is_none())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.show_workflows(window, cx);
-                                })),
-                        )
-                    })
+                    .child(
+                        Button::new("sidebar-workflows")
+                            .custom(palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(28.))
+                            .w(px(28.))
+                            .rounded_md()
+                            .icon(Glyph::Workflow)
+                            .tooltip(tr("工作流"))
+                            .accessibility_label(tr("工作流"))
+                            .selected(self.workflows.visible)
+                            .disabled(!terminal_enabled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_workflows(window, cx);
+                            })),
+                    )
                     .child(div().flex_1())
                     .when(!self.pending_reports.is_empty(), |row| {
                         row.child(

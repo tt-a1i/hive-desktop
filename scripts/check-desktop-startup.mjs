@@ -14,6 +14,8 @@ const bundle = resolve(process.argv[flag + 1]);
 const languageFlag = process.argv.indexOf('--language');
 const language = languageFlag < 0 ? undefined : process.argv[languageFlag + 1];
 assert.ok(languageFlag < 0 || language === 'zh' || language === 'en', 'Use --language zh or --language en');
+assert.ok(!(process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH && language === 'en'),
+  'Windows preview controls require Chinese; use --language zh or omit HIVE_WINDOWS_PREVIEW_PATH for an English startup-only check');
 const mac = process.platform === 'darwin';
 const contents = join(bundle, 'Hive Desktop.app', 'Contents');
 const resources = mac ? join(contents, 'Resources') : join(bundle, 'resources');
@@ -151,7 +153,8 @@ try {
     const renamedLead = JSON.parse(await readFile(join(state, 'chats/index.json'), 'utf8')).find(session => session.id === leadChat);
     assert.equal(renamedLead.title, '启动方式核验');
     assert.equal(renamedLead.customTitle, true);
-    assert.equal(JSON.parse(await readFile(join(state, 'desktop-appearance.json'), 'utf8')), 'system');
+    assert.deepEqual(JSON.parse(await readFile(join(state, 'desktop-appearance.json'), 'utf8')),
+      { mode: 'system', font_size: 16 });
     const leadDraft = join(draftDir, `session-${leadChat}.json`);
     // The native restart flushes the unsubmitted input before replacing its sidecar.
     assert.equal(JSON.parse(await readFile(leadDraft, 'utf8')).input, '后台恢复核验草稿');

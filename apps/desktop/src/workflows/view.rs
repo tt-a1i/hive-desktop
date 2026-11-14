@@ -603,7 +603,7 @@ impl HiveApp {
                         div()
                             .id(SharedString::from(format!("schedule-name-{}", schedule.id)))
                             .role(Role::Label)
-                            .aria_label(basename(&schedule.script_path).to_owned())
+                            .aria_value(basename(&schedule.script_path).to_owned())
                             .flex_1()
                             .min_w_0()
                             .truncate()
@@ -619,7 +619,7 @@ impl HiveApp {
                                 schedule.id
                             )))
                             .role(Role::Label)
-                            .aria_label(if enabled {
+                            .aria_value(if enabled {
                                 tr("已启用")
                             } else {
                                 tr("已暂停")
@@ -802,7 +802,7 @@ impl HiveApp {
                                         schedule.id
                                     )))
                                     .role(Role::Label)
-                                    .aria_label(format!(
+                                    .aria_value(format!(
                                         "{}: {}",
                                         basename(&schedule.script_path),
                                         tr("删除该定时计划？运行历史会保留。")

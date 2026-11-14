@@ -74,6 +74,19 @@ function Find-Action([string] $Name) {
         [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
     return $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
 }
+function Save-FixtureFailure([string] $Reason) {
+    Write-Host "Fixture interaction failed: $Reason"
+    foreach ($label in @('外部程序', '选择 外部 Pi 可执行文件', '选择 Codex 可执行文件', '选择 Claude Code 可执行文件', 'Codex 可执行文件路径', '重新读取', '保存设置')) {
+        try {
+            $control = Find-Action $label
+            if ($null -eq $control) { Write-Host "Control '$label': absent"; continue }
+            $state = $control.Current
+            Write-Host "Control '$label': enabled=$($state.IsEnabled), offscreen=$($state.IsOffscreen), bounds=$($state.BoundingRectangle)"
+        } catch { Write-Warning "Could not inspect fixture control '$label': $_" }
+    }
+    try { Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-native-failure.png') }
+    catch { Write-Warning "Could not capture the fixture failure: $_" }
+}
 function Wait-Action([string] $Name, [int] $TimeoutSeconds = 8) {
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     do {
@@ -83,9 +96,84 @@ function Wait-Action([string] $Name, [int] $TimeoutSeconds = 8) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Could not reach the fixture action '$Name'."
 }
+function Wait-ActionsAbsent([string[]] $Names) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $remaining = @($Names | Where-Object { $null -ne (Find-Action $_) })
+        if ($remaining.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Fixture controls did not disappear: $($remaining -join ', ')."
+}
+
+function Test-VisibleControl($Control) {
+    $state = $Control.Current
+    $bounds = $state.BoundingRectangle
+    $windowBounds = $root.Current.BoundingRectangle
+    return (-not $state.IsOffscreen -and -not $bounds.IsEmpty -and $bounds.Width -gt 0 -and $bounds.Height -gt 0 -and
+        $windowBounds.Contains($bounds.X + $bounds.Width / 2, $bounds.Y + $bounds.Height / 2))
+}
+function Reveal-Action([string] $Name) {
+    $action = Wait-Action $Name
+    if (Test-VisibleControl $action) { return $action }
+    # GPUI's AX Invoke clicks the node's center. Focus first lets the actual
+    # viewport reveal an offscreen action before that coordinate click.
+    $action.SetFocus()
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $action = Find-Action $Name
+        if ($null -ne $action -and $action.Current.IsEnabled -and (Test-VisibleControl $action)) { return $action }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "The fixture action '$Name' did not enter the window after focus."
+}
+function Find-MessageQuote([string] $Message) {
+    $groupType = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Group)
+    $quoteName = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '引用消息到草稿')
+    $textType = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+    $matches = @()
+    foreach ($group in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $groupType)) {
+        if ($group.Current.Name -cne '你') { continue }
+        $quotes = $group.FindAll([System.Windows.Automation.TreeScope]::Descendants, $quoteName)
+        if ($quotes.Count -eq 0) { continue }
+        if ($quotes.Count -ne 1) { throw 'Fixture message group has multiple quote actions.' }
+        foreach ($body in $group.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textType)) {
+            if ($body.Current.Name -ceq $Message) { $matches += $quotes[0]; continue }
+            $pattern = $null
+            if ($body.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+                if ($pattern.Current.IsReadOnly -and $pattern.Current.Value -ceq $Message) { $matches += $quotes[0] }
+            } elseif ($body.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {
+                $range = $pattern.DocumentRange
+                if ($range.GetAttributeValue([System.Windows.Automation.TextPattern]::IsReadOnlyAttribute) -eq $true -and
+                    ($range.GetText(-1) -replace "`r`n", "`n").TrimEnd("`r", "`n") -ceq $Message) { $matches += $quotes[0] }
+            }
+        }
+    }
+    if ($matches.Count -ne 1) { throw "Expected exactly one quote action with matching read-only fixture text; found $($matches.Count)." }
+    return $matches[0]
+}
+function Invoke-MessageQuote([string] $Message) {
+    $quote = Find-MessageQuote $Message
+    if (-not $quote.Current.IsEnabled) { throw 'Fixture message quote action is disabled.' }
+    if (-not (Test-VisibleControl $quote)) {
+        $quote.SetFocus()
+        $deadline = [DateTime]::UtcNow.AddSeconds(8)
+        do {
+            $quote = Find-MessageQuote $Message
+            if ($quote.Current.IsEnabled -and (Test-VisibleControl $quote)) { break }
+            Start-Sleep -Milliseconds 120
+        } while ([DateTime]::UtcNow -lt $deadline)
+    }
+    if (-not (Test-VisibleControl $quote)) { throw 'Fixture message quote action did not become visible.' }
+    $quote.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
+
 function Invoke-Action([string] $Name) {
     Write-Host "Invoking fixture control: $Name"
-    $action = Wait-Action $Name
+    $action = Reveal-Action $Name
     $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
@@ -124,7 +212,9 @@ function Wait-Appearance([string] $Mode, [string] $Label) {
     do {
         if (Test-Path -LiteralPath $path) {
             $saved = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $path -Raw -Encoding UTF8)
-            if ($saved -ceq $Mode) {
+            # Theme changes must preserve the current font preference. The
+            # application now writes both fields rather than a legacy string.
+            if ($saved.mode -ceq $Mode -and $saved.font_size -eq 16) {
                 $statesMatch = $true
                 foreach ($choice in @('跟随系统', '浅色', '深色')) {
                     $control = Find-Action "外观：$choice"
@@ -141,6 +231,7 @@ function Wait-Appearance([string] $Mode, [string] $Label) {
     throw "Appearance '$Mode' was not persisted and selected in the native window."
 }
 
+try {
 # Only operate on this test app's window and the temporary Reviewer created by the startup check.
 Save-FixtureWindow $OutputPath
 [void](Wait-Action '打开或收起工作区与会话导航')
@@ -183,8 +274,11 @@ Invoke-Action '模型与接口'
 Wait-EditorText '提供商 ID' 'windows-provider-draft'
 Invoke-Action '关闭表单'
 Invoke-Action '放弃修改'
+Wait-ActionsAbsent @('放弃当前表单修改？', '放弃修改')
 [void](Wait-Action '添加提供商')
 Invoke-Action '外部程序'
+$programInput = Wait-Action 'Codex 可执行文件路径'
+$programInput.SetFocus()
 [void](Wait-Action '选择 Codex 可执行文件')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')
 if ($null -ne (Find-Action '更多工作区功能')) { throw 'Workspace navigation is covering preferences.' }
@@ -192,6 +286,9 @@ $codexPath = 'C:\Fixture Programs\codex.exe'
 $commandInput = Wait-Action 'Codex 可执行文件路径'
 $commandInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($codexPath)
 Invoke-Action '保存设置'
+# The busy action is named '处理中…'. A disabled '保存设置' means the actual
+# response has restored that name and the saved inputs are no longer modified.
+Wait-EnabledState '保存设置' $false
 Invoke-Action '角色模板'
 [void](Wait-Action '角色模板名称')
 Invoke-Action '外部程序'
@@ -250,7 +347,13 @@ Invoke-Action '展开 read 工具详情，完成 README.md'
 [void](Wait-Action '收起 read 工具详情，完成 README.md')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-tool-details.png')
 Wait-EditorText '聊天消息' $ExistingDraft
-Invoke-Action '引用消息到草稿'
+# Revisit the fixture message before locating its own quote action.
+Invoke-Action '查找当前会话'
+$query = Wait-Action '查找当前会话的消息和工具'
+$query.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($WorkerPrompt)
+Wait-EnabledState '下一条匹配消息' $true
+Invoke-Action '关闭会话查找'
+Invoke-MessageQuote $WorkerPrompt
 $quoted = "> $WorkerPrompt`n`n$ExistingDraft"
 Wait-EditorText '聊天消息' $quoted
 Invoke-Action '返回团队成员'
@@ -266,11 +369,11 @@ Invoke-Action '收起工作过程，2 项工具已完成'
 Invoke-Action '打开主会话'
 Invoke-Action '打开关联派单'
 [void](Wait-Action '在文件资源管理器中显示：review.txt')
-[void](Wait-Action '打开 Tester 的成员会话')
+[void](Wait-Action '打开成员会话: Tester')
 Invoke-Action '设置'
 Invoke-Action '角色模板'
 Invoke-Action '返回派单详情'
-[void](Wait-Action '打开 Tester 的成员会话')
+[void](Wait-Action '打开成员会话: Tester')
 Invoke-Action '复制派单编号'
 $deadline = [DateTime]::UtcNow.AddSeconds(8)
 while ((Get-Clipboard -Raw) -cne $DispatchId) {
@@ -278,7 +381,7 @@ while ((Get-Clipboard -Raw) -cne $DispatchId) {
     Start-Sleep -Milliseconds 120
 }
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-related-dispatch.png')
-Invoke-Action '打开 Tester 的成员会话'
+Invoke-Action '打开成员会话: Tester'
 Invoke-Action '返回派单详情'
 [void](Wait-Action '在文件资源管理器中显示：review.txt')
 Invoke-Action '返回来源会话'
@@ -322,14 +425,14 @@ Invoke-Action '取消'
 Write-Host 'Renamed the lead session without changing its draft or team binding.'
 
 Invoke-Action '搜索会话'
-$search = Wait-Action '搜索会话名称、项目或 Agent'
+$search = Wait-Action '搜索会话名称、项目路径或 Agent'
 $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('Reviewer')
 [void](Wait-Action '打开 Reviewer · Beta · Pi')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-session-search.png')
 Invoke-Action '打开 Reviewer · Beta · Pi'
 Wait-EditorText '聊天消息' $quoted
 Invoke-Action '搜索会话'
-$search = Wait-Action '搜索会话名称、项目或 Agent'
+$search = Wait-Action '搜索会话名称、项目路径或 Agent'
 $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('启动方式核验')
 Invoke-Action '打开 启动方式核验 · Beta · Pi'
 [void](Wait-Action '打开关联派单')
@@ -381,3 +484,7 @@ Invoke-Action '取消置顶'
 Wait-SessionPin $false
 Wait-EditorText '聊天消息' '后台恢复核验草稿'
 Write-Host 'Pinned and unpinned the named conversation without changing its timestamp or draft.'
+} catch {
+    Save-FixtureFailure $_.Exception.Message
+    throw
+}

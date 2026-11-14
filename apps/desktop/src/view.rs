@@ -310,7 +310,7 @@ impl HiveApp {
                 div()
                     .id("error-banner-text")
                     .role(Role::Label)
-                    .aria_label(
+                    .aria_value(
                         self.error
                             .as_ref()
                             .map(|error| error.text())
@@ -761,7 +761,7 @@ impl Render for HiveApp {
             self.workspace.is_none() && has_text && self.connected && !self.loading && !self.closing;
         self.composer_can_submit = can_submit || can_pick_project_to_send;
         let submit_on_enter = (can_submit || can_pick_project_to_send)
-            && cx.global::<crate::composer::ComposerPreferences>().mode
+            && cx.global::<crate::composer::ComposerPreferences>().settings.mode
                 == crate::composer::SendMode::Enter;
         if submit_on_enter != self.composer_submit_on_enter {
             self.composer_submit_on_enter = submit_on_enter;
@@ -979,7 +979,7 @@ impl Render for HiveApp {
                             } else if self.workflows.visible {
                                 self.render_workflows(window, cx)
                             } else if self.collaboration.visible {
-                                self.render_collaboration(cx)
+                                self.render_collaboration(window, cx)
                             } else if self.member_panel {
                                 self.render_members(window, narrow, cx)
                             } else {
@@ -1084,6 +1084,7 @@ impl Render for HiveApp {
                                                     h_flex()
                                                         .flex_1()
                                                         .min_w_0()
+                                                        .overflow_hidden()
                                                         .items_center()
                                                         .gap_2()
                                                         .when_some(
@@ -1133,6 +1134,7 @@ impl Render for HiveApp {
                                                                     .h(px(26.))
                                                                     .px_1p5()
                                                                     .rounded_md()
+                                                                    .flex_1()
                                                                     .min_w_0()
                                                                     .max_w(px(420.))
                                                                     .tooltip(tr("重命名会话"))
@@ -1151,10 +1153,11 @@ impl Render for HiveApp {
                                                                         div()
                                                                             .id("session-title")
                                                                             .role(Role::Label)
-                                                                            .aria_label(
+                                                                            .aria_value(
                                                                                 session_title
                                                                                     .clone(),
                                                                             )
+                                                                            .flex_1()
                                                                             .min_w_0()
                                                                             .truncate()
                                                                             .text_size(px(13.))

@@ -147,7 +147,7 @@ impl Render for ImageViewer {
                                     div()
                                         .id("image-dimensions")
                                         .role(Role::Label)
-                                        .aria_label(format!(
+                                        .aria_value(format!(
                                             "{} × {}",
                                             self.dimensions.0, self.dimensions.1
                                         ))
@@ -267,7 +267,7 @@ impl Render for ImageViewer {
                             div()
                                 .id("image-loading")
                                 .role(Role::Label)
-                                .aria_label(tr("正在读取原图…"))
+                                .aria_value(tr("正在读取原图…"))
                                 .size_full()
                                 .flex()
                                 .items_center()
@@ -285,7 +285,7 @@ impl Render for ImageViewer {
                         .gap_1p5()
                         .id("image-notice")
                         .role(Role::Label)
-                        .aria_label(text)
+                        .aria_value(text)
                         .text_xs()
                         .text_color(Color::Success.get(cx))
                         .child(Icon::new(Glyph::Check).size(px(12.)).text_color(Color::Success.get(cx)))
@@ -309,7 +309,7 @@ impl Render for ImageViewer {
                             .border_color(Color::Error.get(cx).opacity(0.24))
                             .id("image-error")
                             .role(Role::Label)
-                            .aria_label(text.clone())
+                            .aria_value(text.clone())
                             .text_xs()
                             .text_color(Color::Error.get(cx))
                             .child(Icon::new(Glyph::CircleAlert).size(px(14.)).text_color(Color::Error.get(cx)))
