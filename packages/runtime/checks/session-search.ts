@@ -68,10 +68,28 @@ try {
     runtime.chats.rename(record.id, '分页查找 ' + i);
     runtime.chats.setPinned(record.id,true);
   }
+  // Newer matches in another workspace must not consume the selected workspace's page.
+  for (let i = 0; i < 105; i++) {
+    const record = await runtime.chats.createRecord(projects[1].id);
+    runtime.chats.rename(record.id, '分页查找 other ' + i);
+  }
+  const scoped = await runtime.chats.search('分页查找', false, 0, projects[0].id);
+  assert.equal(scoped.total, 101);
+  assert.equal(scoped.matches.length, 100);
+  assert.ok(scoped.matches.every(hit => hit.session.workspaceId === projects[0].id));
+  assert.equal((await runtime.chats.search('分页查找', false, 100, projects[0].id)).matches.length, 1);
+  assert.equal((await runtime.chats.search('分页查找', false, 0, 'unknown-workspace')).total, 0);
+  for (const invalid of ['', '  ', null, 42, {}]) await assert.rejects(runtime.chats.search('', false, 0, invalid));
+  const archivedRecord = await runtime.chats.createRecord(projects[1].id);
+  runtime.chats.rename(archivedRecord.id, '归档范围');
+  await runtime.chats.setArchived(archivedRecord.id, true);
+  assert.equal((await runtime.chats.search('归档范围', true, 0, projects[1].id)).total, 1);
+  assert.equal((await runtime.chats.search('归档范围', true, 0, projects[0].id)).total, 0);
+  assert.equal((await runtime.chats.search('归档范围', false, 0, projects[1].id)).total, 0);
   const limited = await runtime.chats.search('分页查找');
-  assert.equal(limited.total, 101);
+  assert.equal(limited.total, 206);
   assert.equal(limited.matches.length, 100);
-  assert.equal((await runtime.chats.search('分页查找 100')).matches[0].session.title, '分页查找 100');
+  assert.equal((await runtime.chats.search('分页查找 100', false, 0, projects[0].id)).matches[0].session.title, '分页查找 100');
   const pins=await runtime.chats.pinned();
   assert.equal(pins.length,102,'Global pins must not inherit the search result cap');
   assert.equal(new Set(pins.map(hit=>hit.session.id)).size,102);

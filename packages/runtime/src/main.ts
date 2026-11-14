@@ -144,7 +144,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       chats.assertWorkspaceAvailable(workspace);
       return chats.attachments.addClipboard(workspace, params.image);
     }
-    case 'chat.search': return chats.search(params.query, params.archived, params.offset);
+    case 'chat.search': return chats.search(params.query, params.archived, params.offset, params.workspaceId);
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.createRecord':
     case 'chat.create': {
