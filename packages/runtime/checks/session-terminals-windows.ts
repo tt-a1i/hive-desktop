@@ -8,6 +8,29 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import type { TerminalEvent } from '../src/terminal-connection.js';
 
+// ConPTY emits OSC window-title updates and may echo a complete command before
+// its output. Only completed, independent output lines prove the command ran.
+function terminalText(text: string): string {
+ return text.replace(/\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)/g, '')
+  .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+}
+function observation(text: string, tag: string): {cwd: string; content: string} | undefined {
+ const normalized = terminalText(text).replaceAll('\r\n', '\n');
+ const lines = normalized.split('\n');
+ const end = lines.findIndex(line => line.trim() === `${tag}_END`);
+ if (end < 0 || end === lines.length - 1) return;
+ const data = lines.findIndex(line => line.trim() === `${tag}_DATA`);
+ const cwd = lines.find(line => line.startsWith(`${tag}_PWD:`));
+ if (!cwd || data < 0 || data + 1 !== end - 1) return;
+ return {cwd: cwd.slice(`${tag}_PWD:`.length).trim(), content: lines[data + 1]!.trim()};
+}
+// Regression for a real ConPTY transcript: echoed markers are not proof of
+// completion and title sequences can occur between the marker and file data.
+const sampleTag = 'HIVEFIXTURE';
+const echoed = `echo ${sampleTag}_DATA & type same.txt & echo ${sampleTag}_END\r\n`;
+assert.equal(observation(echoed, sampleTag), undefined);
+assert.deepEqual(observation(echoed + `${sampleTag}_PWD:C:\\fixture \r\n${sampleTag}_DATA \r\x1b]0;cmd.exe\x07\nroot\r\x1b]0;cmd.exe\x07\n${sampleTag}_END\r\n`, sampleTag), {cwd: 'C:\\fixture', content: 'root'});
+
 const receiptArg = process.argv.indexOf('--receipt');
 if (receiptArg >= 0 && !process.argv[receiptArg + 1]) throw Error('--receipt requires a path');
 const receiptPath = receiptArg < 0 ? undefined : resolve(process.argv[receiptArg + 1]!);
@@ -74,17 +97,19 @@ if (process.platform !== 'win32') {
    const tag = 'HIVE' + randomUUID().replaceAll('-', '');
    await input(id, '@echo off');
    await input(id, `echo ${content}>terminal-relative.txt & echo ${tag}_PWD:%CD% & echo ${tag}_DATA & type same.txt & echo. & echo ${tag}_END`);
-   const result = await wait(() => drain(id), text => text.includes(`${tag}_END`), 'cmd directory and file');
-   assert.ok(result.toLowerCase().includes(`${tag}_PWD:${path}`.toLowerCase()), `Wrong shell directory: ${result}`);
-   assert.match(result, new RegExp(`${tag}_DATA\\s*${content}\\s*${tag}_END`));
+   const result = await wait(async () => observation(await drain(id), tag), Boolean, 'cmd directory and file');
+   assert.ok(result);
+   assert.equal(result.cwd.toLowerCase(), path.toLowerCase(), 'Shell must use the requested directory');
+   assert.equal(result.content, content, 'Shell must read its own same-named file');
    assert.equal((await readFile(join(path, 'terminal-relative.txt'), 'utf8')).trim(), content);
    return tag;
   }
   async function shellPid(id: string) {
    const tag = 'PID' + randomUUID().replaceAll('-', '');
    await input(id, `powershell.exe -NoProfile -NonInteractive -Command "$p=(Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID)).ParentProcessId; Write-Output ('${tag}:' + $p)"`);
-   const result = await wait(() => drain(id), text => new RegExp(`${tag}:[0-9]+`).test(text), 'shell process id');
-   const pid = Number(result.match(new RegExp(`${tag}:([0-9]+)`))![1]);
+   const pattern = new RegExp(`(?:^|\\n)${tag}:([0-9]+)\\r?\\n`);
+   const result = await wait(async () => terminalText(await drain(id)), text => pattern.test(text), 'shell process id');
+   const pid = Number(result.match(pattern)![1]);
    assert.ok(Number.isSafeInteger(pid) && pid > 0 && alive(pid)); pids.push(pid); return pid;
   }
   const rootView = await attach(root.runId); await inspect(rootView.id, repo, 'root'); const rootPid = await shellPid(rootView.id);
@@ -92,7 +117,7 @@ if (process.platform !== 'win32') {
   await terminal.detach({attachmentId: first.id});
   const second = await attach(brun.runId, two.id); await inspect(second.id, b, 'two'); const bPid = await shellPid(second.id);
   assert.equal(new Set([rootPid, aPid, bPid]).size, 3);
-  const restored = await attach(arun.runId, one.id); assert.ok(restored.snapshot.includes(marker), 'Reattached shell must restore prior output');
+  const restored = await attach(arun.runId, one.id); assert.ok(observation(restored.snapshot, marker), 'Reattached shell must restore completed prior output');
   await assert.rejects(terminal.attach({workspaceId: workspace.id, sessionId: two.id, runId: arun.runId, attachmentId: randomUUID(), cols: 80, rows: 24}), /workspace and session/);
   await assert.rejects(terminal.attach({workspaceId: workspace.id, runId: arun.runId, attachmentId: randomUUID(), cols: 80, rows: 24}), /workspace and session/);
   await assert.rejects(terminal.stop({workspaceId: workspace.id, sessionId: two.id, runId: arun.runId}), /workspace and session/);
