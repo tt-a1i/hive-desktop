@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, realpath, rename, rm, rmdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -18,7 +18,33 @@ export interface ManagedWorktree {
   branch: string;
   baseOid: string;
 }
-type Intent = { state: 'creating' | 'ready'; record: ManagedWorktree };
+/** Private creation provenance, saved before any checkout; never accepted from an RPC caller. */
+export interface WorktreeCreation {
+  version: 1;
+  workspaceId: string;
+  backend: 'pi' | 'codex' | 'pi-rpc' | 'claude';
+  identityState: 'new' | 'known';
+  originAgentId?: string;
+  model?: {provider: string; id: string; name: string};
+}
+type Intent = { version?: 2; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation };
+function validateIntentCreation(intent: Intent): void {
+  if (intent?.version !== undefined && (intent.version !== 2 || intent.creation === undefined)
+    || intent?.creation !== undefined && intent.version !== 2)
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Versioned worktree creation provenance is missing or unsupported; legacy recovery was not used');
+  validateCreation(intent?.creation);
+}
+function validateCreation(creation: WorktreeCreation | undefined): void {
+  if (creation === undefined) return; // Older generic intents have no recoverable Worker identity.
+  const text = (value: unknown): value is string => typeof value === 'string' && !!value.trim() && value.length <= 4096 && !value.includes('\0');
+  if (!creation || creation.version !== 1 || !text(creation.workspaceId)
+    || !['pi','codex','pi-rpc','claude'].includes(creation.backend)
+    || !['new','known'].includes(creation.identityState)
+    || (creation.identityState === 'known' ? !text(creation.originAgentId) : creation.originAgentId !== undefined)
+    || (creation.model !== undefined && (!creation.model || !text(creation.model.provider) || !text(creation.model.id) || !text(creation.model.name))))
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree creation identity is invalid; it cannot be replaced with caller identity');
+}
+
 export class GitWorktreeError extends Error {
   constructor(public readonly code: string, message: string, options?: ErrorOptions) { super(message, options); this.name = 'GitWorktreeError'; }
 }
@@ -58,8 +84,16 @@ async function commonDir(cwd: string): Promise<string> {
 async function writeIntent(ownerDir: string, intent: Intent): Promise<void> {
   const tmp = join(ownerDir, `.${randomUUID()}.tmp`);
   try {
-    await writeFile(tmp, JSON.stringify(intent), { flag: 'wx', mode: 0o600 });
+    const document: Intent = intent.creation ? {...intent, version: 2} : intent;
+    validateIntentCreation(document);
+    const file = await open(tmp, 'wx', 0o600);
+    try { await file.writeFile(JSON.stringify(document)); await file.sync(); }
+    finally { await file.close(); }
     await rename(tmp, join(ownerDir, 'intent.json'));
+    if (process.platform !== 'win32') {
+      const directory = await open(ownerDir, 'r');
+      try { await directory.sync(); } finally { await directory.close(); }
+    }
   } finally { await rm(tmp, { force: true }); }
 }
 function ownerDir(dataRoot: string, chatId: string): string {
@@ -67,8 +101,9 @@ function ownerDir(dataRoot: string, chatId: string): string {
   return join(dataRoot, 'worktrees', chatId);
 }
 /** Explicit checkout: Git may invoke the user's configured checkout filters or hooks. */
-export async function createManagedWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string }): Promise<ManagedWorktree> {
+export async function createManagedWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation }): Promise<ManagedWorktree> {
   if (!chatIdValid(input.chatId)) throw new TypeError('Invalid chat ID');
+  validateCreation(input.creation);
   const project = await realpath(input.projectRoot);
   const repository = await realpath(await git(project, 'rev-parse', '--show-toplevel'));
   const prefix = relative(repository, project);
@@ -97,7 +132,7 @@ export async function createManagedWorktree(input: { projectRoot: string; dataRo
   const worktree = join(dir, 'tree');
   const record: ManagedWorktree = { version: 1, projectRoot: project, chatId: input.chatId, ownerToken: randomUUID(), repoCommonDir: common,
     managedWorktreeRoot: worktree, executionPath: join(worktree, prefix), projectPrefix: prefix, branch, baseOid };
-  try { await writeIntent(dir, { state: 'creating', record }); }
+  try { await writeIntent(dir, { state: 'creating', record, ...(input.creation && {creation: input.creation}) }); }
   catch (error) { await rmdir(dir).catch(() => {}); throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Could not save worktree creation intent', { cause: error }); }
   await git(project, 'worktree', 'add', '-b', branch, '--', worktree, baseOid);
   try {
@@ -109,7 +144,7 @@ export async function createManagedWorktree(input: { projectRoot: string; dataRo
   } catch (error) {
     throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Worktree created but ownership marker could not be established; retain it for manual inspection', { cause: error });
   }
-  try { await writeIntent(dir, { state: 'ready', record }); }
+  try { await writeIntent(dir, { state: 'ready', record, ...(input.creation && {creation: input.creation}) }); }
   catch (error) { throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Worktree created but ownership publication failed; inspect creation intent to recover', { cause: error }); }
   await validateManagedWorktree(root, record);
   return record;
@@ -124,6 +159,7 @@ async function verifyIdentity(dataRoot: string, record: ManagedWorktree): Promis
   const dir = ownerDir(root, record.chatId);
   if (await realpath(join(root, 'worktrees')) !== join(root, 'worktrees') || await realpath(dir) !== dir) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership directory was replaced');
   const intent = JSON.parse(await readFile(join(dir, 'intent.json'), 'utf8')) as Intent;
+  validateIntentCreation(intent);
   const keys: (keyof ManagedWorktree)[] = ['version', 'projectRoot', 'chatId', 'ownerToken', 'repoCommonDir', 'gitDir', 'managedWorktreeRoot', 'executionPath', 'projectPrefix', 'branch', 'baseOid'];
   if (!intent || !['creating', 'ready'].includes(intent.state) || !intent.record || keys.some(key => intent.record[key] !== record[key]) || record.version !== 1) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership does not match');
   if (await realpath(record.projectRoot) !== record.projectRoot || await commonDir(record.projectRoot) !== record.repoCommonDir) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Original project repository identity changed');
@@ -192,6 +228,7 @@ export async function readWorktreeIntent(dataRoot: string, chatId: string): Prom
   const dir = ownerDir(root, chatId);
   if (await realpath(join(root, 'worktrees')) !== join(root, 'worktrees') || await realpath(dir) !== dir) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership directory was replaced');
   const intent = JSON.parse(await readFile(join(dir, 'intent.json'), 'utf8')) as Intent;
+  validateIntentCreation(intent);
   if (!intent || !['creating', 'ready'].includes(intent.state) || intent.record?.version !== 1 || intent.record.chatId !== chatId) throw new Error('Invalid worktree intent');
   return intent;
 }
@@ -199,7 +236,7 @@ export async function readWorktreeIntent(dataRoot: string, chatId: string): Prom
 export async function recoverManagedWorktree(dataRoot: string, record: ManagedWorktree): Promise<ManagedWorktree> {
   const { root, intent, gitDir } = await verify(dataRoot, record);
   const recovered = { ...record, gitDir };
-  if (intent.state === 'creating') await writeIntent(ownerDir(root, record.chatId), { state: 'ready', record: recovered });
+  if (intent.state === 'creating') await writeIntent(ownerDir(root, record.chatId), { ...intent, state: 'ready', record: recovered });
   await validateManagedWorktree(root, recovered);
   return recovered;
 }

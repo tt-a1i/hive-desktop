@@ -30,7 +30,7 @@ import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffO
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
 import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
 import { previewGithubPr, createGithubPr, updateGithubPr, type GithubPrTarget, type GithubPrWriteRequest } from './github-prs.js';
-import { createManagedWorktree, readWorktreeIntent, recoverManagedWorktree, validateManagedWorktree, type ManagedWorktree } from './git-worktrees.js';
+import { createManagedWorktree, readWorktreeIntent, recoverManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
 import { readdir, realpath } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
@@ -148,7 +148,10 @@ export class Chats implements StructuredSessionPort {
   /** Resolve only persisted ownership. A missing worktree never falls back to the team root. */
   private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
     if (!record.execution) return workspace.path;
-    const {record: owned} = await readWorktreeIntent(this.dataDir, record.id);
+    const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
+    if (creation && (creation.workspaceId !== record.workspaceId || creation.backend !== record.backend
+      || creation.originAgentId && creation.originAgentId !== record.originAgentId))
+      throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Worktree creation provenance and conversation identity disagree.');
     const original = await realpath(workspace.path);
     if (owned.projectRoot !== original || owned.executionPath !== record.execution.path || owned.branch !== record.execution.branch) {
       throw new Error('会话工作树与团队项目或保存的执行目录不匹配；已停止恢复，请检查工作树。');
@@ -218,38 +221,51 @@ export class Chats implements StructuredSessionPort {
     let entries;
     try { entries = await readdir(join(this.dataDir, 'worktrees'), {withFileTypes: true}); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {pending: [], unreadable: 0}; throw error; }
-    const pending: {sessionId: string; branch: string; path: string; state: string}[] = [];
+    const pending: {sessionId: string; branch: string; path: string; state: string; backend?: ChatBackend; originAgentId?: string; legacy?: true; identityRecorded?: false}[] = [];
     let unreadable = 0;
     for (const entry of entries) {
       if (!entry.isDirectory() || this.index.peek(entry.name)) continue;
       try {
         const intent = await readWorktreeIntent(this.dataDir, entry.name);
-        if (intent.record.projectRoot === projectRoot) pending.push({sessionId: entry.name, branch: intent.record.branch,
-          path: intent.record.executionPath, state: intent.state});
+        if (intent.record.projectRoot === projectRoot && (!intent.creation || intent.creation.workspaceId === workspaceId)) pending.push({sessionId: entry.name, branch: intent.record.branch,
+          path: intent.record.executionPath, state: intent.state, ...(intent.creation ? {backend: intent.creation.backend, ...(intent.creation.originAgentId && {originAgentId: intent.creation.originAgentId})} : {legacy: true as const, identityRecorded: false as const})});
       } catch { unreadable++; }
     }
     return {pending, unreadable};
   }
-  async recoverWorktreeRecord(workspaceId: string, id: string, backend: ChatBackend = 'pi') {
+  async recoverWorktreeRecord(workspaceId: string, id: string, backend?: ChatBackend, memberId?: string): Promise<ChatRecord & {legacy?: true; identityRecorded?: false; recoveryKind?: 'new-orchestrator'}> {
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
       const existing = this.index.peek(id);
       if (existing) {
         if (existing.workspaceId !== workspaceId || !existing.execution) throw new Error('会话身份已被使用，未覆盖现有记录。');
+        const {creation} = await readWorktreeIntent(this.dataDir, id);
+        if (creation && creation.workspaceId !== workspaceId
+          || backend !== undefined && (backend !== existing.backend || creation && backend !== creation.backend)
+          || memberId !== undefined && (memberId !== existing.originAgentId || memberId !== creation?.originAgentId))
+          throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Recovery cannot replace the saved creation backend or original member.');
         await this.sessionExecution(id);
-        return existing;
+        return {...existing, ...(!creation && {legacy: true as const, identityRecorded: false as const,
+          // A previously bound legacy Worker keeps its reliable index origin;
+          // only the generic recovery path creates a new orchestrator record.
+          ...((existing.identityState === 'new' || existing.originAgentId === `${workspaceId}:orchestrator`)
+            && {recoveryKind: 'new-orchestrator' as const})})};
       }
       const workspace = await this.workspace(workspaceId);
-      const {record: owned} = await readWorktreeIntent(this.dataDir, id);
+      const {record: owned, creation} = await readWorktreeIntent(this.dataDir, id);
+      if (creation && creation.workspaceId !== workspaceId || creation && backend !== undefined && backend !== creation.backend
+        || memberId !== undefined && memberId !== creation?.originAgentId)
+        throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Recovery uses only the original creation backend and member; caller identity cannot replace them.');
       if (owned.projectRoot !== await realpath(workspace.path)) throw new Error('待恢复的工作树不属于当前项目。');
       const recovered = await recoverManagedWorktree(this.dataDir, owned);
-      const record: ChatRecord = {id, workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new',
+      const record: ChatRecord = {id, workspaceId, backend: creation?.backend ?? backend ?? 'pi', title: '新会话', sessionFile: null, updatedAt: Date.now(),
+        identityState: creation?.identityState ?? 'new', ...(creation?.originAgentId && {originAgentId: creation.originAgentId}), ...(creation?.model && {model: creation.model}),
         execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
       this.index.save(record);
-      return record;
+      return {...record, ...(!creation && {legacy: true as const, identityRecorded: false as const, recoveryKind: 'new-orchestrator' as const})};
     });
   }
   private executionGuidance(workspace: WorkspaceSummary, path: string): string {
@@ -705,7 +721,7 @@ export class Chats implements StructuredSessionPort {
         completedIds: () => handle.completedDeliveryIds(),
         userInputMutationReason: item => {
           const current = this.index.get(record.id);
-          return (!current.agentId || current.agentId === `${current.workspaceId}:orchestrator`)
+          return (!(current.agentId ?? current.originAgentId) || (current.agentId ?? current.originAgentId) === `${current.workspaceId}:orchestrator`)
             && item.presentation?.messageSequence === undefined ? 'legacy' : undefined;
         },
         ...(handle.steer && {steer: (item: import('./delivery-queue.js').DeliveryItem) => handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!})}),
@@ -833,21 +849,14 @@ export class Chats implements StructuredSessionPort {
     this.opening.set(id, opening);
     return opening;
   }
-  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string} = {}) {
-    return this.withWorkspace(workspaceId, async () => {
-    this.assertWorkspaceAvailable(workspaceId);
-    if (this.closing) throw new Error('Chat runtime is closing');
-    const workspace = await this.workspace(workspaceId);
-    this.assertWorkspaceAvailable(workspaceId);
-    if (this.closing) throw new Error('Chat runtime is closing');
-    const record: ChatRecord = { id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new' };
+  private async saveNewRecord(workspace: WorkspaceSummary, record: ChatRecord, options: {isolation?: 'worktree'; branch?: string}) {
     if (options.isolation === 'worktree') {
-      const owned: ManagedWorktree = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id,
+      const creation: WorktreeCreation = {version: 1, workspaceId: record.workspaceId, backend: record.backend,
+        identityState: record.originAgentId ? 'known' : 'new', ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.model && {model: record.model})};
+      const owned = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id, creation,
         ...(options.branch !== undefined && {branch: options.branch})});
       record.execution = {kind: 'worktree', path: owned.executionPath, branch: owned.branch};
-      // Keep the private intent/worktree if this final save fails. Never remove
-      // code that a configured checkout hook may already have created.
-      this.assertWorkspaceAvailable(workspaceId);
+      this.assertWorkspaceAvailable(record.workspaceId);
       if (this.closing) throw new Error(`会话创建已停止；工作树仍保留，可按会话 ${record.id} 恢复。`);
     }
     try { this.index.save(record); }
@@ -856,7 +865,59 @@ export class Chats implements StructuredSessionPort {
       throw error;
     }
     return record;
+  }
+  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string} = {}) {
+    return this.withWorkspace(workspaceId, async () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error('Chat runtime is closing');
+      const workspace = await this.workspace(workspaceId);
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error('Chat runtime is closing');
+      return this.saveNewRecord(workspace, {id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new'}, options);
     });
+  }
+  /** Create only: never binds, stops or starts the Worker's currently selected conversation. */
+  async createMemberWorktree(workspaceId: string, memberId: string, options: {branch?: string; backend?: ChatBackend} = {}) {
+    return this.withWorkspace(workspaceId, async () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error('Chat runtime is closing');
+      this.validateMemberOrigin(workspaceId, memberId);
+      const workspace = await this.workspace(workspaceId);
+      const team = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspaceId)}/team`) as {id: string}[];
+      if (!team.some(member => member.id === memberId)) throw new SessionIdentityError('MEMBER_NOT_FOUND', 'Select an existing Worker in this workspace.');
+      const config = this.runtime.peekAgentLaunchConfig(workspaceId, memberId);
+      const backends: Record<string, ChatBackend> = {'hive:pi': 'pi', 'hive:codex': 'codex', 'hive:pi-rpc': 'pi-rpc', 'hive:claude': 'claude'};
+      const backend = config && backends[config.command];
+      if (!backend) throw new SessionIdentityError('MEMBER_BACKEND_UNSUPPORTED', 'This Worker has no supported structured backend configuration.');
+      if (options.backend !== undefined && options.backend !== backend) throw new SessionIdentityError('MEMBER_BACKEND_MISMATCH', 'The requested backend differs from this Worker configuration. Create using the Worker backend.');
+      const args = config?.args ?? [], providerAt = args.indexOf('--provider'), modelAt = args.indexOf('--model');
+      const provider = providerAt >= 0 ? args[providerAt + 1] : undefined, modelId = modelAt >= 0 ? args[modelAt + 1] : undefined;
+      if ((providerAt >= 0 || modelAt >= 0) && (!provider?.trim() || !modelId?.trim() || provider.startsWith('--') || modelId.startsWith('--')))
+        throw new SessionIdentityError('MEMBER_MODEL_INVALID', 'The Worker launch model must provide both provider and model.');
+      this.assertWorkspaceAvailable(workspaceId);
+      if (this.closing) throw new Error('Chat runtime is closing');
+      const record: ChatRecord = {id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(),
+        originAgentId: memberId, identityState: 'known', ...(provider && modelId && {model: {provider, id: modelId, name: modelId}})};
+      const saved = await this.saveNewRecord(workspace, record, {isolation: 'worktree', ...(options.branch !== undefined && {branch: options.branch})});
+      return this.publicSession(saved, saved.execution!.path);
+    });
+  }
+  private validateMemberOrigin(workspaceId: string, memberId: string) {
+    if (typeof memberId !== 'string' || !memberId.trim() || memberId === `${workspaceId}:orchestrator` || memberId === `${workspaceId}:__workflow__`)
+      throw new SessionIdentityError('MEMBER_INVALID', 'An existing Worker identity is required; orchestrator and workflow identities are not allowed.');
+  }
+  async memberWorktrees(workspaceId: string, memberId: string) {
+    this.assertWorkspaceAvailable(workspaceId);
+    this.validateMemberOrigin(workspaceId, memberId);
+    await this.workspace(workspaceId);
+    const records = this.index.list(workspaceId).filter(record => record.originAgentId === memberId && record.execution?.kind === 'worktree');
+    return {sessions: await Promise.all(records.map(async record => {
+      const session = this.publicSession(record, record.execution!.path);
+      try { await this.sessionExecution(record.id); return {...session, executionAvailable: true as const}; }
+      catch (error) { return {...session, executionAvailable: false as const, executionError: {
+        code: error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'WORKTREE_UNAVAILABLE',
+        message: error instanceof Error ? error.message : String(error)}}; }
+    }))};
   }
   async create(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string} = {}) {
     const record = await this.createRecord(workspaceId, backend, options);

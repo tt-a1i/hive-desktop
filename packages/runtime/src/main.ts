@@ -78,6 +78,14 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     }
     case 'team.member.create': return runtime.createMember(text(params, 'workspaceId'), { name: params.name, role: params.role, backend: params.backend,
       ...(params.description !== undefined && { description: params.description }) });
+    case 'member.worktree.create': {
+      if (params.backend !== undefined && !['pi','codex','pi-rpc','claude'].includes(params.backend as string)) throw new Error('Unsupported chat backend');
+      if (params.branch !== undefined && typeof params.branch !== 'string') throw new Error('Branch must be text');
+      return chats.createMemberWorktree(text(params, 'workspaceId'), text(params, 'memberId'), {
+        ...(params.backend !== undefined && {backend: params.backend as 'pi' | 'codex' | 'pi-rpc' | 'claude'}),
+        ...(typeof params.branch === 'string' && {branch: params.branch})});
+    }
+    case 'member.worktrees': return chats.memberWorktrees(text(params, 'workspaceId'), text(params, 'memberId'));
     case 'team.members': {
       const workspace = text(params, 'workspaceId');
       const members = await hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspace)}/team`) as { id: string }[];
@@ -179,7 +187,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.worktrees.pending': return chats.pendingWorktrees(text(params, 'workspaceId'));
     case 'chat.worktrees.recover': {
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');
-      return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend);
+      return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend, params.memberId === undefined ? undefined : text(params, 'memberId'));
     }
     case 'chat.createRecord':
     case 'chat.create': {
