@@ -132,8 +132,14 @@ function Find-MessageQuote([string] $Message) {
         [System.Windows.Automation.AutomationElement]::NameProperty, $Message)
     $quoteCondition = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::NameProperty, '引用消息到草稿')
-    $bodies = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $bodyCondition)
-    if ($bodies.Count -ne 1) { throw "Expected exactly one fixture message body; found $($bodies.Count)." }
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $bodies = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $bodyCondition)
+        if ($bodies.Count -gt 1) { throw "Expected exactly one fixture message body; found $($bodies.Count)." }
+        if ($bodies.Count -eq 1) { break }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($bodies.Count -ne 1) { throw 'Fixture message body did not appear in the accessibility tree.' }
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
     $group = $walker.GetParent($bodies[0])
     while ($null -ne $group -and $group.Current.ControlType -ne [System.Windows.Automation.ControlType]::Group) {
