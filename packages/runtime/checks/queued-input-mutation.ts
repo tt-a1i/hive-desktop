@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import type { Chats } from '../src/chats.js';
 import type { DeliveryQueue } from '../src/delivery-queue.js';
@@ -14,7 +16,20 @@ const previous = process.env.PI_CODING_AGENT_DIR, offline = process.env.PI_OFFLI
 process.env.PI_CODING_AGENT_DIR = agent; process.env.PI_OFFLINE = '1';
 const queueOf = (chats: Chats, id: string) => (chats as unknown as { live: Map<string, { queue: DeliveryQueue }> }).live.get(id)!.queue;
 let runtime: Awaited<ReturnType<typeof createDesktopRuntime>> | undefined;
+let modelRequests = 0;
+const modelServer = createServer((_request, response) => {
+ modelRequests++;
+ response.writeHead(500).end('Unexpected fixture model request');
+});
 try {
+ modelServer.listen(0, '127.0.0.1');
+ await once(modelServer, 'listening');
+ const address = modelServer.address();
+ assert.ok(address && typeof address !== 'string');
+ await writeFile(join(agent, 'models.json'), JSON.stringify({ providers: { openai: {
+  api: 'openai-responses', baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: 'fixture-only',
+  models: [{ id: 'gpt-6.1-terra', name: 'Terra fixture metadata', input: ['text'] }],
+ } } }));
  const events: any[] = [];
  const state = join(directory, 'state'); runtime = await createDesktopRuntime(state, event => events.push(event));
  const workspace = await runtime.hive.request('POST', '/api/workspaces', { path: directory, name: 'Queue mutation', autostart_orchestrator: false }) as { id: string };
@@ -94,8 +109,15 @@ try {
 
  console.log('QUEUED_INPUT_MUTATION_OK: exact duplicate provenance, immutable attachment/suffix, CAS, SQL audit/cancel, precommit rollback, stale-edit and before/after cancel crash recovery. Real Hive HTTP/SQLite, no model calls.');
 } finally {
- await runtime?.close();
- if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
- if (offline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE = offline;
- await rm(directory, { recursive: true, force: true });
+ try { await runtime?.close(); }
+ finally {
+  try {
+   if (modelServer.listening) await new Promise<void>((resolve, reject) => modelServer.close(error => error ? reject(error) : resolve()));
+  } finally {
+   if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous;
+   if (offline === undefined) delete process.env.PI_OFFLINE; else process.env.PI_OFFLINE = offline;
+   await rm(directory, { recursive: true, force: true });
+  }
+ }
+ assert.equal(modelRequests, 0, 'Fixture model must never receive a request');
 }
