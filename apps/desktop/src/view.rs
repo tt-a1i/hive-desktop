@@ -10,6 +10,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::{Input, Textarea},
+        menu::{DropdownMenu, PopupMenuItem},
         *,
     },
     *,
@@ -79,6 +80,188 @@ impl HiveApp {
                         }),
                     ),
             )
+            .into_any_element()
+    }
+
+    fn render_chat_breadcrumb(
+        &self,
+        project: Option<crate::protocol::Workspace>,
+        title: String,
+        disabled: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let backend = match self
+            .session
+            .as_ref()
+            .map(|session| session.backend)
+            .unwrap_or_default()
+        {
+            crate::protocol::Backend::Pi => "pi",
+            crate::protocol::Backend::Codex => "codex",
+            crate::protocol::Backend::PiRpc => "pi-rpc",
+            crate::protocol::Backend::Claude => "claude",
+        };
+        h_flex()
+            .flex_1()
+            .min_w_0()
+            .overflow_hidden()
+            .items_center()
+            .gap_2()
+            .when_some(project, |crumb, project| {
+                let project_id = project.id.clone();
+                let label = if english() {
+                    format!("New conversation in {}", project.name)
+                } else {
+                    format!("在 {} 中新建会话", project.name)
+                };
+                crumb
+                    .child(
+                        Button::new("chat-project-new-session")
+                            .custom(crate::palette::quiet_icon_variant(cx))
+                            .compact()
+                            .h(px(26.))
+                            .px_1p5()
+                            .rounded_md()
+                            .min_w_0()
+                            .max_w(px(160.))
+                            .flex_shrink_1()
+                            .tooltip(label.clone())
+                            .accessibility_label(label)
+                            .disabled(
+                                !self.connected || self.loading || !self.workspace_writes_allowed(),
+                            )
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(crate::palette::project_badge(&project.name, 14., cx))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(13.))
+                                            .text_color(Color::Secondary.get(cx))
+                                            .child(project.name),
+                                    ),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.new_session_in_project(project_id.clone(), backend, cx)
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(12.))
+                            .text_color(Color::Muted.get(cx).opacity(0.55))
+                            .child("/"),
+                    )
+            })
+            .when_some(self.session.clone(), |crumb, session| {
+                let weak = cx.weak_entity();
+                let rename = weak.clone();
+                let rename_id = session.id.clone();
+                let double_click_id = rename_id.clone();
+                let archive_blocked = self.session_archive_blocked(&session.id);
+                let pinning = self.session_pin_loading.contains(&session.id)
+                    || self.session_archive_loading.contains(&session.id);
+                crumb.child(
+                    v_flex().flex_1().min_w_0().max_w(px(420.)).child(
+                        Button::new("session-title-menu")
+                            .custom(crate::palette::quiet_icon_variant(cx))
+                            .compact()
+                            .h(px(26.))
+                            .px_1p5()
+                            .rounded_md()
+                            .w_full()
+                            .min_w_0()
+                            .tooltip(title.clone())
+                            .accessibility_label(if english() {
+                                format!("Current conversation actions: {title}")
+                            } else {
+                                format!("当前会话操作：{title}")
+                            })
+                            .disabled(disabled || pinning)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .id("session-title")
+                                            .role(Role::Label)
+                                            .aria_label(title.clone())
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_size(px(13.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(Color::Text.get(cx))
+                                            .child(title),
+                                    )
+                                    .child(
+                                        Icon::new(Glyph::ChevronDown)
+                                            .size(px(12.))
+                                            .flex_shrink_0()
+                                            .text_color(Color::Muted.get(cx)),
+                                    ),
+                            )
+                            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                if event.click_count() == 2
+                                    && !event.modifiers().modified()
+                                    && this
+                                        .session
+                                        .as_ref()
+                                        .is_some_and(|session| session.id == double_click_id)
+                                {
+                                    // The in-window menu leaves the title under the pointer.
+                                    // Removing its trigger closes it before the rename field appears.
+                                    this.begin_session_rename(window, cx);
+                                    let focus = this.session_name.read(cx).focus_handle(cx);
+                                    window.on_next_frame(move |window, cx| focus.focus(window, cx));
+                                }
+                            }))
+                            .dropdown_menu(move |menu, _, _| {
+                                let rename = rename.clone();
+                                let rename_id = rename_id.clone();
+                                let menu = menu
+                                    .item(PopupMenuItem::new(tr("重命名当前会话")).on_click(
+                                        move |_, window, cx| {
+                                            let _ =
+                                                rename.update(cx, |this, cx| {
+                                                    if this.session.as_ref().is_some_and(
+                                                        |session| session.id == rename_id,
+                                                    ) {
+                                                        this.begin_session_rename(window, cx);
+                                                    }
+                                                });
+                                        },
+                                    ))
+                                    .separator();
+                                Self::session_menu_items(
+                                    menu,
+                                    session.clone(),
+                                    archive_blocked,
+                                    weak.clone(),
+                                )
+                            }),
+                    ),
+                )
+            })
+            .when(self.session.is_none(), |crumb| {
+                crumb.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(13.))
+                        .text_color(Color::Text.get(cx))
+                        .child(tr("新对话")),
+                )
+            })
             .into_any_element()
     }
 
@@ -1085,120 +1268,7 @@ impl Render for HiveApp {
                                                 || self.session_name_loading
                                                 || !self.workspace_writes_allowed();
                                             header
-                                                .child(
-                                                    h_flex()
-                                                        .flex_1()
-                                                        .min_w_0()
-                                                        .overflow_hidden()
-                                                        .items_center()
-                                                        .gap_2()
-                                                        .when_some(
-                                                            active_project.clone(),
-                                                            |crumb, ws| {
-                                                                crumb
-                                                                    .child(
-                                                                        crate::palette::project_badge(
-                                                                            &ws.name,
-                                                                            18.,
-                                                                            cx,
-                                                                        ),
-                                                                    )
-                                                                    .child(
-                                                                        div()
-                                                                            .max_w(px(180.))
-                                                                            .flex_shrink_0()
-                                                                            .text_size(px(13.))
-                                                                            .font_weight(
-                                                                                FontWeight::MEDIUM,
-                                                                            )
-                                                                            .text_color(
-                                                                                Color::Secondary
-                                                                                    .get(cx),
-                                                                            )
-                                                                            .truncate()
-                                                                            .child(ws.name),
-                                                                    )
-                                                                    .child(
-                                                                        div()
-                                                                            .flex_shrink_0()
-                                                                            .text_size(px(12.))
-                                                                            .text_color(
-                                                                                Color::Muted
-                                                                                    .get(cx)
-                                                                                    .opacity(0.55),
-                                                                            )
-                                                                            .child("/"),
-                                                                    )
-                                                            },
-                                                        )
-                                                        .when(self.session.is_some(), |crumb| {
-                                                            crumb.child(
-                                                                Button::new("rename-session")
-                                                                    .custom(crate::palette::quiet_icon_variant(cx))
-                                                                    .compact()
-                                                                    .h(px(26.))
-                                                                    .px_1p5()
-                                                                    .rounded_md()
-                                                                    .flex_1()
-                                                                    .min_w_0()
-                                                                    .max_w(px(420.))
-                                                                    .tooltip(tr("重命名会话"))
-                                                                    .accessibility_label(tr(
-                                                                        "重命名当前会话",
-                                                                    ))
-                                                                    .disabled(title_disabled)
-                                                                    .on_click(cx.listener(
-                                                                        |this, _, window, cx| {
-                                                                            this.begin_session_rename(
-                                                                                window, cx,
-                                                                            )
-                                                                        },
-                                                                    ))
-                                                                    .child(
-                                                                        div()
-                                                                            .id("session-title")
-                                                                            .role(Role::Label)
-                                                                            .aria_label(
-                                                                                session_title
-                                                                                    .clone(),
-                                                                            )
-                                                                            .flex_1()
-                                                                            .min_w_0()
-                                                                            .truncate()
-                                                                            .text_size(px(13.))
-                                                                            .font_weight(
-                                                                                FontWeight::SEMIBOLD,
-                                                                            )
-                                                                            .text_color(
-                                                                                Color::Text.get(cx),
-                                                                            )
-                                                                            .child(
-                                                                                session_title
-                                                                                    .clone(),
-                                                                            ),
-                                                                    ),
-                                                            )
-                                                        })
-                                                        .when(
-                                                            self.session.is_none()
-                                                                && active_project.is_some(),
-                                                            |crumb| {
-                                                                crumb.child(
-                                                                    div()
-                                                                        .min_w_0()
-                                                                        .truncate()
-                                                                        .text_size(px(13.))
-                                                                        .font_weight(
-                                                                            FontWeight::MEDIUM,
-                                                                        )
-                                                                        .text_color(
-                                                                            Color::Text.get(cx),
-                                                                        )
-                                                                        .child(tr("新对话")),
-                                                                )
-                                                            },
-                                                        ),
-                                                )
+                                                .child(self.render_chat_breadcrumb(active_project.clone(), session_title.clone(), title_disabled, cx))
                                                 .when(has_session_failure, |bar| {
                                                     bar.child(
                                                         Button::new("show-session-failure")

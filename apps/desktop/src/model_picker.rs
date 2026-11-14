@@ -2,20 +2,30 @@ use crate::{app::HiveApp, language::tr, palette::Color};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
+        Icon,
         button::{Button, ButtonVariants},
         input::Input,
         popover::Popover,
         scroll::ScrollableElement,
-        Icon, *,
+        *,
     },
     prelude::FluentBuilder,
     *,
 };
 
 impl HiveApp {
-    pub(crate) fn model_picker(&self, window: &Window, running: bool, cx: &Context<Self>) -> AnyElement {
+    pub(crate) fn model_picker(
+        &self,
+        window: &Window,
+        running: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let current = self.model.as_ref();
-        let selected = current.and_then(|current| self.models.iter().find(|model| model.provider == current.provider && model.id == current.id));
+        let selected = current.and_then(|current| {
+            self.models
+                .iter()
+                .find(|model| model.provider == current.provider && model.id == current.id)
+        });
         let raw_name = selected
             .filter(|model| !model.name.trim().is_empty())
             .map(|model| model.name.clone())
@@ -48,14 +58,11 @@ impl HiveApp {
             .px_1p5()
             .rounded_lg()
             .selected(self.choosing_model)
+            .w_full()
             .min_w_0()
-            .max_w(px(if window.viewport_size().width < px(900.) {
-                220.
-            } else {
-                280.
-            }))
             .child(
                 h_flex()
+                    .w_full()
                     .min_w_0()
                     .items_center()
                     .gap_1p5()
@@ -69,12 +76,28 @@ impl HiveApp {
                     })
                     .child(
                         div()
+                            .flex_1()
                             .min_w_0()
                             .truncate()
                             .text_size(px(12.5))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(Color::Text.get(cx))
                             .child(name.clone()),
+                    )
+                    .when_some(effort, |row, level| {
+                        row.child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(12.))
+                                .text_color(Color::Muted.get(cx))
+                                .child(level),
+                        )
+                    })
+                    .child(
+                        Icon::new(Glyph::ChevronDown)
+                            .size(px(11.))
+                            .flex_shrink_0()
+                            .text_color(Color::Muted.get(cx)),
                     ),
             )
             .tooltip(format!(
@@ -82,8 +105,13 @@ impl HiveApp {
                 tr("只影响当前会话，不修改 Agent 全局默认")
             ))
             .disabled(unavailable);
-        if unavailable { return trigger.into_any_element(); }
+        if unavailable {
+            return trigger.into_any_element();
+        }
+        let mut trigger_layout = div().w_full().min_w_0();
+        let trigger_style = trigger_layout.style().clone();
         Popover::new("session-model-picker").anchor(Anchor::BottomRight)
+            .trigger_style(trigger_style)
             .p_0()
             .rounded_xl()
             .border_1()

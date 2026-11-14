@@ -172,6 +172,26 @@ function Invoke-Action([string] $Name) {
     $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
+function Open-CurrentConversationMenu {
+    # The current header is distinct from sidebar row actions. Its initial
+    # title is the real team member name, not a test-specific display alias.
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $buttons = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
+                $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+                $_.Current.Name.StartsWith('当前会话操作：')
+            })
+        if ($buttons.Count -eq 1) {
+            Invoke-Action $buttons[0].Current.Name
+            return
+        }
+        if ($buttons.Count -gt 1) { throw 'The owned window exposes multiple current conversation headers.' }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'The current conversation header menu was not available.'
+}
+
 function Toggle-Action([string] $Name) {
     Write-Host "Toggling fixture control: $Name"
     $action = Wait-Action $Name
@@ -419,10 +439,12 @@ if ([System.IO.File]::ReadAllText($TasksFile) -cne 'Agent update + My draft') { 
 Write-Host 'Verified conflict review and saving the reconciled task document in the native editor.'
 
 Invoke-Action '返回会话'
+Open-CurrentConversationMenu
 Invoke-Action '重命名当前会话'
 $titleInput = Wait-Action '会话名称'
 $titleInput.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('启动方式核验')
 Invoke-Action '保存名称'
+Invoke-Action '当前会话操作：启动方式核验'
 Invoke-Action '重命名当前会话'
 Wait-EditorText '会话名称' '启动方式核验'
 Invoke-Action '取消'

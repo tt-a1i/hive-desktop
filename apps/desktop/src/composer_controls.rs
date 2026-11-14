@@ -1,13 +1,9 @@
-use crate::{
-    app::HiveApp,
-    language::tr,
-    palette,
-    protocol::Backend,
-};
+use crate::{app::HiveApp, language::tr, palette, protocol::Backend};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
+        menu::{DropdownMenu, PopupMenuItem},
         *,
     },
     prelude::FluentBuilder,
@@ -32,7 +28,14 @@ impl HiveApp {
         can_send: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let _ = Self::command_button;
+        let footer_width = window.use_keyed_state("composer-footer-width", cx, |_, _| px(0.));
+        let width = *footer_width.read(cx);
+        let compact = if width > px(0.) {
+            width < px(480.)
+        } else {
+            window.viewport_size().width < px(900.)
+        };
+        let native_commands = self.pi_commands_available();
         let can_resume = !running
             && self
                 .session
@@ -44,46 +47,46 @@ impl HiveApp {
             && (self.delivery_failure.is_none() || self.agent_diagnostic.is_some());
 
         h_flex()
+            .id("composer-footer-controls")
+            .on_prepaint(move |bounds, window, cx| {
+                if *footer_width.read(cx) != bounds.size.width {
+                    footer_width.update(cx, |width, _| *width = bounds.size.width);
+                    window.refresh();
+                }
+            })
             .w_full()
             .min_w_0()
             .gap_2()
             .items_center()
             .pt_1()
             .child(
-                h_flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .child(
-                        Button::new("attach-images")
-                            .custom(palette::quiet_icon_variant(cx))
-                            .compact()
-                            .xsmall()
-                            .h(px(28.))
-                            .w(px(28.))
-                            .rounded_lg()
-                            .icon(Glyph::Paperclip)
-                            .tooltip(tr("添加文件或图片"))
-                            .accessibility_label(tr("添加文件或图片"))
-                            .disabled(
-                                !self.connected
-                                    || self.workspace.is_none()
-                                    || self.loading
-                                    || self
-                                        .session
-                                        .as_ref()
-                                        .is_some_and(|session| {
-                                            self.inflight_inputs.contains_key(&session.id)
-                                        })
-                                    || !self.attachments.ready(self.draft_target.as_ref()),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.choose_images(cx))),
-                    ),
+                h_flex().flex_shrink_0().items_center().child(
+                    Button::new("attach-images")
+                        .custom(palette::quiet_icon_variant(cx))
+                        .compact()
+                        .xsmall()
+                        .h(px(28.))
+                        .w(px(28.))
+                        .rounded_lg()
+                        .icon(Glyph::Paperclip)
+                        .tooltip(tr("添加文件或图片"))
+                        .accessibility_label(tr("添加文件或图片"))
+                        .disabled(
+                            !self.connected
+                                || self.workspace.is_none()
+                                || self.loading
+                                || self.session.as_ref().is_some_and(|session| {
+                                    self.inflight_inputs.contains_key(&session.id)
+                                })
+                                || !self.attachments.ready(self.draft_target.as_ref()),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.choose_images(cx))),
+                ),
             )
             .child(
                 h_flex()
                     .flex_1()
                     .min_w_0()
-                    .flex_wrap()
                     .justify_end()
                     .items_center()
                     .gap_0p5()
@@ -91,8 +94,47 @@ impl HiveApp {
                         row.child(self.new_chat_menu("home-agent", tr("选择 Agent"), None, cx))
                     })
                     .when(self.session.is_some(), |row| {
-                        row.child(self.model_picker(window, running, cx))
-                            .children(self.reasoning_picker_trigger(window, running, cx))
+                        row.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .max_w(px(300.))
+                                .child(self.model_picker(window, running, cx)),
+                        )
+                        .when(native_commands && !compact, |row| {
+                            row.child(self.command_button(cx))
+                        })
+                        .when(native_commands && compact, |row| {
+                            row.child(
+                                Button::new("composer-controls-overflow")
+                                    .custom(palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .h(px(28.))
+                                    .w(px(28.))
+                                    .rounded_lg()
+                                    .icon(Glyph::Ellipsis)
+                                    .tooltip(tr("更多输入选项"))
+                                    .accessibility_label(tr("更多输入选项"))
+                                    .disabled(
+                                        !self.connected || !self.conversation_ready || self.loading,
+                                    )
+                                    .dropdown_menu({
+                                        let weak = cx.weak_entity();
+                                        move |menu, _, _| {
+                                            let weak = weak.clone();
+                                            menu.item(
+                                                PopupMenuItem::new(tr("选择原生命令")).on_click(
+                                                    move |_, window, cx| {
+                                                        let _ = weak.update(cx, |this, cx| {
+                                                            this.toggle_native_commands(window, cx);
+                                                        });
+                                                    },
+                                                ),
+                                            )
+                                        }
+                                    }),
+                            )
+                        })
                     }),
             )
             .child(

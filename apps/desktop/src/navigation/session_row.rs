@@ -1,7 +1,57 @@
 use super::*;
 use crate::language::{english, tr};
+use gpui_kit::component::menu::PopupMenu;
 
 impl HiveApp {
+    pub(crate) fn session_archive_blocked(&self, id: &str) -> bool {
+        self.busy.contains(id)
+            || self.pending.get(id).copied().unwrap_or(0) > 0
+            || self.interaction_count(id) > 0
+    }
+
+    /// Shared by sidebar and title menus, with the original session identity
+    /// and archive guard captured for this menu opening.
+    pub(crate) fn session_menu_items(
+        menu: PopupMenu,
+        session: crate::protocol::Session,
+        archive_blocked: bool,
+        app: WeakEntity<Self>,
+    ) -> PopupMenu {
+        let archive_session = session.clone();
+        let archive_app = app.clone();
+        menu.item(
+            PopupMenuItem::new(if session.pinned {
+                tr("取消置顶")
+            } else {
+                tr("置顶会话")
+            })
+            .on_click(move |_, _, cx| {
+                let _ = app.update(cx, |this, cx| {
+                    this.set_session_pinned(session.clone(), !session.pinned, cx)
+                });
+            }),
+        )
+        .item(
+            PopupMenuItem::new(if archive_session.archived {
+                tr("恢复会话")
+            } else if archive_blocked {
+                tr("归档会话（需先处理当前任务）")
+            } else {
+                tr("归档会话")
+            })
+            .disabled(!archive_session.archived && archive_blocked)
+            .on_click(move |_, _, cx| {
+                let _ = archive_app.update(cx, |this, cx| {
+                    this.set_session_archived(
+                        archive_session.clone(),
+                        !archive_session.archived,
+                        cx,
+                    )
+                });
+            }),
+        )
+    }
+
     fn session_activity(&self, id: &str) -> Option<&'static str> {
         if self.interaction_count(id) > 0 {
             Some(tr("待回应"))
@@ -99,9 +149,7 @@ impl HiveApp {
         } else {
             None
         };
-        let archive_blocked = self.busy.contains(&id)
-            || self.pending.get(&id).copied().unwrap_or(0) > 0
-            || self.interaction_count(&id) > 0;
+        let archive_blocked = self.session_archive_blocked(&id);
         let menu_session = session.clone();
         let weak = cx.weak_entity();
         let pinning =
@@ -139,41 +187,7 @@ impl HiveApp {
                 !self.connected || pinning || self.workspace_removing.as_ref() == Some(&project),
             )
             .dropdown_menu(move |menu, _, _| {
-                let session = menu_session.clone();
-                let weak = weak.clone();
-                let archive_session = session.clone();
-                let archive_app = weak.clone();
-                menu.item(
-                    PopupMenuItem::new(if session.pinned {
-                        tr("取消置顶")
-                    } else {
-                        tr("置顶会话")
-                    })
-                    .on_click(move |_, _, cx| {
-                        let _ = weak.update(cx, |this, cx| {
-                            this.set_session_pinned(session.clone(), !session.pinned, cx)
-                        });
-                    }),
-                )
-                .item(
-                    PopupMenuItem::new(if archive_session.archived {
-                        tr("恢复会话")
-                    } else if archive_blocked {
-                        tr("归档会话（需先处理当前任务）")
-                    } else {
-                        tr("归档会话")
-                    })
-                    .disabled(!archive_session.archived && archive_blocked)
-                    .on_click(move |_, _, cx| {
-                        let _ = archive_app.update(cx, |this, cx| {
-                            this.set_session_archived(
-                                archive_session.clone(),
-                                !archive_session.archived,
-                                cx,
-                            )
-                        });
-                    }),
-                )
+                Self::session_menu_items(menu, menu_session.clone(), archive_blocked, weak.clone())
             });
         h_flex()
             .relative()
@@ -219,11 +233,7 @@ impl HiveApp {
                                 .child(palette::project_badge(&workspace_name, 18., cx))
                                 .when_some(dot_color, |row, color| {
                                     row.child(
-                                        div()
-                                            .size(px(5.))
-                                            .flex_shrink_0()
-                                            .rounded_full()
-                                            .bg(color),
+                                        div().size(px(5.)).flex_shrink_0().rounded_full().bg(color),
                                     )
                                 })
                                 .child(
@@ -454,7 +464,8 @@ impl HiveApp {
                                 )
                             })
                             .children(state.records.iter().map(|hit| {
-                                let project = self.workspace_display_name(&hit.session.workspace_id);
+                                let project =
+                                    self.workspace_display_name(&hit.session.workspace_id);
                                 self.render_session_row(
                                     &hit.session,
                                     crate::view::untitled_session_label(&hit.session)
