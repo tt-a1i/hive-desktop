@@ -2,6 +2,107 @@ use super::*;
 use crate::language::{english, tr};
 use gpui_kit::component::menu::PopupMenu;
 
+// Button has a stable id and forwards InteractiveElement to its base, but
+// does not expose StatefulInteractiveElement's accessibility setters. This
+// adapter only configures that same base; it never renders another node.
+struct SemanticButton(Button);
+impl InteractiveElement for SemanticButton {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.0.interactivity()
+    }
+}
+impl StatefulInteractiveElement for SemanticButton {}
+
+struct MenuPresentation {
+    button_focus: FocusHandle,
+    region_focus: FocusHandle,
+    open: bool,
+}
+
+/// Keep the existing popover's mouse and keyboard paths. Accessibility Invoke
+/// needs an explicit semantic action on the child Button, not a center click on
+/// its normally hover-only parent.
+#[derive(IntoElement)]
+struct AccessibleSessionMenu {
+    button: Button,
+    focus_key: SharedString,
+    row_group: SharedString,
+    session: crate::protocol::Session,
+    archive_blocked: bool,
+    disabled: bool,
+    app: WeakEntity<HiveApp>,
+}
+impl RenderOnce for AccessibleSessionMenu {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let presentation =
+            window.use_keyed_state(self.focus_key.clone(), cx, |_, cx| MenuPresentation {
+                button_focus: cx.focus_handle(),
+                region_focus: cx.focus_handle().tab_stop(false),
+                open: false,
+            });
+        let focus = presentation.read(cx).button_focus.clone();
+        let region = presentation.read(cx).region_focus.clone();
+        let visible = presentation.read(cx).open || region.contains_focused(window, cx);
+        let app = self.app.clone();
+        let id = self.session.id.clone();
+        let project = self.session.workspace_id.clone();
+        let mut button = SemanticButton(self.button.track_focus(&focus));
+        if !self.disabled {
+            button = button.on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                // Recheck live state in case the queued AX request predates a
+                // connection, metadata-save or workspace-removal update.
+                let enabled = app.upgrade().is_some_and(|app| {
+                    let app = app.read(cx);
+                    app.connected
+                        && !app.session_pin_loading.contains(&id)
+                        && !app.session_archive_loading.contains(&id)
+                        && app.workspace_removing.as_ref() != Some(&project)
+                });
+                cx.stop_propagation();
+                if !enabled {
+                    return;
+                }
+                focus.focus(window, cx);
+                focus.dispatch_action(
+                    &gpui_kit::base::actions::Confirm { secondary: false },
+                    window,
+                    cx,
+                );
+            });
+        }
+        let menu = button
+            .0
+            .dropdown_menu(move |menu, _, _| {
+                HiveApp::session_menu_items(
+                    menu,
+                    self.session.clone(),
+                    self.archive_blocked,
+                    self.app.clone(),
+                )
+            })
+            .on_open_change(move |open, window, cx| {
+                presentation.update(cx, |state, _| state.open = *open);
+                window.refresh();
+            });
+        // Visibility::Hidden skips paint, including AX and keyboard listeners.
+        // Opacity preserves those listeners and the existing positioned hitbox.
+        // The region also covers DropdownMenu's restored trigger focus.
+        div()
+            .id(self.focus_key)
+            .absolute()
+            .right_1()
+            .top_0()
+            .bottom_0()
+            .flex()
+            .items_center()
+            .track_focus(&region)
+            .tab_stop(false)
+            .opacity(if visible { 1. } else { 0. })
+            .group_hover(self.row_group, |style| style.opacity(1.))
+            .child(menu)
+    }
+}
+
 impl HiveApp {
     pub(crate) fn session_archive_blocked(&self, id: &str) -> bool {
         self.busy.contains(id)
@@ -163,7 +264,9 @@ impl HiveApp {
         let is_selected = self.viewing_conversation()
             && self.session.as_ref().is_some_and(|s| s.id == session.id);
         let relative_time = palette::compact_relative_time(session.updated_at, english());
-        let menu = Button::new(SharedString::from(format!("{scope}-menu-{id}")))
+        let menu_disabled =
+            !self.connected || pinning || self.workspace_removing.as_ref() == Some(&project);
+        let menu_button = Button::new(SharedString::from(format!("{scope}-menu-{id}")))
             .custom(palette::subtle_icon_variant(cx))
             .compact()
             .xsmall()
@@ -183,12 +286,16 @@ impl HiveApp {
             } else {
                 format!("{title} 的会话操作")
             })
-            .disabled(
-                !self.connected || pinning || self.workspace_removing.as_ref() == Some(&project),
-            )
-            .dropdown_menu(move |menu, _, _| {
-                Self::session_menu_items(menu, menu_session.clone(), archive_blocked, weak.clone())
-            });
+            .disabled(menu_disabled);
+        let menu = AccessibleSessionMenu {
+            button: menu_button,
+            focus_key: format!("session-menu-focus:{scope}:{id}").into(),
+            row_group: row_group.clone(),
+            session: menu_session,
+            archive_blocked,
+            disabled: menu_disabled,
+            app: weak,
+        };
         h_flex()
             .relative()
             .group(row_group.clone())
@@ -322,18 +429,7 @@ impl HiveApp {
                         })),
                 ),
             )
-            .child(
-                div()
-                    .absolute()
-                    .right_1()
-                    .top_0()
-                    .bottom_0()
-                    .flex()
-                    .items_center()
-                    .invisible()
-                    .group_hover(row_group, |s| s.visible())
-                    .child(menu),
-            )
+            .child(menu)
     }
 
     pub(super) fn render_pinned_navigation(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
