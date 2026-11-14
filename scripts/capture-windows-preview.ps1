@@ -127,83 +127,32 @@ function Reveal-Action([string] $Name) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "The fixture action '$Name' did not enter the window after focus."
 }
-function Show-FixtureMessageAccessibility([string] $Message) {
-    # Inspect only names containing this owned fixture's known prompt fragment.
-    $fragment = $Message.Substring(0, [Math]::Min(8, $Message.Length))
-    $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-        [System.Windows.Automation.Condition]::TrueCondition)
-    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
-    $count = 0
-    foreach ($node in $nodes) {
-        $name = $node.Current.Name
-        if ([string]::IsNullOrEmpty($name) -or -not $name.Contains($fragment)) { continue }
-        $count++
-        if ($count -gt 10) { break }
-        $short = $name.Substring(0, [Math]::Min(80, $name.Length))
-        Write-Host "Fixture match: type=$($node.Current.ControlType.ProgrammaticName), name=$short"
-        $parent = $walker.GetParent($node)
-        for ($depth = 0; $null -ne $parent -and $depth -lt 6; $depth++) {
-            $parentName = $parent.Current.Name
-            if ($parentName.Length -gt 80) { $parentName = $parentName.Substring(0, 80) }
-            $quoteCondition = New-Object System.Windows.Automation.PropertyCondition(
-                [System.Windows.Automation.AutomationElement]::NameProperty, '引用消息到草稿')
-            $quotes = $parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $quoteCondition)
-            Write-Host "  ancestor $depth`: type=$($parent.Current.ControlType.ProgrammaticName), name=$parentName, quoteCount=$($quotes.Count)"
-            $parent = $walker.GetParent($parent)
-        }
-    }
-    Write-Host "Fixture name matches (up to 10): $([Math]::Min($count, 10))"
-    $quoteCondition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::NameProperty, '引用消息到草稿')
-    $candidates = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $quoteCondition)
-    Write-Host "Quote candidate count: $($candidates.Count)"
-    for ($i = 0; $i -lt [Math]::Min(4, $candidates.Count); $i++) {
-        $parent = $walker.GetParent($candidates[$i])
-        for ($depth = 0; $null -ne $parent -and $depth -lt 4; $depth++) {
-            $state = $parent.Current
-            $name = $state.Name
-            if ($name.Length -gt 80) { $name = $name.Substring(0, 80) }
-            Write-Host "Quote $i ancestor $depth`: type=$($state.ControlType.ProgrammaticName), id=$($state.AutomationId), name=$name"
-            $sibling = $walker.GetFirstChild($parent)
-            $seen = 0
-            while ($null -ne $sibling -and $seen -lt 4) {
-                $item = $sibling.Current
-                if ($item.ControlType -eq [System.Windows.Automation.ControlType]::Edit) { $sibling = $walker.GetNextSibling($sibling); continue }
-                $itemName = $item.Name
-                if ($itemName.Length -gt 80) { $itemName = $itemName.Substring(0, 80) }
-                Write-Host "  child: type=$($item.ControlType.ProgrammaticName), id=$($item.AutomationId), name=$itemName"
-                $seen++
-                $sibling = $walker.GetNextSibling($sibling)
-            }
-            $parent = $walker.GetParent($parent)
-        }
-    }
-}
 function Find-MessageQuote([string] $Message) {
-    $bodyCondition = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::NameProperty, $Message)
-    $quoteCondition = New-Object System.Windows.Automation.PropertyCondition(
+    $groupType = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Group)
+    $quoteName = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::NameProperty, '引用消息到草稿')
-    $deadline = [DateTime]::UtcNow.AddSeconds(8)
-    do {
-        $bodies = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $bodyCondition)
-        if ($bodies.Count -gt 1) { throw "Expected exactly one fixture message body; found $($bodies.Count)." }
-        if ($bodies.Count -eq 1) { break }
-        Start-Sleep -Milliseconds 120
-    } while ([DateTime]::UtcNow -lt $deadline)
-    if ($bodies.Count -ne 1) {
-        Show-FixtureMessageAccessibility $Message
-        throw 'Fixture message body did not appear in the accessibility tree.'
+    $textType = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)
+    $matches = @()
+    foreach ($group in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $groupType)) {
+        if ($group.Current.Name -cne '你') { continue }
+        $quotes = $group.FindAll([System.Windows.Automation.TreeScope]::Descendants, $quoteName)
+        if ($quotes.Count -eq 0) { continue }
+        if ($quotes.Count -ne 1) { throw 'Fixture message group has multiple quote actions.' }
+        foreach ($body in $group.FindAll([System.Windows.Automation.TreeScope]::Descendants, $textType)) {
+            $pattern = $null
+            if ($body.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+                if ($pattern.Current.IsReadOnly -and $pattern.Current.Value -ceq $Message) { $matches += $quotes[0] }
+            } elseif ($body.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) {
+                $range = $pattern.DocumentRange
+                if ($range.GetAttributeValue([System.Windows.Automation.TextPattern]::IsReadOnlyAttribute) -eq $true -and
+                    ($range.GetText(-1) -replace "`r`n", "`n").TrimEnd("`r", "`n") -ceq $Message) { $matches += $quotes[0] }
+            }
+        }
     }
-    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
-    $group = $walker.GetParent($bodies[0])
-    while ($null -ne $group -and $group.Current.ControlType -ne [System.Windows.Automation.ControlType]::Group) {
-        $group = $walker.GetParent($group)
-    }
-    if ($null -eq $group) { throw 'Fixture message group is absent.' }
-    $quotes = $group.FindAll([System.Windows.Automation.TreeScope]::Descendants, $quoteCondition)
-    if ($quotes.Count -ne 1) { throw "Expected exactly one quote action in fixture message; found $($quotes.Count)." }
-    return $quotes[0]
+    if ($matches.Count -ne 1) { throw "Expected exactly one quote action with matching read-only fixture text; found $($matches.Count)." }
+    return $matches[0]
 }
 function Invoke-MessageQuote([string] $Message) {
     $quote = Find-MessageQuote $Message
