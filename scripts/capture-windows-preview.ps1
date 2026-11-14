@@ -401,7 +401,9 @@ Invoke-Action '打开关联派单'
 [void](Wait-Action '打开成员会话: Tester')
 Invoke-Action '设置'
 Invoke-Action '角色模板'
-Invoke-Action '返回派单详情'
+[void](Wait-Action '角色模板名称')
+Invoke-Action '关闭设置'
+Wait-ActionsAbsent @('关闭设置', '搜索设置')
 [void](Wait-Action '打开成员会话: Tester')
 Invoke-Action '复制派单编号'
 $deadline = [DateTime]::UtcNow.AddSeconds(8)
@@ -422,7 +424,9 @@ $editor = Wait-Action '任务文档 Markdown'
 $editor.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('My draft')
 Wait-EditorText '任务文档 Markdown' 'My draft'
 Invoke-Action '设置'
-Invoke-Action '返回协作概览'
+[void](Wait-Action '关闭设置')
+Invoke-Action '关闭设置'
+Wait-ActionsAbsent @('关闭设置', '搜索设置')
 Wait-EditorText '任务文档 Markdown' 'My draft'
 [System.IO.File]::WriteAllText($TasksFile, 'Agent update')
 Invoke-Action '保存任务'
