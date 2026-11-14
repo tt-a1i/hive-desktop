@@ -37,6 +37,8 @@ run [43558667271](https://github.com/tt-a1i/hive-desktop/actions/runs/4355866727
 
 run [43559892506](https://github.com/tt-a1i/hive-desktop/actions/runs/43559892506) 越过 Pi 账号和模型检查后，在置顶检查暴露陈旧的返回值期望：现在的全局命中包含 `workspacePath`，旧期望漏了该字段。已补充与实际创建目录独立 `realpath` 的精确比较，不删除返回字段或放宽 deepEqual；该问题也影响 Mac，不属于 Windows 产品缺陷。`session-pins.ts` 本机退出 0，保留四后端元数据、真实 HTTP/SQLite/JSONL、写盘失败/冷恢复及零 Agent 请求检查（`session-pins-final.log`）。新 Windows 结果继续记录。
 
+run [43560938873](https://github.com/tt-a1i/hive-desktop/actions/runs/43560938873) 已通过置顶与归档，图片受控对端检查遇到 `spawn EFTYPE`：临时生成的 `.cjs` 被官方 SDK 当作原生程序，在 Windows 直接启动失败。夹具改为其支持的 `.js` 入口，并明确临时目录为 CommonJS；保留原始图片字节/历史/完成回执/无效输入拒绝断言，不修改 Claude 适配器，也不登录或调用真实 Claude。Mac 定向检查退出 0（`image-peer-launch.log`），Windows 后续结果待记录。
+
 不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功。现有 Mac 开发包无需因 test-only 改动重新组装。
 
 ## 本轮账号范围
