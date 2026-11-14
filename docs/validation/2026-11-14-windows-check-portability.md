@@ -41,6 +41,8 @@ run [43560938873](https://github.com/tt-a1i/hive-desktop/actions/runs/4356093887
 
 后续 [43561583272](https://github.com/tt-a1i/hive-desktop/actions/runs/43561583272) 已越过启动，夹具历史未被 SDK 读回，原耐久性断言如实失败。当前再将临时目录先 `realpath`，使传给 SDK 的目录与子进程实际 cwd 使用同一真实路径，避免 Windows 短路径差异；这是待 Windows 结果确认的路径修复，未删除历史或完成回执断言。Mac 定向退出 0（`image-peer-canonical-path.log`）。
 
+run [43562367240](https://github.com/tt-a1i/hive-desktop/actions/runs/43562367240) 已完整通过上述图片对端/历史检查，路径修复得到 Windows 实机确认。下一项上传检查则暴露另一个跨平台陈旧期望：Pi 显式用户消息已保留为原生 `role=user`，旧检查仍找 `customType=hive-delivery`。现按附件 ID 与原生用户角色定位，首次及冷重开均要求恰好一条，保留原始图片/来源/HTTP/SQLite检查，并完整比较冷恢复的正文与展示元数据。Mac `check:attachments`（含编译后 JSONL）和收紧冷读数量后的定向检查均退出 0；未修改生产消息契约，也不是 Windows 产品丢失消息。
+
 不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功。现有 Mac 开发包无需因 test-only 改动重新组装。
 
 ## 本轮账号范围

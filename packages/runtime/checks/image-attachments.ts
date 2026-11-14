@@ -112,7 +112,10 @@ try {
       .flatMap((x: any) => x.content ?? [])
       .some((x: any) => x.type === 'input_image' && x.image_url === `data:image/png;base64,${data}`),
   );
-  const message = snapshot.history.find((x: any) => x.customType === 'hive-delivery') as any;
+  const inputs = snapshot.history.filter((x: any) => x.role === 'user'
+    && x.presentation?.attachments?.some((attachment: any) => attachment.id === staged.attachment.id)) as any[];
+  assert.equal(inputs.length, 1, 'Explicit user input must remain a single native user message');
+  const message = inputs[0];
   assert.equal(message.presentation.displayText, '原图核验');
   assert.deepEqual(message.presentation.attachments, [staged.attachment]);
   assert.equal(message.presentation.sourceText, encoded);
@@ -135,11 +138,12 @@ try {
   assert.deepEqual((await runtime.chats.attachments.get(ws.id, [staged.attachment.id]))[0], staged);
   const reopened = await runtime.chats.open(chat.id);
   assert.equal(reopened.pending, 1);
-  assert.ok(
-    (reopened.history.find((x: any) => x.customType === 'hive-delivery') as any).content.some(
-      (x: any) => x.type === 'image' && x.data === data,
-    ),
-  );
+  const restoredInputs = reopened.history.filter((x: any) => x.role === 'user'
+    && x.presentation?.attachments?.some((attachment: any) => attachment.id === staged.attachment.id)) as any[];
+  assert.equal(restoredInputs.length, 1, 'Cold reopen must not duplicate native user input');
+  const restoredInput = restoredInputs[0];
+  assert.deepEqual(restoredInput.content, message.content);
+  assert.deepEqual(restoredInput.presentation, message.presentation);
   await writeFile(path, Buffer.from(data, 'base64'));
   const otherImage = await runtime.chats.attachments.add(ws2.id, path);
   const imageOnly = await runtime.chats.create(ws2.id, 'pi');
