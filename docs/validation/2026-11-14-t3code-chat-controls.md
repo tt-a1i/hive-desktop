@@ -34,4 +34,12 @@
 
 置顶/取消置顶与Pi命令溢出菜单本批尚未实际操作。新建Pi并非纯UI：会初始化原生SDK及用户资源，可能安装缺失包或执行扩展；只展开已经就绪会话的overflow本身不发RPC。不为补这项界面验证重试Pi登录、伪造会话或禁用用户资源。Claude/Antigravity不验。
 
-此批源码已整合，优化包与Windows原生继续。当前开发包仍为0e478c2，只含上一批设置浮层；背景模糊、侧栏搜索/宽度等其他T3差距与完整产品目标保持开放。
+## 实际优化开发包
+
+本批进入current/candidate `9f010e2540fc7b0a27fe8c77b0da16ec8f8bb432`，默认优化release、无ui-preview。ZIP144,163,842字节，SHA-256 `acfe2e26daeedd36cd0e95d0142cb1787ac3b4c609a640ac67d37b12ac5afed7`；DMG223,960,373字节，SHA-256 `a6d04558cd7a902383ed87d95f8a26ca043b3678b19803e6945d39f3d368fe0a`。28,872项/29链接完整匹配，DMG只读挂载清单和Applications快捷方式核对后卸载；相较0e478c2仅原生二进制一项变化，118份runtime文件、Node和生产依赖保持。四组正式包检查退出0，英文实际原生启动恢复缺失会话选择通过。
+
+同一优化二进制和Resources、仅QA身份不同、无Node/runtime覆盖的窗口，实际显示9f010e2540fc/优化版及Node22.23.3/Hive2.2.1。冷开真实Terra会话可读唯一中断命令和预期回复、空队列及Terra/中。实际标题菜单置顶新测试会话后，主线程独立index确认只更新该ID；随后取消置顶、归档、经归档列表打开并恢复，完整历史可读。英文约822×503/20px的标题菜单、双击重命名取消、同一模型/Medium面板通过，原草稿保持；主线程只读AX/截图和二进制SHA另核。正常退出0、owned Node71238消失，最终index中测试会话未置顶/未归档，原草稿SHA保持。
+
+这些操作之后，再用两个全新的实际包内Node进程冷读：原三会话36条及测试会话7条完整history/ID保持，工具仍为唯一interrupted记录，回复只有一次，pending0，Terra/medium一致。冷读和本批优化包QA均无新模型请求；前文两条真实Terra输入发生于同内容源码的调试窗口，分别保留来源。
+
+收据位于`.artifacts/release-9f010e2/{receipt,checks,cold-receipt,dmg-receipt,native-payload-identity,native-ui-verdict,pin-*}.json`及日志。已推广Mac current，未替换用户安装实例，0e478c2保留可运行回退。Windows当前的静态Label文本值缺陷由#30修复复验，本包未声称修复该缺陷；完整Windows流程仍未通过。背景模糊、侧栏搜索/宽度、T3命令面板/消息内容搜索等差距与完整产品目标保持开放。

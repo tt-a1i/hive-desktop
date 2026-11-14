@@ -4,7 +4,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
-2026-11-14 最新方向：UI/UX 先直接复刻 T3 Code，作为布局、视觉、交互和全部设置页的唯一基准。当前 Mac 开发包为 `0e478c2`，已加入T3设置浮层、分组搜索导航与真实保存反馈；优化包中英文窄窗、实际配置写入/拒绝/还原、后台重启及草稿保持已验证，见[本批范围](docs/validation/2026-11-14-t3code-settings-modal.md)。聊天标题和输入工具栏继续对齐，背景模糊尚未实现。既有[真实协作](docs/validation/2026-11-14-collaboration-start-and-live.md)、停止/恢复和[版本诊断](docs/validation/2026-11-14-build-diagnostics.md)证据保留。当前已运行安装实例未替换。Claude/Antigravity按用户要求本轮不验收；Pi当前账号invalid_grant，不重复登录。Windows原生交互与完整产品验收继续。
+2026-11-14 最新方向：UI/UX 先直接复刻 T3 Code，作为布局、视觉、交互和全部设置页的唯一基准。当前 Mac 开发包为 `9f010e2`，包含[设置浮层与真实配置反馈](docs/validation/2026-11-14-t3code-settings-modal.md)、[标题菜单/双击重命名及模型/推理合并工具栏](docs/validation/2026-11-14-t3code-chat-controls.md)。实际Terra工具停止/排队继续和完整冷恢复、优化包会话置顶/归档恢复及双语窄窗操作已验证。侧栏拖宽和直接搜索正在实施，背景模糊尚未实现。既有[真实协作](docs/validation/2026-11-14-collaboration-start-and-live.md)和[版本诊断](docs/validation/2026-11-14-build-diagnostics.md)证据保留。当前已运行安装实例未替换。Claude/Antigravity按用户要求本轮不验收；Pi当前账号invalid_grant，不重复登录。Windows静态文本可访问性修复及剩余原生流程、完整产品验收继续。
 
 2026-11-09：采用 GPUI + gpui-kit 构建 macOS / Windows 原生界面，复用 Hive Node 后台。macOS 已分别跑通内置 Pi、外部 Codex 和外部 Pi 主控创建 Worker、派单、文件执行、显式汇报、主控核验及会话恢复。外部 Pi 的范围见 [团队验证](docs/validation/2026-11-07-external-pi-team.md)，Codex 见 [原生接入验证](docs/validation/2026-11-07-codex.md)。成员管理、Claude 官方 SDK 接入、账号与模型配置、全局置顶和便携开发包已加入；Claude 真实模型协作、完整配置、界面打磨和跨平台正式发行仍在实施。
 
