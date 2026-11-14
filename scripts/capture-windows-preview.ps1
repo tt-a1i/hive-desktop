@@ -127,6 +127,33 @@ function Reveal-Action([string] $Name) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "The fixture action '$Name' did not enter the window after focus."
 }
+function Show-FixtureMessageAccessibility([string] $Message) {
+    # Inspect only names containing this owned fixture's known prompt fragment.
+    $fragment = $Message.Substring(0, [Math]::Min(8, $Message.Length))
+    $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.Condition]::TrueCondition)
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    $count = 0
+    foreach ($node in $nodes) {
+        $name = $node.Current.Name
+        if ([string]::IsNullOrEmpty($name) -or -not $name.Contains($fragment)) { continue }
+        $count++
+        if ($count -gt 10) { break }
+        $short = $name.Substring(0, [Math]::Min(80, $name.Length))
+        Write-Host "Fixture match: type=$($node.Current.ControlType.ProgrammaticName), name=$short"
+        $parent = $walker.GetParent($node)
+        for ($depth = 0; $null -ne $parent -and $depth -lt 6; $depth++) {
+            $parentName = $parent.Current.Name
+            if ($parentName.Length -gt 80) { $parentName = $parentName.Substring(0, 80) }
+            $quoteCondition = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::NameProperty, '引用消息到草稿')
+            $quotes = $parent.FindAll([System.Windows.Automation.TreeScope]::Descendants, $quoteCondition)
+            Write-Host "  ancestor $depth`: type=$($parent.Current.ControlType.ProgrammaticName), name=$parentName, quoteCount=$($quotes.Count)"
+            $parent = $walker.GetParent($parent)
+        }
+    }
+    Write-Host "Fixture name matches (up to 10): $([Math]::Min($count, 10))"
+}
 function Find-MessageQuote([string] $Message) {
     $bodyCondition = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::NameProperty, $Message)
@@ -139,7 +166,10 @@ function Find-MessageQuote([string] $Message) {
         if ($bodies.Count -eq 1) { break }
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
-    if ($bodies.Count -ne 1) { throw 'Fixture message body did not appear in the accessibility tree.' }
+    if ($bodies.Count -ne 1) {
+        Show-FixtureMessageAccessibility $Message
+        throw 'Fixture message body did not appear in the accessibility tree.'
+    }
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
     $group = $walker.GetParent($bodies[0])
     while ($null -ne $group -and $group.Current.ControlType -ne [System.Windows.Automation.ControlType]::Group) {
