@@ -1,7 +1,7 @@
 use crate::{
     app::HiveApp,
     language::tr,
-    palette::{self, Color},
+    palette,
     protocol::Backend,
 };
 use gpui_kit::{
@@ -26,13 +26,13 @@ pub(crate) fn backend_glyph(backend: Backend) -> Glyph {
 impl HiveApp {
     pub(crate) fn render_composer_controls(
         &self,
-        window: &Window,
+        window: &mut Window,
         _welcome: bool,
         running: bool,
         can_send: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let attachment_count = self.attachments.refs(self.draft_target.as_ref()).len();
+        let _ = Self::command_button;
         let can_resume = !running
             && self
                 .session
@@ -51,10 +51,8 @@ impl HiveApp {
             .pt_1()
             .child(
                 h_flex()
-                    .min_w_0()
-                    .flex_wrap()
+                    .flex_shrink_0()
                     .items_center()
-                    .gap_0p5()
                     .child(
                         Button::new("attach-images")
                             .custom(palette::quiet_icon_variant(cx))
@@ -79,63 +77,7 @@ impl HiveApp {
                                     || !self.attachments.ready(self.draft_target.as_ref()),
                             )
                             .on_click(cx.listener(|this, _, _, cx| this.choose_images(cx))),
-                    )
-                    .when(attachment_count > 0, |row| {
-                        row.child(
-                            Button::new("show-draft-attachments")
-                                .custom(palette::quiet_icon_variant(cx))
-                                .compact()
-                                .h(px(26.))
-                                .px_2()
-                                .rounded_full()
-                                .label(format!("{} · {}", tr("附件"), attachment_count))
-                                .accessibility_label(format!(
-                                    "{} · {}",
-                                    tr("查看草稿附件"),
-                                    attachment_count
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let offset = this.composer_scroll.offset();
-                                    let delta = this.composer_scroll.bounds().top()
-                                        - this.attachments.scroll.bounds().top();
-                                    this.composer_scroll
-                                        .set_offset(point(offset.x, offset.y + delta));
-                                    this.attachments.scroll.set_offset(point(px(0.), px(0.)));
-                                    window.refresh();
-                                    cx.notify();
-                                })),
-                        )
-                    })
-                    .when(self.pi_commands_available(), |row| {
-                        row.child(self.command_button(cx))
-                    })
-                    .when(self.session.is_none(), |row| {
-                        row.child(self.new_chat_menu("home-agent", tr("选择 Agent"), None, cx))
-                    })
-                    .when_some(self.session.as_ref(), |row, session| {
-                        let label = tr(session.backend.label());
-                        row.child(
-                            div()
-                                .id("composer-backend-badge")
-                                .role(Role::Label)
-                                .aria_label(label)
-                                .flex_shrink_0()
-                                .h(px(28.))
-                                .px_2()
-                                .rounded_lg()
-                                .flex()
-                                .items_center()
-                                .gap(px(5.))
-                                .text_xs()
-                                .text_color(Color::Muted.get(cx))
-                                .child(
-                                    Icon::new(backend_glyph(session.backend))
-                                        .size(px(13.))
-                                        .text_color(Color::Muted.get(cx)),
-                                )
-                                .child(label),
-                        )
-                    }),
+                    ),
             )
             .child(
                 h_flex()
@@ -145,83 +87,90 @@ impl HiveApp {
                     .justify_end()
                     .items_center()
                     .gap_1()
+                    .when(self.session.is_none(), |row| {
+                        row.child(self.new_chat_menu("home-agent", tr("选择 Agent"), None, cx))
+                    })
                     .when(self.session.is_some(), |row| {
                         row.child(self.model_picker(window, running, cx))
-                            .child(self.usage_button(window, running, cx))
+                            .children(self.reasoning_picker_trigger(window, running, cx))
                     }),
             )
-            .when(self.session.is_some(), |row| {
-                row.child(
-                    h_flex()
-                        .flex_shrink_0()
-                        .items_center()
-                        .gap_1p5()
-                        .when(running, |actions| {
-                            actions.child(
-                                Button::new("stop")
-                                    .custom(palette::quiet_icon_variant(cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(30.))
-                                    .w(px(30.))
-                                    .rounded_full()
-                                    .icon(Glyph::Square)
-                                    .tooltip(tr("停止回复"))
-                                    .accessibility_label(tr("停止"))
-                                    .disabled(!self.connected)
-                                    .on_click(cx.listener(|this, _, _, cx| this.abort(cx))),
-                            )
-                        })
-                        .when(can_resume, |actions| {
-                            actions.child(
-                                Button::new("resume")
-                                    .primary()
-                                    .compact()
-                                    .h(px(30.))
-                                    .px_3()
-                                    .rounded_full()
-                                    .label(tr("继续处理"))
-                                    .disabled(
-                                        !self.connected || !self.conversation_ready || self.loading,
-                                    )
-                                    .on_click(cx.listener(|this, _, _, cx| this.resume(cx))),
-                            )
-                        })
-                        .when(!can_resume, |actions| {
-                            actions.child(
-                                Button::new("send")
-                                    .custom(palette::send_circle_variant(can_send, cx))
-                                    .compact()
-                                    .h(px(30.))
-                                    .when(!running, |button| button.w(px(30.)))
-                                    .when(running, |button| button.px_3())
-                                    .rounded_full()
-                                    .when(!can_send, |button| {
-                                        button
-                                            .bg(palette::send_circle_disabled_bg(cx))
-                                            .text_color(palette::send_circle_disabled_fg(cx))
-                                    })
-                                    .icon(Glyph::ArrowUp)
-                                    .when(running, |button| button.label(tr("排队")))
-                                    .accessibility_label(if running {
-                                        tr("加入消息队列")
+            .child(
+                h_flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_1p5()
+                    .when(running, |actions| {
+                        actions.child(
+                            Button::new("stop")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(28.))
+                                .w(px(28.))
+                                .rounded_full()
+                                .icon(Glyph::Square)
+                                .tooltip(tr("停止回复"))
+                                .accessibility_label(tr("停止"))
+                                .disabled(!self.connected)
+                                .on_click(cx.listener(|this, _, _, cx| this.abort(cx))),
+                        )
+                    })
+                    .when(can_resume, |actions| {
+                        actions.child(
+                            Button::new("resume")
+                                .primary()
+                                .compact()
+                                .h(px(28.))
+                                .px_3()
+                                .rounded_full()
+                                .label(tr("继续处理"))
+                                .disabled(
+                                    !self.connected || !self.conversation_ready || self.loading,
+                                )
+                                .on_click(cx.listener(|this, _, _, cx| this.resume(cx))),
+                        )
+                    })
+                    .when(!can_resume, |actions| {
+                        actions.child(
+                            Button::new("send")
+                                .custom(palette::send_circle_variant(can_send, cx))
+                                .compact()
+                                .h(px(28.))
+                                .when(!running, |button| button.w(px(28.)))
+                                .when(running, |button| button.px_3())
+                                .rounded_full()
+                                .when(!can_send, |button| {
+                                    button
+                                        .bg(palette::send_circle_disabled_bg(cx))
+                                        .text_color(palette::send_circle_disabled_fg(cx))
+                                })
+                                .icon(Glyph::ArrowUp)
+                                .when(running, |button| button.label(tr("排队")))
+                                .accessibility_label(if running {
+                                    tr("加入消息队列")
+                                } else {
+                                    tr("发送消息")
+                                })
+                                .tooltip(if self.workspace.is_none() {
+                                    tr("选择项目文件夹并发送").into()
+                                } else if running {
+                                    tr("加入队列，当前回复结束后按顺序处理").into()
+                                } else {
+                                    cx.global::<crate::composer::ComposerPreferences>()
+                                        .mode
+                                        .hint()
+                                })
+                                .disabled(!can_send)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if this.workspace.is_none() {
+                                        this.choose_workspace_folder(window, cx);
                                     } else {
-                                        tr("发送消息")
-                                    })
-                                    .tooltip(if running {
-                                        tr("加入队列，当前回复结束后按顺序处理")
-                                    } else {
-                                        cx.global::<crate::composer::ComposerPreferences>()
-                                            .mode
-                                            .hint()
-                                    })
-                                    .disabled(!can_send)
-                                    .on_click(
-                                        cx.listener(|this, _, window, cx| this.send(window, cx)),
-                                    ),
-                            )
-                        }),
-                )
-            })
+                                        this.send(window, cx);
+                                    }
+                                })),
+                        )
+                    }),
+            )
     }
 }

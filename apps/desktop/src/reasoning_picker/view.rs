@@ -3,6 +3,7 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
+        popover::Popover,
         Icon, *,
     },
     prelude::FluentBuilder,
@@ -24,6 +25,69 @@ fn label(level: &str) -> &str {
 impl HiveApp {
     pub(crate) fn reasoning_label(&self) -> Option<String> {
         self.reasoning_picker.state.as_ref().map(|state| label(&state.level).to_owned())
+    }
+
+    pub(crate) fn reasoning_picker_trigger(
+        &self,
+        window: &mut Window,
+        running: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let state = self.reasoning_picker.state.as_ref()?;
+        if state.levels.len() <= 1 && state.level == "native" {
+            return None;
+        }
+        let open_state = window.use_keyed_state("reasoning-popover-open", cx, |_, _| false);
+        let open = *open_state.read(cx);
+        let unavailable =
+            !self.connected || !self.conversation_ready || running || self.loading || self.closing;
+        let level_text = label(&state.level).to_owned();
+        let trigger = Button::new("choose-reasoning")
+            .custom(crate::palette::quiet_icon_variant(cx))
+            .compact()
+            .h(px(26.))
+            .px_2()
+            .rounded_lg()
+            .selected(open)
+            .disabled(unavailable)
+            .accessibility_label(tr("设置会话推理强度"))
+            .tooltip(tr("设置会话推理强度"))
+            .child(
+                div()
+                    .text_size(px(12.5))
+                    .font_weight(FontWeight::NORMAL)
+                    .text_color(Color::Muted.get(cx))
+                    .child(level_text),
+            );
+        if unavailable {
+            return Some(trigger.into_any_element());
+        }
+        Some(
+            Popover::new("session-reasoning-popover")
+                .anchor(Anchor::BottomRight)
+                .p_2()
+                .rounded_xl()
+                .border_1()
+                .border_color(Color::Divider.get(cx))
+                .bg(Color::Card.get(cx))
+                .shadow_lg()
+                .w(px(220.))
+                .open(open)
+                .trigger(trigger)
+                .on_open_change({
+                    let open_state = open_state.clone();
+                    move |next_open, _, cx| {
+                        open_state.update(cx, |value, cx| {
+                            *value = *next_open;
+                            cx.notify();
+                        });
+                    }
+                })
+                .when(open, |popover| {
+                    popover.child(self.render_reasoning_settings(running, cx))
+                })
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn render_reasoning_settings(

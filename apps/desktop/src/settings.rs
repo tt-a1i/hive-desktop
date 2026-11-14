@@ -355,16 +355,16 @@ pub(super) fn settings_notice_box(
         .py_2p5()
         .rounded_xl()
         .border_1()
-        .text_sm()
+        .text_size(px(13.))
         .when(is_error, |el| {
             el.bg(Color::ErrorSurface.get(cx))
                 .border_color(Color::Error.get(cx).opacity(0.24))
                 .text_color(Color::Error.get(cx))
         })
         .when(!is_error, |el| {
-            el.bg(Color::Inset.get(cx))
+            el.bg(Color::Inset.get(cx).opacity(0.75))
                 .border_color(Color::Divider.get(cx))
-                .text_color(Color::Text.get(cx))
+                .text_color(Color::Secondary.get(cx))
         })
         .child(text)
 }
@@ -385,7 +385,8 @@ pub(super) fn status_pill(
         .child(div().size(px(6.)).rounded_full().bg(dot_color))
         .child(
             div()
-                .text_xs()
+                .text_size(px(11.5))
+                .font_weight(FontWeight::MEDIUM)
                 .text_color(Color::Secondary.get(cx))
                 .child(label.into()),
         )
@@ -448,23 +449,24 @@ impl HiveApp {
                 .px_5()
                 .py_4()
                 .gap_4()
-                .when(!compact_settings, |panel| panel.px_6().py_6().gap_5())
+                .when(!compact_settings, |panel| panel.px_8().py_6().gap_5())
                 .when(!compact_settings, |panel| {
                     panel.child(
                         v_flex()
                             .flex_shrink_0()
                             .gap_1()
+                            .pb_0p5()
                             .child(
                                 div()
                                     .text_size(px(18.))
-                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .font_weight(FontWeight::MEDIUM)
                                     .text_color(Color::Text.get(cx))
                                     .child(tr(title_key)),
                             )
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(Color::Secondary.get(cx))
+                                    .text_size(px(13.))
+                                    .text_color(Color::Muted.get(cx))
                                     .child(tr(subtitle_key)),
                             ),
                     )
@@ -519,7 +521,7 @@ impl HiveApp {
                                                                 .child(
                                                                     div()
                                                                         .text_xs()
-                                                                        .text_color(Color::Secondary.get(cx))
+                                                                        .text_color(Color::Muted.get(cx))
                                                                         .child(tr("在所有工作区引导主控按任务需要组建团队。")),
                                                                 ),
                                                         )
@@ -538,7 +540,7 @@ impl HiveApp {
                                             ))
                                             .child(
                                                 settings_row(true, cx)
-                                                    .bg(Color::Inset.get(cx))
+                                                    .bg(Color::Inset.get(cx).opacity(0.6))
                                                     .py_2p5()
                                                     .child(
                                                         h_flex()

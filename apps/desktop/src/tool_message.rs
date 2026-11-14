@@ -88,7 +88,7 @@ impl HiveApp {
             Button::new(("tool-group", start))
                 .custom(crate::palette::quiet_icon_variant(cx))
                 .compact()
-                .h(px(28.))
+                .h(px(24.))
                 .px_1p5()
                 .rounded_md()
                 .w_full()
@@ -111,27 +111,19 @@ impl HiveApp {
                         .gap_1p5()
                         .child(
                             div()
-                                .size(px(6.))
-                                .rounded_full()
-                                .flex_shrink_0()
-                                .bg(Color::Muted.get(cx).opacity(0.65)),
-                        )
-                        .child(
-                            Icon::new(Glyph::Cpu)
-                                .size(px(13.))
-                                .text_color(Color::Muted.get(cx)),
-                        )
-                        .child(
-                            div()
                                 .text_xs()
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(Color::Secondary.get(cx))
+                                .text_color(if expanded {
+                                    Color::Secondary.get(cx)
+                                } else {
+                                    Color::Muted.get(cx)
+                                })
                                 .child(tr("工作过程")),
                         )
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(Color::Muted.get(cx))
+                                .text_color(Color::Muted.get(cx).opacity(0.85))
                                 .child(if english() {
                                     format!("· {count} completed")
                                 } else {
@@ -144,8 +136,8 @@ impl HiveApp {
                             } else {
                                 Glyph::ChevronRight
                             })
-                            .size(px(12.))
-                            .text_color(Color::Muted.get(cx)),
+                            .size(px(11.5))
+                            .text_color(Color::Muted.get(cx).opacity(0.8)),
                         )
                         .child(div().flex_1()),
                 )
@@ -216,7 +208,7 @@ impl HiveApp {
                 Button::new(("tool-details", index))
                     .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
-                    .h(px(26.))
+                    .h(px(24.))
                     .px_1p5()
                     .rounded_md()
                     .w_full()
@@ -242,19 +234,8 @@ impl HiveApp {
                             .items_center()
                             .gap_1p5()
                             .child(
-                                div()
-                                    .size(px(6.))
-                                    .rounded_full()
-                                    .flex_shrink_0()
-                                    .bg(status_color.opacity(if tool.status == "完成" {
-                                        0.65
-                                    } else {
-                                        1.0
-                                    })),
-                            )
-                            .child(
                                 Icon::new(tool_glyph(&tool.name))
-                                    .size(px(13.))
+                                    .size(px(12.5))
                                     .text_color(if failed {
                                         Color::Error.get(cx)
                                     } else if in_progress {
@@ -268,7 +249,11 @@ impl HiveApp {
                                     .flex_shrink_0()
                                     .text_xs()
                                     .font_weight(FontWeight::MEDIUM)
-                                    .text_color(Color::Secondary.get(cx))
+                                    .text_color(if tool.expanded || in_progress {
+                                        Color::Text.get(cx)
+                                    } else {
+                                        Color::Secondary.get(cx)
+                                    })
                                     .child(tool.name.clone()),
                             )
                             .child(
@@ -277,9 +262,9 @@ impl HiveApp {
                                     .flex_1()
                                     .text_left()
                                     .truncate()
-                                    .text_xs()
+                                    .text_size(px(11.5))
                                     .font_family(Theme::global(cx).mono_font_family.clone())
-                                    .text_color(Color::Muted.get(cx))
+                                    .text_color(Color::Muted.get(cx).opacity(0.85))
                                     .child(summary.unwrap_or_default()),
                             )
                             .when(tool.status != "完成", |row| {
@@ -302,8 +287,8 @@ impl HiveApp {
                                 } else {
                                     Glyph::ChevronRight
                                 })
-                                .size(px(12.))
-                                .text_color(Color::Muted.get(cx)),
+                                .size(px(11.5))
+                                .text_color(Color::Muted.get(cx).opacity(0.8)),
                             ),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -347,8 +332,9 @@ impl HiveApp {
                 let patch_match = self.conversation_find_patch_match(&id, tool.patch.as_deref());
                 view.child(
                     div()
-                        .ml_2()
+                        .ml(px(12.))
                         .pl_3()
+                        .py_0p5()
                         .border_l_1()
                         .border_color(if failed {
                             Color::Error.get(cx).opacity(0.45)
@@ -360,8 +346,8 @@ impl HiveApp {
                         .child(
                             v_flex()
                                 .tab_group()
-                                .rounded_xl()
-                                .bg(Color::Inset.get(cx))
+                                .rounded_lg()
+                                .bg(Color::Card.get(cx))
                                 .border_1()
                                 .border_color(Color::Divider.get(cx))
                                 .overflow_hidden()
@@ -371,11 +357,10 @@ impl HiveApp {
                                             .items_center()
                                             .justify_between()
                                             .gap_2()
-                                            .px_2p5()
+                                            .px_3()
                                             .py_1p5()
                                             .border_b_1()
                                             .border_color(Color::Divider.get(cx))
-                                            .bg(Color::Card.get(cx).opacity(0.55))
                                             .child(
                                                 h_flex()
                                                     .flex_1()
@@ -562,7 +547,8 @@ impl HiveApp {
                                     )
                                     .border_0()
                                     .rounded_none()
-                                    .p_2p5()
+                                    .px_3()
+                                    .py_2()
                                     .gap_2()
                                     .when_some(args, |card, input| {
                                         card.child(
@@ -572,7 +558,7 @@ impl HiveApp {
                                                 .child(
                                                     div()
                                                         .text_size(px(11.))
-                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .font_weight(FontWeight::MEDIUM)
                                                         .text_color(Color::Muted.get(cx))
                                                         .child(tr("输入参数")),
                                                 )
@@ -593,7 +579,7 @@ impl HiveApp {
                                                                 .clone(),
                                                         )
                                                         .text_size(px(12.))
-                                                        .line_height(px(19.))
+                                                        .line_height(px(18.5))
                                                         .text_color(Color::Secondary.get(cx))
                                                         .child(gpui_kit::base::SelectableText::new(
                                                             SharedString::from(format!(
@@ -618,7 +604,7 @@ impl HiveApp {
                                                 .child(
                                                     div()
                                                         .text_size(px(11.))
-                                                        .font_weight(FontWeight::SEMIBOLD)
+                                                        .font_weight(FontWeight::MEDIUM)
                                                         .text_color(if failed {
                                                             Color::Error.get(cx)
                                                         } else {
@@ -643,7 +629,7 @@ impl HiveApp {
                                                                 .clone(),
                                                         )
                                                         .text_size(px(12.))
-                                                        .line_height(px(19.))
+                                                        .line_height(px(18.5))
                                                         .text_color(if failed {
                                                             Color::Error.get(cx)
                                                         } else {
@@ -665,7 +651,7 @@ impl HiveApp {
             .when(failed && !tool.expanded, |view| {
                 view.child(
                     div()
-                        .ml_2()
+                        .ml(px(12.))
                         .pl_2p5()
                         .pr_2()
                         .py_1()

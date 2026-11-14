@@ -1,5 +1,5 @@
 mod view;
-pub(crate) const CHAT_COLUMN_WIDTH: f32 = 768.;
+pub(crate) const CHAT_COLUMN_WIDTH: f32 = 736.;
 use crate::app::HiveApp;
 use gpui_kit::{component::v_flex, prelude::FluentBuilder, *};
 use std::{cell::Cell, rc::Rc};

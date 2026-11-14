@@ -10,7 +10,6 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::{Input, Textarea},
-        tooltip::Tooltip,
         *,
     },
     *,
@@ -346,9 +345,9 @@ impl HiveApp {
             )
     }
 
-    fn render_composer_card(
+    pub(crate) fn render_composer_card(
         &self,
-        window: &Window,
+        window: &mut Window,
         welcome: bool,
         running: bool,
         can_send: bool,
@@ -364,11 +363,11 @@ impl HiveApp {
             .mx_auto()
             .flex_shrink_1()
             .gap_2()
-            .px(px(16.))
-            .pt(px(14.))
-            .pb(px(10.))
-            .when(welcome && self.workspace.is_some(), |composer| {
-                composer.min_h(px(126.)).justify_between()
+            .px(px(14.))
+            .pt(px(12.))
+            .pb(px(8.))
+            .when(welcome, |composer| {
+                composer.min_h(px(118.)).justify_between()
             })
             .rounded_2xl()
             .border_1()
@@ -509,15 +508,6 @@ impl HiveApp {
                                         })),
                                 ))
                             })
-                            .when(welcome && self.workspace.is_none(), |surface| {
-                                surface.child(
-                                    div()
-                                        .text_sm()
-                                        .p_2()
-                                        .text_color(Color::Secondary.get(cx))
-                                        .child(tr("选择本地项目文件夹，开始与 Agent 协作。")),
-                                )
-                            })
                             .when(self.command_picker.open, |view| {
                                 view.child(
                                     deferred(
@@ -537,32 +527,33 @@ impl HiveApp {
                                     attachments,
                                 ))
                             })
-                            .when(self.workspace.is_some(), |v| {
-                                v.child(crate::focus_scroll::Reveal::new(
-                                    "composer-input-reveal",
-                                    &self.composer_scroll,
-                                    div()
-                                        .capture_action(cx.listener(Self::composer_enter))
-                                        .capture_action(cx.listener(Self::command_up))
-                                        .capture_action(cx.listener(Self::command_down))
-                                        .capture_action(cx.listener(Self::command_escape))
-                                        .child(
-                                            Textarea::new(&self.input)
-                                                .appearance(false)
-                                                .bordered(false)
-                                                .aria_label(tr("聊天消息"))
-                                                .on_paste({
-                                                    let app = cx.weak_entity();
-                                                    move |item, _, cx| {
-                                                        app.update(cx, |this, cx| {
-                                                            this.paste_images(item, cx)
-                                                        })
-                                                        .unwrap_or(false)
-                                                    }
-                                                }),
-                                        ),
-                                ))
-                            }),
+                            .child(crate::focus_scroll::Reveal::new(
+                                "composer-input-reveal",
+                                &self.composer_scroll,
+                                div()
+                                    .capture_action(cx.listener(Self::composer_enter))
+                                    .capture_action(cx.listener(Self::command_up))
+                                    .capture_action(cx.listener(Self::command_down))
+                                    .capture_action(cx.listener(Self::command_escape))
+                                    .child(
+                                        Textarea::new(&self.input)
+                                            .appearance(false)
+                                            .bordered(false)
+                                            .aria_label(tr("聊天消息"))
+                                            .on_paste({
+                                                let app = cx.weak_entity();
+                                                move |item, _, cx| {
+                                                    app.update(cx, |this, cx| {
+                                                        if this.workspace.is_none() {
+                                                            return false;
+                                                        }
+                                                        this.paste_images(item, cx)
+                                                    })
+                                                    .unwrap_or(false)
+                                                }
+                                            }),
+                                    ),
+                            )),
                     ),
             ))
             .child(div().flex_shrink_0().child(self.render_composer_controls(
@@ -570,7 +561,7 @@ impl HiveApp {
             )))
     }
 
-    fn render_composer_status(
+    pub(crate) fn render_composer_status(
         &self,
         running: bool,
         pending: usize,
@@ -675,6 +666,23 @@ impl Render for HiveApp {
         }
         self.restore_task_editor(window, cx);
         if self.draft_target != self.draft_owner {
+            if let Some(key) = self
+                .draft_target
+                .as_ref()
+                .filter(|key| key.starts_with("workspace:"))
+            {
+                if self.draft_owner.is_none()
+                    && self
+                        .drafts
+                        .get(key)
+                        .is_none_or(|existing| existing.is_empty())
+                {
+                    let carried = self.input.read(cx).value().to_string();
+                    if !carried.trim().is_empty() {
+                        self.drafts.insert(key.clone(), carried);
+                    }
+                }
+            }
             let text = self
                 .draft_target
                 .as_ref()
@@ -688,22 +696,7 @@ impl Render for HiveApp {
             });
             self.draft_owner = self.draft_target.clone();
         }
-        let placeholder = self
-            .session
-            .as_ref()
-            .map(|s| {
-                if crate::language::english() {
-                    format!(
-                        "Ask {} anything, paste images, or type /…",
-                        crate::language::tr(s.backend.label())
-                    )
-                } else {
-                    format!("向 {} 发送消息，支持粘贴图片与 / 命令…", s.backend.label())
-                }
-            })
-            .unwrap_or_else(|| {
-                crate::language::tr("输入需求，支持粘贴图片与 / 命令…").into()
-            });
+        let placeholder: String = tr("输入任何问题，支持粘贴图片与 / 命令").into();
         if self.input_placeholder != placeholder {
             self.input_placeholder = placeholder.clone();
             self.input
@@ -753,8 +746,13 @@ impl Render for HiveApp {
             && !self.loading
             && (pending == 0 || running)
             && !self.closing;
-        self.composer_can_submit = can_submit;
-        let submit_on_enter = can_submit
+        let has_text = !self.input.read(cx).value().trim().is_empty()
+            || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
+        self.composer_has_text = has_text;
+        let can_pick_project_to_send =
+            self.workspace.is_none() && has_text && self.connected && !self.loading && !self.closing;
+        self.composer_can_submit = can_submit || can_pick_project_to_send;
+        let submit_on_enter = (can_submit || can_pick_project_to_send)
             && cx.global::<crate::composer::ComposerPreferences>().mode
                 == crate::composer::SendMode::Enter;
         if submit_on_enter != self.composer_submit_on_enter {
@@ -763,21 +761,49 @@ impl Render for HiveApp {
                 .update(cx, |input, cx| input.set_submit_on_enter(submit_on_enter, cx));
         }
         self.sync_conversation_list(cx);
-        let has_text = !self.input.read(cx).value().trim().is_empty()
-            || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
-        self.composer_has_text = has_text;
-        let welcome = self
-            .session
-            .as_ref()
-            .is_none_or(|s| s.agent_id.is_none() && !s.custom_title)
+        let welcome = self.session.as_ref().is_none_or(|s| s.agent_id.is_none())
             && !open_failed
             && self.pending_reports.is_empty()
             && self.messages.is_empty()
             && !has_interactions
             && !running
             && pending == 0
+            && !has_session_failure
+            && !self
+                .session
+                .as_ref()
+                .is_some_and(|s| self.failed_drafts.get(&s.id).is_some_and(|d| !d.is_empty()))
             && self.connected
             && !self.loading;
+        let reasoning_key = self
+            .session
+            .as_ref()
+            .filter(|_| {
+                self.conversation_ready && self.connected && !self.loading && !self.closing
+            })
+            .map(|session| {
+                (
+                    session.id.clone(),
+                    self.model
+                        .as_ref()
+                        .map(|model| format!("{}/{}", model.provider, model.id)),
+                )
+            });
+        let loaded_reasoning_key =
+            window.use_keyed_state("reasoning-autoload-key", cx, |_, _| {
+                None::<(String, Option<String>)>
+            });
+        if let Some(key) = reasoning_key {
+            if loaded_reasoning_key.read(cx).as_ref() != Some(&key)
+                && !self.reasoning_picker.loading
+            {
+                loaded_reasoning_key.update(cx, |slot, _| *slot = Some(key));
+                let app = cx.entity().downgrade();
+                window.on_next_frame(move |_, cx| {
+                    let _ = app.update(cx, |this, cx| this.load_reasoning(None, cx));
+                });
+            }
+        }
         let narrow = window.viewport_size().width < px(820.);
         let preferences = self.settings_panel || self.roles.visible;
         let compact_settings = window.viewport_size().width < px(720.);
@@ -957,8 +983,6 @@ impl Render for HiveApp {
                                 .h_full()
                                 .child(div().flex_1().min_h_0().min_w_0().w_full().child(body))
                                 .into_any_element()
-                        } else if self.workspace.is_none() && self.session.is_none() {
-                            self.render_welcome(window, cx).into_any_element()
                         } else {
                             let active_project = self
                                 .workspaces
@@ -968,24 +992,16 @@ impl Render for HiveApp {
                             let renaming = self.session.is_some()
                                 && self.session_name_target.as_deref()
                                     == self.session.as_ref().map(|s| s.id.as_str());
-                            let title = if welcome && active_project.is_none() {
-                                tr("打开项目").into()
-                            } else if welcome {
-                                if let Some(ws) = &active_project {
-                                    if english() {
-                                        format!("What should we build in {}?", ws.name)
-                                    } else {
-                                        format!("今天在 {} 构建什么？", ws.name)
-                                    }
-                                } else {
-                                    tr("今天想推进什么？").into()
-                                }
-                            } else {
-                                self.session
-                                    .as_ref()
-                                    .map(|s| self.session_title(s).to_string())
-                                    .unwrap_or_else(|| "Hive".into())
-                            };
+                            let session_title = self
+                                .session
+                                .as_ref()
+                                .map(|s| {
+                                    self.session_title(s)
+                                        .split_whitespace()
+                                        .collect::<Vec<_>>()
+                                        .join(" ")
+                                })
+                                .unwrap_or_else(|| tr("新对话").to_string());
                             let topbar_inset = if !self.sidebar_open
                                 && inset > px(0.)
                                 && !disconnected_banner
@@ -1042,121 +1058,21 @@ impl Render for HiveApp {
                                                     })),
                                             )
                                         })
-                                        .when(welcome, |bar| {
-                                            bar.child(
-                                                h_flex()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .when_some(
-                                                        active_project.clone(),
-                                                        |crumb, ws| {
-                                                            crumb
-                                                                .child(
-                                                                    crate::palette::project_badge(
-                                                                        &ws.name,
-                                                                        18.,
-                                                                        cx,
-                                                                    ),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .max_w(px(220.))
-                                                                        .text_size(px(13.))
-                                                                        .font_weight(
-                                                                            FontWeight::MEDIUM,
-                                                                        )
-                                                                        .text_color(
-                                                                            Color::Secondary
-                                                                                .get(cx),
-                                                                        )
-                                                                        .truncate()
-                                                                        .child(ws.name),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .text_size(px(12.))
-                                                                        .text_color(
-                                                                            Color::Muted
-                                                                                .get(cx)
-                                                                                .opacity(0.55),
-                                                                        )
-                                                                        .child("/"),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .text_size(px(13.))
-                                                                        .font_weight(
-                                                                            FontWeight::MEDIUM,
-                                                                        )
-                                                                        .text_color(
-                                                                            Color::Text.get(cx),
-                                                                        )
-                                                                        .truncate()
-                                                                        .child(tr("新会话")),
-                                                                )
-                                                        },
-                                                    ),
-                                            )
-                                            .when_some(active_project.clone(), |bar, ws| {
-                                                let folder_path =
-                                                    std::path::PathBuf::from(&ws.path);
-                                                bar.child(
-                                                    Button::new("topbar-open-folder")
-                                                        .custom(
-                                                            crate::palette::quiet_icon_variant(cx),
-                                                        )
-                                                        .compact()
-                                                        .xsmall()
-                                                        .h(px(28.))
-                                                        .w(px(28.))
-                                                        .rounded_lg()
-                                                        .icon(Glyph::FolderOpen)
-                                                        .tooltip(tr("在文件管理器中打开项目"))
-                                                        .accessibility_label(tr(
-                                                            "在文件管理器中打开当前项目",
-                                                        ))
-                                                        .on_click(cx.listener(
-                                                            move |_, _, _, cx| {
-                                                                cx.reveal_path(&folder_path)
-                                                            },
-                                                        )),
-                                                )
-                                                .child(
-                                                    Button::new("topbar-quick-terminal")
-                                                        .custom(
-                                                            crate::palette::quiet_icon_variant(cx),
-                                                        )
-                                                        .compact()
-                                                        .xsmall()
-                                                        .h(px(28.))
-                                                        .w(px(28.))
-                                                        .rounded_lg()
-                                                        .icon(Glyph::SquareTerminal)
-                                                        .tooltip(tr("打开工作区终端"))
-                                                        .accessibility_label(tr("打开工作区终端"))
-                                                        .disabled(!self.connected)
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.show_terminal(window, cx);
-                                                                cx.notify();
-                                                            },
-                                                        )),
-                                                )
-                                            })
-                                        })
                                         .when(!welcome, |bar| {
                                             bar.when_some(
                                                 self.conversation_return(cx),
                                                 |header, back| header.child(back),
                                             )
-                                            .when(!renaming, |header| {
-                                                let clean_title = title
-                                                    .split_whitespace()
-                                                    .collect::<Vec<_>>()
-                                                    .join(" ");
-                                                header.child(
+                                        })
+                                        .when(!renaming, |header| {
+                                            let show_conv_tools = self.conversation_ready
+                                                && self.session.is_some()
+                                                && !self.loading;
+                                            let title_disabled = !self.connected
+                                                || self.session_name_loading
+                                                || !self.workspace_writes_allowed();
+                                            header
+                                                .child(
                                                     h_flex()
                                                         .flex_1()
                                                         .min_w_0()
@@ -1195,336 +1111,377 @@ impl Render for HiveApp {
                                                                             .text_color(
                                                                                 Color::Muted
                                                                                     .get(cx)
-                                                                                    .opacity(0.5),
+                                                                                    .opacity(0.55),
                                                                             )
                                                                             .child("/"),
                                                                     )
                                                             },
                                                         )
-                                                        .child(
-                                                            div()
-                                                                .id("session-title")
-                                                                .role(Role::Label)
-                                                                .aria_label(title.clone())
-                                                                .text_size(px(13.))
-                                                                .font_weight(FontWeight::SEMIBOLD)
-                                                                .text_color(Color::Text.get(cx))
-                                                                .flex_1()
-                                                                .min_w_0()
-                                                                .truncate()
-                                                                .tooltip({
-                                                                    let title = title.clone();
-                                                                    move |window, cx| {
-                                                                        Tooltip::new(title.clone())
-                                                                            .build(window, cx)
-                                                                    }
-                                                                })
-                                                                .child(clean_title),
+                                                        .when(self.session.is_some(), |crumb| {
+                                                            crumb.child(
+                                                                Button::new("rename-session")
+                                                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                                                    .compact()
+                                                                    .h(px(26.))
+                                                                    .px_1p5()
+                                                                    .rounded_md()
+                                                                    .min_w_0()
+                                                                    .max_w(px(420.))
+                                                                    .tooltip(tr("重命名会话"))
+                                                                    .accessibility_label(tr(
+                                                                        "重命名当前会话",
+                                                                    ))
+                                                                    .disabled(title_disabled)
+                                                                    .on_click(cx.listener(
+                                                                        |this, _, window, cx| {
+                                                                            this.begin_session_rename(
+                                                                                window, cx,
+                                                                            )
+                                                                        },
+                                                                    ))
+                                                                    .child(
+                                                                        div()
+                                                                            .id("session-title")
+                                                                            .role(Role::Label)
+                                                                            .aria_label(
+                                                                                session_title
+                                                                                    .clone(),
+                                                                            )
+                                                                            .min_w_0()
+                                                                            .truncate()
+                                                                            .text_size(px(13.))
+                                                                            .font_weight(
+                                                                                FontWeight::SEMIBOLD,
+                                                                            )
+                                                                            .text_color(
+                                                                                Color::Text.get(cx),
+                                                                            )
+                                                                            .child(
+                                                                                session_title
+                                                                                    .clone(),
+                                                                            ),
+                                                                    ),
+                                                            )
+                                                        })
+                                                        .when(
+                                                            self.session.is_none()
+                                                                && active_project.is_some(),
+                                                            |crumb| {
+                                                                crumb.child(
+                                                                    div()
+                                                                        .min_w_0()
+                                                                        .truncate()
+                                                                        .text_size(px(13.))
+                                                                        .font_weight(
+                                                                            FontWeight::MEDIUM,
+                                                                        )
+                                                                        .text_color(
+                                                                            Color::Text.get(cx),
+                                                                        )
+                                                                        .child(tr("新对话")),
+                                                                )
+                                                            },
                                                         ),
                                                 )
-                                            })
-                                            .when(renaming, |header| {
-                                                header
-                                                    .key_context("HiveSessionName")
-                                                    .on_action(cx.listener(
-                                                        |this,
-                                                         _: &crate::CancelSessionRename,
-                                                         _,
-                                                         cx| {
-                                                            if !this.session_name_loading {
-                                                                this.session_name_target = None;
-                                                                cx.notify();
-                                                            }
-                                                        },
-                                                    ))
-                                                    .child(
-                                                        div().flex_1().min_w_0().child(
-                                                            Input::new(&self.session_name)
-                                                                .small()
-                                                                .aria_label(tr("会话名称"))
-                                                                .disabled(
-                                                                    self.session_name_loading,
+                                                .when(has_session_failure, |bar| {
+                                                    bar.child(
+                                                        Button::new("show-session-failure")
+                                                            .custom(
+                                                                crate::palette::quiet_icon_variant(
+                                                                    cx,
                                                                 ),
-                                                        ),
-                                                    )
-                                                    .child(
-                                                        Button::new("save-session-name")
-                                                            .primary()
-                                                            .small()
-                                                            .h(px(28.))
-                                                            .rounded_lg()
-                                                            .label(tr("保存名称"))
-                                                            .disabled(
-                                                                !self.connected
-                                                                    || self.session_name_loading,
                                                             )
-                                                            .on_click(cx.listener(
-                                                                |this, _, _, cx| {
-                                                                    this.save_session_name(cx)
-                                                                },
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        Button::new("cancel-session-name")
-                                                            .outline()
                                                             .small()
-                                                            .h(px(28.))
+                                                            .h(px(26.))
+                                                            .px_2()
                                                             .rounded_lg()
-                                                            .label(tr("取消"))
-                                                            .disabled(self.session_name_loading)
+                                                            .label(tr("错误详情"))
                                                             .on_click(cx.listener(
-                                                                |this, _, _, cx| {
-                                                                    this.session_name_target = None;
+                                                                |this, _, window, cx| {
+                                                                    this.composer_scroll.set_offset(
+                                                                        point(px(0.), px(0.)),
+                                                                    );
+                                                                    this.failure_scroll.set_offset(
+                                                                        point(px(0.), px(0.)),
+                                                                    );
+                                                                    window.refresh();
                                                                     cx.notify();
                                                                 },
                                                             )),
                                                     )
-                                            })
-                                            .when(!renaming && has_session_failure, |header| {
-                                                header.child(
-                                                    Button::new("show-session-failure")
-                                                        .custom(
-                                                            crate::palette::quiet_icon_variant(cx),
-                                                        )
-                                                        .small()
-                                                        .h(px(26.))
-                                                        .px_2()
-                                                        .rounded_lg()
-                                                        .label(tr("错误详情"))
-                                                        .on_click(cx.listener(
-                                                            |this, _, window, cx| {
-                                                                this.composer_scroll.set_offset(
-                                                                    point(px(0.), px(0.)),
-                                                                );
-                                                                this.failure_scroll.set_offset(
-                                                                    point(px(0.), px(0.)),
-                                                                );
-                                                                window.refresh();
-                                                                cx.notify();
-                                                            },
-                                                        )),
-                                                )
-                                            })
-                                            .when(
-                                                !renaming
-                                                    && !has_session_failure
-                                                    && (!self.status.is_background_connected()
-                                                        || running),
-                                                |header| {
-                                                    header.child(
-                                                        h_flex()
-                                                            .flex_shrink_0()
-                                                            .items_center()
-                                                            .gap_1p5()
-                                                            .px_2p5()
-                                                            .py_0p5()
-                                                            .rounded_full()
-                                                            .bg(Color::AccentSoft.get(cx))
-                                                            .child(
-                                                                div()
-                                                                    .w(px(6.))
-                                                                    .h(px(6.))
-                                                                    .rounded_full()
-                                                                    .bg(Color::Accent.get(cx)),
-                                                            )
-                                                            .child(
-                                                                div()
-                                                                    .text_xs()
-                                                                    .font_weight(FontWeight::MEDIUM)
-                                                                    .text_color(
-                                                                        Color::Accent.get(cx),
-                                                                    )
-                                                                    .child(
-                                                                        if running
-                                                                            && self
-                                                                                .status
-                                                                                .is_background_connected()
-                                                                        {
-                                                                            tr("正在回复…")
-                                                                                .to_string()
-                                                                        } else {
-                                                                            self.status.text()
-                                                                        },
-                                                                    ),
-                                                            ),
-                                                    )
-                                                },
-                                            )
-                                            .when(!renaming, |header| {
-                                                let show_conv_tools = self.conversation_ready
-                                                    && self.session.is_some()
-                                                    && !self.loading;
-                                                header.child(
-                                                    h_flex()
-                                                        .flex_shrink_0()
-                                                        .items_center()
-                                                        .gap_1()
-                                                        .child(
-                                                            Button::new("rename-session")
-                                                                .custom(
-                                                                    crate::palette::quiet_icon_variant(
-                                                                        cx,
-                                                                    ),
+                                                })
+                                                .when(
+                                                    !has_session_failure
+                                                        && (!self.status.is_background_connected()
+                                                            || running),
+                                                    |bar| {
+                                                        bar.child(
+                                                            h_flex()
+                                                                .flex_shrink_0()
+                                                                .items_center()
+                                                                .gap_1p5()
+                                                                .px_2p5()
+                                                                .py_0p5()
+                                                                .rounded_full()
+                                                                .bg(Color::AccentSoft.get(cx))
+                                                                .child(
+                                                                    div()
+                                                                        .w(px(6.))
+                                                                        .h(px(6.))
+                                                                        .rounded_full()
+                                                                        .bg(Color::Accent.get(cx)),
                                                                 )
-                                                                .compact()
-                                                                .xsmall()
-                                                                .h(px(28.))
-                                                                .w(px(28.))
-                                                                .rounded_lg()
-                                                                .icon(Glyph::Pencil)
-                                                                .tooltip(tr("重命名会话"))
-                                                                .accessibility_label(tr(
-                                                                    "重命名当前会话",
-                                                                ))
-                                                                .disabled(
-                                                                    !self.connected
-                                                                        || self
-                                                                            .session_name_loading
-                                                                        || !self
-                                                                            .workspace_writes_allowed(),
-                                                                )
-                                                                .on_click(cx.listener(
-                                                                    |this, _, window, cx| {
-                                                                        this.begin_session_rename(
-                                                                            window, cx,
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .font_weight(
+                                                                            FontWeight::MEDIUM,
                                                                         )
-                                                                    },
-                                                                )),
+                                                                        .text_color(
+                                                                            Color::Accent.get(cx),
+                                                                        )
+                                                                        .child(
+                                                                            if running
+                                                                                && self
+                                                                                    .status
+                                                                                    .is_background_connected()
+                                                                            {
+                                                                                tr("正在回复…")
+                                                                                    .to_string()
+                                                                            } else {
+                                                                                self.status.text()
+                                                                            },
+                                                                        ),
+                                                                ),
                                                         )
-                                                        .when(show_conv_tools, |tools| {
-                                                            tools
-                                                                .child(
-                                                                    Button::new(
-                                                                        "find-in-conversation",
-                                                                    )
-                                                                    .custom(
-                                                                        crate::palette::quiet_icon_variant(
-                                                                            cx,
-                                                                        ),
-                                                                    )
-                                                                    .compact()
-                                                                    .xsmall()
-                                                                    .h(px(28.))
-                                                                    .w(px(28.))
-                                                                    .rounded_lg()
-                                                                    .icon(Glyph::Search)
-                                                                    .accessibility_label(tr(
-                                                                        "查找当前会话",
-                                                                    ))
-                                                                    .tooltip(
-                                                                        if cfg!(target_os = "macos")
-                                                                        {
-                                                                            tr("查找会话内容 · ⌘F")
-                                                                        } else {
-                                                                            tr("查找会话内容 · Ctrl+F")
-                                                                        },
-                                                                    )
-                                                                    .on_click(cx.listener(
-                                                                        |this, _, window, cx| {
-                                                                            this.open_conversation_find(
-                                                                                window, cx,
-                                                                            )
-                                                                        },
-                                                                    )),
-                                                                )
-                                                                .child(
-                                                                    Button::new(
-                                                                        "export-conversation",
-                                                                    )
-                                                                    .custom(
-                                                                        crate::palette::quiet_icon_variant(
-                                                                            cx,
-                                                                        ),
-                                                                    )
-                                                                    .compact()
-                                                                    .xsmall()
-                                                                    .h(px(28.))
-                                                                    .w(px(28.))
-                                                                    .rounded_lg()
-                                                                    .icon(Glyph::FileDown)
-                                                                    .accessibility_label(tr(
-                                                                        "导出当前对话",
-                                                                    ))
-                                                                    .tooltip(tr(
-                                                                        "导出对话为 Markdown",
-                                                                    ))
-                                                                    .disabled(
-                                                                        self.messages.is_empty(),
-                                                                    )
-                                                                    .on_click(cx.listener(
-                                                                        |this, _, window, cx| {
-                                                                            this.open_conversation_export(
-                                                                                window, cx,
-                                                                            )
-                                                                        },
-                                                                    )),
-                                                                )
-                                                        })
-                                                        .when_some(
-                                                            active_project.clone(),
-                                                            |tools, _| {
-                                                                tools.child(
-                                                                    Button::new(
-                                                                        "topbar-quick-terminal",
-                                                                    )
-                                                                    .custom(
-                                                                        crate::palette::quiet_icon_variant(
-                                                                            cx,
-                                                                        ),
-                                                                    )
-                                                                    .compact()
-                                                                    .xsmall()
-                                                                    .h(px(28.))
-                                                                    .w(px(28.))
-                                                                    .rounded_lg()
-                                                                    .icon(Glyph::SquareTerminal)
-                                                                    .tooltip(tr("打开工作区终端"))
-                                                                    .accessibility_label(tr(
-                                                                        "打开工作区终端",
-                                                                    ))
-                                                                    .disabled(!self.connected)
-                                                                    .on_click(cx.listener(
-                                                                        |this, _, window, cx| {
-                                                                            this.show_terminal(
-                                                                                window, cx,
-                                                                            );
-                                                                            cx.notify();
-                                                                        },
-                                                                    )),
-                                                                )
-                                                            },
-                                                        )
-                                                        .when(
-                                                            self.reading_above_latest(),
-                                                            |tools| {
-                                                                tools.child(
-                                                                    Button::new("jump-to-latest")
+                                                    },
+                                                )
+                                                .when(self.reading_above_latest(), |bar| {
+                                                    bar.child(
+                                                        Button::new("jump-to-latest")
+                                                            .custom(
+                                                                crate::palette::quiet_icon_variant(
+                                                                    cx,
+                                                                ),
+                                                            )
+                                                            .small()
+                                                            .h(px(28.))
+                                                            .px_2()
+                                                            .rounded_lg()
+                                                            .icon(Glyph::ArrowDown)
+                                                            .label(tr("回到最新"))
+                                                            .accessibility_label(tr("回到最新消息"))
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.jump_to_latest(cx);
+                                                                },
+                                                            )),
+                                                    )
+                                                })
+                                                .when(
+                                                    show_conv_tools || active_project.is_some(),
+                                                    |bar| {
+                                                        bar.child(
+                                                            h_flex()
+                                                                .flex_shrink_0()
+                                                                .items_center()
+                                                                .gap_1()
+                                                                .when(show_conv_tools, |tools| {
+                                                                    tools.child(
+                                                                        Button::new(
+                                                                            "find-in-conversation",
+                                                                        )
                                                                         .custom(
                                                                             crate::palette::quiet_icon_variant(
                                                                                 cx,
                                                                             ),
                                                                         )
-                                                                        .small()
+                                                                        .compact()
+                                                                        .xsmall()
                                                                         .h(px(28.))
-                                                                        .px_2()
+                                                                        .w(px(28.))
                                                                         .rounded_lg()
-                                                                        .icon(Glyph::ArrowDown)
-                                                                        .label(tr("回到最新"))
+                                                                        .icon(Glyph::Search)
                                                                         .accessibility_label(tr(
-                                                                            "回到最新消息",
+                                                                            "查找当前会话",
                                                                         ))
+                                                                        .tooltip(
+                                                                            if cfg!(
+                                                                                target_os = "macos"
+                                                                            ) {
+                                                                                tr("查找会话内容 · ⌘F")
+                                                                            } else {
+                                                                                tr("查找会话内容 · Ctrl+F")
+                                                                            },
+                                                                        )
                                                                         .on_click(cx.listener(
-                                                                            |this, _, _, cx| {
-                                                                                this.jump_to_latest(
-                                                                                    cx,
-                                                                                );
+                                                                            |this, _, window, cx| {
+                                                                                this.open_conversation_find(
+                                                                                    window, cx,
+                                                                                )
                                                                             },
                                                                         )),
+                                                                    )
+                                                                })
+                                                                .when(
+                                                                    !show_conv_tools && welcome,
+                                                                    |tools| {
+                                                                        tools.when_some(
+                                                                            active_project.clone(),
+                                                                            |tools, ws| {
+                                                                                let folder_path =
+                                                                                    std::path::PathBuf::from(
+                                                                                        &ws.path,
+                                                                                    );
+                                                                                tools.child(
+                                                                                    Button::new("topbar-open-folder")
+                                                                                        .custom(crate::palette::quiet_icon_variant(cx))
+                                                                                        .compact()
+                                                                                        .xsmall()
+                                                                                        .h(px(28.))
+                                                                                        .w(px(28.))
+                                                                                        .rounded_lg()
+                                                                                        .icon(Glyph::FolderOpen)
+                                                                                        .tooltip(tr("在文件管理器中打开项目"))
+                                                                                        .accessibility_label(tr(
+                                                                                            "在文件管理器中打开当前项目",
+                                                                                        ))
+                                                                                        .on_click(cx.listener(
+                                                                                            move |_, _, _, cx| {
+                                                                                                cx.reveal_path(&folder_path)
+                                                                                            },
+                                                                                        )),
+                                                                                )
+                                                                            },
+                                                                        )
+                                                                    },
                                                                 )
-                                                            },
-                                                        ),
+                                                                .when_some(
+                                                                    active_project.clone(),
+                                                                    |tools, _| {
+                                                                        tools.child(
+                                                                            Button::new(
+                                                                                "topbar-quick-terminal",
+                                                                            )
+                                                                            .custom(
+                                                                                crate::palette::quiet_icon_variant(
+                                                                                    cx,
+                                                                                ),
+                                                                            )
+                                                                            .compact()
+                                                                            .xsmall()
+                                                                            .h(px(28.))
+                                                                            .w(px(28.))
+                                                                            .rounded_lg()
+                                                                            .icon(Glyph::SquareTerminal)
+                                                                            .tooltip(tr("打开工作区终端"))
+                                                                            .accessibility_label(tr(
+                                                                                "打开工作区终端",
+                                                                            ))
+                                                                            .disabled(!self.connected)
+                                                                            .on_click(cx.listener(
+                                                                                |this, _, window, cx| {
+                                                                                    this.show_terminal(
+                                                                                        window, cx,
+                                                                                    );
+                                                                                    cx.notify();
+                                                                                },
+                                                                            )),
+                                                                        )
+                                                                    },
+                                                                )
+                                                                .when(show_conv_tools, |tools| {
+                                                                    tools.child(
+                                                                        Button::new(
+                                                                            "export-conversation",
+                                                                        )
+                                                                        .custom(
+                                                                            crate::palette::quiet_icon_variant(
+                                                                                cx,
+                                                                            ),
+                                                                        )
+                                                                        .compact()
+                                                                        .xsmall()
+                                                                        .h(px(28.))
+                                                                        .w(px(28.))
+                                                                        .rounded_lg()
+                                                                        .icon(Glyph::FileDown)
+                                                                        .accessibility_label(tr(
+                                                                            "导出当前对话",
+                                                                        ))
+                                                                        .tooltip(tr(
+                                                                            "导出对话为 Markdown",
+                                                                        ))
+                                                                        .disabled(
+                                                                            self.messages.is_empty(),
+                                                                        )
+                                                                        .on_click(cx.listener(
+                                                                            |this, _, window, cx| {
+                                                                                this.open_conversation_export(
+                                                                                    window, cx,
+                                                                                )
+                                                                            },
+                                                                        )),
+                                                                    )
+                                                                }),
+                                                        )
+                                                    },
                                                 )
-                                            })
+                                        })
+                                        .when(renaming, |header| {
+                                            header
+                                                .key_context("HiveSessionName")
+                                                .on_action(cx.listener(
+                                                    |this,
+                                                     _: &crate::CancelSessionRename,
+                                                     _,
+                                                     cx| {
+                                                        if !this.session_name_loading {
+                                                            this.session_name_target = None;
+                                                            cx.notify();
+                                                        }
+                                                    },
+                                                ))
+                                                .child(
+                                                    div().flex_1().min_w_0().child(
+                                                        Input::new(&self.session_name)
+                                                            .small()
+                                                            .aria_label(tr("会话名称"))
+                                                            .disabled(self.session_name_loading),
+                                                    ),
+                                                )
+                                                .child(
+                                                    Button::new("save-session-name")
+                                                        .primary()
+                                                        .small()
+                                                        .h(px(28.))
+                                                        .rounded_lg()
+                                                        .label(tr("保存名称"))
+                                                        .disabled(
+                                                            !self.connected
+                                                                || self.session_name_loading,
+                                                        )
+                                                        .on_click(cx.listener(
+                                                            |this, _, _, cx| {
+                                                                this.save_session_name(cx)
+                                                            },
+                                                        )),
+                                                )
+                                                .child(
+                                                    Button::new("cancel-session-name")
+                                                        .outline()
+                                                        .small()
+                                                        .h(px(28.))
+                                                        .rounded_lg()
+                                                        .label(tr("取消"))
+                                                        .disabled(self.session_name_loading)
+                                                        .on_click(cx.listener(
+                                                            |this, _, _, cx| {
+                                                                this.session_name_target = None;
+                                                                cx.notify();
+                                                            },
+                                                        )),
+                                                )
                                         }),
                                 )
                                 .when(self.conversation_find.is_some(), |view| {
@@ -1630,230 +1587,20 @@ impl Render for HiveApp {
                                     },
                                 )
                                 .when(welcome, |surface| {
-                                    let hero_px = if window.viewport_size().width < px(1000.) {
-                                        26.
+                                    let hero_can_send = if self.workspace.is_none() {
+                                        has_text && self.connected && !self.loading && !self.closing
                                     } else {
-                                        30.
+                                        can_submit && has_text
                                     };
-                                    surface.child(
-                                        v_flex()
-                                            .id("welcome-draft-scroll")
-                                            .flex_1()
-                                            .min_h_0()
-                                            .w_full()
-                                            .overflow_y_scroll()
-                                            .px_5()
-                                            .when(!narrow, |v| v.px(px(44.)))
-                                            .pb_10()
-                                            .when(
-                                                window.viewport_size().height > px(560.),
-                                                |v| v.justify_center(),
-                                            )
-                                            .child(
-                                                v_flex()
-                                                    .w_full()
-                                                    .max_w(px(CHAT_COLUMN_WIDTH))
-                                                    .mx_auto()
-                                                    .gap_5()
-                                                    .child(
-                                                        v_flex()
-                                                            .w_full()
-                                                            .items_center()
-                                                            .text_center()
-                                                            .gap_1p5()
-                                                            .child(
-                                                                div()
-                                                                    .id("session-title")
-                                                                    .role(Role::Label)
-                                                                    .aria_label(title.clone())
-                                                                    .text_size(px(hero_px))
-                                                                    .line_height(px(38.))
-                                                                    .whitespace_normal()
-                                                                    .child(
-                                                                        if let Some(ws) =
-                                                                            active_project.as_ref()
-                                                                        {
-                                                                            h_flex()
-                                                                                .flex_wrap()
-                                                                                .justify_center()
-                                                                                .items_baseline()
-                                                                                .gap_1p5()
-                                                                                .child(
-                                                                                    div()
-                                                                                        .font_weight(FontWeight::NORMAL)
-                                                                                        .text_color(Color::Text.get(cx).opacity(0.86))
-                                                                                        .child(if english() {
-                                                                                            "What should we build in"
-                                                                                        } else {
-                                                                                            "今天在"
-                                                                                        }),
-                                                                                )
-                                                                                .child(
-                                                                                    div()
-                                                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                                                        .text_color(Color::Text.get(cx))
-                                                                                        .child(ws.name.clone()),
-                                                                                )
-                                                                                .child(
-                                                                                    div()
-                                                                                        .font_weight(FontWeight::NORMAL)
-                                                                                        .text_color(Color::Text.get(cx).opacity(0.86))
-                                                                                        .child(if english() {
-                                                                                            "?"
-                                                                                        } else {
-                                                                                            "构建什么？"
-                                                                                        }),
-                                                                                )
-                                                                                .into_any_element()
-                                                                        } else {
-                                                                            div()
-                                                                                .font_weight(
-                                                                                    FontWeight::SEMIBOLD,
-                                                                                )
-                                                                                .child(title)
-                                                                                .into_any_element()
-                                                                        },
-                                                                    ),
-                                                            )
-                                                            .when(
-                                                                self.session.is_none(),
-                                                                |hero| {
-                                                                    hero.child(
-                                                                        div()
-                                                                            .id("home-agent-hint")
-                                                                            .role(Role::Label)
-                                                                            .aria_label(tr(
-                                                                                "先写下需求，再选择 Agent。草稿会带入新会话。",
-                                                                            ))
-                                                                            .text_size(px(13.))
-                                                                            .text_color(
-                                                                                Color::Muted
-                                                                                    .get(cx),
-                                                                            )
-                                                                            .child(tr(
-                                                                                "先写下需求，再选择 Agent。草稿会带入新会话。",
-                                                                            )),
-                                                                    )
-                                                                },
-                                                            )
-                                                            .when(
-                                                                self.session.is_some()
-                                                                    && self.workspace.is_some(),
-                                                                |hero| {
-                                                                    hero.child(
-                                                                        div()
-                                                                            .text_size(px(13.))
-                                                                            .text_color(
-                                                                                Color::Muted
-                                                                                    .get(cx),
-                                                                            )
-                                                                            .child(tr(
-                                                                                "直接输入需求，或使用下方快捷指令开始。",
-                                                                            )),
-                                                                    )
-                                                                },
-                                                            ),
-                                                    )
-                                                    .child(self.render_composer_card(
-                                                        window,
-                                                        welcome,
-                                                        running,
-                                                        can_submit && has_text,
-                                                        cx,
-                                                    ))
-                                                    .child(self.render_composer_status(
-                                                        running,
-                                                        pending,
-                                                        needs_pi_model,
-                                                        cx,
-                                                    ))
-                                                    .when(self.workspace.is_some(), |col| {
-                                                        col.child(
-                                                            h_flex()
-                                                                .w_full()
-                                                                .min_w_0()
-                                                                .flex_wrap()
-                                                                .items_center()
-                                                                .justify_between()
-                                                                .gap_2()
-                                                                .px_1()
-                                                                .child(
-                                                                    self.render_project_context(cx),
-                                                                )
-                                                                .child(
-                                                                    h_flex()
-                                                                        .flex_wrap()
-                                                                        .items_center()
-                                                                        .gap_1()
-                                                                        .children(
-                                                                            [
-                                                                                (
-                                                                                    Glyph::FolderOpen,
-                                                                                    tr("了解项目"),
-                                                                                    tr("请梳理当前项目的结构、主要入口和运行方式。"),
-                                                                                ),
-                                                                                (
-                                                                                    Glyph::Search,
-                                                                                    tr("审查改动"),
-                                                                                    tr("请审查当前项目尚未提交的改动，按严重程度列出有证据的问题。"),
-                                                                                ),
-                                                                                (
-                                                                                    Glyph::SquareTerminal,
-                                                                                    tr("排查问题"),
-                                                                                    tr("请帮我重现并定位当前项目中的问题，给出根因分析和修复方案。"),
-                                                                                ),
-                                                                            ]
-                                                                            .into_iter()
-                                                                            .enumerate()
-                                                                            .map(|(i, (icon, label, prompt))| {
-                                                                                Button::new((
-                                                                                    "starter",
-                                                                                    i,
-                                                                                ))
-                                                                                .custom(
-                                                                                    crate::palette::quiet_icon_variant(
-                                                                                        cx,
-                                                                                    ),
-                                                                                )
-                                                                                .compact()
-                                                                                .xsmall()
-                                                                                .h(px(26.))
-                                                                                .px_2()
-                                                                                .rounded_md()
-                                                                                .icon(icon)
-                                                                                .label(label)
-                                                                                .on_click(cx.listener(
-                                                                                    move |this, _, window, cx| {
-                                                                                        this.input.update(
-                                                                                            cx,
-                                                                                            |input, cx| {
-                                                                                                let current =
-                                                                                                    input.value();
-                                                                                                let value = if current
-                                                                                                    .is_empty()
-                                                                                                {
-                                                                                                    prompt.to_owned()
-                                                                                                } else {
-                                                                                                    format!("{current}\n{prompt}")
-                                                                                                };
-                                                                                                input.replace_all(
-                                                                                                    value, window,
-                                                                                                    cx,
-                                                                                                );
-                                                                                                input.focus(
-                                                                                                    window, cx,
-                                                                                                );
-                                                                                            },
-                                                                                        )
-                                                                                    },
-                                                                                ))
-                                                                            }),
-                                                                        ),
-                                                                ),
-                                                        )
-                                                    }),
-                                            ),
-                                    )
+                                    surface.child(self.render_hero_stage(
+                                        window,
+                                        narrow,
+                                        running,
+                                        hero_can_send,
+                                        pending,
+                                        needs_pi_model,
+                                        cx,
+                                    ))
                                 })
                                 .when(!welcome && open_failed, |surface| {
                                     surface.child(
@@ -1904,8 +1651,7 @@ impl Render for HiveApp {
                                             .max_h(window.viewport_size().height * 0.62)
                                             .flex_shrink_0()
                                             .gap_1p5()
-                                            .px_5()
-                                            .when(!narrow, |dock| dock.px(px(44.)))
+                                            .px(if narrow { px(16.) } else { px(32.) })
                                             .pt_1()
                                             .pb_3()
                                             .child(self.render_composer_card(
@@ -1914,6 +1660,9 @@ impl Render for HiveApp {
                                                 running,
                                                 can_submit && has_text,
                                                 cx,
+                                            ))
+                                            .child(self.render_composer_meta_bar(
+                                                window, running, cx,
                                             ))
                                             .child(self.render_composer_status(
                                                 running,

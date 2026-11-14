@@ -118,7 +118,7 @@ impl Render for ToolDiff {
         let status_running = self.status == "执行中";
         v_flex()
             .min_w_0()
-            .gap_3()
+            .gap_2p5()
             .tab_group()
             .child(
                 v_flex()
@@ -140,7 +140,7 @@ impl Render for ToolDiff {
                                     .child(
                                         Icon::new(Glyph::FileDiff)
                                             .size(px(14.))
-                                            .text_color(Color::Secondary.get(cx)),
+                                            .text_color(Color::Muted.get(cx)),
                                     )
                                     .child(
                                         div()
@@ -151,9 +151,9 @@ impl Render for ToolDiff {
                                     )
                                     .child(
                                         div()
-                                            .px_2()
-                                            .py(px(2.))
-                                            .rounded_full()
+                                            .px_1p5()
+                                            .py(px(1.5))
+                                            .rounded_md()
                                             .bg(if status_failed {
                                                 Color::ErrorSurface.get(cx)
                                             } else if status_running {
@@ -421,6 +421,9 @@ impl Render for ToolDiff {
                     div()
                         .h(diff_height)
                         .min_w_0()
+                        .rounded_xl()
+                        .bg(Color::Card.get(cx))
+                        .overflow_hidden()
                         .child(
                             Diff::new(&self.state)
                                 .soft_wrap(true)
@@ -438,7 +441,7 @@ impl Render for ToolDiff {
                     div()
                         .min_w_0()
                         .rounded_xl()
-                        .bg(Color::Inset.get(cx))
+                        .bg(Color::Card.get(cx))
                         .border_1()
                         .border_color(Color::Divider.get(cx))
                         .overflow_hidden()
@@ -452,11 +455,13 @@ impl Render for ToolDiff {
                             )
                             .border_0()
                             .rounded_none()
-                            .p_3()
+                            .px_3p5()
+                            .py_3()
                             .track_focus(&self.raw_focus)
                             .font_family(Theme::global(cx).mono_font_family.clone())
                             .text_size(px(12.))
                             .line_height(px(19.))
+                            .text_color(Color::Text.get(cx))
                             .child(crate::text_reading::selectable_text(
                                 "tool-diff-source",
                                 self.document

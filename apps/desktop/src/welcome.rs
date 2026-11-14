@@ -1,301 +1,408 @@
 use crate::{
-    app::{HiveApp, SettingsSection},
-    chrome,
-    focus_scroll::Reveal,
-    language::tr,
+    app::HiveApp,
+    conversation_list::CHAT_COLUMN_WIDTH,
+    language::{english, tr},
     palette::Color,
 };
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
-        menu::{DropdownMenu, PopupMenuItem},
-        scroll::ScrollableElement,
         *,
     },
     prelude::FluentBuilder,
     *,
 };
-use std::sync::{Arc, OnceLock};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
+};
+
 mod agents;
 
+const GIT_BRANCH_TTL: Duration = Duration::from_secs(3);
+
+fn git_branch_cache() -> &'static Mutex<HashMap<String, (Instant, Option<String>)>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, (Instant, Option<String>)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn read_git_head(project_path: &str) -> Option<String> {
+    let mut current = Some(Path::new(project_path));
+    for _ in 0..4 {
+        let Some(dir) = current else {
+            break;
+        };
+        let dot_git = dir.join(".git");
+        let head_path = if dot_git.is_dir() {
+            Some(dot_git.join("HEAD"))
+        } else if dot_git.is_file() {
+            fs::read_to_string(&dot_git).ok().and_then(|content| {
+                content
+                    .lines()
+                    .find_map(|line| line.strip_prefix("gitdir:"))
+                    .map(|raw| {
+                        let target = PathBuf::from(raw.trim());
+                        if target.is_absolute() {
+                            target.join("HEAD")
+                        } else {
+                            dir.join(target).join("HEAD")
+                        }
+                    })
+            })
+        } else {
+            None
+        };
+        if let Some(head_path) = head_path {
+            let head = fs::read_to_string(head_path).ok()?;
+            let line = head.lines().next()?.trim();
+            if let Some(branch) = line.strip_prefix("ref: refs/heads/") {
+                let branch = branch.trim();
+                return (!branch.is_empty()).then(|| branch.to_owned());
+            }
+            if let Some(reference) = line.strip_prefix("ref: ") {
+                let reference = reference.trim();
+                return (!reference.is_empty()).then(|| reference.to_owned());
+            }
+            if line.len() >= 7 && line.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Some(line[..7].to_owned());
+            }
+            return None;
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+pub(crate) fn cached_git_branch(project_path: &str) -> Option<String> {
+    let now = Instant::now();
+    if let Ok(cache) = git_branch_cache().lock() {
+        if let Some((fetched_at, branch)) = cache.get(project_path) {
+            if now.duration_since(*fetched_at) < GIT_BRANCH_TTL {
+                return branch.clone();
+            }
+        }
+    }
+    let branch = read_git_head(project_path);
+    if let Ok(mut cache) = git_branch_cache().lock() {
+        if cache.len() > 64 {
+            cache.clear();
+        }
+        cache.insert(project_path.to_owned(), (now, branch.clone()));
+    }
+    branch
+}
+
 impl HiveApp {
-    pub(crate) fn render_project_context(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let project = self
+    /// T3 Code Layer-2 borderless metadata strip directly below the Composer card.
+    pub(crate) fn render_composer_meta_bar(
+        &self,
+        window: &Window,
+        running: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let active_project = self
             .workspaces
             .iter()
-            .find(|project| Some(&project.id) == self.workspace.as_ref());
-        h_flex().min_w_0().when_some(project, |row, project| {
-            let path = std::path::PathBuf::from(&project.path);
-            let identity = format!("{} · {}", project.name, project.path);
-            let display_path = crate::palette::display_path(&project.path);
-            row.child(
+            .find(|ws| Some(&ws.id) == self.workspace.as_ref())
+            .cloned();
+        let branch = active_project
+            .as_ref()
+            .and_then(|ws| cached_git_branch(&ws.path));
+        let member_badge = self
+            .session
+            .as_ref()
+            .and_then(|s| s.agent_id.as_deref())
+            .map(|id| self.agent_name(id));
+
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .max_w(px(CHAT_COLUMN_WIDTH))
+            .mx_auto()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .px_2()
+            .pt_1p5()
+            .child(
                 h_flex()
                     .min_w_0()
-                    .max_w_full()
                     .items_center()
-                    .gap_1p5()
-                    .child(
-                        Button::new("home-project-folder")
+                    .gap_2()
+                    .child({
+                        let folder_label = active_project
+                            .as_ref()
+                            .map(|ws| ws.name.clone())
+                            .unwrap_or_else(|| tr("打开项目文件夹").to_owned());
+                        let folder_tooltip = active_project
+                            .as_ref()
+                            .map(|ws| format!("{}\n{}", ws.path, tr("点击切换项目文件夹")))
+                            .unwrap_or_else(|| tr("打开项目文件夹").to_owned());
+                        Button::new("composer-project-folder")
                             .custom(crate::palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
+                            .h(px(22.))
+                            .px_1p5()
                             .rounded_md()
-                            .h(px(24.))
-                            .w(px(24.))
-                            .icon(Glyph::FolderOpen)
-                            .accessibility_label(format!(
-                                "{}: {identity}",
-                                tr("在文件管理器中打开项目")
-                            ))
-                            .tooltip(project.path.clone())
-                            .on_click(cx.listener(move |_, _, _, cx| cx.reveal_path(&path))),
-                    )
-                    .child(
-                        div()
-                            .id("home-project-name")
-                            .role(Role::Label)
-                            .aria_label(project.name.clone())
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(Color::Secondary.get(cx))
-                            .truncate()
-                            .child(project.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx).opacity(0.6))
-                            .child("·"),
-                    )
-                    .child(
-                        div()
-                            .id("home-project-path")
-                            .role(Role::Label)
-                            .aria_label(project.path.clone())
-                            .max_w(px(220.))
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx))
-                            .truncate()
-                            .child(display_path),
-                    ),
+                            .min_w_0()
+                            .tooltip(folder_tooltip)
+                            .accessibility_label(tr("打开项目文件夹"))
+                            .disabled(!self.connected)
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .items_center()
+                                    .gap_1p5()
+                                    .child(
+                                        Icon::new(Glyph::Folder)
+                                            .size(px(12.5))
+                                            .text_color(Color::Muted.get(cx))
+                                            .flex_shrink_0(),
+                                    )
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .max_w(px(220.))
+                                            .truncate()
+                                            .text_size(px(12.))
+                                            .text_color(Color::Muted.get(cx))
+                                            .child(folder_label),
+                                    ),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.choose_workspace_folder(window, cx);
+                            }))
+                    })
+                    .when_some(member_badge, |row, member| {
+                        row.child(
+                            h_flex()
+                                .flex_shrink_0()
+                                .items_center()
+                                .gap_1()
+                                .px_1p5()
+                                .py(px(1.))
+                                .rounded_md()
+                                .bg(Color::Inset.get(cx))
+                                .child(
+                                    Icon::new(Glyph::Users)
+                                        .size(px(11.))
+                                        .text_color(Color::Secondary.get(cx)),
+                                )
+                                .child(
+                                    div()
+                                        .max_w(px(140.))
+                                        .truncate()
+                                        .text_size(px(11.5))
+                                        .text_color(Color::Secondary.get(cx))
+                                        .child(member),
+                                ),
+                        )
+                    }),
             )
-        })
-    }
-
-    /// Beluga-inspired centered onboarding & agent readiness view when no project is open.
-    /// Opening this page never creates a session or starts an agent.
-    pub(crate) fn render_welcome(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        let weak = cx.weak_entity();
-        static LOGO: OnceLock<Arc<Image>> = OnceLock::new();
-        let logo = LOGO
-            .get_or_init(|| {
-                Arc::new(Image::from_bytes(
-                    ImageFormat::Png,
-                    include_bytes!("../assets/hive-logo.png").to_vec(),
-                ))
-            })
-            .clone();
-        let compact = window.viewport_size().width < px(760.);
-        let font_scale = cx.global::<crate::appearance::Appearance>().font_size() as f32 / 16.0;
-        let tall = window.viewport_size().height > px(740. * font_scale);
-        let collapsed_sidebar = !self.sidebar_open;
-        let left_inset = if collapsed_sidebar {
-            chrome::traffic_light_inset(window)
-        } else {
-            px(0.)
-        };
-        v_flex()
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .h_full()
             .child(
-                chrome::drag_bar("welcome-topbar", window, cx)
-                    .w_full()
-                    .px_3()
-                    .when(left_inset > px(0.), |bar| bar.pl(left_inset + px(8.)))
-                    .gap_2()
-                    .when(collapsed_sidebar, |bar| {
-                        bar.child(
-                            Button::new("toggle-navigation")
-                                .custom(crate::palette::quiet_icon_variant(cx))
-                                .compact()
-                                .xsmall()
-                                .h(px(28.))
-                                .w(px(28.))
-                                .rounded_lg()
-                                .icon(Glyph::PanelLeft)
-                                .tooltip(tr("打开或收起导航"))
-                                .accessibility_label(tr("打开或收起工作区与会话导航"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.sidebar_open = !this.sidebar_open;
-                                    cx.notify();
-                                })),
+                h_flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_2p5()
+                    .when_some(branch, |row, branch| {
+                        row.child(
+                            h_flex()
+                                .id("composer-git-branch")
+                                .role(Role::Label)
+                                .aria_label(format!("{}: {branch}", tr("当前 Git 分支")))
+                                .min_w_0()
+                                .items_center()
+                                .gap_1()
+                                .text_size(px(12.))
+                                .text_color(Color::Muted.get(cx))
+                                .child(
+                                    Icon::new(Glyph::GitBranch)
+                                        .size(px(12.))
+                                        .text_color(Color::Muted.get(cx))
+                                        .flex_shrink_0(),
+                                )
+                                .child(div().max_w(px(180.)).truncate().child(branch)),
                         )
                     })
-                    .child(div().flex_1()),
+                    .when(self.session.is_some(), |row| {
+                        row.child(self.usage_button(window, running, cx))
+                    })
+                    .when(self.session.is_none() && active_project.is_some(), |row| {
+                        row.child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(Color::Muted.get(cx))
+                                .child(tr("未选择 Agent")),
+                        )
+                    }),
             )
-            .child(crate::focus_scroll::Viewport::new(
-                "welcome-viewport",
-                &self.welcome_scroll,
-                div()
-                    .id("welcome-page")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .h_full()
-                    .when(tall, |page| page.justify_center())
-                    .overflow_y_scroll()
-                    .track_scroll(&self.welcome_scroll)
-                    .vertical_scrollbar(&self.welcome_scroll)
+    }
+
+    /// Unified T3 Code centered Hero stage for both no-project home and empty threads.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn render_hero_stage(
+        &self,
+        window: &mut Window,
+        narrow: bool,
+        running: bool,
+        can_send: bool,
+        pending: usize,
+        needs_pi_model: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let active_project = self
+            .workspaces
+            .iter()
+            .find(|ws| Some(&ws.id) == self.workspace.as_ref())
+            .cloned();
+        let compact = window.viewport_size().width < px(1000.);
+        let tall = window.viewport_size().height > px(560.);
+        let hero_px = if compact { 25. } else { 28. };
+        let aria_title = if let Some(ws) = &active_project {
+            if english() {
+                format!("What should we build in {}?", ws.name)
+            } else {
+                format!("在 {} 中构建什么？", ws.name)
+            }
+        } else {
+            tr("准备构建什么？").into()
+        };
+
+        v_flex()
+            .id("welcome-draft-scroll")
+            .track_scroll(&self.welcome_scroll)
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .overflow_y_scroll()
+            .px(if narrow { px(16.) } else { px(32.) })
+            .when(tall, |v| v.justify_center().pb(px(88.)))
+            .when(!tall, |v| v.pt_6().pb_8())
+            .child(
+                v_flex()
+                    .w_full()
+                    .max_w(px(CHAT_COLUMN_WIDTH))
+                    .mx_auto()
                     .child(
                         v_flex()
-                            .flex_shrink_0()
                             .w_full()
-                            .max_w(px(620.))
-                            .mx_auto()
-                            .gap_6()
-                            .px_6()
-                            .pt_2()
-                            .pb_8()
+                            .items_center()
+                            .text_center()
+                            .mb_6()
+                            .gap_1p5()
                             .child(
-                                v_flex()
-                                    .flex_shrink_0()
-                                    .items_center()
-                                    .text_center()
-                                    .gap_2p5()
-                                    .child(
-                                        v_flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(
-                                                div()
-                                                    .size(px(48.))
-                                                    .flex_shrink_0()
-                                                    .rounded_2xl()
-                                                    .bg(Color::Card.get(cx))
-                                                    .border_1()
-                                                    .border_color(Color::Divider.get(cx))
-                                                    .shadow_xs()
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .child(img(logo).size(px(32.))),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(11.))
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .text_color(Color::Muted.get(cx))
-                                                    .child("H I V E"),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("welcome-title")
-                                            .role(Role::Label)
-                                            .aria_label(tr("你的项目，你的 Agent。"))
-                                            .text_size(px(if compact { 26. } else { 32. }))
-                                            .line_height(px(if compact { 34. } else { 40. }))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(tr("你的项目，你的 Agent。")),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("welcome-description")
-                                            .role(Role::Label)
-                                            .aria_label(tr("在本地工作区直接连接 Claude Code、Codex 或 Pi，专注对话、代码改动与执行过程。"))
-                                            .max_w(px(460.))
-                                            .text_sm()
-                                            .line_height(px(22.))
-                                            .text_color(Color::Secondary.get(cx))
-                                            .child(tr("在本地工作区直接连接 Claude Code、Codex 或 Pi，专注对话、代码改动与执行过程。")),
-                                    ),
-                            )
-                            .when(self.error.is_some(), |view| view.child(self.render_error_banner(cx)))
-                            .child(
-                                v_flex()
-                                    .flex_shrink_0()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(Reveal::new(
-                                        "welcome-actions-reveal",
-                                        &self.welcome_scroll,
+                                div()
+                                    .id("session-title")
+                                    .role(Role::Label)
+                                    .aria_label(aria_title.clone())
+                                    .text_size(px(hero_px))
+                                    .line_height(px(34.))
+                                    .whitespace_normal()
+                                    .child(if let Some(ws) = active_project.as_ref() {
                                         h_flex()
-                                            .flex_shrink_0()
-                                            .justify_center()
-                                            .gap_2p5()
                                             .flex_wrap()
+                                            .justify_center()
+                                            .items_baseline()
+                                            .gap_1p5()
                                             .child(
-                                                Button::new("welcome-open-project")
-                                                    .primary()
-                                                    .rounded_xl()
-                                                    .h(px(36.))
-                                                    .px_4()
-                                                    .icon(Glyph::FolderOpen)
-                                                    .label(tr("打开项目文件夹"))
-                                                    .disabled(!self.connected)
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.choose_workspace_folder(window, cx)
-                                                    })),
+                                                div()
+                                                    .font_weight(FontWeight::NORMAL)
+                                                    .text_color(Color::Text.get(cx))
+                                                    .child(if english() {
+                                                        "What should we build in"
+                                                    } else {
+                                                        "在"
+                                                    }),
                                             )
                                             .child(
-                                                Button::new("welcome-configure")
-                                                    .outline()
-                                                    .rounded_xl()
-                                                    .h(px(36.))
-                                                    .px_3p5()
-                                                    .label(tr("先配置 Agent"))
-                                                    .dropdown_caret(true)
-                                                    .accessibility_label(tr("选择 Agent 配置入口"))
-                                                    .dropdown_menu(move |mut menu, _, _| {
-                                                        for (section, label) in [
-                                                            (SettingsSection::PiAccounts, tr("内置 Pi 账号")),
-                                                            (SettingsSection::Models, tr("模型与接口")),
-                                                            (SettingsSection::Programs, tr("外部 Agent 程序")),
-                                                        ] {
-                                                            let weak = weak.clone();
-                                                            menu = menu.item(
-                                                                PopupMenuItem::new(label).on_click(
-                                                                    move |_, window, cx| {
-                                                                        let _ = weak.update(
-                                                                            cx,
-                                                                            |this, cx| {
-                                                                                this.settings_section =
-                                                                                    section;
-                                                                                this.open_settings(
-                                                                                    window, cx,
-                                                                                );
-                                                                            },
-                                                                        );
-                                                                    },
-                                                                ),
-                                                            );
-                                                        }
-                                                        menu
+                                                div()
+                                                    .font_weight(FontWeight::SEMIBOLD)
+                                                    .text_color(Color::Text.get(cx))
+                                                    .child(ws.name.clone()),
+                                            )
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight::NORMAL)
+                                                    .text_color(Color::Text.get(cx))
+                                                    .child(if english() {
+                                                        "?"
+                                                    } else {
+                                                        "中构建什么？"
                                                     }),
-                                            ),
-                                    ))
+                                            )
+                                            .into_any_element()
+                                    } else {
+                                        div()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(Color::Text.get(cx))
+                                            .child(aria_title)
+                                            .into_any_element()
+                                    }),
+                            )
+                            .child(if active_project.is_some() {
+                                Button::new("welcome-switch-project")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .disabled(!self.connected)
+                                    .accessibility_label(tr("切换项目文件夹"))
                                     .child(
                                         div()
-                                            .text_xs()
+                                            .text_size(px(13.))
                                             .text_color(Color::Muted.get(cx))
-                                            .child(if self.connected {
-                                                tr("打开本地文件夹后即可选择 Agent 开始会话。")
-                                            } else {
-                                                tr("后台暂不可用 · 可在窗口顶部重新启动后台")
-                                            }),
-                                    ),
-                            )
-                            .child(self.render_welcome_agents(cx)),
-                    ),
-            ))
+                                            .child(tr("切换项目文件夹")),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.choose_workspace_folder(window, cx);
+                                    }))
+                                    .into_any_element()
+                            } else {
+                                Button::new("welcome-open-project")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .disabled(!self.connected)
+                                    .accessibility_label(tr("选择项目文件夹，或在下方直接输入"))
+                                    .child(
+                                        div()
+                                            .text_size(px(13.))
+                                            .text_color(Color::Muted.get(cx))
+                                            .child(tr("选择项目文件夹，或在下方直接输入")),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.choose_workspace_folder(window, cx);
+                                    }))
+                                    .into_any_element()
+                            }),
+                    )
+                    .child(
+                        self.render_composer_card(window, true, running, can_send, cx),
+                    )
+                    .child(self.render_composer_meta_bar(window, running, cx))
+                    .child(
+                        div()
+                            .pt_1p5()
+                            .child(self.render_composer_status(
+                                running,
+                                pending,
+                                needs_pi_model,
+                                cx,
+                            )),
+                    )
+                    .when(active_project.is_none(), |col| {
+                        col.children(self.render_agent_setup_link(cx))
+                    }),
+            )
     }
 }

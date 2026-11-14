@@ -1318,5 +1318,16 @@
   "直接输入需求，或使用下方快捷指令开始。": "Describe what you want to build, or pick a quick starter below.",
   "了解项目": "Explore project",
   "审查改动": "Review changes",
-  "排查问题": "Debug an issue"
+  "排查问题": "Debug an issue",
+  "选择项目文件夹并发送": "Choose a project folder and send",
+  "新对话": "New thread",
+  "输入任何问题，支持粘贴图片与 / 命令": "Ask anything. @ files, / commands",
+  "准备构建什么？": "What should we build?",
+  "切换项目文件夹": "Switch project folder",
+  "当前 Git 分支": "Current Git branch",
+  "未选择 Agent": "No Agent selected",
+  "点击切换项目文件夹": "Click to switch project folder",
+  "选择项目文件夹，或在下方直接输入": "Open a project folder, or start typing below",
+  "配置本地 Agent →": "Configure local Agents →",
+  "配置本地 Agent 与模型账号": "Configure local Agents and model accounts"
 }
