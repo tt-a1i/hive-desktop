@@ -212,6 +212,8 @@ impl HiveApp {
                     .px_1p5()
                     .rounded_md()
                     .w_full()
+                    .min_w_0()
+                    .overflow_hidden()
                     .accessibility_label(if english() {
                         format!(
                             "{action} {} tool details · {} {}",
@@ -229,12 +231,13 @@ impl HiveApp {
                     })
                     .child(
                         h_flex()
-                            .flex_1()
+                            .w_full()
                             .min_w_0()
                             .items_center()
                             .gap_1p5()
                             .child(
                                 Icon::new(tool_glyph(&tool.name))
+                                    .flex_shrink_0()
                                     .size(px(12.5))
                                     .text_color(if failed {
                                         Color::Error.get(cx)
@@ -261,6 +264,7 @@ impl HiveApp {
                                     .min_w_0()
                                     .flex_1()
                                     .text_left()
+                                    .overflow_hidden()
                                     .truncate()
                                     .text_size(px(11.5))
                                     .font_family(Theme::global(cx).mono_font_family.clone())
@@ -287,6 +291,7 @@ impl HiveApp {
                                 } else {
                                     Glyph::ChevronRight
                                 })
+                                .flex_shrink_0()
                                 .size(px(11.5))
                                 .text_color(Color::Muted.get(cx).opacity(0.8)),
                             ),

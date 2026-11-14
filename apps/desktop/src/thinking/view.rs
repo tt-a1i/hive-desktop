@@ -69,6 +69,8 @@ impl HiveApp {
                     .rounded_md()
                     .justify_start()
                     .w_full()
+                    .min_w_0()
+                    .overflow_hidden()
                     .accessibility_label(if english() {
                         format!(
                             "{} thinking block {}: {label}",
@@ -85,7 +87,7 @@ impl HiveApp {
                     .disabled(block.redacted)
                     .child(
                         h_flex()
-                            .flex_1()
+                            .w_full()
                             .min_w_0()
                             .gap_1p5()
                             .items_center()
@@ -95,6 +97,7 @@ impl HiveApp {
                                 } else {
                                     Glyph::Sparkles
                                 })
+                                .flex_shrink_0()
                                 .size(px(12.5))
                                 .text_color(accent_color),
                             )
@@ -117,6 +120,8 @@ impl HiveApp {
                                     div()
                                         .flex_1()
                                         .min_w_0()
+                                        .text_left()
+                                        .overflow_hidden()
                                         .truncate()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx).opacity(0.8))
@@ -130,6 +135,7 @@ impl HiveApp {
                                     } else {
                                         Glyph::ChevronRight
                                     })
+                                    .flex_shrink_0()
                                     .size(px(11.5))
                                     .text_color(Color::Muted.get(cx).opacity(0.8)),
                                 )
