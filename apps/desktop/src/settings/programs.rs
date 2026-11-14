@@ -52,6 +52,16 @@ impl ProgramCheck {
     }
 }
 impl HiveApp {
+    pub(super) fn render_program_save_feedback(&self, window: &Window, cx: &App) -> Option<AnyElement> {
+        let notice = self.program_save_message.as_ref()?;
+        let is_error = matches!(notice, super::SettingsNotice::Error(..));
+        Some(div().px_5().pt_3().flex_shrink_0().min_w_0().child(
+            super::settings_notice_box("programs-save-feedback", notice.text(), is_error, cx)
+                .max_h((window.viewport_size().height * 0.2).min(px(120.)))
+                .whitespace_normal().overflow_y_scroll()
+        ).into_any_element())
+    }
+
     pub(crate) fn open_program_setup(&mut self, backend: &'static str, window: &mut Window, cx: &mut Context<Self>) {
         self.program_setup_focus = Some(backend);
         self.settings_section = crate::app::SettingsSection::Programs;
@@ -160,7 +170,14 @@ impl HiveApp {
                         ),
                 )
                 .when_some(
-                    self.settings_message.as_ref().map(|notice| notice.text()),
+                    self.settings_message.as_ref().filter(|notice| {
+                        // The modal already exposes this save result above the
+                        // scroller. Keep other errors, and the standalone view,
+                        // on their original inline feedback path.
+                        !(self.preferences_modal_open && self.settings_panel && !self.roles.visible
+                            && self.settings_section == crate::app::SettingsSection::Programs
+                            && self.program_save_message.as_ref().is_some_and(|saved| saved.text() == notice.text()))
+                    }).map(|notice| notice.text()),
                     |view, message| {
                         view.child(super::settings_notice_box(
                             "programs-save-notice",

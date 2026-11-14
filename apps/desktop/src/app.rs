@@ -154,6 +154,8 @@ pub struct HiveApp {
     pub claude_command: Entity<InputState>,
     pub settings_panel: bool,
     pub preferences_focus: FocusHandle,
+    pub preferences_modal_open: bool,
+    pub preferences_search_open: bool,
     pub preferences_return_focus: Option<FocusHandle>,
     pub repair_accounts_focus: FocusHandle,
     pub repair_models_focus: FocusHandle,
@@ -166,6 +168,7 @@ pub struct HiveApp {
     pub settings_loading: bool,
     pub executable_picker_generation: u64,
     pub settings_message: Option<crate::settings::SettingsNotice>,
+    pub program_save_message: Option<crate::settings::SettingsNotice>,
     pub executable_settings: Option<crate::settings::ExecutableSettings>,
     pub codex_account: crate::settings::codex_account::CodexAccountCheck,
     pub program_checks: HashMap<&'static str, crate::settings::programs::ProgramCheck>,
@@ -330,6 +333,7 @@ impl HiveApp {
                 if matches!(event, InputEvent::Change) {
                     if this.executable_paths_changed(cx) {
                         this.settings_message = None;
+                        this.program_save_message = None;
                     }
                     cx.notify();
                 }
@@ -477,6 +481,8 @@ impl HiveApp {
             conversation_find: None,
             settings_panel: false,
             preferences_focus: cx.focus_handle(),
+            preferences_modal_open: false,
+            preferences_search_open: false,
             preferences_return_focus: None,
             repair_accounts_focus: cx.focus_handle(),
             repair_models_focus: cx.focus_handle(),
@@ -489,6 +495,7 @@ impl HiveApp {
             settings_loading: false,
             executable_picker_generation: 0,
             settings_message: None,
+            program_save_message: None,
             executable_settings: None,
             program_checks: Default::default(),
             codex_account: Default::default(),

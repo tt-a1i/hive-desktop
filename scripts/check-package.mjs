@@ -39,6 +39,12 @@ function stop(child) {
   }
 }
 try {
+  progress('Checking T3 Code license notice');
+  assert.deepEqual(
+    await readFile(join(resources, 'licenses/LICENSE-T3CODE')),
+    await readFile(join(dirname(fileURLToPath(import.meta.url)), '../apps/desktop/licenses/LICENSE-T3CODE')),
+    'The packaged T3 Code notice must match its preserved source license',
+  );
   if (process.platform === 'darwin') {
     progress('Checking native application identity and decoded icon');
     const info = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', join(base, 'Hive Desktop.app/Contents/Info.plist')], { encoding: 'utf8' });

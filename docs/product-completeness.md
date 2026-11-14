@@ -20,7 +20,7 @@
 - 最新唯一参考实查：T3 Code 0.1.9 / `24e77473ecf4`，约256px侧栏、居中限宽聊天/输入区；设置是背景模糊上的居中圆角浮层，带左侧分组搜索导航、右侧分类面包屑与关闭按钮。下一步先复刻设置浮层与导航，再逐页收口主窗口、聊天和输入区；现有 Hive 后台能力与草稿/保存语义保留。Cindy/Beluga 以下记录仅作历史证据。
 - Cindy：`3a474759524e8bf804bda4ddf6d2f4c3188918e2` 的 [SettingsSidebarNav.tsx](https://github.com/makecindy/cindy/blob/3a474759524e8bf804bda4ddf6d2f4c3188918e2/apps/desktop/src/renderer/components/settings/SettingsSidebarNav.tsx)，核对搜索导航、选中状态与可访问语义。
 - Beluga 原仓库现重定向至 `beluga-labs/beluga`，本轮 main `c5c991aa99fd25ff47e3d8a80a5e9698bc30a036`；原生窗口仍在欢迎引导，仅观察该页面，未跳过引导或推断后续流程。
-- 本批独立实现 Rust/GPUI 行为，不复制上述 TypeScript、CSS、图像或其他资源。
+- T3布局和组件在Rust/GPUI中实现，保存其MIT许可并随包分发；固定源码及哈希记录于本地参考证据。历史Cindy/Beluga资料不再作为新UI实现依据。
 
 ## 按完整流程推进
 
@@ -40,5 +40,7 @@
 2026-11-14 第二批补齐协作起步/空筛选恢复，修复窄窗首屏操作及任务输入聚焦，实际窗口完成 Codex 主控 → 既有成员 → 显式汇报 → 独立字节核验及两次完整冷读，见[精确范围](validation/2026-11-14-collaboration-start-and-live.md)。Pi 当前 `invalid_grant`，不重复登录；Claude/Antigravity 本轮不验。Windows 检查中的实际阻断继续修复并分别记录。
 
 记录改动前触发方式、修复后的可观察行为、检查命令/退出码、原生操作和包内版本。源码修复、历史证据重读与新真实 Agent 调用分开记录。维护可复查的未完成项，禁止用大量外观微调代替功能缺口的收口。
+
+T3设置浮层与导航的实际配置、焦点和恢复流程跟踪于[#36](https://github.com/tt-a1i/hive-desktop/issues/36)；当前仍在原生复验，背景模糊及后续主窗口、聊天、具体设置与引导继续开放。
 
 仅清理本项目可再生缓存或已被替代且不占用的重复产物；保留用户数据、原始参考、必要验证状态及可运行回退。存储不足不以删除证据或测试规避。

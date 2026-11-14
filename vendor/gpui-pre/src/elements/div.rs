@@ -1381,6 +1381,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Hide this element and its descendants from assistive technology without
+    /// changing painting or input handling. A stable element id is required.
+    ///
+    /// Hidden containers produce an accessibility node even without an explicit
+    /// role. The parent flag also hides descendants retained by accessibility
+    /// clients. Move keyboard focus outside the subtree separately: AccessKit
+    /// preserves focused nodes.
+    fn aria_hidden(mut self, hidden: bool) -> Self {
+        self.interactivity().aria.hidden = hidden;
+        self
+    }
+
     /// Set the accessible description for this element. Unlike the label (which
     /// names the element), the description provides supplementary information
     /// that assistive technology announces after the name, role, and value -
@@ -1953,11 +1965,17 @@ impl Element for Div {
     }
 
     fn a11y_role(&self) -> Option<accesskit::Role> {
-        // Nodes with `GenericContainer` should never be reported to accesskit.
-        // Equivalent to an HTML div with no role.
+        // Ordinary containers are transparent. Hidden containers need a node
+        // so AccessKit can exclude their entire subtree.
         self.interactivity
             .override_role
             .filter(|role| *role != accesskit::Role::GenericContainer)
+            .or_else(|| {
+                self.interactivity
+                    .aria
+                    .hidden
+                    .then_some(accesskit::Role::GenericContainer)
+            })
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -2154,6 +2172,7 @@ impl IntoElement for Div {
 
 #[derive(Default)]
 pub(crate) struct AriaProperties {
+    pub(crate) hidden: bool,
     pub(crate) author_id: Option<SharedString>,
     pub(crate) label: Option<SharedString>,
     pub(crate) description: Option<SharedString>,
@@ -3589,6 +3608,11 @@ impl Interactivity {
     }
 
     pub(crate) fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        if self.aria.hidden {
+            node.set_hidden();
+        } else {
+            node.clear_hidden();
+        }
         if let Some(id) = &self.aria.author_id {
             node.set_author_id(id.to_string());
         }
@@ -5399,6 +5423,50 @@ mod tests {
         })
         .unwrap();
         assert_eq!(*mouse_down_out_count.borrow(), 0);
+    }
+
+    #[test]
+    fn aria_hidden_preserves_parent_child_tree_and_can_be_cleared() {
+        use crate::window::a11y::A11y;
+        use std::sync::{Arc, atomic::AtomicBool};
+
+        let mut a11y = A11y::new(Arc::new(AtomicBool::new(true)), false, None);
+        let parent_id = accesskit::NodeId(1);
+        let child_id = accesskit::NodeId(2);
+        for hidden in [false, true, false] {
+            a11y.begin_frame();
+            let mut parent = div()
+                .id("workspace")
+                .role(accesskit::Role::Group)
+                .aria_hidden(hidden);
+            let mut node = accesskit::Node::new(parent.a11y_role().unwrap());
+            parent.interactivity().write_a11y_info(&mut node);
+            assert!(a11y.nodes.push(parent_id, node));
+            assert!(
+                a11y.nodes
+                    .push_leaf(child_id, accesskit::Node::new(accesskit::Role::Button))
+            );
+            a11y.nodes.pop();
+            let update = a11y.end_frame(Default::default());
+            let parent = &update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == parent_id)
+                .unwrap()
+                .1;
+            assert_eq!(parent.is_hidden(), hidden);
+            assert_eq!(parent.children(), &[child_id]);
+            assert!(update.nodes.iter().any(|(id, _)| *id == child_id));
+        }
+        let mut wrapper = div().id("workspace").aria_hidden(true);
+        assert_eq!(wrapper.a11y_role(), Some(accesskit::Role::GenericContainer));
+        wrapper.interactivity().aria.hidden = false;
+        assert_eq!(wrapper.a11y_role(), None);
+
+        let mut reused_node = accesskit::Node::new(accesskit::Role::Group);
+        reused_node.set_hidden();
+        wrapper.interactivity().write_a11y_info(&mut reused_node);
+        assert!(!reused_node.is_hidden());
     }
 
     #[test]

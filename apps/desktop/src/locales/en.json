@@ -1367,5 +1367,10 @@
   "Hive 包": "Hive package",
   "后台平台": "Backend platform",
   "诊断信息包含版本、构建和连接状态，可用于反馈问题。版本来自当前程序与实际运行的后台。": "Diagnostics contain version, build and connection details for reporting issues. Versions come from this application and its running backend.",
-  "含已跟踪文件修改": "Tracked files modified"
+  "含已跟踪文件修改": "Tracked files modified",
+  "关闭设置": "Close settings",
+  "界面": "Interface",
+  "协作": "Collaboration",
+  "应用": "Application",
+  "返回设置": "Back to settings"
 }

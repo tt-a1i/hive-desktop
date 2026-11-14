@@ -39,6 +39,18 @@
 
 四个独立角度审查发现构建缓存与未跟踪状态范围不一致，以及会话加载可能误报后台启动。已明确收窄为已跟踪文件、同步UI/复制字段及稳定缓存回归，连接优先级也已修复。复核架构、边界和测试均A，范围B+（当时等待原生窄窗验证）；后续原生检查按上文通过。没有将静态复核称为独立完整实机重跑。
 
-## 尚待本批交付验证
+## 优化开发包与实际运行
 
-正式优化包中的版本来源、包内实际Node往返与UI仍须独立复验；现有current仍为c24069c，不声称本页已入包。`check-package.mjs`已增加与实际随包元数据/Node进程的精确比较，待新包执行。Windows About原生交互、系统输入法/辅助技术完整矩阵和正式签名/公证分别记录。Claude/Antigravity本轮不验收，Pi账号不重试，不以这些账号边界阻断其他实施。
+本批已进入 current/candidate Mac 开发包 `8cd9c8453ff3d4708c946994691725c259a796cc`，默认优化 release、无 ui-preview。ZIP 为144,147,038字节，SHA-256为`2ac357038c8fda35331798deb287b92d036dd49715a059cdacecf30657ac2618`；DMG为249,219,834字节，SHA-256为`574a8442986234c8732a77923ce5ce72d4b5514d9f11484f188d5176890a5994`。28,871项清单、29个链接和118个runtime文件逐项匹配，DMG只读挂载清单与Applications快捷方式核对后已卸载。冻结生产依赖与Node经源码manifest/lock/patch一致性核对后复用，没有把开发目录依赖作为随包依赖。
+
+`check-package`、`check-packaged-codex`、`check-packaged-dispatches`、`check-packaged-queue`均实际退出0。新增包检查与随包Node进程的`process.version/platform/arch`、runtime/Hive包元数据精确比较通过。包内Node实际冷读今日三会话36条完整历史、原ID和冷态角色别名搜索一致，无新模型请求。
+
+使用同一原生二进制与Resources、仅QA身份不同的隔离应用，未设置Node/runtime覆盖。窗口显示实际`8cd9c8453ff3`、Release、已跟踪文件未修改、`aarch64-apple-darwin`，后台为`v22.23.3 / 0.1.0 / 2.2.1 / darwin / arm64`。中英文搜索、窄窗20px、键盘显露和复制、外部程序页16/20px、实际结束owned Node并从窗口重启、连接/断线/重连时白名单复制均通过。主线程独立比对二进制SHA和诊断内容。正常退出码0，原子进程及重启进程均消失。未替换用户安装实例，c24069c保留可运行回退。
+
+优化包退出后剪贴板保持**未通过验收**。一次受控观察在窗口退出附近发现剪贴板变化；源码尚未发现退出时写入，不能确定来自应用、工具时序或外部写入。unexpected正文未保存；单独跟踪[#35](https://github.com/tt-a1i/hive-desktop/issues/35)。上文调试包单次立即读取成功不覆盖这个发布包边界。证据保留于`.artifacts/release-8cd9c84/{receipt,checks,wire-receipt,dmg-receipt,native-ui-verdict,clipboard-close-observer}.json`及对应日志。
+
+归档及未占用检查后已清理本包组装base、已替代f9f3c2b解压副本和旧DMG，合计1,156,597,057字节逻辑大小。全部ZIP、原证据/状态、当前8cd解压包及DMG、c24069c可运行回退和仍在使用的Rust缓存保留；未测量物理空间回收。操作收据为`.artifacts/release-8cd9c84/cleanup-unused.json`。
+
+## 尚待验证
+
+Windows About原生交互、系统输入法/辅助技术完整矩阵和正式签名/公证继续开放。新T3设置浮层尚不在8cd9c84中。Claude/Antigravity本轮不验收，Pi账号不重试，不以这些账号边界阻断其他实施。此开发包与本页的有限验收不代表完整产品已交付。

@@ -17,6 +17,7 @@ mod appearance;
 mod about;
 mod language;
 mod search;
+mod shell;
 mod notification;
 pub mod remote;
 pub mod pi_accounts;
@@ -24,6 +25,7 @@ pub mod pi_models;
 pub mod programs;
 pub mod codex_account;
 
+#[derive(Clone)]
 pub enum SettingsNotice { Message(&'static str), Error(&'static str, String) }
 impl SettingsNotice {
     fn text(&self) -> String {
@@ -245,6 +247,7 @@ impl HiveApp {
         self.executable_picker_generation += 1;
         self.settings_loading = true;
         self.settings_message = None;
+        self.program_save_message = None;
         cx.notify();
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
@@ -297,6 +300,9 @@ impl HiveApp {
                         this.program_setup_focus = None;
                         this.settings_message = Some(SettingsNotice::Error(if save { "保存设置失败" } else { "读取设置失败" }, error))
                     }
+                }
+                if save {
+                    this.program_save_message = this.settings_message.clone();
                 }
                 cx.notify();
             });
@@ -420,9 +426,8 @@ impl HiveApp {
         self.settings_search.update(cx, |input, cx| input.set_value("", window, cx));
         self.close_settings();
         self.close_roles();
-        if window.viewport_size().width < px(820.) {
-            self.sidebar_open = false;
-        }
+        self.preferences_modal_open = false;
+        self.preferences_search_open = false;
         if let Some(focus) = self.preferences_return_focus.take() {
             window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }
@@ -436,9 +441,7 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let (title_key, subtitle_key) = section_meta(self.settings_section);
-        let content = if !self.settings_search.read(cx).value().trim().is_empty() {
-            self.render_settings_results(cx).into_any_element()
-        } else if self.roles.visible {
+        let content = if self.roles.visible {
             self.render_roles(cx).into_any_element()
         } else {
             v_flex()
@@ -448,11 +451,10 @@ impl HiveApp {
                 .mx_auto()
                 .min_h_0()
                 .min_w_0()
-                .px_5()
-                .py_4()
+                .px(if compact_settings { px(16.) } else { px(24.) })
+                .py_5()
                 .gap_4()
-                .when(!compact_settings, |panel| panel.px_8().py_6().gap_5())
-                .when(!compact_settings, |panel| {
+                .map(|panel| {
                     panel.child(
                         v_flex()
                             .flex_shrink_0()
@@ -611,29 +613,6 @@ impl HiveApp {
                     }
                 }).into_any_element()
         };
-        h_flex()
-            .key_context("HivePreferences")
-            .track_focus(&self.preferences_focus)
-            .on_action(
-                cx.listener(|this, _: &crate::ClosePreferences, window, cx| {
-                    this.leave_preferences(window, cx)
-                }),
-            )
-            .items_stretch()
-            .when(compact_settings, |layout| layout.flex_col())
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .bg(Color::Surface.get(cx))
-            .child(self.render_settings_tabs(compact_settings, window, cx))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .bg(Color::Surface.get(cx))
-                    .child(self.render_settings_search(compact_settings, window, cx))
-                    .child(content),
-            )
+        self.render_settings_shell(content, compact_settings, window, cx)
     }
 }

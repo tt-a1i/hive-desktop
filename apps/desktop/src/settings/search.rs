@@ -1,7 +1,7 @@
 use crate::language::tr;
 use crate::{
     app::{HiveApp, SettingsSection},
-    palette::{Color, quiet_icon_variant},
+    palette::Color,
 };
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -84,7 +84,15 @@ const ENTRIES: &[Entry] = &[
     },
 ];
 fn matches(entry: &Entry, query: &str) -> bool {
-    let text = format!("{} {} {} {} {}", entry.title, entry.description, entry.keywords, tr(entry.title), tr(entry.description)).to_lowercase();
+    let text = format!(
+        "{} {} {} {} {}",
+        entry.title,
+        entry.description,
+        entry.keywords,
+        tr(entry.title),
+        tr(entry.description)
+    )
+    .to_lowercase();
     query.split_whitespace().all(|word| text.contains(word))
 }
 impl HiveApp {
@@ -94,10 +102,13 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.preferences_search_open = false;
         self.settings_search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.settings_section = section;
-        if section == SettingsSection::Remote { self.refresh_remote(cx); }
+        if section == SettingsSection::Remote {
+            self.refresh_remote(cx);
+        }
         if section == SettingsSection::Models {
             self.load_pi_models(cx);
         }
@@ -111,6 +122,7 @@ impl HiveApp {
         cx.notify();
     }
     fn open_settings_match(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.preferences_search_open = false;
         if let Some(section) = ENTRIES[index].section {
             self.select_settings_section(section, window, cx);
         } else {
@@ -130,47 +142,37 @@ impl HiveApp {
             self.open_settings_match(index, window, cx);
         }
     }
-    pub(super) fn render_settings_search(
+    pub(crate) fn render_settings_search(
         &self,
-        compact: bool,
-        window: &mut Window,
+        _compact: bool,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_query = !self.settings_search.read(cx).value().is_empty();
-        let search_row = h_flex()
+        h_flex()
             .w_full()
-            .max_w(px(720.))
-            .mx_auto()
-            .gap_2()
+            .min_w_0()
+            .h(px(48.))
+            .flex_shrink_0()
+            .px_3()
+            .gap_1()
             .items_center()
             .child(
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Icon::new(Glyph::Search)
-                            .size(px(14.))
-                            .text_color(Color::Muted.get(cx)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(Input::new(&self.settings_search).aria_label(tr("搜索设置"))),
-                    ),
+                div().flex_1().min_w_0().child(
+                    Input::new(&self.settings_search)
+                        .small()
+                        .aria_label(tr("搜索设置")),
+                ),
             )
             .when(has_query, |row| {
                 row.child(
                     Button::new("clear-settings-search")
-                        .custom(quiet_icon_variant(cx))
+                        .ghost()
                         .compact()
-                        .small()
-                        .h(px(28.))
-                        .px_2p5()
-                        .rounded_lg()
-                        .label(tr("清除"))
+                        .h(px(24.))
+                        .w(px(24.))
+                        .icon(Glyph::X)
+                        .tooltip(tr("清除设置搜索"))
                         .accessibility_label(tr("清除设置搜索"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.settings_search.update(cx, |input, cx| {
@@ -180,28 +182,10 @@ impl HiveApp {
                             cx.notify();
                         })),
                 )
-            });
-
-        if compact {
-            div()
-                .w_full()
-                .px_5()
-                .py_2p5()
-                .border_b_1()
-                .border_color(Color::Divider.get(cx))
-                .child(search_row)
-                .into_any_element()
-        } else {
-            crate::chrome::drag_bar("settings-content-topbar", window, cx)
-                .w_full()
-                .px_6()
-                .border_b_1()
-                .border_color(Color::Divider.get(cx))
-                .child(search_row)
-                .into_any_element()
-        }
+            })
     }
-    pub(super) fn render_settings_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
+
+    pub(crate) fn render_settings_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let query = self.settings_search.read(cx).value().trim().to_lowercase();
         let entries: Vec<_> = ENTRIES
             .iter()
@@ -218,117 +202,65 @@ impl HiveApp {
                 .min_h_0()
                 .min_w_0()
                 .w_full()
-                .max_w(px(720.))
-                .mx_auto()
-                .px_6()
-                .py_6()
-                .gap_3()
+                .px_2()
+                .pb_3()
+                .gap_1()
                 .overflow_y_scroll()
                 .track_scroll(scroll)
                 .vertical_scrollbar(scroll)
-                .child(
-                    div()
-                        .px_1()
-                        .text_xs()
-                        .text_color(Color::Secondary.get(cx))
-                        .child(if entries.is_empty() {
-                            tr("没有找到设置页面").to_string()
-                        } else if crate::language::english() {
-                            format!("{} settings pages · Enter opens the first", entries.len())
-                        } else {
-                            format!("找到 {} 个设置页面 · Enter 打开首项", entries.len())
-                        }),
-                )
                 .when(entries.is_empty(), |view| {
                     view.child(
-                        super::settings_card(cx)
-                            .p_6()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Icon::new(Glyph::Search)
-                                    .size(px(18.))
-                                    .text_color(Color::Muted.get(cx)),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_center()
-                                    .text_color(Color::Secondary.get(cx))
-                                    .child(tr(
-                                        "没有匹配的设置。换个关键词，或清除搜索浏览全部设置。",
-                                    )),
-                            ),
+                        div()
+                            .px_2()
+                            .py_3()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(tr("没有找到设置页面")),
                     )
                 })
-                .when(!entries.is_empty(), |view| {
-                    view.child(super::settings_card(cx).children(entries.into_iter().enumerate().map(
-                        |(row_idx, (index, entry))| {
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .when(row_idx > 0, |row| {
-                                    row.border_t_1().border_color(Color::Divider.get(cx))
-                                })
-                                .child(crate::focus_scroll::Reveal::new(
-                                    ("settings-search-reveal", index),
-                                    scroll,
-                                    Button::new(("settings-search-result", index))
-                                        .ghost()
-                                        .w_full()
-                                        .h_auto()
-                                        .justify_start()
-                                        .px_4()
-                                        .py_3()
-                                        .rounded_none()
-                                        .accessibility_label(format!(
-                                            "{} · {}",
-                                            tr(entry.title),
-                                            tr(entry.description)
-                                        ))
-                                        .child(
-                                            h_flex()
-                                                .w_full()
-                                                .min_w_0()
-                                                .items_center()
-                                                .justify_between()
-                                                .gap_3()
-                                                .child(
-                                                    v_flex()
-                                                        .flex_1()
-                                                        .min_w_0()
-                                                        .items_start()
-                                                        .text_left()
-                                                        .gap_0p5()
-                                                        .child(
-                                                            div()
-                                                                .text_sm()
-                                                                .font_weight(FontWeight::MEDIUM)
-                                                                .text_color(Color::Text.get(cx))
-                                                                .child(tr(entry.title)),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(
-                                                                    Color::Secondary.get(cx),
-                                                                )
-                                                                .child(tr(entry.description)),
-                                                        ),
-                                                )
-                                                .child(
-                                                    Icon::new(Glyph::ChevronRight)
-                                                        .size(px(14.))
-                                                        .text_color(Color::Muted.get(cx)),
-                                                ),
-                                        )
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.open_settings_match(index, window, cx)
-                                        })),
-                                ))
-                        },
-                    )))
-                }),
+                .children(entries.into_iter().map(|(index, entry)| {
+                    crate::focus_scroll::Reveal::new(
+                        ("settings-search-reveal", index),
+                        scroll,
+                        Button::new(("settings-search-result", index))
+                            .ghost()
+                            .w_full()
+                            .h_auto()
+                            .px_2()
+                            .py_2()
+                            .rounded_md()
+                            .accessibility_label(format!(
+                                "{} · {}",
+                                tr(entry.title),
+                                tr(entry.description)
+                            ))
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .items_start()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_size(px(13.))
+                                            .text_left()
+                                            .text_color(Color::Text.get(cx))
+                                            .child(tr(entry.title)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_left()
+                                            .whitespace_normal()
+                                            .text_color(Color::Muted.get(cx))
+                                            .child(tr(entry.description)),
+                                    ),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_settings_match(index, window, cx)
+                            })),
+                    )
+                })),
         )
     }
 }

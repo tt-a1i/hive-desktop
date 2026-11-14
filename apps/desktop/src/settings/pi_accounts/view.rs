@@ -232,6 +232,7 @@ impl HiveApp {
                                                 )
                                                 .on_click(cx.listener(|this, _, window, cx| {
                                                     this.leave_preferences(window, cx);
+                                                    window.close_dialog(cx);
                                                     this.refresh_pi_models(cx);
                                                 })),
                                         ))

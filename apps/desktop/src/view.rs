@@ -23,6 +23,65 @@ pub(crate) fn untitled_session_label(session: &crate::protocol::Session) -> Opti
 }
 
 impl HiveApp {
+    /// Shared connection recovery for the workspace and its modal settings.
+    pub(crate) fn render_connection_notice(&self, inset: Pixels, cx: &Context<Self>) -> AnyElement {
+        h_flex()
+            .flex_shrink_0()
+            .min_h(px(if inset > px(0.) {
+                chrome::TOPBAR_HEIGHT
+            } else {
+                40.
+            }))
+            .items_center()
+            .gap_2p5()
+            .px_3()
+            .py_1p5()
+            .when(inset > px(0.), |b| b.pl(inset + px(8.)))
+            .bg(Color::Sidebar.get(cx))
+            .border_b_1()
+            .border_color(Color::Divider.get(cx))
+            .child(
+                div()
+                    .size(px(6.))
+                    .flex_shrink_0()
+                    .rounded_full()
+                    .bg(if self.restarting {
+                        Color::Accent.get(cx)
+                    } else {
+                        Color::Error.get(cx)
+                    }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(Color::Text.get(cx))
+                    .child(if self.restarting {
+                        tr("正在重新启动后台，当前草稿已保留。")
+                    } else {
+                        tr("后台未连接，当前草稿已保留。")
+                    }),
+            )
+            .child(
+                Button::new("restart-backend")
+                    .outline()
+                    .compact()
+                    .small()
+                    .h(px(26.))
+                    .px_2p5()
+                    .rounded_lg()
+                    .label(tr("重新启动后台"))
+                    .disabled(self.restarting)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.restart_backend(window, cx)
+                        }),
+                    ),
+            )
+            .into_any_element()
+    }
+
     pub(crate) fn agent_name(&self, id: &str) -> String {
         self.members
             .iter()
@@ -814,7 +873,7 @@ impl Render for HiveApp {
         }
         let narrow = window.viewport_size().width < px(820.);
         let preferences = self.settings_panel || self.roles.visible;
-        let compact_settings = window.viewport_size().width < px(720.);
+        self.ensure_preferences_modal(window, cx);
         if !self.loading
             && (!narrow || !self.sidebar_open)
             && self.viewing_conversation()
@@ -845,65 +904,14 @@ impl Render for HiveApp {
                 && self.settings_section == crate::app::SettingsSection::Remote);
 
         v_flex()
+            .id("workspace-root")
+            .aria_hidden(preferences)
             .size_full()
             .bg(Color::Surface.get(cx))
             .text_color(Color::Text.get(cx))
             .when(disconnected_banner, |view| {
                 view.child(
-                    h_flex()
-                        .flex_shrink_0()
-                        .min_h(px(if inset > px(0.) {
-                            chrome::TOPBAR_HEIGHT
-                        } else {
-                            40.
-                        }))
-                        .items_center()
-                        .gap_2p5()
-                        .px_3()
-                        .py_1p5()
-                        .when(inset > px(0.), |b| b.pl(inset + px(8.)))
-                        .bg(Color::Sidebar.get(cx))
-                        .border_b_1()
-                        .border_color(Color::Divider.get(cx))
-                        .child(
-                            div()
-                                .size(px(6.))
-                                .flex_shrink_0()
-                                .rounded_full()
-                                .bg(if self.restarting {
-                                    Color::Accent.get(cx)
-                                } else {
-                                    Color::Error.get(cx)
-                                }),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_xs()
-                                .text_color(Color::Text.get(cx))
-                                .child(if self.restarting {
-                                    tr("正在重新启动后台，当前草稿已保留。")
-                                } else {
-                                    tr("后台未连接，当前草稿已保留。")
-                                }),
-                        )
-                        .child(
-                            Button::new("restart-backend")
-                                .outline()
-                                .compact()
-                                .small()
-                                .h(px(26.))
-                                .px_2p5()
-                                .rounded_lg()
-                                .label(tr("重新启动后台"))
-                                .disabled(self.restarting)
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.restart_backend(window, cx)
-                                    }),
-                                ),
-                        ),
+                    self.render_connection_notice(inset, cx),
                 )
             })
             .when(remote_banner, |view| {
@@ -966,14 +974,11 @@ impl Render for HiveApp {
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .when(!preferences && self.sidebar_open, |view| {
+                    .when(self.sidebar_open, |view| {
                         view.child(self.render_navigation(narrow, window, cx))
                     })
-                    .when(preferences || !narrow || !self.sidebar_open, |view| {
-                        view.child(if preferences {
-                            self.render_preferences(compact_settings, window, cx)
-                                .into_any_element()
-                        } else if !self.viewing_conversation() {
+                    .when(!narrow || !self.sidebar_open, |view| {
+                        view.child(if self.memory.visible || self.workflows.visible || self.collaboration.visible || self.member_panel || self.terminal.visible {
                             let body = if self.memory.visible {
                                 self.render_memory(cx).into_any_element()
                             } else if self.workflows.visible {

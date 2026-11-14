@@ -53,6 +53,7 @@ try {
     await cp(join(root, 'crates', 'hive-terminal', file), join(terminalNotices, file));
   }
   await cp(join(root, 'apps/desktop/licenses/LICENSE-LUCIDE'), join(resources, 'licenses/LICENSE-LUCIDE'));
+  await cp(join(root, 'apps/desktop/licenses/LICENSE-T3CODE'), join(resources, 'licenses/LICENSE-T3CODE'));
   if (process.platform === 'darwin') {
     const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
     await prepareMacBundle(app, { version: metadata.version,
