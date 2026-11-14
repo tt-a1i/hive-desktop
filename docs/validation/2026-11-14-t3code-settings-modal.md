@@ -4,7 +4,7 @@
 
 ## 参考与改动
 
-固定实际安装的T3 Code 0.1.9提交[`24e77473ecf41bc1f7142529c7911c1c1aae1d76`](https://github.com/pingdotgg/t3code/tree/24e77473ecf41bc1f7142529c7911c1aae1d76)。对应设置路由、AppRouteModal、SettingsSidebarNav、SettingsGroup和dialog样式已只读查阅，源码哈希保存在`.artifacts/t3code-24e77473ecf4/source.json`。MIT许可保留于`apps/desktop/licenses/LICENSE-T3CODE`，打包脚本复制并由包检查逐字节核对。
+固定实际安装的T3 Code 0.1.9提交[`24e77473ecf41bc1f7142529c7911c1c1aae1d76`](https://github.com/pingdotgg/t3code/tree/24e77473ecf41bc1f7142529c7911c1c1aae1d76)。对应设置路由、AppRouteModal、SettingsSidebarNav、SettingsGroup和dialog样式已只读查阅，源码哈希保存在`.artifacts/t3code-24e77473ecf4/source.json`。MIT许可保留于`apps/desktop/licenses/LICENSE-T3CODE`，打包脚本复制并由包检查逐字节核对。
 
 整页设置改为窗口管理的居中圆角浮层，保留真实工作台作为背景。最大1280×960，宽窗口四周40px，小窗口横向24px/纵向32px；16px圆角，240px分组侧栏，右栏48px分类面包屑和关闭。小于768px时侧栏改56px图标，展开搜索后占用浮层内容，选择分类返回。当前只有现有十个可用Hive页面，没有用无功能页面补齐T3的二十类导航。
 

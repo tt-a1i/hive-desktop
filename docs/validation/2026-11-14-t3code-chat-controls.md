@@ -1,6 +1,6 @@
 # T3聊天标题与单行输入工具栏
 
-工作项[#37](https://github.com/tt-a1i/hive-desktop/issues/37)，属于完整产品目标[#1](https://github.com/tt-a1i/hive-desktop/issues/1)。参考继续固定为实际T3 Code 0.1.9 / `24e77473ecf41bc1f7142529c7911c1aae1d76`的ChatHeader、ComposerControlsBar和ChatComposer；不引入其他产品的界面方向。
+工作项[#37](https://github.com/tt-a1i/hive-desktop/issues/37)，属于完整产品目标[#1](https://github.com/tt-a1i/hive-desktop/issues/1)。参考继续固定为实际T3 Code 0.1.9 / `24e77473ecf41bc1f7142529c7911c1c1aae1d76`的ChatHeader、ComposerControlsBar和ChatComposer；不引入其他产品的界面方向。
 
 ## 行为
 
