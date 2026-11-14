@@ -170,7 +170,7 @@ impl HiveApp {
                         ))
                     },
                 )
-                .child(super::settings_card(cx).children(entries.into_iter().enumerate().map(
+                .child(super::settings_card(cx).flex_shrink_0().children(entries.into_iter().enumerate().map(
                     |(index, (backend, label, input, effective))| {
                         div()
                             .w_full()

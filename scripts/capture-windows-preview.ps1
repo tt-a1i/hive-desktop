@@ -81,6 +81,15 @@ function Wait-Action([string] $Name, [int] $TimeoutSeconds = 8) {
         if ($null -ne $action -and $action.Current.IsEnabled) { return $action }
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
+    Write-Host "Unavailable fixture control: $Name"
+    foreach ($label in @($Name, '外部程序', '选择 外部 Pi 可执行文件', '选择 Codex 可执行文件', '选择 Claude Code 可执行文件', 'Codex 可执行文件路径', '重新读取', '保存设置')) {
+        $control = Find-Action $label
+        if ($null -eq $control) { Write-Host "Control '$label': absent"; continue }
+        $state = $control.Current
+        Write-Host "Control '$label': enabled=$($state.IsEnabled), offscreen=$($state.IsOffscreen), bounds=$($state.BoundingRectangle)"
+    }
+    try { Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-native-failure.png') }
+    catch { Write-Warning "Could not capture the fixture failure: $_" }
     throw "Could not reach the fixture action '$Name'."
 }
 function Invoke-Action([string] $Name) {
@@ -187,6 +196,8 @@ Invoke-Action '关闭表单'
 Invoke-Action '放弃修改'
 [void](Wait-Action '添加提供商')
 Invoke-Action '外部程序'
+$programInput = Wait-Action 'Codex 可执行文件路径'
+$programInput.SetFocus()
 [void](Wait-Action '选择 Codex 可执行文件')
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-program-settings.png')
 if ($null -ne (Find-Action '更多工作区功能')) { throw 'Workspace navigation is covering preferences.' }

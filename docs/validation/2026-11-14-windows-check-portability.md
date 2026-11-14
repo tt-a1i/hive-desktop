@@ -1,6 +1,6 @@
 # Windows 检查程序可移植性
 
-2026-11-14，工作项 [#30](https://github.com/tt-a1i/hive-desktop/issues/30)。只修改检查程序，未修改应用或流水线配置。
+2026-11-14，工作项 [#30](https://github.com/tt-a1i/hive-desktop/issues/30)。前期修复检查程序；后续原生调查另发现并局部修复外部程序页裁切。流水线配置未修改。
 
 ## 观察与改动
 
@@ -46,6 +46,12 @@ run [43562367240](https://github.com/tt-a1i/hive-desktop/actions/runs/4356236724
 run [43563561289](https://github.com/tt-a1i/hive-desktop/actions/runs/43563561289) 已通过全部上述 Node 检查、Windows 优化版编译、位置/终端测试、部署/便携 ZIP/解压、包内 runtime/PTY、Codex 与 Windows 终端桥。原生窗口也已打开保存的项目并恢复失效会话选择；上传的 1040×760 窗口图显示真实应用。后续 UIAutomation 切换外观时仍比较旧 JSON 字符串，实际应用现在保存 `{mode,font_size}`，因此最终原生检查失败。当前修正脚本按模式及未变的16px字号核对，并保留三个原生 Toggle 状态检查；最终重启检查同样完整比较对象。没有修改产品设置格式、跳过窗口动作或放宽保存断言。
 
 独立检查还发现 `--language en` 与中文 Windows 截图动作不兼容，现于创建临时状态/启动窗口前明确拒绝该组合；英文仅启动检查可不设置截图环境变量运行。Node 语法检查通过；本机没有 PowerShell，实际 Windows 交互结果继续由下一次原生运行确认。
+
+run [43566600333](https://github.com/tt-a1i/hive-desktop/actions/runs/43566600333) 已确认三种外观保存/原生 Toggle、Pi 目录搜索及模型表单切换/放弃草稿通过。后续在外部程序页找不到可用的 Codex 浏览按钮，失败日志未区分缺失、禁用与裁切，尚不能据此断定唯一根因。
+
+Mac 原生调查复现了另一个真实配置问题：1040×760、16px 下，同一程序卡片底部的输入/浏览被自身圆角边缘裁切，底部保存区却可见，滚动无法到达被裁切部分。仅给 Programs 的卡片增加 `flex_shrink_0()`，避免纵向弹性布局将它压缩后由 `overflow_hidden` 裁掉字段，不改变共享卡片或配置逻辑。调试复验中，16px 宽窗和真实20px中英文822×503均能滚到完整末行与底部操作；未运行账号、CLI或模型检查。Mac构建及MSVC交叉检查通过，不冒充Windows或release验收。
+
+Windows脚本在检查浏览按钮前先聚焦实际Codex路径输入，让已有键盘显露逻辑生效；原输入/保存/恢复断言保留。任何 `Wait-Action` 失败会额外记录本测试窗口内固定控件的缺失/启用/离屏/位置状态，并保存失败截图，不复制输入值。新原生Windows结果继续补充。
 
 不将 Mac 检查或 MSVC 交叉检查视为 Windows 原生成功，也不将本次部分原生步骤通过称为完整 Windows 验收。现有 Mac 开发包无需因 test-only 改动重新组装。
 
