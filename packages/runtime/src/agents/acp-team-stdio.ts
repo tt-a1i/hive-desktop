@@ -4,7 +4,7 @@ import { createServer, connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createTeamCommand } from '../team-tool.js';
 
 type Binding = { workspaceId: string; agentId: string; token: string; hivePort: string; cwd: string };
@@ -43,7 +43,7 @@ export function createAcpTeamServer(binding: Binding) {
     proof.listen(socketPath, () => resolve(true));
   });
   const path = fileURLToPath(import.meta.url);
-  const args = path.endsWith('.ts') ? ['--import', createRequire(import.meta.url).resolve('tsx/esm'), path] : [path];
+  const args = path.endsWith('.ts') ? ['--import', pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href, path] : [path];
   let disposed = false;
   return {
     server: { name: 'hive-team', command: process.execPath, args, env: [

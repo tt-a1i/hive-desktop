@@ -22,7 +22,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 项目位置：`/Users/tsk/code/hive-desktop`。
 
-私有开发仓库：<https://github.com/tt-a1i/hive-desktop>。
+开发仓库：<https://github.com/tt-a1i/hive-desktop>（2026-11-15 已核对为公开仓库）。
 
 ## 已确认的方向
 
