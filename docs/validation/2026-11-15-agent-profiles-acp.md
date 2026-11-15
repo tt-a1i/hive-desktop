@@ -62,6 +62,8 @@ Windows 运行 `43665961985` 在 `9b1b5c2` 整组通过，包含进程监督、�
 
 随后完整冻结 `portable-e1c2b88` 已含 ACP 生产注册及私有环境修复；包内链接、官方 Node 校验、core/真实 PTY、Codex 生命周期及 **39 项功能检查通过**。首次 Root 使用 legacy 部署参数造成失效工作区链接，被包装器拒绝；改用仓库既有 frozen+hoisted 部署，保留失败日志后重新完整验收。此包尚不含之后的 AX 文本补丁及只读责任快照，没有推广为 current/candidate。
 
+本轮后续 `portable-2e339b5` 已整合接续及归档/关闭修复，Mac core、Codex 生命周期和 **50 项包内检查通过**。受控 ACP→Codex 的原生窗口接续及冷恢复另见[文本接续记录](2026-11-15-session-handoffs.md)。Windows `43678719830` 源码全组、编译与解包 core/Codex 通过，解包功能检查因接续用例 60 秒总限时被中止，修订后的最终包验证仍在继续；不将该运行算作完整通过。
+
 跨后端接续所需的 Hive 只读责任快照已单独接入，能观察已报告但尚未投递的责任、历史未答问题及 controller 回执等。真实 HTTP/SQLite、同一读事务、无 DB/WAL 写入、旧补丁保持及独立审查通过。它只证明 Hive 账本，不替代应用等待队列、原生消费收据或运行状态；接续功能本身仍在实施。检查 `checks/desktop-conversation-switch-state.ts` 的 controller 夹具只在 POSIX 验收，没有声称 Windows 通过。
 
 完整目标中的原地回退、跨后端接续、自动更新、语音、隔离 HTML、密码库及其余平台和真实流程继续开放。Claude/Antigravity 不进行登录或真实模型验证，Pi 登录失败不重试。
