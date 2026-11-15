@@ -24,6 +24,7 @@ const address = modelServer.address(); assert(address && typeof address !== 'str
 await writeFile(join(agentDir, 'models.json'), JSON.stringify({ providers: { openai: { api: 'openai-responses', baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: 'fixture', models: [{ id: 'gpt-6.1-terra', name: 'Fixture', input: ['text'] }] } } }));
 await writeFile(join(agentDir, 'settings.json'), JSON.stringify({ defaultProvider: 'openai', defaultModel: 'gpt-6.1-terra' }));
 const runtime = await createDesktopRuntime(join(dir, 'state'), () => {});
+const privateTokens:string[]=[];const eventReceipts:string[]=[];
 const sessions: Awaited<ReturnType<typeof createAcpSession>>[] = [];
 const queues = (chats: Chats) => (chats as unknown as { live: Map<string, { queue: DeliveryQueue }> }).live;
 try {
@@ -32,8 +33,8 @@ try {
   const orchestrator = `${workspace.id}:orchestrator`;
   const peer = fileURLToPath(new URL('./fixtures/acp-team-peer.cjs', import.meta.url));
   async function session(agentId: string) {
-    const token = runtime.agents.peekAgentToken(agentId); assert(token);
-    const handle = await createAcpSession({ command: process.execPath, args: [peer], cwd: dir, sessionDir: dir, onEvent: () => {}, teamBinding: () => ({ workspaceId: workspace.id, agentId, token, hivePort: String(runtime.hive.port), cwd: dir }) });
+    const token = runtime.agents.peekAgentToken(agentId); assert(token);privateTokens.push(token);
+    const handle = await createAcpSession({ command: process.execPath, args: [peer], env:{HIVE_ACP_TEAM_BINDING:'stale-binding',HIVE_ACP_TEAM_PROOF:'stale-proof'}, cwd: dir, sessionDir: dir, onEvent: event=>eventReceipts.push(JSON.stringify(event)), teamBinding: () => ({ workspaceId: workspace.id, agentId, token, hivePort: String(runtime.hive.port), cwd: dir }) });
     sessions.push(handle);
     for (let i = 0; i < 100 && !handle.teamConnected(); i++) await new Promise(r => setTimeout(r, 10));
     assert(handle.teamConnected()); return handle;
@@ -46,6 +47,8 @@ try {
     return result.content[0].text;
   }
   const lead = await session(orchestrator);
+  // A peer that reflects the temporary descriptor must not leak its token to history/events.
+  await call(lead,['__fixture_reflect_private_descriptor']);
   await call(lead, ['spawn', 'coder', '--name', 'acp-worker']);
   const members = await runtime.hive.request('GET', `/api/ui/workspaces/${workspace.id}/team`) as Array<{ id: string; name: string }>;
   const worker = members.find(m => m.name === 'acp-worker'); assert(worker);
@@ -79,11 +82,9 @@ try {
   assert.equal(index.forAgent(workspace.id, worker.id)!.id, replacement.id);
   for (const session of sessions) {
     const transcript = await readFile(session.sessionFile!, 'utf8');
-    for (const agentId of [orchestrator, worker.id]) {
-      const token = runtime.agents.peekAgentToken(agentId);
-      if (token) assert(!transcript.includes(token), 'team tokens must never be persisted');
-    }
+    for (const token of privateTokens) assert(!transcript.includes(token), 'team tokens must never be persisted');
   }
+  for(const token of privateTokens)assert(!eventReceipts.some(event=>event.includes(token)),'reflected descriptors must not leak tokens in events');
   assert.equal(modelRequests, 0);
   console.log('ACP team: real Hive spawn, dispatch, end_turn, seen, report and original orchestrator delivery passed; no model inference');
 } finally {

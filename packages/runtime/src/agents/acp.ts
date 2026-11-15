@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { AcpTransport, AcpRpcError } from './acp-transport.js';
 import { AcpHistory } from './acp-history.js';
 import { acpInitialize, acpPermission, acpSession, acpUpdate, object } from './acp-protocol.js';
-import { createAcpTeamServer } from './acp-team-stdio.js';
+import { acpAgentEnvironment, createAcpTeamServer } from './acp-team-stdio.js';
 import type { AgentInteraction, PiEvent, PiSessionHandle } from './types.js';
 export interface AcpTeamBinding {
     workspaceId: string;
@@ -72,7 +72,7 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
     const redact = (value: unknown): unknown => { if (typeof value === 'string')
         return binding?.token ? value.replaceAll(binding.token, '[redacted]') : value; if (Array.isArray(value))
         return value.map(redact); if (object(value))
-        return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v)])); return value; };
+        return Object.fromEntries(Object.entries(value).map(([k, v]) => [binding?.token ? k.replaceAll(binding.token, '[redacted]') : k, redact(v)])); return value; };
     const emit = (event: PiEvent) => { try {
         options.onEvent(redact(event) as PiEvent);
     }
@@ -175,7 +175,7 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
         }
     };
     try {
-        transport = await AcpTransport.start({ command: options.command, ...(options.args && { args: options.args }), env: { ...options.env, ...team?.childEnv }, cwd: options.cwd, ...(options.signal && { signal: options.signal }), ...(options.requestTimeoutMs && { requestTimeoutMs: options.requestTimeoutMs }), onClose: info => { if (!disposed && !readOnly)
+        transport = await AcpTransport.start({ command: options.command, ...(options.args && { args: options.args }), env: acpAgentEnvironment(options.env), cwd: options.cwd, ...(options.signal && { signal: options.signal }), ...(options.requestTimeoutMs && { requestTimeoutMs: options.requestTimeoutMs }), onClose: info => { if (!disposed && !readOnly)
                 fail(info.error); }, onNotification: n => { if (n.method === 'session/update') {
                 if (!sessionId) {
                     earlyUpdates.push(n.params);

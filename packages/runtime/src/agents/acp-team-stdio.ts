@@ -11,7 +11,12 @@ type Binding = { workspaceId: string; agentId: string; token: string; hivePort: 
 const BINDING_ENV = 'HIVE_ACP_TEAM_BINDING';
 const PROOF_ENV = 'HIVE_ACP_TEAM_PROOF';
 
-/** Create a private stdio MCP server descriptor for one ACP session. */
+// Values belong only to the temporary ACP session descriptor sent over stdin.
+export function acpAgentEnvironment(env: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return { ...env, [BINDING_ENV]: undefined, [PROOF_ENV]: undefined };
+}
+
+/** Create a private stdio MCP server descriptor for one ACP session. Never persist or log its env. */
 export function createAcpTeamServer(binding: Binding) {
   const nonce = randomUUID();
   const socketPath = process.platform === 'win32'
@@ -41,8 +46,10 @@ export function createAcpTeamServer(binding: Binding) {
   const args = path.endsWith('.ts') ? ['--import', createRequire(import.meta.url).resolve('tsx/esm'), path] : [path];
   let disposed = false;
   return {
-    server: { name: 'hive-team', command: process.execPath, args, env: [] as { name: string; value: string }[] },
-    childEnv: { [BINDING_ENV]: JSON.stringify(binding), [PROOF_ENV]: JSON.stringify({ socketPath, nonce }) },
+    server: { name: 'hive-team', command: process.execPath, args, env: [
+      { name: BINDING_ENV, value: JSON.stringify(binding) },
+      { name: PROOF_ENV, value: JSON.stringify({ socketPath, nonce }) },
+    ] },
     connected: () => seen,
     waitForConnection: (options: {signal?:AbortSignal;timeoutMs?:number}={}) => {
       if(options.signal?.aborted)return Promise.reject(options.signal.reason??new Error('ACP bridge wait aborted'));
@@ -81,7 +88,8 @@ function runServer(binding: Binding) {
   let initialized = false;
   let ready = false;
   let ended = false;
-  const send = (value: unknown) => { if (!ended) process.stdout.write(`${JSON.stringify(value)}\n`); };
+  const redact = (value: unknown): unknown => typeof value === 'string' ? value.replaceAll(binding.token, '[redacted]') : Array.isArray(value) ? value.map(redact) : object(value) ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key.replaceAll(binding.token, '[redacted]'), redact(item)])) : value;
+  const send = (value: unknown) => { if (!ended) process.stdout.write(`${JSON.stringify(redact(value))}\n`); };
   const markConnected = () => {
     if (!proofRaw) return;
     try {
