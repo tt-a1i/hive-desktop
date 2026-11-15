@@ -12,13 +12,37 @@ import {Script} from 'node:vm';
 import {resolveSavedScriptLaunch} from '@tt-a1i/hive/dist/src/server/workspace-shell-runtime.js';
 import type {ProjectScriptRun} from '../src/project-script-runs.js';
 
-const workerProgram = `const fs=require('node:fs'),cp=require('node:child_process');const[mode,arg]=process.argv.slice(2);const cwd=fs.realpathSync(process.cwd());if(mode==='report'){fs.appendFileSync('fixture-counter.txt','once\\n');fs.writeFileSync('fixture-report.json',JSON.stringify({cwd,cmdPid:process.ppid,nodePid:process.pid,tag:arg}));}else if(mode==='interactive'){fs.writeFileSync(arg,JSON.stringify({cwd,cmdPid:process.ppid,nodePid:process.pid}));}else if(mode==='child'){fs.writeFileSync(arg+'.child.json',JSON.stringify({cwd,pid:process.pid,parentPid:process.ppid}));setInterval(()=>{},1000);}else if(mode==='tree'){const child=cp.spawn(process.execPath,[__filename,'child',arg],{stdio:'inherit',detached:false});child.on('error',()=>process.exit(71));fs.writeFileSync(arg+'.json',JSON.stringify({cwd,cmdPid:process.ppid,nodePid:process.pid,childPid:child.pid}));setInterval(()=>{},1000);}else process.exit(72);`;
+const workerProgram = String.raw`
+const fs = require('node:fs'), cp = require('node:child_process'), path = require('node:path');
+function parentPid() {
+ const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+ const query = '$row = Get-CimInstance Win32_Process -Filter "ProcessId=' + process.pid + '"; if ($null -eq $row) {exit 73}; [Console]::Out.Write($row.ParentProcessId)';
+ let output;
+ try {output = cp.execFileSync(powershell, ['-NoProfile', '-NonInteractive', '-Command', query], {encoding: 'utf8', windowsHide: true, timeout: 15000, stdio: ['ignore', 'pipe', 'pipe']}).trim();}
+ catch {throw Error('Win32 process parent observation failed');}
+ const pid = Number(output);
+ if (!/^[1-9][0-9]*$/.test(output) || !Number.isSafeInteger(pid)) throw Error('Win32 process parent observation returned an invalid PID');
+ return pid;
+}
+const [mode, arg] = process.argv.slice(2), cwd = fs.realpathSync(process.cwd()), observedParent = parentPid();
+const observed = {cwd, cmdPid: observedParent, nodePid: process.pid, nodeReportedParentPid: process.ppid, parentPidSource: 'Win32_Process.ParentProcessId'};
+if (mode === 'report') {
+ fs.appendFileSync('fixture-counter.txt', 'once\n'); fs.writeFileSync('fixture-report.json', JSON.stringify({...observed, tag: arg}));
+} else if (mode === 'interactive') {
+ fs.writeFileSync(arg, JSON.stringify(observed));
+} else if (mode === 'child') {
+ fs.writeFileSync(arg + '.child.json', JSON.stringify({cwd, pid: process.pid, parentPid: observedParent, parentPidSource: observed.parentPidSource})); setInterval(() => {}, 1000);
+} else if (mode === 'tree') {
+ const child = cp.spawn(process.execPath, [__filename, 'child', arg], {stdio: 'inherit', detached: false});
+ child.on('error', () => process.exit(71)); fs.writeFileSync(arg + '.json', JSON.stringify({...observed, childPid: child.pid})); setInterval(() => {}, 1000);
+} else process.exit(72);
+`;
 new Script(workerProgram, {filename: 'script-worker.cjs'}); // Parse only; native execution remains Windows-only.
 
-type ProcessReport = {cwd: string; cmdPid: number; nodePid: number; childPid?: number};
+type ProcessReport = {cwd: string; cmdPid: number; nodePid: number; childPid?: number; parentPidSource: string; nodeReportedParentPid?: number};
 function report(value: unknown): ProcessReport {
  assert.ok(value && typeof value === 'object'); const row = value as ProcessReport;
- assert.equal(typeof row.cwd, 'string'); assert.ok(win32.isAbsolute(row.cwd));
+ assert.equal(typeof row.cwd, 'string'); assert.ok(win32.isAbsolute(row.cwd)); assert.equal(row.parentPidSource, 'Win32_Process.ParentProcessId');
  for (const pid of [row.cmdPid, row.nodePid, ...(row.childPid === undefined ? [] : [row.childPid])]) assert.ok(Number.isSafeInteger(pid) && pid > 0);
  assert.notEqual(row.cmdPid, row.nodePid); if (row.childPid !== undefined) assert.ok(row.childPid !== row.nodePid && row.childPid !== row.cmdPid);
  return row;
@@ -27,14 +51,14 @@ function sameDirectory(actual: string, expected: string) {assert.equal(win32.nor
 const nativePlan = resolveSavedScriptLaunch('exit /b 23', 'C:\\fixture', {ComSpec: 'C:\\Windows\\System32\\cmd.exe'}, 'win32');
 assert.deepEqual(nativePlan, {command: 'C:\\Windows\\System32\\cmd.exe', args: ['/d', '/s', '/c', 'exit /b 23'], cwd: 'C:\\fixture'});
 assert.throws(() => resolveSavedScriptLaunch('echo fixture', '\\\\server\\share', {}, 'win32'), /SCRIPT_UNSUPPORTED_CWD/);
-assert.equal(report({cwd: 'C:\\fixture', cmdPid: 101, nodePid: 102, childPid: 103}).childPid, 103);
-assert.throws(() => report({cwd: 'C:\\fixture', cmdPid: 0, nodePid: 102}));
-assert.throws(() => report({cwd: 'relative', cmdPid: 101, nodePid: 102}));
+assert.equal(report({cwd: 'C:\\fixture', cmdPid: 101, nodePid: 102, childPid: 103, parentPidSource: 'Win32_Process.ParentProcessId'}).childPid, 103);
+assert.throws(() => report({cwd: 'C:\\fixture', cmdPid: 0, nodePid: 102, parentPidSource: 'Win32_Process.ParentProcessId'}));
+assert.throws(() => report({cwd: 'relative', cmdPid: 101, nodePid: 102, parentPidSource: 'Win32_Process.ParentProcessId'}));
 sameDirectory('c:\\FIXTURE\\tree\r\n', 'C:\\fixture\\tree');
 const receiptIndex = process.argv.indexOf('--receipt');
 if (receiptIndex >= 0 && !process.argv[receiptIndex + 1]) throw Error('--receipt requires a path');
 const receiptPath = receiptIndex < 0 ? undefined : resolve(process.argv[receiptIndex + 1]!);
-const receipt: Record<string, unknown> = {platform: process.platform, pass: false, realWindowsPty: false, launchAndReportContract: true, workerSyntax: true, noModelOrAccount: true};
+const receipt: Record<string, unknown> = {platform: process.platform, pass: false, realWindowsPty: false, launchAndReportContract: true, workerSyntax: true, parentPidSource: 'Win32_Process.ParentProcessId', noModelOrAccount: true};
 async function writeReceipt() {if (receiptPath) {await mkdir(dirname(receiptPath), {recursive: true}); await writeFile(receiptPath, JSON.stringify(receipt, null, 2));}}
 if (process.platform !== 'win32') {
  receipt.skipped = 'Windows native cmd/PTY validation requires Windows'; await writeReceipt();
@@ -84,9 +108,10 @@ if (process.platform !== 'win32') {
   const prefix = join(directory, name), command = `${moveToHold ? `cd /d ${quote(hold)} && ` : ''}node.exe ${quote(worker)} tree ${quote(prefix)}`;
   const script = await save(workspaceId, name, command), input = request(workspaceId, script, sessionId), run = await rpc('script.run', input) as ProjectScriptRun;
   const processes = remember(report(await readJson(prefix + '.json'))), descendant = await readJson(prefix + '.child.json');
-  assert.ok(Number.isSafeInteger(processes.childPid)); assert.equal(descendant.pid, processes.childPid); assert.equal(descendant.parentPid, processes.nodePid); assert.ok(allAlive(treePids(processes)));
+  assert.ok(Number.isSafeInteger(processes.childPid)); assert.equal(descendant.pid, processes.childPid); assert.equal(descendant.parentPid, processes.nodePid); assert.equal(descendant.parentPidSource, 'Win32_Process.ParentProcessId'); assert.ok(allAlive(treePids(processes)));
   assert.equal(typeof run.nativeRunId, 'string'); const native = await rpc('hive.request', {method: 'GET', path: `/api/runtime/runs/${run.nativeRunId}`});
-  assert.equal(native.pid, processes.cmdPid, 'Recorded parent must be the actual Hive-owned cmd PTY'); assert.equal(native.agent_id, `${workspaceId}:script:${run.runId}:shell`);
+  if (native.pid !== processes.cmdPid) console.error('WINDOWS_SCRIPT_PID_DIAGNOSTIC', JSON.stringify({kind: 'script', nativeRunId: run.nativeRunId, nativePid: native.pid, cimParentPid: processes.cmdPid, nodePid: processes.nodePid, nodeReportedParentPid: processes.nodeReportedParentPid}));
+  assert.equal(native.pid, processes.cmdPid, 'Win32 CIM parent must be the actual Hive-owned cmd PTY'); assert.equal(native.agent_id, `${workspaceId}:script:${run.runId}:shell`);
   if (moveToHold) sameDirectory(processes.cwd, await realpath(hold));
   return {run, input, processes};
  }
@@ -98,7 +123,9 @@ if (process.platform !== 'win32') {
   await rpc('terminal.restoreComplete', {attachmentId, sequence: restored.sequence});
   const output = join(directory, name + '.json'); await rpc('terminal.input', {attachmentId, bytes: [...Buffer.from(`node.exe ${quote(worker)} interactive ${quote(output)}\r\n`)]});
   const result = report(await readJson(output)); owned.add(result.cmdPid); assert.ok(alive(result.cmdPid));
-  const native = await rpc('hive.request', {method: 'GET', path: `/api/runtime/runs/${run.runId}`}); assert.equal(native.pid, result.cmdPid);
+  const native = await rpc('hive.request', {method: 'GET', path: `/api/runtime/runs/${run.runId}`});
+  if (native.pid !== result.cmdPid) console.error('WINDOWS_SCRIPT_PID_DIAGNOSTIC', JSON.stringify({kind: 'interactive', nativeRunId: run.runId, nativePid: native.pid, cimParentPid: result.cmdPid, nodePid: result.nodePid, nodeReportedParentPid: result.nodeReportedParentPid}));
+  assert.equal(native.pid, result.cmdPid, 'Win32 CIM parent must be the actual Hive-owned interactive cmd PTY');
   // Consume raw output for native flow control. Its ANSI text proves neither cwd nor PID.
   for (const event of terminalEvents.filter(event => event.attachmentId === attachmentId && event.type === 'output')) await rpc('terminal.ack', {attachmentId, sequence: event.sequence, bytes: event.bytes.length});
   await rpc('terminal.detach', {attachmentId}); return result.cmdPid;
