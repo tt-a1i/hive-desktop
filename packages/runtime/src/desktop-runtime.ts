@@ -28,6 +28,8 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
         'writeUserInputPrompt', 'writeSystemMessageToAgent', 'deliverUserInputToOrchestrator', 'deliverSystemMessageToAgent']);
       const deferred = new Set(['startAgent', 'writeStatusPrompt', 'writeSendPrompt', 'writeCancelPrompt', 'deliverUserInputToOrchestrator', 'deliverSystemMessageToAgent']);
       agents = new Proxy(structured, {get(target, property, receiver) {
+        if (property === 'executionAdmissionBlocked') return () => executionMutations.isLeased('');
+        if (property === 'beginExecutionAdmission') return (workspaceId: string) => executionMutations.begin(workspaceId);
         const value = Reflect.get(target, property, receiver) as unknown;
         if (typeof property !== 'string' || !gated.has(property) || typeof value !== 'function') return value;
         return (...args: unknown[]) => {
@@ -56,6 +58,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return agents;
     },
   });
+  const unsubscribeAdmission = executionMutations.onRelease(() => hive.resumeExecutionDeliveries());
   const settings = new DesktopSettings(hive, options.executableEnvironment);
   const agentModels = new AgentModels(hive, settings);
   const piAuth = new PiAuth();
@@ -74,6 +77,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
   const initialization = new ProjectWorktreeInitialization(dataDir, projectScripts, scriptRuns,
     (workspaceId, sessionId) => chats.initializationPlan(workspaceId, sessionId), workspaceId => chats.assertWorkspaceAvailable(workspaceId));
   chats.initialization = initialization;
+  chats.configureHistory(executionMutations, () => terminal.hasAnyActiveShell());
   let closing: Promise<void> | undefined;
   return { hive, chats, agents, executionMutations, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns, initialization,
     createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; description?: unknown }) => {
@@ -96,6 +100,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return hive.request(method, path, body);
     },
     close: () => closing ??= (async () => {
+      unsubscribeAdmission();
       initialization.close();
       const scripts = await Promise.allSettled([scriptRuns.close()]);
       const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), terminal.close(), agentModels.close()]);

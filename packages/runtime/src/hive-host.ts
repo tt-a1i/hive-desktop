@@ -27,6 +27,8 @@ export interface SavedScriptContext {scriptRunId: string; cwd: string; command: 
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
     readonly projectScriptState: import('./project-script-settings.js').ProjectScriptStatePort;
+    executionLedgerRevision(): string;
+    resumeExecutionDeliveries(): void;
     startSavedScript(workspaceId: string, context: SavedScriptContext, observer: SavedScriptObserver): Promise<{runId: string}>;
     stopSavedScript(workspaceId: string, scriptRunId: string, nativeRunId: string): void;
     startSessionShell(workspaceId: string, context: {sessionId: string; cwd: string}): Promise<{runId: string}>;
@@ -108,6 +110,13 @@ export async function createHiveHost({
         projectScriptState: {
             read(key, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.readProjectScriptState(key, workspaceId);},
             compareAndSwap(key, expected, next, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.compareAndSwapProjectScriptState(key, expected, next, workspaceId);},
+        },
+        executionLedgerRevision() {
+            if (closing) throw new Error("Hive host is closed");
+            return (runtime.store as typeof runtime.store & {executionLedgerRevision(): string}).executionLedgerRevision();
+        },
+        resumeExecutionDeliveries() {
+            if (!closing) (runtime.store as typeof runtime.store & {resumeExecutionDeliveries(): void}).resumeExecutionDeliveries();
         },
         startSavedScript(workspaceId, context, observer) {
             if (closing) throw new Error('Hive host is closed');

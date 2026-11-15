@@ -344,6 +344,28 @@ index 747d27facfa9463001a04d97a296ff115f365b48..18a3cdcdf0a73d6beb5d9667c548407d
                  attachAgentPty(run, spawn(spawnCommand.command, spawnCommand.args, buildAgentPtySpawnOptions(input.cwd, env)), ptyOutputBus);
              }
              catch (error) {
+diff --git a/dist/src/server/dispatch-message-outbox.js b/dist/src/server/dispatch-message-outbox.js
+index c640530edbd34375bceb3389a8604f153cedf7a7..e61da69bfa363421513fc01a9234de4be90ebcc1 100644
+--- a/dist/src/server/dispatch-message-outbox.js
++++ b/dist/src/server/dispatch-message-outbox.js
+@@ -26,6 +26,9 @@ export const createDispatchMessageOutbox = (ports) => {
+         draining.add(key);
+         try {
+             while (!ports.isClosing()) {
++                if (ports.runtime.executionAdmissionBlocked?.()) return;
++                const releaseAdmission = ports.runtime.beginExecutionAdmission?.(workspaceId);
++                try {
+                 const run = ports.runtime.getActiveRunByAgentId(workspaceId, targetAgentId);
+                 if (!run)
+                     return;
+@@ -54,6 +57,7 @@ export const createDispatchMessageOutbox = (ports) => {
+                     ports.messages.failed(message.id, error instanceof Error ? error.message : String(error));
+                     return; // retry on next explicit drain/start; never spin on a failed PTY
+                 }
++                } finally { releaseAdmission?.(); }
+             }
+         }
+         finally {
 diff --git a/dist/src/server/recovery-summary.js b/dist/src/server/recovery-summary.js
 index 018b3549ed6a693b59fe7a55927290c4f3e21da8..639181956485c778b636b6ccea0d0141fd031012 100644
 --- a/dist/src/server/recovery-summary.js
@@ -777,7 +799,7 @@ index b2d3be4da9ad56700ffec0ddb3031fc81fb64e20..a05c03ee4bc414082a437e8e5950dd1c
      autostartConfiguredAgents: (input: {
          hivePort: string;
 diff --git a/dist/src/server/runtime-store-helpers.js b/dist/src/server/runtime-store-helpers.js
-index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..15d416323617ad01872e70ee8895c0413605a16f 100644
+index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..a22e77d39f67a81498a24bbd2702081b99c9113a 100644
 --- a/dist/src/server/runtime-store-helpers.js
 +++ b/dist/src/server/runtime-store-helpers.js
 @@ -170,7 +170,7 @@ export const createRuntimeStoreServices = (options = {}) => {
@@ -841,6 +863,14 @@ index d30a7ee3da9bb35dfbafee82dacb6e5125f78416..15d416323617ad01872e70ee8895c041
          startWorkspaceShell: (workspaceId) => services.shellRuntime.start(services.workspaceStore.getWorkspaceSnapshot(workspaceId).summary),
          autostartConfiguredAgents,
          registerTasksListener: (listener) => {
+@@ -533,6 +547,7 @@ export const createRuntimeStoreLifecycle = ({ agentManager, services, }) => {
+             await services.tasksFileWatcher.start(workspaceId, workspace.summary.path);
+         },
+         writeRunInput: (runId, input) => {
++            if (services.agentRuntime.executionAdmissionBlocked?.()) throw new Error("Execution is locked by a history operation");
+             if (!agentManager)
+                 throw new Error('Agent manager is required for PTY stdin writes');
+             if (services.shellRuntime.hasRun(runId)) {
 diff --git a/dist/src/server/runtime-store-remote.js b/dist/src/server/runtime-store-remote.js
 index c4bdd2dfcaace3dae5dbce091695f94785d036c5..d4c3fcd350d90850ca4f416da5c2fa2234ec5730 100644
 --- a/dist/src/server/runtime-store-remote.js
@@ -950,10 +980,18 @@ index c4bdd2dfcaace3dae5dbce091695f94785d036c5..d4c3fcd350d90850ca4f416da5c2fa22
          },
      };
 diff --git a/dist/src/server/runtime-store-workflows.js b/dist/src/server/runtime-store-workflows.js
-index c5cbf640b7babd2deabd2700c830ff88624123b7..9daaccb7b5e9d576b013ca5eb73c68b876354ed5 100644
+index c5cbf640b7babd2deabd2700c830ff88624123b7..221b61d060cfe842f23d3182c6e3b1a96b8bfc5e 100644
 --- a/dist/src/server/runtime-store-workflows.js
 +++ b/dist/src/server/runtime-store-workflows.js
-@@ -22,18 +22,8 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+@@ -6,6 +6,7 @@ import { createWorkflowRunner } from './workflow-runner.js';
+ import { createWorkflowScheduler } from './workflow-scheduler.js';
+ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+     const runner = createWorkflowRunner({
++        beginExecutionAdmission: (workspaceId) => services.agentRuntime.beginExecutionAdmission?.(workspaceId),
+         awaiter: services.workflowDispatchAwaiter,
+         workflowRunStore: services.workflowRunStore,
+         dispatchPort: {
+@@ -22,18 +23,8 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
                  if (!cancelled)
                      return false;
                  services.workspaceStore.markTaskCancelled(workspaceId, openDispatch.toAgentId);
@@ -974,7 +1012,7 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..9daaccb7b5e9d576b013ca5eb73c68b8
                  return true;
              },
          },
-@@ -68,9 +58,10 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+@@ -68,9 +59,10 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
                  : '\n' +
                      dispatches
                          .map((d) => {
@@ -988,7 +1026,7 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..9daaccb7b5e9d576b013ca5eb73c68b8
                                  : d.reportText.trim()
                              : `(no report; status=${d.status})`;
                          return `  #${d.stepIndex ?? '?'} -> ${escapeHiveEnvelopeText(reply)}`;
-@@ -82,8 +73,9 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
+@@ -82,8 +74,9 @@ export const createRuntimeStoreWorkflowRuntime = (services, store) => {
                  const serialized = typeof finalRecord.result === 'string'
                      ? finalRecord.result
                      : JSON.stringify(finalRecord.result, null, 2);
@@ -1001,10 +1039,27 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..9daaccb7b5e9d576b013ca5eb73c68b8
                  return `\nResult (workflow return value):\n${escapeHiveEnvelopeText(truncated)}`;
              })();
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..695a7463d356c7b5610149cb61813316dfb3d655 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c528885e973a8 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
-@@ -37,6 +37,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -1,3 +1,4 @@
++import { createHash } from 'node:crypto';
+ import { createRuntimeStoreController } from './runtime-store-controller.js';
+ import { createRuntimeStoreDreamMethods } from './runtime-store-dream.js';
+ import { createRuntimeStoreExternalGoalMethods } from './runtime-store-external-goals.js';
+@@ -23,6 +24,11 @@ export const createRuntimeStore = (options = {}) => {
+             throw new Error('Workflow runtime not initialized');
+         return workflowRuntime;
+     };
++    const admitted = (workspaceId, fn) => {
++        const release = services.agentRuntime.beginExecutionAdmission?.(workspaceId);
++        try { return Promise.resolve(fn()).finally(() => release?.()); }
++        catch (error) { release?.(); throw error; }
++    };
+     let store;
+     const controller = createRuntimeStoreController(services, () => store);
+     const workerMutations = createRuntimeStoreWorkerMutations({
+@@ -37,6 +43,7 @@ export const createRuntimeStore = (options = {}) => {
          close: async () => {
              await controller.close();
              workflowRuntime?.scheduler.close();
@@ -1012,7 +1067,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..695a7463d356c7b5610149cb61813316
              await services.teamMemoryDreamScheduler.close();
              await lifecycle.close();
          },
-@@ -48,9 +49,9 @@ export const createRuntimeStore = (options = {}) => {
+@@ -48,9 +55,9 @@ export const createRuntimeStore = (options = {}) => {
              return workspace;
          },
          listWorkspaces: () => services.workspaceStore.listWorkspaces(),
@@ -1024,7 +1079,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..695a7463d356c7b5610149cb61813316
              for (const agent of workspace.agents) {
                  const activeRun = services.agentRuntime.getActiveRunByAgentId(workspaceId, agent.id);
                  if (activeRun)
-@@ -82,7 +83,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -82,7 +89,7 @@ export const createRuntimeStore = (options = {}) => {
              if (services.settings.getAppState('active_workspace_id')?.value === workspaceId) {
                  services.settings.setAppState('active_workspace_id', null);
              }
@@ -1033,15 +1088,35 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..695a7463d356c7b5610149cb61813316
          addWorker: (workspaceId, input) => services.workspaceStore.addWorker(workspaceId, input),
          addWorkerWithLaunch: workerMutations.addWorkerWithLaunch,
          updateWorkerProfile: (workspaceId, workerId, input) => services.workspaceStore.updateWorkerProfile(workspaceId, workerId, input),
-@@ -98,6 +99,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -96,8 +103,27 @@ export const createRuntimeStore = (options = {}) => {
+         dispatchTaskByWorkerName: services.teamOps.dispatchTaskByWorkerName,
+         reportTask: controller.reportTask,
          drainReportOutbox: services.teamOps.drainReportOutbox,
++        executionLedgerRevision: () => {
++            const hash = createHash('sha256');
++            for (const table of ['messages', 'dispatches', 'dispatch_messages', 'dispatch_message_outbox', 'report_outbox']) {
++                hash.update(table);
++                for (const row of services.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).iterate()) hash.update(JSON.stringify(row));
++            }
++            return hash.digest('hex');
++        },
++        resumeExecutionDeliveries: () => {
++            for (const workspace of services.workspaceStore.listWorkspaces()) {
++                const snapshot = services.workspaceStore.getWorkspaceSnapshot(workspace.id);
++                for (const agent of snapshot.agents) {
++                    services.teamOps.drainReportOutbox(workspace.id, agent.id);
++                    services.teamOps.replayQueuedDispatches(workspace.id, agent.id);
++                    services.dispatchMessageOps.drainDispatchMessageOutbox(workspace.id, agent.id);
++                }
++            }
++        },
          statusTask: controller.statusTask,
          ...services.dispatchMessageOps,
 +        getDispatch: services.dispatchLedgerStore.getDispatch,
          listDispatches: services.dispatchLedgerStore.listWorkspaceDispatches,
          listOpenDispatches: services.dispatchLedgerStore.listOpenWorkspaceDispatches,
          listRecentDispatches: services.dispatchLedgerStore.listRecentWorkspaceDispatches,
-@@ -112,10 +114,14 @@ export const createRuntimeStore = (options = {}) => {
+@@ -112,10 +138,14 @@ export const createRuntimeStore = (options = {}) => {
          closeWorkspaceShell: lifecycle.closeWorkspaceShell,
          configureAgentLaunch: lifecycle.configureAgentLaunch,
          peekAgentLaunchConfig: lifecycle.peekAgentLaunchConfig,
@@ -1049,14 +1124,15 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..695a7463d356c7b5610149cb61813316
          startAgent: lifecycle.startAgent,
          autostartConfiguredAgents: lifecycle.autostartConfiguredAgents,
          startWorkspaceWatch: lifecycle.startWorkspaceWatch,
-         startWorkspaceShell: lifecycle.startWorkspaceShell,
-+        startSessionShell: lifecycle.startSessionShell,
-+        startSavedScript: lifecycle.startSavedScript,
+-        startWorkspaceShell: lifecycle.startWorkspaceShell,
++        startWorkspaceShell: (workspaceId) => admitted(workspaceId, () => lifecycle.startWorkspaceShell(workspaceId)),
++        startSessionShell: (workspaceId, context) => admitted(workspaceId, () => lifecycle.startSessionShell(workspaceId, context)),
++        startSavedScript: (workspaceId, context, observer) => admitted(workspaceId, () => lifecycle.startSavedScript(workspaceId, context, observer)),
 +        stopSavedScript: lifecycle.stopSavedScript,
          findLiveRun: lifecycle.findLiveRun,
          getLiveRun: lifecycle.getLiveRun,
          waitForRunExit: lifecycle.waitForRunExit,
-@@ -123,6 +129,19 @@ export const createRuntimeStore = (options = {}) => {
+@@ -123,6 +153,19 @@ export const createRuntimeStore = (options = {}) => {
          registerTasksListener: lifecycle.registerTasksListener,
          listAgentRuns: (agentId) => services.agentRuntime.listAgentRuns(agentId),
          listMessagesForRecovery: (workspaceId, sinceMs) => services.messageLogStore.listMessagesForRecovery(workspaceId, sinceMs),
@@ -1076,7 +1152,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..695a7463d356c7b5610149cb61813316
          recallMessages: (workspaceId, query, options) => services.teamRecallStore.recallMessages(workspaceId, query, options),
          ...createRuntimeStoreMemoryMethods(services),
          ...createRuntimeStoreDreamMethods(services),
-@@ -141,6 +160,8 @@ export const createRuntimeStore = (options = {}) => {
+@@ -141,6 +184,8 @@ export const createRuntimeStore = (options = {}) => {
          getRetentionSignals: () => services.protocolEventStats.getRetentionSignals(),
          ...createRuntimeStoreRemoteMethods(services),
          getWorkflowDispatchAwaiter: () => services.workflowDispatchAwaiter,
@@ -1085,7 +1161,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..695a7463d356c7b5610149cb61813316
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
-@@ -155,6 +176,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -155,6 +200,7 @@ export const createRuntimeStore = (options = {}) => {
          })),
          saveWorkspaceUpload: (input) => services.workspaceUploadStore.saveUpload(input),
          listWorkspaceUploads: (workspaceId, limit) => services.workspaceUploadStore.listUploads(workspaceId, limit),
@@ -1203,7 +1279,7 @@ index f74fc2d4250e25025d2f7fb327cf49df8c1277a5..c7aad08d1f2e58f4660f04a98143b948
              void stop(workspaceId)
                  .catch((closeError) => logWatcherError(workspaceId, closeError))
 diff --git a/dist/src/server/team-operations.js b/dist/src/server/team-operations.js
-index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..c0d9df9abc48e52fd5d02dc78e78c58ffbb707d5 100644
+index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..2b66d78e305c39edc39e8b861df45b3a7847b009 100644
 --- a/dist/src/server/team-operations.js
 +++ b/dist/src/server/team-operations.js
 @@ -33,7 +33,10 @@ export const formatUnknownWorkerError = (workerName, roster) => {
@@ -1218,6 +1294,15 @@ index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..c0d9df9abc48e52fd5d02dc78e78c58f
          return [
              `Dispatch ${requestedDispatchId} is not open for worker ${workerName}. Your open dispatches:`,
              ...lines,
+@@ -60,7 +63,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
+     // An entry is marked delivered only after its PTY write actually resolves,
+     // so a still-down orchestrator just leaves the backlog pending.
+     const drainReportOutbox = (workspaceId, targetAgentId = `${workspaceId}:orchestrator`) => {
+-        if (runtimeClosing())
++        if (runtimeClosing() || agentRuntime.executionAdmissionBlocked?.())
+             return { attempted: 0, firstSyncError: null };
+         if (!agentRuntime.getActiveRunByAgentId(workspaceId, targetAgentId)) {
+             return { attempted: 0, firstSyncError: null };
 @@ -79,6 +82,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
              try {
                  void agentRuntime
@@ -1226,7 +1311,34 @@ index 2f9a3594daa332080d700e7a8a0ee9a2a1b9fb00..c0d9df9abc48e52fd5d02dc78e78c58f
                      requireActiveRun: true,
                  })
                      .then(() => {
-@@ -538,6 +542,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
+@@ -235,6 +239,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
+      *  excluded — the runner owns their lifecycle and its awaiters must not see
+      *  a late delivery after the run already ended. */
+     const replayQueuedDispatches = (workspaceId, workerId, options = {}) => {
++        if (agentRuntime.executionAdmissionBlocked?.()) return;
+         if (!agentRuntime.getActiveRunByAgentId(workspaceId, workerId))
+             return;
+         const queued = listOpenWorkspaceDispatches(workspaceId).filter((item) => item.toAgentId === workerId &&
+@@ -304,6 +309,7 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
+         }
+     };
+     const dispatchTask = async (workspaceId, workerId, text, input = {}) => {
++        if (agentRuntime.executionAdmissionBlocked?.()) throw new ConflictError("Execution is locked by a history operation");
+         const fromAgentId = input.fromAgentId;
+         const sender = fromAgentId ? workspaceStore.getAgent(workspaceId, fromAgentId) : undefined;
+         const worker = workspaceStore.getWorker(workspaceId, workerId);
+@@ -529,15 +535,18 @@ export const createTeamOperations = ({ agentRuntime, createDispatch, deleteDispa
+             return Object.assign(dispatch, { restartedWorker });
+         },
+         recordUserInput(workspaceId, orchestratorId, text) {
++            if (agentRuntime.executionAdmissionBlocked?.()) throw new ConflictError("Execution is locked by a history operation");
+             workspaceStore.getAgent(workspaceId, orchestratorId);
+             agentRuntime.writeUserInputPrompt(workspaceId, text);
+             insertMessage(createUserInputMessage(workspaceId, orchestratorId, text));
+         },
+         async deliverUserInput(workspaceId, orchestratorId, text) {
++            if (agentRuntime.executionAdmissionBlocked?.()) throw new ConflictError("Execution is locked by a history operation");
+             workspaceStore.getAgent(workspaceId, orchestratorId);
              const messageHandle = insertMessage(createUserInputMessage(workspaceId, orchestratorId, text));
              try {
                  await agentRuntime.deliverUserInputToOrchestrator(workspaceId, text, {
@@ -1429,7 +1541,7 @@ index 7f1e616c416b50c7aec3a4ef6c6142b233f762b6..7cefabf68ea448c749cd0e0754374b40
       *  and any caller that wants to wait synchronously. */
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
 diff --git a/dist/src/server/workflow-runner.js b/dist/src/server/workflow-runner.js
-index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af0b785753 100644
+index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..9dbda3130d3982b1d0edb0d48e6f2c3b4d1c443d 100644
 --- a/dist/src/server/workflow-runner.js
 +++ b/dist/src/server/workflow-runner.js
 @@ -1,4 +1,5 @@
@@ -1438,7 +1550,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
  import { assertWindowsSafeFilename } from './windows-filename.js';
  import { createWorkflowAgentCallExecutor, } from './workflow-agent-call-executor.js';
  import { createWorkflowDagLayerTracker } from './workflow-dag-layer-tracker.js';
-@@ -22,14 +23,49 @@ const toNestedWorkflowFilename = (scriptName) => {
+@@ -22,14 +23,51 @@ const toNestedWorkflowFilename = (scriptName) => {
  };
  export const createWorkflowRunner = (deps) => {
      const { store, workflowRunStore, awaiter, dispatchPort, resolveWorkspacePath, roleTemplateResolver, logStore, resolveCliLaunchConfig, getWorkflowCliPolicy, } = deps;
@@ -1457,6 +1569,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
 +        assertOpen();
 +        if (idleLeases.has(workspaceId))
 +            throw busy();
++        const releaseAdmission = deps.beginExecutionAdmission?.(workspaceId);
 +        let activities = workspaceActivities.get(workspaceId);
 +        if (!activities) {
 +            activities = new Set();
@@ -1464,6 +1577,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
 +        }
 +        // Register before any loader await or queued execution can yield to workspace removal.
 +        const activity = Promise.resolve().then(operation).finally(() => {
++            releaseAdmission?.();
 +            activities.delete(activity);
 +            if (!activities.size)
 +                workspaceActivities.delete(workspaceId);
@@ -1488,7 +1602,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
          if (isRunStopped(runId))
              throw new Error('Stopped by user');
          const abortReason = abortedRuns.get(runId);
-@@ -173,7 +209,7 @@ export const createWorkflowRunner = (deps) => {
+@@ -173,7 +211,7 @@ export const createWorkflowRunner = (deps) => {
              compiledFunctionSource: loaded.compiledFunctionSource,
              scriptPath: loaded.scriptPath,
              workerSource: WORKFLOW_VM_WORKER_URL,
@@ -1497,7 +1611,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
              onWorkerSettled: () => activeScriptWorkers.delete(run.id),
              handlers: {
                  agent: agentExecutor.agent,
-@@ -185,16 +221,16 @@ export const createWorkflowRunner = (deps) => {
+@@ -185,16 +223,16 @@ export const createWorkflowRunner = (deps) => {
                  assertRunActive: () => assertRunActive(run.id),
              },
          });
@@ -1517,7 +1631,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
          }, maxDurationMs);
          budgetTimer.unref?.();
          try {
-@@ -212,11 +248,14 @@ export const createWorkflowRunner = (deps) => {
+@@ -212,11 +250,14 @@ export const createWorkflowRunner = (deps) => {
              // degraded result (often a list of nulls), which both lies to the UI
              // and lies to the orchestrator's completion notification. Check the
              // marker after fn returns and record the truth instead.
@@ -1534,7 +1648,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
                  });
              }
              else {
-@@ -240,9 +279,9 @@ export const createWorkflowRunner = (deps) => {
+@@ -240,9 +281,9 @@ export const createWorkflowRunner = (deps) => {
              const message = errorToMessage(error);
              abortedRuns.set(run.id, message);
              workflowRunStore.updateRun(run.id, {
@@ -1546,7 +1660,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
              });
          }
          finally {
-@@ -314,8 +353,9 @@ export const createWorkflowRunner = (deps) => {
+@@ -314,8 +355,9 @@ export const createWorkflowRunner = (deps) => {
              throw new Error('Stopped by user');
          }
      };
@@ -1557,7 +1671,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
          assertParentRunStillRunning(input);
          const run = workflowRunStore.createRun(buildCreateInput(input, loaded));
          rememberTrigger(run.id, input.triggeredByAgentId);
-@@ -325,31 +365,32 @@ export const createWorkflowRunner = (deps) => {
+@@ -325,31 +367,32 @@ export const createWorkflowRunner = (deps) => {
              throw new Error(`workflow run vanished mid-flight: ${run.id}`);
          return finalized;
      };
@@ -1601,7 +1715,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
          if (visited.has(runId))
              return false;
          visited.add(runId);
-@@ -359,20 +400,20 @@ export const createWorkflowRunner = (deps) => {
+@@ -359,20 +402,20 @@ export const createWorkflowRunner = (deps) => {
          stoppedRuns.add(runId);
          void activeScriptWorkers
              .get(runId)
@@ -1626,7 +1740,7 @@ index d96dd1e0b6659bbed1fc3d9dd81b102283ed2703..b30ed2efecf51c92d4263bc630c009af
          });
          // If the script had no in-flight agent() call when stop was requested,
          // it may never reject on its own. Persist the stopped state immediately
-@@ -380,5 +421,18 @@ export const createWorkflowRunner = (deps) => {
+@@ -380,5 +423,18 @@ export const createWorkflowRunner = (deps) => {
          return true;
      };
      const stopRun = (runId) => stopRunAndChildren(runId, new Set());

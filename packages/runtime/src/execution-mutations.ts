@@ -5,6 +5,8 @@ export class ExecutionMutations {
   private writers = 0;
   private leased = false;
   private waiters: Array<() => void> = [];
+  private releaseListeners = new Set<() => void>();
+  onRelease(listener: () => void): () => void { this.releaseListeners.add(listener); return () => { this.releaseListeners.delete(listener); }; }
   whenReleased(): Promise<void> {
     return this.leased ? new Promise(resolve => { this.waiters.push(resolve); }) : Promise.resolve();
   }
@@ -20,6 +22,6 @@ export class ExecutionMutations {
     if (this.leased || this.writers) throw new Error('Execution is busy; finish active work before the history operation');
     this.leased = true;
     let released = false;
-    return () => { if (!released) { released = true; this.leased = false; for (const wake of this.waiters.splice(0)) wake(); } };
+    return () => { if (!released) { released = true; this.leased = false; for (const wake of this.waiters.splice(0)) wake(); for (const listener of this.releaseListeners) { try { listener(); } catch (error) { console.error("Failed to resume deferred Hive deliveries", error); } } } };
   }
 }
