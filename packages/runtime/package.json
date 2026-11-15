@@ -68,7 +68,7 @@
     "check:project-scripts-windows": "pnpm build && tsx checks/project-scripts-windows.ts",
     "check:code-checkpoints": "pnpm check && tsx checks/code-checkpoints.ts && tsx checks/code-checkpoints-unsupported.ts && tsx checks/code-checkpoints-failures.ts && tsx checks/code-checkpoints-special.ts",
     "check:interaction-attachments": "tsx checks/interaction-attachments.ts",
-    "check:history": "pnpm build && tsx checks/codex-history-control.ts && tsx checks/codex-fork-provenance.ts && tsx checks/checkpoint-materialize.ts && tsx checks/execution-admission.ts && tsx checks/execution-team-admission.ts && tsx checks/execution-outbox-admission.ts && tsx checks/execution-workflow-admission.ts && tsx checks/session-history-operations.ts && tsx checks/session-history-wire.ts"
+    "check:history": "pnpm build && tsx checks/codex-history-control.ts && tsx checks/codex-fork-provenance.ts && tsx checks/checkpoint-materialize.ts && tsx checks/execution-admission.ts && tsx checks/execution-team-admission.ts && tsx checks/execution-outbox-admission.ts && tsx checks/execution-workflow-admission.ts && tsx checks/session-history-operations.ts && tsx checks/session-history-wire.ts && tsx checks/execution-sqlite-outbox.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.317",
