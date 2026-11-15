@@ -21,6 +21,8 @@ try {
     assert(events.some(e => e.type === 'tool_end' && !e.isError));
     await a.addContext('context', 'fixture');
     assert(a.hasContext('fixture'));
+    await a.prompt('consume durable context once');
+    assert.equal(JSON.parse(await readFile(a.sessionFile!, 'utf8')).contexts.length, 0);
     const file = a.sessionFile!;
     await a.dispose();
     await b.prompt('B continues after A closes', {deliveryId:'db2'});
@@ -28,6 +30,7 @@ try {
     const restored = await start('normal', file, 'a');
     assert.equal(restored.history().length, 2);
     assert.match(JSON.stringify(restored.history()), /restored once/);
+    assert(restored.hasContext('fixture'), 'native history replacement preserves local context receipts');
     await restored.dispose();
     const again = await start('normal', file, 'a');
     assert.equal(again.history().length, 2);

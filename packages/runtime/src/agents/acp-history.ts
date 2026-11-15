@@ -7,6 +7,7 @@ export interface AcpHistoryState {
     sessionId: string;
     history: unknown[];
     historyIds: string[];
+    contextTypes?: string[];
     contexts: {
         text: string;
         customType: string;
