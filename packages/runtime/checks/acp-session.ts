@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createAcpSession } from '../src/agents/acp.js';
 import type { PiEvent } from '../src/agents/types.js';
 const root = await mkdtemp(join(tmpdir(), 'hive-acp-'));
 const handles: Awaited<ReturnType<typeof createAcpSession>>[] = [];
 let events: PiEvent[] = [];
-const start = async (mode = 'normal', sessionFile?: string, id = mode) => { const h = await createAcpSession({ command: process.execPath, args: [resolve('checks/fixtures/acp-peer.cjs'), mode, id, join(root,'native-echo')], cwd: root, sessionDir: root, ...(sessionFile && { sessionFile }), onEvent: e => events.push(e), requestTimeoutMs: 300, cancelTimeoutMs: 40 }); handles.push(h); return h; };
+const start = async (mode = 'normal', sessionFile?: string, id = mode) => { const h = await createAcpSession({ command: process.execPath, args: [fileURLToPath(new URL('./fixtures/acp-peer.cjs', import.meta.url)), mode, id, join(root,'native-echo')], cwd: root, sessionDir: root, ...(sessionFile && { sessionFile }), onEvent: e => events.push(e), requestTimeoutMs: 300, cancelTimeoutMs: 40 }); handles.push(h); return h; };
 try {
     await assert.rejects(start('normal', join(root, 'missing.json')), /missing/);
     await assert.rejects(start('version'), /version/);

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
@@ -29,7 +30,7 @@ try {
   const workspace = await runtime.hive.request('POST', '/api/workspaces', { path: dir, name: 'ACP team', autostart_orchestrator: false }) as { id: string };
   const chat = await runtime.chats.create(workspace.id); await runtime.chats.resume(chat.id);
   const orchestrator = `${workspace.id}:orchestrator`;
-  const peer = resolve('checks/fixtures/acp-team-peer.cjs');
+  const peer = fileURLToPath(new URL('./fixtures/acp-team-peer.cjs', import.meta.url));
   async function session(agentId: string) {
     const token = runtime.agents.peekAgentToken(agentId); assert(token);
     const handle = await createAcpSession({ command: process.execPath, args: [peer], cwd: dir, sessionDir: dir, onEvent: () => {}, teamBinding: () => ({ workspaceId: workspace.id, agentId, token, hivePort: String(runtime.hive.port), cwd: dir }) });

@@ -72,6 +72,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @hive-desktop/runtime exec tsx checks/session-history-wire.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check profiles and ACP against controlled peers without vendor requests
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $checks = @('agent-profiles', 'structured-launch', 'profile-runtime-binding', 'profile-runtime-wire',
+            'profile-settings-atomic', 'profile-claude-offline-history', 'codex-history-profile-launch',
+            'acp-session', 'acp-team-stdio', 'acp-team-hive')
+          foreach ($check in $checks) {
+            pnpm --filter @hive-desktop/runtime exec tsx "checks/$check.ts"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Check question attachment ownership and reply lifecycle without vendor requests
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:interaction-attachments

@@ -10,7 +10,7 @@ const directory=await mkdtemp(join(tmpdir(),'hive-profile-wire-'));
 await mkdir(join(directory,'pi'));
 const dataDir=join(directory,'state');
 function start() {
- const child=spawn(process.execPath,['dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:dataDir,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1'},stdio:['pipe','pipe','pipe']});
+ const child=spawn(process.execPath,[process.env.HIVE_DESKTOP_TEST_RUNTIME ?? 'dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:dataDir,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1'},stdio:['pipe','pipe','pipe']});
  const exited=once(child,'exit');let sequence=0,stderr='';
  child.stderr.on('data',chunk=>{stderr+=String(chunk);});
  const pending=new Map<number,{resolve(value:any):void;reject(error:Error):void}>();
