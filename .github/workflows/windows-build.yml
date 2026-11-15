@@ -107,6 +107,9 @@ jobs:
       - name: Check session terminals with native Windows PTYs
         timeout-minutes: 5
         run: pnpm --filter @hive-desktop/runtime exec tsx checks/session-terminals-windows.ts --receipt target/session-terminals-windows.json
+      - name: Check delayed native PTY PID publication
+        timeout-minutes: 3
+        run: pnpm --filter @hive-desktop/runtime check:pty-live-pid
       - name: Check saved project scripts with native Windows processes
         timeout-minutes: 5
         run: pnpm --filter @hive-desktop/runtime exec tsx checks/project-scripts-windows.ts --receipt target/project-scripts-windows.json
