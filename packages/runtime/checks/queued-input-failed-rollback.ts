@@ -9,7 +9,8 @@ import { DispatchExecutionOrigins } from '../src/dispatch-execution-origins.js';
 const directory = mkdtempSync(join(tmpdir(), 'hive-failed-rollback-'));
 try {
  for (const mode of ['edit', 'edit-busy', 'cancel-committed'] as const) {
-  const id = mode, record = { id, workspaceId: 'workspace', agentId: 'workspace:orchestrator', originAgentId: 'workspace:orchestrator', identityState: 'known' as const };
+  const fixedProfile = { id: 'default-pi', revision: 1 };
+  const id = mode, record = { id, workspaceId: 'workspace', backend: 'pi' as const, profile: fixedProfile, agentId: 'workspace:orchestrator', originAgentId: 'workspace:orchestrator', identityState: 'known' as const };
   const executed: string[] = [], completed: string[] = [];
   let releaseHead!: () => void, enteredHead!: () => void;
   const headEntered = new Promise<void>(resolve => { enteredHead = resolve; });
@@ -18,6 +19,13 @@ try {
   const rows = new Map<number, { type: 'user_input' | 'user_input_cancelled'; text: string }>([[1, {type:'user_input',text:'head'}], [2, {type:'user_input',text:'original'}]]);
   const chats: any = Object.create(Chats.prototype);
   Object.assign(chats, { closing: false, removing: new Set(), activating: new Map(), live: new Map(), opening: new Map(), mutatingQueues: new Set(), sequences: new Map(), emit: () => {},
+   // This lifecycle fixture starts after profile initialization. Keep the
+   // authoritative identity check active while isolating the queue write fault.
+   profilesReady: Promise.resolve(),
+   profiles: { resolveForExecution: async (ref: unknown, backend: string) => {
+    assert.deepEqual(ref, fixedProfile); assert.equal(backend, 'pi');
+    return {ref: fixedProfile, driver: 'pi', enabled: true, launch: {args: []}};
+   } },
    dispatchOrigins: new DispatchExecutionOrigins(join(directory, id + '-origins')),
    index: { get: () => record, peek: () => record, forAgent: () => record },
    hive: { getUserInput: (_w: string,_a: string,s: number) => rows.get(s), mutateUserInput: (_w: string,_a: string,s: number,_e: string,replacement: string | null,persist: () => void) => {
