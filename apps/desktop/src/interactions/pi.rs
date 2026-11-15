@@ -170,6 +170,7 @@ impl HiveApp {
                                 .child(tr("正在发送回应…")),
                         )
                     })
+                    .when(text_entry, |view| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(if english() { "Attachments are not supported for this question." } else { "此问题不支持附件。" })))
                     .when_some(card.pi_input.as_ref(), |view, input| {
                         view.child(
                             Input::new(input)

@@ -118,6 +118,20 @@ export class ChatAttachments {
     const record=await this.upload(workspaceId,name,image.mimeType,image.data);
     return {attachment:this.ref(workspaceId,record.id,record.original_name,image.mimeType,record.size_bytes),image};
   }
+  /** Internal path references for native question answers, including images.
+   * Normal image payloads remain inline image data and do not expose this path. */
+  async questionReferences(workspaceId: string, input: unknown): Promise<{attachment: ChatAttachment; filePath: string}[]> {
+    const result: {attachment: ChatAttachment; filePath: string}[] = [];
+    for (const id of attachmentIds(input)) {
+      const upload = await this.hive.locateUpload(workspaceId, id);
+      if (!upload || typeof upload.localPath !== 'string' || !isAbsolute(upload.localPath)) throw new Error('Attachment is unavailable in this workspace');
+      const info = await stat(upload.localPath);
+      if (!info.isFile() || info.size !== upload.record.sizeBytes) throw new Error('Attachment copy is unavailable or changed');
+      const projectFile = await this.projectReference(workspaceId, id);
+      result.push({attachment: {...this.ref(workspaceId, id, upload.record.originalName, upload.record.mimeType, upload.record.sizeBytes), ...(projectFile ? {projectFile} : {})}, filePath: upload.localPath});
+    }
+    return result;
+  }
   async get(workspaceId: string, input: unknown): Promise<StagedAttachment[]> {
     const ids = attachmentIds(input);
     const result: StagedAttachment[] = [];

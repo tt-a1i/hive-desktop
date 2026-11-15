@@ -234,7 +234,9 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return chats.mutateQueuedInput(text(params, 'sessionId'), text(params, 'deliveryId'), params.expectedText, params.text);
     }
     case 'chat.queue.cancel': return chats.mutateQueuedInput(text(params, 'sessionId'), text(params, 'deliveryId'), params.expectedText);
-    case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response);
+    case 'chat.interactionAttachments.list': return chats.listInteractionAttachments(text(params, 'sessionId'));
+    case 'chat.interactionAttachments.save': return chats.saveInteractionAttachments(text(params, 'sessionId'), text(params, 'interactionId'), params.attachmentsByQuestionId);
+    case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response, params.attachmentsByQuestionId);
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));
     case 'chat.resume': return chats.resume(text(params, 'sessionId'));
     case 'chat.refreshPiModels': return chats.refreshPiModels(text(params, 'sessionId'));

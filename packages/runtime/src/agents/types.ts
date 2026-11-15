@@ -67,6 +67,7 @@ export interface PiSessionHandle {
   addContext(text: string, customType?: string): Promise<void>;
   completedDeliveryIds(): readonly string[];
   interactions?(): readonly AgentInteraction[];
+  validateInteractionResponse?(id: string, response: unknown): void;
   respondInteraction?(id: string, response: unknown): void | Promise<void>;
   /** Member retirement may finish host tool acknowledgements; direct user stop stays immediate. */
   abort(options?: { settleTools?: boolean }): Promise<void>;

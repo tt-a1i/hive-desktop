@@ -65,7 +65,8 @@
     "check:session-terminals-windows": "pnpm build && tsx checks/session-terminals-windows.ts",
     "check:member-worktrees": "pnpm build && tsx checks/member-worktrees.ts && tsx checks/member-worktrees-wire.ts",
     "check:project-scripts": "pnpm build && tsx checks/project-script-settings.ts && tsx checks/project-script-runs.ts && tsx checks/project-script-storage-failures.ts && tsx checks/project-script-stop-storage.ts && tsx checks/project-script-workspace-lifetime.ts && tsx checks/project-script-log-pages.ts && tsx checks/project-script-signals.ts && tsx checks/project-scripts-wire.ts",
-    "check:project-scripts-windows": "pnpm build && tsx checks/project-scripts-windows.ts"
+    "check:project-scripts-windows": "pnpm build && tsx checks/project-scripts-windows.ts",
+    "check:interaction-attachments": "tsx checks/interaction-attachments.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.317",

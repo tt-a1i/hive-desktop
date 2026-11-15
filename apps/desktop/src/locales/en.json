@@ -1,4 +1,7 @@
 {
+  "部分附件导入失败，请重新选择。": "Some attachments could not be imported. Please select them again.",
+  "附件状态保存失败，请重试保存。": "Could not save the attachments. Retry saving them.",
+  "提交结果未知，请勿重复提交；请检查会话状态。": "The submission outcome is unknown. Do not submit again; check the session status.",
   "界面语言": "Language",
   "语言已保存": "Language saved",
   "读取语言设置失败": "Could not read language preferences",

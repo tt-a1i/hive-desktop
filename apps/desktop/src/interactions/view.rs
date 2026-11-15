@@ -39,7 +39,19 @@ impl HiveApp {
             .as_ref()
             .map(|session| session.id.clone())
             .unwrap_or_default();
+        let receipt_key = format!(
+            "{}:{}:{}",
+            self.connection_generation,
+            self.workspace.as_deref().unwrap_or_default(),
+            session
+        );
         v_flex().w_full().min_w_0().gap_3().children(
+            self.interactions.receipts.get(&receipt_key).into_iter().flatten().map(|receipt| {
+                let status = receipt["status"].as_str().unwrap_or("unknown");
+                let label = match (english(), status) { (true, "draft") => "Saved draft", (true, "prepared") => "Prepared; callback outcome unknown", (true, "callback-handed") => "Callback handed off (model read not confirmed)", (false, "draft") => "已保存草稿", (false, "prepared") => "已准备，回调结果未知", (false, "callback-handed") => "已交付回调（尚未确认模型读取）", (true, _) => "Unknown status", _ => "状态未知" };
+                v_flex().w_full().p_3().gap_1().rounded_lg().border_1().border_color(Color::Divider.get(cx)).child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("Question attachments · {label} · read only") } else { format!("问题附件 · {label} · 只读") })).child(div().text_xs().text_color(Color::Muted.get(cx)).child(format!("Session: {} · Interaction: {} · Thread: {} · Turn: {} · Item: {} · Request: {}", receipt["sessionId"].as_str().unwrap_or(""), receipt["interactionId"].as_str().unwrap_or(""), receipt["threadId"].as_str().unwrap_or(""), receipt["turnId"].as_str().unwrap_or(""), receipt["itemId"].as_str().unwrap_or(""), receipt["nativeRequestId"]))).children(receipt["attachments"].as_array().into_iter().flatten().map(|entry| div().text_xs().text_color(Color::Text.get(cx)).child(format!("{}: {}", entry["questionId"].as_str().unwrap_or(""), entry["attachment"]["name"].as_str().unwrap_or("")))))
+            }).map(|element| element.into_any_element())
+        ).children(
             self.interactions
                 .sessions
                 .get(&session)
@@ -383,6 +395,9 @@ impl HiveApp {
                                 ),
                         )
                     })
+                    .when(questions && card.attachment_save_failed, |view| {
+                        view.child(Button::new(("retry-question-attachment-save", i)).compact().label(if english() { "Retry saving attachments" } else { "重试保存附件" }).disabled(disabled).on_click({ let session = session.clone(); let id = id.clone(); cx.listener(move |this, _, _, cx| this.save_question_attachments(session.clone(), id.clone(), cx)) }))
+                    })
                     .when(questions, |view| {
                         view.child(
                             h_flex()
@@ -397,7 +412,7 @@ impl HiveApp {
                                         .px_3()
                                         .rounded_lg()
                                         .label(tr("提交回答"))
-                                        .disabled(disabled || card.questions.is_empty())
+                                        .disabled(disabled || card.attachment_save_failed || card.questions.is_empty() || card.questions.iter().any(|draft| draft.importing))
                                         .on_click({
                                             let session = session.clone();
                                             let id = id.clone();

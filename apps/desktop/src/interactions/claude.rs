@@ -48,6 +48,9 @@ impl InteractionCard {
                         selected: None,
                         multiple_selected: vec![],
                         other: false,
+                        attachments: vec![],
+                        import_generation: 0,
+                        importing: false,
                         _subscription: subscription,
                     });
                 }

@@ -1,3 +1,4 @@
+import { InteractionAttachments, interactionIdentity, composeQuestionAttachmentResponse } from './interaction-attachments.js';
 import { ProjectWorktreeInitialization, WorktreeInitializationError, type InitializationPlan } from './project-worktree-initialization.js';
 import { ProjectFileReferences } from './project-file-references.js';
 import { DispatchExecutionOrigins, DispatchOriginError } from './dispatch-execution-origins.js';
@@ -80,6 +81,8 @@ export class Chats implements StructuredSessionPort {
   private readonly startingForInput = new Set<string>();
   private readonly keepingPaused = new Set<string>();
   readonly attachments: ChatAttachments;
+  private readonly interactionAttachments: InteractionAttachments;
+  private readonly preparingInteractions = new Set<string>();
   private readonly sessionDir: string;
   private readonly queueDir: string;
   private readonly dispatchOrigins: DispatchExecutionOrigins;
@@ -93,6 +96,7 @@ export class Chats implements StructuredSessionPort {
     private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels) {
     const directory = join(dataDir, 'chats');
     this.attachments=new ChatAttachments(hive, new ProjectFileReferences(join(directory, 'project-file-references')));
+    this.interactionAttachments = new InteractionAttachments(join(directory, 'interaction-attachments'), this.attachments);
     this.sessionDir = join(directory, 'pi');
     this.queueDir = join(directory, 'deliveries');
     this.dispatchOrigins = new DispatchExecutionOrigins(join(directory, 'dispatch-execution-origins'));
@@ -1196,12 +1200,69 @@ export class Chats implements StructuredSessionPort {
       return { ok: true };
     });
   }
-  async respondInteraction(id: string, interactionId: string, response: unknown) {
+  listInteractionAttachments(id: string) {
+    const record = this.index.get(id);
+    return {receipts: this.interactionAttachments.list(record.workspaceId, id)};
+  }
+  private pendingAttachmentInteraction(id: string, interactionId: string) {
+    const record = this.index.get(id);
+    this.assertWorkspaceAvailable(record.workspaceId);
+    const chat = this.live.get(id);
+    const interaction = chat?.handle.interactions?.().find(value => value.id === interactionId);
+    if (record.backend !== 'codex' || !chat || chat.failure || chat.cleanup || !chat.handle.respondInteraction
+      || !chat.handle.validateInteractionResponse || !interaction || interaction.backend !== 'codex'
+      || interaction.method !== 'item/tool/requestUserInput' || interaction.state !== 'pending') {
+      throw new CodexInteractionError('INTERACTION_STALE', 'This conversation has no pending Codex question');
+    }
+    return {record, chat, interaction};
+  }
+  async saveInteractionAttachments(id: string, interactionId: string, attachmentsByQuestionId: unknown) {
+    return this.prepareInteractionAttachments(id, interactionId, attachmentsByQuestionId);
+  }
+  private async prepareInteractionAttachments(id: string, interactionId: string, attachmentsByQuestionId: unknown, submission?: {response: unknown}) {
+    const key = JSON.stringify([id, interactionId]);
+    if (this.preparingInteractions.has(key)) throw new CodexInteractionError('INTERACTION_STALE', 'An attachment operation is already in progress');
+    this.preparingInteractions.add(key);
+    try {
+      const {record, chat, interaction} = this.pendingAttachmentInteraction(id, interactionId);
+      const identity = interactionIdentity(interaction);
+      const recheck = () => {
+        const current = this.pendingAttachmentInteraction(id, interactionId);
+        if (current.chat !== chat || current.record.workspaceId !== record.workspaceId || interactionIdentity(current.interaction) !== identity)
+          throw new CodexInteractionError('INTERACTION_STALE', 'The original native question is no longer pending');
+        return current.interaction;
+      };
+      if (submission) chat.handle.validateInteractionResponse!(interactionId, submission.response);
+      await this.runnableIdentity(record);
+      await this.initializationReady(record);
+      recheck();
+      const receipt = await this.interactionAttachments.prepare(record.workspaceId, id, interaction, attachmentsByQuestionId);
+      recheck();
+      if (!submission) return {receipt: this.interactionAttachments.write(receipt, 'draft')};
+      const composed = composeQuestionAttachmentResponse(submission.response, receipt);
+      chat.handle.validateInteractionResponse!(interactionId, composed);
+      // Synchronous durable preparation and final pending check precede callback handoff.
+      // No answer text enters the receipt. Cold reads never replay this native callback.
+      const prepared = this.interactionAttachments.write(receipt, 'prepared');
+      recheck();
+      const result = chat.handle.respondInteraction!(interactionId, composed);
+      const handed = this.interactionAttachments.write(prepared, 'callback-handed');
+      await result;
+      return {accepted: true, receipt: handed};
+    } finally { this.preparingInteractions.delete(key); }
+  }
+  async respondInteraction(id: string, interactionId: string, response: unknown, attachmentsByQuestionId?: unknown) {
+    if (attachmentsByQuestionId !== undefined) return this.prepareInteractionAttachments(id, interactionId, attachmentsByQuestionId, {response});
     const chat = this.live.get(id);
     if (!chat || chat.failure || chat.cleanup || !chat.handle.respondInteraction) {
       throw new CodexInteractionError('INTERACTION_STALE', 'This conversation has no live native interaction');
     }
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
+    // A lost response acknowledgement must not bypass an attachment receipt via the old RPC shape.
+    const receipts = this.interactionAttachments.list(this.index.get(id).workspaceId, id);
+    if (receipts.some(receipt => receipt.interactionId === interactionId && receipt.status !== 'draft'))
+      throw new CodexInteractionError('INTERACTION_STALE', 'This response may already have been handed to Codex');
+    if (this.preparingInteractions.has(JSON.stringify([id, interactionId]))) throw new CodexInteractionError('INTERACTION_STALE', 'An attachment operation is already in progress');
     await chat.handle.respondInteraction(interactionId, response);
     return { accepted: true };
   }
