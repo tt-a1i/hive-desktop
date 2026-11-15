@@ -216,6 +216,9 @@ impl HiveApp {
             .when(!self.connected && state.result.is_some(), |v| {
                 v.child(
                     div()
+                        .id("codex-limits-status")
+                        .role(Role::Status)
+                        .aria_label(tr("后台连接已断开，请重新读取额度。"))
                         .text_xs()
                         .child(tr("后台连接已断开，请重新读取额度。")),
                 )
@@ -223,6 +226,9 @@ impl HiveApp {
             .when(self.connected && stale && state.result.is_some(), |v| {
                 v.child(
                     div()
+                        .id("codex-limits-status")
+                        .role(Role::Status)
+                        .aria_label(tr("程序路径已更改，请重新读取额度。"))
                         .text_xs()
                         .child(tr("程序路径已更改，请重新读取额度。")),
                 )
@@ -231,6 +237,9 @@ impl HiveApp {
                 v.when_some(state.result.as_ref(), |v, result| match result {
                     Err(_) => v.child(
                         div()
+                            .id("codex-limits-status")
+                            .role(Role::Status)
+                            .aria_label(tr("无法读取 Codex 账号额度。"))
                             .text_xs()
                             .text_color(Color::Error.get(cx))
                             .child(tr("无法读取 Codex 账号额度。")),
@@ -244,44 +253,65 @@ impl HiveApp {
                             "cancelled" => tr("检查已取消。"),
                             _ => tr("无法读取 Codex 账号额度。"),
                         };
-                        v.child(div().text_xs().child(message))
-                            .when(
-                                result.status == "ok" || result.status == "unavailable",
-                                |v| {
-                                    v.child(div().text_xs().child(
-                                        match result.ordinary_usage_allowed {
-                                            Some(true) => tr("账号允许普通使用"),
-                                            Some(false) => tr("当前普通使用受限"),
-                                            None => tr("普通使用状态未知"),
-                                        },
-                                    ))
-                                },
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(format!("{}: {}", tr("读取时间"), result.checked_at)),
-                            )
-                            .children(result.windows.iter().map(|window| {
-                                let label = if window.position == "primary" {
-                                    tr("主要窗口")
-                                } else {
-                                    tr("次要窗口")
+                        v.child(
+                            div()
+                                .id("codex-limits-status")
+                                .role(Role::Status)
+                                .aria_label(message)
+                                .text_xs()
+                                .child(message),
+                        )
+                        .when(
+                            result.status == "ok" || result.status == "unavailable",
+                            |v| {
+                                let text = match result.ordinary_usage_allowed {
+                                    Some(true) => tr("账号允许普通使用"),
+                                    Some(false) => tr("当前普通使用受限"),
+                                    None => tr("普通使用状态未知"),
                                 };
-                                let duration = window
-                                    .window_duration_mins
-                                    .map(|x| format!("{x} {}", tr("分钟")))
-                                    .unwrap_or_else(|| tr("时长未知").to_owned());
-                                let reset =
-                                    window.resets_at.as_deref().unwrap_or(tr("重置时间未知"));
-                                div().text_xs().child(format!(
-                                    "{label}: {}% {} · {duration} · {}: {reset}",
-                                    100. - window.used_percent,
-                                    tr("剩余"),
-                                    tr("重置")
-                                ))
-                            }))
+                                v.child(
+                                    div()
+                                        .id("codex-limits-ordinary")
+                                        .role(Role::Label)
+                                        .aria_value(text)
+                                        .text_xs()
+                                        .child(text),
+                                )
+                            },
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(Color::Muted.get(cx))
+                                .child(format!("{}: {}", tr("读取时间"), result.checked_at)),
+                        )
+                        .children(result.windows.iter().map(|window| {
+                            let label = if window.position == "primary" {
+                                tr("主要窗口")
+                            } else {
+                                tr("次要窗口")
+                            };
+                            let duration = window
+                                .window_duration_mins
+                                .map(|x| format!("{x} {}", tr("分钟")))
+                                .unwrap_or_else(|| tr("时长未知").to_owned());
+                            let reset = window.resets_at.as_deref().unwrap_or(tr("重置时间未知"));
+                            let text = format!(
+                                "{label}: {}% {} · {duration} · {}: {reset}",
+                                100. - window.used_percent,
+                                tr("剩余"),
+                                tr("重置")
+                            );
+                            div()
+                                .id(SharedString::from(format!(
+                                    "codex-limit-window-{}",
+                                    window.position
+                                )))
+                                .role(Role::Label)
+                                .aria_value(text.clone())
+                                .text_xs()
+                                .child(text)
+                        }))
                     }
                 })
             })
@@ -506,7 +536,22 @@ impl HiveApp {
 
 #[cfg(test)]
 mod limits_tests {
-    use super::LimitsState;
+    use super::{LimitsResult, LimitsState};
+    #[test]
+    fn controlled_limit_response_decodes_without_losing_windows() {
+        let result: LimitsResult = serde_json::from_value(serde_json::json!({
+            "status": "ok", "checkedAt": "2026-11-15T00:00:00.000Z", "ordinaryUsageAllowed": false,
+            "windows": [
+                {"position":"primary", "usedPercent":22, "windowDurationMins":300, "resetsAt":null},
+                {"position":"secondary", "usedPercent":95, "windowDurationMins":null, "resetsAt":null}
+            ], "source":"app"
+        })).unwrap();
+        assert_eq!(result.status, "ok");
+        assert_eq!(result.ordinary_usage_allowed, Some(false));
+        assert_eq!(result.windows.len(), 2);
+        assert_eq!(result.windows[0].used_percent, 22.);
+        assert_eq!(result.windows[1].used_percent, 95.);
+    }
     #[test]
     fn old_requests_and_changed_executables_do_not_show_as_current() {
         let state = LimitsState {
