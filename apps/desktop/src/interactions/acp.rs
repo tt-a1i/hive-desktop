@@ -62,18 +62,23 @@ impl HiveApp {
     }
     pub(super) fn render_uncertain_acp(&self,cx:&mut Context<Self>) -> impl IntoElement + use<> {
         let scope=self.acp_scope();let state=&self.interactions.uncertain;
+        let discarded_notice=if english(){"Queued wait discarded; native outcome remains unknown."}else{"已放弃等待投递；原生执行结果仍未知。"};
+        let confirmation_notice=if english(){"The agent may already have acted. This only discards the queued wait; native work and Hive audit remain."}else{"Agent 可能已经执行。此操作只放弃这次等待投递，不会撤销可能发生的原生操作，并保留 Hive 审计。"};
+        let empty_notice=if english(){"This preview has no queued wait available to discard. Native outcomes may still be unknown."}else{"当前预览没有可放弃的等待投递；原生执行结果仍可能未知。"};
         let current=state.connection==self.connection_generation && state.open==self.open_request && scope.as_ref().is_some_and(|(s,p)|state.session.as_ref()==Some(s) && state.profile.as_ref()==Some(p));
         v_flex().gap_2().p_3().border_1().border_color(Color::Divider.get(cx))
             .child(Button::new("acp-uncertain-refresh").outline().small().label(if english(){"Review uncertain deliveries"}else{"查看未确认的待投递"}).disabled(!self.connected || (state.loading && current) || scope.is_none()).on_click(cx.listener(|this,_,_,cx|this.load_uncertain_acp(cx))))
             .when(current,|view|view
-                .when(state.notice,|v|v.child(div().id("acp-discard-status").role(Role::Status).child(if english(){"Queued wait discarded; native outcome remains unknown."}else{"已放弃等待投递；原生执行结果仍未知。"})))
+                .when(state.notice,|v|v.child(div().id("acp-discard-status").role(Role::Status).aria_label(discarded_notice).child(discarded_notice)))
+                .when(!state.loading && state.error.is_none() && state.blocked.is_none() && state.deliveries.is_empty() && !state.notice,|v|v.child(div().id("acp-uncertain-empty").role(Role::Status).aria_label(empty_notice).child(empty_notice)))
                 .when_some(state.blocked.clone(),|v,text|v.child(div().id("acp-uncertain-blocked").role(Role::Status).aria_label(text.clone()).child(text)))
                 .when_some(state.error.clone(),|v,text|v.child(div().id("acp-uncertain-error").role(Role::Status).aria_label(text.clone()).child(text)))
                 .children(state.deliveries.iter().enumerate().map(|(index,delivery)| {
                     let id=delivery.delivery_id.clone();let text=delivery.text.clone();let confirm=state.confirm.as_ref()==Some(&id);
-                    v_flex().gap_1().child(div().text_xs().child(format!("{}{} · {}",delivery.origin,delivery.dispatch_id.as_ref().map(|id|format!(" · {id}")).unwrap_or_default(),delivery.notice))).child(div().text_sm().child(text.clone()))
+                    let source=format!("{}{} · {}",delivery.origin,delivery.dispatch_id.as_ref().map(|id|format!(" · {id}")).unwrap_or_default(),delivery.notice);
+                    v_flex().gap_1().child(div().id(("acp-uncertain-source",index)).role(Role::Label).aria_label(source.clone()).text_xs().child(source)).child(div().id(("acp-uncertain-text",index)).role(Role::Label).aria_label(text.clone()).text_sm().child(text.clone()))
                         .when(!confirm,|v| {let id=id.clone();v.child(Button::new(("acp-discard-ask",index)).label(if english(){"Discard this queued wait…"}else{"放弃这次等待投递…"}).disabled(state.loading || state.error.is_some()).on_click(cx.listener(move |this,_,_,cx|{this.interactions.uncertain.confirm=Some(id.clone());cx.notify();})))})
-                        .when(confirm,|v| {let id=id.clone();let text=text.clone();v.child(div().text_xs().child(if english(){"The agent may already have acted. This only discards the queued wait; native work and Hive audit remain."}else{"Agent 可能已经执行。此操作只放弃这次等待投递，不会撤销可能发生的原生操作，并保留 Hive 审计。"})).child(Button::new(("acp-discard-confirm",index)).label(if english(){"Confirm discard queued wait"}else{"确认放弃这次等待投递"}).disabled(state.loading || state.error.is_some() || !self.connected).on_click(cx.listener(move |this,_,_,cx|this.discard_uncertain_acp(id.clone(),text.clone(),cx))))})
+                        .when(confirm,|v| {let id=id.clone();let text=text.clone();v.child(div().id(("acp-uncertain-confirmation",index)).role(Role::Label).aria_label(confirmation_notice).text_xs().child(confirmation_notice)).child(Button::new(("acp-discard-confirm",index)).label(if english(){"Confirm discard queued wait"}else{"确认放弃这次等待投递"}).disabled(state.loading || state.error.is_some() || !self.connected).on_click(cx.listener(move |this,_,_,cx|this.discard_uncertain_acp(id.clone(),text.clone(),cx))))})
                 }))
             )
     }
