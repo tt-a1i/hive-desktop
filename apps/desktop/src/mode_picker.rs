@@ -74,7 +74,8 @@ impl HiveApp {
         } else {
             &self.mode_picker.mode
         };
-        if self.conversation_is_read_only()
+        if self.current_history_access().is_some_and(|a| a.handoff_passive())
+            || self.conversation_is_read_only()
             || picker.loading
             || !self.conversation_ready
             || self.loading

@@ -1106,10 +1106,18 @@ impl Render for HiveApp {
             if loaded_reasoning_key.read(cx).as_ref() != Some(&key)
                 && !self.reasoning_picker.loading
             {
-                loaded_reasoning_key.update(cx, |slot, _| *slot = Some(key));
+                loaded_reasoning_key.update(cx, |slot, _| *slot = Some(key.clone()));
                 let app = cx.entity().downgrade();
+                let connection = self.connection_generation;
+                let open_request = self.open_request;
                 window.on_next_frame(move |_, cx| {
-                    let _ = app.update(cx, |this, cx| this.load_reasoning(None, cx));
+                    let _ = app.update(cx, |this, cx| {
+                        let model = this.model.as_ref().map(|m| format!("{}/{}", m.provider, m.id));
+                        if this.connection_generation == connection && this.open_request == open_request
+                            && this.session.as_ref().is_some_and(|s| s.id == key.0) && model == key.1 {
+                            this.load_reasoning(None, cx);
+                        }
+                    });
                 });
             }
         }
