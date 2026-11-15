@@ -1833,5 +1833,15 @@
   "成员配置引用不可用，无法创建工作树会话": "The member profile reference is unavailable; a worktree session cannot be created.",
   "创建会话返回的配置引用不匹配": "The created session returned a different profile reference.",
   "成员配置不可用": "Member profile unavailable",
-  "成员配置已变化，请重新读取模型": "The member profile changed. Reload the model list."
+  "成员配置已变化，请重新读取模型": "The member profile changed. Reload the model list.",
+  "程序设置不可用，请重新读取设置。": "Program settings are unavailable. Reload settings.",
+  "不支持此后端。": "This agent backend is unsupported.",
+  "Agent 配置不可用，请刷新配置后重试。": "Agent profiles are unavailable. Refresh profiles and retry.",
+  "默认 Agent 配置不可用。": "The default agent profile is unavailable.",
+  "路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；版本检查只读取程序版本。保存影响后续新建会话，已有会话保留固定配置。": "Leave the path empty to use PATH; environment variables take precedence. You can check the current input before saving. The version check only reads the program version. Saved changes apply to new conversations; existing conversations keep their pinned configuration.",
+  "设置已保存。后续新建会话使用更新后的配置，已有会话保留固定配置。": "Settings saved. New conversations use the updated configuration; existing conversations retain their pinned configuration.",
+  "配置或输入已更改，请重新读取额度。": "The configuration or input changed. Reload account limits.",
+  "配置或输入已更改，请重新检查连接与账号。": "The configuration or input changed. Recheck the connection and account.",
+  "配置或输入已更改，请重新检查。": "The configuration or input changed. Run the check again.",
+  "读取配置失败": "Could not read configuration"
 }

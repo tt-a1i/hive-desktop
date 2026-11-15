@@ -23,11 +23,12 @@ struct LimitsResult {
     checked_at: String,
     ordinary_usage_allowed: Option<bool>,
     windows: Vec<LimitWindow>,
-    source: String,
+    #[serde(rename = "source")]
+    _source: String,
 }
 #[derive(Default)]
 struct LimitsState {
-    input: String,
+    scope: Option<super::CheckScope>,
     request_id: u64,
     loading: bool,
     result: Option<Result<LimitsResult, String>>,
@@ -44,7 +45,8 @@ struct AccountResult {
 }
 #[derive(Default)]
 pub struct CodexAccountCheck {
-    input: String,
+    scope: Option<super::CheckScope>,
+    request_id: u64,
     loading: bool,
     result: Option<Result<AccountResult, String>>,
     limits: LimitsState,
@@ -53,13 +55,8 @@ impl LimitsState {
     fn accepts(&self, id: u64, connection: u64, current_connection: u64, connected: bool) -> bool {
         connected && connection == current_connection && self.request_id == id
     }
-    fn input_changed(&self, input: &str) -> bool {
-        let uses_env = self
-            .result
-            .as_ref()
-            .and_then(|r| r.as_ref().ok())
-            .is_some_and(|r| r.source == "env");
-        !uses_env && input.trim() != self.input
+    fn input_changed(&self, current: &Result<super::CheckScope, String>) -> bool {
+        current.as_ref().ok() != self.scope.as_ref()
     }
 }
 impl AccountResult {
@@ -81,14 +78,8 @@ impl AccountResult {
     }
 }
 impl CodexAccountCheck {
-    fn uses_environment(&self) -> bool {
-        self.result
-            .as_ref()
-            .and_then(|value| value.as_ref().ok())
-            .is_some_and(|value| value.source == "env")
-    }
-    fn input_changed(&self, input: &str) -> bool {
-        !self.uses_environment() && input.trim() != self.input
+    fn input_changed(&self, current: &Result<super::CheckScope, String>) -> bool {
+        current.as_ref().ok() != self.scope.as_ref()
     }
     fn message(&self) -> (String, bool) {
         match self.result.as_ref() {
@@ -109,9 +100,12 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
-        let input = self.codex_command.read(cx).value().trim().to_owned();
+        let scope = match self.program_check_scope("codex", cx) { Ok(scope) => scope, Err(error) => { self.settings_message = Some(super::SettingsNotice::Error("读取配置失败", error)); cx.notify(); return; } };
+        let params = scope.params();
+        let id = LIMIT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         self.codex_account = CodexAccountCheck {
-            input: input.clone(),
+            scope: Some(scope.clone()),
+            request_id: id,
             loading: true,
             result: None,
             limits: LimitsState::default(),
@@ -121,16 +115,15 @@ impl HiveApp {
             let result = runtime
                 .request(
                     "desktop.settings.codexAccount",
-                    serde_json::json!({"command":if input.is_empty(){None}else{Some(input)}}),
+                    params,
                 )
                 .await
                 .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()));
             let _ = this.update(cx, |this, cx| {
-                if this.connection_generation != connection {
-                    return;
-                }
+                if this.connection_generation != connection || this.codex_account.request_id != id { return; }
+                let current = this.program_check_scope("codex", cx);
                 this.codex_account.loading = false;
-                this.codex_account.result = Some(result);
+                if this.connected && current.as_ref().ok() == Some(&scope) { this.codex_account.result = Some(result); }
                 cx.notify();
             });
         })
@@ -144,10 +137,11 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
-        let input = self.codex_command.read(cx).value().trim().to_owned();
+        let scope = match self.program_check_scope("codex", cx) { Ok(scope) => scope, Err(error) => { self.settings_message = Some(super::SettingsNotice::Error("读取配置失败", error)); cx.notify(); return; } };
+        let params = scope.params();
         let id = LIMIT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         self.codex_account.limits = LimitsState {
-            input: input.clone(),
+            scope: Some(scope.clone()),
             request_id: id,
             loading: true,
             result: None,
@@ -157,7 +151,7 @@ impl HiveApp {
             let result = runtime
                 .request(
                     "desktop.settings.codexLimits",
-                    serde_json::json!({"command":if input.is_empty(){None}else{Some(input)}}),
+                    params,
                 )
                 .await
                 .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()));
@@ -170,8 +164,9 @@ impl HiveApp {
                 ) {
                     return;
                 }
+                let current = this.program_check_scope("codex", cx);
                 this.codex_account.limits.loading = false;
-                this.codex_account.limits.result = Some(result);
+                if current.as_ref().ok() == Some(&scope) { this.codex_account.limits.result = Some(result); }
                 cx.notify();
             });
         })
@@ -180,8 +175,7 @@ impl HiveApp {
     }
     fn render_codex_limits(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let state = &self.codex_account.limits;
-        let input = self.codex_command.read(cx).value();
-        let stale = state.input_changed(&input);
+        let stale = state.input_changed(&self.program_check_scope("codex", cx));
         v_flex()
             .gap_2()
             .pt_2()
@@ -228,11 +222,12 @@ impl HiveApp {
                     div()
                         .id("codex-limits-status")
                         .role(Role::Status)
-                        .aria_label(tr("程序路径已更改，请重新读取额度。"))
+                        .aria_label(tr("配置或输入已更改，请重新读取额度。"))
                         .text_xs()
-                        .child(tr("程序路径已更改，请重新读取额度。")),
+                        .child(tr("配置或输入已更改，请重新读取额度。")),
                 )
             })
+            .when(self.connected && !stale && state.result.is_some(), |v| v.child(div().text_xs().child(state.scope.as_ref().map(|scope| scope.label()).unwrap_or_default())))
             .when(self.connected && !stale, |v| {
                 v.when_some(state.result.as_ref(), |v, result| match result {
                     Err(_) => v.child(
@@ -324,28 +319,18 @@ impl HiveApp {
         if state.result.is_none() {
             return state.message().0;
         }
-        let input = self.codex_command.read(cx).value();
-        if state.input_changed(&input) {
-            return tr("输入已更改，请重新检查连接与账号。").into();
+        if state.input_changed(&self.program_check_scope("codex", cx)) {
+            return tr("配置或输入已更改，请重新检查连接与账号。").into();
         }
         let message = state.message().0;
-        let saved = self
-            .executable_settings
-            .as_ref()
-            .and_then(|settings| settings.codex_command.as_deref())
-            .unwrap_or_default();
-        if !state.uses_environment() && input.trim() != saved {
-            format!("{}: {message}", tr("未保存的程序路径"))
-        } else {
-            message
-        }
+        state.scope.as_ref().map(|scope| format!("{}: {message}", scope.label())).unwrap_or(message)
     }
     pub(crate) fn render_codex_account_check(
         &self,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
         let state = &self.codex_account;
-        let changed = state.input_changed(&self.codex_command.read(cx).value());
+        let changed = state.scope.is_some() && state.input_changed(&self.program_check_scope("codex", cx));
         let (dot_color, pill_text) = if state.loading {
             (super::amber_dot(cx), tr("检查中…"))
         } else if changed {
@@ -432,14 +417,15 @@ impl HiveApp {
                     return view.child(
                         crate::text_reading::selectable_text(
                             "codex-account-changed",
-                            tr("输入已更改，请重新检查。"),
+                            tr("配置或输入已更改，请重新检查。"),
                         )
                         .text_xs()
                         .text_color(Color::Secondary.get(cx)),
                     );
                 }
                 let (message, error) = state.message();
-                view.child(
+                view.child(div().text_xs().child(state.scope.as_ref().map(|scope| scope.label()).unwrap_or_default()))
+                .child(
                     crate::text_reading::selectable_text("codex-account-status", message)
                         .text_xs()
                         .font_weight(FontWeight::MEDIUM)
@@ -555,7 +541,7 @@ mod limits_tests {
     #[test]
     fn old_requests_and_changed_executables_do_not_show_as_current() {
         let state = LimitsState {
-            input: "codex-a".into(),
+            scope: Some(super::super::CheckScope::Draft { command: "codex-a".into(), reference: crate::protocol::ProfileRef { id: "default-codex".into(), revision: 1 }, store_version: 1 }),
             request_id: 9,
             loading: false,
             result: None,
@@ -564,7 +550,7 @@ mod limits_tests {
         assert!(!state.accepts(8, 2, 2, true));
         assert!(!state.accepts(9, 2, 3, true));
         assert!(!state.accepts(9, 2, 2, false));
-        assert!(state.input_changed("codex-b"));
-        assert!(!state.input_changed("codex-a"));
+        assert!(state.input_changed(&Ok(super::super::CheckScope::Draft { command: "codex-b".into(), reference: crate::protocol::ProfileRef { id: "default-codex".into(), revision: 1 }, store_version: 1 })));
+        assert!(!state.input_changed(&Ok(super::super::CheckScope::Draft { command: "codex-a".into(), reference: crate::protocol::ProfileRef { id: "default-codex".into(), revision: 1 }, store_version: 1 })));
     }
 }

@@ -17,7 +17,7 @@ use serde_json::json;
 pub struct ProgramResult {
     status: String,
     version: Option<String>,
-    verified_version: String,
+    verified_version: Option<String>,
     command: String,
     source: String,
     message: String,
@@ -40,15 +40,13 @@ impl ProgramResult {
     }
 }
 pub struct ProgramCheck {
-    input: String,
+    scope: super::CheckScope,
     loading: bool,
     result: Option<Result<ProgramResult, String>>,
 }
 impl ProgramCheck {
-    fn input_changed(&self, input: &str) -> bool {
-        let environment = self.result.as_ref().and_then(|result| result.as_ref().ok())
-            .is_some_and(|result| result.source == "env");
-        !environment && self.input != input.trim()
+    fn input_changed(&self, current: &Result<super::CheckScope, String>) -> bool {
+        current.as_ref().ok() != Some(&self.scope)
     }
 }
 impl HiveApp {
@@ -78,28 +76,20 @@ impl HiveApp {
     }
 
     pub(crate) fn program_setup_status(&self, backend: &'static str, cx: &Context<Self>) -> String {
-        let input = match backend { "codex" => &self.codex_command, "claude" => &self.claude_command, _ => &self.pi_command };
         let Some(check) = self.program_checks.get(backend) else { return tr("尚未检查程序版本").into(); };
         if check.loading { return tr("检查中…").into(); }
-        if check.input_changed(&input.read(cx).value()) { return tr("输入已更改，请重新检查。").into(); }
+        if check.input_changed(&self.program_check_scope(backend, cx)) { return tr("配置或输入已更改，请重新检查。").into(); }
         let message = match check.result.as_ref() {
             Some(Ok(result)) => result.message(),
             Some(Err(error)) => crate::language::localize_owned_error(error),
             None => tr("尚未检查程序版本").into(),
         };
-        let saved = self.executable_settings.as_ref().and_then(|settings| match backend {
-            "codex" => settings.codex_command.as_deref(), "claude" => settings.claude_command.as_deref(), _ => settings.pi_command.as_deref(),
-        }).unwrap_or_default();
-        let environment = check.result.as_ref().and_then(|result| result.as_ref().ok()).is_some_and(|result| result.source == "env");
-        if !environment && input.read(cx).value().trim() != saved {
-            format!("{}: {message}", tr("未保存的程序路径"))
-        } else { message }
+        format!("{}: {message}", check.scope.label())
     }
 
     pub(crate) fn program_local_check_state(&self, backend: &'static str, cx: &Context<Self>) -> Option<bool> {
-        let input = match backend { "codex" => &self.codex_command, "claude" => &self.claude_command, _ => &self.pi_command };
         let check = self.program_checks.get(backend)?;
-        if check.loading || check.input_changed(&input.read(cx).value()) {
+        if check.loading || check.input_changed(&self.program_check_scope(backend, cx)) {
             return None;
         }
         match check.result.as_ref()? {
@@ -155,7 +145,7 @@ impl HiveApp {
                         .child(
                             crate::text_reading::selectable_text(
                                 "programs-description",
-                                tr("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；版本检查只读取程序版本。修改在下次启动对应 Agent 时生效。"),
+                                tr("路径留空时使用 PATH 查找，环境变量优先。可先检查当前输入，再保存；版本检查只读取程序版本。保存影响后续新建会话，已有会话保留固定配置。"),
                             )
                             .text_xs()
                             .text_color(Color::Secondary.get(cx)),
@@ -278,7 +268,7 @@ impl HiveApp {
     fn check_program(
         &mut self,
         backend: &'static str,
-        input: Entity<InputState>,
+        _input: Entity<InputState>,
         cx: &mut Context<Self>,
     ) {
         if !self.connected
@@ -292,11 +282,16 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
-        let value = input.read(cx).value().trim().to_owned();
+        let scope = match self.program_check_scope(backend, cx) {
+            Ok(scope) => scope,
+            Err(error) => { self.settings_message = Some(super::SettingsNotice::Error("读取配置失败", error)); cx.notify(); return; }
+        };
+        let mut params = scope.params();
+        params["backend"] = json!(backend);
         self.program_checks.insert(
             backend,
             ProgramCheck {
-                input: value.clone(),
+                scope: scope.clone(),
                 loading: true,
                 result: None,
             },
@@ -307,7 +302,7 @@ impl HiveApp {
             let result = runtime
                 .request(
                     "desktop.settings.probe",
-                    json!({"backend":backend,"command":if value.is_empty(){None}else{Some(value)}}),
+                    params,
                 )
                 .await
                 .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()));
@@ -315,9 +310,12 @@ impl HiveApp {
                 if this.connection_generation != connection {
                     return;
                 }
+                let current = this.program_check_scope(backend, cx);
                 if let Some(check) = this.program_checks.get_mut(backend) {
-                    check.loading = false;
-                    check.result = Some(result);
+                    if check.scope == scope {
+                        check.loading = false;
+                        if current.as_ref().ok() == Some(&scope) && this.connected { check.result = Some(result); }
+                    }
                 }
                 cx.notify();
             });
@@ -338,7 +336,7 @@ impl HiveApp {
         let probe_input = input.clone();
         let check = self.program_checks.get(backend);
         let loading = check.is_some_and(|check| check.loading);
-        let changed = check.is_some_and(|check| check.input_changed(&input.read(cx).value()));
+        let changed = check.is_some_and(|check| check.input_changed(&self.program_check_scope(backend, cx)));
         let (pill_dot, pill_label): (Rgba, SharedString) = if loading {
             (super::amber_dot(cx), tr("检查中…").into())
         } else if changed {
@@ -357,6 +355,7 @@ impl HiveApp {
                 None => (Color::Muted.get(cx), tr("待配置").into()),
             }
         };
+        let checked_scope = check.map(|check| check.scope.label());
         let checked_result = check.filter(|_| !changed).and_then(|check| check.result.as_ref());
         let has_meta = effective.is_some() || changed || checked_result.is_some();
         let readout = |suffix: &str, text: String| {
@@ -472,11 +471,12 @@ impl HiveApp {
                         })
                         .when(changed, |row| {
                             row.child(
-                                readout("changed", tr("输入已更改，请重新检查。").into())
+                                readout("changed", tr("配置或输入已更改，请重新检查。").into())
                                     .text_xs()
                                     .text_color(Color::Secondary.get(cx)),
                             )
                         })
+                        .when(checked_result.is_some(), |row| row.child(readout("scope", checked_scope.clone().unwrap_or_default()).text_xs().text_color(Color::Muted.get(cx))))
                         .when_some(checked_result, |row, result| match result {
                             Err(error) => row.child(
                                 readout("error", crate::language::localize_owned_error(error))
@@ -509,11 +509,13 @@ impl HiveApp {
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx)),
                                     )
+                                    .when(result.verified_version.is_none(), |row| row.child(readout("compatibility-unknown", if english() { "No client-verified version is available; compatibility is unverified." } else { "客户端没有已验证版本，兼容性尚未验证。" }.into()).text_xs().text_color(Color::Secondary.get(cx))))
                                     .when(
                                         result
                                             .version
                                             .as_ref()
-                                            .is_some_and(|version| version != &result.verified_version),
+                                            .zip(result.verified_version.as_ref())
+                                            .is_some_and(|(version, verified)| version != verified),
                                         |row| {
                                             row.child(
                                                 readout(
@@ -521,12 +523,12 @@ impl HiveApp {
                                                     if english() {
                                                         format!(
                                                             "Client-verified version: {}. The detected version differs; compatibility has not been verified.",
-                                                            result.verified_version
+                                                            result.verified_version.as_deref().unwrap_or_default()
                                                         )
                                                     } else {
                                                         format!(
                                                             "客户端已验证版本：{}。检测版本不同，尚未验证兼容性。",
-                                                            result.verified_version
+                                                            result.verified_version.as_deref().unwrap_or_default()
                                                         )
                                                     },
                                                 )

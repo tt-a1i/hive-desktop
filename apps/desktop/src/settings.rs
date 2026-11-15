@@ -60,10 +60,50 @@ impl EffectiveCommand {
             "env" => tr("环境变量（覆盖应用设置）"),
             "app" => tr("应用设置"),
             "draft" => tr("输入路径"),
+            "profile" => if english() { "Agent profile" } else { "Agent 配置" },
             "path" => "PATH",
             _ => tr("未知来源"),
         };
         format!("{prefix}: {} · {}", self.command, source)
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CheckScope {
+    Draft { command: String, reference: crate::protocol::ProfileRef, store_version: u64 },
+    Profile { reference: crate::protocol::ProfileRef, label: String, store_version: u64 },
+}
+impl CheckScope {
+    fn params(&self) -> serde_json::Value {
+        match self {
+            Self::Draft { command, .. } => json!({"command": if command.is_empty() { None } else { Some(command) }}),
+            Self::Profile { reference, .. } => json!({"profile": reference}),
+        }
+    }
+    fn label(&self) -> String {
+        match self {
+            Self::Draft { .. } => if english() { "Unsaved executable input" } else { "未保存的程序路径" }.into(),
+            Self::Profile { reference, label, .. } => format!("{} · r{}", label, reference.revision),
+        }
+    }
+}
+impl HiveApp {
+    pub(super) fn program_check_scope(&self, backend: &str, cx: &App) -> Result<CheckScope, String> {
+        let settings = self.executable_settings.as_ref().ok_or_else(|| tr("程序设置不可用，请重新读取设置。").to_owned())?;
+        let (input, saved, driver) = match backend {
+            "codex" => (&self.codex_command, settings.codex_command.as_deref(), "codex"),
+            "claude" => (&self.claude_command, settings.claude_command.as_deref(), "claude"),
+            "pi" => (&self.pi_command, settings.pi_command.as_deref(), "pi-rpc"),
+            _ => return Err(tr("不支持此后端。").into()),
+        };
+        let value = input.read(cx).value().trim().to_owned();
+        if self.profiles.loading || self.profiles.error.is_some() { return Err(tr("Agent 配置不可用，请刷新配置后重试。").into()); }
+        let snapshot = self.profiles.snapshot.as_ref().ok_or_else(|| tr("Agent 配置不可用，请刷新配置后重试。").to_owned())?;
+        let id = format!("default-{driver}");
+        let profile = snapshot.profiles.iter().find(|p| p.id == id && p.driver == driver && p.revisions.iter().any(|r| r.revision == p.current_revision))
+            .ok_or_else(|| tr("默认 Agent 配置不可用。").to_owned())?;
+        let reference = crate::protocol::ProfileRef { id, revision: profile.current_revision };
+        if value != saved.unwrap_or_default() { return Ok(CheckScope::Draft { command: value, reference, store_version: snapshot.store_version }); }
+        Ok(CheckScope::Profile { reference, label: profile.label.clone(), store_version: snapshot.store_version })
     }
 }
 impl HiveApp {
@@ -288,8 +328,12 @@ impl HiveApp {
                             this.executable_settings = Some(settings);
                             let _ = window.update(cx, |_, window, cx| this.finish_program_setup(window, cx));
                             if save {
+                                this.profiles.snapshot = None;
+                                this.profiles.generation += 1;
+                                this.profiles.loading = false;
+                                this.load_profiles(cx);
                                 this.settings_message =
-                                    Some(SettingsNotice::Message("设置已保存。新启动的外部进程将使用更新后的配置。"));
+                                    Some(SettingsNotice::Message("设置已保存。后续新建会话使用更新后的配置，已有会话保留固定配置。"));
                             }
                         }
                         Err(error) => {
@@ -621,5 +665,19 @@ impl HiveApp {
                 }).into_any_element()
         };
         self.render_settings_shell(content, compact_settings, window, cx)
+    }
+}
+
+#[cfg(test)]
+mod profile_check_scope_tests {
+    use super::CheckScope;
+    use crate::protocol::ProfileRef;
+    use serde_json::json;
+    #[test]
+    fn profile_checks_are_pinned_and_never_mix_draft_command() {
+        let scope = CheckScope::Profile { reference: ProfileRef { id: "default-codex".into(), revision: 2 }, label: "Work".into(), store_version: 4 };
+        assert_eq!(scope.params(), json!({"profile":{"id":"default-codex","revision":2}}));
+        assert_ne!(scope, CheckScope::Profile { reference: ProfileRef { id: "default-codex".into(), revision: 3 }, label: "Work".into(), store_version: 5 });
+        assert_eq!(CheckScope::Draft { command: "/draft".into(), reference: ProfileRef { id: "default-codex".into(), revision: 2 }, store_version: 4 }.params(), json!({"command":"/draft"}));
     }
 }
