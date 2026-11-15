@@ -68,6 +68,10 @@ try {
   const alpha = await workspace('Alpha');
   const beta = await workspace('Beta');
   const legacy = await runtime.chats.createRecord(beta.id, 'codex');
+  // ChatIndex returns snapshots, so an unchanged record must still be archivable.
+  const snapshotIndex = new ChatIndex(join(state, 'chats'));
+  assert.notStrictEqual(snapshotIndex.get(legacy.id), snapshotIndex.get(legacy.id));
+  assert.deepEqual(snapshotIndex.get(legacy.id), snapshotIndex.get(legacy.id));
   const archivedIds = new Set<string>();
   for (const backend of ['pi', 'codex', 'pi-rpc', 'claude'] satisfies ChatBackend[]) {
     const chat = await runtime.chats.createRecord(alpha.id, backend);
@@ -159,6 +163,34 @@ try {
   const opened = await runtime.chats.open(live.id);
   assert.equal(opened.busy, false);
   assert.equal(opened.pending, 0);
+  // Pause the real team check, change the same record, then let archive finish.
+  // This verifies the concurrent-update guard independently of filesystem speed.
+  const originalRequest = runtime.hive.request.bind(runtime.hive);
+  let entered!: () => void, release!: () => void;
+  const inTeamCheck = new Promise<void>(resolve => { entered = resolve; });
+  const continueTeamCheck = new Promise<void>(resolve => { release = resolve; });
+  runtime.hive.request = async (method, path, body) => {
+    if (method === 'GET' && path === `/api/ui/workspaces/${liveWorkspace.id}/team`) {
+      entered();
+      await continueTeamCheck;
+    }
+    return originalRequest(method, path, body);
+  };
+  try {
+    const attempted = runtime.chats.setArchived(live.id, true);
+    const rejected = assert.rejects(attempted, /会话刚刚更新/);
+    await Promise.race([inTeamCheck, rejected.then(() => {
+      throw new Error('Archive ended before the controlled team check');
+    })]);
+    runtime.chats.rename(live.id, '归档期间更新的标题');
+    release();
+    await rejected;
+    assert.equal(runtime.chats.list(liveWorkspace.id)[0]?.archived, undefined);
+    assert.equal(runtime.chats.list(liveWorkspace.id)[0]?.title, '归档期间更新的标题');
+  } finally {
+    release();
+    runtime.hive.request = originalRequest;
+  }
   await runtime.chats.setArchived(live.id, true);
   const archivedRun = await runtime.chats.open(live.id);
   assert.equal(archivedRun.runId, opened.runId);
