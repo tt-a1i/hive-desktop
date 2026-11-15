@@ -4,7 +4,7 @@ const root=process.argv[2],mode=process.argv[3]||'normal';fs.mkdirSync(root,{rec
 let sid,history=[],bridge,lines,next=0;
 const send=value=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\n');
 const log=value=>fs.appendFileSync(path.join(root,'protocol.jsonl'),JSON.stringify(value)+'\n');
-log({event:'start',cwd:process.cwd(),mode});
+log({event:'start',pid:process.pid,cwd:process.cwd(),mode});
 const file=()=>path.join(root,sid+'.json');
 const update=(text,id=crypto.randomUUID(),kind='agent_message_chunk')=>send({method:'session/update',params:{sessionId:sid,update:{sessionUpdate:kind,messageId:id,content:{type:'text',text}}}});
 async function rpc(method,params){const id=++next;bridge.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');for(;;){const message=JSON.parse((await lines.next()).value);if(message.id!==id)continue;if(message.error)throw Error(JSON.stringify(message.error));return message.result;}}

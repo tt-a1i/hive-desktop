@@ -1108,6 +1108,7 @@ export class Chats implements StructuredSessionPort {
 
   /** Hive invokes this for both the selected orchestrator and spawned workers. */
   async start(input: Parameters<StructuredSessionPort['start']>[0]): Promise<StructuredSessionHandle> {
+    if(this.closing)throw new Error('Chat runtime is closing');
     this.assertWorkspaceAvailable(input.workspace.id);
     await this.initializeProfiles();
     const parsed = await resolveStructuredLaunch(parseStructuredLaunch(input.config), this.profiles);
@@ -1754,9 +1755,14 @@ export class Chats implements StructuredSessionPort {
       && this.hive.isSettledDispatch(record.workspaceId, sourceAgent, item.presentation.dispatchId));
     queue.discardPending(new Set(settled.map(item => item.id)));
   }
-  async close() {
+  /** Stop admission and interrupt pending native starts before Hive waits for them.
+   * Owned sessions/queues are still disposed in the existing close phase. */
+  beginClose(): void {
     this.closing = true;
     this.closeAbort.abort(new Error('Chat runtime is closing'));
+  }
+  async close() {
+    this.beginClose();
     await Promise.allSettled([...this.activating.values(), ...this.gitOperations]);
     await Promise.allSettled(this.opening.values());
     const results = await Promise.allSettled([...this.live.entries()].map(([id, chat]) => this.stopLive(id, chat)));
