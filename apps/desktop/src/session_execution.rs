@@ -127,9 +127,10 @@ struct MemberTarget {
     name: String,
     command: Option<String>,
     model: Option<(String, String)>,
+    role: String,
+    description: String,
     backend_label: String,
     model_label: String,
-    generation: u64,
     open_request: u64,
     session_id: Option<String>,
 }
@@ -220,14 +221,24 @@ fn response_session(
 }
 fn member_context_matches(
     target: &MemberTarget,
-    generation: u64,
+    member: Option<&crate::protocol::Member>,
     open_request: u64,
     session_id: Option<&str>,
 ) -> bool {
-    target.generation == generation
-        && target.open_request == open_request
+    target.open_request == open_request
         && target.session_id.as_deref() == session_id
+        // Roster poll generations identify reads, not changes to this Worker.
+        // Status/workload may change while a new conversation is being created.
+        && member.is_some_and(|member| {
+            member.id == target.id
+                && member.role == target.role
+                && member.description == target.description
+                && member.configured_command == target.command
+                && member.desktop_model.as_ref().map(|model| (&model.provider, &model.id))
+                    == target.model.as_ref().map(|(provider, id)| (provider, id))
+        })
 }
+
 struct WorktreeDialog {
     app: WeakEntity<HiveApp>,
     runtime: Arc<Runtime>,
@@ -304,7 +315,8 @@ impl HiveApp {
                 .as_ref()
                 .map(|model| format!("{} / {}", model.provider, model.id))
                 .unwrap_or_else(|| tr("成员默认模型").into()),
-            generation: self.member_generation,
+            role: member.role.clone(),
+            description: member.description.clone(),
             open_request: self.open_request,
             session_id: self.session.as_ref().map(|session| session.id.clone()),
         };
@@ -407,19 +419,10 @@ impl WorktreeDialog {
                     app.member_panel
                         && member_context_matches(
                             target,
-                            app.member_generation,
+                            app.members.iter().find(|member| member.id == target.id),
                             app.open_request,
                             app.session.as_ref().map(|session| session.id.as_str()),
                         )
-                        && app.members.iter().any(|member| {
-                            member.id == target.id
-                                && member.configured_command == target.command
-                                && member
-                                    .desktop_model
-                                    .as_ref()
-                                    .map(|model| (model.provider.clone(), model.id.clone()))
-                                    == target.model
-                        })
                 })
         })
     }
@@ -825,23 +828,75 @@ mod tests {
         assert!(legacy.execution.is_none());
         assert_eq!(legacy.display_role_key(), "会话");
     }
-    #[test]
-    fn member_context_rejects_rebinding_or_navigation_during_creation() {
-        let target = MemberTarget {
+    fn member_fixture() -> crate::protocol::Member {
+        serde_json::from_value(json!({"id":"worker","name":"Worker","role":"coder","description":"Original responsibility","status":"idle","pending_task_count":0,"configured_command":"hive:codex","desktop_model":{"provider":"openai","id":"gpt-6.1-terra"}})).unwrap()
+    }
+    fn member_target() -> MemberTarget {
+        MemberTarget {
             id: "worker".into(),
             name: "Worker".into(),
-            command: None,
-            model: None,
-            backend_label: "Pi".into(),
-            model_label: "default".into(),
-            generation: 3,
+            command: Some("hive:codex".into()),
+            model: Some(("openai".into(), "gpt-6.1-terra".into())),
+            role: "coder".into(),
+            description: "Original responsibility".into(),
+            backend_label: "Codex".into(),
+            model_label: "Terra".into(),
             open_request: 5,
             session_id: Some("B".into()),
-        };
-        assert!(member_context_matches(&target, 3, 5, Some("B")));
-        assert!(!member_context_matches(&target, 4, 5, Some("B")));
-        assert!(!member_context_matches(&target, 3, 6, Some("B")));
-        assert!(!member_context_matches(&target, 3, 5, Some("A")));
+        }
+    }
+    #[test]
+    fn normal_roster_polls_and_workload_updates_keep_member_dialog_current() {
+        let target = member_target();
+        for pending in 0..4 {
+            // Each successful poll replaces the roster with fresh Member values.
+            let mut refreshed = member_fixture();
+            refreshed.status = if pending == 0 { "idle" } else { "working" }.into();
+            refreshed.pending_task_count = pending;
+            assert!(member_context_matches(
+                &target,
+                Some(&refreshed),
+                5,
+                Some("B")
+            ));
+        }
+    }
+    #[test]
+    fn member_context_rejects_removal_role_launch_config_and_navigation_changes() {
+        let target = member_target();
+        let member = member_fixture();
+        assert!(!member_context_matches(&target, None, 5, Some("B")));
+        assert!(!member_context_matches(
+            &target,
+            Some(&member),
+            6,
+            Some("B")
+        ));
+        assert!(!member_context_matches(
+            &target,
+            Some(&member),
+            5,
+            Some("A")
+        ));
+        let mutations: [fn(&mut crate::protocol::Member); 7] = [
+            |member| member.id = "replacement-worker".into(),
+            |member| member.role = "reviewer".into(),
+            |member| member.description = "Changed responsibility".into(),
+            |member| member.configured_command = Some("hive:pi".into()),
+            |member| member.desktop_model.as_mut().unwrap().provider = "other-provider".into(),
+            |member| member.desktop_model.as_mut().unwrap().id = "other-model".into(),
+            |member| member.desktop_model = None,
+        ];
+        for mutate in mutations {
+            let mut changed = member.clone();
+            mutate(&mut changed);
+            assert!(!member_context_matches(
+                &target,
+                Some(&changed),
+                5,
+                Some("B")
+            ));
+        }
     }
     #[test]
     fn history_requires_capability_and_keeps_unavailable_source_as_an_error() {
