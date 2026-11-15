@@ -23,6 +23,8 @@ pub struct Script {
     pub version: String,
     pub name: String,
     pub command: String,
+    #[serde(default, rename = "runOnWorktreeCreate")]
+    pub run_on_worktree_create: bool,
 }
 impl Snapshot {
     pub fn saved_selection(
@@ -31,6 +33,7 @@ impl Snapshot {
         key: &str,
         name: &str,
         command: &str,
+        run_on_worktree_create: bool,
         remove: bool,
     ) -> Result<String, String> {
         if remove {
@@ -50,6 +53,7 @@ impl Snapshot {
                     script.id == key
                 }) && script.name == name
                     && script.command == command
+                    && script.run_on_worktree_create == run_on_worktree_create
             })
             .collect::<Vec<_>>();
         if candidates.len() == 1 {
@@ -64,6 +68,15 @@ impl Snapshot {
             || self.scripts.len() > 100
         {
             return Err("Invalid script settings response".into());
+        }
+        if self
+            .scripts
+            .iter()
+            .filter(|s| s.run_on_worktree_create)
+            .count()
+            > 1
+        {
+            return Err("Multiple worktree setup scripts".into());
         }
         let mut ids = std::collections::HashSet::new();
         for script in &self.scripts {
@@ -377,29 +390,31 @@ mod tests {
                     version: old.into(),
                     name: "build".into(),
                     command: "make".into(),
+                    run_on_worktree_create: false,
                 },
                 Script {
                     id: new.into(),
                     version: new.into(),
                     name: "build".into(),
                     command: "make".into(),
+                    run_on_worktree_create: false,
                 },
             ],
         };
         assert_eq!(
             snapshot
-                .saved_selection(&[old.into()], "", "build", "make", false)
+                .saved_selection(&[old.into()], "", "build", "make", false, false)
                 .unwrap(),
             new
         );
         assert!(
             snapshot
-                .saved_selection(&[old.into()], old, "build", "changed draft", false)
+                .saved_selection(&[old.into()], old, "build", "changed draft", false, false)
                 .is_err()
         );
         assert!(
             snapshot
-                .saved_selection(&[old.into()], old, "", "", true)
+                .saved_selection(&[old.into()], old, "", "", false, true)
                 .is_err()
         );
     }

@@ -1,3 +1,4 @@
+import { ProjectWorktreeInitialization, WorktreeInitializationError, type InitializationPlan } from './project-worktree-initialization.js';
 import { ProjectFileReferences } from './project-file-references.js';
 import { DispatchExecutionOrigins, DispatchOriginError } from './dispatch-execution-origins.js';
 import { artifactSourceRequest, ArtifactSourceError, resolveArtifactFile, type ResolvedArtifact } from './artifact-files.js';
@@ -62,6 +63,16 @@ function githubTarget(params: Record<string, unknown>): GithubPrTarget {
 
 export class Chats implements StructuredSessionPort {
   private readonly index: ChatIndex;
+  initialization?: ProjectWorktreeInitialization;
+  async initializationPlan(workspaceId: string, id: string): Promise<InitializationPlan | undefined> {
+    const record = this.index.get(id);
+    if (record.workspaceId !== workspaceId) throw new Error('Session belongs to another workspace');
+    if (!record.execution) return undefined;
+    await this.sessionExecution(id);
+    const {creation} = await readWorktreeIntent(this.dataDir, id);
+    return creation?.setup;
+  }
+  private async initializationReady(record: ChatRecord) {await this.initialization?.assertReady(record.workspaceId, record.id);}
   private readonly live = new Map<string, LiveChat>();
   private readonly opening = new Map<string, Promise<LiveChat>>();
   private readonly sequences = new Map<string, number>();
@@ -624,6 +635,7 @@ export class Chats implements StructuredSessionPort {
     return workspace;
   }
   private async load(record: ChatRecord, recoveryFailure?: Error): Promise<LiveChat> {
+    await this.initializationReady(record);
     record = await this.runnableIdentity(record);
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = await this.executionPath(record, workspace);
@@ -725,7 +737,7 @@ export class Chats implements StructuredSessionPort {
             && item.presentation?.messageSequence === undefined ? 'legacy' : undefined;
         },
         ...(handle.steer && {steer: (item: import('./delivery-queue.js').DeliveryItem) => handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!})}),
-        execute: item => item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.images && {images:item.images}), ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text),
+        execute: async item => {await this.initializationReady(this.index.get(record.id)); return item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.images && {images:item.images}), ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text);},
         onError: error => { if (!chat?.aborted) this.recordDeliveryFailure(record.id, queue, chat?.failure ?? error); },
         onState: (busy, completedReportId) => {
           if (this.mutatingQueues.has(record.id)) return;
@@ -773,7 +785,7 @@ export class Chats implements StructuredSessionPort {
     };
   }
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
-  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError) {
+  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError) {
     const workspace = await this.workspace(record.workspaceId);
     let history: unknown[] = [], historyMessageIds: string[] = [];
     let historyWarning: string | undefined;
@@ -836,6 +848,7 @@ export class Chats implements StructuredSessionPort {
   private async require(id: string): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
+    await this.initializationReady(this.index.get(id));
     await this.runnableIdentity(this.index.get(id));
     const existing = this.live.get(id);
     if (existing?.cleanup) {
@@ -849,9 +862,10 @@ export class Chats implements StructuredSessionPort {
     this.opening.set(id, opening);
     return opening;
   }
-  private async saveNewRecord(workspace: WorkspaceSummary, record: ChatRecord, options: {isolation?: 'worktree'; branch?: string}) {
+  private async saveNewRecord(workspace: WorkspaceSummary, record: ChatRecord, options: {isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string}) {
     if (options.isolation === 'worktree') {
-      const creation: WorktreeCreation = {version: 1, workspaceId: record.workspaceId, backend: record.backend,
+      const setup = await this.initialization?.capture(record.workspaceId, options.skipSetup, options.expectedSetupRevision);
+      const creation: WorktreeCreation = {version: setup ? 2 : 1, ...(setup && {setup}), workspaceId: record.workspaceId, backend: record.backend,
         identityState: record.originAgentId ? 'known' : 'new', ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.model && {model: record.model})};
       const owned = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id, creation,
         ...(options.branch !== undefined && {branch: options.branch})});
@@ -864,9 +878,13 @@ export class Chats implements StructuredSessionPort {
       if (record.execution) throw new Error(`工作树已保留，但会话记录保存失败。请从待恢复工作树找回会话 ${record.id}。`, {cause: error});
       throw error;
     }
+    if (record.execution) {
+      // Publish creation first; initialization starts outside the workspace lock and never activates an Agent.
+      await this.initialization?.created(record.workspaceId, record.id);
+    }
     return record;
   }
-  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string} = {}) {
+  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
@@ -877,7 +895,7 @@ export class Chats implements StructuredSessionPort {
     });
   }
   /** Create only: never binds, stops or starts the Worker's currently selected conversation. */
-  async createMemberWorktree(workspaceId: string, memberId: string, options: {branch?: string; backend?: ChatBackend} = {}) {
+  async createMemberWorktree(workspaceId: string, memberId: string, options: {branch?: string; backend?: ChatBackend; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
@@ -898,7 +916,7 @@ export class Chats implements StructuredSessionPort {
       if (this.closing) throw new Error('Chat runtime is closing');
       const record: ChatRecord = {id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(),
         originAgentId: memberId, identityState: 'known', ...(provider && modelId && {model: {provider, id: modelId, name: modelId}})};
-      const saved = await this.saveNewRecord(workspace, record, {isolation: 'worktree', ...(options.branch !== undefined && {branch: options.branch})});
+      const saved = await this.saveNewRecord(workspace, record, {isolation: 'worktree', ...(options.branch !== undefined && {branch: options.branch}), ...(options.skipSetup !== undefined && {skipSetup: options.skipSetup}), ...(options.expectedSetupRevision !== undefined && {expectedSetupRevision: options.expectedSetupRevision})});
       return this.publicSession(saved, saved.execution!.path);
     });
   }
@@ -919,17 +937,18 @@ export class Chats implements StructuredSessionPort {
         message: error instanceof Error ? error.message : String(error)}}; }
     }))};
   }
-  async create(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string} = {}) {
+  async create(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
     const record = await this.createRecord(workspaceId, backend, options);
     return this.open(record.id);
   }
   async open(id: string) {
     try { return this.snapshot(id, await this.require(id)); }
     catch (error) {
-      if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError)) throw error;
+      if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError || error instanceof WorktreeInitializationError)) throw error;
       const live = this.live.get(id);
       if (live) await this.stopLive(id, live);
-      return this.readOnlySnapshot(this.index.get(id), error);
+      return {...await this.readOnlySnapshot(this.index.get(id), error),
+        ...(error instanceof WorktreeInitializationError && {initialization: await this.initialization?.get(this.index.get(id).workspaceId, id)})};
     }
   }
 
@@ -1020,7 +1039,10 @@ export class Chats implements StructuredSessionPort {
           await chat.queue.enqueue(text, true, presentation, images);
         }
       },
-      ready: () => { if (!this.keepingPaused.has(id)) chat.queue.resume(); },
+      ready: () => {
+        void this.initializationReady(this.index.get(id)).then(() => {if (!this.keepingPaused.has(id)) chat.queue.resume();})
+          .catch(error => this.recordDeliveryFailure(id, chat.queue, error instanceof Error ? error : new Error(String(error))));
+      },
       stop: error => this.stopLive(id, chat, error),
     };
   }
@@ -1037,6 +1059,7 @@ export class Chats implements StructuredSessionPort {
     finally { if (this.activating.get(workspaceId) === barrier) this.activating.delete(workspaceId); }
   }
   private async activationAvailable(id: string) {
+    await this.initializationReady(this.index.get(id));
     const record = await this.runnableIdentity(this.index.get(id));
     this.assertWorkspaceAvailable(record.workspaceId);
     const agentId = record.originAgentId ?? (record.identityState === 'new' ? `${record.workspaceId}:orchestrator` : undefined);

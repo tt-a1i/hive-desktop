@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-export interface ProjectScript { id: string; version: string; name: string; command: string }
-export interface ProjectScriptsSnapshot { version: 1; revision: string; scripts: ProjectScript[] }
+export interface ProjectScript { id: string; version: string; name: string; command: string; runOnWorktreeCreate?: boolean }
+export interface ProjectScriptsSnapshot { version: 2; revision: string; scripts: ProjectScript[] }
 /** The CAS must compare and mutate one SQLite app_state row in a single transaction. */
 export interface ProjectScriptStatePort {
   read(key: string, workspaceId: string): string | null;
@@ -22,21 +22,22 @@ function text(value: unknown, kind: 'name' | 'command'): string {
   return value as string;
 }
 function decode(raw: string | null, workspaceId: string): ProjectScriptsSnapshot {
-  if (raw === null) return { version: 1, revision: '0', scripts: [] };
+  if (raw === null) return { version: 2, revision: '0', scripts: [] };
   try {
     const record: unknown = JSON.parse(raw);
     if (!record || typeof record !== 'object' || Array.isArray(record)) throw 0;
     const object = record as Record<string, unknown>;
-    if (Object.keys(object).sort().join(',') !== 'revision,scripts,version,workspaceId' || object.version !== 1 || object.workspaceId !== workspaceId || typeof object.revision !== 'string' || !uuid.test(object.revision) || !Array.isArray(object.scripts) || object.scripts.length > 100) throw 0;
+    if (Object.keys(object).sort().join(',') !== 'revision,scripts,version,workspaceId' || ![1, 2].includes(object.version as number) || object.workspaceId !== workspaceId || typeof object.revision !== 'string' || !uuid.test(object.revision) || !Array.isArray(object.scripts) || object.scripts.length > 100) throw 0;
     const ids = new Set<string>();
     const scripts = object.scripts.map((item: unknown): ProjectScript => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) throw 0;
       const script = item as Record<string, unknown>;
-      if (Object.keys(script).sort().join(',') !== 'command,id,name,version' || typeof script.id !== 'string' || !uuid.test(script.id) || ids.has(script.id) || typeof script.version !== 'string' || !uuid.test(script.version)) throw 0;
+      if (Object.keys(script).sort().join(',') !== (object.version === 2 && script.runOnWorktreeCreate !== undefined ? 'command,id,name,runOnWorktreeCreate,version' : 'command,id,name,version') || script.runOnWorktreeCreate !== undefined && (object.version !== 2 || typeof script.runOnWorktreeCreate !== 'boolean') || typeof script.id !== 'string' || !uuid.test(script.id) || ids.has(script.id) || typeof script.version !== 'string' || !uuid.test(script.version)) throw 0;
       ids.add(script.id);
-      return { id: script.id, version: script.version, name: text(script.name, 'name'), command: text(script.command, 'command') };
+      return { id: script.id, version: script.version, name: text(script.name, 'name'), command: text(script.command, 'command'), ...(script.runOnWorktreeCreate !== undefined && {runOnWorktreeCreate: script.runOnWorktreeCreate as boolean}) };
     });
-    return { version: 1, revision: object.revision, scripts };
+    if (scripts.filter(script => script.runOnWorktreeCreate).length > 1) throw 0;
+    return { version: 2, revision: object.revision, scripts };
   } catch { return fail('CORRUPT', 'Saved project scripts are invalid; no changes were made'); }
 }
 /** The caller must coordinate workspace deletion with mutations using its workspace lifecycle lock. */
@@ -55,8 +56,9 @@ export class ProjectScriptSettings {
     if (script.version !== expectedVersion) return fail('CONFLICT', 'Project script changed; reload settings');
     return { ...script };
   }
-  async save(workspaceId: string, expectedRevision: string, input: { id?: string; name: unknown; command: unknown }): Promise<ProjectScriptsSnapshot> {
-    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['id', 'name', 'command'].includes(k))) return fail('INVALID', 'Invalid project script');
+  async save(workspaceId: string, expectedRevision: string, input: { id?: string; name: unknown; command: unknown; runOnWorktreeCreate?: boolean }): Promise<ProjectScriptsSnapshot> {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(k => !['id', 'name', 'command', 'runOnWorktreeCreate'].includes(k))) return fail('INVALID', 'Invalid project script');
+    if (input.runOnWorktreeCreate !== undefined && typeof input.runOnWorktreeCreate !== 'boolean') return fail('INVALID', 'Invalid setup role');
     const name = text(input.name, 'name'), command = text(input.command, 'command');
     if (input.id !== undefined && (typeof input.id !== 'string' || !uuid.test(input.id))) return fail('INVALID', 'Invalid project script ID');
     const {stateKey, raw, snapshot} = await this.current(workspaceId);
@@ -64,8 +66,8 @@ export class ProjectScriptSettings {
     const index = input.id === undefined ? -1 : snapshot.scripts.findIndex(script => script.id === input.id);
     if (input.id !== undefined && index < 0) return fail('NOT_FOUND', 'Saved project script not found');
     if (index < 0 && snapshot.scripts.length >= 100) return fail('INVALID', 'Too many project scripts');
-    const next = { id: input.id ?? randomUUID(), version: randomUUID(), name, command };
-    const scripts = [...snapshot.scripts]; if (index < 0) scripts.push(next); else scripts[index] = next;
+    const next = { id: input.id ?? randomUUID(), version: randomUUID(), name, command, ...(input.runOnWorktreeCreate !== undefined && {runOnWorktreeCreate: input.runOnWorktreeCreate}) };
+    const scripts = snapshot.scripts.map(script => input.runOnWorktreeCreate && script.runOnWorktreeCreate ? {...script, version: randomUUID(), runOnWorktreeCreate: false} : script); if (index < 0) scripts.push(next); else scripts[index] = next;
     return this.commit(workspaceId, stateKey, raw, scripts);
   }
   async remove(workspaceId: string, expectedRevision: string, id: string): Promise<ProjectScriptsSnapshot> {
@@ -81,7 +83,7 @@ export class ProjectScriptSettings {
     if (raw !== null && !this.port.compareAndSwap(stateKey, raw, null, workspaceId)) fail('CONFLICT', 'Project scripts changed; reload settings');
   }
   private commit(workspaceId: string, stateKey: string, raw: string | null, scripts: ProjectScript[]): ProjectScriptsSnapshot {
-    const next: ProjectScriptsSnapshot = {version: 1, revision: randomUUID(), scripts};
+    const next: ProjectScriptsSnapshot = {version: 2, revision: randomUUID(), scripts};
     if (!this.port.compareAndSwap(stateKey, raw, JSON.stringify({ ...next, workspaceId }), workspaceId)) return fail('CONFLICT', 'Project scripts changed; reload settings');
     return next;
   }

@@ -8,13 +8,35 @@ pub(crate) struct HistoryNavigation {
     generation: u64,
     pub(crate) loading: bool,
     pub(crate) access: HistoryAccess,
+    pub(crate) initialization: Option<Initialization>,
 }
 impl HistoryNavigation {
     pub(crate) fn invalidate(&mut self) {
         self.generation += 1;
         self.loading = false;
         self.access = Default::default();
+        self.initialization = None;
     }
+}
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Initialization {
+    pub(crate) version: String,
+    pub(crate) status: String,
+    pub(crate) script: Option<InitializationScript>,
+    pub(crate) error_code: Option<String>,
+    pub(crate) run_id: Option<String>,
+    pub(crate) actions: Option<InitializationActions>,
+}
+#[derive(Clone, Deserialize)]
+pub(crate) struct InitializationActions {
+    pub(crate) retry: bool,
+    pub(crate) skip: bool,
+    pub(crate) reason: Option<String>,
+}
+#[derive(Clone, Deserialize)]
+pub(crate) struct InitializationScript {
+    pub(crate) name: String,
 }
 #[derive(Default)]
 pub(crate) struct HistoryAccess {
@@ -152,6 +174,57 @@ impl HiveApp {
         self.current_history_access()
             .is_some_and(|access| access.read_only)
     }
+    pub(crate) fn refresh_initialization(&mut self, cx: &mut Context<Self>) {
+        let (Some(workspace), Some(session)) = (
+            self.workspace.clone(),
+            self.session.as_ref().map(|s| s.id.clone()),
+        ) else {
+            return;
+        };
+        let generation = self.open_request;
+        self.request(
+            "worktree.initialization.get",
+            serde_json::json!({"workspaceId":workspace,"sessionId":session}),
+            cx,
+            move |this, value, cx| {
+                if this.open_request != generation
+                    || this.workspace.as_ref() != Some(&workspace)
+                    || this.session.as_ref().map(|s| &s.id) != Some(&session)
+                {
+                    return;
+                }
+                match serde_json::from_value::<Option<Initialization>>(value) {
+                    Ok(status) => this.history_navigation.initialization = status,
+                    Err(_) => this.error = Some("无法读取工作树初始化状态".into()),
+                }
+                cx.notify();
+            },
+        );
+    }
+    pub(crate) fn change_initialization(&mut self, retry: bool, cx: &mut Context<Self>) {
+        let (Some(workspace), Some(session), Some(status)) = (
+            self.workspace.clone(),
+            self.session.as_ref().map(|s| s.id.clone()),
+            self.history_navigation.initialization.as_ref(),
+        ) else {
+            return;
+        };
+        let uncertain =
+            matches!(status.status.as_str(), "unknown" | "interrupted") && status.run_id.is_some();
+        let allowed = status
+            .actions
+            .as_ref()
+            .map(|actions| if retry { actions.retry } else { actions.skip })
+            .unwrap_or(!uncertain);
+        if !allowed {
+            return;
+        }
+        let version = status.version.clone();
+        let generation = self.open_request;
+        self.request(if retry { "worktree.initialization.retry" } else { "worktree.initialization.skip" }, serde_json::json!({"workspaceId":workspace,"sessionId":session,"expectedVersion":version}), cx, move |this, _, cx| {
+            if this.open_request == generation && this.workspace.as_ref() == Some(&workspace) && this.session.as_ref().map(|s| &s.id) == Some(&session) { this.refresh_initialization(cx); }
+        });
+    }
     pub(crate) fn open_historical_member_session(
         &mut self,
         dispatch: Option<String>,
@@ -252,7 +325,7 @@ impl HiveApp {
 }
 #[cfg(test)]
 mod tests {
-    use super::{validated_session, DispatchSessionRequest, DispatchSessionResponse};
+    use super::{DispatchSessionRequest, DispatchSessionResponse, validated_session};
     use serde_json::json;
     #[test]
     fn dispatch_navigation_accepts_historical_unbound_session_and_rejects_wrong_identity() {
@@ -284,16 +357,18 @@ mod tests {
             source_agent_id: None,
             ..request
         };
-        assert!(serde_json::to_value(absent)
-            .unwrap()
-            .get("sourceAgentId")
-            .is_none());
+        assert!(
+            serde_json::to_value(absent)
+                .unwrap()
+                .get("sourceAgentId")
+                .is_none()
+        );
     }
 }
 
 #[cfg(test)]
 mod access_tests {
-    use super::{open_session_identity_matches, HistoryAccess, NavigationContext};
+    use super::{HistoryAccess, NavigationContext, open_session_identity_matches};
     use crate::protocol::OpenSession;
     use serde_json::json;
     #[test]

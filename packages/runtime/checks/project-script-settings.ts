@@ -29,7 +29,7 @@ try {
   const known = new Set([ws1.id, ws2.id]);
   const validate = (id: string) => { if (!known.has(id)) throw new Error('Workspace not found'); };
   const one = new ProjectScriptSettings(port(db1), validate), two = new ProjectScriptSettings(port(db2), validate);
-  const initial = await one.list(ws1.id); assert.deepEqual(initial, {version:1,revision:'0',scripts:[]});
+  const initial = await one.list(ws1.id); assert.deepEqual(initial, {version:2,revision:'0',scripts:[]});
   const marker = join(dir, 'must-not-exist');
   const secretCommand = `echo SENSITIVE_TEST_COMMAND > '${marker}'\nprintf done\n`;
   const saved = await one.save(ws1.id, initial.revision, {name:'Local check',command:secretCommand});
@@ -43,6 +43,14 @@ try {
   assert.equal(raced.filter(item => item.status === 'fulfilled').length, 1);
   const rejected = raced.find(item => item.status === 'rejected');
   assert.equal(rejected?.status === 'rejected' && rejected.reason.code, 'CONFLICT');
+  const secondProject = await one.list(ws2.id);
+  const firstRole = await one.save(ws2.id, secondProject.revision, {id: secondProject.scripts[0]!.id, name:'First setup', command:'true', runOnWorktreeCreate:true});
+  const roleVersion = firstRole.scripts[0]!.version;
+  const switchedRole = await two.save(ws2.id, firstRole.revision, {name:'Second setup', command:'true', runOnWorktreeCreate:true});
+  assert.equal(switchedRole.scripts.filter(item => item.runOnWorktreeCreate).length, 1);
+  assert.equal(switchedRole.scripts[0]!.runOnWorktreeCreate, false);
+  assert.notEqual(switchedRole.scripts[0]!.version, roleVersion, 'revoking setup also updates the old script CAS version');
+  await assert.rejects(one.capture(ws2.id, switchedRole.scripts[0]!.id, roleVersion), (e:any)=>e.code==='CONFLICT');
   await assert.rejects(two.capture(ws2.id, script.id, script.version), (e:any)=>e.code==='NOT_FOUND');
   await assert.rejects(two.save(ws1.id, initial.revision, {name:'Other',command:'false'}), (e:any)=>e.code==='CONFLICT');
   const captured = await one.capture(ws1.id, script.id, script.version);
@@ -58,11 +66,16 @@ try {
   await assert.rejects(one.list(ws1.id), (e:any)=>e.code==='CORRUPT' && !e.message.includes('SENSITIVE_TEST_COMMAND'));
   await assert.rejects(one.save(ws1.id, changed.revision, {name:'x',command:'x'}), (e:any)=>e.code==='CORRUPT');
   assert.equal((db1.prepare('SELECT value FROM app_state WHERE key=?').get(row.key) as {value:string}).value, '{broken');
-  for (const invalid of [JSON.stringify({...JSON.parse(row.value), version: 2}), JSON.stringify({...JSON.parse(row.value), futureField: true}), JSON.stringify({...JSON.parse(row.value), scripts: [{...JSON.parse(row.value).scripts[0], command: 42}]})]) {
+  for (const invalid of [JSON.stringify({...JSON.parse(row.value), version: 3}), JSON.stringify({...JSON.parse(row.value), futureField: true}), JSON.stringify({...JSON.parse(row.value), scripts: [{...JSON.parse(row.value).scripts[0], command: 42}]})]) {
     db2.prepare('UPDATE app_state SET value=? WHERE key=?').run(invalid, row.key);
     await assert.rejects(one.remove(ws1.id, changed.revision, script.id), (e:any)=>e.code==='CORRUPT');
     assert.equal((db1.prepare('SELECT value FROM app_state WHERE key=?').get(row.key) as {value:string}).value, invalid);
   }
+  // Legacy rows retain every saved command but never opt in to setup implicitly.
+  const legacy = {...JSON.parse(row.value), version: 1};
+  db2.prepare('UPDATE app_state SET value=? WHERE key=?').run(JSON.stringify(legacy), row.key);
+  assert.equal((await one.list(ws1.id)).version, 2);
+  assert.equal((await one.list(ws1.id)).scripts.some(script => script.runOnWorktreeCreate), false);
   db2.prepare('UPDATE app_state SET value=? WHERE key=?').run(row.value,row.key);
   db1.close(); db1=undefined; db2.close(); db2=undefined;
   await runtime.close(); runtime=undefined;

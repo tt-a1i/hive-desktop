@@ -1,3 +1,4 @@
+import { validateInitializationPlan, type InitializationPlan } from './project-worktree-initialization.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises';
@@ -20,29 +21,33 @@ export interface ManagedWorktree {
 }
 /** Private creation provenance, saved before any checkout; never accepted from an RPC caller. */
 export interface WorktreeCreation {
-  version: 1;
+  version: 1 | 2;
+  setup?: InitializationPlan;
   workspaceId: string;
   backend: 'pi' | 'codex' | 'pi-rpc' | 'claude';
   identityState: 'new' | 'known';
   originAgentId?: string;
   model?: {provider: string; id: string; name: string};
 }
-type Intent = { version?: 2; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation };
+type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation };
 function validateIntentCreation(intent: Intent): void {
-  if (intent?.version !== undefined && (intent.version !== 2 || intent.creation === undefined)
-    || intent?.creation !== undefined && intent.version !== 2)
+  if (intent?.version !== undefined && (![2, 3].includes(intent.version) || intent.creation === undefined)
+    || intent?.creation !== undefined && ![2, 3].includes(intent.version!))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Versioned worktree creation provenance is missing or unsupported; legacy recovery was not used');
+  if (intent.version === 3 ? intent.creation?.version !== 2 : intent.creation?.version === 2) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Setup creation intent version is invalid');
   validateCreation(intent?.creation);
 }
 function validateCreation(creation: WorktreeCreation | undefined): void {
   if (creation === undefined) return; // Older generic intents have no recoverable Worker identity.
   const text = (value: unknown): value is string => typeof value === 'string' && !!value.trim() && value.length <= 4096 && !value.includes('\0');
-  if (!creation || creation.version !== 1 || !text(creation.workspaceId)
+  if (!creation || ![1, 2].includes(creation.version) || !text(creation.workspaceId)
     || !['pi','codex','pi-rpc','claude'].includes(creation.backend)
     || !['new','known'].includes(creation.identityState)
     || (creation.identityState === 'known' ? !text(creation.originAgentId) : creation.originAgentId !== undefined)
     || (creation.model !== undefined && (!creation.model || !text(creation.model.provider) || !text(creation.model.id) || !text(creation.model.name))))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree creation identity is invalid; it cannot be replaced with caller identity');
+  if (creation.version === 2) validateInitializationPlan(creation.setup);
+  else if (creation.setup !== undefined) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Legacy intent cannot carry setup');
 }
 
 export class GitWorktreeError extends Error {
@@ -84,7 +89,7 @@ async function commonDir(cwd: string): Promise<string> {
 async function writeIntent(ownerDir: string, intent: Intent): Promise<void> {
   const tmp = join(ownerDir, `.${randomUUID()}.tmp`);
   try {
-    const document: Intent = intent.creation ? {...intent, version: 2} : intent;
+    const document: Intent = intent.creation ? {...intent, version: intent.creation.version === 2 ? 3 : 2} : intent;
     validateIntentCreation(document);
     const file = await open(tmp, 'wx', 0o600);
     try { await file.writeFile(JSON.stringify(document)); await file.sync(); }

@@ -16,7 +16,7 @@ use gpui_kit::{
     *,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 #[derive(Clone, Deserialize)]
@@ -246,6 +246,9 @@ struct WorktreeDialog {
     connection: u64,
     branch: Entity<InputState>,
     backend: &'static str,
+    skip_setup: bool,
+    setup: Option<Result<(String, Option<(String, String)>), String>>,
+    setup_loading: bool,
     member: Option<MemberTarget>,
     recovering: bool,
     member_history: bool,
@@ -357,6 +360,9 @@ impl HiveApp {
                 connection,
                 branch,
                 backend,
+                skip_setup: false,
+                setup: None,
+                setup_loading: false,
                 member,
                 recovering,
                 member_history: history,
@@ -369,6 +375,12 @@ impl HiveApp {
                 notice: None,
                 scroll: ScrollHandle::new(),
             };
+            if !recovering && !history {
+                let pending = cx.weak_entity();
+                cx.defer(move |cx| {
+                    let _ = pending.update(cx, |editor, cx| editor.load_setup(cx));
+                });
+            }
             if recovering || history {
                 let pending = cx.weak_entity();
                 cx.defer(move |cx| {
@@ -425,6 +437,44 @@ impl WorktreeDialog {
                         )
                 })
         })
+    }
+    fn load_setup(&mut self, cx: &mut Context<Self>) {
+        if self.setup_loading || self.busy || !self.current(cx) {
+            return;
+        }
+        self.setup_loading = true;
+        self.setup = None;
+        let runtime = self.runtime.clone();
+        let workspace = self.workspace.clone();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request("script.settings.list", json!({"workspaceId":workspace}))
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<crate::project_scripts::model::Snapshot>(value)
+                        .map_err(|e| e.to_string())
+                })
+                .and_then(|snapshot| snapshot.validate())
+                .map(|snapshot| {
+                    (
+                        snapshot.revision,
+                        snapshot
+                            .scripts
+                            .into_iter()
+                            .find(|script| script.run_on_worktree_create)
+                            .map(|script| (script.name, script.version)),
+                    )
+                });
+            let _ = this.update(cx, |this, cx| {
+                this.setup_loading = false;
+                if this.current(cx) {
+                    this.setup = Some(result);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
     fn load_list(&mut self, history: bool, cx: &mut Context<Self>) {
         if self.busy || self.loading || !self.current(cx) {
@@ -505,7 +555,11 @@ impl WorktreeDialog {
         .detach();
     }
     fn submit(&mut self, pending: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy || self.loading || !self.current(cx) {
+        if self.busy
+            || self.loading
+            || !self.current(cx)
+            || (pending.is_none() && (self.setup_loading || !matches!(self.setup, Some(Ok(_)))))
+        {
             return;
         }
         let Some(app) = self.app.upgrade() else {
@@ -535,7 +589,7 @@ impl WorktreeDialog {
             })
             .or_else(|| Some(self.backend.to_owned()));
         let recovery_kind = item.as_ref().and_then(|item| item.recovery_kind.clone());
-        let (method, params) = match request_params(
+        let (method, mut params) = match request_params(
             &self.workspace,
             self.backend,
             &self.branch.read(cx).value(),
@@ -549,6 +603,15 @@ impl WorktreeDialog {
                 return;
             }
         };
+        if item.is_none() {
+            let Some(Ok((revision, _))) = &self.setup else {
+                return;
+            };
+            params["expectedSetupRevision"] = json!(revision);
+            if self.skip_setup {
+                params["skipSetup"] = json!(true);
+            }
+        }
         let runtime = self.runtime.clone();
         let workspace = self.workspace.clone();
         let window = window.window_handle();
@@ -676,6 +739,7 @@ impl Render for WorktreeDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current(cx);
         let disabled = !current || self.busy || self.loading;
+        let setup_unavailable = self.setup_loading || !matches!(self.setup, Some(Ok(_)));
         let backend = self.backend;
         let recovering = self.recovering;
         let history = self.member_history;
@@ -696,9 +760,17 @@ impl Render for WorktreeDialog {
                 Button::new(("worktree-backend",index)).outline().small().label(tr(label)).selected(backend == value).disabled(disabled)
                     .on_click(cx.listener(move |this,_,_,cx| {this.backend = value;cx.notify();}))))))
             .when(!recovering && !history,|view| view
+                 .child(div().id("worktree-setup-selection").role(Role::Status).text_sm().text_color(Color::Muted.get(cx)).child(match &self.setup {
+                    Some(Ok((_, Some((name, version))))) => format!("{}: {} · {}: {}. {}", tr("工作树初始化脚本"), name, tr("版本"), version, tr(if self.skip_setup { "本次创建将跳过此脚本。" } else { "新会话会等待脚本完成后才能发送消息。" })),
+                    Some(Ok((_, None))) => tr("此项目没有启用工作树初始化脚本。").to_owned(),
+                    Some(Err(_)) => tr("无法读取初始化设置，请重试后创建。").to_owned(),
+                    None => tr("正在读取初始化设置…").to_owned(),
+                }))
+                .child(Button::new("reload-worktree-setup").outline().small().label(tr("刷新初始化设置")).disabled(disabled || self.setup_loading).on_click(cx.listener(|this,_,_,cx| this.load_setup(cx))))
+                .child(Button::new("skip-new-worktree-setup").outline().small().selected(self.skip_setup).disabled(disabled).label(tr(if self.skip_setup {"本次跳过初始化：是"} else {"本次跳过初始化：否"})).on_click(cx.listener(|this,_,_,cx| {this.skip_setup = !this.skip_setup; cx.notify();})))
                 .child(div().text_sm().child(tr("分支名（可选）"))).child(Input::new(&self.branch).disabled(disabled))
                 .child(Button::new("create-isolated-session").primary().label(tr(if self.busy {"正在创建工作树…"} else if self.member.is_some() {"新建独立会话"} else {"新建独立工作树会话"}))
-                    .disabled(disabled).on_click(cx.listener(|this,_,window,cx| this.submit(None,window,cx)))))
+                    .disabled(disabled || setup_unavailable).on_click(cx.listener(|this,_,window,cx| this.submit(None,window,cx)))))
             .when(recovering,|view| view
                 .child(div().text_sm().child(tr("按已保存的原成员与后端恢复目录；缺失或损坏的创建身份不会被替换，代码仍保留。")))
                 .when(!self.loading && self.page.pending.is_empty(),|view| view.child(div().text_sm().child(tr("没有待恢复的工作树。"))))
@@ -739,10 +811,10 @@ impl Render for WorktreeDialog {
 
 #[cfg(test)]
 mod tests {
+    use super::{MemberHistoryPage, member_history_matches};
     use super::{
-        member_context_matches, request_params, response_session, MemberTarget, PendingWorktree,
+        MemberTarget, PendingWorktree, member_context_matches, request_params, response_session,
     };
-    use super::{member_history_matches, MemberHistoryPage};
     use crate::protocol::Session;
     use serde_json::json;
     #[test]
@@ -801,24 +873,28 @@ mod tests {
             serde_json::to_value(parsed.execution.unwrap()).unwrap(),
             json!({"kind":"worktree","path":"/owned","branch":"hive/s"})
         );
-        assert!(response_session(
-            value.clone(),
-            "other",
-            Some("s"),
-            Some("worker"),
-            None,
-            None
-        )
-        .is_err());
-        assert!(response_session(
-            value.clone(),
-            "w",
-            Some("replacement"),
-            Some("worker"),
-            None,
-            None
-        )
-        .is_err());
+        assert!(
+            response_session(
+                value.clone(),
+                "other",
+                Some("s"),
+                Some("worker"),
+                None,
+                None
+            )
+            .is_err()
+        );
+        assert!(
+            response_session(
+                value.clone(),
+                "w",
+                Some("replacement"),
+                Some("worker"),
+                None,
+                None
+            )
+            .is_err()
+        );
         assert!(
             response_session(value.clone(), "w", None, Some("replacement"), None, None).is_err()
         );
@@ -942,25 +1018,29 @@ mod tests {
         worker.custom_title = true;
         assert!(crate::view::untitled_session_label(&worker).is_none());
         let value = json!({"id":"legacy","workspaceId":"w","title":"新会话","backend":"pi","identityState":"new","recoveryKind":"new-orchestrator","execution":{"kind":"worktree","path":"/original","branch":"legacy"}});
-        assert!(response_session(
-            value.clone(),
-            "w",
-            Some("legacy"),
-            None,
-            Some("pi"),
-            Some("new-orchestrator")
-        )
-        .is_ok());
+        assert!(
+            response_session(
+                value.clone(),
+                "w",
+                Some("legacy"),
+                None,
+                Some("pi"),
+                Some("new-orchestrator")
+            )
+            .is_ok()
+        );
         let mut missing = value;
         missing.as_object_mut().unwrap().remove("recoveryKind");
-        assert!(response_session(
-            missing,
-            "w",
-            Some("legacy"),
-            None,
-            Some("pi"),
-            Some("new-orchestrator")
-        )
-        .is_err());
+        assert!(
+            response_session(
+                missing,
+                "w",
+                Some("legacy"),
+                None,
+                Some("pi"),
+                Some("new-orchestrator")
+            )
+            .is_err()
+        );
     }
 }

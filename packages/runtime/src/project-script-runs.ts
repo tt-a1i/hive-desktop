@@ -89,7 +89,14 @@ export class ProjectScriptRuns {
       .finally(() => { tasks.delete(task); if (!tasks.size) this.pending.delete(workspace); });
     tasks.add(task); return task;
   }
-  private async start(input: {workspaceId: string; scriptId: string; expectedVersion: string; sessionId?: string; requestId: string}): Promise<ProjectScriptRun> {
+  /** Internal coordinator entry; never exposed as an RPC accepting a command. */
+  runCaptured(workspaceId: string, sessionId: string, requestId: string, script: ProjectScript): Promise<ProjectScriptRun> {
+    let tasks = this.pending.get(workspaceId); if (!tasks) {tasks = new Set(); this.pending.set(workspaceId, tasks);}
+    const task = this.start({workspaceId, sessionId, requestId, scriptId: script.id, expectedVersion: script.version}, script)
+      .finally(() => {tasks.delete(task); if (!tasks.size) this.pending.delete(workspaceId);});
+    tasks.add(task); return task;
+  }
+  private async start(input: {workspaceId: string; scriptId: string; expectedVersion: string; sessionId?: string; requestId: string}, captured?: ProjectScript): Promise<ProjectScriptRun> {
     this.check(input.workspaceId);
     const file = this.requestFile(input.workspaceId, input.requestId);
     const duplicate = () => {
@@ -99,7 +106,7 @@ export class ProjectScriptRuns {
       return structuredClone(run);
     };
     if (existsSync(file)) return duplicate();
-    const script = await this.settings.capture(input.workspaceId, input.scriptId, input.expectedVersion);
+    const script = captured ?? await this.settings.capture(input.workspaceId, input.scriptId, input.expectedVersion);
     const cwd = await realpath(await this.executionDirectory(input.workspaceId, input.sessionId));
     if (!statSync(cwd).isDirectory()) fail('SCRIPT_SOURCE_UNAVAILABLE', 'The selected execution directory is unavailable');
     this.check(input.workspaceId);
@@ -162,6 +169,13 @@ export class ProjectScriptRuns {
     }
     if (live.persistenceError) fail('SCRIPT_RUN_WRITE_FAILED', 'Script process state could not be durably recorded; inspect this run before retrying');
     return structuredClone(run);
+  }
+  /** Internal initialization lookup keeps trusted live ownership visible if its manifest disappears. */
+  capturedRequest(workspace: string, requestId: string): ProjectScriptRun | undefined {
+    const live = [...this.live.values()].find(value => value.run.workspaceId === workspace && value.run.requestId === requestId);
+    if (live) return structuredClone(live.run);
+    const undurable = [...this.undurable.values()].find(run => run.workspaceId === workspace && run.requestId === requestId);
+    return undurable ? structuredClone(undurable) : this.list(workspace).runs.find(run => run.requestId === requestId);
   }
   list(workspace: string): {runs: ProjectScriptRun[]} {
     if (!workspaceId(workspace)) fail('SCRIPT_INPUT_INVALID', 'Invalid workspace identity');

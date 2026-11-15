@@ -1,3 +1,4 @@
+import { WorktreeInitializationError } from './project-worktree-initialization.js';
 import { ProjectScriptRunError } from './project-script-runs.js';
 import { ProjectScriptSettingsError } from './project-script-settings.js';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
@@ -81,7 +82,10 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'member.worktree.create': {
       if (params.backend !== undefined && !['pi','codex','pi-rpc','claude'].includes(params.backend as string)) throw new Error('Unsupported chat backend');
       if (params.branch !== undefined && typeof params.branch !== 'string') throw new Error('Branch must be text');
+      if (params.expectedSetupRevision !== undefined && typeof params.expectedSetupRevision !== 'string') throw new Error('Invalid setup revision');
+      if (params.skipSetup !== undefined && typeof params.skipSetup !== 'boolean') throw new Error('Invalid setup selection');
       return chats.createMemberWorktree(text(params, 'workspaceId'), text(params, 'memberId'), {
+        ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}),
         ...(params.backend !== undefined && {backend: params.backend as 'pi' | 'codex' | 'pi-rpc' | 'claude'}),
         ...(typeof params.branch === 'string' && {branch: params.branch})});
     }
@@ -106,6 +110,16 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'desktop.settings.probe': return settings.probe(params.backend, params.command);
     case 'desktop.settings.get': return settings.get();
     case 'desktop.settings.update': return settings.update(params);
+    case 'worktree.initialization.get':
+    case 'worktree.initialization.retry':
+    case 'worktree.initialization.skip': {
+      const mutation = method !== 'worktree.initialization.get';
+      if (Object.keys(params).some(key => !['workspaceId', 'sessionId', ...(mutation ? ['expectedVersion'] : [])].includes(key))) throw new WorktreeInitializationError('Supply only the original session and expected setup state version.');
+      const workspaceId = text(params, 'workspaceId'), sessionId = text(params, 'sessionId');
+      return method === 'worktree.initialization.get' ? runtime.initialization.get(workspaceId, sessionId)
+        : method === 'worktree.initialization.retry' ? runtime.initialization.retry(workspaceId, sessionId, text(params, 'expectedVersion'))
+        : runtime.initialization.skip(workspaceId, sessionId, text(params, 'expectedVersion'));
+    }
     case 'script.settings.list': return runtime.projectScripts.list(text(params, 'workspaceId'));
     case 'script.settings.save': return runtime.projectScripts.save(text(params, 'workspaceId'), text(params, 'expectedRevision'), record(params.script) as {id?: string; name: unknown; command: unknown});
     case 'script.settings.remove': return runtime.projectScripts.remove(text(params, 'workspaceId'), text(params, 'expectedRevision'), text(params, 'scriptId'));
@@ -196,7 +210,9 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       if (params.isolation !== undefined && params.isolation !== 'worktree') throw new Error('Unsupported session isolation');
       if (params.branch !== undefined && (params.isolation !== 'worktree' || typeof params.branch !== 'string')) throw new Error('A branch is only valid for a new worktree session');
       const workspace = text(params, 'workspaceId');
-      const options = {...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch})};
+      if (params.expectedSetupRevision !== undefined && typeof params.expectedSetupRevision !== 'string') throw new Error('Invalid setup revision');
+      if (params.skipSetup !== undefined && typeof params.skipSetup !== 'boolean') throw new Error('Invalid setup selection');
+      const options = {...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}), ...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch})};
       return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend, options) : chats.create(workspace, params.backend, options);
     }
     case 'chat.pin': {
@@ -248,7 +264,7 @@ input.on('line', line => {
       await writeFrame({ id, result });
     } catch (error) {
       await writeFrame({ id, error: {
-        code: error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+        code: error instanceof WorktreeInitializationError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

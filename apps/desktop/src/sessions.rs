@@ -37,16 +37,15 @@ impl HiveApp {
                 expanded,
                 expanded_tool_groups: self.expanded_tool_groups.clone(),
                 thinking: crate::thinking::ThinkingPosition::new(
-                    cx.global::<crate::composer::ComposerPreferences>().settings.expand_thinking,
-                    self
-                    .messages
-                    .iter()
-                    .flat_map(|message| {
+                    cx.global::<crate::composer::ComposerPreferences>()
+                        .settings
+                        .expand_thinking,
+                    self.messages.iter().flat_map(|message| {
                         message
                             .thinking
                             .iter()
                             .map(|block| ((message.id.clone(), block.index), block.expanded))
-                    })
+                    }),
                 ),
             },
         );
@@ -74,8 +73,12 @@ impl HiveApp {
             for message in &mut self.messages {
                 for block in &mut message.thinking {
                     block.expanded = position.thinking.expanded(
-                        cx.global::<crate::composer::ComposerPreferences>().settings.expand_thinking,
-                        &message.id, block.index, block.redacted,
+                        cx.global::<crate::composer::ComposerPreferences>()
+                            .settings
+                            .expand_thinking,
+                        &message.id,
+                        block.index,
+                        block.redacted,
                     );
                 }
             }
@@ -102,7 +105,10 @@ impl HiveApp {
                     if this.connection_generation != connection {
                         return;
                     }
-                    this.error = Some(crate::app::ErrorNotice::Detail("保存会话位置失败",error.to_string()));
+                    this.error = Some(crate::app::ErrorNotice::Detail(
+                        "保存会话位置失败",
+                        error.to_string(),
+                    ));
                     cx.notify();
                 });
             }
@@ -140,7 +146,12 @@ impl HiveApp {
                         }
                     }
                 }
-                Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("工作区响应格式错误",error.to_string())),
+                Err(error) => {
+                    this.error = Some(crate::app::ErrorNotice::Detail(
+                        "工作区响应格式错误",
+                        error.to_string(),
+                    ))
+                }
             },
         );
     }
@@ -201,7 +212,9 @@ impl HiveApp {
         }
         self.refresh_sessions(cx);
         self.refresh_members(cx);
-        if self.workflows.visible { self.refresh_workflows(cx); }
+        if self.workflows.visible {
+            self.refresh_workflows(cx);
+        }
         if self.member_panel {
             self.load_roles(cx);
         }
@@ -398,7 +411,10 @@ impl HiveApp {
                                     if this.session.is_none() {
                                         this.loading = false;
                                     }
-                                    this.error = Some(crate::app::ErrorNotice::Detail("会话列表格式错误",error.to_string()));
+                                    this.error = Some(crate::app::ErrorNotice::Detail(
+                                        "会话列表格式错误",
+                                        error.to_string(),
+                                    ));
                                 }
                             },
                             Err(error) => {
@@ -501,29 +517,47 @@ impl HiveApp {
                                 }
                             }
                         }
-                        Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("创建会话响应错误",error.to_string())),
+                        Err(error) => {
+                            this.error = Some(crate::app::ErrorNotice::Detail(
+                                "创建会话响应错误",
+                                error.to_string(),
+                            ))
+                        }
                     },
-                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("创建会话失败",format!("{backend}: {error}"))),
+                    Err(error) => {
+                        this.error = Some(crate::app::ErrorNotice::Detail(
+                            "创建会话失败",
+                            format!("{backend}: {error}"),
+                        ))
+                    }
                 }
                 cx.notify();
             });
         })
         .detach();
     }
-    pub(crate) fn accept_created_session(&mut self, session: Session, cx: &mut Context<Self>) -> bool {
-        if self.workspace.as_ref() != Some(&session.workspace_id) || !self.workspace_writes_allowed() {
+    pub(crate) fn accept_created_session(
+        &mut self,
+        session: Session,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.workspace.as_ref() != Some(&session.workspace_id)
+            || !self.workspace_writes_allowed()
+        {
             return false;
         }
         self.sessions.retain(|existing| existing.id != session.id);
         self.sessions.insert(0, session.clone());
         self.close_collaboration();
         let workspace_draft = format!("workspace:{}", session.workspace_id);
-        let transfer = self.session.is_none() && self.draft_owner.as_ref() == Some(&workspace_draft);
+        let transfer =
+            self.session.is_none() && self.draft_owner.as_ref() == Some(&workspace_draft);
         let session_key = format!("session:{}", session.id);
         self.open_session(session.id, cx);
         self.focus_project_input = true;
         if transfer {
-            self.attachments.transfer(&workspace_draft, session_key.clone());
+            self.attachments
+                .transfer(&workspace_draft, session_key.clone());
             if let Some(text) = self.drafts.remove(&workspace_draft) {
                 self.drafts.insert(session_key, text);
             }
@@ -591,7 +625,12 @@ impl HiveApp {
         self.show_session(id, cx);
     }
 
-    pub(crate) fn open_member_session(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_member_session(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use crate::app::ConversationSource;
         if !self.workspace_writes_allowed() || !self.sessions.iter().any(|s| s.id == id) {
             return;
@@ -623,7 +662,9 @@ impl HiveApp {
     }
 
     pub(crate) fn show_session(&mut self, id: String, cx: &mut Context<Self>) {
-        let Some(request_workspace) = self.workspace.clone() else { return; };
+        let Some(request_workspace) = self.workspace.clone() else {
+            return;
+        };
         self.focus_project_input = false;
         self.close_workflows();
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
@@ -692,6 +733,7 @@ impl HiveApp {
                         }
                         this.history_navigation.access = crate::history_navigation::HistoryAccess::snapshot(&open);
                         this.conversation_ready = true;
+                        this.history_navigation.initialization = open.initialization.clone();
                         this.status = "后台已连接".into();
                         if open.busy {
                             this.busy.insert(id.clone());

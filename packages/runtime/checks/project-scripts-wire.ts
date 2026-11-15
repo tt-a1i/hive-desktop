@@ -18,7 +18,7 @@ const until=async<T>(read:()=>T|Promise<T>,ready:(value:T)=>boolean)=>{const end
 try{
  assert.ok((await rpc('initialize')).result.hivePort);
  const ws=(await rpc('hive.request',{method:'POST',path:'/api/workspaces',body:{path:project,name:'Script wire',autostart_orchestrator:false}})).result;
- assert.deepEqual((await rpc('script.settings.list',{workspaceId:ws.id})).result,{version:1,revision:'0',scripts:[]});
+ assert.deepEqual((await rpc('script.settings.list',{workspaceId:ws.id})).result,{version:2,revision:'0',scripts:[]});
  const saved=(await rpc('script.settings.save',{workspaceId:ws.id,expectedRevision:'0',script:{name:'Native wire',command:'printf native-wire; exit 9'}})).result;
  const script=saved.scripts[0];
  const missing=await rpc('script.run',{workspaceId:ws.id,scriptId:randomUUID(),expectedVersion:randomUUID(),requestId:randomUUID()});

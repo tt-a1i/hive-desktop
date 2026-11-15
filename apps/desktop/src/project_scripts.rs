@@ -1,4 +1,4 @@
-mod model;
+pub(crate) mod model;
 use crate::{
     app::{HiveApp, SettingsSection},
     language::tr,
@@ -99,6 +99,7 @@ impl HiveApp {
 struct Form {
     name: Entity<InputState>,
     command: Entity<TextareaState>,
+    run_on_worktree_create: bool,
 }
 impl Form {
     fn new(script: Option<&Script>, window: &mut Window, cx: &mut Context<Page>) -> Self {
@@ -126,7 +127,11 @@ impl Form {
             }
         })
         .detach();
-        Self { name, command }
+        Self {
+            name,
+            command,
+            run_on_worktree_create: script.is_some_and(|s| s.run_on_worktree_create),
+        }
     }
 }
 #[derive(Clone)]
@@ -469,6 +474,7 @@ impl Page {
         };
         let name = form.name.read(cx).value().to_string();
         let command = form.command.read(cx).value().to_string();
+        let run_on_worktree_create = form.run_on_worktree_create;
         if remove && key.is_empty()
             || !remove && (name.trim().is_empty() || command.trim().is_empty())
         {
@@ -479,7 +485,8 @@ impl Page {
         if remove {
             params["scriptId"] = json!(key);
         } else {
-            params["script"] = json!({"name":name,"command":command});
+            params["script"] =
+                json!({"name":name,"command":command,"runOnWorktreeCreate":run_on_worktree_create});
             if !key.is_empty() {
                 params["script"]["id"] = json!(key);
             }
@@ -521,6 +528,7 @@ impl Page {
                             &key,
                             &name,
                             &command,
+                            run_on_worktree_create,
                             remove,
                         ) {
                             Ok(selected) => selected,
@@ -918,7 +926,7 @@ impl Render for Page {
         let scroll = self.scroll.clone();
         let content=v_flex().id("project-scripts-content").flex_shrink_0().min_w_0().gap_3().pr_1()
             .child(crate::text_reading::selectable_text("project-scripts-project",format!("{}: {}\n{}: {}",tr("项目"),self.workspace.as_deref().unwrap_or("—"),tr("项目目录"),self.scope.as_ref().map(|scope|scope.path.as_str()).unwrap_or("—"))))
-            .child(div().text_sm().child(tr("保存脚本与执行分开。仅手动运行已保存的完整命令；切换会话或关闭设置不会停止进程，退出应用会取消并等待进程退出。")))
+            .child(div().text_sm().child(tr("保存脚本与执行分开。可手动运行已保存的完整命令，也可指定一个脚本用于新工作树初始化；切换会话或关闭设置不会停止进程，退出应用会取消并等待进程退出。")))
             .when(!online,|view|view.child(div().id("scripts-offline").role(Role::Status).text_sm().text_color(Color::Error.get(cx)).child(if self.workspace.is_none(){tr("请先选择项目，再配置或运行项目脚本。")}else{tr("后台未连接，不能读取、保存或运行；本地编辑仍保留。")})))
             .child(h_flex().flex_wrap().gap_2()
                 .child(crate::focus_scroll::Reveal::new("reload-script-settings-reveal",&scroll,Button::new("reload-script-settings").outline().small().label(tr("刷新已保存脚本（保留编辑）")).disabled(!online||self.settings_busy).on_click(cx.listener(|this,_,_,cx|this.reload_settings(cx)))))
@@ -937,9 +945,12 @@ impl Render for Page {
                 .map(|s| {
                     s.name != name.read(cx).value().as_str()
                         || s.command != command.read(cx).value().as_str()
+                        || s.run_on_worktree_create != form.run_on_worktree_create
                 })
                 .unwrap_or(
-                    !name.read(cx).value().is_empty() || !command.read(cx).value().is_empty(),
+                    !name.read(cx).value().is_empty()
+                        || !command.read(cx).value().is_empty()
+                        || form.run_on_worktree_create,
                 );
             let can_save = settings_enabled
                 && dirty
@@ -958,6 +969,8 @@ impl Render for Page {
                 .child(crate::focus_scroll::Reveal::new("project-script-name-reveal",&scroll,Input::new(&name).aria_label(tr("脚本名称")).disabled(self.settings_busy)).track_focus(&name.read(cx).focus_handle(cx)))
                 .child(div().text_sm().child(tr("完整命令")))
                 .child(crate::focus_scroll::Reveal::new("project-script-command-reveal",&scroll,Textarea::new(&command).aria_label(tr("完整命令")).disabled(self.settings_busy)).track_focus(&command.read(cx).focus_handle(cx)))
+                .child(crate::focus_scroll::Reveal::new("script-worktree-setup-reveal",&scroll,Button::new("script-worktree-setup").outline().small().label(if form.run_on_worktree_create { tr("新工作树创建时运行：已启用") } else { tr("新工作树创建时运行：未启用") }).selected(form.run_on_worktree_create).disabled(self.settings_busy || (!form.run_on_worktree_create && state.snapshot.as_ref().is_some_and(|s| s.scripts.iter().any(|s| s.id != selected && s.run_on_worktree_create)))).on_click(cx.listener(|this,_,_,cx|{let state=this.state_mut().unwrap();let key=state.selected.clone();if let Some(form)=state.forms.get_mut(&key){form.run_on_worktree_create=!form.run_on_worktree_create;}this.notice=None;cx.notify();}))))
+                .child(div().text_xs().child(tr("只能指定一个初始化脚本。新工作树会等待此脚本完成后才能发送消息。")))
                 .when(dirty,|view|view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("有未保存的编辑。运行按钮只使用下方已保存的命令快照。"))))
                 .child(h_flex().flex_wrap().gap_2()
                     .child(crate::focus_scroll::Reveal::new("save-project-script-reveal",&scroll,Button::new("save-project-script").primary().label(tr("保存项目脚本")).disabled(!can_save||!selected.is_empty()&&saved.is_none()).on_click(cx.listener(|this,_,_,cx|this.save(false,cx)))))

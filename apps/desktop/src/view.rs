@@ -19,7 +19,9 @@ use gpui_kit::{
 pub(crate) fn untitled_session_label(session: &crate::protocol::Session) -> Option<&'static str> {
     // Saved origin labels an unnamed Worker without implying a current binding.
     // Keep conversation titles and explicit renames verbatim.
-    if session.custom_title || session.title != "新会话" { return None; }
+    if session.custom_title || session.title != "新会话" {
+        return None;
+    }
     match session.display_agent_id() {
         Some(_) if session.display_role_key() == "成员" => Some(tr("成员会话")),
         None => Some(tr("新会话")),
@@ -78,11 +80,7 @@ impl HiveApp {
                     .rounded_lg()
                     .label(tr("重新启动后台"))
                     .disabled(self.restarting)
-                    .on_click(
-                        cx.listener(|this, _, window, cx| {
-                            this.restart_backend(window, cx)
-                        }),
-                    ),
+                    .on_click(cx.listener(|this, _, window, cx| this.restart_backend(window, cx))),
             )
             .into_any_element()
     }
@@ -434,18 +432,33 @@ impl HiveApp {
         let dispatch = dispatch_id.map(str::to_owned);
         let worker = worker_id.map(str::to_owned);
         Some(
-            Button::new(SharedString::from(format!("historical-member-link-{source_id}")))
-                .custom(crate::palette::quiet_icon_variant(cx))
-                .compact().xsmall().h(px(22.)).px_1p5().rounded_md()
-                .label(label)
-                .accessibility_label(tr("打开原成员会话"))
-                .disabled(!self.connected || self.closing)
-                .tooltip(if self.history_navigation.loading { tr("正在查询原成员会话…") } else { tr("打开原成员会话") })
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if target.as_ref().is_some_and(|target| target.current(this)) {
-                        this.open_historical_member_session(dispatch.clone(), worker.clone(), window, cx);
-                    }
-                })),
+            Button::new(SharedString::from(format!(
+                "historical-member-link-{source_id}"
+            )))
+            .custom(crate::palette::quiet_icon_variant(cx))
+            .compact()
+            .xsmall()
+            .h(px(22.))
+            .px_1p5()
+            .rounded_md()
+            .label(label)
+            .accessibility_label(tr("打开原成员会话"))
+            .disabled(!self.connected || self.closing)
+            .tooltip(if self.history_navigation.loading {
+                tr("正在查询原成员会话…")
+            } else {
+                tr("打开原成员会话")
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if target.as_ref().is_some_and(|target| target.current(this)) {
+                    this.open_historical_member_session(
+                        dispatch.clone(),
+                        worker.clone(),
+                        window,
+                        cx,
+                    );
+                }
+            })),
         )
     }
 
@@ -804,9 +817,11 @@ impl HiveApp {
                             )),
                     ),
             ))
-            .child(div().flex_shrink_0().child(self.render_composer_controls(
-                window, welcome, running, can_send, cx,
-            )))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .child(self.render_composer_controls(window, welcome, running, can_send, cx)),
+            )
     }
 
     pub(crate) fn render_composer_status(
@@ -823,10 +838,27 @@ impl HiveApp {
             .gap_1p5()
             .when_some(self.current_history_access(), |surface, access| {
                 surface
-                    .when(self.conversation_is_read_only(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("此历史会话仅供阅读；草稿已保留，不能发送、继续或更改模型。"))))
-                    .when(self.conversation_is_read_only(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
+                    .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("此历史会话仅供阅读；草稿已保留，不能发送、继续或更改模型。"))))
+                    .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
                     .when_some(access.identity_error.as_ref(), |surface, error| surface.child(div().px_1().text_xs().text_color(Color::Error.get(cx)).child(format!("{}: {}", error.code, error.message))))
                     .when(access.history_incomplete || access.history_warning.is_some(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(access.history_warning.clone().unwrap_or_else(|| tr("此会话的历史记录不完整。").to_owned()))))
+            })
+            .when_some(self.history_navigation.initialization.as_ref(), |surface, setup| {
+                let ready = matches!(setup.status.as_str(), "succeeded" | "skipped" | "disabled");
+                let retryable = matches!(setup.status.as_str(), "pending" | "failed" | "cancelled" | "interrupted" | "unknown");
+                let uncertain = matches!(setup.status.as_str(), "unknown" | "interrupted") && setup.run_id.is_some();
+                let can_retry = setup.actions.as_ref().map(|a| a.retry).unwrap_or(!uncertain);
+                let can_skip = setup.actions.as_ref().map(|a| a.skip).unwrap_or(!uncertain);
+                let unavailable_reason = setup.actions.as_ref().and_then(|a| a.reason.as_ref());
+                let status = match setup.status.as_str() { "disabled" => tr("未启用"), "pending" => tr("等待中"), "running" => tr("运行中"), "succeeded" => tr("已成功"), "failed" => tr("失败"), "cancelled" => tr("已取消"), "interrupted" => tr("已中断"), "unknown" => tr("状态未知"), "skipped" => tr("已跳过"), _ => tr("状态未知") };
+                surface.child(div().id("worktree-initialization-status").role(Role::Status).px_1().text_xs().child(format!("{}: {} · {}{}", tr("工作树初始化"), status, setup.script.as_ref().map(|s| s.name.as_str()).unwrap_or("—"), setup.error_code.as_ref().map(|e| format!(" · {e}")).unwrap_or_default())))
+                     .when((!can_retry || !can_skip) && !ready, |v| v.child(div().px_1().text_xs().text_color(Color::Error.get(cx)).child(if uncertain { tr("无法确认原脚本进程已退出，不能重试或跳过。可刷新状态，或新建独立会话。") } else { tr("部分操作当前不可用；请刷新状态。") })))
+                    .when_some(unavailable_reason, |v, reason| v.child(div().px_1().text_xs().child(reason.clone())))
+                    .child(h_flex().flex_wrap().gap_2()
+                        .child(Button::new("refresh-worktree-initialization").outline().small().label(tr("刷新初始化状态")).on_click(cx.listener(|this,_,_,cx| this.refresh_initialization(cx))))
+                        .when(retryable, |v| v.child(Button::new("retry-worktree-initialization").outline().small().label(tr("重试原初始化脚本")).disabled(!can_retry).on_click(cx.listener(|this,_,_,cx| this.change_initialization(true,cx)))))
+                        .when(!ready, |v| v.child(Button::new("skip-worktree-initialization").outline().small().label(tr(if setup.status == "running" {"停止并跳过初始化"} else {"跳过初始化"})).disabled(!can_skip).on_click(cx.listener(|this,_,_,cx| this.change_initialization(false,cx)))))
+                        .when(ready, |v| v.child(Button::new("reopen-initialized-session").primary().small().label(tr("打开会话" )).on_click(cx.listener(|this,_,_,cx| { if let Some(id)=this.session.as_ref().map(|s|s.id.clone()) { this.show_session(id,cx); } })))))
             })
             .when(
                 !self.connected || running || pending > 0 || !self.status.is_background_connected(),
@@ -954,12 +986,14 @@ impl Render for HiveApp {
         let placeholder: String = tr("输入任何问题，支持粘贴图片与 / 命令").into();
         if self.input_placeholder != placeholder {
             self.input_placeholder = placeholder.clone();
-            self.input
-                .update(cx, |input, cx| input.set_placeholder(placeholder, window, cx));
+            self.input.update(cx, |input, cx| {
+                input.set_placeholder(placeholder, window, cx)
+            });
         }
         self.prepare_interactions(window, cx);
         self.prepare_terminal_view(cx);
-        let has_session_failure = self.agent_diagnostic.is_some() || self.delivery_failure.is_some();
+        let has_session_failure =
+            self.agent_diagnostic.is_some() || self.delivery_failure.is_some();
         let running = self
             .session
             .as_ref()
@@ -988,7 +1022,8 @@ impl Render for HiveApp {
             && self.model.is_none()
             && !self.loading;
         self.ensure_attachment_previews(cx);
-        let can_submit = !self.conversation_is_read_only() && self.attachments.ready(self.draft_target.as_ref())
+        let can_submit = !self.conversation_is_read_only()
+            && self.attachments.ready(self.draft_target.as_ref())
             && self.conversation_ready
             && self.session.is_some()
             && !needs_pi_model
@@ -1004,19 +1039,29 @@ impl Render for HiveApp {
         let has_text = !self.input.read(cx).value().trim().is_empty()
             || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
         self.composer_has_text = has_text;
-        let can_pick_project_to_send =
-            self.workspace.is_none() && has_text && self.connected && !self.loading && !self.closing;
+        let can_pick_project_to_send = self.workspace.is_none()
+            && has_text
+            && self.connected
+            && !self.loading
+            && !self.closing;
         self.composer_can_submit = can_submit || can_pick_project_to_send;
         let submit_on_enter = (can_submit || can_pick_project_to_send)
-            && cx.global::<crate::composer::ComposerPreferences>().settings.mode
+            && cx
+                .global::<crate::composer::ComposerPreferences>()
+                .settings
+                .mode
                 == crate::composer::SendMode::Enter;
         if submit_on_enter != self.composer_submit_on_enter {
             self.composer_submit_on_enter = submit_on_enter;
-            self.input
-                .update(cx, |input, cx| input.set_submit_on_enter(submit_on_enter, cx));
+            self.input.update(cx, |input, cx| {
+                input.set_submit_on_enter(submit_on_enter, cx)
+            });
         }
         self.sync_conversation_list(cx);
-        let welcome = self.session.as_ref().is_none_or(|s| s.display_agent_id().is_none())
+        let welcome = self
+            .session
+            .as_ref()
+            .is_none_or(|s| s.display_agent_id().is_none())
             && !open_failed
             && self.pending_reports.is_empty()
             && self.messages.is_empty()
@@ -1034,7 +1079,11 @@ impl Render for HiveApp {
             .session
             .as_ref()
             .filter(|_| {
-                !self.conversation_is_read_only() && self.conversation_ready && self.connected && !self.loading && !self.closing
+                !self.conversation_is_read_only()
+                    && self.conversation_ready
+                    && self.connected
+                    && !self.loading
+                    && !self.closing
             })
             .map(|session| {
                 (
@@ -1044,10 +1093,9 @@ impl Render for HiveApp {
                         .map(|model| format!("{}/{}", model.provider, model.id)),
                 )
             });
-        let loaded_reasoning_key =
-            window.use_keyed_state("reasoning-autoload-key", cx, |_, _| {
-                None::<(String, Option<String>)>
-            });
+        let loaded_reasoning_key = window.use_keyed_state("reasoning-autoload-key", cx, |_, _| {
+            None::<(String, Option<String>)>
+        });
         if let Some(key) = reasoning_key {
             if loaded_reasoning_key.read(cx).as_ref() != Some(&key)
                 && !self.reasoning_picker.loading

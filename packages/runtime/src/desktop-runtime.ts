@@ -1,3 +1,4 @@
+import { ProjectWorktreeInitialization } from './project-worktree-initialization.js';
 import { ProjectScriptSettings } from './project-script-settings.js';
 import { ProjectScriptRuns, type ScriptEvent } from './project-script-runs.js';
 import { Terminals, type TerminalEvent } from './terminal.js';
@@ -39,8 +40,11 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     scriptRuns = new ProjectScriptRuns(hive, projectScripts, dataDir, workspaceId => chats.assertWorkspaceAvailable(workspaceId),
       (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId), options.onScriptEvent);
   } catch (error) { await hive.close(); await chats.close(); throw error; }
+  const initialization = new ProjectWorktreeInitialization(dataDir, projectScripts, scriptRuns,
+    (workspaceId, sessionId) => chats.initializationPlan(workspaceId, sessionId), workspaceId => chats.assertWorkspaceAvailable(workspaceId));
+  chats.initialization = initialization;
   let closing: Promise<void> | undefined;
-  return { hive, chats, agents, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns,
+  return { hive, chats, agents, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns, initialization,
     createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; description?: unknown }) => {
       chats.assertWorkspaceAvailable(workspaceId);
       if (typeof input.name !== 'string' || !input.name.trim() || !isWorkerRole(input.role)
@@ -61,6 +65,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return hive.request(method, path, body);
     },
     close: () => closing ??= (async () => {
+      initialization.close();
       const scripts = await Promise.allSettled([scriptRuns.close()]);
       const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), terminal.close(), agentModels.close()]);
       const stage2 = await Promise.allSettled([hive.close()]);

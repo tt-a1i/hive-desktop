@@ -58,7 +58,9 @@ pub struct Session {
 impl Session {
     /// Presentation only: original identity is never a live run or token credential.
     pub(crate) fn display_agent_id(&self) -> Option<&str> {
-        self.origin_agent_id.as_deref().filter(|_| self.identity_state.as_deref() == Some("known"))
+        self.origin_agent_id
+            .as_deref()
+            .filter(|_| self.identity_state.as_deref() == Some("known"))
             .or(self.agent_id.as_deref())
     }
     pub(crate) fn display_role_key(&self) -> &'static str {
@@ -184,6 +186,8 @@ pub struct PendingUserInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
+    #[serde(default)]
+    pub initialization: Option<crate::history_navigation::Initialization>,
     #[serde(default)]
     pub read_only: bool,
     pub identity_error: Option<SnapshotIdentityError>,
@@ -435,7 +439,6 @@ pub enum TerminalFrame {
     },
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,10 +463,18 @@ mod tests {
         assert_eq!(input.text, "原始输入");
         assert!(!input.processing);
         assert_eq!(input.attachments.len(), 1);
-        assert_eq!(serde_json::to_value(&input.attachments[0]).unwrap(), attachment);
+        assert_eq!(
+            serde_json::to_value(&input.attachments[0]).unwrap(),
+            attachment
+        );
         let failure = snapshot.delivery_failure.unwrap();
         assert_eq!(failure.delivery_id, "delivery-1");
         assert_eq!(failure.message, "原生诊断：原文保留");
-        assert!(serde_json::from_value::<DeliveryFailure>(json!({"delivery_id":"wrong-case","message":"diagnostic"})).is_err());
+        assert!(
+            serde_json::from_value::<DeliveryFailure>(
+                json!({"delivery_id":"wrong-case","message":"diagnostic"})
+            )
+            .is_err()
+        );
     }
 }

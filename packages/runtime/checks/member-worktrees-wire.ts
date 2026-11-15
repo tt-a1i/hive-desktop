@@ -48,6 +48,6 @@ try{
  const retry=await wire.rpc('chat.worktrees.recover',{workspaceId:ws.id,sessionId:orphan.sessionId,memberId:workerId});assert.deepEqual(retry.result,recovered);
  assert.ok((await wire.rpc('chat.worktrees.recover',{workspaceId:ws.id,sessionId:orphan.sessionId,backend:'codex'})).error?.message.includes('SESSION_IDENTITY_CONFLICT'));
  assert.ok((await wire.rpc('chat.worktrees.recover',{workspaceId:ws.id,sessionId:orphan.sessionId,memberId:`${ws.id}:orchestrator`})).error?.message.includes('SESSION_IDENTITY_CONFLICT'));
- const intent=JSON.parse(await readFile(join(data,'worktrees',recovered.id,'intent.json'),'utf8'));assert.equal(intent.creation.originAgentId,workerId);assert.equal(intent.version,2);
+ const intent=JSON.parse(await readFile(join(data,'worktrees',recovered.id,'intent.json'),'utf8'));assert.equal(intent.creation.originAgentId,workerId);assert.equal(intent.version,3);assert.equal(intent.creation.version,2);assert.deepEqual(intent.creation.setup,{enabled:false});
  await wire.close();await writeFile(join(directory,'receipt.json'),JSON.stringify({pass:true,productionJsonl:true,realHiveSqliteGit:true,backends:sessions.map(item=>item.backend),noRuns:true,coldRecovery:true},null,2)+'\n');console.log(JSON.stringify({pass:true,directory}));
 }finally{db?.close();await wire.close();}
