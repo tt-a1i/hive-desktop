@@ -1,4 +1,4 @@
-import { defaultAgentProfileId, type AgentProfiles, type AgentProfileRef } from './agent-profiles.js';
+import type { AgentProfiles, AgentProfileRef } from './agent-profiles.js';
 import { nativeProfileLaunch } from './agent-session-factory.js';
 import {probeCodexLimits} from './codex-limits.js';
 import { probeExecutable } from './executable-probe.js';
@@ -8,7 +8,7 @@ import type { HiveHost } from './hive-host.js';
 
 export interface DesktopExecutables { piCommand: string | null; codexCommand: string | null; claudeCommand: string | null }
 export interface DesktopExecutableEnvironment { readonly HIVE_PI_COMMAND?: string; readonly HIVE_CODEX_COMMAND?: string; readonly HIVE_CLAUDE_COMMAND?: string }
-type EffectiveCommand = { command: string; source: 'env' | 'app' | 'path' };
+type EffectiveCommand = { command: string; source: 'env' | 'app' | 'path' | 'profile' };
 export interface DesktopSettingsSnapshot extends DesktopExecutables {
   effective: { pi: EffectiveCommand; codex: EffectiveCommand; claude: EffectiveCommand };
 }
@@ -127,8 +127,15 @@ export class DesktopSettings {
     if (errors.length > 1) throw new AggregateError(errors, 'Desktop settings probes failed to close');
   }
   async get(): Promise<DesktopSettingsSnapshot> {
-    const stored = await this.hive.request('GET', path) as { value: string | null };
-    return this.snapshot(stored.value === null ? { ...defaults } : executables(JSON.parse(stored.value)));
+    const configuration=await this.profiles?.desktopConfiguration();
+    const stored=configuration?.saved?undefined:await this.hive.request('GET', path) as {value:string|null};
+    const saved=configuration?.saved??(stored!.value===null?{...defaults}:executables(JSON.parse(stored!.value)));
+    const result=this.snapshot(saved);
+    if(configuration)for(const backend of ['pi','codex','claude'] as const){
+      const command=configuration.commands[backend];
+      result.effective[backend]={command,source:result.effective[backend].command===command?result.effective[backend].source:'profile'};
+    }
+    return result;
   }
   update(value: unknown): Promise<DesktopSettingsSnapshot> {
     const task = this.mutation.then(() => this.updateSaved(value));
@@ -140,13 +147,8 @@ export class DesktopSettings {
     if ((value as Record<string, unknown>).claudeCommand === undefined) saved = { ...saved, claudeCommand: (await this.get()).claudeCommand };
     const result = this.snapshot(saved);
     if (this.profiles) {
-      for (const backend of ['codex', 'pi-rpc', 'claude'] as const) {
-        const snapshot = await this.profiles.list();
-        const id = defaultAgentProfileId(backend);
-        const current = await this.profiles.getRef(await this.profiles.currentRef(id), backend);
-        const command = result.effective[backend === 'pi-rpc' ? 'pi' : backend].command;
-        if (current.launch.command !== command) await this.profiles.update(id, {launch: {...current.launch, command}}, snapshot.storeVersion);
-      }
+      await this.profiles.updateDesktopExecutables(saved,result.effective);
+      return this.get();
     }
     await this.hive.request('PUT', path, { value: JSON.stringify(saved) });
     return result;

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
-import type { DesktopSettingsSnapshot } from './desktop-settings.js';
+import type { DesktopExecutables, DesktopSettingsSnapshot } from './desktop-settings.js';
 import type { HiveHost } from './hive-host.js';
 
 export const AGENT_DRIVERS = ['pi', 'codex', 'pi-rpc', 'claude'] as const;
@@ -26,7 +26,7 @@ export interface AgentProfilesSnapshot { storeVersion: number; profiles: AgentPr
 export interface AgentProfileMutation { storeVersion: number; profile: ResolvedAgentProfile }
 export interface CreateAgentProfile { driver: AgentDriver; label: string; launch: AgentProfileLaunch }
 export interface UpdateAgentProfile { label?: string; launch?: AgentProfileLaunch }
-interface StoredProfiles extends AgentProfilesSnapshot { schemaVersion: 1 }
+interface StoredProfiles extends AgentProfilesSnapshot { schemaVersion: 1; desktopExecutables?: DesktopExecutables }
 
 export class AgentProfileError extends Error {
   constructor(readonly code: 'PROFILE_INVALID' | 'PROFILE_STORE_CORRUPT' | 'PROFILE_STORE_UNINITIALIZED'
@@ -110,14 +110,20 @@ function profile(value: unknown): AgentProfile {
   if (ref.revision !== revisions.length) throw invalid('Current profile revision must be the latest saved revision');
   return { id: ref.id, driver, label, enabled: input.enabled, currentRevision: ref.revision, revisions };
 }
+function desktopExecutables(value: unknown): DesktopExecutables {
+  const input=object(value);keys(input,['piCommand','codexCommand','claudeCommand']);
+  const result={} as DesktopExecutables;
+  for(const key of ['piCommand','codexCommand','claudeCommand'] as const) result[key]=input[key]===null?null:text(input[key],4096,key).trim();
+  return result;
+}
 function storedProfiles(value: unknown): StoredProfiles {
-  const input = object(value); keys(input, ['schemaVersion', 'storeVersion', 'profiles']);
+  const input = object(value); keys(input, ['schemaVersion', 'storeVersion', 'profiles', 'desktopExecutables']);
   if (input.schemaVersion !== 1 || !Number.isSafeInteger(input.storeVersion) || (input.storeVersion as number) < 1
     || !Array.isArray(input.profiles)) throw invalid('Invalid profile store');
   const profiles = input.profiles.map(profile);
   const ids = new Set(profiles.map(entry => entry.id));
   if (ids.size !== profiles.length || AGENT_DRIVERS.some(driver => !ids.has(defaultIds[driver]))) throw invalid('Invalid default/duplicate profiles');
-  return { schemaVersion: 1, storeVersion: input.storeVersion as number, profiles };
+  return { schemaVersion: 1, storeVersion: input.storeVersion as number, profiles, ...(input.desktopExecutables !== undefined && {desktopExecutables: desktopExecutables(input.desktopExecutables)}) };
 }
 function resolved(store: StoredProfiles, rawRef: AgentProfileRef, expectedDriver?: AgentDriver): ResolvedAgentProfile {
   const ref = validateAgentProfileRef(rawRef);
@@ -182,7 +188,14 @@ export class AgentProfiles {
     const captured: unknown = structuredClone(settings);
     return this.serial(async () => {
       const existing = await this.read();
-      if (existing) return this.snapshot(existing);
+      if (existing) {
+        if (!existing.desktopExecutables) {
+          existing.desktopExecutables=desktopExecutables({piCommand:(captured as DesktopSettingsSnapshot).piCommand,codexCommand:(captured as DesktopSettingsSnapshot).codexCommand,claudeCommand:(captured as DesktopSettingsSnapshot).claudeCommand});
+          existing.storeVersion++;
+          await this.write(existing);
+        }
+        return this.snapshot(existing);
+      }
       const effective = object(object(captured).effective);
       const profiles = AGENT_DRIVERS.map(driver => {
         const executable = driver === 'pi' ? undefined : object(effective[driver === 'pi-rpc' ? 'pi' : driver]).command;
@@ -190,13 +203,44 @@ export class AgentProfiles {
           revisions: [{ revision: 1, legacyConfiguration: true,
             launch: { ...(executable !== undefined && { command: executable }), args: [] } }] });
       });
-      const store: StoredProfiles = { schemaVersion: 1, storeVersion: 1, profiles };
+      const store: StoredProfiles = { schemaVersion: 1, storeVersion: 1, profiles, desktopExecutables:desktopExecutables({piCommand:(captured as DesktopSettingsSnapshot).piCommand,codexCommand:(captured as DesktopSettingsSnapshot).codexCommand,claudeCommand:(captured as DesktopSettingsSnapshot).claudeCommand}) };
       await this.write(store);
       return this.snapshot(store);
     });
   }
   private snapshot(store: StoredProfiles): AgentProfilesSnapshot {
     return structuredClone({ storeVersion: store.storeVersion, profiles: store.profiles });
+  }
+  /** Compatibility settings and executable defaults share this one durable row. */
+  desktopConfiguration(): Promise<{saved?:DesktopExecutables;commands:Record<'pi'|'codex'|'claude',string>}|undefined> {
+    return this.serial(async()=>{
+      const store=await this.read();if(!store)return undefined;
+      return {...(store.desktopExecutables&&{saved:structuredClone(store.desktopExecutables)}),commands:{
+        pi:resolved(store,{id:defaultIds['pi-rpc'],revision:store.profiles.find(p=>p.id===defaultIds['pi-rpc'])!.currentRevision}).launch.command!,
+        codex:resolved(store,{id:defaultIds.codex,revision:store.profiles.find(p=>p.id===defaultIds.codex)!.currentRevision}).launch.command!,
+        claude:resolved(store,{id:defaultIds.claude,revision:store.profiles.find(p=>p.id===defaultIds.claude)!.currentRevision}).launch.command!,
+      }};
+    });
+  }
+  updateDesktopExecutables(raw:DesktopExecutables,effective:DesktopSettingsSnapshot['effective']):Promise<void> {
+    const saved=desktopExecutables(raw),commands=structuredClone(effective);
+    return this.serial(async()=>{
+      const store=await this.requireStore();
+      if(!store.desktopExecutables)throw new AgentProfileError('PROFILE_STORE_UNINITIALIZED','Initialize compatibility settings before editing defaults');
+      let changed=JSON.stringify(saved)!==JSON.stringify(store.desktopExecutables);
+      for(const [driver,key,effectiveKey] of [['pi-rpc','piCommand','pi'],['codex','codexCommand','codex'],['claude','claudeCommand','claude']] as const){
+        if(saved[key]===store.desktopExecutables[key])continue;
+        const entry=store.profiles.find(profile=>profile.id===defaultIds[driver])!;
+        const launch=validateAgentProfileLaunch(driver,{...entry.revisions.at(-1)!.launch,command:commands[effectiveKey].command});
+        if(JSON.stringify(launch)===JSON.stringify(entry.revisions.at(-1)!.launch))continue;
+        if(!entry.enabled)throw new AgentProfileError('PROFILE_DISABLED','Enable this profile before creating a new configuration revision');
+        entry.revisions.push({revision:++entry.currentRevision,launch});changed=true;
+      }
+      if(!changed)return;
+      if(store.storeVersion===Number.MAX_SAFE_INTEGER)throw invalid('Profile store version is exhausted');
+      store.desktopExecutables=saved;store.storeVersion++;
+      await this.write(store);
+    });
   }
   list(): Promise<AgentProfilesSnapshot> { return this.serial(async () => this.snapshot(await this.requireStore())); }
   getRef(ref: AgentProfileRef, expectedDriver?: AgentDriver): Promise<ResolvedAgentProfile> {

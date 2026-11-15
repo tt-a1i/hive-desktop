@@ -1,0 +1,45 @@
+/** One canonical settings/profile row, real Hive SQLite; no executable/account access. */
+import assert from 'node:assert/strict';
+import {mkdir,mkdtemp} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createDesktopRuntime} from '../src/desktop-runtime.js';
+import {AGENT_PROFILES_STATE_PATH} from '../src/agent-profiles.js';
+const directory=await mkdtemp(join(tmpdir(),'hive-profile-atomic-')),data=join(directory,'state');
+const prior=process.env.PI_CODING_AGENT_DIR,offline=process.env.PI_OFFLINE;await mkdir(join(directory,'pi'));process.env.PI_CODING_AGENT_DIR=join(directory,'pi');process.env.PI_OFFLINE='1';
+let runtime:Awaited<ReturnType<typeof createDesktopRuntime>>|undefined;
+const open=()=>createDesktopRuntime(data,()=>{},{executableEnvironment:{}});
+try{
+ runtime=await open();const initial=await runtime.settings.get(),baseline=await runtime.profiles.list();
+ const original=runtime.hive.request.bind(runtime.hive);let writes=0;
+ runtime.hive.request=async(method,path,body)=>{if(method==='PUT'&&path===AGENT_PROFILES_STATE_PATH){writes++;throw Error('OWNED_BEFORE_COMMIT');}return original(method,path,body);};
+ await assert.rejects(runtime.settings.update({...initial,codexCommand:'/fixture/codex-new',claudeCommand:'/fixture/claude-new'}),/OWNED_BEFORE_COMMIT/);assert.equal(writes,1);
+ runtime.hive.request=original;assert.deepEqual(await runtime.profiles.list(),baseline);assert.deepEqual(await runtime.settings.get(),initial);
+ await runtime.close();runtime=await open();assert.deepEqual(await runtime.settings.get(),initial);assert.deepEqual(await runtime.profiles.list(),baseline);
+ const request=runtime.hive.request.bind(runtime.hive);let legacyWrites=0;
+ runtime.hive.request=async(method,path,body)=>{if(method==='PUT'&&path.endsWith('/desktop_executables')){legacyWrites++;throw Error('LEGACY_ROW_MUST_NOT_BE_WRITTEN');}return request(method,path,body);};
+ await runtime.settings.update({...initial,codexCommand:'/fixture/codex-atomic',claudeCommand:'/fixture/claude-atomic'});assert.equal(legacyWrites,0);
+ assert.equal((await runtime.profiles.currentRef('default-codex')).revision,2);assert.equal((await runtime.profiles.currentRef('default-claude')).revision,2);
+ assert.equal((await runtime.settings.get()).codexCommand,'/fixture/codex-atomic');assert.equal((await runtime.settings.get()).effective.codex.command,'/fixture/codex-atomic');runtime.hive.request=request;
+ const saved=await runtime.settings.get();await runtime.profiles.enableDisable('default-claude',false,(await runtime.profiles.list()).storeVersion);const beforeDisabled=await runtime.profiles.list();
+ await assert.rejects(runtime.settings.update({...saved,codexCommand:'/fixture/no-partial-codex',claudeCommand:'/fixture/disabled-claude'}),/PROFILE_DISABLED/);
+ assert.deepEqual(await runtime.profiles.list(),beforeDisabled);assert.equal((await runtime.settings.get()).codexCommand,saved.codexCommand);
+ await runtime.settings.update({...saved,codexCommand:'/fixture/unrelated-disabled-ok'});
+ const beforeLoss=await runtime.settings.get(),requestLoss=runtime.hive.request.bind(runtime.hive);
+ runtime.hive.request=async(method,path,body)=>{const result=await requestLoss(method,path,body);if(method==='PUT'&&path===AGENT_PROFILES_STATE_PATH)throw Error('OWNED_RESPONSE_LOST_AFTER_COMMIT');return result;};
+ await assert.rejects(runtime.settings.update({...beforeLoss,codexCommand:'/fixture/committed-response-lost'}),/OWNED_RESPONSE_LOST_AFTER_COMMIT/);assert.throws(()=>runtime!.profiles.currentRefSnapshot('default-codex'),/PROFILE_STORE_UNINITIALIZED/);
+ runtime.hive.request=requestLoss;const authoritative=await runtime.settings.get();assert.equal(authoritative.codexCommand,'/fixture/committed-response-lost');assert.equal(authoritative.effective.codex.command,authoritative.codexCommand);
+ const lossRef=runtime.profiles.currentRefSnapshot('default-codex');assert.equal((await runtime.profiles.getRef(lossRef)).launch.command,authoritative.codexCommand);
+ await runtime.close();runtime=await open();assert.equal((await runtime.settings.get()).effective.codex.command,'/fixture/committed-response-lost');assert.deepEqual(await runtime.profiles.currentRef('default-codex'),lossRef);
+ const beforeConcurrent=await runtime.settings.get(),version=(await runtime.profiles.list()).storeVersion,current=await runtime.profiles.getRef(lossRef);
+ await Promise.all([runtime.profiles.update('default-codex',{label:'Concurrent profile label',launch:{...current.launch,args:['--fixture-argument','kept']}},version),runtime.settings.update({...beforeConcurrent,codexCommand:'/fixture/concurrent-command'})]);
+ const concurrent=await runtime.profiles.getRef(await runtime.profiles.currentRef('default-codex'));assert.equal(concurrent.label,'Concurrent profile label');assert.deepEqual(concurrent.launch.args,['--fixture-argument','kept']);assert.equal(concurrent.launch.command,'/fixture/concurrent-command');
+ await runtime.profiles.update('default-codex',{launch:{...concurrent.launch,command:'/fixture/direct-profile-command'}},(await runtime.profiles.list()).storeVersion);
+ const effective=await runtime.settings.get();assert.equal(effective.effective.codex.command,'/fixture/direct-profile-command');assert.equal(effective.effective.codex.source,'profile');assert.equal((await runtime.profiles.getRef({id:'default-codex',revision:1})).launch.command,initial.effective.codex.command);
+ await runtime.close();runtime=await open();assert.equal((await runtime.settings.get()).effective.codex.command,'/fixture/direct-profile-command');
+ const beforeMetadataMigration=await runtime.profiles.getRef(await runtime.profiles.currentRef('default-codex'));
+ const row=await runtime.hive.request('GET',AGENT_PROFILES_STATE_PATH) as {value:string};const oldFormat=JSON.parse(row.value);delete oldFormat.desktopExecutables;
+ await runtime.hive.request('PUT',AGENT_PROFILES_STATE_PATH,{value:JSON.stringify(oldFormat)});await runtime.close();runtime=await open();
+ const afterMetadataMigration=await runtime.profiles.getRef(await runtime.profiles.currentRef('default-codex'));assert.deepEqual(afterMetadataMigration,beforeMetadataMigration);assert.equal((await runtime.settings.get()).effective.codex.command,'/fixture/direct-profile-command');assert.ok(JSON.parse((await runtime.hive.request('GET',AGENT_PROFILES_STATE_PATH) as {value:string}).value).desktopExecutables);
+ console.log(JSON.stringify({pass:true,directory,canonicalAtomicRow:true,beforeCommitUnchanged:true,afterCommitResponseLossReconciled:true,disabledBatchAtomic:true,concurrentFieldsRetained:true,noInference:true}));
+}finally{await runtime?.close();if(prior===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=prior;if(offline===undefined)delete process.env.PI_OFFLINE;else process.env.PI_OFFLINE=offline;}

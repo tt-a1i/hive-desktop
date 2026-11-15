@@ -309,7 +309,7 @@ function asError(value: unknown): Error { return value instanceof Error ? value 
 // The SDK history API has no per-call config directory. Run the same official
 // reader in a short-lived Node process with the native child environment, rather
 // than changing the shared host environment or reimplementing transcript parsing.
-async function readSessionMessages(sessionId: string, cwd: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<SessionMessage[]> {
+export async function readSessionMessages(sessionId: string, cwd: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<SessionMessage[]> {
   if (!env) return getSessionMessages(sessionId, { dir: cwd });
   const script = `import { getSessionMessages } from ${JSON.stringify(import.meta.resolve('@anthropic-ai/claude-agent-sdk'))};
     const [sessionId, dir] = process.argv.slice(1);

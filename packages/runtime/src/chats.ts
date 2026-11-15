@@ -18,7 +18,7 @@ import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalSt
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type ClaudeSessionHandle } from './agents/claude.js';
+import { readSessionMessages as readClaudeSessionMessages, type ClaudeSessionHandle } from './agents/claude.js';
 import { type CodexSessionHandle } from './agents/codex.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
@@ -26,7 +26,6 @@ import { ChatIndex, SessionIdentityError, type ChatRecord, type ChatBackend } fr
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import { externalPiBranch, externalPiMessage } from './agents/external-pi-history.js';
 import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
-import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeProjection } from './agents/claude-projection.js';
 import { readClaudeMetadata } from './agents/claude-metadata.js';
 import { CodexProjection } from './agents/codex-projection.js';
@@ -932,7 +931,9 @@ export class Chats implements StructuredSessionPort {
       } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
         const metadata = readClaudeMetadata(join(this.sessionDir, '..', 'claude'), record.nativeclaudeSessionId);
         const projection = new ClaudeProjection(() => metadata);
-        const messages = await getSessionMessages(record.nativeclaudeSessionId, {dir: record.execution?.path ?? workspace.path});
+        if (!record.profile) throw new Error('The saved Claude profile reference is missing; its native history directory is unavailable');
+        const profile=await this.profiles.getRef(record.profile,'claude');
+        const messages=await readClaudeSessionMessages(record.nativeclaudeSessionId,record.execution?.path ?? workspace.path,nativeProfileLaunch(profile).env,this.closeAbort.signal);
         for (const message of messages) projection.put(message);
         const snapshot = projection.snapshot(); history = snapshot.history; historyMessageIds = snapshot.historyMessageIds;
         historyWarning = 'Claude SDK history completeness cannot be verified; no native process was opened';
