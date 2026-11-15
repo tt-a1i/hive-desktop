@@ -40,12 +40,22 @@ ACP 使用明确配置的 stdio 程序，不创建虚构默认路径。已接生
 
 官方 `@agentclientprotocol/codex-acp@2.6.0` 与已安装 Codex `0.169.0` 已做隔离零模型预检，初始化、新建原生会话及生产 MCP 工具发现通过，原生返回基础模型为 Terra。实际空会话还未生成 rollout，随后 load 失败；未新建替代、发送提示或修改账号配置。此次预检未保留实际 provider 字段，不能宣称完整模型身份或冷恢复已验证。新一轮混合协作必须从原生响应核对模型和 provider，并独立记录预算。预检原始失败和版本化守卫证据保留于 `.artifacts/functional-parity/acp-vendor-plan/`。
 
-这证明受控协议与生产接线，不是任意真实厂商 ACP、账号、模型或 GUI 验收。ACP 桌面权限和不确定投递入口目前只有编译与纯逻辑检查，实际窗口验收、新包及 Windows 仍须继续。独立报告已保存到 `.artifacts/review/acp-{adapter,registration}-review.md`。
+Mac 隔离 QA 已用真实窗口验证 ACP 配置创建、固定 revision 和发送前零进程。原工作区主控存在未结责任时，首次发送正确拒绝并保留草稿；换用独立 Worker/worktree 后，明确发送启动受控 peer，并穿透生产 Hive MCP bridge。原生权限选择 `deny-once` 和停止 `session/cancel` 均由对端实际收到。
+
+受控 peer 在收到输入后退出，界面提供原文及来源预览、两步放弃和结果反馈。最初这些正文未出现在辅助功能树，`8da3800` 补齐文本标签后，实际 AX 操作读到了原文、风险说明和成功提示。正常冷重开明确显示空预览；Root 另只读核对两条具体 delivery 已不在持久队列，原始 ACP `sent` 未知审计仍保留，未宣称原生工作成功或撤销。原生程序 SHA256 `7bf47f2586833ace4425e6027351b056497bcb81a514ec55ed51ff2b795a9f6e`，QA runtime 为冻结 `e1c2b88`；原便携包未修改。
+
+证据在 `.artifacts/functional-parity/ui-qa/profile-checks/`：`acp3-{preview,confirm,discarded,cold-preview}.txt` 与 `root-independent-acp-discard.json`。图片不支持提示未完成实际文件选择验收，面板已取消，没有发送图片。上述证明受控协议、生产接线和限定真实窗口流程，不是任意厂商账号或模型验收。独立报告另存 `.artifacts/review/acp-{adapter,registration,env}-review.md`。
 
 ## 平台与包
 
 Windows 运行 `43665961985` 在 `9b1b5c2` 整组通过，包含进程监督、原生 PTY、项目脚本、解包及 Tester 原成员会话实际 UIA 操作。它不包含后续配置与 ACP 注册，不能推为最新平台验收。
 
+包含配置及 ACP 的 `e1c2b88` 运行 `43674991500`：进程监督与原生 CLI 通过，build 在 ACP 取消夹具失败。夹具固定等待 10 毫秒，Windows 尚未发出请求就触发取消，随后未及时观察 Promise 拒绝。`222d54d` 仅修夹具为立即观察结果、等待对端确认已收到 prompt 再取消，保留两种取消和未完成状态断言；源码检查与额外 80 毫秒持久化延迟检查通过。修复后的完整 Windows 流程仍须继续，不把本轮标为通过。
+
 未推广的 `portable-dd7c573` 使用优化原生程序、锁定生产依赖与官方校验 Node 22.23.3。核心、Codex 生命周期及 36 项包内功能检查通过。此包含四后端配置和独立 ACP 层，尚不含之后的 ACP 生产注册与最新反馈修复。包验收曾因旧队列夹具未初始化 profile、搜索夹具把启动迁移算作搜索写入而失败；保留失败日志，修正夹具后仍分别检查真实身份与只读不变，没有削弱生产保护。
+
+随后完整冻结 `portable-e1c2b88` 已含 ACP 生产注册及私有环境修复；包内链接、官方 Node 校验、core/真实 PTY、Codex 生命周期及 **39 项功能检查通过**。首次 Root 使用 legacy 部署参数造成失效工作区链接，被包装器拒绝；改用仓库既有 frozen+hoisted 部署，保留失败日志后重新完整验收。此包尚不含之后的 AX 文本补丁及只读责任快照，没有推广为 current/candidate。
+
+跨后端接续所需的 Hive 只读责任快照已单独接入，能观察已报告但尚未投递的责任、历史未答问题及 controller 回执等。真实 HTTP/SQLite、同一读事务、无 DB/WAL 写入、旧补丁保持及独立审查通过。它只证明 Hive 账本，不替代应用等待队列、原生消费收据或运行状态；接续功能本身仍在实施。检查 `checks/desktop-conversation-switch-state.ts` 的 controller 夹具只在 POSIX 验收，没有声称 Windows 通过。
 
 完整目标中的原地回退、跨后端接续、自动更新、语音、隔离 HTML、密码库及其余平台和真实流程继续开放。Claude/Antigravity 不进行登录或真实模型验证，Pi 登录失败不重试。
