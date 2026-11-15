@@ -1,6 +1,8 @@
 // Real Hive HTTP/SQLite + Pi SDK native history. Queues held paused: no model calls.
 import assert from 'node:assert/strict';
+import {once} from 'node:events';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {createServer} from 'node:http';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
@@ -9,10 +11,24 @@ import {createDesktopRuntime} from '../src/desktop-runtime.js';
 import type {Chats} from '../src/chats.js';
 import type {DeliveryQueue} from '../src/delivery-queue.js';
 const directory=await mkdtemp(join(tmpdir(),'hive-input-recovery-'));
-const agent=join(directory,'agent');await mkdir(agent);await writeFile(join(agent,'settings.json'),JSON.stringify({defaultProvider:'openai',defaultModel:'gpt-6.1-terra'}));process.env.PI_CODING_AGENT_DIR=agent;process.env.PI_OFFLINE='1';
+const agent=join(directory,'agent');
+const previous=process.env.PI_CODING_AGENT_DIR,offline=process.env.PI_OFFLINE;
+process.env.PI_CODING_AGENT_DIR=agent;process.env.PI_OFFLINE='1';
 const queues=(chats:Chats)=>(chats as unknown as {live:Map<string,{queue:DeliveryQueue}>}).live;
 let runtime:Awaited<ReturnType<typeof createDesktopRuntime>>|undefined;
+let modelRequests=0;
+const modelServer=createServer((_request,response)=>{
+ modelRequests++;
+ response.writeHead(500).end('Unexpected fixture model request');
+});
 try{
+ await mkdir(agent);
+ await writeFile(join(agent,'settings.json'),JSON.stringify({defaultProvider:'openai',defaultModel:'gpt-6.1-terra'}));
+ modelServer.listen(0,'127.0.0.1');
+ await once(modelServer,'listening');
+ const address=modelServer.address();
+ assert.ok(address&&typeof address!=='string');
+ await writeFile(join(agent,'models.json'),JSON.stringify({providers:{openai:{api:'openai-responses',baseUrl:`http://127.0.0.1:${address.port}/v1`,apiKey:'fixture-only',models:[{id:'gpt-6.1-terra',name:'Terra fixture metadata',input:['text']}]}}}));
  const state=join(directory,'state');runtime=await createDesktopRuntime(state,()=>{});const records=[];
  for(const name of ['manual-resume','explicit-input','failed-start']){
   const project=join(directory,name);await mkdir(project);
@@ -47,4 +63,16 @@ try{
  await runtime.close();runtime=undefined;runtime=await createDesktopRuntime(state,()=>{});
  for(const record of records){const chat=await runtime.chats.open(record.id);assert.equal(chat.pending,1);assert.equal(queues(runtime.chats).get(record.id)!.queue.pending[0]?.presentation?.origin,record.name==='explicit-input'?'user':'recovery');}
  console.log('User-input recovery passed: explicit cold input has one durable user delivery and recovery context; manual resume/fault cleanup still wake; cold spools retained. Real Hive/SQLite/Pi, no model requests.');
-}finally{await runtime?.close();await rm(directory,{recursive:true,force:true});}
+}finally{
+ try{await runtime?.close();}
+ finally{
+  try{
+   if(modelServer.listening)await new Promise<void>((resolve,reject)=>modelServer.close(error=>error?reject(error):resolve()));
+  }finally{
+   if(previous===undefined)delete process.env.PI_CODING_AGENT_DIR;else process.env.PI_CODING_AGENT_DIR=previous;
+   if(offline===undefined)delete process.env.PI_OFFLINE;else process.env.PI_OFFLINE=offline;
+   await rm(directory,{recursive:true,force:true});
+  }
+ }
+ assert.equal(modelRequests,0,'Fixture model must never receive a request');
+}
