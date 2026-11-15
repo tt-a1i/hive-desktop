@@ -91,6 +91,7 @@ export class DeliveryQueue {
    ...(this.mutationReason(item, index) && { reason: this.mutationReason(item, index) }),
   }] : []);
  }
+ get isPaused(): boolean { return this.paused; }
  get busy(): boolean { return this.running !== undefined; }
 
  /** Resolves after atomic persistence, without waiting for model execution. */

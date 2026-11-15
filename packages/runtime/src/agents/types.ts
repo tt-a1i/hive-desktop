@@ -45,7 +45,16 @@ export interface NativeCommand { name: string; description?: string; source: 'ex
 
 export interface ReasoningState { level: string; levels: string[]; description?: string }
 
+export interface SessionModeState {
+  backend: string; selected: string | null; applied: string | null; pendingNextTurn: boolean;
+  options: {id: string; label: string; description?: string}[]; description?: string;
+}
+
 export interface PiSessionHandle {
+  permissionMode?(): SessionModeState | Promise<SessionModeState>;
+  setPermissionMode?(mode: string): SessionModeState | Promise<SessionModeState>;
+  mode?(): SessionModeState | Promise<SessionModeState>;
+  setMode?(mode: string): SessionModeState | Promise<SessionModeState>;
   sessionId: string;
   readonly sessionFile: string | undefined;
   history(): readonly unknown[];

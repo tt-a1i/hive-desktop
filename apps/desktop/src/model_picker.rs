@@ -128,6 +128,8 @@ impl HiveApp {
                     this.reasoning_picker.model_scroll.set_offset(point(px(0.),px(0.)));
                     this.reasoning_picker.scroll.set_offset(point(px(0.),px(0.)));
                     this.load_reasoning(None, cx);
+                    this.load_mode(None, cx);
+                    this.load_permission_mode(None, cx);
                 }
                 cx.notify();
             }))
@@ -308,7 +310,8 @@ impl HiveApp {
                                         .overflow_y_scroll()
                                         .track_scroll(reasoning_scroll)
                                         .vertical_scrollbar(reasoning_scroll)
-                                        .child(self.render_reasoning_settings(running, cx)),
+                                        .child(self.render_reasoning_settings(running, cx))
+                                        .child(self.render_mode_settings(running, cx)),
                                 )),
                         ),
                 )

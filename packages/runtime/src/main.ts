@@ -240,6 +240,10 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.refreshPiModels': return chats.refreshPiModels(text(params, 'sessionId'));
     case 'chat.commands': return chats.commands(text(params, 'sessionId'));
     case 'chat.usage': return chats.usage(text(params, 'sessionId'));
+    case 'chat.permissionMode': return chats.mode(text(params, 'sessionId'), undefined, true);
+    case 'chat.setPermissionMode': return chats.mode(text(params, 'sessionId'), text(params, 'mode'), true);
+    case 'chat.mode': return chats.mode(text(params, 'sessionId'));
+    case 'chat.setMode': return chats.mode(text(params, 'sessionId'), text(params, 'mode'));
     case 'chat.reasoning': return chats.reasoning(text(params, 'sessionId'));
     case 'chat.setReasoning': return chats.reasoning(text(params, 'sessionId'), text(params, 'level'));
     case 'chat.setModel': return chats.setModel(text(params, 'sessionId'), text(params, 'provider'), text(params, 'modelId'));

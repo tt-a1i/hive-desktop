@@ -274,6 +274,7 @@ impl HiveApp {
                     if this.session.as_ref().map(|s| &s.id) == Some(&id) {
                         this.choosing_model = false;
                         this.reasoning_picker = Default::default();
+                        this.mode_picker = Default::default();
                         this.reset_usage();
                         this.unavailable_model = None;
                         this.model = Some(ModelIdentity {

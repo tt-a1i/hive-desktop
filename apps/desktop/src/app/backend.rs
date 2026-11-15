@@ -189,6 +189,7 @@ impl HiveApp {
         self.session_pin_loading.clear();
         self.session_archive_loading.clear();
         self.reasoning_picker = Default::default();
+        self.mode_picker = Default::default();
         self.command_picker = Default::default();
         self.reset_usage();
         self.attachments.reset_connection();

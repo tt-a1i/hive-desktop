@@ -27,6 +27,7 @@ export interface ChatRecord {
   pinned?: boolean;
   archived?: boolean;
   lastDeliveryFailure?: DeliveryFailure;
+  nativeMode?: {backend: 'codex' | 'claude'; mode?: string; permissionMode?: string};
   reasoning?: {provider:string;modelId:string;level:string};
   sessionFile: string | null;
   agentId?: string;
@@ -145,6 +146,14 @@ function isChatRecord(value: unknown): value is ChatRecord {
   if (record.lastDeliveryFailure !== undefined) {
     const failure=record.lastDeliveryFailure as Record<string,unknown>|null;
     if (!failure || typeof failure!=='object' || Array.isArray(failure) || typeof failure.deliveryId!=='string' || !failure.deliveryId || typeof failure.message!=='string') return false;
+  }
+  if (record.nativeMode !== undefined) {
+    const mode = record.nativeMode as Record<string,unknown> | null;
+    if (!mode || typeof mode !== 'object' || Array.isArray(mode) || mode.backend !== record.backend
+      || !['codex', 'claude'].includes(mode.backend as string)
+      || (mode.mode !== undefined && (typeof mode.mode !== 'string' || !mode.mode))
+      || (mode.permissionMode !== undefined && (mode.backend !== 'codex' || typeof mode.permissionMode !== 'string' || !mode.permissionMode))
+      || (mode.mode === undefined && mode.permissionMode === undefined)) return false;
   }
   if (record.reasoning !== undefined) {
     const setting = record.reasoning as Record<string,unknown> | null;

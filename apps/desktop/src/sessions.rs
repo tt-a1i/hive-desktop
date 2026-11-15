@@ -314,6 +314,7 @@ impl HiveApp {
         self.unavailable_model = None;
         self.choosing_model = false;
         self.reasoning_picker = Default::default();
+        self.mode_picker = Default::default();
         self.command_picker = Default::default();
         self.reset_usage();
         self.open_request += 1;
@@ -682,6 +683,7 @@ impl HiveApp {
         self.unread.remove(&id);
         self.choosing_model = false;
         self.reasoning_picker = Default::default();
+        self.mode_picker = Default::default();
         self.command_picker = Default::default();
         self.reset_usage();
         let request = self.open_request;

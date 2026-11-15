@@ -18,6 +18,7 @@ import { createClaudeTeamServer, type ClaudeTeamBinding } from './claude-team.js
 import type { PiEvent, PiSessionHandle } from './types.js';
 export interface ClaudeSessionOptions {
   cwd: string; sessionDir: string; sessionId?: string; command?: string; signal?: AbortSignal;
+  mode?: string;
   model?: { provider: string; id: string }; onEvent: (event: PiEvent) => void;
   teamBinding?: () => ClaudeTeamBinding | undefined;
   onUnexpectedExit?: (error: Error) => void;
@@ -34,6 +35,10 @@ type Run = { uuid: UUID; cancelled: boolean; controller: AbortController; tools:
 /** Launches the user's original Claude Code with the official SDK; never handles its credentials. */
 export async function createClaudeSession(options: ClaudeSessionOptions): Promise<ClaudeSessionHandle> {
   if (options.model && options.model.provider !== 'claude') throw new Error('Unsupported Claude model provider');
+  const modes = ['default', 'acceptEdits', 'plan'] as const;
+  const validMode = (value: string): value is typeof modes[number] => modes.some(mode => mode === value);
+  if (options.mode !== undefined && !validMode(options.mode)) throw new TypeError('Unsupported Claude session mode');
+  let selectedMode: typeof modes[number] = options.mode as typeof modes[number] | undefined ?? 'default';
   options.signal?.throwIfAborted();
   const executable = resolveClaudeExecutable(options.command ?? process.env.HIVE_CLAUDE_COMMAND ?? 'claude');
   const sessionId = options.sessionId ?? randomUUID();
@@ -94,7 +99,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
   const running: Query = query({ prompt: input, options: {
     cwd: options.cwd, pathToClaudeCodeExecutable: executable, abortController: controller,
     ...(options.sessionId ? { resume: options.sessionId } : { sessionId }), ...(options.model && { model: options.model.id }),
-    includePartialMessages: true, permissionMode: 'default', mcpServers: { [team.name]: team.server },
+    includePartialMessages: true, permissionMode: selectedMode, mcpServers: { [team.name]: team.server },
     canUseTool: options.canUseTool ?? ((toolName, input, nativeOptions) => interactions.request(toolName, input, nativeOptions)),
     onUserDialog: options.onUserDialog ?? (async request => { unsupported(`user dialog ${request.dialogKind}`); return { behavior: 'cancelled' }; }),
     ...(options.supportedDialogKinds && { supportedDialogKinds: options.supportedDialogKinds }),
@@ -163,6 +168,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
   try {
     options.signal?.throwIfAborted();
     const init = await claudeDeadline(running.initializationResult(), 'initialization', 30000, options.signal);
+    if (options.mode !== undefined) await claudeDeadline(running.setPermissionMode(selectedMode), 'restore permission mode', 30000, options.signal);
     models = await claudeDeadline(running.supportedModels(), 'model catalog', 30000, options.signal);
     const servers = await claudeDeadline(running.mcpServerStatus(), 'MCP handshake', 30000, options.signal);
     if (!servers.some(server => server.name === team.name && server.status === 'connected')) throw new Error('Claude Hive MCP server did not connect');
@@ -250,6 +256,16 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     async dispose() { if (active) throw new Error('Abort and await the active Claude prompt before disposal'); await close(); },
     currentModel: () => currentModel ? { provider: 'claude', id: currentModel, name: models.find(model => model.value === currentModel || model.resolvedModel === currentModel)?.displayName ?? currentModel } : undefined,
     listModels: () => models.map(model => ({ provider: 'claude', id: model.value, name: model.displayName, available: true })),
+    mode: () => ({backend: 'claude', selected: selectedMode, applied: selectedMode, pendingNextTurn: false,
+      options: modes.map(id => ({id, label: id})), description: 'Native Claude permission mode applies to this session. It does not constrain other agents.'}),
+    async setMode(mode) {
+      check(); if (active || interactions.snapshot().length) throw new Error('Claude session is busy');
+      if (!validMode(mode)) throw new TypeError('Unsupported Claude session mode');
+      await claudeDeadline(running.setPermissionMode(mode), 'set permission mode');
+      check(); selectedMode = mode;
+      return {backend: 'claude', selected: mode, applied: mode, pendingNextTurn: false,
+        options: modes.map(id => ({id, label: id})), description: 'Native Claude permission mode applies to this session. It does not constrain other agents.'};
+    },
     reasoning,
     async setReasoning(level) {
       check();if(active) throw new Error('Claude session is already processing a prompt');

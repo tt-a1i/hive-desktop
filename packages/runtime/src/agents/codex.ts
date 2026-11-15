@@ -6,6 +6,7 @@ import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-p
 import { CodexTransport, CodexRpcError, type CodexServerRequest } from './codex-transport.js';
 import { updateCodexSettings } from './codex-settings.js';
 import { mkdirSync } from 'node:fs';
+import { CodexModes } from './codex-modes.js';
 import { CodexInteractions } from './codex-interactions.js';
 import { CodexProjection } from './codex-projection.js';
 import { CodexEvents } from './codex-events.js';
@@ -27,6 +28,8 @@ export interface CodexSessionOptions {
   command?: string;
   signal?: AbortSignal;
   model?: { provider: string; id: string };
+  mode?: string;
+  permissionMode?: string;
   customTools?: CodexTool[];
   onEvent: (event: PiEvent) => void;
   /** Persist the durable backend reference before delivery completion is acknowledged. */
@@ -210,6 +213,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       }
     },
   });
+  const modes = new CodexModes(transport, options.mode, options.permissionMode);
   const resume = async (extra: Record<string, unknown> = {}) => {
     response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, excludeTurns: true, ...extra });
     if (response.thread.historyMode === 'legacy' && response.thread.turns.length === 0 && response.thread.path) {
@@ -291,12 +295,13 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       const page: { data: Model[]; nextCursor: string | null } = await transport.sendRequest('model/list', { cursor, includeHidden: true });
       models.push(...page.data); cursor = page.nextCursor;
     } while (cursor);
+    if (options.mode || options.permissionMode) await modes.validateInitial();
     const modelParams = options.model ? { model: options.model.id, modelProvider: options.model.provider } : {};
     if (options.threadId) {
-      await resume(modelParams);
+      await resume({ ...modelParams, ...modes.threadParams() });
       if (response!.thread.id !== options.threadId) throw new Error('Codex returned a different thread ID');
     }
-    else response = await transport.sendRequest<CodexThreadResponse>('thread/start', { cwd: options.cwd, allowProviderModelFallback: false, ...modelParams,
+    else response = await transport.sendRequest<CodexThreadResponse>('thread/start', { cwd: options.cwd, allowProviderModelFallback: false, ...modelParams, ...modes.threadParams(),
       dynamicTools: options.customTools?.map(tool => ({ type: 'function', name: tool.name, description: tool.description, inputSchema: tool.parameters })) ?? [] });
     if (options.model && (response!.model !== options.model.id || response!.modelProvider !== options.model.provider)) throw new Error('Codex did not select the requested model/provider');
     threadId = response!.thread.id;
@@ -347,6 +352,10 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     history: () => events!.snapshot().history,
     snapshot: () => events!.snapshot(),
     usage:()=>codexUsage(nativeUsage),
+    async mode() { await modes.load(); return modes.mode(); },
+    async setMode(mode) { ensureIdle(); await modes.load(); ensureIdle(); return modes.setMode(mode); },
+    async permissionMode() { await modes.load(); return modes.permissionMode(); },
+    async setPermissionMode(mode) { ensureIdle(); await modes.load(); ensureIdle(); return modes.setPermissionMode(mode); },
     interactions: () => interactions.snapshot(),
     respondInteraction: (id, response) => interactions.respond(id, response),
     completedDeliveryIds: () => [...metadata.completed],
@@ -372,10 +381,13 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       run.done = Promise.resolve().then(async () => {
         try {
           await notifyMaterialized();
+          const currentReasoning = modes.needsReasoning() ? await reasoning() : undefined;
           const started = await transport.sendRequest<{ turn: CodexTurn }>('turn/start', { threadId,
+            ...modes.turnParams(response.model, currentReasoning?.level === 'native' ? null : currentReasoning?.level ?? null),
             input: [...(text ? [{ type: 'text', text, text_elements: [] }] : []), ...images.map(image=>({type:'image',url:`data:${image.mimeType};base64,${image.data}`}))],
             ...(metadata.context.length > 0 && { additionalContext: { 'hive-context': { kind: 'application',
               value: metadata.context.map(entry => entry.text).join('\n\n') } } }) });
+          modes.accepted();
           run.turnId = started.turn.id;
           materialized = true;
           await notifyMaterialized();

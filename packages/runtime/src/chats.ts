@@ -45,7 +45,7 @@ import { createTeamTool, createTeamCommand } from './team-tool.js';
 interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
   executionPath: string;
-  failure?: Error; lastErrorMessage?: string; reasoningFailure?: Error; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
+  failure?: Error; lastErrorMessage?: string; reasoningFailure?: Error; modeChanging?: boolean; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string };
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
@@ -668,7 +668,7 @@ export class Chats implements StructuredSessionPort {
     const handle = record.backend === 'codex'
       ? await createCodexSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'codex'),
         command: executables!.codex.command, signal: this.closeAbort.signal,
-        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(model && { model }), onEvent,
+        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
         onUnexpectedExit,
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
         customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
@@ -677,7 +677,7 @@ export class Chats implements StructuredSessionPort {
       : record.backend === 'claude'
       ? await createClaudeSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'claude'),
         command: executables!.claude.command, signal: this.closeAbort.signal, ...(record.nativeclaudeSessionId && { sessionId: record.nativeclaudeSessionId }),
-        ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
+        ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
       : record.backend === 'pi-rpc'
       ? await createExternalPiSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'external-pi'),
         command: executables!.pi.command, signal: this.closeAbort.signal,
@@ -1040,7 +1040,7 @@ export class Chats implements StructuredSessionPort {
         }
       },
       ready: () => {
-        void this.initializationReady(this.index.get(id)).then(() => {if (!this.keepingPaused.has(id)) chat.queue.resume();})
+        void this.initializationReady(this.index.get(id)).then(() => {if (!this.keepingPaused.has(id) && !chat.modeChanging) chat.queue.resume();})
           .catch(error => this.recordDeliveryFailure(id, chat.queue, error instanceof Error ? error : new Error(String(error))));
       },
       stop: error => this.stopLive(id, chat, error),
@@ -1259,6 +1259,46 @@ export class Chats implements StructuredSessionPort {
     const record=this.index.get(id);this.assertWorkspaceAvailable(record.workspaceId);
     const chat=await this.require(id);
     return chat.handle.usage ? chat.handle.usage() : {source:record.backend,reports:[],notice:'该原生后端未提供用量读取接口。'};
+  }
+  async mode(id: string, selected?: unknown, permission = false) {
+    const record = this.index.get(id);
+    this.assertWorkspaceAvailable(record.workspaceId);
+    if (selected !== undefined && typeof selected !== 'string') throw new TypeError('Session mode must be text');
+    return this.withWorkspace(record.workspaceId, async () => {
+      const chat = await this.require(id);
+      const read = permission ? chat.handle.permissionMode?.bind(chat.handle) : chat.handle.mode?.bind(chat.handle);
+      const write = permission ? chat.handle.setPermissionMode?.bind(chat.handle) : chat.handle.setMode?.bind(chat.handle);
+      if (!read || !write) {
+        if (selected !== undefined) throw new Error('This backend does not support native session modes');
+        return {backend: record.backend, selected: null, applied: null, pendingNextTurn: false, options: [],
+          description: 'This backend does not support native session modes.'};
+      }
+      if (selected === undefined) return read();
+      // Never change the meaning of an already accepted delivery or interaction.
+      if (chat.queue.busy || chat.queue.pendingCount || chat.handle.interactions?.().length)
+        throw new Error('Finish or remove queued messages and interactions before changing session mode');
+      const state = await read();
+      if (!state.options.some(option => option.id === selected)) throw new TypeError('Unsupported native session mode');
+      if (chat.queue.busy || chat.queue.pendingCount || chat.handle.interactions?.().length)
+        throw new Error('Conversation became busy before changing session mode');
+      const wasPaused = chat.queue.isPaused;
+      chat.modeChanging = true;
+      try {
+        await chat.queue.pause();
+        return await this.changeNativeSettings(id, chat, async () => {
+          const state = await write(selected as string);
+          if (state.selected !== selected || (state.applied !== selected && !state.pendingNextTurn))
+            throw new Error('Native session did not confirm the requested mode');
+          if (record.backend !== 'codex' && record.backend !== 'claude') throw new Error('Unsupported native mode backend');
+          const nativeMode: NonNullable<ChatRecord['nativeMode']> = {...this.index.get(id).nativeMode, backend: record.backend, [permission ? 'permissionMode' : 'mode']: selected as string};
+          this.index.save({...this.index.get(id), nativeMode});
+          return state;
+        });
+      } finally {
+        delete chat.modeChanging;
+        if (!wasPaused && !chat.failure && !chat.cleanup) chat.queue.resume();
+      }
+    });
   }
   async reasoning(id: string, level?: unknown) {
     const record = this.index.get(id);
