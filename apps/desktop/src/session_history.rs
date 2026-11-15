@@ -202,6 +202,50 @@ impl HistoryDialog {
         self.request_id = None;
         self.call("history.fork.preview", json!({"workspaceId":self.workspace,"sessionId":self.session,"boundary":{"nativeUserItemId":self.item},"code":code,"edit":self.edit}), cx);
     }
+    fn open_ready(&mut self, value: Value, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || !self.current(cx) || value["state"] != "ready" {
+            return;
+        }
+        let Ok(session) =
+            serde_json::from_value::<crate::protocol::Session>(value["session"].clone())
+        else {
+            self.error = Some(tr("操作结果缺少可打开的会话。").into());
+            cx.notify();
+            return;
+        };
+        if session.workspace_id != self.workspace {
+            self.error = Some(tr("操作结果中的项目不匹配。").into());
+            cx.notify();
+            return;
+        }
+        self.busy = true;
+        let window = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                if !this.current(cx) {
+                    cx.notify();
+                    return;
+                }
+                let accepted = window
+                    .update(cx, |_, window, cx| {
+                        this.app.update(cx, |app, cx| {
+                            app.sessions.retain(|s| s.id != session.id);
+                            app.sessions.insert(0, session.clone());
+                            app.show_session(session.id.clone(), cx);
+                            window.close_dialog(cx);
+                        })
+                    })
+                    .is_ok_and(|r| r.is_ok());
+                if !accepted {
+                    this.error = Some(tr("无法打开分叉会话。").into());
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
     fn apply(&mut self, cx: &mut Context<Self>) {
         let Some(token) = self
             .preview
@@ -231,6 +275,7 @@ impl Render for HistoryDialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current(cx);
         let disabled = !current || self.busy || self.operation.is_some();
+        let selection_disabled = disabled || self.request_id.is_some();
         let allowed = self
             .capabilities
             .as_ref()
@@ -247,24 +292,24 @@ impl Render for HistoryDialog {
             .when(!current, |v| v.child(div().id("history-context-changed").role(Role::Alert).child(tr("项目、会话或后台连接已变化，请关闭后重新打开。"))))
             .when_some(self.capabilities.as_ref().and_then(|v| v["reason"].as_str()).map(str::to_owned), |v, reason| v.child(div().text_sm().child(reason)))
             .child(h_flex().gap_2().flex_wrap()
-                .child(Button::new("history-current-code").outline().small().selected(self.selected.is_none()).disabled(disabled).label(tr("历史对话 + 当前代码"))
+                .child(Button::new("history-current-code").outline().small().selected(self.selected.is_none()).disabled(selection_disabled).label(tr("历史对话 + 当前代码"))
                     .on_click(cx.listener(|this, _, _, cx| {this.selected = None; this.preview = None; cx.notify();})))
                 .children(checkpoints.into_iter().enumerate().filter_map(|(i, checkpoint)| {
                     let id = checkpoint["checkpointId"].as_str()?.to_owned(); let selected = self.selected.as_ref() == Some(&id); let label = format!("{} {}", tr("检查点"), id);
-                    Some(Button::new(("history-checkpoint", i)).outline().small().selected(selected).disabled(disabled).label(label)
+                    Some(Button::new(("history-checkpoint", i)).outline().small().selected(selected).disabled(selection_disabled).label(label)
                         .on_click(cx.listener(move |this, _, _, cx| {this.selected = Some(id.clone()); this.preview = None; cx.notify();})))
                 })))
-            .child(Button::new("history-checkpoint-preview").outline().small().disabled(disabled || !can_checkpoint).label(tr("预览当前代码检查点"))
+            .child(Button::new("history-checkpoint-preview").outline().small().disabled(selection_disabled || !can_checkpoint).label(tr("预览当前代码检查点"))
                 .on_click(cx.listener(|this, _, _, cx| this.call("checkpoint.preview", this.params(), cx))))
             .when_some(self.checkpoint_preview.clone(), |v, p| {
                 let exclusions = strings(&p["exclusions"]); let version = p["version"].as_str().unwrap_or_default().to_owned();
                 let can = p["canCapture"] == true && !version.is_empty();
                 v.child(div().text_sm().child(format!("{}: {}", tr("排除的忽略文件"), exclusions)))
                     .child(div().text_sm().child(strings(&p["unsupported"])))
-                    .child(Button::new("history-checkpoint-capture").outline().small().disabled(disabled || !can).label(tr("保存检查点"))
+                    .child(Button::new("history-checkpoint-capture").outline().small().disabled(selection_disabled || !can).label(tr("保存检查点"))
                         .on_click(cx.listener(move |this, _, _, cx| {let mut params = this.params(); params["expectedVersion"] = json!(version); params["requestId"] = json!(this.capture_request_id.get_or_insert_with(|| uuid::Uuid::new_v4().to_string()).clone()); this.call("checkpoint.capture", params, cx);})))
             })
-            .child(Button::new("history-fork-preview").outline().small().disabled(disabled || !allowed).label(tr("预览分叉"))
+            .child(Button::new("history-fork-preview").outline().small().disabled(selection_disabled || !allowed).label(tr("预览分叉"))
                 .on_click(cx.listener(|this, _, _, cx| this.fork_preview(cx))))
             .when_some(self.preview.clone(), |v, p| {
                 let relation = p["codeRelation"]["label"].as_str().unwrap_or_default().to_owned();
@@ -283,6 +328,8 @@ impl Render for HistoryDialog {
                 let operation_id = op["operationId"].as_str().unwrap_or_default().to_owned();
                 v.child(div().id("history-operation-status").role(Role::Status).text_sm().child(format!("{}: {} · {}", tr("操作状态"), state, operation_id)))
                     .when_some(op["error"].as_str().map(str::to_owned), |v, e| v.child(div().text_sm().child(e)))
+                    .when(op["state"] == "ready", |v| v.child(Button::new("history-open-ready").outline().small().disabled(!current || self.busy).label(tr("打开分叉会话"))
+                        .on_click(cx.listener(move |this, _, window, cx| this.open_ready(op.clone(), window, cx)))))
                     .child(Button::new("history-operation-refresh").outline().small().disabled(!current || self.busy || operation_id.is_empty()).label(tr("刷新操作状态"))
                         .on_click(cx.listener(move |this, _, _, cx| this.call("history.operations.get", json!({"workspaceId":this.workspace,"operationId":operation_id}), cx))))
             })
@@ -295,5 +342,368 @@ impl Render for HistoryDialog {
                     .on_click(cx.listener(move |this, _, _, cx| this.call("history.operations.get", json!({"workspaceId":this.workspace,"operationId":id}), cx))))
             }))
             .when_some(self.error.clone(), |v, e| v.child(div().id("history-error").role(Role::Alert).text_sm().text_color(Color::Error.get(cx)).child(e)))
+    }
+}
+
+struct OperationsDialog {
+    app: WeakEntity<HiveApp>,
+    runtime: Arc<Runtime>,
+    workspace: String,
+    connection: u64,
+    operations: Vec<Value>,
+    busy: bool,
+    error: Option<String>,
+}
+impl HiveApp {
+    pub(crate) fn open_history_operations(
+        &mut self,
+        project: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connected || self.closing || window.has_active_dialog(cx) {
+            return;
+        }
+        let Some(workspace) = project.or_else(|| self.workspace.clone()) else {
+            return;
+        };
+        if self.workspace.as_ref() != Some(&workspace) {
+            self.select_workspace(workspace.clone(), cx);
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let connection = self.connection_generation;
+        let app = cx.weak_entity();
+        let editor = cx.new(|cx: &mut Context<OperationsDialog>| {
+            let editor = OperationsDialog {
+                app,
+                runtime,
+                workspace,
+                connection,
+                operations: vec![],
+                busy: false,
+                error: None,
+            };
+            let weak = cx.weak_entity();
+            cx.defer(move |cx| {
+                let _ = weak.update(cx, |this, cx| this.load(cx));
+            });
+            editor
+        });
+        let cancel = editor.clone();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let cancel = cancel.clone();
+            let busy = editor.read(cx).busy;
+            dialog
+                .title(tr("历史操作"))
+                .w(px(620.))
+                .overlay_closable(false)
+                .keyboard(!busy)
+                .close_button(!busy)
+                .on_ok(|_, _, _| false)
+                .on_cancel(move |_, _, cx| !cancel.read(cx).busy)
+                .child(editor.clone())
+        });
+    }
+}
+impl OperationsDialog {
+    fn current(&self, cx: &App) -> bool {
+        self.app.upgrade().is_some_and(|e| {
+            let app = e.read(cx);
+            app.connected
+                && !app.closing
+                && app.connection_generation == self.connection
+                && app.workspace.as_deref() == Some(&self.workspace)
+                && app
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|r| Arc::ptr_eq(r, &self.runtime))
+        })
+    }
+    fn load(&mut self, cx: &mut Context<Self>) {
+        if self.busy || !self.current(cx) {
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        let runtime = self.runtime.clone();
+        let workspace = self.workspace.clone();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request("history.operations.list", json!({"workspaceId":workspace}))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                if this.current(cx) {
+                    match result {
+                        Ok(v) => {
+                            this.operations =
+                                v["operations"].as_array().cloned().unwrap_or_default()
+                        }
+                        Err(e) => this.error = Some(e),
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn open_ready(&mut self, value: Value, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || !self.current(cx) || value["state"] != "ready" {
+            return;
+        }
+        let Ok(session) =
+            serde_json::from_value::<crate::protocol::Session>(value["session"].clone())
+        else {
+            self.error = Some(tr("操作结果缺少可打开的会话。").into());
+            cx.notify();
+            return;
+        };
+        if session.workspace_id != self.workspace {
+            self.error = Some(tr("操作结果中的项目不匹配。").into());
+            cx.notify();
+            return;
+        }
+        self.busy = true;
+        let window = window.window_handle();
+        cx.spawn(async move |this, cx| {
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                if !this.current(cx) {
+                    cx.notify();
+                    return;
+                }
+                let accepted = window
+                    .update(cx, |_, window, cx| {
+                        this.app.update(cx, |app, cx| {
+                            app.sessions.retain(|s| s.id != session.id);
+                            app.sessions.insert(0, session.clone());
+                            app.show_session(session.id.clone(), cx);
+                            window.close_dialog(cx);
+                        })
+                    })
+                    .is_ok_and(|r| r.is_ok());
+                if !accepted {
+                    this.error = Some(tr("无法打开分叉会话。").into());
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+}
+impl Render for OperationsDialog {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self.current(cx);
+        v_flex()
+            .id("workspace-history-operations")
+            .gap_2()
+            .max_h(px(480.))
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .text_sm()
+                    .child(tr("查看此项目的历史分叉操作。未确定的操作不会自动重试。")),
+            )
+            .when(!current, |v| {
+                v.child(
+                    div()
+                        .id("operations-context-changed")
+                        .role(Role::Alert)
+                        .child(tr("项目或后台连接已变化，请关闭后重新打开。")),
+                )
+            })
+            .child(
+                Button::new("workspace-operations-refresh")
+                    .outline()
+                    .small()
+                    .disabled(!current || self.busy)
+                    .label(tr("刷新操作状态"))
+                    .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
+            )
+            .when(!self.busy && self.operations.is_empty(), |v| {
+                v.child(div().text_sm().child(tr("没有历史操作。")))
+            })
+            .children(
+                self.operations
+                    .clone()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, op)| {
+                        let id = op["operationId"].as_str().unwrap_or_default();
+                        let state = op["state"].as_str().unwrap_or("unknown");
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child(format!("{id} · {state}")))
+                            .when_some(op["error"].as_str().map(str::to_owned), |v, e| {
+                                v.child(div().text_sm().child(e))
+                            })
+                            .when(op["state"] == "ready", |v| {
+                                v.child(
+                                    Button::new(("open-history-child", i))
+                                        .outline()
+                                        .small()
+                                        .disabled(!current || self.busy)
+                                        .label(tr("打开分叉会话"))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_ready(op.clone(), window, cx)
+                                        })),
+                                )
+                            })
+                    }),
+            )
+            .when_some(self.error.clone(), |v, e| {
+                v.child(
+                    div()
+                        .id("operations-error")
+                        .role(Role::Alert)
+                        .text_sm()
+                        .text_color(Color::Error.get(cx))
+                        .child(e),
+                )
+            })
+    }
+}
+
+impl HiveApp {
+    pub(crate) fn restore_fork_draft(
+        &mut self,
+        session: String,
+        workspace: String,
+        operation: String,
+        draft: Value,
+        cx: &mut Context<Self>,
+    ) {
+        let key = format!("session:{session}");
+        if self
+            .draft_store
+            .as_ref()
+            .is_some_and(|s| s.fork_imported(&key, &operation))
+        {
+            return;
+        }
+        let Some(text) = draft["text"].as_str().map(str::to_owned) else {
+            return;
+        };
+        let Some(ids) = draft["attachmentIds"].as_array().and_then(|v| {
+            v.iter()
+                .map(|id| id.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+        }) else {
+            return;
+        };
+        if draft["missingAttachments"]
+            .as_array()
+            .is_none_or(|v| !v.is_empty())
+        {
+            self.error = Some(crate::app::ErrorNotice::Conversation(Box::new(
+                tr("分叉草稿有缺失附件，未导入；请检查原会话。").into(),
+            )));
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let connection = self.connection_generation;
+        let request = self.open_request;
+        cx.spawn(async move |this, cx| {
+            let result = if ids.is_empty() {
+                Ok(vec![])
+            } else {
+                runtime
+                    .request(
+                        "chat.attachments.get",
+                        json!({"workspaceId":workspace,"ids":ids}),
+                    )
+                    .await
+                    .and_then(|v| {
+                        let items = v.as_array().ok_or("Invalid attachment response")?;
+                        let refs = items
+                            .iter()
+                            .map(|v| {
+                                serde_json::from_value::<crate::protocol::AttachmentRef>(
+                                    v["attachment"].clone(),
+                                )
+                                .map_err(|e| e.to_string())
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        if refs.len() != ids.len()
+                            || refs
+                                .iter()
+                                .zip(&ids)
+                                .any(|(r, id)| &r.id != id || r.workspace_id != workspace)
+                        {
+                            return Err("Attachment identity mismatch".into());
+                        }
+                        Ok(refs)
+                    })
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection
+                    || this.open_request != request
+                    || this.workspace.as_deref() != Some(&workspace)
+                    || this.session.as_ref().is_none_or(|s| s.id != session)
+                {
+                    return;
+                }
+                let refs = match result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(
+                            format!("{}: {e}", tr("无法恢复分叉草稿附件")).into(),
+                        )));
+                        cx.notify();
+                        return;
+                    }
+                };
+                if this.drafts.get(&key).is_some_and(|v| !v.is_empty())
+                    || !this.attachments.refs(Some(&key)).is_empty()
+                    || (this.draft_owner.as_ref() == Some(&key)
+                        && !this.input.read(cx).value().is_empty())
+                {
+                    let marked = this.flush_drafts(cx).and_then(|_| {
+                        this.draft_store
+                            .as_mut()
+                            .ok_or_else(|| std::io::Error::other("Draft store unavailable"))?
+                            .mark_existing_fork(&key, &operation)
+                    });
+                    if let Err(e) = marked {
+                        this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(
+                            format!("{}: {e}", tr("无法保存分叉草稿")).into(),
+                        )));
+                        cx.notify();
+                    }
+                    return;
+                }
+                let result = this
+                    .draft_store
+                    .as_mut()
+                    .ok_or_else(|| "Draft store unavailable".to_owned())
+                    .and_then(|store| {
+                        store
+                            .import_fork(&key, &operation, text.clone(), refs.clone())
+                            .map_err(|e| e.to_string())
+                    });
+                match result {
+                    Ok(()) => {
+                        this.drafts.insert(key.clone(), text);
+                        if !refs.is_empty() {
+                            this.attachments.drafts.insert(key.clone(), refs);
+                        }
+                        this.draft_owner = None;
+                    }
+                    Err(e) => {
+                        this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(
+                            format!("{}: {e}", tr("无法保存分叉草稿")).into(),
+                        )))
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }

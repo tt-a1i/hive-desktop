@@ -290,7 +290,12 @@ impl HiveApp {
             let isolated_project = target.clone();
             let pending = weak.clone();
             let pending_project = target.clone();
+            let operations = weak.clone();
+            let operations_project = target.clone();
             menu.separator()
+                .item(PopupMenuItem::new(tr("查看历史操作…")).on_click(move |_, window, cx| {
+                    let _ = operations.update(cx, |this, cx| this.open_history_operations(operations_project.clone(), window, cx));
+                }))
                 .item(PopupMenuItem::new(tr("新建独立工作树会话…")).on_click(move |_, window, cx| {
                     let _ = isolated.update(cx, |this, cx| this.open_session_execution(isolated_project.clone(), false, window, cx));
                 }))

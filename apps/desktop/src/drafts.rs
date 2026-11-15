@@ -19,6 +19,8 @@ struct Draft {
     attachments: Vec<crate::attachments::AttachmentRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     task: Option<crate::collaboration::SavedTaskDraft>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fork_imported: Option<String>,
 }
 
 impl Draft {
@@ -81,6 +83,7 @@ impl DraftStore {
                     failed: Vec::new(),
                     attachments: Vec::new(),
                     task: None,
+                    fork_imported: self.saved.get(key).and_then(|d| d.fork_imported.clone()),
                 },
             );
         }
@@ -93,6 +96,7 @@ impl DraftStore {
                     failed: Vec::new(),
                     attachments: Vec::new(),
                     task: None,
+                    fork_imported: None,
                 })
                 .failed
                 .clone_from(messages);
@@ -105,6 +109,7 @@ impl DraftStore {
                     failed: Vec::new(),
                     attachments: Vec::new(),
                     task: None,
+                    fork_imported: None,
                 })
                 .attachments
                 .clone_from(items);
@@ -119,8 +124,23 @@ impl DraftStore {
                     failed: Vec::new(),
                     attachments: Vec::new(),
                     task: Some(task.clone()),
+                    fork_imported: None,
                 },
             );
+        }
+        for (key, saved) in &self.saved {
+            if saved.fork_imported.is_some() {
+                next.entry(key.clone())
+                    .or_insert_with(|| Draft {
+                        key: key.clone(),
+                        input: String::new(),
+                        failed: vec![],
+                        attachments: vec![],
+                        task: None,
+                        fork_imported: saved.fork_imported.clone(),
+                    })
+                    .fork_imported = saved.fork_imported.clone();
+            }
         }
         for (key, draft) in &next {
             if self.saved.get(key) == Some(draft) {
@@ -146,6 +166,54 @@ impl DraftStore {
                 }
             }
         }
+        Ok(())
+    }
+    pub(crate) fn fork_imported(&self, key: &str, operation: &str) -> bool {
+        self.saved
+            .get(key)
+            .is_some_and(|d| d.fork_imported.as_deref() == Some(operation))
+    }
+    pub(crate) fn mark_existing_fork(&mut self, key: &str, operation: &str) -> io::Result<()> {
+        let mut draft = self
+            .saved
+            .get(key)
+            .cloned()
+            .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "Draft missing"))?;
+        draft.fork_imported = Some(operation.to_owned());
+        let mut tmp = NamedTempFile::new_in(&self.dir)?;
+        serde_json::to_writer(tmp.as_file_mut(), &draft)?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(self.dir.join(draft.filename()?))?;
+        self.saved.insert(key.to_owned(), draft);
+        Ok(())
+    }
+    pub(crate) fn import_fork(
+        &mut self,
+        key: &str,
+        operation: &str,
+        text: String,
+        attachments: Vec<crate::attachments::AttachmentRef>,
+    ) -> io::Result<()> {
+        if self.saved.contains_key(key) {
+            return Err(io::Error::new(
+                ErrorKind::AlreadyExists,
+                "Draft already exists",
+            ));
+        }
+        let draft = Draft {
+            key: key.to_owned(),
+            input: text,
+            failed: vec![],
+            attachments,
+            task: None,
+            fork_imported: Some(operation.to_owned()),
+        };
+        let path = self.dir.join(draft.filename()?);
+        let mut tmp = NamedTempFile::new_in(&self.dir)?;
+        serde_json::to_writer(tmp.as_file_mut(), &draft)?;
+        tmp.as_file().sync_all()?;
+        tmp.persist_noclobber(path)?;
+        self.saved.insert(key.to_owned(), draft);
         Ok(())
     }
 }
@@ -232,7 +300,10 @@ impl HiveApp {
             smol::Timer::after(Duration::from_millis(450)).await;
             let _ = this.update(cx, |this, cx| {
                 if let Err(error) = this.flush_drafts(cx) {
-                    this.error = Some(crate::app::ErrorNotice::Detail("无法保存本地草稿",error.to_string()));
+                    this.error = Some(crate::app::ErrorNotice::Detail(
+                        "无法保存本地草稿",
+                        error.to_string(),
+                    ));
                     cx.notify();
                 }
             });
@@ -244,6 +315,45 @@ impl HiveApp {
 mod tests {
     use super::*;
 
+    #[test]
+    fn imported_fork_marker_survives_clearing_and_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = DraftStore::open(root.path()).unwrap();
+        store
+            .import_fork("session:child", "operation-1", "draft".into(), vec![])
+            .unwrap();
+        store
+            .save(
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .unwrap();
+        let mut reopened = DraftStore::open(root.path()).unwrap();
+        assert!(reopened.fork_imported("session:child", "operation-1"));
+        assert!(!reopened.fork_imported("session:child", "operation-2"));
+        assert!(
+            reopened
+                .import_fork("session:child", "operation-1", "again".into(), vec![])
+                .is_err()
+        );
+    }
+    #[test]
+    fn existing_draft_is_preserved_when_fork_is_marked() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = DraftStore::open(root.path()).unwrap();
+        let inputs = HashMap::from([("session:child".to_owned(), "existing".to_owned())]);
+        store
+            .save(&inputs, &HashMap::new(), &HashMap::new(), &HashMap::new())
+            .unwrap();
+        store
+            .mark_existing_fork("session:child", "operation-1")
+            .unwrap();
+        let reopened = DraftStore::open(root.path()).unwrap();
+        assert_eq!(reopened.saved["session:child"].input, "existing");
+        assert!(reopened.fork_imported("session:child", "operation-1"));
+    }
     #[test]
     fn task_drafts_preserve_empty_edits_and_conflict_base_and_remove_only_after_disk_success() {
         use crate::collaboration::SavedTaskDraft;
@@ -298,16 +408,25 @@ mod tests {
         let key = "session:project-reference".to_owned();
         let input = "保留普通草稿\n第二行".to_owned();
         let attachment = crate::attachments::AttachmentRef {
-            id: "snapshot-id".into(), workspace_id: "project".into(),
-            name: "需求.md".into(), mime_type: "text/markdown".into(), size: 24,
+            id: "snapshot-id".into(),
+            workspace_id: "project".into(),
+            name: "需求.md".into(),
+            mime_type: "text/markdown".into(),
+            size: 24,
             project_file: Some(crate::protocol::ProjectFileReference {
-                relative_path: "docs/需求.md".into(), sha256: "ab".repeat(32),
+                relative_path: "docs/需求.md".into(),
+                sha256: "ab".repeat(32),
             }),
         };
-        DraftStore::open(root.path()).unwrap().save(
-            &HashMap::from([(key.clone(), input.clone())]), &HashMap::new(),
-            &HashMap::from([(key.clone(), vec![attachment.clone()])]), &HashMap::new(),
-        ).unwrap();
+        DraftStore::open(root.path())
+            .unwrap()
+            .save(
+                &HashMap::from([(key.clone(), input.clone())]),
+                &HashMap::new(),
+                &HashMap::from([(key.clone(), vec![attachment.clone()])]),
+                &HashMap::new(),
+            )
+            .unwrap();
         let reopened = DraftStore::open(root.path()).unwrap();
         assert_eq!(reopened.saved[&key].input, input);
         assert_eq!(reopened.saved[&key].attachments, vec![attachment]);

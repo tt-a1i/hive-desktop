@@ -187,6 +187,10 @@ pub struct PendingUserInput {
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
     #[serde(default)]
+    pub fork_draft: Option<Value>,
+    #[serde(default)]
+    pub lineage: Option<Value>,
+    #[serde(default)]
     pub initialization: Option<crate::history_navigation::Initialization>,
     #[serde(default)]
     pub read_only: bool,
