@@ -297,7 +297,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.open': return chats.open(text(params, 'sessionId'));
     case 'chat.prompt': {
       if (typeof params.text !== 'string') throw new TypeError('text must be a string');
-      return chats.prompt(text(params, 'sessionId'), params.text, params.attachmentIds);
+      return chats.prompt(text(params, 'sessionId'), params.text, params.attachmentIds, params.busyMode);
     }
     case 'chat.queue.edit': {
       if (typeof params.text !== 'string') throw new TypeError('Queue text must be a string');

@@ -12,6 +12,7 @@ impl HiveApp {
         let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {
             return;
         };
+        self.showing_welcome_guide = false;
         let text = self.input.read(cx).value().to_string();
         if self.current_history_access().is_some_and(|a| a.handoff_blocked()) { self.error = Some("接续状态需要先刷新核验。".into()); cx.notify(); return; }
         if self.current_history_access().is_some_and(|a| a.handoff_unconsumed()) && (text.trim().is_empty() || text.trim_start().starts_with('/')) {
@@ -25,6 +26,9 @@ impl HiveApp {
             || !self.attachments.ready(Some(&attachment_key))
             || self.inflight_inputs.contains_key(&id)
             || (!self.busy.contains(&id) && self.pending.get(&id).copied().unwrap_or(0) > 0)
+            || (self.busy.contains(&id)
+                && crate::general::current(cx).busy_send_mode
+                    == crate::general::BusySendMode::BlockUntilIdle)
             || self.loading
             || !self.connected
         {
@@ -35,6 +39,10 @@ impl HiveApp {
         }
         let Some(runtime) = self.runtime.clone() else {
             return;
+        };
+        let busy_mode = match crate::general::current(cx).busy_send_mode {
+            crate::general::BusySendMode::SteerWhenSupported => "steer",
+            _ => "queue",
         };
         let was_busy = self.busy.contains(&id);
         self.busy.insert(id.clone());
@@ -47,7 +55,7 @@ impl HiveApp {
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
-                .request("chat.prompt", json!({"sessionId":id,"text":text,"attachmentIds":refs.iter().map(|item|&item.id).collect::<Vec<_>>()}))
+                .request("chat.prompt", json!({"sessionId":id,"text":text,"attachmentIds":refs.iter().map(|item|&item.id).collect::<Vec<_>>(),"busyMode":busy_mode}))
                 .await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection {

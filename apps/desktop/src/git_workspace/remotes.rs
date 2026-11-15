@@ -77,11 +77,13 @@ impl RemotePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let default_base = crate::diffs_settings::current(cx).pr_default_base;
+        let default_draft = crate::diffs_settings::current(cx).pr_default_draft;
         let branch = cx.new(|cx| InputState::new(window, cx));
         let head = cx.new(|cx| InputState::new(window, cx));
         let base = cx.new(|cx| {
             let mut input = InputState::new(window, cx);
-            input.set_value("main", window, cx);
+            input.set_value(default_base, window, cx);
             input
         });
         let title = cx.new(|cx| InputState::new(window, cx));
@@ -123,7 +125,7 @@ impl RemotePanel {
             base,
             title,
             body,
-            draft: true,
+            draft: default_draft,
             defaults_set: false,
             generation: 0,
             busy: false,
@@ -266,6 +268,11 @@ impl RemotePanel {
                 if this.head.read(cx).value().is_empty() {
                     this.head
                         .update(cx, |input, cx| input.set_value(branch, window, cx));
+                }
+                if this.base.read(cx).value().trim().is_empty() {
+                    let default_base = crate::diffs_settings::current(cx).pr_default_base;
+                    this.base
+                        .update(cx, |input, cx| input.set_value(default_base, window, cx));
                 }
                 cx.notify();
             });

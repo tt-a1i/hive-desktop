@@ -16,7 +16,59 @@ struct PinResult {
     sessions: Vec<Session>,
 }
 
+use crate::language::{english, tr};
+use gpui_kit::component::WindowExt as _;
+
 impl HiveApp {
+    pub(crate) fn request_session_pinned(
+        &mut self,
+        session: Session,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if pinned || !crate::general::current(cx).confirm_unpin_session {
+            self.set_session_pinned(session, pinned, cx);
+            return;
+        }
+        if !self.connected
+            || self.closing
+            || self.session_pin_loading.contains(&session.id)
+            || self.session_archive_loading.contains(&session.id)
+            || self.workspace_removing.as_ref() == Some(&session.workspace_id)
+            || window.has_active_dialog(cx)
+        {
+            return;
+        }
+        let connection = self.connection_generation;
+        let weak = cx.weak_entity();
+        let title = session.title.clone();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let weak = weak.clone();
+            let confirm_session = session.clone();
+            dialog
+                .title(tr("取消置顶？"))
+                .description(if english() {
+                    format!(
+                        "Unpin \"{title}\"? It will return to its normal chronological position."
+                    )
+                } else {
+                    format!("确定取消置顶“{title}”吗？该会话将回到工作区的常规时间位置。")
+                })
+                .show_cancel(true)
+                .ok_text(tr("取消置顶"))
+                .cancel_text(tr("取消"))
+                .on_ok(move |_, _, cx| {
+                    weak.update(cx, |this, cx| {
+                        if this.connection_generation == connection {
+                            this.set_session_pinned(confirm_session.clone(), false, cx);
+                        }
+                    })
+                    .is_ok()
+                })
+        });
+    }
+
     pub(crate) fn set_session_pinned(
         &mut self,
         session: Session,

@@ -1,6 +1,5 @@
 use crate::app::HiveApp;
 use crate::chrome;
-use crate::conversation_list::CHAT_COLUMN_WIDTH;
 use crate::language::{english, tr};
 use crate::palette::Color;
 use gpui_kit::assets::IconName as Glyph;
@@ -629,12 +628,13 @@ impl HiveApp {
         } else {
             hsla(0., 0., 0., 0.08)
         };
+        let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
         v_flex()
             .relative()
             .w_full()
             .min_w_0()
             .min_h_0()
-            .max_w(px(CHAT_COLUMN_WIDTH))
+            .max_w(px(chat_width))
             .mx_auto()
             .flex_shrink_1()
             .gap_2()
@@ -842,9 +842,10 @@ impl HiveApp {
         needs_pi_model: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
         v_flex()
             .w_full()
-            .max_w(px(CHAT_COLUMN_WIDTH))
+            .max_w(px(chat_width))
             .mx_auto()
             .gap_1p5()
             .when_some(self.current_history_access(), |surface, access| {
@@ -1050,6 +1051,9 @@ impl Render for HiveApp {
                 .is_none_or(|session| !self.inflight_inputs.contains_key(&session.id))
             && !self.loading
             && (pending == 0 || running)
+            && !(running
+                && crate::general::current(cx).busy_send_mode
+                    == crate::general::BusySendMode::BlockUntilIdle)
             && !self.closing;
         let has_text = !self.input.read(cx).value().trim().is_empty()
             || !self.attachments.refs(self.draft_target.as_ref()).is_empty();
@@ -1073,23 +1077,24 @@ impl Render for HiveApp {
             });
         }
         self.sync_conversation_list(cx);
-        let welcome = self
-            .session
-            .as_ref()
-            .is_none_or(|s| s.display_agent_id().is_none())
-            && !open_failed
-            && self.pending_reports.is_empty()
-            && self.messages.is_empty()
-            && !has_interactions
-            && !running
-            && pending == 0
-            && !has_session_failure
-            && !self
+        let welcome = self.showing_welcome_guide
+            || (self
                 .session
                 .as_ref()
-                .is_some_and(|s| self.failed_drafts.get(&s.id).is_some_and(|d| !d.is_empty()))
-            && self.connected
-            && !self.loading;
+                .is_none_or(|s| s.display_agent_id().is_none())
+                && !open_failed
+                && self.pending_reports.is_empty()
+                && self.messages.is_empty()
+                && !has_interactions
+                && !running
+                && pending == 0
+                && !has_session_failure
+                && !self
+                    .session
+                    .as_ref()
+                    .is_some_and(|s| self.failed_drafts.get(&s.id).is_some_and(|d| !d.is_empty()))
+                && self.connected
+                && !self.loading);
         let reasoning_key = self
             .session
             .as_ref()
@@ -1320,7 +1325,11 @@ impl Render for HiveApp {
                                                     .w(px(28.))
                                                     .rounded_lg()
                                                     .icon(Glyph::PanelLeft)
-                                                    .tooltip(tr("打开或收起导航"))
+                                                    .tooltip(crate::keybindings::hint(
+                                                        crate::keybindings::Target::ToggleSidebar,
+                                                        "打开或收起导航",
+                                                        cx,
+                                                    ))
                                                     .accessibility_label(tr(
                                                         "打开或收起工作区与会话导航",
                                                     ))
@@ -1477,37 +1486,104 @@ impl Render for HiveApp {
                                                                         )),
                                                                     )
                                                                 })
-                                                                .when(
-                                                                    !show_conv_tools && welcome,
-                                                                    |tools| {
-                                                                        tools.when_some(
-                                                                            active_project.clone(),
-                                                                            |tools, ws| {
-                                                                                let folder_path =
-                                                                                    std::path::PathBuf::from(
-                                                                                        &ws.path,
-                                                                                    );
-                                                                                tools.child(
-                                                                                    Button::new("topbar-open-folder")
-                                                                                        .custom(crate::palette::quiet_icon_variant(cx))
-                                                                                        .compact()
-                                                                                        .xsmall()
-                                                                                        .h(px(28.))
-                                                                                        .w(px(28.))
-                                                                                        .rounded_lg()
-                                                                                        .icon(Glyph::FolderOpen)
-                                                                                        .tooltip(tr("在文件管理器中打开项目"))
-                                                                                        .accessibility_label(tr(
-                                                                                            "在文件管理器中打开当前项目",
-                                                                                        ))
-                                                                                        .on_click(cx.listener(
-                                                                                            move |_, _, _, cx| {
-                                                                                                cx.reveal_path(&folder_path)
-                                                                                            },
-                                                                                        )),
-                                                                                )
-                                                                            },
-                                                                        )
+                                                                .when_some(
+                                                                    active_project.clone(),
+                                                                    |tools, ws| {
+                                                                        let ws_id = ws.id.clone();
+                                                                        let ws_menu_id = ws.id.clone();
+                                                                        let folder_path =
+                                                                            std::path::PathBuf::from(
+                                                                                &ws.path,
+                                                                            );
+                                                                        let default_target =
+                                                                            crate::general::current(
+                                                                                cx,
+                                                                            )
+                                                                            .default_open_target;
+                                                                        let target_label =
+                                                                            default_target.label();
+                                                                        let connected =
+                                                                            self.connected;
+                                                                        let open_disabled = !connected
+                                                                            && default_target
+                                                                                != crate::general::OpenTarget::Finder;
+                                                                        let tooltip = if english() {
+                                                                            format!(
+                                                                                "Open project in {target_label}"
+                                                                            )
+                                                                        } else {
+                                                                            format!(
+                                                                                "在 {target_label} 中打开项目"
+                                                                            )
+                                                                        };
+                                                                        tools
+                                                                            .child(
+                                                                                Button::new("topbar-open-folder")
+                                                                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                                                                    .compact()
+                                                                                    .xsmall()
+                                                                                    .h(px(28.))
+                                                                                    .px_2()
+                                                                                    .rounded_lg()
+                                                                                    .icon(Glyph::FolderOpen)
+                                                                                    .label(target_label)
+                                                                                    .tooltip(tooltip.clone())
+                                                                                    .accessibility_label(tooltip)
+                                                                                    .disabled(open_disabled)
+                                                                                    .on_click(cx.listener(
+                                                                                        move |this, _, _, cx| {
+                                                                                            if !this.connected
+                                                                                                && default_target
+                                                                                                    == crate::general::OpenTarget::Finder
+                                                                                            {
+                                                                                                cx.reveal_path(&folder_path);
+                                                                                            } else {
+                                                                                                this.open_workspace_target(
+                                                                                                    ws_id.clone(),
+                                                                                                    default_target.wire(),
+                                                                                                    cx,
+                                                                                                );
+                                                                                            }
+                                                                                        },
+                                                                                    )),
+                                                                            )
+                                                                            .child(
+                                                                                Button::new("topbar-open-target-menu")
+                                                                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                                                                    .compact()
+                                                                                    .xsmall()
+                                                                                    .h(px(28.))
+                                                                                    .w(px(20.))
+                                                                                    .rounded_lg()
+                                                                                    .icon(Glyph::ChevronDown)
+                                                                                    .tooltip(tr("选择打开方式"))
+                                                                                    .accessibility_label(tr("选择打开方式"))
+                                                                                    .disabled(!connected)
+                                                                                    .dropdown_menu({
+                                                                                        let weak = cx.weak_entity();
+                                                                                        move |mut menu, _, _| {
+                                                                                            for target in crate::general::OpenTarget::for_platform().iter().copied() {
+                                                                                                let weak = weak.clone();
+                                                                                                let ws_item_id = ws_menu_id.clone();
+                                                                                                let active = target == default_target;
+                                                                                                menu = menu.item(
+                                                                                                    PopupMenuItem::new(target.label())
+                                                                                                        .checked(active)
+                                                                                                        .on_click(move |_, _, cx| {
+                                                                                                            let _ = weak.update(cx, |this, cx| {
+                                                                                                                this.open_workspace_target(
+                                                                                                                    ws_item_id.clone(),
+                                                                                                                    target.wire(),
+                                                                                                                    cx,
+                                                                                                                );
+                                                                                                            });
+                                                                                                        }),
+                                                                                                );
+                                                                                            }
+                                                                                            menu
+                                                                                        }
+                                                                                    }),
+                                                                            )
                                                                     },
                                                                 )
                                                                 .when_some(
@@ -1528,7 +1604,11 @@ impl Render for HiveApp {
                                                                             .w(px(28.))
                                                                             .rounded_lg()
                                                                             .icon(Glyph::SquareTerminal)
-                                                                            .tooltip(tr("打开工作区终端"))
+                                                                            .tooltip(crate::keybindings::hint(
+                                                                                crate::keybindings::Target::ToggleTerminal,
+                                                                                "打开工作区终端",
+                                                                                cx,
+                                                                            ))
                                                                             .accessibility_label(tr(
                                                                                 "打开工作区终端",
                                                                             ))
@@ -1642,10 +1722,13 @@ impl Render for HiveApp {
                                     view.child(self.render_conversation_find(cx))
                                 })
                                 .when(self.error.is_some(), |view| {
+                                    let chat_width = cx
+                                        .global::<crate::appearance::Appearance>()
+                                        .chat_width_px();
                                     view.child(
                                         div()
                                             .w_full()
-                                            .max_w(px(CHAT_COLUMN_WIDTH + 64.))
+                                            .max_w(px(chat_width + 64.))
                                             .mx_auto()
                                             .px_5()
                                             .pt_2()
@@ -1746,15 +1829,55 @@ impl Render for HiveApp {
                                     } else {
                                         can_submit && has_text
                                     };
-                                    surface.child(self.render_hero_stage(
-                                        window,
-                                        narrow,
-                                        running,
-                                        hero_can_send,
-                                        pending,
-                                        needs_pi_model,
-                                        cx,
-                                    ))
+                                    surface
+                                        .when(self.showing_welcome_guide, |surface| {
+                                            surface.child(
+                                                h_flex()
+                                                    .id("welcome-guide-banner")
+                                                    .w_full()
+                                                    .px_5()
+                                                    .py_2()
+                                                    .border_b_1()
+                                                    .border_color(Color::Divider.get(cx))
+                                                    .bg(Color::Surface.get(cx))
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .gap_2()
+                                                    .flex_wrap()
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(Color::Secondary.get(cx))
+                                                            .child(tr("正在查看欢迎引导")),
+                                                    )
+                                                    .child(
+                                                        Button::new("exit-welcome-guide")
+                                                            .outline()
+                                                            .compact()
+                                                            .small()
+                                                            .h(px(26.))
+                                                            .px_2p5()
+                                                            .rounded_md()
+                                                            .label(tr("返回当前工作区"))
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.showing_welcome_guide =
+                                                                        false;
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    ),
+                                            )
+                                        })
+                                        .child(self.render_hero_stage(
+                                            window,
+                                            narrow,
+                                            running,
+                                            hero_can_send,
+                                            pending,
+                                            needs_pi_model,
+                                            cx,
+                                        ))
                                 })
                                 .when(!welcome && open_failed, |surface| {
                                     surface.child(

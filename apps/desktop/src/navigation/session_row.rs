@@ -126,9 +126,9 @@ impl HiveApp {
             } else {
                 tr("置顶会话")
             })
-            .on_click(move |_, _, cx| {
+            .on_click(move |_, window, cx| {
                 let _ = app.update(cx, |this, cx| {
-                    this.set_session_pinned(session.clone(), !session.pinned, cx)
+                    this.request_session_pinned(session.clone(), !session.pinned, window, cx)
                 });
             }),
         )
@@ -141,11 +141,12 @@ impl HiveApp {
                 tr("归档会话")
             })
             .disabled(!archive_session.archived && archive_blocked)
-            .on_click(move |_, _, cx| {
+            .on_click(move |_, window, cx| {
                 let _ = archive_app.update(cx, |this, cx| {
-                    this.set_session_archived(
+                    this.request_session_archived(
                         archive_session.clone(),
                         !archive_session.archived,
+                        window,
                         cx,
                     )
                 });
@@ -251,7 +252,11 @@ impl HiveApp {
             .unwrap_or_else(|| format!(" · {workspace_name}"));
         let is_selected = self.viewing_conversation()
             && self.session.as_ref().is_some_and(|s| s.id == session.id);
-        let relative_time = palette::compact_relative_time(session.updated_at, english());
+        let relative_time = palette::format_session_time(
+            session.updated_at,
+            crate::general::current(cx).session_time_format,
+            english(),
+        );
         let menu_disabled =
             !self.connected || pinning || self.workspace_removing.as_ref() == Some(&project);
         let menu_button = Button::new(SharedString::from(format!("{scope}-menu-{id}")))

@@ -15,12 +15,14 @@ mod command_picker;
 mod conversation;
 mod conversation_find;
 mod conversation_export;
+mod diffs_settings;
 mod file_save;
 mod focus_scroll;
 mod conversation_list;
 mod drafts;
 mod diagnostics;
 mod failures;
+mod general;
 mod image_input;
 mod project_files;
 mod project_scripts;
@@ -29,6 +31,7 @@ mod history_navigation;
 mod keybindings;
 mod image_viewer;
 mod interactions;
+mod maintenance;
 mod members;
 mod memory;
 mod model_picker;
@@ -73,7 +76,16 @@ actions!(
         OpenConversationFind,
         CloseConversationFind,
         NextSessionResult,
-        PreviousSessionResult
+        PreviousSessionResult,
+        NewSessionShortcut,
+        ToggleSidebar,
+        ToggleWorkspaceTerminal,
+        OpenGitWorkspaceShortcut,
+        OpenProjectFilePicker,
+        OpenModelPicker,
+        ToggleSessionMode,
+        SelectPreviousSession,
+        SelectNextSession
     ]
 );
 
@@ -88,43 +100,20 @@ fn main() {
             gpui_kit::init(cx);
             cx.set_global(local_notifications::Preferences::default());
             cx.set_global(appearance::Appearance::default());
+            general::init(cx);
+            diffs_settings::init(cx);
             cx.set_global(language::Language::default());
             component::set_locale("zh-CN");
             cx.set_global(composer::ComposerPreferences::default());
             keybindings::init(cx);
             appearance::apply(None, cx);
+            let os = cx.platform_info().os;
+            cx.bind_keys(keybindings::startup_bindings(os));
             cx.bind_keys([
-                KeyBinding::new(
-                    if cfg!(target_os = "macos") {
-                        "cmd-f"
-                    } else {
-                        "ctrl-f"
-                    },
-                    OpenConversationFind,
-                    None,
-                ),
                 KeyBinding::new("escape", CloseConversationFind, Some("HiveConversation")),
-                KeyBinding::new(
-                    if cfg!(target_os = "macos") {
-                        "cmd-k"
-                    } else {
-                        "ctrl-k"
-                    },
-                    OpenSessionSearch,
-                    None,
-                ),
                 KeyBinding::new("down", NextSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("up", PreviousSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("escape", CancelSessionRename, Some("HiveSessionName")),
-                KeyBinding::new(
-                    if cfg!(target_os = "macos") {
-                        "cmd-,"
-                    } else {
-                        "ctrl-,"
-                    },
-                    OpenPreferences,
-                    None,
-                ),
                 KeyBinding::new("escape", ClosePreferences, Some("HivePreferences")),
                 KeyBinding::new(
                     if cfg!(target_os = "macos") {

@@ -502,9 +502,15 @@ impl Render for FileViewer {
                                                             path_label,
                                                         )
                                                         .font_family(
-                                                            Theme::global(cx)
-                                                                .mono_font_family
-                                                                .clone(),
+                                                            cx.global::<crate::appearance::Appearance>()
+                                                                .code_font_family()
+                                                                .font_family_name()
+                                                                .map(SharedString::from)
+                                                                .unwrap_or_else(|| {
+                                                                    Theme::global(cx)
+                                                                        .mono_font_family
+                                                                        .clone()
+                                                                }),
                                                         ),
                                                     ),
                                             ),
@@ -673,43 +679,51 @@ impl Render for FileViewer {
                                 )
                             })
                             .when(!text.is_empty(), |view| {
+                                let appearance = cx.global::<crate::appearance::Appearance>();
+                                let code_font = appearance
+                                    .code_font_family()
+                                    .font_family_name()
+                                    .map(SharedString::from)
+                                    .unwrap_or_else(|| Theme::global(cx).mono_font_family.clone());
+                                let code_size = f32::from(appearance.code_font_size());
+                                let code_line_height = (code_size * 1.55).round();
+                                let word_wrap = appearance.code_word_wrap();
                                 view.child(
                                     h_flex()
                                         .w_full()
                                         .min_w_0()
                                         .items_start()
-                                        .child(
-                                            div()
-                                                .w(gutter_width)
-                                                .flex_shrink_0()
-                                                .py_2()
-                                                .px_2()
-                                                .border_r_1()
-                                                .border_color(Color::Divider.get(cx))
-                                                .bg(Color::Card.get(cx).opacity(0.45))
-                                                .font_family(
-                                                    Theme::global(cx).mono_font_family.clone(),
-                                                )
-                                                .text_size(px(12.))
-                                                .line_height(px(19.))
-                                                .text_right()
-                                                .text_color(Color::Muted.get(cx))
-                                                .child(gutter),
-                                        )
+                                        .when(!word_wrap, |row| {
+                                            row.child(
+                                                div()
+                                                    .w(gutter_width)
+                                                    .flex_shrink_0()
+                                                    .py_2()
+                                                    .px_2()
+                                                    .border_r_1()
+                                                    .border_color(Color::Divider.get(cx))
+                                                    .bg(Color::Card.get(cx).opacity(0.45))
+                                                    .font_family(code_font.clone())
+                                                    .text_size(px(code_size))
+                                                    .line_height(px(code_line_height))
+                                                    .text_right()
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child(gutter),
+                                            )
+                                        })
                                         .child(
                                             div()
                                                 .id("file-preview-code-x")
                                                 .flex_1()
                                                 .min_w_0()
-                                                .overflow_x_scroll()
+                                                .when(!word_wrap, |code| {
+                                                    code.overflow_x_scroll().whitespace_nowrap()
+                                                })
                                                 .px_3()
                                                 .py_2()
-                                                .whitespace_nowrap()
-                                                .font_family(
-                                                    Theme::global(cx).mono_font_family.clone(),
-                                                )
-                                                .text_size(px(12.))
-                                                .line_height(px(19.))
+                                                .font_family(code_font)
+                                                .text_size(px(code_size))
+                                                .line_height(px(code_line_height))
                                                 .text_color(Color::Text.get(cx))
                                                 .child(crate::text_reading::selectable_text(
                                                     "file-preview-source",

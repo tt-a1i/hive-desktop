@@ -282,7 +282,9 @@ impl HiveApp {
                     .child(
                         v_flex()
                             .w_full()
-                            .max_w(px(CHAT_COLUMN_WIDTH))
+                            .max_w(px(cx
+                                .global::<crate::appearance::Appearance>()
+                                .chat_width_px()))
                             .mx_auto()
                             .pb(if matches!(row.kind, Kind::Tail) {
                                 px(0.)

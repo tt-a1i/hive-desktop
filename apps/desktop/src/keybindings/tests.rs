@@ -215,3 +215,110 @@ fn component_shortcuts_are_protected_from_new_global_chords() {
         None
     )));
 }
+
+#[test]
+fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
+    let root = tempfile::tempdir().unwrap();
+    let legacy = r#"{"version":1,"bindings":{"search":"cmd-shift-j","find":null,"preferences":"cmd-,"}}"#;
+    fs::write(root.path().join(FILE), legacy).unwrap();
+    let migrated = load(root.path(), OperatingSystem::Mac).unwrap();
+    assert_eq!(migrated.get(Target::Search).as_deref(), Some("cmd-shift-j"));
+    assert_eq!(migrated.get(Target::Find), &None);
+    assert_eq!(migrated.get(Target::Preferences).as_deref(), Some("cmd-,"));
+    assert_eq!(
+        migrated.get(Target::NewSession).as_deref(),
+        Some(Target::NewSession.default(OperatingSystem::Mac))
+    );
+    assert_eq!(
+        migrated.get(Target::ToggleTerminal).as_deref(),
+        Some(Target::ToggleTerminal.default(OperatingSystem::Mac))
+    );
+
+    let with_disabled_new = r#"{"version":1,"bindings":{"search":"cmd-shift-j","find":"cmd-f","preferences":"cmd-,","new_session":null}}"#;
+    fs::write(root.path().join(FILE), with_disabled_new).unwrap();
+    let loaded = load(root.path(), OperatingSystem::Mac).unwrap();
+    assert_eq!(loaded.get(Target::NewSession), &None);
+}
+
+#[test]
+fn keymap_delta_supports_live_rebind_disable_and_restore_roundtrip() {
+    use super::{keymap_delta_with, startup_bindings};
+
+    let intern = |chord: &str| -> &'static str {
+        match chord {
+            "cmd-k" => "cmd-k",
+            "cmd-`" => "cmd-`",
+            "cmd-shift-j" => "cmd-shift-j",
+            "cmd-shift-t" => "cmd-shift-t",
+            other => panic!("unexpected chord in test: {other}"),
+        }
+    };
+    let os = OperatingSystem::Mac;
+    let defaults = Bindings::defaults(os);
+    let mut map = Keymap::new(startup_bindings(os));
+    assert_eq!(
+        map.bindings_for_action(&crate::OpenSessionSearch).count(),
+        1
+    );
+    assert_eq!(
+        map.bindings_for_action(&crate::ToggleWorkspaceTerminal).count(),
+        1
+    );
+
+    // Step 1: Rebind A -> B
+    let mut step1 = defaults.clone();
+    step1.set(Target::Search, Some("cmd-shift-j".to_owned()));
+    step1.set(Target::ToggleTerminal, Some("cmd-shift-t".to_owned()));
+    map.add_bindings(keymap_delta_with(&defaults, &step1, intern));
+    assert!(
+        map.bindings_for_input(&[Keystroke::parse("cmd-k").unwrap()], &[])
+            .0
+            .is_empty()
+    );
+    assert!(
+        map.bindings_for_input(&[Keystroke::parse("cmd-`").unwrap()], &[])
+            .0
+            .is_empty()
+    );
+    assert_eq!(
+        map.bindings_for_input(&[Keystroke::parse("cmd-shift-j").unwrap()], &[])
+            .0
+            .len(),
+        1
+    );
+    assert_eq!(
+        map.bindings_for_input(&[Keystroke::parse("cmd-shift-t").unwrap()], &[])
+            .0
+            .len(),
+        1
+    );
+
+    // Step 2: Disable B -> None
+    let mut step2 = step1.clone();
+    step2.set(Target::Search, None);
+    step2.set(Target::ToggleTerminal, None);
+    map.add_bindings(keymap_delta_with(&step1, &step2, intern));
+    assert_eq!(
+        map.bindings_for_action(&crate::OpenSessionSearch).count(),
+        0
+    );
+    assert_eq!(
+        map.bindings_for_action(&crate::ToggleWorkspaceTerminal).count(),
+        0
+    );
+
+    // Step 3: Restore None -> A
+    map.add_bindings(keymap_delta_with(&step2, &defaults, intern));
+    assert_eq!(
+        map.bindings_for_input(&[Keystroke::parse("cmd-k").unwrap()], &[])
+            .0
+            .len(),
+        1
+    );
+    assert_eq!(
+        map.bindings_for_input(&[Keystroke::parse("cmd-`").unwrap()], &[])
+            .0
+            .len(),
+        1
+    );
+}

@@ -5,7 +5,8 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonCustomVariant, ButtonVariants},
         diff::{
-            Diff, DiffChangeIndicator, DiffHoverHighlight, DiffHunkSeparator, DiffMode, DiffState,
+            Diff, DiffChangeIndicator, DiffFile, DiffHoverHighlight, DiffHunkSeparator, DiffMode,
+            DiffState,
         },
         *,
     },
@@ -20,9 +21,43 @@ struct ToolDiff {
     provenance: &'static str,
     status: &'static str,
     raw: bool,
+    ignore_whitespace: bool,
     loading: bool,
     scroll: ScrollHandle,
     raw_focus: FocusHandle,
+}
+
+fn compute_diff_files(document: &data::Document, ignore_whitespace: bool) -> Vec<DiffFile> {
+    if !ignore_whitespace || document.raw.is_empty() {
+        return document.files.clone();
+    }
+    let filtered = crate::diffs_settings::filter_patch_whitespace(&document.raw);
+    if filtered == document.raw {
+        return document.files.clone();
+    }
+    if filtered.trim().is_empty() {
+        return Vec::new();
+    }
+    DiffFile::parse(&filtered).unwrap_or_else(|_| document.files.clone())
+}
+
+fn apply_tool_diff_files(
+    state: &Entity<DiffState>,
+    document: &data::Document,
+    ignore_whitespace: bool,
+    collapse_multi: bool,
+    cx: &mut App,
+) {
+    let files = compute_diff_files(document, ignore_whitespace);
+    let paths: Vec<String> = files.iter().map(|f| f.path().to_string()).collect();
+    state.update(cx, |state, cx| {
+        state.set_files(files, cx);
+        if collapse_multi && paths.len() > 1 {
+            for path in paths {
+                state.set_file_collapsed(&path, true, cx);
+            }
+        }
+    });
 }
 impl HiveApp {
     pub(crate) fn retain_tool_patch(&mut self, id: &str, result: &Value, cx: &App) {
@@ -55,14 +90,19 @@ impl HiveApp {
             "工具请求的改动片段；行号从片段起点计算，不代表编辑已成功"
         };
         let english_labels = english();
+        let prefs = crate::diffs_settings::current(cx);
+        let initial_mode = prefs.default_diff_mode.into_diff_mode();
+        let initial_ignore_ws = prefs.ignore_whitespace;
+        let collapse_multi = prefs.collapse_multi_file_diffs;
         let viewer = cx.new(|cx: &mut Context<ToolDiff>| {
-            let state = cx.new(|cx| DiffState::new([], cx));
+            let state = cx.new(|cx| DiffState::new([], cx).with_mode(initial_mode));
             let view = ToolDiff {
                 state,
                 document: None,
                 provenance,
                 status,
                 raw: false,
+                ignore_whitespace: initial_ignore_ws,
                 loading: true,
                 scroll: ScrollHandle::new(),
                 raw_focus: cx.focus_handle().tab_stop(true),
@@ -73,8 +113,13 @@ impl HiveApp {
                 })
                 .await;
                 let _ = this.update(cx, |this, cx| {
-                    this.state
-                        .update(cx, |state, cx| state.set_files(document.files.clone(), cx));
+                    apply_tool_diff_files(
+                        &this.state,
+                        &document,
+                        this.ignore_whitespace,
+                        collapse_multi,
+                        cx,
+                    );
                     this.raw = document.error.is_some();
                     this.document = Some(document);
                     this.loading = false;
@@ -112,8 +157,11 @@ impl Render for ToolDiff {
             .map(|f| f.additions() + f.deletions() + 10)
             .sum();
         let diff_height = px((rows as f32 * 22.).max(180.)).min(height);
-        let has_files = self.document.as_ref().is_some_and(|d| !d.files.is_empty());
+        let has_raw_files = self.document.as_ref().is_some_and(|d| !d.files.is_empty());
+        let has_files = !files.is_empty();
         let mode = self.state.read(cx).mode();
+        let code_size = f32::from(cx.global::<crate::appearance::Appearance>().code_font_size());
+        let code_wrap = cx.global::<crate::appearance::Appearance>().code_word_wrap();
         let status_failed = self.status == "失败";
         let status_running = self.status == "执行中";
         v_flex()
@@ -283,6 +331,31 @@ impl Render for ToolDiff {
                                         window.focus(&this.raw_focus, cx);
                                         cx.notify();
                                     })),
+                            )
+                            .child(
+                                Button::new("diff-ignore-ws")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .h(px(26.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .label(tr("忽略空白"))
+                                    .selected(self.ignore_whitespace)
+                                    .toggled(self.ignore_whitespace)
+                                    .disabled(self.loading || self.document.as_ref().is_none_or(|d| d.raw.is_empty()))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.ignore_whitespace = !this.ignore_whitespace;
+                                        if let Some(doc) = &this.document {
+                                            apply_tool_diff_files(
+                                                &this.state,
+                                                doc,
+                                                this.ignore_whitespace,
+                                                false,
+                                                cx,
+                                            );
+                                        }
+                                        cx.notify();
+                                    })),
                             ),
                     )
                     .child(
@@ -340,9 +413,12 @@ impl Render for ToolDiff {
                                     .disabled(self.document.as_ref().is_none_or(|d| d.raw.is_empty()))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         if let Some(d) = &this.document {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                d.raw.clone(),
-                                            ));
+                                            let content = if this.ignore_whitespace {
+                                                crate::diffs_settings::filter_patch_whitespace(&d.raw)
+                                            } else {
+                                                d.raw.clone()
+                                            };
+                                            cx.write_to_clipboard(ClipboardItem::new_string(content));
                                         }
                                     })),
                             ),
@@ -412,7 +488,11 @@ impl Render for ToolDiff {
                             .border_color(Color::Divider.get(cx))
                             .text_sm()
                             .text_color(Color::Muted.get(cx))
-                            .child(tr("这段记录没有文本差异。")),
+                            .child(if self.ignore_whitespace && has_raw_files {
+                                tr("忽略空白后没有代码内容变更。")
+                            } else {
+                                tr("这段记录没有文本差异。")
+                            }),
                     )
                 },
             )
@@ -426,7 +506,7 @@ impl Render for ToolDiff {
                         .overflow_hidden()
                         .child(
                             Diff::new(&self.state)
-                                .soft_wrap(true)
+                                .soft_wrap(code_wrap)
                                 .hover_highlight(DiffHoverHighlight::Both)
                                 .change_indicator(DiffChangeIndicator::Signs)
                                 .hunk_separator(DiffHunkSeparator::Metadata)
@@ -459,14 +539,26 @@ impl Render for ToolDiff {
                             .py_3()
                             .track_focus(&self.raw_focus)
                             .font_family(Theme::global(cx).mono_font_family.clone())
-                            .text_size(px(12.))
-                            .line_height(px(19.))
+                            .text_size(px(code_size))
+                            .line_height(px((code_size * 1.6).round()))
+                            .when(code_wrap, |v| v.whitespace_normal())
                             .text_color(Color::Text.get(cx))
                             .child(crate::text_reading::selectable_text(
                                 "tool-diff-source",
                                 self.document
                                     .as_ref()
-                                    .map(|d| d.raw.clone())
+                                    .map(|d| {
+                                        if self.ignore_whitespace {
+                                            let filtered = crate::diffs_settings::filter_patch_whitespace(&d.raw);
+                                            if filtered.trim().is_empty() && !d.raw.trim().is_empty() {
+                                                tr("忽略空白后没有代码内容变更。").into()
+                                            } else {
+                                                filtered
+                                            }
+                                        } else {
+                                            d.raw.clone()
+                                        }
+                                    })
                                     .unwrap_or_default(),
                             )),
                         ),

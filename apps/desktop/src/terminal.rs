@@ -273,8 +273,13 @@ impl HiveApp {
         cx.notify();
     }
     pub fn prepare_terminal_view(&mut self, cx: &mut Context<Self>) {
+        self.sync_terminal_typography(cx);
         self.sync_terminal_workspace(cx);
         self.set_terminal_input_enabled(self.can_type_in_terminal(), cx);
+    }
+    pub(crate) fn sync_terminal_typography(&mut self, cx: &mut Context<Self>) {
+        let view = self.terminal.view.clone();
+        crate::appearance::sync_terminal(&view, cx);
     }
     fn can_type_in_terminal(&self) -> bool {
         self.connected

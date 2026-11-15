@@ -1,6 +1,5 @@
 use crate::{
     app::HiveApp,
-    conversation_list::CHAT_COLUMN_WIDTH,
     language::{english, tr},
     palette::Color,
 };
@@ -115,18 +114,37 @@ impl HiveApp {
             .or_else(|| active_project.as_ref().map(|workspace| workspace.path.clone()));
         let branch = execution.map(|execution| execution.branch.clone())
             .or_else(|| execution_path.as_deref().and_then(cached_git_branch));
-        let execution_tooltip = execution_path.as_ref().map(|path| format!("{} · {}", tr(if execution.is_some() {"独立工作树执行目录"} else {"会话执行目录"}), path))
-            .unwrap_or_else(|| tr("查看项目 Git 状态与差异").to_owned());
+        let git_hint = crate::keybindings::hint(
+            crate::keybindings::Target::OpenGitWorkspace,
+            "查看项目 Git 状态与差异",
+            cx,
+        );
+        let execution_tooltip = execution_path
+            .as_ref()
+            .map(|path| {
+                format!(
+                    "{} · {}\n{}",
+                    tr(if execution.is_some() {
+                        "独立工作树执行目录"
+                    } else {
+                        "会话执行目录"
+                    }),
+                    path,
+                    git_hint
+                )
+            })
+            .unwrap_or(git_hint);
         let member_badge = self
             .session
             .as_ref()
             .and_then(|s| s.agent_id.as_deref())
             .map(|id| self.agent_name(id));
 
+        let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
         h_flex()
             .w_full()
             .min_w_0()
-            .max_w(px(CHAT_COLUMN_WIDTH))
+            .max_w(px(chat_width))
             .mx_auto()
             .items_center()
             .justify_between()
@@ -286,6 +304,7 @@ impl HiveApp {
             tr("准备构建什么？").into()
         };
 
+        let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
         v_flex()
             .id("welcome-draft-scroll")
             .track_scroll(&self.welcome_scroll)
@@ -299,7 +318,7 @@ impl HiveApp {
             .child(
                 v_flex()
                     .w_full()
-                    .max_w(px(CHAT_COLUMN_WIDTH))
+                    .max_w(px(chat_width))
                     .mx_auto()
                     .child(
                         v_flex()
@@ -436,8 +455,11 @@ impl HiveApp {
                                 cx,
                             )),
                     )
-                    .when(active_project.is_none(), |col| {
+                    .when(!self.showing_welcome_guide && active_project.is_none(), |col| {
                         col.children(self.render_agent_setup_link(cx))
+                    })
+                    .when(self.showing_welcome_guide, |col| {
+                        col.child(self.render_welcome_guide_panel(cx))
                     }),
             )
     }

@@ -1,4 +1,6 @@
 use super::*;
+use crate::language::{english, tr};
+use gpui_kit::component::WindowExt as _;
 
 #[derive(serde::Deserialize)]
 struct ArchiveResult {
@@ -6,6 +8,57 @@ struct ArchiveResult {
 }
 
 impl HiveApp {
+    pub(crate) fn request_session_archived(
+        &mut self,
+        session: Session,
+        archived: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !archived || !crate::general::current(cx).confirm_archive_session {
+            self.set_session_archived(session, archived, cx);
+            return;
+        }
+        if !self.connected
+            || self.closing
+            || self.session_pin_loading.contains(&session.id)
+            || self.session_archive_loading.contains(&session.id)
+            || self.workspace_removing.as_ref() == Some(&session.workspace_id)
+            || window.has_active_dialog(cx)
+        {
+            return;
+        }
+        let connection = self.connection_generation;
+        let weak = cx.weak_entity();
+        let title = session.title.clone();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let weak = weak.clone();
+            let confirm_session = session.clone();
+            dialog
+                .title(tr("归档会话？"))
+                .description(if english() {
+                    format!(
+                        "Archive \"{title}\"? You can restore it anytime from Archived Sessions in Settings."
+                    )
+                } else {
+                    format!(
+                        "确定归档会话“{title}”吗？归档后可随时在设置的“归档会话”中恢复。"
+                    )
+                })
+                .show_cancel(true)
+                .ok_text(tr("归档会话"))
+                .cancel_text(tr("取消"))
+                .on_ok(move |_, _, cx| {
+                    weak.update(cx, |this, cx| {
+                        if this.connection_generation == connection {
+                            this.set_session_archived(confirm_session.clone(), true, cx);
+                        }
+                    })
+                    .is_ok()
+                })
+        });
+    }
+
     pub(crate) fn set_session_archived(
         &mut self,
         session: Session,
@@ -50,7 +103,13 @@ impl HiveApp {
                     {
                         this.error = Some("归档响应中的会话身份或状态不匹配，请刷新核对。".into())
                     }
-                    Ok(_) => {}
+                    Ok(_) => {
+                        if this.settings_panel
+                            && this.settings_section == crate::app::SettingsSection::Archive
+                        {
+                            this.load_archived_settings(false, cx);
+                        }
+                    }
                 }
                 // Ordered navigation events carry the saved state. Do not apply
                 // an older RPC acknowledgement over a newer incoming delivery.
@@ -102,6 +161,9 @@ impl HiveApp {
         }
         if pinned {
             self.refresh_pinned_sessions(cx);
+        }
+        if self.settings_panel && self.settings_section == crate::app::SettingsSection::Archive {
+            self.load_archived_settings(false, cx);
         }
         cx.notify();
     }

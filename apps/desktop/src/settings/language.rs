@@ -95,8 +95,12 @@ impl HiveApp {
         self.pi_models.localize_placeholders(window, cx);
         self.interactions.localize_placeholders(window, cx);
         self.localize_find_placeholder(window, cx);
+        self.keybinding_settings
+            .update(cx, |editor, cx| editor.localize_placeholders(window, cx));
         for (input, label) in [
             (&self.settings_search, "搜索设置，如模型、通知、快捷键…"),
+            (&self.archive_settings.search, "搜索已归档会话…"),
+            (&self.diffs_pr_base_input, "例如 main"),
             (&self.session_name, "会话名称"),
             (&self.folder, "项目文件夹的绝对路径"),
             (&self.member_name, "成员名称"),

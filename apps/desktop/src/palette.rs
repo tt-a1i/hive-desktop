@@ -272,6 +272,140 @@ pub fn compact_relative_time(updated_at_ms: i64, english: bool) -> Option<String
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LocalClock {
+    year: i32,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+}
+
+#[cfg(unix)]
+fn local_clock_from_unix_secs(secs: i64) -> Option<LocalClock> {
+    let time_t = secs as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let ptr = unsafe { libc::localtime_r(&time_t, &mut tm) };
+    if ptr.is_null() {
+        return None;
+    }
+    Some(LocalClock {
+        year: tm.tm_year + 1900,
+        month: (tm.tm_mon + 1).clamp(1, 12) as u8,
+        day: tm.tm_mday.clamp(1, 31) as u8,
+        hour: tm.tm_hour.clamp(0, 23) as u8,
+        minute: tm.tm_min.clamp(0, 59) as u8,
+    })
+}
+
+#[cfg(unix)]
+fn now_local_clock() -> Option<LocalClock> {
+    let secs = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+    local_clock_from_unix_secs(secs)
+}
+
+#[cfg(windows)]
+fn local_clock_from_unix_secs(secs: i64) -> Option<LocalClock> {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{
+        FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime,
+    };
+    let ticks = secs.checked_add(11_644_473_600)?.checked_mul(10_000_000)?;
+    if ticks < 0 {
+        return None;
+    }
+    let ticks = ticks as u64;
+    let ft = FILETIME {
+        dwLowDateTime: (ticks & 0xFFFF_FFFF) as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    let mut utc: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    if unsafe { FileTimeToSystemTime(&ft, &mut utc) } == 0 {
+        return None;
+    }
+    let mut local: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    if unsafe { SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) } == 0 {
+        return None;
+    }
+    Some(LocalClock {
+        year: i32::from(local.wYear),
+        month: local.wMonth.clamp(1, 12) as u8,
+        day: local.wDay.clamp(1, 31) as u8,
+        hour: local.wHour.clamp(0, 23) as u8,
+        minute: local.wMinute.clamp(0, 59) as u8,
+    })
+}
+
+#[cfg(windows)]
+fn now_local_clock() -> Option<LocalClock> {
+    use windows_sys::Win32::Foundation::SYSTEMTIME;
+    use windows_sys::Win32::System::Time::GetLocalTime;
+    let mut local: SYSTEMTIME = unsafe { std::mem::zeroed() };
+    unsafe { GetLocalTime(&mut local) };
+    Some(LocalClock {
+        year: i32::from(local.wYear),
+        month: local.wMonth.clamp(1, 12) as u8,
+        day: local.wDay.clamp(1, 31) as u8,
+        hour: local.wHour.clamp(0, 23) as u8,
+        minute: local.wMinute.clamp(0, 59) as u8,
+    })
+}
+
+fn format_clock_parts(
+    target: LocalClock,
+    today: LocalClock,
+    format: crate::general::SessionTimeFormat,
+    english: bool,
+) -> String {
+    if target.year == today.year && target.month == today.month && target.day == today.day {
+        match format {
+            crate::general::SessionTimeFormat::Clock24h => {
+                format!("{:02}:{:02}", target.hour, target.minute)
+            }
+            crate::general::SessionTimeFormat::Clock12h => {
+                let h12 = match target.hour % 12 {
+                    0 => 12,
+                    h => h,
+                };
+                if english {
+                    let meridiem = if target.hour < 12 { "AM" } else { "PM" };
+                    format!("{h12}:{:02} {meridiem}", target.minute)
+                } else {
+                    let meridiem = if target.hour < 12 { "上午" } else { "下午" };
+                    format!("{meridiem}{h12}:{:02}", target.minute)
+                }
+            }
+            crate::general::SessionTimeFormat::Relative => {
+                format!("{:02}:{:02}", target.hour, target.minute)
+            }
+        }
+    } else if target.year == today.year {
+        format!("{:02}/{:02}", target.month, target.day)
+    } else {
+        format!("{}/{:02}/{:02}", target.year, target.month, target.day)
+    }
+}
+
+pub fn format_session_time(
+    updated_at_ms: i64,
+    format: crate::general::SessionTimeFormat,
+    english: bool,
+) -> Option<String> {
+    if updated_at_ms <= 0 {
+        return None;
+    }
+    match format {
+        crate::general::SessionTimeFormat::Relative => compact_relative_time(updated_at_ms, english),
+        crate::general::SessionTimeFormat::Clock24h
+        | crate::general::SessionTimeFormat::Clock12h => {
+            let secs = updated_at_ms.div_euclid(1000);
+            let target = local_clock_from_unix_secs(secs)?;
+            let today = now_local_clock()?;
+            Some(format_clock_parts(target, today, format, english))
+        }
+    }
+}
+
 /// Formats filesystem paths cleanly for UI display (`~/code/proj` or `…/parent/proj` for deep paths).
 pub fn display_path(raw: &str) -> String {
     if let Some(home) = std::env::var_os("HOME")
@@ -318,5 +452,94 @@ mod tests {
             project_badge_tone_index("archify"),
             project_badge_tone_index("hive-desktop")
         );
+    }
+
+    #[test]
+    fn session_time_formats_relative_24h_and_12h_clocks() {
+        let today = LocalClock {
+            year: 2026,
+            month: 11,
+            day: 15,
+            hour: 18,
+            minute: 30,
+        };
+        let morning = LocalClock {
+            hour: 9,
+            minute: 5,
+            ..today
+        };
+        let afternoon = LocalClock {
+            hour: 15,
+            minute: 7,
+            ..today
+        };
+        let same_year = LocalClock {
+            month: 3,
+            day: 9,
+            ..today
+        };
+        let older_year = LocalClock {
+            year: 2025,
+            month: 12,
+            day: 31,
+            ..today
+        };
+
+        assert_eq!(
+            format_clock_parts(
+                morning,
+                today,
+                crate::general::SessionTimeFormat::Clock24h,
+                true
+            ),
+            "09:05"
+        );
+        assert_eq!(
+            format_clock_parts(
+                afternoon,
+                today,
+                crate::general::SessionTimeFormat::Clock12h,
+                true
+            ),
+            "3:07 PM"
+        );
+        assert_eq!(
+            format_clock_parts(
+                afternoon,
+                today,
+                crate::general::SessionTimeFormat::Clock12h,
+                false
+            ),
+            "下午3:07"
+        );
+        assert_eq!(
+            format_clock_parts(
+                same_year,
+                today,
+                crate::general::SessionTimeFormat::Clock24h,
+                true
+            ),
+            "03/09"
+        );
+        assert_eq!(
+            format_clock_parts(
+                older_year,
+                today,
+                crate::general::SessionTimeFormat::Clock12h,
+                true
+            ),
+            "2025/12/31"
+        );
+
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        assert_eq!(
+            format_session_time(now_ms, crate::general::SessionTimeFormat::Relative, true),
+            Some("now".into())
+        );
+        assert!(format_session_time(now_ms, crate::general::SessionTimeFormat::Clock24h, true).is_some());
+        assert!(format_session_time(now_ms, crate::general::SessionTimeFormat::Clock12h, false).is_some());
     }
 }

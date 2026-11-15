@@ -12,6 +12,7 @@ export interface DeliveryItem {
  readonly presentation?: DeliveryPresentation;
  readonly images?: readonly PromptImage[];
  readonly contextRef?: {operationId:string;snapshotHash:string};
+ readonly steerUser?: boolean;
 }
 
 type StoredItem = DeliveryItem & { readonly queueState?: "pending" | "started" | "canceled" };
@@ -104,7 +105,7 @@ export class DeliveryQueue {
   return this.items.flatMap((item, index) => item.presentation?.origin === 'user' ? [{
    deliveryId: item.id, text: item.presentation.displayText,
    attachments: structuredClone(item.presentation.attachments ?? []),
-   processing: index === 0 && this.busy && !this.paused,
+   processing: (index === 0 || this.steering.has(item.id)) && this.busy && !this.paused,
    editable: this.mutationReason(item, index) === undefined,
    ...(this.mutationReason(item, index) && { reason: this.mutationReason(item, index) }),
   }] : []);
@@ -113,19 +114,19 @@ export class DeliveryQueue {
  get busy(): boolean { return this.running !== undefined; }
 
  /** Resolves after atomic persistence, without waiting for model execution. */
- async enqueue(text: string, triggerTurn = true, presentation?: DeliveryPresentation, imageInput?: readonly PromptImage[]): Promise<void> {
+ async enqueue(text: string, triggerTurn = true, presentation?: DeliveryPresentation, imageInput?: readonly PromptImage[], options?: { steerUser?: boolean }): Promise<void> {
   if (presentation !== undefined && !isDeliveryPresentation(presentation)) throw new Error("Invalid delivery presentation");
   const images = promptImages(imageInput);
   if (images.length && !triggerTurn) throw new TypeError("不触发模型回合的投递暂不支持图片。");
-  const original:DeliveryItem={id:randomUUID(),text,triggerTurn,...(images.length&&{images}),...(presentation&&{presentation:structuredClone(presentation)})};
+  const original:DeliveryItem={id:randomUUID(),text,triggerTurn,...(images.length&&{images}),...(presentation&&{presentation:structuredClone(presentation)}),...(options?.steerUser&&{steerUser:true})};
   const prepared=this.options.prepare?.(original)??original;
-  if(prepared.id!==original.id||prepared.text!==original.text||prepared.triggerTurn!==original.triggerTurn||!isDeepStrictEqual(prepared.presentation,original.presentation)||!isDeepStrictEqual(prepared.images,original.images))throw new Error('Prepared delivery changed its input identity');
+  if(prepared.id!==original.id||prepared.text!==original.text||prepared.triggerTurn!==original.triggerTurn||prepared.steerUser!==original.steerUser||!isDeepStrictEqual(prepared.presentation,original.presentation)||!isDeepStrictEqual(prepared.images,original.images))throw new Error('Prepared delivery changed its input identity');
   this.replace([...this.items, { ...prepared, queueState: "pending" }]);
   const item = this.items.at(-1)!;
   // Asynchronous system input and worker reports may join the current turn. Never overtake a
   // queued user/task input; persist first and retain until native completion.
   if (!this.paused && this.busy && this.attemptedId === this.items[0]?.id
-    && item.triggerTurn && !item.images?.length && (item.presentation?.origin === 'system' || item.presentation?.origin === 'report')
+    && item.triggerTurn && !item.images?.length && (item.presentation?.origin === 'system' || item.presentation?.origin === 'report' || (item.steerUser === true && item.presentation?.origin === 'user'))
     && this.items.slice(1, -1).every(entry => this.steering.has(entry.id)) && this.options.steer) {
    const attempt = this.options.steer(item).then(handled => {
     if (handled && !this.options.completedIds().includes(item.id)) throw new Error('Native steering completed without a durable delivery receipt');

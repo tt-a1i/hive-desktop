@@ -49,8 +49,11 @@ fn apply_screen(
     cx: &mut Context<HiveApp>,
 ) {
     match screen {
+        "settings:general" => open_section(app, SettingsSection::General, window, cx),
         "settings:appearance" => open_section(app, SettingsSection::Appearance, window, cx),
         "settings:chat" => open_section(app, SettingsSection::Chat, window, cx),
+        "settings:diffs" => open_section(app, SettingsSection::Diffs, window, cx),
+        "settings:archive" => open_section(app, SettingsSection::Archive, window, cx),
         "settings:accounts" => open_section(app, SettingsSection::PiAccounts, window, cx),
         "settings:models" => open_section(app, SettingsSection::Models, window, cx),
         "settings:team" => open_section(app, SettingsSection::Team, window, cx),
@@ -126,7 +129,19 @@ fn apply_screen(
         "chat:file-viewer" => {
             // Preview the selected project's actual file. Route selection must
             // never create or replace files in a user's workspace.
-            app.open_file_preview("README.md".to_owned(), window, cx);
+            if let Some(root) = app
+                .workspace
+                .as_ref()
+                .and_then(|id| app.workspaces.iter().find(|w| &w.id == id))
+                .map(|w| std::path::PathBuf::from(&w.path))
+                .or_else(|| std::env::current_dir().ok())
+            {
+                app.open_resource_preview(
+                    root.join("README.md").display().to_string(),
+                    window,
+                    cx,
+                );
+            }
         }
         _ => {}
     }

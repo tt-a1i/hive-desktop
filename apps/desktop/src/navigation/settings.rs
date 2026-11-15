@@ -34,8 +34,14 @@ impl HiveApp {
         let searching = !self.settings_search.read(cx).value().trim().is_empty();
         let groups = [
             (
-                tr("界面"),
+                tr("偏好"),
                 vec![
+                    (
+                        "settings-general-tab",
+                        tr("通用"),
+                        Glyph::SlidersHorizontal,
+                        Some(SettingsSection::General),
+                    ),
                     (
                         "settings-appearance-tab",
                         tr("外观"),
@@ -49,7 +55,9 @@ impl HiveApp {
                         Some(SettingsSection::Chat),
                     ),
                     (
-                        "settings-keybindings-tab", tr("快捷键"), Glyph::Keyboard,
+                        "settings-keybindings-tab",
+                        tr("快捷键"),
+                        Glyph::Keyboard,
                         Some(SettingsSection::Keybindings),
                     ),
                     (
@@ -75,8 +83,12 @@ impl HiveApp {
                         Glyph::Cpu,
                         Some(SettingsSection::Models),
                     ),
-                    ("settings-project-scripts-tab", tr("项目脚本"), Glyph::SquareTerminal, Some(SettingsSection::ProjectScripts)),
-                    ("settings-profiles-tab", tr("Agent 配置"), Glyph::Bot, Some(SettingsSection::Profiles)),
+                    (
+                        "settings-profiles-tab",
+                        tr("Agent 配置"),
+                        Glyph::Bot,
+                        Some(SettingsSection::Profiles),
+                    ),
                     (
                         "settings-programs-tab",
                         tr("外部程序"),
@@ -89,28 +101,42 @@ impl HiveApp {
                 tr("协作"),
                 vec![
                     (
+                        "settings-diffs-tab",
+                        tr("Diff 与 PR"),
+                        Glyph::FileDiff,
+                        Some(SettingsSection::Diffs),
+                    ),
+                    (
+                        "settings-project-scripts-tab",
+                        tr("项目脚本"),
+                        Glyph::SquareTerminal,
+                        Some(SettingsSection::ProjectScripts),
+                    ),
+                    (
                         "settings-team-tab",
                         tr("团队"),
                         Glyph::Network,
                         Some(SettingsSection::Team),
                     ),
-                    ("settings-roles-tab", tr("角色模板"), Glyph::Bot, None),
-                    (
-                        "settings-remote-tab",
-                        tr("远程接入"),
-                        Glyph::Network,
-                        Some(SettingsSection::Remote),
-                    ),
+                    ("settings-roles-tab", tr("角色模板"), Glyph::Users, None),
                 ],
             ),
             (
                 tr("应用"),
-                vec![(
-                    "settings-about-tab",
-                    tr("关于与诊断"),
-                    Glyph::Info,
-                    Some(SettingsSection::About),
-                )],
+                vec![
+                    (
+                        "settings-archive-tab",
+                        tr("归档会话"),
+                        Glyph::Archive,
+                        Some(SettingsSection::Archive),
+                    ),
+                    (
+                        "settings-about-tab",
+                        tr("关于与维护"),
+                        Glyph::Info,
+                        Some(SettingsSection::About),
+                    ),
+                ],
             ),
         ];
         v_flex()

@@ -3,7 +3,7 @@ use crate::app::{HiveApp, SettingsSection};
 use crate::palette::Color;
 use gpui_kit::{
     component::{
-        button::Button,
+        button::{Button, ButtonVariants},
         input::InputState,
         scroll::ScrollableElement,
         *,
@@ -13,8 +13,11 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::json;
+pub mod archive;
 mod appearance;
 mod about;
+mod diffs;
+mod general;
 mod language;
 mod search;
 mod shell;
@@ -207,6 +210,9 @@ impl HiveApp {
         if self.settings_section == SettingsSection::Models {
             self.load_pi_models(cx);
         }
+        if self.settings_section == SettingsSection::Archive {
+            self.load_archived_settings(false, cx);
+        }
         if self.settings_section == SettingsSection::Remote { self.refresh_remote(cx); }
         self.team_autostaff_request(None, cx);
         if !self.notification_loaded {
@@ -378,6 +384,71 @@ pub(super) fn settings_row(divider_top: bool, cx: &App) -> Div {
         })
 }
 
+pub(super) fn settings_anchor_row(
+    id: &'static str,
+    divider_top: bool,
+    highlighted: bool,
+    highlight_gen: u64,
+    cx: &App,
+) -> Stateful<Div> {
+    let accent = Color::Accent.get(cx);
+    let accent_soft = Color::AccentSoft.get(cx);
+    div()
+        .id(id)
+        .w_full()
+        .min_w_0()
+        .px_4()
+        .py_3p5()
+        .when(divider_top, |row| {
+            row.border_t_1().border_color(Color::Divider.get(cx))
+        })
+        .when(highlighted, move |row| {
+            row.bg(accent_soft.opacity(0.65))
+                .border_l_2()
+                .border_color(accent)
+                .on_prepaint(move |bounds, window, cx| {
+                    let state = window.use_keyed_state(
+                        SharedString::from(format!("settings-anchor-{id}")),
+                        cx,
+                        |_, _| 0u64,
+                    );
+                    let should_scroll = state.update(cx, |last, _| {
+                        if *last != highlight_gen {
+                            *last = highlight_gen;
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if should_scroll {
+                        window.request_autoscroll(bounds.dilate(px(16.)));
+                    }
+                })
+        })
+}
+
+pub(super) fn settings_reset_button<F>(
+    id: impl Into<ElementId>,
+    tooltip_key: &'static str,
+    cx: &App,
+    on_click: F,
+) -> Button
+where
+    F: Fn(&gpui_kit::ClickEvent, &mut Window, &mut App) + 'static,
+{
+    Button::new(id)
+        .custom(crate::palette::subtle_icon_variant(cx))
+        .compact()
+        .xsmall()
+        .h(px(26.))
+        .w(px(26.))
+        .rounded_md()
+        .icon(gpui_kit::assets::IconName::RotateCcw)
+        .tooltip(tr(tooltip_key))
+        .accessibility_label(tr(tooltip_key))
+        .on_click(on_click)
+}
+
 pub(super) fn settings_segmented_bar(cx: &App) -> Div {
     h_flex()
         .flex_shrink_0()
@@ -454,10 +525,12 @@ pub(super) fn amber_dot(cx: &App) -> Rgba {
 
 fn section_meta(section: SettingsSection) -> (&'static str, &'static str) {
     match section {
-        SettingsSection::Appearance => ("外观", "主题、界面字号、语言与阅读预览"),
+        SettingsSection::General => ("通用", "默认打开工具、侧边栏排序、忙碌发送方式与确认保护"),
+        SettingsSection::Appearance => ("外观", "主题、界面字号、对话宽度、等宽排版与语言"),
         SettingsSection::Chat => ("聊天", "发送快捷键、工具活动与思考展示"),
+        SettingsSection::Keybindings => ("快捷键", "搜索、录制与恢复全局快捷键，保存后立即生效"),
+        SettingsSection::Diffs => ("Diff 与 PR", "默认差异视图、空白过滤与 Pull Request 创建偏好"),
         SettingsSection::ProjectScripts => ("项目脚本", "保存项目命令，手动运行并查看后台执行记录与输出"),
-        SettingsSection::Keybindings => ("快捷键", "录制、停用与恢复全局快捷键，保存后重启应用生效"),
         SettingsSection::PiAccounts => ("内置 Pi", "连接提供商、订阅登录与 API Key"),
         SettingsSection::Models => ("模型与接口", "自定义接口、模型覆盖、上下文与能力"),
         SettingsSection::Team => ("团队", "自动组队引导"),
@@ -465,11 +538,32 @@ fn section_meta(section: SettingsSection) -> (&'static str, &'static str) {
         SettingsSection::Remote => ("远程接入", "账号连接、设备配对与访问记录"),
         SettingsSection::Profiles => ("Agent 配置", "管理启动配置和历史版本"),
         SettingsSection::Programs => ("外部程序", "外部 Pi、Codex 与 Claude Code 的路径和版本检查"),
-        SettingsSection::About => ("关于与诊断", "版本、构建与后台连接信息"),
+        SettingsSection::Archive => ("归档会话", "搜索、恢复并打开已归档的历史会话"),
+        SettingsSection::About => ("关于与维护", "版本、后台诊断、临时缓存清理与开源许可"),
     }
 }
 
 impl HiveApp {
+    pub(crate) fn highlight_settings_anchor(&mut self, anchor: &'static str, cx: &mut Context<Self>) {
+        self.settings_highlight_generation = self.settings_highlight_generation.wrapping_add(1);
+        let generation = self.settings_highlight_generation;
+        self.settings_highlight_anchor = Some((anchor, generation));
+        cx.spawn(async move |this, cx| {
+            smol::Timer::after(std::time::Duration::from_millis(1600)).await;
+            let _ = this.update(cx, |this, cx| {
+                if this
+                    .settings_highlight_anchor
+                    .is_some_and(|(_, current)| current == generation)
+                {
+                    this.settings_highlight_anchor = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub fn leave_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_search.update(cx, |input, cx| input.set_value("", window, cx));
         self.close_settings();
@@ -526,6 +620,50 @@ impl HiveApp {
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {
+                        SettingsSection::General => content.id("settings-general-container").child(crate::focus_scroll::Viewport::new(
+                            "general-settings-viewport",
+                            &self.general_scroll,
+                            v_flex()
+                                .id("settings-general-content")
+                                .flex_1()
+                                .min_h_0()
+                                .min_w_0()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.general_scroll)
+                                .vertical_scrollbar(&self.general_scroll)
+                                .pr_1()
+                                .child(self.render_general_settings(cx)),
+                        )),
+                        SettingsSection::Diffs => content.id("settings-diffs-container").child(crate::focus_scroll::Viewport::new(
+                            "diffs-settings-viewport",
+                            &self.diffs_scroll,
+                            v_flex()
+                                .id("settings-diffs-content")
+                                .flex_1()
+                                .min_h_0()
+                                .min_w_0()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.diffs_scroll)
+                                .vertical_scrollbar(&self.diffs_scroll)
+                                .pr_1()
+                                .child(self.render_diffs_settings(cx)),
+                        )),
+                        SettingsSection::Archive => content.id("settings-archive-container").child(
+                            crate::focus_scroll::Viewport::new(
+                                "archive-settings-viewport",
+                                &self.archive_scroll,
+                                v_flex()
+                                    .id("settings-archive-content")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .min_w_0()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.archive_scroll)
+                                    .vertical_scrollbar(&self.archive_scroll)
+                                    .pr_1()
+                                    .child(self.render_archive_settings(window, cx)),
+                            ),
+                        ),
                         SettingsSection::Remote => content.id("settings-remote-container").child(crate::focus_scroll::Viewport::new("remote-viewport", &self.remote.scroll, v_flex().flex_1().min_h_0().min_w_0().id("settings-remote-content").overflow_y_scroll().track_scroll(&self.remote.scroll).vertical_scrollbar(&self.remote.scroll).pr_1().child(self.render_remote_settings(cx)))),
                         SettingsSection::ProjectScripts => content.id("settings-project-scripts-container").child(self.render_project_scripts(window, cx)),
                         SettingsSection::Keybindings => content.id("settings-keybindings-container").child(self.keybinding_settings.clone()),

@@ -8,8 +8,12 @@ use crate::{
 };
 use gpui_kit::{
     component::{
-        button::{Button, ButtonVariants},
+        button::{Button, ButtonCustomVariant, ButtonVariants},
         checkbox::Checkbox,
+        diff::{
+            Diff, DiffChangeIndicator, DiffFile, DiffHoverHighlight, DiffHunkSeparator, DiffMode,
+            DiffState,
+        },
         input::{Textarea, TextareaState},
         scroll::ScrollableElement,
         *,
@@ -378,6 +382,10 @@ struct GitWorkspace {
     diff_generation: u64,
     files_scroll: ScrollHandle,
     diff_scroll: ScrollHandle,
+    diff_state: Entity<DiffState>,
+    diff_raw: bool,
+    ignore_whitespace: bool,
+    diff_has_structured: bool,
     index_generation: u64,
     index_busy: bool,
     index_preview: Option<PendingIndexPreview>,
@@ -449,6 +457,16 @@ impl HiveApp {
                 diff_generation: 0,
                 files_scroll: ScrollHandle::new(),
                 diff_scroll: ScrollHandle::new(),
+                diff_state: cx.new(|cx| {
+                    DiffState::new([], cx).with_mode(
+                        crate::diffs_settings::current(cx)
+                            .default_diff_mode
+                            .into_diff_mode(),
+                    )
+                }),
+                diff_raw: false,
+                ignore_whitespace: crate::diffs_settings::current(cx).ignore_whitespace,
+                diff_has_structured: false,
                 index_generation: 0,
                 index_busy: false,
                 index_preview: None,
@@ -521,6 +539,8 @@ impl GitWorkspace {
         self.status_error = None;
         self.status_loading = true;
         self.diff = None;
+        self.diff_has_structured = false;
+        self.diff_state.update(cx, |s, cx| s.set_files([], cx));
         self.diff_error = None;
         self.diff_loading = false;
         self.files_scroll = ScrollHandle::new();
@@ -613,6 +633,8 @@ impl GitWorkspace {
         self.index_notice = None;
         self.diff_generation += 1;
         self.diff = None;
+        self.diff_has_structured = false;
+        self.diff_state.update(cx, |s, cx| s.set_files([], cx));
         self.diff_error = None;
         self.diff_loading = false;
         self.files_scroll.scroll_to_item(index);
@@ -631,6 +653,8 @@ impl GitWorkspace {
         self.diff_generation += 1;
         let generation = self.diff_generation;
         self.diff = None;
+        self.diff_has_structured = false;
+        self.diff_state.update(cx, |s, cx| s.set_files([], cx));
         self.diff_error = None;
         self.diff_loading = true;
         self.diff_scroll = ScrollHandle::new();
@@ -658,13 +682,58 @@ impl GitWorkspace {
                     return;
                 }
                 match result {
-                    Ok(diff) => this.diff = Some(diff),
+                    Ok(diff) => {
+                        this.diff = Some(diff);
+                        let collapse =
+                            crate::diffs_settings::current(cx).collapse_multi_file_diffs;
+                        this.sync_diff_state(collapse, cx);
+                    }
                     Err(error) => this.diff_error = Some(error),
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+    fn sync_diff_state(&mut self, collapse_multi: bool, cx: &mut App) {
+        let Some(patch) = self.diff.as_ref().and_then(|diff| diff.patch.as_deref()) else {
+            self.diff_has_structured = false;
+            self.diff_state.update(cx, |s, cx| s.set_files([], cx));
+            return;
+        };
+        if patch.trim().is_empty() {
+            self.diff_has_structured = false;
+            self.diff_state.update(cx, |s, cx| s.set_files([], cx));
+            return;
+        }
+        let effective = if self.ignore_whitespace {
+            crate::diffs_settings::filter_patch_whitespace(patch)
+        } else {
+            patch.to_owned()
+        };
+        if effective.trim().is_empty() {
+            self.diff_has_structured = false;
+            self.diff_state.update(cx, |s, cx| s.set_files([], cx));
+            return;
+        }
+        match DiffFile::parse(&effective) {
+            Ok(files) if !files.is_empty() => {
+                let paths: Vec<String> = files.iter().map(|f| f.path().to_string()).collect();
+                self.diff_state.update(cx, |s, cx| {
+                    s.set_files(files, cx);
+                    if collapse_multi && paths.len() > 1 {
+                        for path in paths {
+                            s.set_file_collapsed(&path, true, cx);
+                        }
+                    }
+                });
+                self.diff_has_structured = true;
+            }
+            _ => {
+                self.diff_has_structured = false;
+                self.diff_state.update(cx, |s, cx| s.set_files([], cx));
+            }
+        }
     }
     fn preview_index(&mut self, operation: IndexOperation, cx: &mut Context<Self>) {
         if !self.current(cx) || self.status_loading || self.busy(cx) || self.index_refresh_required { return; }
@@ -1020,9 +1089,152 @@ impl Render for GitWorkspace {
                         .child(format!("{}\n{}", tr("此差异包含限制；元数据或冲突阶段不代表合并后的补丁"), diff.limitations.join("\n")))))
                     .when(diff.binary, |view| view.child(div().text_sm().child(tr("二进制内容仅显示元数据，不生成文本补丁"))))
                     .when_some(diff.patch.as_ref(), |view, patch| {
-                        view.child(crate::text_reading::region("git-raw-patch-region".into(), tr("Git 原始字节补丁").to_owned(), &self.diff_scroll, diff_height, cx)
-                            .font_family(Theme::global(cx).mono_font_family.clone())
-                            .child(crate::text_reading::selectable_text("git-raw-patch", if patch.is_empty() { tr("此比较没有文本内容差异").to_owned() } else { patch.clone() })))
+                        let appearance = cx.global::<crate::appearance::Appearance>();
+                        let code_size = f32::from(appearance.code_font_size());
+                        let code_wrap = appearance.code_word_wrap();
+                        let diff_mode = self.diff_state.read(cx).mode();
+                        let has_patch = !patch.trim().is_empty();
+                        let show_structured = !self.diff_raw && self.diff_has_structured;
+                        let segment_variant = |cx: &App| {
+                            ButtonCustomVariant::new(cx)
+                                .color(gpui::rgba(0).into())
+                                .foreground(Color::Text.get(cx).into())
+                                .hover(Color::Card.get(cx).opacity(0.65).into())
+                                .active(Color::Card.get(cx).into())
+                        };
+                        let raw_display = if patch.is_empty() {
+                            tr("此比较没有文本内容差异").to_owned()
+                        } else if self.ignore_whitespace && !self.diff_raw {
+                            let filtered = crate::diffs_settings::filter_patch_whitespace(patch);
+                            if filtered.trim().is_empty() {
+                                tr("忽略空白后没有代码内容差异").to_owned()
+                            } else {
+                                filtered
+                            }
+                        } else {
+                            patch.clone()
+                        };
+                        view.child(
+                            v_flex()
+                                .min_w_0()
+                                .gap_2()
+                                .when(has_patch, |col| {
+                                    col.child(
+                                        h_flex()
+                                            .flex_wrap()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_2()
+                                            .child(
+                                                h_flex()
+                                                    .gap_0p5()
+                                                    .p_0p5()
+                                                    .rounded_lg()
+                                                    .bg(Color::Inset.get(cx))
+                                                    .border_1()
+                                                    .border_color(Color::Divider.get(cx))
+                                                    .child(
+                                                        Button::new("git-diff-unified")
+                                                            .custom(segment_variant(cx))
+                                                            .compact()
+                                                            .h(px(24.))
+                                                            .px_2()
+                                                            .rounded_md()
+                                                            .label(tr("合并视图"))
+                                                            .selected(!self.diff_raw && self.diff_has_structured && diff_mode == DiffMode::Unified)
+                                                            .disabled(!self.diff_has_structured)
+                                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                                this.diff_raw = false;
+                                                                this.diff_state.update(cx, |s, cx| s.set_mode(DiffMode::Unified, cx));
+                                                                cx.notify();
+                                                            })),
+                                                    )
+                                                    .child(
+                                                        Button::new("git-diff-split")
+                                                            .custom(segment_variant(cx))
+                                                            .compact()
+                                                            .h(px(24.))
+                                                            .px_2()
+                                                            .rounded_md()
+                                                            .label(tr("并排视图"))
+                                                            .selected(!self.diff_raw && self.diff_has_structured && diff_mode == DiffMode::Split)
+                                                            .disabled(!self.diff_has_structured)
+                                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                                this.diff_raw = false;
+                                                                this.diff_state.update(cx, |s, cx| s.set_mode(DiffMode::Split, cx));
+                                                                cx.notify();
+                                                            })),
+                                                    )
+                                                    .child(
+                                                        Button::new("git-diff-raw")
+                                                            .custom(segment_variant(cx))
+                                                            .compact()
+                                                            .h(px(24.))
+                                                            .px_2()
+                                                            .rounded_md()
+                                                            .label(tr("原始补丁"))
+                                                            .selected(self.diff_raw || !self.diff_has_structured)
+                                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                                this.diff_raw = true;
+                                                                cx.notify();
+                                                            })),
+                                                    ),
+                                            )
+                                            .child(
+                                                Button::new("git-diff-ignore-ws")
+                                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                                    .compact()
+                                                    .h(px(24.))
+                                                    .px_2()
+                                                    .rounded_md()
+                                                    .label(tr("忽略空白"))
+                                                    .selected(self.ignore_whitespace)
+                                                    .toggled(self.ignore_whitespace)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.ignore_whitespace = !this.ignore_whitespace;
+                                                        this.sync_diff_state(false, cx);
+                                                        cx.notify();
+                                                    })),
+                                            ),
+                                    )
+                                })
+                                .child(if show_structured {
+                                    div()
+                                        .h(diff_height)
+                                        .min_w_0()
+                                        .rounded_md()
+                                        .bg(Color::Card.get(cx))
+                                        .overflow_hidden()
+                                        .child(
+                                            Diff::new(&self.diff_state)
+                                                .soft_wrap(code_wrap)
+                                                .hover_highlight(DiffHoverHighlight::Both)
+                                                .change_indicator(DiffChangeIndicator::Signs)
+                                                .hunk_separator(DiffHunkSeparator::Metadata)
+                                                .rounded_md()
+                                                .overflow_hidden()
+                                                .border_color(Color::Divider.get(cx)),
+                                        )
+                                        .into_any_element()
+                                } else {
+                                    crate::text_reading::region(
+                                        "git-raw-patch-region".into(),
+                                        tr("Git 原始字节补丁").to_owned(),
+                                        &self.diff_scroll,
+                                        diff_height,
+                                        cx,
+                                    )
+                                    .font_family(Theme::global(cx).mono_font_family.clone())
+                                    .text_size(px(code_size))
+                                    .line_height(px((code_size * 1.55).round()))
+                                    .when(code_wrap, |v| v.whitespace_normal())
+                                    .child(crate::text_reading::selectable_text(
+                                        "git-raw-patch",
+                                        raw_display,
+                                    ))
+                                    .into_any_element()
+                                }),
+                        )
                     })
                     .when(diff.patch.is_none() && !diff.binary, |view| view.child(div().text_sm().child(tr("后台未提供文本补丁；请查看文件类型、对象标识和限制说明"))))
             }).into_any_element()

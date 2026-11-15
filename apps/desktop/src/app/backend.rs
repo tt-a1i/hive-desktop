@@ -66,12 +66,23 @@ impl HiveApp {
                     Ok(info) => {
                         this.backend_info = Some(crate::diagnostics::BackendInfo::from_initialize(&info));
                         if let Some(root) = info["dataDir"].as_str() {
+                            this.data_dir = Some(std::path::PathBuf::from(root));
                             crate::language::restore(std::path::Path::new(root), cx);
                             crate::appearance::restore(std::path::Path::new(root), cx);
+                            crate::general::restore(std::path::Path::new(root), cx);
+                            crate::diffs_settings::restore(std::path::Path::new(root), cx);
+                            let pr_base = crate::diffs_settings::current(cx).pr_default_base;
+                            let pr_base_input = this.diffs_pr_base_input.clone();
+                            let _ = settings_window.update(cx, |_, window, cx| {
+                                pr_base_input.update(cx, |input, cx| {
+                                    input.set_value(pr_base, window, cx);
+                                });
+                            });
                             crate::composer::restore(std::path::Path::new(root), cx);
                             crate::keybindings::restore(std::path::Path::new(root), cx);
                             this.sidebar.restore(std::path::Path::new(root));
                             crate::local_notifications::restore(std::path::Path::new(root), cx);
+                            this.sync_terminal_typography(cx);
                         }
                         this.remote.commands = info["remoteCommands"].clone();
                         this.pi_agent_dir =

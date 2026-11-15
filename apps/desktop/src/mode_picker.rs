@@ -57,6 +57,38 @@ impl HiveApp {
         self.load_mode_axis(false, mode, cx);
     }
 
+    pub(crate) fn cycle_session_mode(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = &self.session else {
+            return;
+        };
+        if self.loading
+            || !self.conversation_ready
+            || !self.connected
+            || self.closing
+            || self.conversation_is_read_only()
+            || self.pending.get(&session.id).copied().unwrap_or(0) > 0
+            || self.interaction_count(&session.id) > 0
+            || self.mode_picker.mode.loading
+        {
+            return;
+        }
+        let next = match self.mode_picker.mode.state.as_ref() {
+            None => {
+                self.load_mode(None, cx);
+                return;
+            }
+            Some(state) if state.options.len() < 2 => return,
+            Some(state) => {
+                let current = state.selected.as_deref().or(state.applied.as_deref());
+                let idx = current
+                    .and_then(|id| state.options.iter().position(|option| option.id == id))
+                    .unwrap_or(0);
+                state.options[(idx + 1) % state.options.len()].id.clone()
+            }
+        };
+        self.load_mode(Some(next), cx);
+    }
+
     pub(crate) fn load_permission_mode(&mut self, mode: Option<String>, cx: &mut Context<Self>) {
         if !self
             .session

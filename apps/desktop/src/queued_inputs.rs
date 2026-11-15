@@ -199,12 +199,21 @@ impl HiveApp {
                                         .disabled(!self.connected || self.closing)
                                         .on_click(
                                             cx.listener(move |this, _, window, cx| {
-                                                this.open_queue_editor(
-                                                    cancel_input.clone(),
-                                                    true,
-                                                    window,
-                                                    cx,
-                                                )
+                                                if crate::general::current(cx)
+                                                    .confirm_cancel_queued_input
+                                                {
+                                                    this.open_queue_editor(
+                                                        cancel_input.clone(),
+                                                        true,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                } else {
+                                                    this.cancel_queued_input_now(
+                                                        cancel_input.clone(),
+                                                        cx,
+                                                    );
+                                                }
                                             }),
                                         ),
                                     )
@@ -236,5 +245,58 @@ impl HiveApp {
                 ))
                 .into_any_element(),
         )
+    }
+
+    pub(super) fn cancel_queued_input_now(
+        &mut self,
+        input: crate::protocol::PendingUserInput,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connected
+            || self.closing
+            || !self.workspace_writes_allowed()
+            || !input.editable
+            || input.processing
+        {
+            return;
+        }
+        let Some(session_id) = self.session.as_ref().map(|session| session.id.clone()) else {
+            return;
+        };
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let connection = self.connection_generation;
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request(
+                    "chat.queue.cancel",
+                    serde_json::json!({
+                        "sessionId": session_id,
+                        "deliveryId": input.delivery_id,
+                        "expectedText": input.text,
+                    }),
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
+                match result {
+                    Ok(value) if value["ok"] == true => {}
+                    Ok(_) => {
+                        this.error = Some("后台未确认待发消息操作。".into());
+                    }
+                    Err(error) => {
+                        this.error = Some(crate::app::ErrorNotice::Detail(
+                            "撤回待发消息失败",
+                            error,
+                        ));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }

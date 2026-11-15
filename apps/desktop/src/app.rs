@@ -21,9 +21,11 @@ use std::{
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
+    General,
     Appearance,
     Chat,
     Keybindings,
+    Diffs,
     ProjectScripts,
     PiAccounts,
     Models,
@@ -32,6 +34,7 @@ pub enum SettingsSection {
     Remote,
     Programs,
     Profiles,
+    Archive,
     About,
 }
 
@@ -281,9 +284,21 @@ pub struct HiveApp {
     pub focus_project_input: bool,
     pub program_scroll: ScrollHandle,
     pub appearance_scroll: ScrollHandle,
+    pub general_scroll: ScrollHandle,
+    pub diffs_scroll: ScrollHandle,
+    pub archive_scroll: ScrollHandle,
     pub chat_settings_scroll: ScrollHandle,
     pub team_settings_scroll: ScrollHandle,
     pub settings_search_scroll: ScrollHandle,
+    pub settings_search_selected: usize,
+    pub settings_highlight_anchor: Option<(&'static str, u64)>,
+    pub settings_highlight_generation: u64,
+    pub showing_welcome_guide: bool,
+    pub quit_confirm_open: bool,
+    pub(crate) archive_settings: crate::settings::archive::ArchiveState,
+    pub(crate) maintenance_state: crate::maintenance::MaintenanceState,
+    pub data_dir: Option<std::path::PathBuf>,
+    pub diffs_pr_base_input: Entity<InputState>,
     events: Task<()>,
     pub(crate) workspace_updates: Task<()>,
     _quit: Subscription,
@@ -296,13 +311,24 @@ impl HiveApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::register_local_notifications(window, cx);
         let weak = cx.weak_entity();
-        window.on_window_should_close(cx, move |_, cx| {
-            let _ = weak.update(cx, |this, cx| this.exit(cx));
+        window.on_window_should_close(cx, move |window, cx| {
+            let _ = weak.update(cx, |this, cx| this.request_exit(Some(window), cx));
             false
         });
         let weak = cx.weak_entity();
+        let quit_handle = window.window_handle();
         gpui_kit::App::on_action(cx, move |_: &crate::Quit, cx| {
-            let _ = weak.update(cx, |this, cx| this.exit(cx));
+            let weak = weak.clone();
+            cx.defer(move |cx| {
+                if quit_handle
+                    .update(cx, |_, window, cx| {
+                        let _ = weak.update(cx, |this, cx| this.request_exit(Some(window), cx));
+                    })
+                    .is_err()
+                {
+                    let _ = weak.update(cx, |this, cx| this.request_exit(None, cx));
+                }
+            });
         });
         let weak = cx.weak_entity();
         let handle = window.window_handle();
@@ -341,6 +367,110 @@ impl HiveApp {
                 });
             });
         });
+        Self::register_guarded_action::<crate::NewSessionShortcut>(
+            cx,
+            |this, _window, cx| {
+                if !this.connected || this.closing || this.loading || !this.workspace_writes_allowed()
+                {
+                    return;
+                }
+                let backend = this
+                    .session
+                    .as_ref()
+                    .map(|session| session.backend.wire())
+                    .unwrap_or("pi");
+                this.hide_terminal(cx);
+                this.new_session(backend, cx);
+            },
+            window,
+        );
+        Self::register_guarded_action::<crate::ToggleSidebar>(
+            cx,
+            |this, _window, cx| {
+                this.sidebar_open = !this.sidebar_open;
+                cx.notify();
+            },
+            window,
+        );
+        Self::register_guarded_action::<crate::ToggleWorkspaceTerminal>(
+            cx,
+            |this, window, cx| {
+                if !this.connected || this.closing {
+                    return;
+                }
+                if this.terminal.visible {
+                    this.hide_terminal(cx);
+                } else if this.workspace.is_some() {
+                    this.show_terminal(window, cx);
+                }
+            },
+            window,
+        );
+        Self::register_guarded_action::<crate::OpenGitWorkspaceShortcut>(
+            cx,
+            |this, window, cx| {
+                if this.connected && !this.closing && this.workspace.is_some() {
+                    this.open_git_workspace(window, cx);
+                }
+            },
+            window,
+        );
+        Self::register_guarded_action::<crate::OpenProjectFilePicker>(
+            cx,
+            |this, window, cx| {
+                if this.connected && !this.closing && this.can_reference_project_file() {
+                    this.open_project_file_picker(window, cx);
+                }
+            },
+            window,
+        );
+        Self::register_guarded_action::<crate::OpenModelPicker>(
+            cx,
+            |this, window, cx| {
+                if !this.connected
+                    || this.closing
+                    || this.loading
+                    || !this.viewing_conversation()
+                    || this.session.is_none()
+                    || this.conversation_is_read_only()
+                {
+                    return;
+                }
+                this.choosing_model = !this.choosing_model;
+                if this.choosing_model {
+                    this.model_search
+                        .update(cx, |input, cx| input.set_value("", window, cx));
+                    this.reasoning_picker
+                        .model_scroll
+                        .set_offset(point(px(0.), px(0.)));
+                    this.reasoning_picker.scroll.set_offset(point(px(0.), px(0.)));
+                    this.load_reasoning(None, cx);
+                    let focus = this.model_search.read(cx).focus_handle(cx);
+                    window.on_next_frame(move |window, cx| focus.focus(window, cx));
+                }
+                cx.notify();
+            },
+            window,
+        );
+        Self::register_guarded_action::<crate::ToggleSessionMode>(
+            cx,
+            |this, _window, cx| {
+                if this.connected && !this.closing && this.viewing_conversation() {
+                    this.cycle_session_mode(cx);
+                }
+            },
+            window,
+        );
+        Self::register_guarded_action::<crate::SelectPreviousSession>(
+            cx,
+            |this, window, cx| this.step_session(-1, window, cx),
+            window,
+        );
+        Self::register_guarded_action::<crate::SelectNextSession>(
+            cx,
+            |this, window, cx| this.step_session(1, window, cx),
+            window,
+        );
         let [pi_command, codex_command, claude_command] = std::array::from_fn(|_| {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("留空时使用 PATH"));
             cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
@@ -373,6 +503,7 @@ impl HiveApp {
         cx.subscribe_in(&settings_search, window, |this, _, event: &InputEvent, window, cx| {
             match event {
                 InputEvent::Change => {
+                    this.settings_search_selected = 0;
                     this.settings_search_scroll.set_offset(point(px(0.), px(0.)));
                     cx.notify();
                 }
@@ -410,6 +541,31 @@ impl HiveApp {
                 }
             },
         );
+        let default_pr_base = crate::diffs_settings::current(cx).pr_default_base;
+        let diffs_pr_base_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(crate::language::tr("例如 main"))
+                .default_value(default_pr_base)
+        });
+        cx.subscribe_in(
+            &diffs_pr_base_input,
+            window,
+            |this, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => cx.notify(),
+                InputEvent::PressEnter {
+                    secondary: false,
+                    shift: false,
+                } => this.save_diffs_pr_base(window, cx),
+                InputEvent::Blur => {
+                    let current = crate::diffs_settings::current(cx).pr_default_base;
+                    if this.diffs_pr_base_input.read(cx).value().trim() != current {
+                        this.save_diffs_pr_base(window, cx);
+                    }
+                }
+                _ => {}
+            },
+        )
+        .detach();
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .submit_on_enter(true)
@@ -506,7 +662,7 @@ impl HiveApp {
             repair_models_focus: cx.focus_handle(),
             repair_program_focus: cx.focus_handle(),
             preferences_nav_scroll: ScrollHandle::new(),
-            settings_section: SettingsSection::Appearance,
+            settings_section: SettingsSection::General,
             project_scripts: cx.new(|cx| crate::project_scripts::Page::new(scripts_owner, window, cx)),
             keybinding_settings: cx.new(|cx| crate::keybindings::Editor::new(window, cx)),
             settings_search,
@@ -624,9 +780,21 @@ impl HiveApp {
             focus_project_input: false,
             program_scroll: ScrollHandle::new(),
             appearance_scroll: ScrollHandle::new(),
+            general_scroll: ScrollHandle::new(),
+            diffs_scroll: ScrollHandle::new(),
+            archive_scroll: ScrollHandle::new(),
             chat_settings_scroll: ScrollHandle::new(),
             team_settings_scroll: ScrollHandle::new(),
             settings_search_scroll: ScrollHandle::new(),
+            settings_search_selected: 0,
+            settings_highlight_anchor: None,
+            settings_highlight_generation: 0,
+            showing_welcome_guide: false,
+            quit_confirm_open: false,
+            archive_settings: crate::settings::archive::ArchiveState::new(window, cx),
+            maintenance_state: crate::maintenance::MaintenanceState::default(),
+            data_dir: None,
+            diffs_pr_base_input,
             events: Task::ready(()),
             workspace_updates: Task::ready(()),
             _quit: cx.on_app_quit(|this: &mut Self, cx| {
@@ -648,6 +816,86 @@ impl HiveApp {
         app.start_workspace_updates(cx);
         app
     }
+    fn register_guarded_action<A: gpui_kit::Action>(
+        cx: &mut Context<Self>,
+        handler: fn(&mut Self, &mut Window, &mut Context<Self>),
+        window: &Window,
+    ) {
+        let weak = cx.weak_entity();
+        let handle = window.window_handle();
+        gpui_kit::App::on_action(cx, move |_: &A, cx| {
+            let weak = weak.clone();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    if window.has_active_dialog(cx) {
+                        return;
+                    }
+                    let _ = weak.update(cx, |this, cx| {
+                        if !this.settings_panel && !this.roles.visible {
+                            handler(this, window, cx);
+                        }
+                    });
+                });
+            });
+        });
+    }
+    pub fn has_busy_work(&self) -> bool {
+        !self.busy.is_empty() || !self.inflight_inputs.is_empty()
+    }
+
+    pub fn request_exit(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
+        if self.closing {
+            return;
+        }
+        let should_confirm = match crate::general::current(cx).quit_confirmation {
+            crate::general::QuitConfirmation::Never => false,
+            crate::general::QuitConfirmation::WhenBusy => self.has_busy_work(),
+            crate::general::QuitConfirmation::Always => true,
+        };
+        if !should_confirm {
+            self.exit(cx);
+            return;
+        }
+        let Some(window) = window else {
+            self.exit(cx);
+            return;
+        };
+        if self.quit_confirm_open {
+            return;
+        }
+        self.quit_confirm_open = true;
+        let weak_close = cx.weak_entity();
+        let weak_ok = cx.weak_entity();
+        let busy = self.has_busy_work();
+        gpui_kit::component::WindowExt::open_alert_dialog(window, cx, move |dialog, _, _| {
+            let weak_close = weak_close.clone();
+            let weak_ok = weak_ok.clone();
+            dialog
+                .title(crate::language::tr("确认退出 Hive Desktop？"))
+                .description(if busy {
+                    crate::language::tr(
+                        "当前仍有会话任务正在运行；退出将中断进行中的连接并关闭桌面端。",
+                    )
+                } else {
+                    crate::language::tr("确定要关闭并退出 Hive Desktop 吗？")
+                })
+                .show_cancel(true)
+                .ok_text(crate::language::tr("退出应用"))
+                .cancel_text(crate::language::tr("取消"))
+                .on_close(move |_, _, cx| {
+                    let _ = weak_close.update(cx, |this, _| this.quit_confirm_open = false);
+                })
+                .on_ok(move |_, _, cx| {
+                    let _ = weak_ok.update(cx, |this, cx| {
+                        this.quit_confirm_open = false;
+                        this.exit(cx);
+                    });
+                    true
+                })
+        });
+        cx.notify();
+    }
+
     pub fn exit(&mut self, cx: &mut Context<Self>) {
         if self.closing {
             return;

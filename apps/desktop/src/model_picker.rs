@@ -101,8 +101,9 @@ impl HiveApp {
                     ),
             )
             .tooltip(format!(
-                "{label}\n{identity}\n{}",
-                tr("只影响当前会话，不修改 Agent 全局默认")
+                "{label}\n{identity}\n{}\n{}",
+                tr("只影响当前会话，不修改 Agent 全局默认"),
+                crate::keybindings::hint(crate::keybindings::Target::ChooseModel, "快捷键", cx),
             ))
             .disabled(unavailable);
         if unavailable {

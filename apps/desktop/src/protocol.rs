@@ -123,6 +123,15 @@ pub enum Backend {
     Acp,
 }
 impl Backend {
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Pi => "pi",
+            Self::Codex => "codex",
+            Self::PiRpc => "pi-rpc",
+            Self::Claude => "claude",
+            Self::Acp => "acp",
+        }
+    }
     pub fn label(self) -> &'static str {
         match self {
             Self::Pi => "Pi",

@@ -121,7 +121,11 @@ impl HiveApp {
                     .w(px(26.))
                     .rounded_md()
                     .icon(Glyph::PanelLeft)
-                    .tooltip(tr("打开或收起导航"))
+                    .tooltip(crate::keybindings::hint(
+                        crate::keybindings::Target::ToggleSidebar,
+                        "打开或收起导航",
+                        cx,
+                    ))
                     .accessibility_label(tr("打开或收起工作区与会话导航"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.sidebar_open = !this.sidebar_open;
@@ -234,9 +238,18 @@ impl HiveApp {
             b.label(label)
         })
         .tooltip(
-            project_label
-                .clone()
-                .unwrap_or_else(|| tr("新建会话，选择 Agent 后端").into()),
+            project_label.clone().unwrap_or_else(|| {
+                if id == "new-session-menu" {
+                    crate::keybindings::hint(
+                        crate::keybindings::Target::NewSession,
+                        "新建会话，选择 Agent 后端",
+                        cx,
+                    )
+                    .into()
+                } else {
+                    tr("新建会话，选择 Agent 后端").into()
+                }
+            }),
         )
         .accessibility_label(project_label.unwrap_or_else(|| {
             if id == "new-session-menu" {
@@ -327,7 +340,8 @@ impl HiveApp {
     ) -> impl IntoElement {
         let weak = cx.weak_entity();
         let has_workspace = self.workspace.is_some();
-        let workspaces = self.workspaces.clone();
+        let workspaces: Vec<crate::protocol::Workspace> =
+            self.sorted_projects(cx).into_iter().cloned().collect();
         let active_workspace = self.workspace.clone();
         let connected = self.connected;
         let selected = [self.workflows.visible, self.memory.visible];
@@ -549,35 +563,49 @@ impl HiveApp {
         // Collect flat unarchived sessions across workspaces (or filtered to a workspace).
         let mut flat_sessions: Vec<&crate::protocol::Session> = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
-        let include_active =
-            selected_filter.is_none() || selected_filter.as_ref() == self.workspace.as_ref();
-        if include_active {
-            for session in &self.sessions {
-                if !session.archived && seen_ids.insert(session.id.as_str()) {
-                    flat_sessions.push(session);
-                }
-            }
-        }
-        for workspace in &self.workspaces {
-            if Some(&workspace.id) == self.workspace.as_ref() {
-                continue;
-            }
+        let general = crate::general::current(cx);
+        for workspace in self.sorted_projects(cx) {
             if selected_filter
                 .as_ref()
                 .is_some_and(|filter| filter != &workspace.id)
             {
                 continue;
             }
-            if let Some(items) = self.project_sessions.get(&workspace.id) {
+            let items: Option<&[crate::protocol::Session]> =
+                if Some(&workspace.id) == self.workspace.as_ref() && !self.sessions.is_empty() {
+                    Some(self.sessions.as_slice())
+                } else {
+                    self.project_sessions.get(&workspace.id).map(Vec::as_slice)
+                };
+            if let Some(items) = items {
                 for session in items {
-                    if !session.archived && seen_ids.insert(session.id.as_str()) {
+                    if !session.archived
+                        && !self.removed_sessions.contains(&session.id)
+                        && seen_ids.insert(session.id.as_str())
+                    {
                         flat_sessions.push(session);
                     }
                 }
             }
         }
-        if self.workspaces.len() > 1 && selected_filter.is_none() {
+        if self.workspaces.len() > 1
+            && selected_filter.is_none()
+            && general.project_sort_order == crate::general::ProjectSortOrder::RecentActivity
+        {
             flat_sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        }
+        if general.pin_active_sessions_top {
+            let mut active = Vec::new();
+            let mut inactive = Vec::new();
+            for session in flat_sessions {
+                if self.is_session_active(&session.id) {
+                    active.push(session);
+                } else {
+                    inactive.push(session);
+                }
+            }
+            active.extend(inactive);
+            flat_sessions = active;
         }
 
         let active_workspace = self
@@ -1079,7 +1107,11 @@ impl HiveApp {
                             .w(px(28.))
                             .rounded_md()
                             .icon(Glyph::SquareTerminal)
-                            .tooltip(tr("工作区终端"))
+                            .tooltip(crate::keybindings::hint(
+                                crate::keybindings::Target::ToggleTerminal,
+                                "工作区终端",
+                                cx,
+                            ))
                             .accessibility_label(tr("工作区终端"))
                             .selected(self.terminal.visible)
                             .disabled(!terminal_enabled)

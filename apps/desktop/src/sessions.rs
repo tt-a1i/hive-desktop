@@ -192,6 +192,7 @@ impl HiveApp {
             return;
         }
         self.remember_conversation_position(cx);
+        self.showing_welcome_guide = false;
         self.close_roles();
         self.switch_draft(Some(format!("workspace:{id}")), cx);
         if let Some(previous) = &self.workspace {
@@ -475,6 +476,7 @@ impl HiveApp {
         let Some(workspace) = self.workspace.clone() else {
             return;
         };
+        self.showing_welcome_guide = false;
         if self
             .attachments
             .loading
@@ -680,6 +682,7 @@ impl HiveApp {
             return;
         };
         self.focus_project_input = false;
+        self.showing_welcome_guide = false;
         self.close_workflows();
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
             return;
@@ -873,5 +876,130 @@ impl HiveApp {
                 }
             },
         );
+    }
+
+    pub(crate) fn is_session_active(&self, id: &str) -> bool {
+        self.interaction_count(id) > 0
+            || self.busy.contains(id)
+            || self.pending.get(id).copied().unwrap_or(0) > 0
+    }
+
+    pub(crate) fn sorted_projects(&self, cx: &App) -> Vec<&Workspace> {
+        let mut list: Vec<&Workspace> = self.workspaces.iter().collect();
+        match crate::general::current(cx).project_sort_order {
+            crate::general::ProjectSortOrder::AddedOrder => {}
+            crate::general::ProjectSortOrder::RecentActivity => {
+                list.sort_by(|a, b| {
+                    let latest = |ws: &Workspace| -> i64 {
+                        let slice = if self.workspace.as_ref() == Some(&ws.id)
+                            && !self.sessions.is_empty()
+                        {
+                            self.sessions.as_slice()
+                        } else {
+                            self.project_sessions
+                                .get(&ws.id)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[])
+                        };
+                        slice.iter().map(|s| s.updated_at).max().unwrap_or(i64::MIN)
+                    };
+                    latest(b).cmp(&latest(a))
+                });
+            }
+            crate::general::ProjectSortOrder::Alphabetical => {
+                list.sort_by(|a, b| {
+                    a.name
+                        .to_lowercase()
+                        .cmp(&b.name.to_lowercase())
+                        .then_with(|| a.name.cmp(&b.name))
+                });
+            }
+        }
+        list
+    }
+
+    pub(crate) fn ordered_sidebar_sessions(&self, cx: &App) -> Vec<Session> {
+        let general = crate::general::current(cx);
+        let mut seen = std::collections::HashSet::new();
+        let mut pinned = Vec::new();
+        for hit in &self.pinned_sessions.records {
+            if !self.removed_sessions.contains(&hit.session.id)
+                && !hit.session.archived
+                && seen.insert(hit.session.id.clone())
+            {
+                pinned.push(hit.session.clone());
+            }
+        }
+        let mut list = Vec::new();
+        for ws in self.sorted_projects(cx) {
+            let sessions = if self.workspace.as_ref() == Some(&ws.id) && !self.sessions.is_empty() {
+                &self.sessions
+            } else if let Some(cached) = self.project_sessions.get(&ws.id) {
+                cached
+            } else {
+                continue;
+            };
+            for s in sessions
+                .iter()
+                .filter(|s| !self.removed_sessions.contains(&s.id) && !s.archived)
+            {
+                if seen.insert(s.id.clone()) {
+                    list.push(s.clone());
+                }
+            }
+        }
+        if self.workspaces.len() > 1
+            && general.project_sort_order == crate::general::ProjectSortOrder::RecentActivity
+        {
+            list.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        }
+        if general.pin_active_sessions_top {
+            let mut active = Vec::new();
+            let mut inactive = Vec::new();
+            for s in list {
+                if self.is_session_active(&s.id) {
+                    active.push(s);
+                } else {
+                    inactive.push(s);
+                }
+            }
+            active.extend(inactive);
+            list = active;
+        }
+        pinned.extend(list);
+        pinned
+    }
+
+    pub(crate) fn step_session(
+        &mut self,
+        delta: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connected || self.closing {
+            return;
+        }
+        let list = self.ordered_sidebar_sessions(cx);
+        let Some(target) = (match self
+            .session
+            .as_ref()
+            .and_then(|current| list.iter().position(|item| item.id == current.id))
+        {
+            Some(pos) if list.len() > 1 => {
+                let next = (pos as isize + delta).rem_euclid(list.len() as isize) as usize;
+                Some(list[next].clone())
+            }
+            Some(_) => None,
+            None => {
+                if delta < 0 {
+                    list.last().cloned()
+                } else {
+                    list.first().cloned()
+                }
+            }
+        }) else {
+            return;
+        };
+        self.navigate_to_session(target, window, cx);
     }
 }

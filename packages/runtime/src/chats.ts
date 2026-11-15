@@ -176,6 +176,7 @@ export class Chats implements StructuredSessionPort {
   private readonly activating = new Map<string, Promise<void>>();
   private readonly startingForInput = new Set<string>();
   private readonly keepingPaused = new Set<string>();
+  private readonly steerNextUserInput = new Set<string>();
   readonly attachments: ChatAttachments;
   private readonly interactionAttachments: InteractionAttachments;
   private readonly preparingInteractions = new Set<string>();
@@ -1302,7 +1303,8 @@ export class Chats implements StructuredSessionPort {
             this.dispatchOrigins.put({workspaceId: record.workspaceId, dispatchId: presentation.dispatchId,
               sourceSessionId: record.id, sourceAgentId: input.agentId});
           }
-          await chat.queue.enqueue(text, true, presentation, images);
+          const steerUser = presentation?.origin === 'user' && this.steerNextUserInput.delete(id);
+          await chat.queue.enqueue(text, true, presentation, images, steerUser ? { steerUser: true } : undefined);
         }
       },
       ready: () => {
@@ -1367,7 +1369,10 @@ export class Chats implements StructuredSessionPort {
       await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/agents/${encodeURIComponent(agentId)}/start`);
     } finally { if (forUserInput) this.startingForInput.delete(id); }
   }
-  async prompt(id: string, text: string, idsInput?: unknown) {
+  async prompt(id: string, text: string, idsInput?: unknown, busyMode?: unknown) {
+    if (busyMode !== undefined && busyMode !== 'queue' && busyMode !== 'steer') {
+      throw new TypeError('Invalid busyMode');
+    }
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     const before=this.index.get(id);
     if(before.handoff){
@@ -1410,12 +1415,17 @@ export class Chats implements StructuredSessionPort {
       if (!keepPaused && !chat.queue.pendingCount) chat.queue.resume();
       const record = this.index.get(id);
       this.index.save({ ...record, title: !record.customTitle && record.title === '新会话' ? Array.from(text.trim()).slice(0, 60).join('') || '附件消息' : record.title, updatedAt: Date.now() });
-      if (record.agentId === `${record.workspaceId}:orchestrator`) {
-        await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/user-input`, { text: inputText });
-      } else {
-        await this.runtime.deliverSystemMessageToAgent(record.workspaceId, record.agentId!, inputText, {
-          requireActiveRun: true, presentation: { version: 1, origin: 'user', displayText: inputText },
-        });
+      if (busyMode === 'steer') this.steerNextUserInput.add(id);
+      try {
+        if (record.agentId === `${record.workspaceId}:orchestrator`) {
+          await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/user-input`, { text: inputText });
+        } else {
+          await this.runtime.deliverSystemMessageToAgent(record.workspaceId, record.agentId!, inputText, {
+            requireActiveRun: true, presentation: { version: 1, origin: 'user', displayText: inputText },
+          });
+        }
+      } finally {
+        this.steerNextUserInput.delete(id);
       }
       return { accepted: true, session: this.index.get(id), ...(before.handoff && { passive: false, handoffDelivery: this.handoffDeliveries.get(id) ?? { status: 'pending' } }) };
       }finally{this.handoffStarting.delete(id);}

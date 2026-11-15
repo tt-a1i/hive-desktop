@@ -146,6 +146,26 @@ impl TerminalView {
         cx.notify();
     }
 
+    pub fn set_typography(
+        &mut self,
+        font_family: Option<String>,
+        font_size: Pixels,
+        cx: &mut Context<Self>,
+    ) {
+        let next_family = font_family
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| TerminalConfig::default().font_family);
+        if self.config.font_family == next_family && self.config.font_size == font_size {
+            return;
+        }
+        self.config.font_family = next_family.clone();
+        self.config.font_size = font_size;
+        self.renderer.font_family = next_family;
+        self.renderer.font_size = font_size;
+        cx.notify();
+    }
+
     fn on_action_send_tab(&mut self, _: &SendTab, _window: &mut Window, _cx: &mut Context<Self>) {
         if self.ime.marked.is_some() {
             return;
