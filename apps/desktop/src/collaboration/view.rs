@@ -452,7 +452,13 @@ impl HiveApp {
                                                             tr("成员会话"),
                                                             cx,
                                                         ),
-                                                        |row, link| row.child(link),
+                                                        |row, link| row.child(link.accessibility_label(format!(
+                                                            "{}: {} · {}: {}",
+                                                            tr("打开原成员会话"),
+                                                            task.owner_name,
+                                                            crate::collaboration::dispatch_state(&task.state),
+                                                            task.text
+                                                        ))),
                                                     )
                                                 }),
                                         ))

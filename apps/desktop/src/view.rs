@@ -427,7 +427,7 @@ impl HiveApp {
         worker_id: Option<&str>,
         label: &'static str,
         cx: &Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
+    ) -> Option<Button> {
         let target = self.history_link_target();
         let dispatch = dispatch_id.map(str::to_owned);
         let worker = worker_id.map(str::to_owned);

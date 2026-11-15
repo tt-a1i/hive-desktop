@@ -173,26 +173,21 @@ function Invoke-MessageQuote([string] $Message) {
 }
 
 function Wait-TesterHistoryAction {
-    $bodyName = 'Tester · 已提交: 核对测试入口'
-    $buttonName = '打开原成员会话'
+    $buttonName = '打开原成员会话: Tester · 已提交: 核对测试入口'
+    $condition = New-Object System.Windows.Automation.AndCondition(
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::NameProperty, $buttonName)),
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button)))
     $deadline = [DateTime]::UtcNow.AddSeconds(8)
     do {
-        $body = Find-Action $bodyName
-        if ($null -ne $body) {
-            $node = $body
-            $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-            $condition = New-Object System.Windows.Automation.PropertyCondition(
-                [System.Windows.Automation.AutomationElement]::NameProperty, $buttonName)
-            while ($null -ne $node -and -not $node.Equals($root)) {
-                $buttons = $node.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
-                if ($buttons.Count -eq 1 -and $buttons[0].Current.IsEnabled) { return $buttons[0] }
-                if ($buttons.Count -gt 1) { break }
-                $node = $walker.GetParent($node)
-            }
-        }
+        $buttons = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($buttons.Count -gt 1) { throw "Multiple Tester responsibility actions found: $($buttons.Count)." }
+        if ($buttons.Count -eq 1 -and $buttons[0].Current.IsEnabled) { return $buttons[0] }
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'Could not uniquely associate the Tester responsibility with its original session action.'
+    throw "Could not reach the unique Tester responsibility action '$buttonName'."
 }
 function Invoke-TesterHistoryAction {
     $action = Wait-TesterHistoryAction
