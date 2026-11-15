@@ -275,7 +275,9 @@ export interface HiveAgentRuntime {
 }
 
 /** Hive ledger facts from one synchronous SQLite read snapshot. Neither delivery
- * acknowledgement nor eligibility proves native consumption or an idle agent. */
+ * acknowledgement nor eligibility proves native consumption or an idle agent.
+ * Agent filters include dispatch sender/recipient and report ownership; controller
+ * routing facts remain workspace-wide. Counts overlap and must not be summed. */
 export interface DesktopConversationSwitchState {
  version:1;workspaceId:string;agentId?:string;controllerMode:'internal'|'codex_app';revision:string;eligible:boolean;
  blockers:{code:string;count:number}[];
