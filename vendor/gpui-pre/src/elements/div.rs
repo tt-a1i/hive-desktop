@@ -2632,6 +2632,40 @@ impl Interactivity {
                                         if let Some(focus_handle) = &self.tracked_focus_handle {
                                             window.next_frame.tab_stops.insert(focus_handle);
                                         }
+
+                                        // Accessibility activation addresses this node, not a
+                                        // point in the window. Its layout bounds may be outside
+                                        // an ancestor's scroll clip. A synthetic pointer click
+                                        // at that center could activate a dialog backdrop instead.
+                                        // Reuse keyboard activation's targeted listeners and let
+                                        // the normal focus/reveal path scroll the control into view.
+                                        if window.a11y.is_active()
+                                            && let Some(global_id) = global_id
+                                            && !self.click_listeners.is_empty()
+                                            && !self.a11y_action_listeners.iter().any(
+                                                |(action, _)| *action == accesskit::Action::Click,
+                                            )
+                                        {
+                                            let listeners = self.click_listeners.clone();
+                                            let focus = self.tracked_focus_handle.clone();
+                                            window.on_a11y_action(
+                                                global_id.accesskit_node_id(),
+                                                accesskit::Action::Click,
+                                                move |_, window, cx| {
+                                                    if let Some(focus) = &focus {
+                                                        window.focus(focus, cx);
+                                                    }
+                                                    let event =
+                                                        ClickEvent::Keyboard(KeyboardClickEvent {
+                                                            button: KeyboardButton::Enter,
+                                                            bounds,
+                                                        });
+                                                    for listener in &listeners {
+                                                        listener(&event, window, cx);
+                                                    }
+                                                },
+                                            );
+                                        }
                                         if let Some(hitbox) = hitbox {
                                             #[cfg(debug_assertions)]
                                             self.paint_debug_info(
@@ -4536,6 +4570,104 @@ mod tests {
         MouseMoveEvent, TestAppContext, TouchEvent, TouchId, canvas, util::FluentBuilder as _,
     };
     use std::{cell::Cell, rc::Weak};
+
+    struct AccessiblePressTestView {
+        focus: FocusHandle,
+        clicks: Rc<Cell<usize>>,
+        pointer_events: Rc<Cell<usize>>,
+        custom_action: bool,
+    }
+
+    impl Render for AccessiblePressTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.clicks.clone();
+            let custom_clicks = self.clicks.clone();
+            let pointer_events = self.pointer_events.clone();
+            div()
+                .size_full()
+                .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                    pointer_events.set(pointer_events.get() + 1);
+                })
+                .child(
+                    div().size(px(100.)).overflow_hidden().child(
+                        div()
+                            .id("offscreen-save")
+                            .role(accesskit::Role::Button)
+                            .track_focus(&self.focus)
+                            .mt(px(200.))
+                            .size(px(40.))
+                            .on_click(move |event, _, _| {
+                                assert!(matches!(event, ClickEvent::Keyboard(_)));
+                                clicks.set(clicks.get() + 1);
+                            })
+                            .when(self.custom_action, |target| {
+                                target.on_a11y_action(accesskit::Action::Click, move |_, _, _| {
+                                    custom_clicks.set(custom_clicks.get() + 10);
+                                })
+                            }),
+                    ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn accessible_press_targets_clipped_control_without_pointer_dispatch(cx: &mut TestAppContext) {
+        for custom_action in [false, true] {
+            let clicks = Rc::new(Cell::new(0));
+            let pointer_events = Rc::new(Cell::new(0));
+            let window = cx.add_window({
+                let clicks = clicks.clone();
+                let pointer_events = pointer_events.clone();
+                move |_, cx| AccessiblePressTestView {
+                    focus: cx.focus_handle(),
+                    clicks,
+                    pointer_events,
+                    custom_action,
+                }
+            });
+            cx.update_window(window.into(), |view, window, cx| {
+                window.a11y = crate::window::a11y::A11y::new(
+                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                    false,
+                    None,
+                );
+                window.draw(cx).clear(cx);
+                let focus = view
+                    .downcast::<AccessiblePressTestView>()
+                    .unwrap()
+                    .read(cx)
+                    .focus
+                    .clone();
+                let target = *window
+                    .a11y
+                    .focus_ids
+                    .iter()
+                    .find(|(_, id)| **id == focus.id)
+                    .unwrap()
+                    .0;
+                assert!(window.a11y.node_bounds[&target].top() >= px(200.));
+                window.handle_a11y_action(
+                    accesskit::ActionRequest {
+                        action: accesskit::Action::Click,
+                        target_tree: accesskit::TreeId::ROOT,
+                        target_node: target,
+                        data: None,
+                    },
+                    cx,
+                );
+                if !custom_action {
+                    assert!(focus.is_focused(window));
+                }
+            })
+            .unwrap();
+            assert_eq!(clicks.get(), if custom_action { 10 } else { 1 });
+            assert_eq!(
+                pointer_events.get(),
+                0,
+                "AX press must never hit a backdrop"
+            );
+        }
+    }
 
     struct GroupHoverTestView {
         render_count: Rc<Cell<usize>>,

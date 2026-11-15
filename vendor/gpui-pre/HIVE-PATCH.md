@@ -41,6 +41,33 @@ The regression test exercises both highlight values and checked/radio/listbox
 metadata. It shares the upstream test-harness limitation above and is not claimed
 as executed; actual Windows UIA menu activation must be verified separately.
 
+`Interactivity::paint` in src/elements/div.rs registers a targeted AccessKit
+Click listener for ordinary `on_click` controls, unless the control supplies its
+own accessibility Click handler. It focuses the addressed control and invokes
+the same click callbacks using the existing keyboard activation event. Ordinary
+mouse and keyboard dispatch stay unchanged.
+
+Previously these nodes advertised Click but had no action listener. Window's
+fallback synthesized pointer down/up at the node's complete layout bounds center.
+For a control clipped by a scroll container, that point can hit a modal backdrop
+and dismiss the dialog without activating the requested control. AccessKit's
+macOS press success means the action was accepted, not that the save callback ran.
+Targeted invocation does not depend on pointer hit testing, while focus still
+lets the application's normal reveal/autoscroll path bring the control into view.
+This avoids an arbitrary frame delay and a second coordinate lookup that could
+race changes to the dialog. The existing coordinate fallback remains for other
+custom accessibility nodes; this change covers controls with `on_click`.
+
+The focused regression fixture
+`accessible_press_targets_clipped_control_without_pointer_dispatch` addresses a
+button below an overflow clip and checks one activation, focus transfer, no
+pointer event at the background, and explicit accessibility-handler precedence.
+The desktop passes `cargo check --offline --locked`. The vendor library test was
+attempted but remains blocked by the same published-crate test harness omissions
+described above (optional test crates and upstream font fixtures); it is not
+claimed as executed.
+Native macOS AXPress and post-focus scroll behavior require separate UI validation.
+
 Cargo uses this directory through apps/desktop/Cargo.toml. Keep this delta narrow;
 remove the override once a pinned upstream release includes these capabilities.
 The published license and all original crate files are preserved. Cargo's local
