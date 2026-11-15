@@ -344,6 +344,113 @@ index 747d27facfa9463001a04d97a296ff115f365b48..18a3cdcdf0a73d6beb5d9667c548407d
                  attachAgentPty(run, spawn(spawnCommand.command, spawnCommand.args, buildAgentPtySpawnOptions(input.cwd, env)), ptyOutputBus);
              }
              catch (error) {
+diff --git a/dist/src/server/desktop-conversation-switch-state.js b/dist/src/server/desktop-conversation-switch-state.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..b02ca556fbef5c975c8486000ce02d438847a5d5
+--- /dev/null
++++ b/dist/src/server/desktop-conversation-switch-state.js
+@@ -0,0 +1,101 @@
++import { createHash } from 'node:crypto';
++import { controllerReceiptPendingSql } from './controller-receipt-policy.js';
++import { dispatchMessageEligibilitySql } from './dispatch-message-delivery-policy.js';
++
++const fault = (code, message, cause) => Object.assign(new Error(message, cause ? {cause} : undefined), {code});
++const identity = value => typeof value === 'string' && value.length > 0 && value.length <= 1024 && !/[\x00-\x1f\x7f]/.test(value);
++/** Authoritative ledger facts only. Delivery acknowledgement can mean desktop
++ * enqueue; callers must separately check their durable spool/native receipts.
++ * Does not invoke store getters that initialize rows or any drain/notification. */
++export const createDesktopConversationSwitchState = (db, isClosing) => (workspaceId, agentId) => {
++    if (!identity(workspaceId) || agentId !== undefined && !identity(agentId))
++        throw fault('DESKTOP_SWITCH_INVALID_ARGUMENT', 'Supply a workspace identity and optional agent identity');
++    const read = () => {
++        const bindings = {workspace: workspaceId, agent: agentId ?? null};
++        const parameters = sql => sql.includes('$agent') ? bindings : {workspace: workspaceId};
++        const row = sql => db.prepare(sql).get(parameters(sql));
++        const count = sql => {
++            const n = row(sql)?.n;
++            if (!Number.isSafeInteger(n) || n < 0) throw fault('DESKTOP_SWITCH_CORRUPT', 'Responsibility counts could not be verified');
++            return n;
++        };
++        const workspace = row('SELECT id,controller_mode FROM workspaces WHERE id=$workspace');
++        if (!workspace) throw fault('DESKTOP_SWITCH_WORKSPACE_UNKNOWN', 'Workspace does not exist');
++        if (!['internal', 'codex_app'].includes(workspace.controller_mode)) throw fault('DESKTOP_SWITCH_CORRUPT', 'Workspace controller mode is unsupported');
++        if (agentId !== undefined && agentId !== `${workspaceId}:orchestrator` && agentId !== `${workspaceId}:__workflow__`
++            && !row('SELECT id FROM workers WHERE workspace_id=$workspace AND id=$agent'))
++            throw fault('DESKTOP_SWITCH_AGENT_UNKNOWN', 'Agent does not exist in this workspace');
++        const dispatchScope = '($agent IS NULL OR d.from_agent_id=$agent OR d.to_agent_id=$agent)';
++        const messageScope = '($agent IS NULL OR m.from_agent_id=$agent OR m.recipient_agent_id=$agent)';
++        const reportScope = `($agent IS NULL OR o.target_agent_id=$agent OR d.from_agent_id=$agent OR d.to_agent_id=$agent)`;
++        const reports = 'FROM report_outbox o LEFT JOIN dispatches d ON d.workspace_id=o.workspace_id AND d.id=COALESCE(o.source_dispatch_id,o.dispatch_id)';
++        const openDispatches = {
++            queued: count(`SELECT COUNT(*) n FROM dispatches d WHERE d.workspace_id=$workspace AND d.status='queued' AND ${dispatchScope}`),
++            submitted: count(`SELECT COUNT(*) n FROM dispatches d WHERE d.workspace_id=$workspace AND d.status='submitted' AND ${dispatchScope}`),
++        };
++        const pendingReports = count(`SELECT COUNT(*) n ${reports} WHERE o.workspace_id=$workspace AND ${reportScope} AND ${controllerReceiptPendingSql}`);
++        const pendingDispatchMessages = {};
++        for (const state of ['queued', 'delivering']) pendingDispatchMessages[state] = count(`SELECT COUNT(*) n FROM dispatch_message_outbox o
++            JOIN dispatch_messages m ON m.id=o.message_id WHERE m.workspace_id=$workspace AND o.state='${state}' AND ${messageScope}`);
++        const pendingQuestions = count(`SELECT COUNT(*) n FROM dispatch_messages m LEFT JOIN dispatch_message_outbox o ON o.message_id=m.id
++            WHERE m.workspace_id=$workspace AND ${messageScope} AND m.kind='question' AND COALESCE(o.state,'recorded')!='cancelled'
++            AND ${dispatchMessageEligibilitySql} AND NOT EXISTS (SELECT 1 FROM dispatch_messages answer WHERE answer.workspace_id=m.workspace_id AND answer.reply_to=m.id AND answer.kind='answer')`);
++        const controllerReceipts = workspace.controller_mode === 'codex_app'
++            ? count(`SELECT COUNT(*) n ${reports} WHERE o.workspace_id=$workspace AND o.target_agent_id=o.workspace_id||':orchestrator' AND ${reportScope} AND ${controllerReceiptPendingSql}`) : 0;
++        // Connection and operation facts affect workspace-wide routing even when
++        // dispatch/message responsibilities are filtered to a particular agent.
++        const controller = {
++            pendingConnection: count('SELECT COUNT(*) n FROM workspace_controllers WHERE workspace_id=$workspace AND (request_id IS NOT NULL OR request_thread_id IS NOT NULL)') > 0,
++            pendingOperations: count("SELECT COUNT(*) n FROM controller_operations WHERE workspace_id=$workspace AND state='pending'"),
++            unknownOperations: count("SELECT COUNT(*) n FROM controller_operations WHERE workspace_id=$workspace AND state='unknown'"),
++            sendingNotifications: count("SELECT COUNT(*) n FROM report_outbox WHERE workspace_id=$workspace AND notification_state='sending'"),
++            unreadReceipts: workspace.controller_mode === 'codex_app' ? count(`SELECT COUNT(*) n ${reports} WHERE o.workspace_id=$workspace AND o.target_agent_id=o.workspace_id||':orchestrator' AND o.read_at IS NULL AND ${reportScope} AND ${controllerReceiptPendingSql}`) : 0,
++            readUnacknowledgedReceipts: workspace.controller_mode === 'codex_app' ? count(`SELECT COUNT(*) n ${reports} WHERE o.workspace_id=$workspace AND o.target_agent_id=o.workspace_id||':orchestrator' AND o.read_at IS NOT NULL AND ${reportScope} AND ${controllerReceiptPendingSql}`) : 0,
++        };
++        const hash = createHash('sha256').update('desktop-conversation-switch-state:v1');
++        hash.update(JSON.stringify([workspaceId, agentId ?? null]));
++        // Fixed, non-secret business tables only; never settings/auth/token tables.
++        for (const table of ['messages', 'dispatches', 'dispatch_messages', 'dispatch_message_outbox', 'report_outbox', 'workspace_controllers', 'controller_operations']) {
++            hash.update(table);
++            const sql = table === 'dispatch_message_outbox'
++                ? 'SELECT o.* FROM dispatch_message_outbox o JOIN dispatch_messages m ON m.id=o.message_id WHERE m.workspace_id=$workspace ORDER BY o.rowid'
++                : table === 'controller_operations'
++                    ? 'SELECT workspace_id,operation_id,thread_id,state FROM controller_operations WHERE workspace_id=$workspace ORDER BY rowid'
++                    : `SELECT * FROM ${table} WHERE workspace_id=$workspace ORDER BY rowid`;
++            for (const value of db.prepare(sql).iterate({workspace: workspaceId})) {
++                if (table === 'dispatches' && !['queued','submitted','reported','cancelled'].includes(value.status)
++                    || table === 'dispatch_message_outbox' && !['queued','delivering','delivered','cancelled'].includes(value.state)
++                    || table === 'controller_operations' && !['pending','unknown','completed','failed'].includes(value.state)
++                    || ['report_outbox','dispatch_message_outbox'].includes(table) && value.delivered_at !== null && (!Number.isSafeInteger(value.delivered_at) || value.delivered_at < 0))
++                    throw fault('DESKTOP_SWITCH_CORRUPT', 'Responsibility state contains an unsupported ledger value');
++                hash.update(JSON.stringify(value));
++            }
++        }
++        hash.update(JSON.stringify(workspace));
++        for (const worker of db.prepare('SELECT id,workspace_id FROM workers WHERE workspace_id=$workspace ORDER BY id').iterate({workspace: workspaceId})) hash.update(JSON.stringify(worker));
++        const blockers = [];
++        const block = (code, n) => { if (n) blockers.push({code, count:n}); };
++        block('OPEN_DISPATCHES', openDispatches.queued + openDispatches.submitted);
++        block('PENDING_REPORTS', pendingReports);
++        block('PENDING_DISPATCH_MESSAGES', pendingDispatchMessages.queued + pendingDispatchMessages.delivering);
++        block('UNANSWERED_QUESTIONS', pendingQuestions);
++        block('CONTROLLER_RECEIPTS', controllerReceipts);
++        block('CONTROLLER_CONNECTION_PENDING', Number(controller.pendingConnection));
++        block('CONTROLLER_OPERATIONS_PENDING', controller.pendingOperations);
++        block('CONTROLLER_OPERATIONS_UNKNOWN', controller.unknownOperations);
++        block('CONTROLLER_NOTIFICATION_SENDING', controller.sendingNotifications);
++        return {version:1, workspaceId, ...(agentId !== undefined && {agentId}), controllerMode:workspace.controller_mode,
++            revision:hash.digest('hex'), eligible:blockers.length===0, blockers, openDispatches, pendingReports,
++            pendingDispatchMessages, pendingQuestions, controllerReceipts, controller,
++            readScope:'hive-ledger-only', deliverySemantics:'enqueued-not-consumed'};
++    };
++    try {
++        if (isClosing() || !db.isOpen) throw fault('DESKTOP_SWITCH_CLOSING', 'Hive runtime is closing or closed');
++        // Reuse an existing transaction; do not introduce nested SAVEPOINTs into
++        // a caller's mutation. Otherwise BEGIN establishes one SQLite read view.
++        return db.connection.isTransaction ? read() : db.transaction(read)();
++    } catch (error) {
++        if (typeof error?.code === 'string' && error.code.startsWith('DESKTOP_SWITCH_')) throw error;
++        throw fault('DESKTOP_SWITCH_UNAVAILABLE', 'Responsibility state could not be read; switching eligibility is unknown', error);
++    }
++};
 diff --git a/dist/src/server/dispatch-message-outbox.js b/dist/src/server/dispatch-message-outbox.js
 index c640530edbd34375bceb3389a8604f153cedf7a7..e61da69bfa363421513fc01a9234de4be90ebcc1 100644
 --- a/dist/src/server/dispatch-message-outbox.js
@@ -1039,15 +1146,16 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..221b61d060cfe842f23d3182c6e3b1a9
                  return `\nResult (workflow return value):\n${escapeHiveEnvelopeText(truncated)}`;
              })();
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c528885e973a8 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..bfecea738a11083deaf0128033944e2dd4524803 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
++import { createDesktopConversationSwitchState } from './desktop-conversation-switch-state.js';
 +import { createHash } from 'node:crypto';
  import { createRuntimeStoreController } from './runtime-store-controller.js';
  import { createRuntimeStoreDreamMethods } from './runtime-store-dream.js';
  import { createRuntimeStoreExternalGoalMethods } from './runtime-store-external-goals.js';
-@@ -23,6 +24,11 @@ export const createRuntimeStore = (options = {}) => {
+@@ -23,6 +25,12 @@ export const createRuntimeStore = (options = {}) => {
              throw new Error('Workflow runtime not initialized');
          return workflowRuntime;
      };
@@ -1056,18 +1164,22 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c5288
 +        try { return Promise.resolve(fn()).finally(() => release?.()); }
 +        catch (error) { release?.(); throw error; }
 +    };
++    let desktopConversationSwitchClosing = false;
      let store;
      const controller = createRuntimeStoreController(services, () => store);
      const workerMutations = createRuntimeStoreWorkerMutations({
-@@ -37,6 +43,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -35,8 +43,10 @@ export const createRuntimeStore = (options = {}) => {
+     store = {
+         ...controller.methods,
          close: async () => {
++            desktopConversationSwitchClosing = true;
              await controller.close();
              workflowRuntime?.scheduler.close();
 +            await workflowRuntime?.runner.close();
              await services.teamMemoryDreamScheduler.close();
              await lifecycle.close();
          },
-@@ -48,9 +55,9 @@ export const createRuntimeStore = (options = {}) => {
+@@ -48,9 +58,9 @@ export const createRuntimeStore = (options = {}) => {
              return workspace;
          },
          listWorkspaces: () => services.workspaceStore.listWorkspaces(),
@@ -1079,7 +1191,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c5288
              for (const agent of workspace.agents) {
                  const activeRun = services.agentRuntime.getActiveRunByAgentId(workspaceId, agent.id);
                  if (activeRun)
-@@ -82,7 +89,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -82,7 +92,7 @@ export const createRuntimeStore = (options = {}) => {
              if (services.settings.getAppState('active_workspace_id')?.value === workspaceId) {
                  services.settings.setAppState('active_workspace_id', null);
              }
@@ -1088,10 +1200,11 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c5288
          addWorker: (workspaceId, input) => services.workspaceStore.addWorker(workspaceId, input),
          addWorkerWithLaunch: workerMutations.addWorkerWithLaunch,
          updateWorkerProfile: (workspaceId, workerId, input) => services.workspaceStore.updateWorkerProfile(workspaceId, workerId, input),
-@@ -96,8 +103,27 @@ export const createRuntimeStore = (options = {}) => {
+@@ -96,8 +106,28 @@ export const createRuntimeStore = (options = {}) => {
          dispatchTaskByWorkerName: services.teamOps.dispatchTaskByWorkerName,
          reportTask: controller.reportTask,
          drainReportOutbox: services.teamOps.drainReportOutbox,
++        desktopConversationSwitchState: createDesktopConversationSwitchState(services.db, () => desktopConversationSwitchClosing || services.isRuntimeClosing()),
 +        executionLedgerRevision: () => {
 +            const hash = createHash('sha256');
 +            for (const table of ['messages', 'dispatches', 'dispatch_messages', 'dispatch_message_outbox', 'report_outbox']) {
@@ -1116,7 +1229,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c5288
          listDispatches: services.dispatchLedgerStore.listWorkspaceDispatches,
          listOpenDispatches: services.dispatchLedgerStore.listOpenWorkspaceDispatches,
          listRecentDispatches: services.dispatchLedgerStore.listRecentWorkspaceDispatches,
-@@ -112,10 +138,14 @@ export const createRuntimeStore = (options = {}) => {
+@@ -112,10 +142,14 @@ export const createRuntimeStore = (options = {}) => {
          closeWorkspaceShell: lifecycle.closeWorkspaceShell,
          configureAgentLaunch: lifecycle.configureAgentLaunch,
          peekAgentLaunchConfig: lifecycle.peekAgentLaunchConfig,
@@ -1132,7 +1245,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c5288
          findLiveRun: lifecycle.findLiveRun,
          getLiveRun: lifecycle.getLiveRun,
          waitForRunExit: lifecycle.waitForRunExit,
-@@ -123,6 +153,19 @@ export const createRuntimeStore = (options = {}) => {
+@@ -123,6 +157,19 @@ export const createRuntimeStore = (options = {}) => {
          registerTasksListener: lifecycle.registerTasksListener,
          listAgentRuns: (agentId) => services.agentRuntime.listAgentRuns(agentId),
          listMessagesForRecovery: (workspaceId, sinceMs) => services.messageLogStore.listMessagesForRecovery(workspaceId, sinceMs),
@@ -1152,7 +1265,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c5288
          recallMessages: (workspaceId, query, options) => services.teamRecallStore.recallMessages(workspaceId, query, options),
          ...createRuntimeStoreMemoryMethods(services),
          ...createRuntimeStoreDreamMethods(services),
-@@ -141,6 +184,8 @@ export const createRuntimeStore = (options = {}) => {
+@@ -141,6 +188,8 @@ export const createRuntimeStore = (options = {}) => {
          getRetentionSignals: () => services.protocolEventStats.getRetentionSignals(),
          ...createRuntimeStoreRemoteMethods(services),
          getWorkflowDispatchAwaiter: () => services.workflowDispatchAwaiter,
@@ -1161,7 +1274,7 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..761e6e20c1d689ea48460e2db37c5288
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
-@@ -155,6 +200,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -155,6 +204,7 @@ export const createRuntimeStore = (options = {}) => {
          })),
          saveWorkspaceUpload: (input) => services.workspaceUploadStore.saveUpload(input),
          listWorkspaceUploads: (workspaceId, limit) => services.workspaceUploadStore.listUploads(workspaceId, limit),

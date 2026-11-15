@@ -273,3 +273,14 @@ export interface HiveAgentRuntime {
 		input?: { requireActiveRun?: boolean; beforeWrite?: () => boolean; presentation?: DeliveryPresentation },
 	) => Promise<void>;
 }
+
+/** Hive ledger facts from one synchronous SQLite read snapshot. Neither delivery
+ * acknowledgement nor eligibility proves native consumption or an idle agent. */
+export interface DesktopConversationSwitchState {
+ version:1;workspaceId:string;agentId?:string;controllerMode:'internal'|'codex_app';revision:string;eligible:boolean;
+ blockers:{code:string;count:number}[];
+ openDispatches:{queued:number;submitted:number};pendingReports:number;
+ pendingDispatchMessages:{queued:number;delivering:number};pendingQuestions:number;controllerReceipts:number;
+ controller:{pendingConnection:boolean;pendingOperations:number;unknownOperations:number;sendingNotifications:number;unreadReceipts:number;readUnacknowledgedReceipts:number};
+ readScope:'hive-ledger-only';deliverySemantics:'enqueued-not-consumed';
+}

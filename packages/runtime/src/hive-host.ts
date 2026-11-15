@@ -27,6 +27,7 @@ export interface SavedScriptContext {scriptRunId: string; cwd: string; command: 
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
     readonly projectScriptState: import('./project-script-settings.js').ProjectScriptStatePort;
+    desktopConversationSwitchState(workspaceId:string,agentId?:string): import('./hive-runtime-contract.js').DesktopConversationSwitchState;
     executionLedgerRevision(): string;
     resumeExecutionDeliveries(): void;
     startSavedScript(workspaceId: string, context: SavedScriptContext, observer: SavedScriptObserver): Promise<{runId: string}>;
@@ -110,6 +111,10 @@ export async function createHiveHost({
         projectScriptState: {
             read(key, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.readProjectScriptState(key, workspaceId);},
             compareAndSwap(key, expected, next, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.compareAndSwapProjectScriptState(key, expected, next, workspaceId);},
+        },
+        desktopConversationSwitchState(workspaceId,agentId) {
+            if (closing) throw Object.assign(new Error('Hive host is closing or closed'), {code:'DESKTOP_SWITCH_CLOSING'});
+            return (runtime.store as typeof runtime.store & {desktopConversationSwitchState(workspaceId:string,agentId?:string): import('./hive-runtime-contract.js').DesktopConversationSwitchState}).desktopConversationSwitchState(workspaceId,agentId);
         },
         executionLedgerRevision() {
             if (closing) throw new Error("Hive host is closed");
