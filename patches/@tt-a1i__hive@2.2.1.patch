@@ -243,7 +243,7 @@ index dd5421b5d31fa756076b6f630adb83e7238eb889..4ee7b7d5c1d92a833002df0518d76f58
  export declare const attachAgentPty: (run: AgentRunRecord, pty: IPty, ptyOutputBus: PtyOutputBus, platform?: NodeJS.Platform, execRunner?: ExecRunner) => void;
  export {};
 diff --git a/dist/src/server/agent-manager-support.js b/dist/src/server/agent-manager-support.js
-index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..fc6a28db849dc6ed4f53e67c8915512476cc4e0a 100644
+index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..56fae517b274bfce75d32c11813a54264e3079a9 100644
 --- a/dist/src/server/agent-manager-support.js
 +++ b/dist/src/server/agent-manager-support.js
 @@ -43,7 +43,6 @@ const isPtyReadEofError = (error, platform = process.platform) => {
@@ -280,7 +280,17 @@ index eafb9e52af4a2dda4bc47ad3c57f6ccb3e165c44..fc6a28db849dc6ed4f53e67c89155124
      });
      run.process = {
          isStopped() {
-@@ -290,7 +290,8 @@ export const attachAgentPty = (run, pty, ptyOutputBus, platform = process.platfo
+@@ -266,7 +266,8 @@ export const attachAgentPty = (run, pty, ptyOutputBus, platform = process.platfo
+         pause() {
+             pty.pause();
+         },
+-        pid: pty.pid,
++        // ConPTY can publish its native PID after spawn returns.
++        get pid() { return pty.pid; },
+         resize(cols, rows) {
+             if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) {
+                 throw new Error(`Invalid terminal size for run: ${run.runId}`);
+@@ -290,7 +291,8 @@ export const attachAgentPty = (run, pty, ptyOutputBus, platform = process.platfo
              if (stdinClosed || run.status === 'exited' || run.status === 'error') {
                  throw new Error(`PTY is not active for run: ${run.runId}`);
              }
