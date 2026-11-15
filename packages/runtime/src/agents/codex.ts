@@ -1,3 +1,4 @@
+import { supportsCodexDeferredContinuation } from './codex-native-version.js';
 import { codexUsage } from '../agent-usage.js';
 import { promptImages } from '../prompt-images.js';
 import type { TSchema } from 'typebox';
@@ -214,8 +215,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       }
     },
   });
-  const nativeVersion=(transport.initializeResult as {userAgent?:unknown}|null)?.userAgent;
-  const defersNativeGoals=typeof nativeVersion==='string'&&/\bcodex_cli_rs\/0\.169\.0(?:\s|$)/.test(nativeVersion);
+  const defersNativeGoals=supportsCodexDeferredContinuation(transport.initializeResult);
   if(options.deferGoalContinuation&&!defersNativeGoals){await transport.close();throw new Error('This native history fork requires Codex 0.169.0 deferred continuation support');}
   const modes = new CodexModes(transport, options.mode, options.permissionMode);
   const resume = async (extra: Record<string, unknown> = {}) => {

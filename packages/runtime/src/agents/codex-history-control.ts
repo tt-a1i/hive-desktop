@@ -1,3 +1,4 @@
+import { supportsCodexDeferredContinuation } from './codex-native-version.js';
 import { resolve } from 'node:path';
 import { CodexTransport } from './codex-transport.js';
 import type { CodexItem, CodexTurn } from './codex-history.js';
@@ -19,8 +20,7 @@ export type CodexHistoryForkOptions = {
 /** Read-only history and native branch creation. Never opens or executes a turn. */
 export async function openCodexHistoryControl(options: { cwd: string; command?: string; signal?: AbortSignal }) {
   const transport = await CodexTransport.start({ cwd: options.cwd, ...(options.command && { command: options.command }), ...(options.signal && { signal: options.signal }) });
-  const initialization = transport.initializeResult as { userAgent?: unknown } | null;
-  if (typeof initialization?.userAgent !== 'string' || !/\bcodex_cli_rs\/0\.169\.0(?:\s|$)/.test(initialization.userAgent)) {
+  if (!supportsCodexDeferredContinuation(transport.initializeResult)) {
     await transport.close();
     throw new Error('Unsupported Codex app-server version for history operations');
   }
@@ -36,7 +36,7 @@ export async function openCodexHistoryControl(options: { cwd: string; command?: 
       const page: { data: (CodexTurn & {itemsView?: string})[]; nextCursor?: string | null } = await transport.sendRequest('thread/turns/list', { threadId, cursor, sortDirection: 'asc', itemsView: 'full', limit: 1 });
       if (!page || !Array.isArray(page.data) || (page.nextCursor != null && typeof page.nextCursor !== 'string')) throw new Error('Invalid Codex history page');
       for (const turn of page.data) {
-        if (!turn || typeof turn.id !== 'string' || !turn.id || turnIds.has(turn.id) || turn.status !== 'completed' || turn.itemsView !== 'full' || !Array.isArray(turn.items)) throw new Error('Incomplete or duplicate Codex turn');
+        if (!turn || typeof turn.id !== 'string' || !turn.id || turnIds.has(turn.id) || !['completed', 'interrupted', 'failed'].includes(turn.status) || turn.itemsView !== 'full' || !Array.isArray(turn.items)) throw new Error('Incomplete or duplicate Codex turn');
         turnIds.add(turn.id);
         for (const item of turn.items as CodexItem[]) {
           if (!item || typeof item.id !== 'string' || !item.id || typeof item.type !== 'string' || itemIds.has(item.id) || item.status === 'inProgress') throw new Error('Incomplete or duplicate Codex item');

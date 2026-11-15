@@ -5,7 +5,7 @@ const initial=[{id:'t1',status:'completed',itemsView:'full',items:[{id:'u1',type
 const state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{source:{thread:{id:'source',cwd:process.env.HIVE_HISTORY_SOURCE,path:'/native/source',historyMode:'paginated'},turns:initial},next:0};
 function save(){fs.writeFileSync(stateFile,JSON.stringify(state));}
 rl.createInterface({input:process.stdin}).on('line',line=>{const x=JSON.parse(line);fs.appendFileSync(log,JSON.stringify(x)+'\n');if(!x.id)return;let result;
-if(x.method==='initialize')result={userAgent:'codex_cli_rs/0.169.0'};
+if(x.method==='initialize')result={userAgent:'hive_desktop/0.169.0 (Mac OS 26.7.3; arm64) dumb (hive_desktop; 0.1.0)'};
 else if(x.method==='thread/read')result={thread:state[x.params.threadId]?.thread};
 else if(x.method==='thread/turns/list'){const turns=state[x.params.threadId].turns,n=x.params.cursor?Number(x.params.cursor):0;result={data:turns.slice(n,n+1),nextCursor:n+1<turns.length?String(n+1):null};}
 else if(x.method==='thread/fork'){const id='child'+(++state.next),source=state[x.params.threadId],end=x.params.lastTurnId?source.turns.findIndex(t=>t.id===x.params.lastTurnId)+1:source.turns.length;state[id]={thread:{id,cwd:x.params.cwd,path:'/native/'+id,historyMode:'paginated',forkedFromId:x.params.threadId},turns:source.turns.slice(0,end)};save();if(fs.existsSync(process.env.HIVE_HISTORY_DROP))process.exit(2);result={thread:state[id].thread};}
