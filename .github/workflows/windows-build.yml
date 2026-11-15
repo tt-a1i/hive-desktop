@@ -62,6 +62,9 @@ jobs:
       - name: Check Codex history and tool lifecycle without vendor requests
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:codex
+      - name: Check question attachment ownership and reply lifecycle without vendor requests
+        timeout-minutes: 3
+        run: pnpm --filter @hive-desktop/runtime check:interaction-attachments
       - name: Check Pi authentication without vendor requests
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:pi-auth

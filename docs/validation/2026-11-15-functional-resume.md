@@ -10,6 +10,12 @@
 
 日志：`.artifacts/functional-parity/resume-node-build.log`、`resume-rust-test.log`、`resume-interaction-attachments.log`、`resume-codex.log`。
 
+## 真实原生问题附件
+
+冻结 `f3d9cdd` 的独立原生 Codex 0.169.0 / GPT-6.1 Terra 验收通过。模型实际发出结构化非保密提问并暂停，经新增生产 RPC 回复私有上传引用后，工具用 Python 读取文本和 PNG 副本；原件已删除，随机文本及两份文件的字节数和 SHA-256 均匹配。主代理另从磁盘独立核对了这两份副本。仅一次 turn/start、零 steer，耗时 15.961 秒；没有额外普通消息。冷开历史 ID 与附件收据保持，未自动回复或重放；全部 Runtime/CLI 已退出并核对 ESRCH。
+
+PNG 仅证明字节读取，不证明视觉识别或原生图片输入。首次验证脚本错误要求命令包含完整拼接路径字面量，失败证据保留；修正验证时只做离线证据检查和冷读取，没有增加模型调用。目录：`.artifacts/functional-parity/native-question-proof/.artifacts/functional-parity/native-question/run-3DYoqh/`，包含 `receipt.json`、`original-harness-receipt.json`、`root-copy-readback.json`。GUI 与 Windows 原生问题回复仍待验收。
+
 ## 初始化脚本和绑定核验
 
 暂停前的真实测试应用使用 `315112a` 原生程序和 `d6bc61e` 包内后台。新成员会话 `e3c18345-659f-49b0-8656-daaa15acd623` 的原始归属、Pi 后端、创建意图与脚本版本吻合。脚本在该工作树以退出码 0 完成，标记内容为 `gui-setup`，原生历史没有聊天消息。
