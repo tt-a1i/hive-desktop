@@ -56,8 +56,10 @@ try {
     const file = join(directory, `${name}.mjs`);
     await writeFile(file, result.outputText);
     console.log(`[packaged-functional] ${name}`);
-    // Registration includes a 30-second no-MCP deadline and several cold boots.
-    const timeout = name === 'acp-runtime-registration' ? 120_000 : 60_000;
+    // Registration includes a no-MCP deadline. Handoff runtime checks boot
+    // several real runtimes/worktrees; Windows source runs measured 122/92/76s.
+    const multiBootHandoff = ['session-handoff-runtime', 'handoff-runtime-failures', 'handoff-runtime-delivery'].includes(name);
+    const timeout = multiBootHandoff ? 180_000 : name === 'acp-runtime-registration' ? 120_000 : 60_000;
     execFileSync(node, [file], {cwd: directory, stdio: 'inherit', timeout,
       env: {...process.env, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_OFFLINE: '1',
         HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js')}});

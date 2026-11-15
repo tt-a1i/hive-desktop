@@ -169,6 +169,14 @@ jobs:
         run: node scripts/package-desktop.mjs --executable target/windows-desktop/release/hive-desktop.exe --runtime target/deployed-runtime --output target/portable-windows
       - name: Zip portable folder
         run: Compress-Archive -Path target/portable-windows/* -DestinationPath target/hive-desktop-windows-portable.zip
+      # Keep the exact generated binary available if a later acceptance check fails.
+      # Artifact availability is not a passing validation result or release promotion.
+      - name: Preserve generated portable desktop
+        uses: actions/upload-artifact@v4
+        with:
+          name: hive-desktop-windows-portable
+          path: target/hive-desktop-windows-portable.zip
+          if-no-files-found: error
       - name: Extract final zip
         run: Expand-Archive -Path target/hive-desktop-windows-portable.zip -DestinationPath target/portable-windows-extracted
       - name: Smoke extracted runtime and PTY
@@ -200,12 +208,6 @@ jobs:
           name: windows-terminal-smoke-log
           path: target/windows-terminal-smoke.log
           if-no-files-found: ignore
-      - name: Upload portable desktop
-        uses: actions/upload-artifact@v4
-        with:
-          name: hive-desktop-windows-portable
-          path: target/hive-desktop-windows-portable.zip
-          if-no-files-found: error
       - name: Open the saved workspace in the extracted native application
         timeout-minutes: 4
         env:
