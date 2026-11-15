@@ -142,7 +142,7 @@ impl HiveApp {
                         this.profiles.snapshot = Some(snapshot);
                         this.profiles.error = None
                     }
-                    Err(e) => this.profiles.error = Some(e.to_string()),
+                    Err(e) => { this.profiles.snapshot = None; this.profiles.error = Some(e.to_string()); },
                 };
                 cx.notify();
             });
@@ -260,7 +260,7 @@ impl HiveApp {
                             this.profiles.error=Some(if english() { "The save response was invalid. Refresh profiles before saving again." } else { "保存响应无效，请先刷新配置再保存。" }.into());
                         }
                     },
-                    Err(e)=>this.profiles.error=Some(e.to_string())
+                    Err(e)=>{ if e.contains("PROFILE_STORE_CONFLICT") { this.profiles.snapshot=None; } this.profiles.error=Some(e.to_string()) }
                 }
                 cx.notify();
             });
@@ -302,11 +302,15 @@ impl HiveApp {
                     .on_click(cx.listener(|this, _, _, cx| this.load_profiles(cx))),
             )
             .when(self.profiles.saved, |v| {
-                v.child(div().child(if english() { "Saved." } else { "已保存。" }))
+                let message = if english() { "Saved." } else { "已保存。" };
+                v.child(div().id("profile-save-status").role(Role::Status).aria_label(message).child(message))
             })
             .when_some(self.profiles.error.clone(), |v, error| {
                 v.child(
                     div()
+                        .id("profile-error-status")
+                        .role(Role::Status)
+                        .aria_label(error.clone())
                         .text_color(crate::palette::Color::Text.get(cx))
                         .child(error),
                 )
@@ -374,6 +378,37 @@ impl HiveApp {
                     }),
                 ),
             )
+            .when_some(selected.as_ref(), |view, profile| {
+                let backend = supported_driver(&profile.driver);
+                let reference = ProfileRef { id: profile.id.clone(), revision: profile.current_revision };
+                let usable = !busy && profile.enabled && backend.is_some()
+                    && profile.revisions.iter().any(|revision| revision.revision == profile.current_revision)
+                    && self.workspace.is_some() && self.workspace_writes_allowed();
+                let accessible = if english() {
+                    format!("New conversation using saved profile {} · r{}", profile.label, profile.current_revision)
+                } else {
+                    format!("按已保存配置新建会话：{} · r{}", profile.label, profile.current_revision)
+                };
+                view.child(Button::new("profile-create-session")
+                    .label(tr("按已保存配置新建会话"))
+                    .accessibility_label(accessible)
+                    .disabled(!usable)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let valid = this.connected && !this.profiles.loading && this.workspace.is_some()
+                            && this.workspace_writes_allowed()
+                            && this.profiles.snapshot.as_ref().is_some_and(|snapshot| snapshot.profiles.iter().any(|p|
+                                p.id == reference.id && p.enabled && p.current_revision == reference.revision
+                                && supported_driver(&p.driver) == backend && p.revisions.iter().any(|r| r.revision == reference.revision)));
+                        if !valid { return; }
+                        if let Some(backend) = backend {
+                            let modal = this.preferences_modal_open;
+                            this.leave_preferences(window, cx);
+                            if modal { window.close_dialog(cx); }
+                            this.new_session_with_profile(backend, Some(reference.clone()), cx);
+                        }
+                    })))
+                    .child(div().text_xs().child(tr("新会话使用上方已保存的版本，不使用表单中未保存的修改。")))
+            })
             .child(div().child(if self.profiles.selected.is_some() {
                 tr("编辑配置")
             } else {

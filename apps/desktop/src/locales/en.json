@@ -1843,5 +1843,7 @@
   "配置或输入已更改，请重新读取额度。": "The configuration or input changed. Reload account limits.",
   "配置或输入已更改，请重新检查连接与账号。": "The configuration or input changed. Recheck the connection and account.",
   "配置或输入已更改，请重新检查。": "The configuration or input changed. Run the check again.",
-  "读取配置失败": "Could not read configuration"
+  "读取配置失败": "Could not read configuration",
+  "按已保存配置新建会话": "New conversation using saved profile",
+  "新会话使用上方已保存的版本，不使用表单中未保存的修改。": "The new conversation uses the saved revision above, not unsaved form changes."
 }
