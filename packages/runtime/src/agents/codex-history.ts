@@ -2,7 +2,7 @@ import type { DeliveryPresentation } from '../delivery-presentation.js';
 
 export type CodexItem = { id: string; type: string; [key: string]: unknown };
 export type CodexDelivery = { itemId?: string; turnId: string; deliveryId: string; presentation: DeliveryPresentation };
-export type CodexMetadata = { version: 1; context: { text: string; customType: string }[]; deliveries: CodexDelivery[]; completed: string[] };
+export type CodexMetadata = { version: 1; context: { text: string; customType: string }[]; deliveries: CodexDelivery[]; completed: string[]; inheritedSources?: { itemId: string; sourceSessionId: string }[]; inheritedDeliveries?: CodexDelivery[] };
 export type CodexTurn = { id: string; status: string; error?: { message: string } | null; items: CodexItem[] };
 export type CodexThread = { reasoningEffort?: string | null; model?: string; id: string; path: string | null; historyMode: 'legacy' | 'paginated'; turns: CodexTurn[] };
 export type CodexThreadResponse = { thread: CodexThread; model: string; modelProvider: string };
@@ -39,28 +39,29 @@ function toolOutput(item: CodexItem): string {
 }
 
 /** Presentation projection only: Codex owns its rollout and all prompt history. */
-export function normalizeCodexItem(item: CodexItem, delivery?: CodexDelivery): Record<string, unknown> {
+export function normalizeCodexItem(item: CodexItem, delivery?: CodexDelivery, sourceSessionId?: string): Record<string, unknown> {
   const rawBackendItem = item;
+  const provenance = { itemId: item.id, ...(sourceSessionId && { sourceSessionId }) };
   const timestamp = typeof item.startedAtMs === 'number' ? item.startedAtMs : undefined;
   switch (item.type) {
-    case 'hiveProjectionNotice': return { role: 'notice', content: [{ type: 'text', text: item.text }], rawBackendItem };
+    case 'hiveProjectionNotice': return { role: 'notice', content: [{ type: 'text', text: item.text }], rawBackendItem, ...provenance };
     case 'userMessage': {
       const content = Array.isArray(item.content) ? item.content.map((part: Record<string, unknown>) =>
         part.type === 'text' ? { type: 'text', text: part.text } : part.type==='image' && typeof part.url==='string' && /^data:(image\/(?:png|jpeg|gif|webp));base64,/.test(part.url)
           ? {type:'image',mimeType:part.url.slice(5,part.url.indexOf(';')),data:part.url.slice(part.url.indexOf(',')+1)} : part) : [];
-      if (!delivery) return { role: 'user', content, timestamp, rawBackendItem };
+      if (!delivery) return { role: 'user', content, timestamp, rawBackendItem, ...provenance };
       const presentation = { ...delivery.presentation, deliveryId: delivery.deliveryId };
       return { role: 'custom', customType: 'hive-delivery', display: false, content, timestamp, rawBackendItem,
-        details: presentation, presentation };
+        details: presentation, presentation, ...provenance };
     }
     case 'agentMessage': case 'plan':
-      return { role: 'assistant', content: [{ type: 'text', text: item.text ?? '' }], timestamp, rawBackendItem };
+      return { role: 'assistant', content: [{ type: 'text', text: item.text ?? '' }], timestamp, rawBackendItem, ...provenance };
     case 'reasoning':
       return { role: 'assistant', content: [{ type: 'thinking', thinking:
-        [...(Array.isArray(item.summary) ? item.summary : []), ...(Array.isArray(item.content) ? item.content : [])].join('\n') }], timestamp, rawBackendItem };
+        [...(Array.isArray(item.summary) ? item.summary : []), ...(Array.isArray(item.content) ? item.content : [])].join('\n') }], timestamp, rawBackendItem, ...provenance };
     default:
       return { role: 'toolResult', toolCallId: item.id, toolName: toolName(item), toolInput: codexToolInput(item),
         toolStatus: item.hiveInterrupted === true ? 'interrupted' : item.status, content: [{ type: 'text', text: toolOutput(item) }],
-        isError: item.status === 'failed' || item.success === false, timestamp, rawBackendItem };
+        isError: item.status === 'failed' || item.success === false, timestamp, rawBackendItem, ...provenance };
   }
 }

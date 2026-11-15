@@ -240,9 +240,9 @@ async function codexRows(record: ChatRecord, directory: string): Promise<{ rows:
     const item = entry.item as CodexItem;
     if (complete && (!item.id || !entry.turnId || seenIds.has(item.id) || item.status === 'inProgress' || item.type === 'hiveProjectionNotice')) throw new Error('Invalid complete Codex history snapshot');
     seenIds.add(item.id);
-    const delivery = metadata.deliveries.find(d => d.turnId === entry.turnId && d.itemId === item.id)
+    const delivery = [...(metadata.inheritedDeliveries ?? []), ...metadata.deliveries].find(d => d.turnId === entry.turnId && d.itemId === item.id)
       ?? metadata.deliveries.find(d => d.turnId === entry.turnId && d.itemId === undefined && item.type === 'userMessage');
-    return { id: item.id, message: normalizeCodexItem(item, delivery) };
+    return { id: item.id, message: normalizeCodexItem(item, delivery, metadata.inheritedSources?.find(source => source.itemId === item.id)?.sourceSessionId) };
   });
   return { rows, complete };
 }

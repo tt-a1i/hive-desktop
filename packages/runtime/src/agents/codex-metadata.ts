@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
-import type { CodexMetadata } from './codex-history.js';
+import type { CodexMetadata, CodexTurn } from './codex-history.js';
+import { CodexProjection } from './codex-projection.js';
 
 export function codexMetadataFile(directory: string, threadId: string): string {
   return join(directory, `codex-${createHash('sha256').update(threadId).digest('hex')}.json`);
@@ -17,7 +18,9 @@ export function readCodexMetadata(directory: string, threadId: string): CodexMet
   if (value.version !== 1 || !Array.isArray(value.context) || !Array.isArray(value.deliveries) || !Array.isArray(value.completed)
     || !value.context.every(entry => typeof entry.text === 'string' && typeof entry.customType === 'string')
     || !value.deliveries.every(entry => typeof entry.turnId === 'string' && (entry.itemId === undefined || typeof entry.itemId === 'string') && typeof entry.deliveryId === 'string' && isDeliveryPresentation(entry.presentation))
-    || !value.completed.every(id => typeof id === 'string')) throw new Error('Invalid Hive Codex metadata');
+    || !value.completed.every(id => typeof id === 'string')
+    || (value.inheritedSources !== undefined && (!Array.isArray(value.inheritedSources) || !value.inheritedSources.every(entry => typeof entry.itemId === 'string' && !!entry.itemId && typeof entry.sourceSessionId === 'string' && !!entry.sourceSessionId)))
+    || (value.inheritedDeliveries !== undefined && (!Array.isArray(value.inheritedDeliveries) || !value.inheritedDeliveries.every(entry => typeof entry.turnId === 'string' && typeof entry.itemId === 'string' && !!entry.itemId && typeof entry.deliveryId === 'string' && isDeliveryPresentation(entry.presentation))))) throw new Error('Invalid Hive Codex metadata');
   return value;
 }
 export function writeCodexMetadata(directory: string, threadId: string, metadata: CodexMetadata): void {
@@ -30,4 +33,23 @@ export function writeCodexMetadata(directory: string, threadId: string, metadata
   } finally {
     rmSync(temporary, { force: true });
   }
+}
+
+/** Publish only display history for a native fork. No execution state is inherited. */
+export function createForkCodexMetadata(directory: string, sourceThreadId: string, childThreadId: string, sourceSessionId: string, turns: CodexTurn[]): void {
+  const source = readCodexMetadata(directory, sourceThreadId);
+  const inheritedSources: NonNullable<CodexMetadata['inheritedSources']> = [];
+  const inheritedDeliveries: NonNullable<CodexMetadata['inheritedDeliveries']> = [];
+  const sources = new Map(source.inheritedSources?.map(entry => [entry.itemId, entry.sourceSessionId]));
+  for (const turn of turns) for (const item of turn.items) {
+    inheritedSources.push({ itemId: item.id, sourceSessionId: sources.get(item.id) ?? sourceSessionId });
+    if (item.type !== 'userMessage') continue;
+    const candidates = [...(source.inheritedDeliveries ?? []), ...source.deliveries];
+    const delivery = candidates.find(entry => entry.turnId === turn.id && entry.itemId === item.id)
+      ?? (turn.items.filter(candidate => candidate.type === 'userMessage').length === 1
+        ? candidates.find(entry => entry.turnId === turn.id && entry.itemId === undefined) : undefined);
+    if (delivery) inheritedDeliveries.push({ ...delivery, itemId: item.id });
+  }
+  writeCodexMetadata(directory, childThreadId, { version: 1, context: [], deliveries: [], completed: [], inheritedSources, inheritedDeliveries });
+  new CodexProjection(directory, childThreadId).recover(turns, true);
 }
