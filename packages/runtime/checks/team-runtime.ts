@@ -78,7 +78,7 @@ try {
   assert.ok(worker, `Worker missing after successful CLI spawn: ${JSON.stringify(result)}`);
   const launch = first.agents.peekAgentLaunchConfig(workspace.id, worker.id);
   assert.equal(launch?.command, 'hive:pi');
-  assert.deepEqual(launch.args, ['--provider', testModel.provider, '--model', testModel.id]);
+  assert.deepEqual(launch.args, ['--profile-id', 'default-pi', '--profile-revision', '1', '--provider', testModel.provider, '--model', testModel.id]);
   await first.hive.request('POST', `/api/workspaces/${workspace.id}/agents/${encodeURIComponent(worker.id)}/start`);
   assert.ok(first.agents.getActiveRunByAgentId(workspace.id, worker.id));
 

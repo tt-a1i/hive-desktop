@@ -1,3 +1,4 @@
+import type { AgentProfileRef } from './agent-profiles.js';
 import { validateInitializationPlan, type InitializationPlan } from './project-worktree-initialization.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -25,6 +26,8 @@ export interface WorktreeCreation {
   setup?: InitializationPlan;
   workspaceId: string;
   backend: 'pi' | 'codex' | 'pi-rpc' | 'claude';
+  profile?: AgentProfileRef;
+  legacyConfiguration?: true;
   identityState: 'new' | 'known';
   originAgentId?: string;
   model?: {provider: string; id: string; name: string};
@@ -44,6 +47,8 @@ function validateCreation(creation: WorktreeCreation | undefined): void {
   const text = (value: unknown): value is string => typeof value === 'string' && !!value.trim() && value.length <= 4096 && !value.includes('\0');
   if (!creation || ![1, 2].includes(creation.version) || !text(creation.workspaceId)
     || !['pi','codex','pi-rpc','claude'].includes(creation.backend)
+    || creation.profile !== undefined && (!creation.profile || typeof creation.profile.id !== 'string' || !creation.profile.id || !Number.isSafeInteger(creation.profile.revision) || creation.profile.revision < 1)
+    || creation.legacyConfiguration !== undefined && creation.legacyConfiguration !== true
     || !['new','known'].includes(creation.identityState)
     || (creation.identityState === 'known' ? !text(creation.originAgentId) : creation.originAgentId !== undefined)
     || (creation.model !== undefined && (!creation.model || !text(creation.model.provider) || !text(creation.model.id) || !text(creation.model.name))))

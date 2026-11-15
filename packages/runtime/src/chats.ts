@@ -1,3 +1,6 @@
+import { AgentProfiles, defaultAgentProfileId, type AgentProfileRef } from './agent-profiles.js';
+import { parseStructuredLaunch, resolveStructuredLaunch, StructuredLaunchError } from './structured-launch.js';
+import { nativeProfileLaunch, createAgentSession } from './agent-session-factory.js';
 import { SessionHistoryOperations } from './session-history-operations.js';
 import { HistoryOperationError, historyHash } from './history-operation-journal.js';
 import type { ExecutionMutations } from './execution-mutations.js';
@@ -15,10 +18,9 @@ import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalSt
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createClaudeSession, type ClaudeSessionHandle } from './agents/claude.js';
-import { createCodexSession, type CodexSessionHandle } from './agents/codex.js';
-import { createExternalPiSession, type ExternalPiSessionHandle } from './agents/external-pi.js';
-import { createPiSession } from './agents/pi.js';
+import { type ClaudeSessionHandle } from './agents/claude.js';
+import { type CodexSessionHandle } from './agents/codex.js';
+import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, SessionIdentityError, type ChatRecord, type ChatBackend } from './chat-index.js';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
@@ -79,8 +81,13 @@ export class Chats implements StructuredSessionPort {
         if(record.workspaceId!==workspaceId||record.identityState!=='known'||!record.originAgentId||record.originAgentId===`${workspaceId}:__workflow__`)throw new HistoryOperationError('SOURCE_READ_ONLY','Only a known original orchestrator or existing Worker can fork');
         await this.assertHistoryReady(record);
         const workspace=await this.workspace(workspaceId), executionPath=await this.executionPath(record,workspace);
-        const command=(await this.settings.get()).effective.codex.command;
+        const profile=await this.selectedProfile(record.backend,record.profile);
+        const command=profile.launch.command ?? 'codex';
         return {record,executionPath,projectRoot:workspace.path,command};
+      },
+      nativeLaunch:async record => {
+        const launch = nativeProfileLaunch(await this.selectedProfile(record.backend, record.profile));
+        return {...launch, command: launch.command ?? 'codex'};
       },
       quiescent:async(workspaceId)=>{
         if(this.closing||this.opening.size||this.activating.size||this.startingForInput.size||this.preparingInteractions.size||this.mutatingQueues.size||this.gitOperations.size)throw new HistoryOperationError('SOURCE_BUSY','Finish pending session operations before creating a history fork');
@@ -154,7 +161,7 @@ export class Chats implements StructuredSessionPort {
   private readonly gitOperations = new Set<Promise<unknown>>();
 
   constructor(private readonly hive: HiveHost, private readonly dataDir: string, private readonly emit: (event: ChatEvent) => void,
-    private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels) {
+    private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels, readonly profiles = new AgentProfiles(hive)) {
     const directory = join(dataDir, 'chats');
     this.attachments=new ChatAttachments(hive, new ProjectFileReferences(join(directory, 'project-file-references')));
     this.interactionAttachments = new InteractionAttachments(join(directory, 'interaction-attachments'), this.attachments);
@@ -163,6 +170,24 @@ export class Chats implements StructuredSessionPort {
     this.dispatchOrigins = new DispatchExecutionOrigins(join(directory, 'dispatch-execution-origins'));
     mkdirSync(this.sessionDir, { recursive: true });
     this.index = new ChatIndex(directory);
+  }
+  private profilesReady: Promise<void> | undefined;
+  initializeProfiles(): Promise<void> {
+    return this.profilesReady ??= (async () => {
+      await this.profiles.initialize(await this.settings.get());
+      for (const record of this.index.all()) {
+        if (record.profile) continue;
+        const profile = await this.profiles.legacyRef(record.backend);
+        await this.profiles.getRef(profile, record.backend);
+        this.index.save({...record, profile, legacyConfiguration: true});
+      }
+    })().catch(error => { this.profilesReady = undefined; throw error; });
+  }
+  private async selectedProfile(backend: ChatBackend, ref?: AgentProfileRef) {
+    await this.initializeProfiles();
+    const profile = ref ?? await this.profiles.currentRef(defaultAgentProfileId(backend));
+    try { return await this.profiles.resolveForExecution(profile, backend); }
+    catch (error) { throw new SessionIdentityError('SESSION_PROFILE_UNAVAILABLE', error instanceof Error ? error.message : String(error)); }
   }
   assertWorkspaceAvailable(workspaceId: string): void {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
@@ -176,6 +201,10 @@ export class Chats implements StructuredSessionPort {
     return source ? this.index.establishOrigin(current.id, source) : current;
   }
   private async runnableIdentity(record: ChatRecord): Promise<ChatRecord> {
+    await this.initializeProfiles();
+    record = this.index.get(record.id);
+    if (!record.profile) throw new SessionIdentityError('SESSION_PROFILE_UNAVAILABLE', 'The conversation has no fixed profile reference.');
+    await this.selectedProfile(record.backend, record.profile);
     const current = this.originIdentity(record);
     await this.assertHistoryReady(current);
     if (current.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its saved history is read-only; create a new conversation to continue.');
@@ -191,7 +220,7 @@ export class Chats implements StructuredSessionPort {
     return current;
   }
   private publicSession(record: ChatRecord, executionPath: string) {
-    return {id: record.id, title: record.title, workspaceId: record.workspaceId, backend: record.backend,
+    return {id: record.id, title: record.title, workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
       pinned: !!record.pinned, archived: !!record.archived, updatedAt: record.updatedAt,
       ...(record.customTitle !== undefined && {customTitle: record.customTitle}), ...(record.agentId && {agentId: record.agentId}),
       ...(record.execution && {execution: {kind: record.execution.kind, path: record.execution.path, branch: record.execution.branch}}), executionPath,
@@ -229,6 +258,7 @@ export class Chats implements StructuredSessionPort {
     if (!record.execution) return workspace.path;
     const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
     if (creation && (creation.workspaceId !== record.workspaceId || creation.backend !== record.backend
+      || creation.profile && (creation.profile.id !== record.profile?.id || creation.profile.revision !== record.profile?.revision)
       || creation.originAgentId && creation.originAgentId !== record.originAgentId))
       throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Worktree creation provenance and conversation identity disagree.');
     const original = await realpath(workspace.path);
@@ -312,12 +342,13 @@ export class Chats implements StructuredSessionPort {
     }
     return {pending, unreadable};
   }
-  async recoverWorktreeRecord(workspaceId: string, id: string, backend?: ChatBackend, memberId?: string): Promise<ChatRecord & {legacy?: true; identityRecorded?: false; recoveryKind?: 'new-orchestrator'}> {
+  async recoverWorktreeRecord(workspaceId: string, id: string, backend?: ChatBackend, memberId?: string, profile?: AgentProfileRef): Promise<ChatRecord & {legacy?: true; identityRecorded?: false; recoveryKind?: 'new-orchestrator'}> {
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
       const existing = this.index.peek(id);
       if (existing) {
+        if (profile && (profile.id !== existing.profile?.id || profile.revision !== existing.profile?.revision)) throw new SessionIdentityError('SESSION_PROFILE_CONFLICT', 'Recovery cannot replace the fixed conversation profile.');
         if (existing.workspaceId !== workspaceId || !existing.execution) throw new Error('会话身份已被使用，未覆盖现有记录。');
         const {creation} = await readWorktreeIntent(this.dataDir, id);
         if(creation?.forkOperationId)throw new HistoryOperationError('FORK_RECOVERY_REQUIRED',`Use the dedicated history operation ${creation.forkOperationId} to inspect or recover this fork`);
@@ -340,7 +371,11 @@ export class Chats implements StructuredSessionPort {
         throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Recovery uses only the original creation backend and member; caller identity cannot replace them.');
       if (owned.projectRoot !== await realpath(workspace.path)) throw new Error('待恢复的工作树不属于当前项目。');
       const recovered = await recoverManagedWorktree(this.dataDir, owned);
-      const record: ChatRecord = {id, workspaceId, backend: creation?.backend ?? backend ?? 'pi', title: '新会话', sessionFile: null, updatedAt: Date.now(),
+      await this.initializeProfiles();
+      const recoveredProfile = creation?.profile ?? await this.profiles.legacyRef(creation?.backend ?? backend ?? 'pi');
+      if (profile && (profile.id !== recoveredProfile.id || profile.revision !== recoveredProfile.revision)) throw new SessionIdentityError('SESSION_PROFILE_CONFLICT', 'Recovery must use the exact worktree creation profile.');
+      const record: ChatRecord = {id, workspaceId, backend: creation?.backend ?? backend ?? 'pi', profile: recoveredProfile, ...(!creation?.profile && {legacyConfiguration: true as const}), title: '新会话', sessionFile: null, updatedAt: Date.now(),
+        ...(creation?.profile && {profile: creation.profile}), ...(creation?.legacyConfiguration && {legacyConfiguration: true}),
         identityState: creation?.identityState ?? 'new', ...(creation?.originAgentId && {originAgentId: creation.originAgentId}), ...(creation?.model && {model: creation.model}),
         execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
       this.assertWorkspaceAvailable(workspaceId);
@@ -734,28 +769,28 @@ export class Chats implements StructuredSessionPort {
     };
     const model = record.model && { provider: record.model.provider, id: record.model.id };
     const command = createTeamCommand(binding);
-    const executables = record.backend === 'pi' ? undefined : (await this.settings.get()).effective;
+    const profile = await this.selectedProfile(record.backend, record.profile);
     this.closeAbort.signal.throwIfAborted();
-    const handle = record.backend === 'codex'
-      ? await createCodexSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'codex'),
-        command: executables!.codex.command, signal: this.closeAbort.signal,
+    const handle = await createAgentSession({backend: record.backend, profile, ...(record.backend === 'codex'
+      ? {codex: { cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'codex'),
+        signal: this.closeAbort.signal,
         ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.lineage&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
         onUnexpectedExit,
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
         customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
           execute: (id, args, signal) => command.execute(id, args as { args: string[]; stdin?: string }, signal) }],
-      })
+      }}
       : record.backend === 'claude'
-      ? await createClaudeSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'claude'),
-        command: executables!.claude.command, signal: this.closeAbort.signal, ...(record.nativeclaudeSessionId && { sessionId: record.nativeclaudeSessionId }),
-        ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
+      ? {claude: { cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'claude'),
+        signal: this.closeAbort.signal, ...(record.nativeclaudeSessionId && { sessionId: record.nativeclaudeSessionId }),
+        ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding }}
       : record.backend === 'pi-rpc'
-      ? await createExternalPiSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'external-pi'),
-        command: executables!.pi.command, signal: this.closeAbort.signal,
-        ...(sessionFile && { sessionFile }), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding })
-      : await createPiSession({ cwd: executionPath, sessionDir: this.sessionDir,
+      ? {externalPi: { cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'external-pi'),
+        signal: this.closeAbort.signal,
+        ...(sessionFile && { sessionFile }), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding }}
+      : {pi: { cwd: executionPath, sessionDir: this.sessionDir,
         ...(sessionFile && { sessionFile }), ...(model && { model }),
-        customTools: [createTeamTool(binding)], onEvent, onUnexpectedExit });
+        customTools: [createTeamTool(binding)], onEvent, onUnexpectedExit }})});
     try {
       this.closeAbort.signal.throwIfAborted();
       if (earlyFailure) throw earlyFailure;
@@ -934,10 +969,10 @@ export class Chats implements StructuredSessionPort {
     this.opening.set(id, opening);
     return opening;
   }
-  private async saveNewRecord(workspace: WorkspaceSummary, record: ChatRecord, options: {isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string}) {
+  private async saveNewRecord(workspace: WorkspaceSummary, record: ChatRecord, options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string}) {
     if (options.isolation === 'worktree') {
       const setup = await this.initialization?.capture(record.workspaceId, options.skipSetup, options.expectedSetupRevision);
-      const creation: WorktreeCreation = {version: setup ? 2 : 1, ...(setup && {setup}), workspaceId: record.workspaceId, backend: record.backend,
+      const creation: WorktreeCreation = {version: setup ? 2 : 1, ...(setup && {setup}), workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
         identityState: record.originAgentId ? 'known' : 'new', ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.model && {model: record.model})};
       const owned = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id, creation,
         ...(options.branch !== undefined && {branch: options.branch})});
@@ -956,18 +991,19 @@ export class Chats implements StructuredSessionPort {
     }
     return record;
   }
-  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
+  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
       const workspace = await this.workspace(workspaceId);
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
-      return this.saveNewRecord(workspace, {id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new'}, options);
+      const selected = await this.selectedProfile(backend, options.profile);
+      return this.saveNewRecord(workspace, {id: randomUUID(), workspaceId, backend, profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new'}, options);
     });
   }
   /** Create only: never binds, stops or starts the Worker's currently selected conversation. */
-  async createMemberWorktree(workspaceId: string, memberId: string, options: {branch?: string; backend?: ChatBackend; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
+  async createMemberWorktree(workspaceId: string, memberId: string, options: {profile?: AgentProfileRef; branch?: string; backend?: ChatBackend; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
@@ -980,14 +1016,22 @@ export class Chats implements StructuredSessionPort {
       const backend = config && backends[config.command];
       if (!backend) throw new SessionIdentityError('MEMBER_BACKEND_UNSUPPORTED', 'This Worker has no supported structured backend configuration.');
       if (options.backend !== undefined && options.backend !== backend) throw new SessionIdentityError('MEMBER_BACKEND_MISMATCH', 'The requested backend differs from this Worker configuration. Create using the Worker backend.');
-      const args = config?.args ?? [], providerAt = args.indexOf('--provider'), modelAt = args.indexOf('--model');
-      const provider = providerAt >= 0 ? args[providerAt + 1] : undefined, modelId = modelAt >= 0 ? args[modelAt + 1] : undefined;
-      if ((providerAt >= 0 || modelAt >= 0) && (!provider?.trim() || !modelId?.trim() || provider.startsWith('--') || modelId.startsWith('--')))
-        throw new SessionIdentityError('MEMBER_MODEL_INVALID', 'The Worker launch model must provide both provider and model.');
+      await this.initializeProfiles();
+      let selection;
+      try { selection = parseStructuredLaunch(config!); }
+      catch (error) {
+        if (error instanceof StructuredLaunchError && config?.args?.some(arg => arg === '--provider' || arg === '--model'))
+          throw new SessionIdentityError('MEMBER_MODEL_INVALID', error.message);
+        throw error;
+      }
+      const parsed = await resolveStructuredLaunch(selection, this.profiles);
+      if (options.profile && (options.profile.id !== parsed.resolvedProfile.ref.id || options.profile.revision !== parsed.resolvedProfile.ref.revision))
+        throw new SessionIdentityError('MEMBER_PROFILE_MISMATCH', 'A member worktree must inherit the exact member profile.');
+      const provider = parsed.model?.provider, modelId = parsed.model?.id;
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
       const record: ChatRecord = {id: randomUUID(), workspaceId, backend, title: '新会话', sessionFile: null, updatedAt: Date.now(),
-        originAgentId: memberId, identityState: 'known', ...(provider && modelId && {model: {provider, id: modelId, name: modelId}})};
+        profile: parsed.resolvedProfile.ref, ...(parsed.profile.kind === 'legacy-default' && {legacyConfiguration: true as const}), originAgentId: memberId, identityState: 'known', ...(provider && modelId && {model: {provider, id: modelId, name: modelId}})};
       const saved = await this.saveNewRecord(workspace, record, {isolation: 'worktree', ...(options.branch !== undefined && {branch: options.branch}), ...(options.skipSetup !== undefined && {skipSetup: options.skipSetup}), ...(options.expectedSetupRevision !== undefined && {expectedSetupRevision: options.expectedSetupRevision})});
       return this.publicSession(saved, saved.execution!.path);
     });
@@ -1009,7 +1053,7 @@ export class Chats implements StructuredSessionPort {
         message: error instanceof Error ? error.message : String(error)}}; }
     }))};
   }
-  async create(workspaceId: string, backend: ChatBackend = 'pi', options: {isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
+  async create(workspaceId: string, backend: ChatBackend = 'pi', options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
     const record = await this.createRecord(workspaceId, backend, options);
     return this.open(record.id);
   }
@@ -1035,24 +1079,21 @@ export class Chats implements StructuredSessionPort {
   /** Hive invokes this for both the selected orchestrator and spawned workers. */
   async start(input: Parameters<StructuredSessionPort['start']>[0]): Promise<StructuredSessionHandle> {
     this.assertWorkspaceAvailable(input.workspace.id);
-    const backend = input.config.command === 'hive:codex' ? 'codex' : input.config.command === 'hive:pi-rpc' ? 'pi-rpc' : input.config.command === 'hive:claude' ? 'claude' : 'pi';
-    const args = input.config.args ?? [];
-    const provider = args[args.indexOf('--provider') + 1];
-    const modelId = args[args.indexOf('--model') + 1];
-    const explicitModel = args.includes('--provider') || args.includes('--model');
-    if (explicitModel && (!args.includes('--provider') || !args.includes('--model') || !provider || !modelId)) {
-      throw new Error('Structured launch requires both --provider and --model values');
-    }
+    await this.initializeProfiles();
+    const parsed = await resolveStructuredLaunch(parseStructuredLaunch(input.config), this.profiles);
+    const backend = parsed.driver, profile = parsed.resolvedProfile.ref;
+    const provider = parsed.model?.provider, modelId = parsed.model?.id;
+    const explicitModel = !!parsed.model;
     let record = this.index.forAgent(input.workspace.id, input.agentId);
-    if (record && record.backend !== backend) {
+    if (record && (record.backend !== backend || record.profile?.id !== profile.id || record.profile?.revision !== profile.revision)) {
       throw new Error(`This member is bound to a ${record.backend} conversation. Create and select a new ${backend} conversation before switching backend; the existing transcript is preserved.`);
     }
     if (!record) {
       const members = await this.hive.request('GET', `/api/ui/workspaces/${input.workspace.id}/team`) as { id: string; name: string }[];
       this.assertWorkspaceAvailable(input.workspace.id);
-      record = { id: randomUUID(), workspaceId: input.workspace.id, agentId: input.agentId, originAgentId: input.agentId, identityState: 'known', backend,
+      record = { id: randomUUID(), workspaceId: input.workspace.id, agentId: input.agentId, originAgentId: input.agentId, identityState: 'known', backend, profile, ...(parsed.profile.kind === 'legacy-default' && {legacyConfiguration: true as const}),
         title: input.agentId.endsWith(':orchestrator') ? '主会话' : members.find(member => member.id === input.agentId)?.name ?? '成员会话', sessionFile: null, updatedAt: Date.now(),
-        ...(args.includes('--provider') && args.includes('--model') && provider && modelId ? { model: { provider, id: modelId, name: modelId } } : {}),
+        ...(provider && modelId ? { model: { provider, id: modelId, name: modelId } } : {}),
       };
       this.index.save(record);
     }
@@ -1128,7 +1169,7 @@ export class Chats implements StructuredSessionPort {
   }
   private launchConfig(record: ChatRecord) {
     return { command: record.backend === 'codex' ? 'hive:codex' : record.backend === 'pi-rpc' ? 'hive:pi-rpc' : record.backend === 'claude' ? 'hive:claude' : 'hive:pi', commandPresetId: null,
-      args: record.model ? ['--provider', record.model.provider, '--model', record.model.id] : [] };
+      args: [...(record.profile ? ['--profile-id', record.profile.id, '--profile-revision', String(record.profile.revision)] : []), ...(record.model ? ['--provider', record.model.provider, '--model', record.model.id] : [])] };
   }
   private async withWorkspace<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
     const release=this.executionMutations?.begin(workspaceId);

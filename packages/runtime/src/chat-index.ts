@@ -1,3 +1,4 @@
+import type { AgentProfileRef } from './agent-profiles.js';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
@@ -17,6 +18,8 @@ export class SessionIdentityError extends Error {
 
 export interface ChatRecord {
   backend: ChatBackend;
+  profile?: AgentProfileRef;
+  legacyConfiguration?: true;
   lineage?: {operationId:string;parentSessionId:string;nativeUserItemId:string;edit:boolean;codeRelation:{kind:'current'|'checkpoint';checkpointId:string};inheritedItemIds:string[]};
   forkDraft?: {text:string;attachmentIds:string[];missingAttachments:string[]};
   execution?: ChatExecution;
@@ -63,17 +66,19 @@ export class ChatIndex {
     });
     if (JSON.stringify(value) !== JSON.stringify(this.records)) this.commit(this.records);
   }
+  all(): ChatRecord[] { return this.records.map(recordSnapshot); }
   list(workspaceId: string): ChatRecord[] {
-    return this.records.filter(record => record.workspaceId === workspaceId).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
+    return this.records.filter(record => record.workspaceId === workspaceId).map(recordSnapshot).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
   }
-  peek(id:string):ChatRecord|undefined {return this.records.find(record=>record.id===id);}
+  peek(id:string):ChatRecord|undefined {const record=this.records.find(record=>record.id===id);return record && recordSnapshot(record);}
   get(id: string): ChatRecord {
     const record = this.peek(id);
     if (!record) throw new Error('Conversation not found');
     return record;
   }
   forAgent(workspaceId: string, agentId: string): ChatRecord | undefined {
-    return this.records.find(record => record.workspaceId === workspaceId && record.agentId === agentId);
+    const record = this.records.find(record => record.workspaceId === workspaceId && record.agentId === agentId);
+    return record && recordSnapshot(record);
   }
   bind(id: string, agentId: string): ChatRecord {
     const original = this.get(id);
@@ -91,6 +96,8 @@ export class ChatIndex {
   }
   save(record: ChatRecord): void {
     const existing = this.peek(record.id);
+    if (existing && (existing.backend !== record.backend || existing.profile && (existing.profile.id !== record.profile?.id || existing.profile.revision !== record.profile?.revision)))
+      throw new SessionIdentityError('SESSION_PROFILE_CONFLICT', 'The conversation backend and fixed profile cannot be changed.');
     if (existing?.identityState === 'unknown' && (record.agentId || record.originAgentId) && !existing.originAgentId)
       throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'An older unknown conversation needs exact persisted source evidence before it can be bound.');
     if (existing?.originAgentId && ((record.originAgentId && record.originAgentId !== existing.originAgentId)
@@ -120,9 +127,13 @@ export class ChatIndex {
       writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600, flush: true });
       renameSync(temporary, this.file);
       if(process.platform!=='win32'){const directory=openSync(dirname(this.file),'r');try{fsyncSync(directory);}finally{closeSync(directory);}}
-      this.records = next;
+      this.records = next.map(recordSnapshot);
     } finally { rmSync(temporary, { force: true }); }
   }
+}
+
+function recordSnapshot(record: ChatRecord): ChatRecord {
+  return {...record, ...(record.profile && {profile: {...record.profile}})};
 }
 
 function normalizeIdentity(record: ChatRecord): ChatRecord {
@@ -139,6 +150,8 @@ function isChatRecord(value: unknown): value is ChatRecord {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
+  if (record.profile !== undefined && (!record.profile || typeof record.profile !== 'object' || typeof (record.profile as Record<string, unknown>).id !== 'string' || !(record.profile as Record<string, unknown>).id || !Number.isSafeInteger((record.profile as Record<string, unknown>).revision) || ((record.profile as Record<string, unknown>).revision as number) < 1)) return false;
+  if (record.legacyConfiguration !== undefined && record.legacyConfiguration !== true) return false;
   if (record.lineage !== undefined) {
     const lineage=record.lineage as ChatRecord['lineage'];
     if(!lineage||typeof lineage.operationId!=='string'||typeof lineage.parentSessionId!=='string'||typeof lineage.nativeUserItemId!=='string'||typeof lineage.edit!=='boolean'||!['current','checkpoint'].includes(lineage.codeRelation?.kind)||typeof lineage.codeRelation.checkpointId!=='string'||!Array.isArray(lineage.inheritedItemIds)||!lineage.inheritedItemIds.every(id=>typeof id==='string')) return false;

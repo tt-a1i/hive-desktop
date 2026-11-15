@@ -35,7 +35,7 @@ export interface HiveHost {
     getUserInput(workspaceId: string, agentId: string, sequence: number): HiveUserInputRow | undefined;
     mutateUserInput(workspaceId: string, agentId: string, sequence: number, expectedText: string, replacement: string | null, persistSpool: () => void): void;
     configureAgentLaunch: import("./hive-runtime-contract.js").HiveAgentRuntime["configureAgentLaunch"];
-    createMember(workspaceId: string, input: DesktopMemberInput, command: string): { id: string };
+    createMember(workspaceId: string, input: DesktopMemberInput, launch: string | import('./hive-runtime-contract.js').AgentLaunchConfigInput): { id: string };
     locateUpload(workspaceId:string,id:string):Promise<HiveUploadLocation | undefined>;
     readUpload(workspaceId: string, id: string): Promise<HiveUpload | null>;
     getNavigation(): string | null;
@@ -142,12 +142,12 @@ export async function createHiveHost({
             if (closing) throw new Error('Hive host is closed');
             runtime.store.configureAgentLaunch(workspaceId, agentId, input);
         },
-        createMember(workspaceId, input, command) {
+        createMember(workspaceId, input, launch) {
             if (closing) throw new Error('Hive host is closed');
             return runtime.store.addWorkerWithLaunch(workspaceId, {
                 ...input, avatar: null,
                 description: input.description ?? getDefaultRoleDescription(input.role, resolveWorkspaceUiLanguage(runtime.store.settings, workspaceId)),
-            }, { command, args: [], commandPresetId: null });
+            }, typeof launch === 'string' ? {command: launch, args: [], commandPresetId: null} : launch);
         },
         locateUpload: (workspaceId,id) => {
             if (closing) throw new Error("Hive host is closed");

@@ -1,3 +1,5 @@
+import { parseStructuredLaunch } from './structured-launch.js';
+import { isAgentDriver, validateAgentProfileLaunch, validateAgentProfileRef, type UpdateAgentProfile } from './agent-profiles.js';
 import { HistoryOperationError } from './history-operation-journal.js';
 import { CodeCheckpointError } from './code-checkpoints.js';
 import { WorktreeInitializationError } from './project-worktree-initialization.js';
@@ -40,7 +42,7 @@ const runtimeInfo = captureRuntimeInfo();
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
 const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }), { onTerminalEvent: data => send({ event: 'terminal', data }), onScriptEvent: data => send({ event: 'script', data }) });
-const { hive, chats, settings, agentModels, terminal, piAuth } = runtime;
+const { hive, chats, profiles, settings, agentModels, terminal, piAuth } = runtime;
 let closing: Promise<void> | undefined;
 const close = () => closing ??= runtime.close();
 
@@ -54,9 +56,43 @@ function text(params: Record<string, unknown>, name: string): string {
   return value;
 }
 
+function exact(params: Record<string, unknown>, allowed: string[]) {
+  if (Object.keys(params).some(key => !allowed.includes(key))) throw new Error('Unexpected request field');
+}
+function storeVersion(params: Record<string, unknown>): number {
+  if (!Number.isSafeInteger(params.expectedStoreVersion) || (params.expectedStoreVersion as number) < 1) throw new Error('expectedStoreVersion is required');
+  return params.expectedStoreVersion as number;
+}
+function optionalProfile(params: Record<string, unknown>) {
+  return params.profile === undefined ? {} : {profile: validateAgentProfileRef(params.profile)};
+}
+function optionalModel(params: Record<string, unknown>) {
+  if (params.model === undefined) return {};
+  const model = record(params.model); exact(model, ['provider', 'id']);
+  return {model: {provider: text(model, 'provider'), id: text(model, 'id')}};
+}
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
+    case 'agent.profiles.list': exact(params, []); return profiles.list();
+    case 'agent.profiles.create': {
+      exact(params, ['driver', 'label', 'launch', 'expectedStoreVersion']);
+      if (!isAgentDriver(params.driver)) throw new Error('Unsupported profile driver');
+      return profiles.create({driver: params.driver, label: text(params, 'label'), launch: validateAgentProfileLaunch(params.driver, params.launch)}, storeVersion(params));
+    }
+    case 'agent.profiles.update': {
+      exact(params, ['id', 'label', 'launch', 'expectedStoreVersion']);
+      const current = await profiles.getRef(await profiles.currentRef(text(params, 'id')));
+      const change: UpdateAgentProfile = {...(params.label !== undefined && {label: text(params, 'label')}),
+        ...(params.launch !== undefined && {launch: validateAgentProfileLaunch(current.driver, params.launch)})};
+      if (!Object.keys(change).length) throw new Error('A profile change is required');
+      return profiles.update(current.ref.id, change, storeVersion(params));
+    }
+    case 'agent.profiles.disable':
+    case 'agent.profiles.enable': {
+      exact(params, ['id', 'expectedStoreVersion']);
+      return profiles.enableDisable(text(params, 'id'), method === 'agent.profiles.enable', storeVersion(params));
+    }
     case 'history.capabilities': return chats.history!.capabilities(text(params,'workspaceId'),text(params,'sessionId'));
     case 'checkpoint.preview': return chats.history!.checkpointPreview(text(params,'workspaceId'),text(params,'sessionId'));
     case 'checkpoint.capture': return chats.history!.checkpointCapture(text(params,'workspaceId'),text(params,'sessionId'),text(params,'expectedVersion'),text(params,'requestId'));
@@ -96,14 +132,15 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       hive.saveNavigation(value);
       return { ok: true };
     }
-    case 'team.member.create': return runtime.createMember(text(params, 'workspaceId'), { name: params.name, role: params.role, backend: params.backend,
-      ...(params.description !== undefined && { description: params.description }) });
+    case 'team.member.create': { exact(params, ['workspaceId', 'name', 'role', 'backend', 'description', 'profile', 'model']); return runtime.createMember(text(params, 'workspaceId'), { name: params.name, role: params.role, backend: params.backend, ...optionalProfile(params), ...optionalModel(params),
+      ...(params.description !== undefined && { description: params.description }) }); }
     case 'member.worktree.create': {
+      exact(params, ['workspaceId', 'memberId', 'backend', 'branch', 'skipSetup', 'expectedSetupRevision', 'profile']);
       if (params.backend !== undefined && !['pi','codex','pi-rpc','claude'].includes(params.backend as string)) throw new Error('Unsupported chat backend');
       if (params.branch !== undefined && typeof params.branch !== 'string') throw new Error('Branch must be text');
       if (params.expectedSetupRevision !== undefined && typeof params.expectedSetupRevision !== 'string') throw new Error('Invalid setup revision');
       if (params.skipSetup !== undefined && typeof params.skipSetup !== 'boolean') throw new Error('Invalid setup selection');
-      return chats.createMemberWorktree(text(params, 'workspaceId'), text(params, 'memberId'), {
+      return chats.createMemberWorktree(text(params, 'workspaceId'), text(params, 'memberId'), { ...optionalProfile(params),
         ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}),
         ...(params.backend !== undefined && {backend: params.backend as 'pi' | 'codex' | 'pi-rpc' | 'claude'}),
         ...(typeof params.branch === 'string' && {branch: params.branch})});
@@ -115,18 +152,18 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return members.map(member => {
         const launch = runtime.agents.peekAgentLaunchConfig(workspace, member.id);
         if (!launch || !structuredCommand(launch.command)) return member;
-        const args = launch.args ?? [];
-        const providerIndex = args.indexOf('--provider');
-        const modelIndex = args.indexOf('--model');
-        const provider = providerIndex >= 0 && args[providerIndex + 1];
-        const id = modelIndex >= 0 && args[modelIndex + 1];
-        return provider && id ? { ...member, desktop_model: { provider, id } } : member;
+        try {
+          const parsed = parseStructuredLaunch(launch);
+          const profile = parsed.profile.kind === 'explicit' ? parsed.profile.ref : {id: parsed.profile.id, revision: 1};
+          return {...member, desktop_profile: profile, ...(parsed.model && {desktop_model: parsed.model})};
+        } catch (error) { return {...member, desktop_launch_error: error instanceof Error ? error.message : String(error)}; }
+
       });
     }
-    case 'agent.models': return agentModels.list(text(params, 'workspaceId'), params.backend);
-    case 'desktop.settings.codexLimits': return settings.codexLimits(params.command);
-    case 'desktop.settings.codexAccount': return settings.codexAccount(params.command);
-    case 'desktop.settings.probe': return settings.probe(params.backend, params.command);
+    case 'agent.models': { exact(params, ['workspaceId', 'backend', 'profile']); return agentModels.list(text(params, 'workspaceId'), params.backend, optionalProfile(params).profile); }
+    case 'desktop.settings.codexLimits': { exact(params, ['command', 'profile']); if (params.profile !== undefined && params.command !== undefined) throw new Error('Select a saved profile or an executable draft'); return settings.codexLimits(params.command, optionalProfile(params).profile); }
+    case 'desktop.settings.codexAccount': { exact(params, ['command', 'profile']); if (params.profile !== undefined && params.command !== undefined) throw new Error('Select a saved profile or an executable draft'); return settings.codexAccount(params.command, optionalProfile(params).profile); }
+    case 'desktop.settings.probe': { exact(params, ['backend', 'command', 'profile']); if (params.profile !== undefined && params.command !== undefined) throw new Error('Select a saved profile or an executable draft'); return settings.probe(params.backend, params.command, optionalProfile(params).profile); }
     case 'desktop.settings.get': return settings.get();
     case 'desktop.settings.update': return settings.update(params);
     case 'worktree.initialization.get':
@@ -220,18 +257,20 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.execution': return chats.sessionExecution(text(params, 'sessionId'));
     case 'chat.worktrees.pending': return chats.pendingWorktrees(text(params, 'workspaceId'));
     case 'chat.worktrees.recover': {
+      exact(params, ['workspaceId', 'sessionId', 'backend', 'memberId', 'profile']);
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');
-      return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend, params.memberId === undefined ? undefined : text(params, 'memberId'));
+      return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend, params.memberId === undefined ? undefined : text(params, 'memberId'), optionalProfile(params).profile);
     }
     case 'chat.createRecord':
     case 'chat.create': {
+      exact(params, ['workspaceId', 'backend', 'profile', 'isolation', 'branch', 'skipSetup', 'expectedSetupRevision']);
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');
       if (params.isolation !== undefined && params.isolation !== 'worktree') throw new Error('Unsupported session isolation');
       if (params.branch !== undefined && (params.isolation !== 'worktree' || typeof params.branch !== 'string')) throw new Error('A branch is only valid for a new worktree session');
       const workspace = text(params, 'workspaceId');
       if (params.expectedSetupRevision !== undefined && typeof params.expectedSetupRevision !== 'string') throw new Error('Invalid setup revision');
       if (params.skipSetup !== undefined && typeof params.skipSetup !== 'boolean') throw new Error('Invalid setup selection');
-      const options = {...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}), ...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch})};
+      const options = {...optionalProfile(params), ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}), ...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch})};
       return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend, options) : chats.create(workspace, params.backend, options);
     }
     case 'chat.pin': {

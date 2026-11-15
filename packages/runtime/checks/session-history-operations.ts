@@ -6,12 +6,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import { writeCodexMetadata } from '../src/agents/codex-metadata.js';
+import {readWorktreeIntent} from '../src/git-worktrees.js';
 import { ChatIndex } from '../src/chat-index.js';
 
 const originalFetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'?input:input instanceof URL?input:input.url);if(!['127.0.0.1','localhost','::1'].includes(url.hostname))return Promise.reject(new Error('Fixture disallows external fetch'));return originalFetch(input,init);};
 const dir=await realpath(await mkdtemp(join(tmpdir(),'hive-history-runtime-'))), repo=join(dir,'repo'), data=join(dir,'state');
 const peer=resolve('checks/fixtures/session-history-peer.cjs');
-const envKeys=['GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','PI_CODING_AGENT_DIR','PI_OFFLINE','HIVE_HISTORY_STATE','HIVE_HISTORY_LOG','HIVE_HISTORY_SOURCE','HIVE_HISTORY_DROP','HIVE_HISTORY_DROP_REVERT','HIVE_HISTORY_DROP_BEFORE_REVERT'] as const;
+const envKeys=['GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','PI_CODING_AGENT_DIR','PI_OFFLINE','HIVE_HISTORY_STATE','HIVE_HISTORY_LOG','HIVE_HISTORY_SOURCE','HIVE_HISTORY_DROP','HIVE_HISTORY_DROP_REVERT','HIVE_HISTORY_DROP_BEFORE_REVERT','HIVE_PROFILE_SECRET_SENTINEL'] as const;
 const old=Object.fromEntries(envKeys.map(k=>[k,process.env[k]]));
 let runtime:Awaited<ReturnType<typeof createDesktopRuntime>>|undefined;
 const git=(...args:string[])=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.test','-c','commit.gpgSign=false',...args],{cwd:repo,encoding:'utf8'}).trim();
@@ -19,6 +20,7 @@ const requests=async()=> (await readFile(join(dir,'requests'),'utf8')).trim().sp
 try{
  await mkdir(repo);await mkdir(join(dir,'pi'));await writeFile(join(dir,'gitconfig'),'');
  Object.assign(process.env,{GIT_CONFIG_GLOBAL:join(dir,'gitconfig'),GIT_CONFIG_NOSYSTEM:'1',PI_CODING_AGENT_DIR:join(dir,'pi'),PI_OFFLINE:'1',HIVE_HISTORY_STATE:join(dir,'peer.json'),HIVE_HISTORY_LOG:join(dir,'requests'),HIVE_HISTORY_SOURCE:repo,HIVE_HISTORY_DROP:join(dir,'drop'),HIVE_HISTORY_DROP_REVERT:join(dir,'drop-revert'),HIVE_HISTORY_DROP_BEFORE_REVERT:join(dir,'drop-before-revert')});
+ process.env.HIVE_PROFILE_SECRET_SENTINEL='fixture-secret-not-a-real-credential-84d19';
  git('init','--template=');await writeFile(join(repo,'.gitignore'),'.secret\n');await writeFile(join(repo,'file.txt'),'A');git('add','.');git('commit','-m','base');
  await writeFile(join(repo,'file.txt'),'B');git('add','file.txt');await writeFile(join(repo,'file.txt'),'C');await writeFile(join(repo,'.secret'),'private');
  const open=()=>createDesktopRuntime(data,()=>{},{executableEnvironment:{HIVE_CODEX_COMMAND:peer}});
@@ -32,6 +34,8 @@ try{
  const ledger=runtime.hive.executionLedgerRevision();const headBefore=git('rev-parse','HEAD');const indexBefore=await readFile(join(repo,'.git','index'));const sourceBefore=await readFile(join(repo,'file.txt'));
  async function apply(item:string,edit:boolean,requestId:string){const preview=await runtime!.chats.history!.preview({workspaceId:project.id,sessionId:'session-source',boundary:{nativeUserItemId:item},code:{kind:'current'},edit});const result=await runtime!.chats.history!.apply(project.id,'session-source',preview.previewToken as string,requestId) as any;return {preview,result};}
  const one=await apply('u1',false,'11111111-1111-4111-8111-111111111111');assert.equal(one.result.state,'ready',JSON.stringify(one.result));
+ const sourceProfile=runtime.chats.list(project.id).find(record=>record.id==='session-source')!.profile;assert.deepEqual(one.result.session.profile,sourceProfile);assert.deepEqual((await readWorktreeIntent(data,one.result.session.id)).creation!.profile,sourceProfile);
+ const durableOperation=await runtime.chats.history!.journal.byId(project.id,one.result.operationId);assert.equal(JSON.stringify(durableOperation).includes(process.env.HIVE_PROFILE_SECRET_SENTINEL!),false);assert.equal(JSON.stringify(durableOperation).includes('HIVE_PROFILE_SECRET_SENTINEL'),false);
  const sourceNativeBefore=JSON.parse(await readFile(join(dir,'peer.json'),'utf8')).source.turns;const child=one.result.session;assert.deepEqual(JSON.parse(await readFile(join(dir,'peer.json'),'utf8')).child1.turns.map((t:any)=>t.id),['t1']);assert.equal(await readFile(join(child.executionPath,'file.txt'),'utf8'),'C');assert.equal(execFileSync('git',['-C',child.executionPath,'show',':file.txt'],{encoding:'utf8'}),'B');
  assert.equal(execFileSync('git',['-C',child.executionPath,'show','HEAD:file.txt'],{encoding:'utf8'}),'A');await assert.rejects(readFile(join(child.executionPath,'.secret')));assert.equal(await readFile(join(repo,'.secret'),'utf8'),'private');
  assert.equal(runtime.hive.executionLedgerRevision(),ledger);

@@ -59,7 +59,7 @@ try {
  const duplicate=await create('Retry original name','claude');assert.equal(duplicate.error?.code,'DESKTOP_ERROR');assert.deepEqual(await members(),after);
  const missing=await wire.rpc('team.member.create',{workspaceId:'missing-workspace',name:'Missing',role:'coder',backend:'pi'});assert.equal(missing.error?.code,'DESKTOP_ERROR');assert.deepEqual(await members(),after);
  const launchRows=db.prepare('SELECT agent_id, command, args_json AS args FROM agent_launch_configs WHERE workspace_id = ? AND agent_id <> ? ORDER BY agent_id').all(workspaceId,workspaceId+':orchestrator') as {agent_id:string;command:string;args:string}[];
- assert.equal(launchRows.length,5);assert.deepEqual(new Set(launchRows.map(row=>row.agent_id)),new Set([...ids,saved.id]));assert.ok(launchRows.every(row=>JSON.parse(row.args).length===0));
+ assert.equal(launchRows.length,5);assert.deepEqual(new Set(launchRows.map(row=>row.agent_id)),new Set([...ids,saved.id]));assert.ok(launchRows.every(row=>JSON.stringify(JSON.parse(row.args))===JSON.stringify(['--profile-id','default-'+row.command.slice(5),'--profile-revision','1'])));
  for(const table of ['messages','dispatches','dispatch_messages','agent_runs','workflow_runs'])assert.equal((db.prepare('SELECT COUNT(*) AS n FROM '+table).get() as {n:number}).n,0);
  db.close();db=undefined;await wire.close();wire=start();await wire.rpc('initialize');
  assert.deepEqual(await members(),after);

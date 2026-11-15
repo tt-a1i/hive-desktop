@@ -13,6 +13,7 @@ import type { ChatRecord } from './chat-index.js';
 export interface HistoryDraft {text:string;attachmentIds:string[];missingAttachments:string[]}
 export interface HistoryPort {
  source(workspaceId:string,sessionId:string):Promise<{record:ChatRecord;executionPath:string;projectRoot:string;command:string}>;
+ nativeLaunch?(record:ChatRecord):Promise<{command:string;args?:string[];env?:NodeJS.ProcessEnv}>;
  lease(workspaceId:string):()=>void;
  quiescent(workspaceId:string):Promise<string>;
  setup(workspaceId:string):Promise<WorktreeCreation['setup']>;
@@ -43,6 +44,10 @@ export class SessionHistoryOperations {
  apply(workspaceId:string,sessionId:string,previewToken:string,requestId:string){return this.track(()=>this.applyAction(workspaceId,sessionId,previewToken,requestId));}
  recover(workspaceId:string,operationId:string){return this.track(()=>this.recoverAction(workspaceId,operationId));}
 
+ private async control(source:Awaited<ReturnType<HistoryPort['source']>>){
+  const launch=this.port.nativeLaunch?await this.port.nativeLaunch(source.record):{command:source.command};
+  return openCodexHistoryControl({cwd:source.executionPath,...launch});
+ }
  private checkpoints(source:Awaited<ReturnType<HistoryPort['source']>>){return new CodeCheckpoints({dataDir:this.dataDir,workspaceId:source.record.workspaceId,sessionId:source.record.id,executionPath:source.executionPath});}
  async capabilities(workspaceId:string,sessionId:string){try{const source=await this.port.source(workspaceId,sessionId);return {fork:source.record.backend==='codex',edit:source.record.backend==='codex',checkpoint:true,rewind:false,...(source.record.backend!=='codex'&&{reason:'This backend does not expose a supported native history fork'})};}catch(error){return {fork:false,edit:false,checkpoint:false,rewind:false,reason:error instanceof Error?error.message:String(error)};}}
  private async checkpointPreviewAction(workspaceId:string,sessionId:string){const release=this.port.lease(workspaceId);try{await this.port.quiescent(workspaceId);return await this.checkpoints(await this.port.source(workspaceId,sessionId)).preview();}finally{release();}}
@@ -57,7 +62,7 @@ export class SessionHistoryOperations {
    if(scan.workspace.projectPrefix)fail('CODE_SCOPE_UNSUPPORTED','History forks currently require the repository root as the project directory');
    const chosen=input.code.kind==='checkpoint'?await cp.export(input.code.checkpointId):undefined;
    if(chosen&&chosen.manifest.preview.workspace.commonDir!==scan.workspace.commonDir)fail('CHECKPOINT_IDENTITY','Checkpoint belongs to another repository');
-   control=await openCodexHistoryControl({cwd:source.executionPath,command:source.command});const read=await control.read(source.record.codexThreadId);if(await realpath(read.thread.cwd)!==await realpath(source.executionPath))fail('NATIVE_SOURCE_MISMATCH','Native source thread belongs to another execution directory');const metadataFingerprint=historyHash(readCodexMetadata(join(this.dataDir,'chats','codex'),source.record.codexThreadId));const boundary=itemBoundary(read.turns,input.boundary.nativeUserItemId,!!input.edit);
+   control=await this.control(source);const read=await control.read(source.record.codexThreadId);if(await realpath(read.thread.cwd)!==await realpath(source.executionPath))fail('NATIVE_SOURCE_MISMATCH','Native source thread belongs to another execution directory');const metadataFingerprint=historyHash(readCodexMetadata(join(this.dataDir,'chats','codex'),source.record.codexThreadId));const boundary=itemBoundary(read.turns,input.boundary.nativeUserItemId,!!input.edit);
    const draft=input.edit?await this.port.draft(input.workspaceId,input.sessionId,input.boundary.nativeUserItemId,boundary.turn.id,read.turns):undefined;
    if(historyHash(read.turns)!==historyHash((await control.read(source.record.codexThreadId)).turns)||ledgerFingerprint!==await this.port.quiescent(input.workspaceId))fail('STALE_SOURCE','History or collaboration state changed during preview');
    const previewToken=randomUUID(),codeRelation={kind:input.code.kind,...(chosen&&{checkpointId:chosen.manifest.checkpointId}),label:chosen?'Historical conversation + selected code checkpoint':'Historical conversation + current code'};
@@ -77,7 +82,7 @@ export class SessionHistoryOperations {
   const task=this.execute(claim.operation,preview).finally(()=>this.running.delete(requestId));this.running.set(requestId,task);return task;
  }
  private childRecord(op:HistoryOperation,preview:StoredPreview,owned:ManagedWorktree,turns:CodexTurn[]):ChatRecord {
-  return {...(preview.draft&&{forkDraft:preview.draft}),id:op.childSessionId,workspaceId:op.workspaceId,title:preview.source.record.title+' · fork',backend:'codex',sessionFile:null,codexThreadId:op.childThreadId!,originAgentId:preview.source.record.originAgentId!,identityState:'known',updatedAt:Date.now(),...(preview.source.record.model&&{model:preview.source.record.model}),...(preview.source.record.reasoning&&{reasoning:preview.source.record.reasoning}),...(preview.source.record.nativeMode&&{nativeMode:preview.source.record.nativeMode}),execution:{kind:'worktree',path:owned.executionPath,branch:owned.branch},lineage:{operationId:op.operationId,parentSessionId:preview.source.record.id,nativeUserItemId:preview.input.boundary.nativeUserItemId,edit:!!preview.input.edit,codeRelation:{kind:preview.input.code.kind,checkpointId:op.checkpointId!},inheritedItemIds:turns.flatMap(t=>t.items.map(i=>i.id))}};
+  return {...(preview.draft&&{forkDraft:preview.draft}),id:op.childSessionId,workspaceId:op.workspaceId,title:preview.source.record.title+' · fork',backend:'codex',...(preview.source.record.profile&&{profile:preview.source.record.profile}),...(preview.source.record.legacyConfiguration&&{legacyConfiguration:true}),sessionFile:null,codexThreadId:op.childThreadId!,originAgentId:preview.source.record.originAgentId!,identityState:'known',updatedAt:Date.now(),...(preview.source.record.model&&{model:preview.source.record.model}),...(preview.source.record.reasoning&&{reasoning:preview.source.record.reasoning}),...(preview.source.record.nativeMode&&{nativeMode:preview.source.record.nativeMode}),execution:{kind:'worktree',path:owned.executionPath,branch:owned.branch},lineage:{operationId:op.operationId,parentSessionId:preview.source.record.id,nativeUserItemId:preview.input.boundary.nativeUserItemId,edit:!!preview.input.edit,codeRelation:{kind:preview.input.code.kind,checkpointId:op.checkpointId!},inheritedItemIds:turns.flatMap(t=>t.items.map(i=>i.id))}};
  }
  private async recoverAction(workspaceId:string,operationId:string):Promise<unknown>{
   let op=await this.journal.byId(workspaceId,operationId);
@@ -97,7 +102,7 @@ export class SessionHistoryOperations {
    const checkpoint=await cp.export(checkpointId);const {record:owned,creation}=await readWorktreeIntent(this.dataDir,op.childSessionId);
    if(creation?.forkOperationId!==op.operationId)fail('FORK_IDENTITY','Worktree belongs to another operation');
    await verifyMaterializedCheckpoint({dataRoot:this.dataDir,record:owned,operationId,checkpoint});
-   control=await openCodexHistoryControl({cwd:source.executionPath,command:source.command});
+   control=await this.control(source);
    const child=await control.read(childThreadId);
    if(child.thread.forkedFromId!==source.record.codexThreadId||await realpath(child.thread.cwd)!==await realpath(owned.executionPath)||historyHash(child.turns)!==historyHash(preview.prefix))fail('NATIVE_PREFIX_MISMATCH','The known native child is not the exact selected prefix; no fork or revert was retried');
    const nativeSource=await control.read(source.record.codexThreadId!);
@@ -116,10 +121,10 @@ export class SessionHistoryOperations {
    release=this.port.lease(op.workspaceId);
    const source=await this.port.source(op.workspaceId,op.sourceSessionId);if(historyHash(source)!==historyHash(preview.source)||await this.port.quiescent(op.workspaceId)!==preview.ledgerFingerprint)fail('STALE_SOURCE','Source identity or collaboration state changed since preview');
    const cp=this.checkpoints(source);if((await cp.preview()).version!==preview.codeVersion)fail('STALE_SOURCE','Current code changed since preview');
-   control=await openCodexHistoryControl({cwd:source.executionPath,command:source.command});if(historyHash((await control.read(source.record.codexThreadId!)).turns)!==preview.sourceFingerprint)fail('STALE_SOURCE','Native history changed since preview');
+   control=await this.control(source);if(historyHash((await control.read(source.record.codexThreadId!)).turns)!==preview.sourceFingerprint)fail('STALE_SOURCE','Native history changed since preview');
    let checkpoint:ExportedCodeCheckpoint;if(preview.checkpointId)checkpoint=await cp.export(preview.checkpointId);else{const captured=await cp.capture({expectedVersion:preview.codeVersion,requestId:op.operationId});checkpoint=await cp.export(captured.checkpointId);}
    op=await this.journal.save({...op,checkpointId:checkpoint.manifest.checkpointId});
-   const setup=await this.port.setup(op.workspaceId);const creation:WorktreeCreation={version:setup?2:1,...(setup&&{setup}),forkOperationId:op.operationId,workspaceId:op.workspaceId,backend:'codex',identityState:'known',originAgentId:source.record.originAgentId!,...(source.record.model&&{model:source.record.model})};
+   const setup=await this.port.setup(op.workspaceId);const creation:WorktreeCreation={version:setup?2:1,...(setup&&{setup}),forkOperationId:op.operationId,workspaceId:op.workspaceId,backend:'codex',...(source.record.profile&&{profile:source.record.profile}),...(source.record.legacyConfiguration&&{legacyConfiguration:true}),identityState:'known',originAgentId:source.record.originAgentId!,...(source.record.model&&{model:source.record.model})};
    const owned=await createForkWorktree({projectRoot:source.projectRoot,dataRoot:this.dataDir,chatId:op.childSessionId,creation,operationId:op.operationId,baseOid:checkpoint.manifest.preview.workspace.headOid!});
    await materializeCheckpoint({dataRoot:this.dataDir,record:owned,operationId:op.operationId,checkpoint});op=await this.journal.save({...op,state:'worktreeReady'});
    if(await this.port.quiescent(op.workspaceId)!==preview.ledgerFingerprint||(await cp.preview()).version!==preview.codeVersion||historyHash((await control.read(source.record.codexThreadId!)).turns)!==preview.sourceFingerprint)fail('STALE_SOURCE','Source changed before native fork; the unpublished worktree is retained');

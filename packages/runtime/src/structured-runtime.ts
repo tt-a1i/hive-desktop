@@ -1,3 +1,6 @@
+import { parseStructuredLaunch, withStructuredProfile } from './structured-launch.js';
+import type { AgentProfileRef } from './agent-profiles.js';
+import type { ChatBackend } from './chat-index.js';
 import { timingSafeEqual } from "node:crypto";
 import {
 	buildOrchestratorStatusPayload,
@@ -30,7 +33,13 @@ export type {
 export function createStructuredRuntime(
 	context: HiveAgentRuntimeFactoryContext,
 	port: StructuredSessionPort,
+  defaultProfile?: (backend: ChatBackend) => AgentProfileRef,
 ): HiveAgentRuntime {
+  const launchIdentities = new Map<string, string>();
+  const launchIdentity = (config: import('./hive-runtime-contract.js').AgentLaunchConfigInput) => {
+    const launch = parseStructuredLaunch(config);
+    return JSON.stringify([launch.driver, launch.profile.kind === 'explicit' ? launch.profile.ref : {id: launch.profile.id, revision: 1}]);
+  };
 	const fallback = context.defaultRuntime;
 	const lifecycle = createStructuredLifecycle(context, port);
 	const selected = (workspaceId: string, agentId: string) =>
@@ -112,11 +121,9 @@ export function createStructuredRuntime(
 			);
 			const command = cli ?? config?.command;
 			if (!structuredCommand(command)) return fallback.resolveSpawnLaunchConfig?.(workspaceId, cli);
-			return {
-				command,
-				args: [...(config?.command === command ? (config.args ?? []) : [])],
-				commandPresetId: null,
-			};
+			const inherited = config?.command === command && (cli === undefined || !defaultProfile);
+			const launch = {command, args: [...(inherited ? (config.args ?? []) : [])], commandPresetId: null};
+			return !inherited && defaultProfile ? withStructuredProfile(launch, defaultProfile(command.slice(5) as ChatBackend)) : launch;
 		},
 		getActiveRunByAgentId: (workspaceId, agentId) =>
 			lifecycle.active(workspaceId, agentId)?.live ??
@@ -152,8 +159,15 @@ export function createStructuredRuntime(
 			const active =
 				lifecycle.active(workspace.id, agentId)?.live ??
 				fallback.getActiveRunByAgentId(workspace.id, agentId);
-			if (active) return Promise.resolve(active);
 			const config = fallback.peekAgentLaunchConfig(workspace.id, agentId);
+      const key = JSON.stringify([workspace.id, agentId]);
+      if (active) {
+        const original = launchIdentities.get(key);
+        if (original && (!structuredCommand(config?.command) || launchIdentity(config!) !== original))
+          return Promise.reject(new Error('The active conversation uses another backend or fixed profile. Create a new conversation before changing it.'));
+        return Promise.resolve(active);
+      }
+      if (structuredCommand(config?.command)) launchIdentities.set(key, launchIdentity(config!));
 			return structuredCommand(config?.command)
 				? lifecycle.start(workspace, agentId, config!, input.hivePort)
 				: fallback.startAgent(workspace, agentId, input);

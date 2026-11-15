@@ -1,3 +1,5 @@
+import { defaultAgentProfileId, type AgentProfiles, type AgentProfileRef } from './agent-profiles.js';
+import { nativeProfileLaunch } from './agent-session-factory.js';
 import {probeCodexLimits} from './codex-limits.js';
 import { probeExecutable } from './executable-probe.js';
 import {probeCodexAccount} from './codex-account.js';
@@ -32,6 +34,9 @@ function executables(value: unknown): DesktopExecutables {
 
 /** App-local settings use Hive's existing atomic SQLite app-state row. No cache or agent-global writes. */
 export class DesktopSettings {
+  private profiles?: AgentProfiles;
+  private mutation: Promise<void> = Promise.resolve();
+  attachProfiles(profiles: AgentProfiles) { this.profiles = profiles; }
   private readonly probeAbort = new AbortController();
   private readonly probes = new Set<Promise<unknown>>();
   constructor(private readonly hive: Pick<HiveHost, 'request'>,
@@ -49,7 +54,18 @@ export class DesktopSettings {
       claude: effective(this.environment.HIVE_CLAUDE_COMMAND, saved.claudeCommand, 'claude'),
     } };
   }
-  async probe(backend: unknown, draft: unknown) {
+  async probe(backend: unknown, draft: unknown, ref?: AgentProfileRef) {
+    if (ref) {
+      if (!this.profiles) throw new DesktopSettingsValidationError('Profiles are not initialized');
+      const profile = await this.profiles.resolveForExecution(ref);
+      if (backend !== profile.driver && !(backend === 'pi' && profile.driver === 'pi-rpc')) throw new DesktopSettingsValidationError('Profile backend mismatch');
+      const launch = nativeProfileLaunch(profile);
+      if (!launch.command) throw new DesktopSettingsValidationError('Built-in Pi has no executable to probe');
+      const task = probeExecutable(launch.command, this.probeAbort.signal, launch);
+      this.probes.add(task);
+      try { return {backend, profile: profile.ref, command: launch.command, source: 'profile', ...await task}; }
+      finally { this.probes.delete(task); }
+    }
     if (backend !== 'pi' && backend !== 'codex' && backend !== 'claude') throw new DesktopSettingsValidationError('Unknown external program');
     const candidate = command(draft, 'command');
     const saved = await this.get();
@@ -62,7 +78,16 @@ export class DesktopSettings {
       return {backend,...effective,source:effective.source === 'app' && candidate !== saved[key] ? 'draft' : effective.source,...await task,verifiedVersion:{pi:'1.4.0',codex:'0.167.0',claude:'2.1.317'}[backend]};
     } finally { this.probes.delete(task); }
   }
-  async codexLimits(draft:unknown) {
+  async codexLimits(draft:unknown, ref?: AgentProfileRef) {
+    if (ref) {
+      if (!this.profiles) throw new DesktopSettingsValidationError('Profiles are not initialized');
+      const profile = await this.profiles.resolveForExecution(ref, 'codex');
+      const launch = nativeProfileLaunch(profile);
+      const task = probeCodexLimits(launch.command!, this.probeAbort.signal, launch);
+      this.probes.add(task);
+      try { return {...await task, profile: profile.ref, source: 'profile'}; }
+      finally { this.probes.delete(task); }
+    }
     const candidate=command(draft,'command');
     const saved=await this.get();
     if(this.probeAbort.signal.aborted) throw new Error('Desktop settings are closing');
@@ -72,7 +97,16 @@ export class DesktopSettings {
     try { return {...await task,source:effective.source === 'app' && candidate !== saved.codexCommand ? 'draft' : effective.source}; }
     finally { this.probes.delete(task); }
   }
-  async codexAccount(draft:unknown) {
+  async codexAccount(draft:unknown, ref?: AgentProfileRef) {
+    if (ref) {
+      if (!this.profiles) throw new DesktopSettingsValidationError('Profiles are not initialized');
+      const profile = await this.profiles.resolveForExecution(ref, 'codex');
+      const launch = nativeProfileLaunch(profile);
+      const task = probeCodexAccount(launch.command!, this.probeAbort.signal, launch);
+      this.probes.add(task);
+      try { return {...await task, profile: profile.ref, command: launch.command, source: 'profile'}; }
+      finally { this.probes.delete(task); }
+    }
     const candidate=command(draft,'command');
     const saved=await this.get();
     if(this.probeAbort.signal.aborted) throw new Error('Desktop settings are closing');
@@ -96,10 +130,24 @@ export class DesktopSettings {
     const stored = await this.hive.request('GET', path) as { value: string | null };
     return this.snapshot(stored.value === null ? { ...defaults } : executables(JSON.parse(stored.value)));
   }
-  async update(value: unknown): Promise<DesktopSettingsSnapshot> {
+  update(value: unknown): Promise<DesktopSettingsSnapshot> {
+    const task = this.mutation.then(() => this.updateSaved(value));
+    this.mutation = task.then(() => {}, () => {});
+    return task;
+  }
+  private async updateSaved(value: unknown): Promise<DesktopSettingsSnapshot> {
     let saved = executables(value);
     if ((value as Record<string, unknown>).claudeCommand === undefined) saved = { ...saved, claudeCommand: (await this.get()).claudeCommand };
     const result = this.snapshot(saved);
+    if (this.profiles) {
+      for (const backend of ['codex', 'pi-rpc', 'claude'] as const) {
+        const snapshot = await this.profiles.list();
+        const id = defaultAgentProfileId(backend);
+        const current = await this.profiles.getRef(await this.profiles.currentRef(id), backend);
+        const command = result.effective[backend === 'pi-rpc' ? 'pi' : backend].command;
+        if (current.launch.command !== command) await this.profiles.update(id, {launch: {...current.launch, command}}, snapshot.storeVersion);
+      }
+    }
     await this.hive.request('PUT', path, { value: JSON.stringify(saved) });
     return result;
   }

@@ -1,3 +1,5 @@
+import { AgentProfiles, defaultAgentProfileId, type AgentProfileRef } from './agent-profiles.js';
+import { withStructuredProfile } from './structured-launch.js';
 import { ExecutionMutations } from './execution-mutations.js';
 import { ProjectWorktreeInitialization } from './project-worktree-initialization.js';
 import { ProjectScriptSettings } from './project-script-settings.js';
@@ -20,10 +22,11 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
   const executionMutations = new ExecutionMutations();
   let chats: Chats;
   let agents: HiveAgentRuntime | undefined;
+  let profiles: AgentProfiles;
   const hive = await createHiveHost({
     dataDir: join(dataDir, 'hive'),
     agentRuntimeFactory: context => {
-      const structured = createStructuredRuntime(context, { start: input => chats.start(input) });
+      const structured = createStructuredRuntime(context, { start: input => chats.start(input) }, backend => profiles.currentRefSnapshot(defaultAgentProfileId(backend)));
       const gated = new Set(['startAgent', 'resumeRun', 'writeStatusPrompt', 'writeSendPrompt', 'writeCancelPrompt',
         'writeUserInputPrompt', 'writeSystemMessageToAgent', 'deliverUserInputToOrchestrator', 'deliverSystemMessageToAgent']);
       const deferred = new Set(['startAgent', 'writeStatusPrompt', 'writeSendPrompt', 'writeCancelPrompt', 'deliverUserInputToOrchestrator', 'deliverSystemMessageToAgent']);
@@ -60,12 +63,16 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
   });
   const unsubscribeAdmission = executionMutations.onRelease(() => hive.resumeExecutionDeliveries());
   const settings = new DesktopSettings(hive, options.executableEnvironment);
-  const agentModels = new AgentModels(hive, settings);
+  profiles = new AgentProfiles(hive);
+  settings.attachProfiles(profiles);
+  const agentModels = new AgentModels(hive, settings, profiles);
   const piAuth = new PiAuth();
   const piModels = new PiModelConfig();
   try {
     if (!agents) throw new Error('Hive runtime factory was not installed');
-    chats = new Chats(hive, dataDir, emit, agents, settings, agentModels);
+    await profiles.initialize(await settings.get());
+    chats = new Chats(hive, dataDir, emit, agents, settings, agentModels, profiles);
+    await chats.initializeProfiles();
   } catch (error) { await hive.close(); throw error; }
   const terminal = new Terminals(hive, workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onTerminalEvent ?? (() => {}), (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId), executionMutations);
   const projectScripts = new ProjectScriptSettings(hive.projectScriptState, workspaceId => chats.assertWorkspaceAvailable(workspaceId));
@@ -79,14 +86,16 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
   chats.initialization = initialization;
   chats.configureHistory(executionMutations, () => terminal.hasAnyActiveShell());
   let closing: Promise<void> | undefined;
-  return { hive, chats, agents, executionMutations, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns, initialization,
-    createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; description?: unknown }) => {
+  return { hive, chats, profiles, agents, executionMutations, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns, initialization,
+    createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; profile?: AgentProfileRef; model?: {provider: string; id: string}; description?: unknown }) => {
       chats.assertWorkspaceAvailable(workspaceId);
       if (typeof input.name !== 'string' || !input.name.trim() || !isWorkerRole(input.role)
         || typeof input.backend !== 'string' || !structuredCommand(`hive:${input.backend}`)
         || (input.description !== undefined && typeof input.description !== 'string')) throw new TypeError('Invalid desktop member configuration');
+      const profile = profiles.resolveForExecutionSnapshot(input.profile ?? profiles.currentRefSnapshot(defaultAgentProfileId(input.backend as import('./chat-index.js').ChatBackend)), input.backend as import('./chat-index.js').ChatBackend);
+      const launch = withStructuredProfile({command: `hive:${input.backend}`, args: input.model ? ['--provider', input.model.provider, '--model', input.model.id] : [], commandPresetId: null}, profile.ref);
       return hive.createMember(workspaceId, { name: input.name, role: input.role,
-        ...(input.description !== undefined && { description: input.description as string }) }, `hive:${input.backend}`);
+        ...(input.description !== undefined && { description: input.description as string }) }, launch);
     },
     removeWorkspace: async (workspaceId: string) => {
       await projectScripts.list(workspaceId); // Refuse silently discarding unreadable settings.
