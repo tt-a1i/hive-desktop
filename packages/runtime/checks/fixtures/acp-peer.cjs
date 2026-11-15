@@ -14,7 +14,7 @@ createInterface({input:process.stdin}).on('line',line=>{
  if(m.method==='session/prompt'){
   if(mode==='echo')fs.writeFileSync(echoFile,m.params.prompt[0].text);
   if(mode==='eof')return process.exit(0);
-  if(mode==='timeout'||mode==='ignore-cancel'||(mode==='cancel'&&!global.didCancel)){pending=m.id;return;}
+  if(mode==='timeout'||mode==='ignore-cancel'||(mode==='cancel'&&!global.didCancel)){pending=m.id;if(mode==='cancel'||mode==='ignore-cancel')update('agent_thought_chunk',{content:{type:'text',text:'fixture prompt received'}});return;}
   if(mode==='permission'){permission=m.id;return send({id:'p1',method:'session/request_permission',params:{sessionId:native,toolCall:{toolCallId:'native-tool'},options:[{optionId:'deny-1',name:'Deny',kind:'reject_once'},{optionId:'allow-1',name:'Allow',kind:'allow_once'}]}});}
   if(mode==='unknown'){permission=m.id;return send({id:'unknown1',method:'fs/read_text_file',params:{}});}
   update('agent_thought_chunk',{content:{type:'text',text:'think'}});

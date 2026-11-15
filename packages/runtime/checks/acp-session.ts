@@ -8,7 +8,7 @@ import type { PiEvent } from '../src/agents/types.js';
 const root = await mkdtemp(join(tmpdir(), 'hive-acp-'));
 const handles: Awaited<ReturnType<typeof createAcpSession>>[] = [];
 let events: PiEvent[] = [];
-const start = async (mode = 'normal', sessionFile?: string, id = mode) => { const h = await createAcpSession({ command: process.execPath, args: [fileURLToPath(new URL('./fixtures/acp-peer.cjs', import.meta.url)), mode, id, join(root,'native-echo')], cwd: root, sessionDir: root, ...(sessionFile && { sessionFile }), onEvent: e => events.push(e), requestTimeoutMs: 300, cancelTimeoutMs: 40 }); handles.push(h); return h; };
+const start = async (mode = 'normal', sessionFile?: string, id = mode, onEvent?: (event: PiEvent) => void) => { const h = await createAcpSession({ command: process.execPath, args: [fileURLToPath(new URL('./fixtures/acp-peer.cjs', import.meta.url)), mode, id, join(root,'native-echo')], cwd: root, sessionDir: root, ...(sessionFile && { sessionFile }), onEvent: e => { events.push(e); onEvent?.(e); }, requestTimeoutMs: mode === 'cancel' || mode === 'ignore-cancel' ? 5000 : 300, cancelTimeoutMs: 40 }); handles.push(h); return h; };
 try {
     await assert.rejects(start('normal', join(root, 'missing.json')), /missing/);
     await assert.rejects(start('version'), /version/);
@@ -90,12 +90,24 @@ try {
         await assert.rejects(cold.prompt('must not replay', { deliveryId: mode }), /uncertain/);
     }
     for (const mode of ['cancel', 'ignore-cancel']) {
-        const h = await start(mode);
-        const t = h.prompt('wait', { deliveryId: mode });
-        await new Promise(r => setTimeout(r, 10));
+        let received!: () => void;
+        const promptReceived = new Promise<void>(resolve => { received = resolve; });
+        const h = await start(mode, undefined, mode, event => {
+            if (event.type === 'assistant_delta' && event.delta === 'fixture prompt received') received();
+        });
+        // Observe rejection immediately, including if persistence fails before the peer receives the prompt.
+        const outcome = h.prompt('wait', { deliveryId: mode }).then(
+            () => ({ error: undefined }), error => ({ error }));
+        await Promise.race([promptReceived, outcome.then(({ error }) => {
+            throw new Error(`Prompt ended before the peer acknowledged it: ${String(error)}`);
+        })]);
+        assert.deepEqual(h.uncertainDeliveryIds(), [mode]);
         await h.abort();
-        await assert.rejects(t);
+        const { error } = await outcome;
+        assert.ok(error instanceof Error);
+        assert.match(error.message, mode === 'cancel' ? /cancelled; delivery outcome is uncertain/ : /cancellation timed out/);
         assert.deepEqual(h.completedDeliveryIds(), []);
+        assert.deepEqual(h.uncertainDeliveryIds(), [mode]);
         if(mode==='cancel'){await h.prompt('new delivery after confirmed stop',{deliveryId:'after-cancel'});assert.deepEqual(h.completedDeliveryIds(),['after-cancel']);}
     }
     const fault = await start();
