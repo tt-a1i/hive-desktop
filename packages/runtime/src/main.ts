@@ -1,3 +1,5 @@
+import { HistoryOperationError } from './history-operation-journal.js';
+import { CodeCheckpointError } from './code-checkpoints.js';
 import { WorktreeInitializationError } from './project-worktree-initialization.js';
 import { ProjectScriptRunError } from './project-script-runs.js';
 import { ProjectScriptSettingsError } from './project-script-settings.js';
@@ -287,7 +289,7 @@ input.on('line', line => {
       await writeFrame({ id, result });
     } catch (error) {
       await writeFrame({ id, error: {
-        code: error instanceof WorktreeInitializationError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+        code: error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

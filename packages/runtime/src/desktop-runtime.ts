@@ -100,6 +100,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return hive.request(method, path, body);
     },
     close: () => closing ??= (async () => {
+      await chats.history?.close();
       unsubscribeAdmission();
       initialization.close();
       const scripts = await Promise.allSettled([scriptRuns.close()]);

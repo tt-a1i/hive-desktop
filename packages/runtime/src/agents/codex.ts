@@ -214,9 +214,12 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       }
     },
   });
+  const nativeVersion=(transport.initializeResult as {userAgent?:unknown}|null)?.userAgent;
+  const defersNativeGoals=typeof nativeVersion==='string'&&/\bcodex_cli_rs\/0\.169\.0(?:\s|$)/.test(nativeVersion);
+  if(options.deferGoalContinuation&&!defersNativeGoals){await transport.close();throw new Error('This native history fork requires Codex 0.169.0 deferred continuation support');}
   const modes = new CodexModes(transport, options.mode, options.permissionMode);
   const resume = async (extra: Record<string, unknown> = {}) => {
-    response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, excludeTurns: true, ...extra });
+    response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, excludeTurns: true, ...(defersNativeGoals&&{deferGoalContinuation:true}), ...extra });
     if (response.thread.historyMode === 'legacy' && response.thread.turns.length === 0 && response.thread.path) {
       response = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: true });
     }

@@ -225,6 +225,7 @@ export class Chats implements StructuredSessionPort {
   }
   /** Resolve only persisted ownership. A missing worktree never falls back to the team root. */
   private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
+    await this.assertHistoryReady(record);
     if (!record.execution) return workspace.path;
     const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
     if (creation && (creation.workspaceId !== record.workspaceId || creation.backend !== record.backend
@@ -299,14 +300,14 @@ export class Chats implements StructuredSessionPort {
     let entries;
     try { entries = await readdir(join(this.dataDir, 'worktrees'), {withFileTypes: true}); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {pending: [], unreadable: 0}; throw error; }
-    const pending: {sessionId: string; branch: string; path: string; state: string; backend?: ChatBackend; originAgentId?: string; legacy?: true; identityRecorded?: false; recoveryKind?: 'new-orchestrator'}[] = [];
+    const pending: {sessionId: string; branch: string; path: string; state: string; backend?: ChatBackend; originAgentId?: string; legacy?: true; identityRecorded?: false; recoveryKind?: 'new-orchestrator'|'history-operation'; operationId?:string}[] = [];
     let unreadable = 0;
     for (const entry of entries) {
       if (!entry.isDirectory() || this.index.peek(entry.name)) continue;
       try {
         const intent = await readWorktreeIntent(this.dataDir, entry.name);
         if (intent.record.projectRoot === projectRoot && (!intent.creation || intent.creation.workspaceId === workspaceId)) pending.push({sessionId: entry.name, branch: intent.record.branch,
-          path: intent.record.executionPath, state: intent.state, ...(intent.creation ? {backend: intent.creation.backend, ...(intent.creation.originAgentId && {originAgentId: intent.creation.originAgentId})} : {legacy: true as const, identityRecorded: false as const, recoveryKind: 'new-orchestrator' as const})});
+          path: intent.record.executionPath, state: intent.state, ...(intent.creation ? {...(intent.creation.forkOperationId&&{recoveryKind:'history-operation' as const,operationId:intent.creation.forkOperationId}),backend: intent.creation.backend, ...(intent.creation.originAgentId && {originAgentId: intent.creation.originAgentId})} : {legacy: true as const, identityRecorded: false as const, recoveryKind: 'new-orchestrator' as const})});
       } catch { unreadable++; }
     }
     return {pending, unreadable};
@@ -319,6 +320,7 @@ export class Chats implements StructuredSessionPort {
       if (existing) {
         if (existing.workspaceId !== workspaceId || !existing.execution) throw new Error('会话身份已被使用，未覆盖现有记录。');
         const {creation} = await readWorktreeIntent(this.dataDir, id);
+        if(creation?.forkOperationId)throw new HistoryOperationError('FORK_RECOVERY_REQUIRED',`Use the dedicated history operation ${creation.forkOperationId} to inspect or recover this fork`);
         if (creation && creation.workspaceId !== workspaceId
           || backend !== undefined && (backend !== existing.backend || creation && backend !== creation.backend)
           || memberId !== undefined && (memberId !== existing.originAgentId || memberId !== creation?.originAgentId))
@@ -332,6 +334,7 @@ export class Chats implements StructuredSessionPort {
       }
       const workspace = await this.workspace(workspaceId);
       const {record: owned, creation} = await readWorktreeIntent(this.dataDir, id);
+      if(creation?.forkOperationId)throw new HistoryOperationError('FORK_RECOVERY_REQUIRED',`Use the dedicated history operation ${creation.forkOperationId} to inspect or recover this fork`);
       if (creation && creation.workspaceId !== workspaceId || creation && backend !== undefined && backend !== creation.backend
         || memberId !== undefined && memberId !== creation?.originAgentId)
         throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Recovery uses only the original creation backend and member; caller identity cannot replace them.');

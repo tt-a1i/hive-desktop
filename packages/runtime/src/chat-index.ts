@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude';
 
@@ -119,6 +119,7 @@ export class ChatIndex {
     try {
       writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600, flush: true });
       renameSync(temporary, this.file);
+      if(process.platform!=='win32'){const directory=openSync(dirname(this.file),'r');try{fsyncSync(directory);}finally{closeSync(directory);}}
       this.records = next;
     } finally { rmSync(temporary, { force: true }); }
   }

@@ -34,12 +34,21 @@ function itemBoundary(turns:CodexTurn[],itemId:string,edit:boolean){
 export class SessionHistoryOperations {
  readonly journal:HistoryOperationJournal;private readonly previews=new Map<string,StoredPreview>();private readonly running=new Map<string,Promise<unknown>>();
  constructor(private readonly dataDir:string,private readonly port:HistoryPort){this.journal=new HistoryOperationJournal(dataDir);}
+ private closing=false;private readonly actions=new Set<Promise<unknown>>();
+ private track<T>(action:()=>Promise<T>):Promise<T>{if(this.closing)return Promise.reject(new HistoryOperationError('CLOSING','History operations are shutting down'));const task=action();this.actions.add(task);return task.finally(()=>this.actions.delete(task));}
+ async close(){this.closing=true;await Promise.allSettled([...this.actions]);}
+ checkpointPreview(workspaceId:string,sessionId:string){return this.track(()=>this.checkpointPreviewAction(workspaceId,sessionId));}
+ checkpointCapture(workspaceId:string,sessionId:string,expectedVersion:string,requestId:string){return this.track(()=>this.checkpointCaptureAction(workspaceId,sessionId,expectedVersion,requestId));}
+ preview(input:ForkInput){return this.track(()=>this.previewAction(input));}
+ apply(workspaceId:string,sessionId:string,previewToken:string,requestId:string){return this.track(()=>this.applyAction(workspaceId,sessionId,previewToken,requestId));}
+ recover(workspaceId:string,operationId:string){return this.track(()=>this.recoverAction(workspaceId,operationId));}
+
  private checkpoints(source:Awaited<ReturnType<HistoryPort['source']>>){return new CodeCheckpoints({dataDir:this.dataDir,workspaceId:source.record.workspaceId,sessionId:source.record.id,executionPath:source.executionPath});}
  async capabilities(workspaceId:string,sessionId:string){try{const source=await this.port.source(workspaceId,sessionId);return {fork:source.record.backend==='codex',edit:source.record.backend==='codex',checkpoint:true,rewind:false,...(source.record.backend!=='codex'&&{reason:'This backend does not expose a supported native history fork'})};}catch(error){return {fork:false,edit:false,checkpoint:false,rewind:false,reason:error instanceof Error?error.message:String(error)};}}
- async checkpointPreview(workspaceId:string,sessionId:string){const release=this.port.lease(workspaceId);try{await this.port.quiescent(workspaceId);return await this.checkpoints(await this.port.source(workspaceId,sessionId)).preview();}finally{release();}}
- async checkpointCapture(workspaceId:string,sessionId:string,expectedVersion:string,requestId:string){const release=this.port.lease(workspaceId);try{await this.port.quiescent(workspaceId);return await this.checkpoints(await this.port.source(workspaceId,sessionId)).capture({expectedVersion,requestId});}finally{release();}}
+ private async checkpointPreviewAction(workspaceId:string,sessionId:string){const release=this.port.lease(workspaceId);try{await this.port.quiescent(workspaceId);return await this.checkpoints(await this.port.source(workspaceId,sessionId)).preview();}finally{release();}}
+ private async checkpointCaptureAction(workspaceId:string,sessionId:string,expectedVersion:string,requestId:string){const release=this.port.lease(workspaceId);try{await this.port.quiescent(workspaceId);return await this.checkpoints(await this.port.source(workspaceId,sessionId)).capture({expectedVersion,requestId});}finally{release();}}
  async checkpointList(workspaceId:string,sessionId:string){return {checkpoints:await this.checkpoints(await this.port.source(workspaceId,sessionId)).list()};}
- async preview(input:ForkInput){
+ private async previewAction(input:ForkInput){
   if(!input||typeof input.boundary?.nativeUserItemId!=='string'||!input.boundary.nativeUserItemId||!input.code||!['current','checkpoint'].includes(input.code.kind)||input.edit!==undefined&&typeof input.edit!=='boolean')fail('INVALID_ARGUMENT','Supply an exact native user boundary and explicit code source');
   const release=this.port.lease(input.workspaceId);let control:Awaited<ReturnType<typeof openCodexHistoryControl>>|undefined;
   try{
@@ -60,7 +69,7 @@ export class SessionHistoryOperations {
  private async result(op:HistoryOperation){let session:unknown;let sessionUnavailable:string|undefined;if(op.state==='ready'){try{session=await this.port.session(op.childSessionId);}catch(error){sessionUnavailable=error instanceof Error?error.message:String(error);}}return {operationId:op.operationId,state:op.state,recoverable:!!op.childThreadId&&!!op.checkpointId&&['nativeKnown','metadataReady','uncertain'].includes(op.state),...(op.error&&{error:op.error}),...(sessionUnavailable&&{sessionUnavailable}),...(session!==undefined?{session,...((op.preview as StoredPreview).draft?{draft:(op.preview as StoredPreview).draft}:{})}:{})};}
  async get(workspaceId:string,operationId:string){return this.result(await this.journal.byId(workspaceId,operationId));}
  async list(workspaceId:string){return {operations:await Promise.all((await this.journal.list(workspaceId)).map(op=>this.result(op)))};}
- async apply(workspaceId:string,sessionId:string,previewToken:string,requestId:string):Promise<unknown>{
+ private async applyAction(workspaceId:string,sessionId:string,previewToken:string,requestId:string):Promise<unknown>{
   const requestHash=historyHash({workspaceId,sessionId,previewToken});const prior=await this.journal.get(requestId);
   if(prior){if(prior.requestHash!==requestHash||prior.workspaceId!==workspaceId||prior.sourceSessionId!==sessionId)fail('REQUEST_CONFLICT','This request identity belongs to a different history operation');return this.running.get(requestId)??this.result(prior);}
   const preview=this.previews.get(previewToken);if(!preview||preview.expiresAt<Date.now()||preview.input.workspaceId!==workspaceId||preview.input.sessionId!==sessionId)fail('PREVIEW_EXPIRED','Preview expired; inspect the source again');
@@ -70,31 +79,35 @@ export class SessionHistoryOperations {
  private childRecord(op:HistoryOperation,preview:StoredPreview,owned:ManagedWorktree,turns:CodexTurn[]):ChatRecord {
   return {...(preview.draft&&{forkDraft:preview.draft}),id:op.childSessionId,workspaceId:op.workspaceId,title:preview.source.record.title+' · fork',backend:'codex',sessionFile:null,codexThreadId:op.childThreadId!,originAgentId:preview.source.record.originAgentId!,identityState:'known',updatedAt:Date.now(),...(preview.source.record.model&&{model:preview.source.record.model}),...(preview.source.record.reasoning&&{reasoning:preview.source.record.reasoning}),...(preview.source.record.nativeMode&&{nativeMode:preview.source.record.nativeMode}),execution:{kind:'worktree',path:owned.executionPath,branch:owned.branch},lineage:{operationId:op.operationId,parentSessionId:preview.source.record.id,nativeUserItemId:preview.input.boundary.nativeUserItemId,edit:!!preview.input.edit,codeRelation:{kind:preview.input.code.kind,checkpointId:op.checkpointId!},inheritedItemIds:turns.flatMap(t=>t.items.map(i=>i.id))}};
  }
- async recover(workspaceId:string,operationId:string):Promise<unknown>{
+ private async recoverAction(workspaceId:string,operationId:string):Promise<unknown>{
   let op=await this.journal.byId(workspaceId,operationId);
   if(this.running.has(op.requestId))return this.running.get(op.requestId);
   if(op.state==='ready')return this.result(op);
   if(!op.childThreadId||!op.checkpointId||!['nativeKnown','metadataReady','uncertain'].includes(op.state))return this.result(op);
+  const task=this.recoverKnown(op).finally(()=>this.running.delete(op.requestId));this.running.set(op.requestId,task);return task;
+ }
+ private async recoverKnown(initial:HistoryOperation){
+  let op=initial;const workspaceId=op.workspaceId,operationId=op.operationId,childThreadId=op.childThreadId!,checkpointId=op.checkpointId!;
   const preview=op.preview as StoredPreview;let release:(()=>void)|undefined;let control:Awaited<ReturnType<typeof openCodexHistoryControl>>|undefined;
   try{
    release=this.port.lease(workspaceId);
    const source=await this.port.source(workspaceId,op.sourceSessionId);
    if(historyHash(source)!==historyHash(preview.source)||await this.port.quiescent(workspaceId)!==preview.ledgerFingerprint)fail('STALE_SOURCE','The original source or collaboration state changed; the child remains pending inspection');
    const cp=this.checkpoints(source);if((await cp.preview()).version!==preview.codeVersion)fail('STALE_SOURCE','Source code changed; the child remains pending inspection');
-   const checkpoint=await cp.export(op.checkpointId);const {record:owned,creation}=await readWorktreeIntent(this.dataDir,op.childSessionId);
+   const checkpoint=await cp.export(checkpointId);const {record:owned,creation}=await readWorktreeIntent(this.dataDir,op.childSessionId);
    if(creation?.forkOperationId!==op.operationId)fail('FORK_IDENTITY','Worktree belongs to another operation');
    await verifyMaterializedCheckpoint({dataRoot:this.dataDir,record:owned,operationId,checkpoint});
    control=await openCodexHistoryControl({cwd:source.executionPath,command:source.command});
-   const child=await control.read(op.childThreadId);
+   const child=await control.read(childThreadId);
    if(child.thread.forkedFromId!==source.record.codexThreadId||await realpath(child.thread.cwd)!==await realpath(owned.executionPath)||historyHash(child.turns)!==historyHash(preview.prefix))fail('NATIVE_PREFIX_MISMATCH','The known native child is not the exact selected prefix; no fork or revert was retried');
    const nativeSource=await control.read(source.record.codexThreadId!);
    if(child.thread.path===nativeSource.thread.path||historyHash(nativeSource.turns)!==preview.sourceFingerprint||historyHash(readCodexMetadata(join(this.dataDir,'chats','codex'),source.record.codexThreadId!))!==preview.metadataFingerprint)fail('STALE_SOURCE','Source history or display provenance changed');
-   createForkCodexMetadata(join(this.dataDir,'chats','codex'),source.record.codexThreadId!,op.childThreadId,source.record.id,child.turns);
+   createForkCodexMetadata(join(this.dataDir,'chats','codex'),source.record.codexThreadId!,childThreadId,source.record.id,child.turns);
    op=await this.journal.save({...op,state:'metadataReady'});
    await verifyMaterializedCheckpoint({dataRoot:this.dataDir,record:owned,operationId,checkpoint});
    if(await this.port.quiescent(workspaceId)!==preview.ledgerFingerprint||(await cp.preview()).version!==preview.codeVersion)fail('STALE_SOURCE','Source changed before recovered publication');
    await publishForkWorktree(this.dataDir,owned,operationId);await this.port.publish(this.childRecord(op,preview,owned,child.turns),owned);
-   op=await this.journal.save({...op,state:'ready'});return this.result(op);
+   const {error:previousError,...recovered}=op;op=await this.journal.save({...recovered,state:'ready'});return this.result(op);
   }catch(error){op=await this.journal.save({...op,state:'uncertain',error:error instanceof Error?error.message:String(error)});return this.result(op);}
   finally{await control?.close();release?.();}
  }
