@@ -18,7 +18,7 @@ try {
   let aborted = 0, disposed = 0, exited = 0, loads = 0;
   const rows = new Map<number, { type: 'user_input' | 'user_input_cancelled'; text: string }>([[1, {type:'user_input',text:'head'}], [2, {type:'user_input',text:'original'}]]);
   const chats: any = Object.create(Chats.prototype);
-  Object.assign(chats, { closing: false, removing: new Set(), activating: new Map(), live: new Map(), opening: new Map(), mutatingQueues: new Set(), sequences: new Map(), emit: () => {},
+  Object.assign(chats, { closing: false, removing: new Set(), activating: new Map(), handoffStarting: new Set(), live: new Map(), opening: new Map(), mutatingQueues: new Set(), sequences: new Map(), emit: () => {},
    // This lifecycle fixture starts after profile initialization. Keep the
    // authoritative identity check active while isolating the queue write fault.
    profilesReady: Promise.resolve(),

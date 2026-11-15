@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 
 const directory = await mkdtemp(join(tmpdir(), 'hive-archives-wire-'));
@@ -12,7 +13,7 @@ const agentDir = join(directory, 'pi');
 await mkdir(agentDir);
 const settings = JSON.stringify({ defaultProvider: 'openai', defaultModel: 'gpt-6.1-terra' });
 await writeFile(join(agentDir, 'settings.json'), settings);
-const child = spawn(process.execPath, ['dist/main.js'], {
+const child = spawn(process.execPath, [process.env.HIVE_DESKTOP_TEST_RUNTIME ?? fileURLToPath(new URL('../dist/main.js', import.meta.url))], {
   cwd: process.cwd(),
   env: {
     ...process.env,
