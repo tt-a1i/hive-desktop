@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, realpath, rename, link, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { getGitWorkspaceStatus, getGitWorkspaceVersion, GitWorkspaceError, type GitReadOptions, type GitWorkspaceVersion } from './git-workspace.js';
-import { CodeCheckpointError, checkpointDiskEntry, checkpointHash, checkpointInside, checkpointPath, readCheckpointRegular, type CheckpointEntry } from './checkpoint-files.js';
+import { CodeCheckpointError, checkpointDiskEntry, checkpointFilesystemInventory, checkpointHash, checkpointInside, checkpointPath, readCheckpointRegular, type CheckpointEntry } from './checkpoint-files.js';
 export { CodeCheckpointError } from './checkpoint-files.js';
 export type { CheckpointEntry } from './checkpoint-files.js';
 
@@ -19,7 +19,8 @@ export interface CodeCheckpointPreview {
   unsupported: {code: string; message: string}[]; canCapture: boolean; limits: CheckpointLimits;
 }
 export interface CodeCheckpointManifest {
-  version: 1; checkpointId: string; requestId: string; workspaceId: string; sessionId: string; capturedAt: number;
+  /** v2 requires the Git-ignore-aware real filesystem inventory. */
+  version: 2; checkpointId: string; requestId: string; workspaceId: string; sessionId: string; capturedAt: number;
   preview: CodeCheckpointPreview; head: CheckpointEntry[]; index: CheckpointEntry[]; disk: CheckpointEntry[];
   rawIndex: {sha256: string; bytes: number} | null;
 }
@@ -53,7 +54,7 @@ function git(cwd: string, args: string[], options: GitReadOptions, maximum=8*102
   const nil=process.platform==='win32'?'NUL':'/dev/null';
   return new Promise((resolveResult,reject)=>{
     const child=execFile(options.gitExecutable??'git',['--no-pager','-c','core.fsmonitor=false','-c',`core.hooksPath=${nil}`,'-c','core.untrackedCache=false','-c','diff.external=','-c','submodule.recurse=false','-c','protocol.allow=never','-c','maintenance.auto=false','-c','gc.auto=0',...args],
-      {cwd,env:gitEnvironment(),timeout:options.timeoutMs??8000,maxBuffer:maximum,encoding:'buffer',windowsHide:true},(error,stdout)=>{
+      {cwd,env:{...gitEnvironment(),...(args[0]==='check-ignore'&&{GIT_LITERAL_PATHSPECS:'0'})},timeout:options.timeoutMs??8000,maxBuffer:maximum,encoding:'buffer',windowsHide:true},(error,stdout)=>{
         if(error && !(typeof error.code==='number'&&accepted.includes(error.code))) {
           const code=(error as NodeJS.ErrnoException).code;
           reject(new CodeCheckpointError(code==='ENOENT'?'GIT_NOT_FOUND':code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER'?'OUTPUT_LIMIT':error.killed?'GIT_TIMEOUT':'GIT_READ_FAILED','A bounded read-only Git operation failed'));return;
@@ -166,6 +167,15 @@ export class CodeCheckpoints {
       const prefix=workspace.projectPrefix;
       const local=(path:string)=>{if(prefix&&!path.startsWith(prefix))fail('INVALID_GIT_OUTPUT','Git returned a path outside the execution project');const value=path.slice(prefix.length);checkpointPath(value);return value;};
       const index=parseIndex(await git(workspace.repositoryRoot,['ls-files','--stage','--debug','--full-name','-z'],this.options)).filter(entry=>!prefix||entry.path.startsWith(prefix)).map(entry=>({...entry,path:local(entry.path)}));
+      const head=fields(await git(workspace.projectRoot,['ls-tree','-r','--full-name','-z',workspace.headOid,'--','.'],this.options)).map(record=>{
+        const value=/^(\d{6}) (blob|commit) ([0-9a-f]+)\t([\s\S]+)$/.exec(record);if(!value)fail('INVALID_GIT_OUTPUT','Invalid HEAD tree entry');return gitEntry(value[1]!,value[3]!,local(value[4]!));
+      });
+      const filesystem = await checkpointFilesystemInventory(workspace.projectRoot, new Set([...head,...index].map(entry=>entry.path)), async paths=>{
+        if(!paths.length)return [];
+        const output=fields(await git(workspace.projectRoot,['check-ignore','--stdin','-z','--verbose','--non-matching','--no-index'],this.options,8*1024*1024,[0,1],Buffer.from(paths.map(path=>'./'+path).join('\0')+'\0')));
+        if(output.length!==paths.length*4)fail('INVALID_GIT_OUTPUT','Git ignore classification did not cover the filesystem inventory');
+        return paths.map((path,at)=>{if(output[at*4+3]!=='./'+path)fail('INVALID_GIT_OUTPUT','Git ignore classification returned a different path');const pattern=output[at*4+2]!;return !!pattern&&!pattern.startsWith('!');});
+      },this.limits.entries);
       // Reuse the maintained isolated status implementation: configured filters never execute.
       let offset=0;
       do{
@@ -175,13 +185,15 @@ export class CodeCheckpoints {
         if(workspace.projectPrefix&&status.entries.some(entry=>!entry.repositoryPath.startsWith(workspace.projectPrefix)||(entry.originalRepositoryPath!==undefined&&!entry.originalRepositoryPath.startsWith(workspace.projectPrefix))))fail('OUTSIDE_PROJECT_DIRTY','Changes outside the execution project cannot be silently carried into its checkpoint');
         offset+=status.entries.length;if(!status.hasMore)break;
       }while(true);
-      const head=fields(await git(workspace.projectRoot,['ls-tree','-r','--full-name','-z',workspace.headOid,'--','.'],this.options)).map(record=>{
-        const value=/^(\d{6}) (blob|commit) ([0-9a-f]+)\t([\s\S]+)$/.exec(record);if(!value)fail('INVALID_GIT_OUTPUT','Invalid HEAD tree entry');return gitEntry(value[1]!,value[3]!,local(value[4]!));
-      });
       const untracked=fields(await git(workspace.projectRoot,['ls-files','--others','--exclude-standard','--full-name','-z','--','.'],this.options)).map(path=>{if(path.endsWith('/'))fail('UNSUPPORTED_NESTED_REPOSITORY','An embedded repository requires a separate checkpoint scope');return local(path);});
       const ignored=fields(await git(workspace.projectRoot,['ls-files','--others','--ignored','--exclude-standard','--directory','--full-name','-z','--','.'],this.options));
-      empty.preview.exclusions=ignored.map(path=>{const suffix=path.endsWith('/')?'/':'';return local(suffix?path.slice(0,-1):path)+suffix;}).sort();
+      empty.preview.exclusions=ignored.map(path=>{const suffix=path.endsWith('/')?'/':'';return local(suffix?path.slice(0,-1):path)+suffix;}).filter(path=>!path.endsWith('/')||![...head,...index].some(entry=>entry.path.startsWith(path))).sort();
       const paths=[...new Set([...head,...index].map(entry=>entry.path).concat(untracked))].sort();
+      const candidates=new Set(paths);
+      if(filesystem.some(entry=>!entry.ignored&&['file','symlink'].includes(entry.kind)&&!candidates.has(entry.path)))
+        fail('INCOMPLETE_INVENTORY','Git did not enumerate every non-ignored filesystem file');
+      empty.preview.exclusions=[...new Set([...empty.preview.exclusions,...filesystem.filter(entry=>entry.ignored).map(entry=>entry.path+(entry.kind==='directory'?'/':''))])].sort();
+
       if(head.length+index.length+paths.length+ignored.length>this.limits.entries)fail('ENTRY_LIMIT','Checkpoint inventory exceeds its declared entry limit');
       try{empty.rawIndex=await readCheckpointRegular(workspace.indexPath,this.limits.indexBytes);}catch(error){if(!noFile(error))throw error;}
       if((empty.rawIndex?checkpointHash(empty.rawIndex):'missing')!==workspace.indexFingerprint)fail('CONCURRENT_CHANGE','Index changed while being captured');
@@ -208,7 +220,7 @@ export class CodeCheckpoints {
       if(rootBefore.dev!==rootAfter.dev||rootBefore.ino!==rootAfter.ino)fail('CONCURRENT_CHANGE','The execution directory was replaced');
       const next=await getGitWorkspaceVersion(this.context.executionPath,this.options);if(sourceVersion(next)!==sourceVersion(workspace))fail('CONCURRENT_CHANGE','Repository identity, HEAD, index or config changed during checkpoint read');
       empty.preview.headFingerprint=checkpointHash(JSON.stringify([workspace.headOid,empty.head]));
-      empty.preview.diskFingerprint=checkpointHash(JSON.stringify([rootBefore.dev,rootBefore.ino,empty.disk,identities]));if(Buffer.byteLength(JSON.stringify({preview:empty.preview,head:empty.head,index:empty.index,disk:empty.disk,rawIndex:empty.rawIndex?{sha256:checkpointHash(empty.rawIndex),bytes:empty.rawIndex.length}:null}))+2048>this.limits.manifestBytes)fail('MANIFEST_LIMIT','Checkpoint metadata exceeds its declared byte limit');empty.preview.canCapture=true;
+      empty.preview.diskFingerprint=checkpointHash(JSON.stringify([rootBefore.dev,rootBefore.ino,empty.disk,identities,filesystem]));if(Buffer.byteLength(JSON.stringify({preview:empty.preview,head:empty.head,index:empty.index,disk:empty.disk,rawIndex:empty.rawIndex?{sha256:checkpointHash(empty.rawIndex),bytes:empty.rawIndex.length}:null}))+2048>this.limits.manifestBytes)fail('MANIFEST_LIMIT','Checkpoint metadata exceeds its declared byte limit');empty.preview.canCapture=true;
     }catch(error){
       if((error instanceof CodeCheckpointError||error instanceof GitWorkspaceError)&&['CONCURRENT_CHANGE','UNSAFE_PATH'].includes(error.code))throw error;
       if(!(error instanceof CodeCheckpointError||error instanceof GitWorkspaceError))throw error;
@@ -231,7 +243,7 @@ export class CodeCheckpoints {
       for(const [hash,data] of scan.blobs){const file=join(snapshot,'blobs',hash);if(await realpath(dirname(file))!==dirname(file))fail('STORAGE_UNSAFE','Checkpoint blob storage was replaced or linked');const fd=await open(file,'wx',0o600);try{await fd.writeFile(data);await fd.sync();}finally{await fd.close();}}
       await syncDirectory(join(snapshot,'blobs'));
       const verified=await this.stableScan();if(verified.preview.version!==scan.preview.version)fail('CONCURRENT_CHANGE','Source changed before checkpoint publication');
-      const manifest:CodeCheckpointManifest={version:1,checkpointId:op.checkpointId,requestId:op.requestId,workspaceId:op.workspaceId,sessionId:op.sessionId,capturedAt:Date.now(),preview:scan.preview,head:scan.head,index:scan.index,disk:scan.disk,rawIndex:scan.rawIndex?{sha256:checkpointHash(scan.rawIndex),bytes:scan.rawIndex.length}:null};
+      const manifest:CodeCheckpointManifest={version:2,checkpointId:op.checkpointId,requestId:op.requestId,workspaceId:op.workspaceId,sessionId:op.sessionId,capturedAt:Date.now(),preview:scan.preview,head:scan.head,index:scan.index,disk:scan.disk,rawIndex:scan.rawIndex?{sha256:checkpointHash(scan.rawIndex),bytes:scan.rawIndex.length}:null};
       if(Buffer.byteLength(JSON.stringify(manifest))>this.limits.manifestBytes)fail('MANIFEST_LIMIT','Checkpoint metadata exceeds its declared byte limit');
       await jsonWrite(join(snapshot,'manifest.json'),manifest,true);
       const ready:CodeCheckpointOperation={...op,state:'ready',manifestSha256:checkpointHash(JSON.stringify(manifest))};await jsonWrite(request,ready);return ready;
@@ -246,7 +258,7 @@ export class CodeCheckpoints {
     try{
       const bytes=await this.privateRead(file,defaults.manifestBytes);if(checkpointHash(bytes)!==op.manifestSha256)throw 0;
       const manifest=JSON.parse(text(bytes)) as CodeCheckpointManifest;
-      if(manifest.version!==1||manifest.checkpointId!==op.checkpointId||manifest.requestId!==op.requestId||manifest.workspaceId!==op.workspaceId||manifest.sessionId!==op.sessionId||manifest.preview.version!==op.expectedVersion||!manifest.preview.canCapture||!Array.isArray(manifest.preview.exclusions))throw 0;
+      if(manifest.version!==2||manifest.checkpointId!==op.checkpointId||manifest.requestId!==op.requestId||manifest.workspaceId!==op.workspaceId||manifest.sessionId!==op.sessionId||manifest.preview.version!==op.expectedVersion||!manifest.preview.canCapture||!Array.isArray(manifest.preview.exclusions))throw 0;
       let count=0;
       for(const list of [manifest.head,manifest.index,manifest.disk]){if(!Array.isArray(list))throw 0;const paths=new Set<string>();for(const entry of list){checkpointPath(entry.path);if(paths.has(entry.path)||++count>defaults.entries||!['file','symlink'].includes(entry.kind)||!['100644','100755','120000'].includes(entry.mode)||entry.kind==='symlink'&&entry.mode!=='120000'||entry.kind==='file'&&entry.mode==='120000'||entry.gitOid!==undefined&&!OID.test(entry.gitOid)||entry.permissions!==undefined&&(!Number.isSafeInteger(entry.permissions)||entry.permissions<0||entry.permissions>0o777)||!HASH.test(entry.sha256)||!Number.isSafeInteger(entry.bytes)||entry.bytes<0||entry.bytes>defaults.fileBytes)throw 0;paths.add(entry.path);}}
       if(manifest.rawIndex&&(!HASH.test(manifest.rawIndex.sha256)||!Number.isSafeInteger(manifest.rawIndex.bytes)||manifest.rawIndex.bytes<0||manifest.rawIndex.bytes>defaults.indexBytes))throw 0;
