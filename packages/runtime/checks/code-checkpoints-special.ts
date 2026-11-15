@@ -41,7 +41,7 @@ try{
  const rules=await readFile(join(repo,'.gitignore'));await rm(join(repo,'.gitignore'));execFileSync('mkfifo',[join(repo,'.gitignore')]);await refused();await rm(join(repo,'.gitignore'));await writeFile(join(repo,'.gitignore'),rules);
  // Classification of a directory can read that directory's rules first.
  await mkdir(join(repo,'nested'));for(const name of ['.gitignore','.gitattributes']){execFileSync('mkfifo',[join(repo,'nested',name)]);await refused();await rm(join(repo,'nested',name));}await rm(join(repo,'nested'),{recursive:true});
- execFileSync('mkfifo',[join(repo,'.git','info','attributes')]);await refused();await rm(join(repo,'.git','info','attributes'));
+ await mkdir(join(repo,'.git','info'),{recursive:true});execFileSync('mkfifo',[join(repo,'.git','info','attributes')]);await refused();await rm(join(repo,'.git','info','attributes'));
  assert.deepEqual(await readFile(join(repo,'.git','index')),index);assert.deepEqual(git('rev-parse','HEAD'),head);assert.equal(await readFile(join(repo,'tracked'),'utf8'),'A');assert.ok(ignoredSocket.listening);
  // A previously published v1 checkpoint has no proof of complete real-FS inventory.
  const legacyRequest=randomUUID(),legacy=await module.capture({expectedVersion:(await module.preview()).version,requestId:legacyRequest});
