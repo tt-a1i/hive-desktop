@@ -5,13 +5,14 @@ import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import {mkdtemp,mkdir,writeFile,readFile,rename,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
 const directory=await mkdtemp(join(tmpdir(),'hive-acp-registration-'));
 await mkdir(join(directory,'pi'));
 const dataDir=join(directory,'state');
 function start() {
- const child=spawn(process.execPath,['dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:dataDir,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1',GIT_CONFIG_GLOBAL:join(directory,'gitconfig'),GIT_CONFIG_NOSYSTEM:'1'},stdio:['pipe','pipe','pipe']});
+ const child=spawn(process.execPath,[process.env.HIVE_DESKTOP_TEST_RUNTIME ?? 'dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:dataDir,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1',GIT_CONFIG_GLOBAL:join(directory,'gitconfig'),GIT_CONFIG_NOSYSTEM:'1'},stdio:['pipe','pipe','pipe']});
  const exited=once(child,'exit');let sequence=0,stderr='';
  child.stderr.on('data',chunk=>{stderr+=String(chunk);});
  const pending=new Map<number,{resolve(value:any):void;reject(error:Error):void}>();
@@ -33,7 +34,7 @@ let wire=start();
 const api=async(method:string,params:Record<string,unknown>={})=>{const frame=await wire.rpc(method,params);assert.equal(frame.error,undefined,JSON.stringify(frame.error));return frame.result;};
 const reject=async(method:string,params:Record<string,unknown>)=>assert.ok((await wire.rpc(method,params)).error,method+' must reject');
 const wait=async<T>(read:()=>Promise<T>,ok:(value:T)=>boolean)=>{const limit=Date.now()+15000;for(;;){const value=await read();if(ok(value))return value;assert.ok(Date.now()<limit,'Timed out waiting for production ACP workflow');await new Promise(resolve=>setTimeout(resolve,30));}};
-const peer=resolve('checks/fixtures/acp-runtime-peer.cjs'),nativeRoot=join(directory,'native');
+const peer=fileURLToPath(new URL('./fixtures/acp-runtime-peer.cjs',import.meta.url)),nativeRoot=join(directory,'native');
 const snapshot=(sessionId:string)=>api('chat.open',{sessionId});
 const call=async(sessionId:string,args:string[]|null)=>{
  const before=await snapshot(sessionId),count=before.history.filter((m:any)=>m.role==='assistant').length;

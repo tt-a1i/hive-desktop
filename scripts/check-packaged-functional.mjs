@@ -22,7 +22,8 @@ const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queue
   'codex-history-control', 'codex-fork-provenance', 'session-history-wire',
   'agent-profiles', 'structured-launch', 'profile-runtime-binding', 'profile-runtime-wire',
   'profile-settings-atomic', 'profile-claude-offline-history', 'codex-history-profile-launch',
-  'acp-session', 'acp-team-stdio', 'acp-team-hive',
+  'acp-session', 'acp-team-stdio', 'acp-team-hive', 'acp-runtime-registration', 'acp-startup-shutdown',
+  'profile-executable-probe',
   process.platform === 'win32' ? 'session-terminals-windows' : 'session-terminals',
   ...(process.platform === 'win32' ? ['project-scripts-windows'] : []),
   // These fixtures use POSIX executable peers/hooks. The Windows PTY and
@@ -34,7 +35,7 @@ try {
   await mkdir(join(directory, 'fixtures'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/codex-queue-peer.cjs'), join(directory, 'fixtures/codex-queue-peer.cjs'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/session-history-peer.cjs'), join(directory, 'fixtures/session-history-peer.cjs'));
-  for (const fixture of ['worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs']) {
+  for (const fixture of ['worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs', 'acp-runtime-peer.cjs']) {
     await copyFile(join(root, 'packages/runtime/checks/fixtures', fixture), join(directory, 'fixtures', fixture));
   }
   await copyFile(join(root, 'packages/runtime/checks/fixtures/git-remotes-wire-peer.cjs'), join(directory, 'fixtures/git-remotes-wire-peer.cjs'));
@@ -51,7 +52,9 @@ try {
     const file = join(directory, `${name}.mjs`);
     await writeFile(file, result.outputText);
     console.log(`[packaged-functional] ${name}`);
-    execFileSync(node, [file], {cwd: directory, stdio: 'inherit', timeout: 60_000,
+    // Registration includes a 30-second no-MCP deadline and several cold boots.
+    const timeout = name === 'acp-runtime-registration' ? 120_000 : 60_000;
+    execFileSync(node, [file], {cwd: directory, stdio: 'inherit', timeout,
       env: {...process.env, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_OFFLINE: '1',
         HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js')}});
     receipt.checks.push({name, exitCode: 0});

@@ -4,13 +4,14 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {mkdtemp,mkdir,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join,resolve} from 'node:path';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
 const directory=await mkdtemp(join(tmpdir(),'hive-acp-shutdown-start-'));
 await mkdir(join(directory,'pi'));
 const dataDir=join(directory,'state');
 function start() {
- const child=spawn(process.execPath,['dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:dataDir,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1'},stdio:['pipe','pipe','pipe']});
+ const child=spawn(process.execPath,[process.env.HIVE_DESKTOP_TEST_RUNTIME ?? 'dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:dataDir,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1'},stdio:['pipe','pipe','pipe']});
  const exited=once(child,'exit');let sequence=0,stderr='';
  child.stderr.on('data',chunk=>{stderr+=String(chunk);});
  const pending=new Map<number,{resolve(value:any):void;reject(error:Error):void}>();
@@ -28,7 +29,7 @@ function start() {
 let wire=start();
 const api=async(method:string,params:Record<string,unknown>={})=>{const frame=await wire.rpc(method,params);assert.equal(frame.error,undefined,JSON.stringify(frame.error));return frame.result;};
 const wait=async<T>(read:()=>Promise<T>,ok:(value:T)=>boolean)=>{const limit=Date.now()+15000;for(;;){const value=await read();if(ok(value))return value;assert.ok(Date.now()<limit,'Timed out waiting for production ACP workflow');await new Promise(resolve=>setTimeout(resolve,30));}};
-const peer=resolve('checks/fixtures/acp-runtime-peer.cjs'),nativeRoot=join(directory,'native');
+const peer=fileURLToPath(new URL('./fixtures/acp-runtime-peer.cjs',import.meta.url)),nativeRoot=join(directory,'native');
 try{
  await api('initialize');const workspace=await api('hive.request',{method:'POST',path:'/api/workspaces',body:{path:directory,name:'Shutdown while ACP waits for MCP',autostart_orchestrator:false}});
  const profile=(await api('agent.profiles.create',{driver:'acp',label:'No MCP startup',launch:{command:process.execPath,args:[peer,nativeRoot,'no-mcp']},expectedStoreVersion:(await api('agent.profiles.list')).storeVersion})).profile;
