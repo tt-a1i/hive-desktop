@@ -214,6 +214,15 @@ impl HiveApp {
                                     ),
                             )
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                                if event.is_keyboard() {
+                                    // AX/UIA Invoke targets this callback without a mouse-down.
+                                    // Use the enclosing Popover's normal keyboard toggle action.
+                                    window.dispatch_action(
+                                        Box::new(gpui_kit::base::actions::Confirm { secondary: false }),
+                                        cx,
+                                    );
+                                    return;
+                                }
                                 if event.click_count() == 2
                                     && !event.modifiers().modified()
                                     && this
