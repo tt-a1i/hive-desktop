@@ -92,7 +92,7 @@ function runServer(binding: Binding) {
     const result = (value: unknown) => send({ jsonrpc: '2.0', id, result: value });
     const error = (code: number, text: string) => send({ jsonrpc: '2.0', id, error: { code, message: text } });
     if (method === 'initialize') {
-      if (initialized || !object(params) || params.protocolVersion !== '2025-11-25' || !object(params.capabilities) || !object(params.clientInfo)) return error(-32602, 'Invalid initialize parameters');
+      if (initialized || !object(params) || typeof params.protocolVersion !== 'string' || !object(params.capabilities) || !object(params.clientInfo)) return error(-32602, 'Invalid initialize parameters');
       initialized = true;
       return result({ protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'hive-team', version: '1.0.0' } });
     }

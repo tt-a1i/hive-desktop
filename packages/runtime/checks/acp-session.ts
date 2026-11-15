@@ -7,7 +7,7 @@ import type { PiEvent } from '../src/agents/types.js';
 const root = await mkdtemp(join(tmpdir(), 'hive-acp-'));
 const handles: Awaited<ReturnType<typeof createAcpSession>>[] = [];
 let events: PiEvent[] = [];
-const start = async (mode = 'normal', sessionFile?: string, id = mode) => { const h = await createAcpSession({ command: process.execPath, args: [resolve('checks/fixtures/acp-peer.cjs'), mode, id], cwd: root, sessionDir: root, ...(sessionFile && { sessionFile }), onEvent: e => events.push(e), requestTimeoutMs: 300, cancelTimeoutMs: 40 }); handles.push(h); return h; };
+const start = async (mode = 'normal', sessionFile?: string, id = mode) => { const h = await createAcpSession({ command: process.execPath, args: [resolve('checks/fixtures/acp-peer.cjs'), mode, id, join(root,'native-echo')], cwd: root, sessionDir: root, ...(sessionFile && { sessionFile }), onEvent: e => events.push(e), requestTimeoutMs: 300, cancelTimeoutMs: 40 }); handles.push(h); return h; };
 try {
     await assert.rejects(start('normal', join(root, 'missing.json')), /missing/);
     await assert.rejects(start('version'), /version/);
@@ -36,9 +36,34 @@ try {
     assert.equal(again.history().length, 2);
     assert.deepEqual(again.completedDeliveryIds(), ['da']);
     await again.dispose();
+    const grouped = await start('message-ids', file, 'a');
+    assert.equal(grouped.history().length, 3);
+    assert.deepEqual(grouped.history().map(m=>(m as {content:{text:string}[]}).content[0]!.text), ['hello','answer1','answer2']);
+    await grouped.dispose();
     const offline = await start('no-load', file, 'a');
     assert(offline.readOnly);
     await assert.rejects(offline.prompt('must not create new'), /read-only/);
+    const echo = await start('echo');
+    await echo.addContext('INTERNAL_STARTUP_INSTRUCTIONS','startup');
+    await echo.prompt('actual task',{deliveryId:'echo-delivery',presentation:{version:1,origin:'dispatch',displayText:'visible task',dispatchId:'dispatch-proof',workerId:'worker-proof',messageSequence:7}});
+    await echo.dispose();
+    const echoCold=await start('echo',echo.sessionFile!);
+    const echoHistory=echoCold.history() as {content:{text:string}[];presentation:{dispatchId:string;workerId:string}}[];
+    assert.equal(echoHistory[0]!.content[0]!.text,'actual task');
+    assert.equal(echoHistory[0]!.presentation.dispatchId,'dispatch-proof');
+    assert.equal(echoHistory[0]!.presentation.workerId,'worker-proof');
+    assert(!JSON.stringify(echoHistory).includes('INTERNAL_STARTUP_INSTRUCTIONS'));
+    const duplicate = await start('echo');
+    for(const deliveryId of ['dupe1','dupe2']) {
+        await duplicate.addContext('SAME_INTERNAL_STARTUP','duplicate-startup');
+        await duplicate.prompt('same task',{deliveryId,presentation:{version:1,origin:'dispatch',displayText:'same task',dispatchId:deliveryId}});
+    }
+    await duplicate.dispose();
+    const ambiguous=await start('echo',duplicate.sessionFile!);
+    const ambiguousMessage=ambiguous.history()[0] as {acpReplaySource:string;presentation?:unknown;content:{text:string}[]};
+    assert.equal(ambiguousMessage.acpReplaySource,'unknown');
+    assert.equal(ambiguousMessage.presentation,undefined);
+    assert.equal(ambiguousMessage.content[0]!.text,'same task');
     const unknown = await start('unknown');
     await unknown.prompt('unsupported request answered');
     const p = await start('permission');
@@ -70,6 +95,7 @@ try {
         await h.abort();
         await assert.rejects(t);
         assert.deepEqual(h.completedDeliveryIds(), []);
+        if(mode==='cancel'){await h.prompt('new delivery after confirmed stop',{deliveryId:'after-cancel'});assert.deepEqual(h.completedDeliveryIds(),['after-cancel']);}
     }
     const fault = await start();
     await rm(fault.sessionFile!);

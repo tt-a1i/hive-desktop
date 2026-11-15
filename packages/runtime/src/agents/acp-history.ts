@@ -15,6 +15,7 @@ export interface AcpHistoryState {
     inputs?: {
         id: string;
         text: string;
+        nativeText?: string;
         presentation?: unknown;
     }[];
     deliveries: Record<string, 'sent' | 'completed'>;

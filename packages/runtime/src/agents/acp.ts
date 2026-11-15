@@ -66,6 +66,8 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
     let assistantId = '';
     let assistant: Record<string, unknown> | undefined;
     const tools = new Map<string, Record<string, unknown>>();
+    const nativeMessages = new Map<string, Record<string, unknown>>();
+    let userChunk: { id: string; message: Record<string, unknown> } | undefined;
     const redact = (value: unknown): unknown => { if (typeof value === 'string')
         return binding?.token ? value.replaceAll(binding.token, '[redacted]') : value; if (Array.isArray(value))
         return value.map(redact); if (object(value))
@@ -117,14 +119,25 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
         if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk' || kind === 'user_message_chunk') {
             if (!object(u.content) || u.content.type !== 'text' || typeof u.content.text !== 'string')
                 return;
+            const nativeId = typeof u.messageId === 'string' ? `acp-message:${u.messageId}` : undefined;
             if (kind === 'user_message_chunk') {
-                await put({ role: 'user', content: [u.content], timestamp: Date.now() }, randomUUID());
+                if (!userChunk || (nativeId && userChunk.id !== nativeId)) {
+                    const id = nativeId ?? randomUUID();
+                    userChunk = { id, message: nativeMessages.get(id) ?? { role: 'user', content: [{type:'text',text:''}], timestamp: Date.now() } };
+                    if (nativeId) nativeMessages.set(id, userChunk.message);
+                }
+                const block = (userChunk.message.content as {type:string;text:string}[])[0]!;
+                block.text += u.content.text;
+                await put(userChunk.message, userChunk.id);
                 assistant = undefined;
                 return;
             }
-            if (!assistant) {
-                assistantId = randomUUID();
-                assistant = { role: 'assistant', content: [], timestamp: Date.now() };
+            userChunk = undefined;
+            if (!assistant || (nativeId && assistantId !== nativeId)) {
+                if (assistant && !loading) emit({type:'message_end',sessionId,messageId:assistantId,message:assistant});
+                assistantId = nativeId ?? randomUUID();
+                assistant = nativeMessages.get(assistantId) ?? { role: 'assistant', content: [], timestamp: Date.now() };
+                if (nativeId) nativeMessages.set(assistantId, assistant);
             }
             const content = assistant.content as Record<string, unknown>[];
             const type = kind === 'agent_thought_chunk' ? 'thinking' : 'text';
@@ -156,6 +169,7 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
                     emit({ type: 'tool_update', sessionId, toolCallId: u.toolCallId, toolName: name, result: tool });
             }
             assistant = undefined;
+            userChunk = undefined;
         }
     };
     try {
@@ -191,6 +205,25 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
             await work;
             if (failure)
                 throw failure;
+            // Display association only: never changes consumption, completion or retry state.
+            // ACP does not acknowledge a native ID for the submitted input; match only a
+            // unique complete native payload, including our one-time context, after replay.
+            const originalReplay = structuredClone(replay);
+            for (const message of replay) {
+                if (!object(message) || message.role !== 'user' || !Array.isArray(message.content)) continue;
+                const blocks = message.content;
+                if (!blocks.every(block => object(block) && block.type === 'text' && typeof block.text === 'string')) continue;
+                const nativeText = blocks.map(block => (block as {text:string}).text).join('');
+                const matches = store!.state.inputs?.filter(input => input.nativeText === nativeText) ?? [];
+                const replayMatches = originalReplay.filter(item => object(item) && item.role === 'user' && Array.isArray(item.content) && item.content.every(block => object(block) && block.type === 'text' && typeof block.text === 'string') && item.content.map(block => (block as {text:string}).text).join('') === nativeText);
+                message.acpReplaySource = 'unknown';
+                if (matches.length && matches.every(input => input.text === matches[0]!.text)) message.content = [{type:'text',text:matches[0]!.text}];
+                if (matches.length === 1 && replayMatches.length === 1) {
+                    const input = matches[0]!;
+                    message.acpReplaySource = 'local-input';
+                    if (object(input.presentation)) message.presentation = {...input.presentation,deliveryId:input.id};
+                }
+            }
             await persist(s => { s.history = replay; s.historyIds = replayIds; });
             loading = false;
         }
@@ -237,26 +270,32 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
                     return Promise.reject(error);
                 }
                 const run = { cancelled: false, done: Promise.resolve() };
+                let cancellationConfirmed = false;
                 active = run;
                 assistant = undefined;
+                userChunk = undefined;
+                nativeMessages.clear();
                 tools.clear();
                 run.done = (async () => {
                     try {
                         const context = store!.state.contexts.map(c => c.text).join('\n\n');
                         const deliveryId = promptOptions?.deliveryId;
                         const userId = deliveryId ?? randomUUID();
-                        await persist(s => { (s.inputs ??= []).push({ id: userId, text, ...(promptOptions?.presentation && { presentation: promptOptions.presentation }) }); if (deliveryId)
+                        const nativeText = context ? `${context}\n\n${text}` : text;
+                        await persist(s => { (s.inputs ??= []).push({ id: userId, text, nativeText, ...(promptOptions?.presentation && { presentation: promptOptions.presentation }) }); if (deliveryId)
                             s.deliveries[deliveryId] = 'sent'; s.contexts = []; s.historyIds.push(userId); s.history.push({ role: 'user', content: [{ type: 'text', text }], timestamp: Date.now(), ...(promptOptions?.presentation && { presentation: { ...promptOptions.presentation, ...(deliveryId && { deliveryId }) } }) }); });
                         emit({ type: 'message_end', sessionId, messageId: userId, message: store!.state.history.at(-1) });
                         if (run.cancelled)
                             throw new Error('ACP turn cancelled before send');
-                        const result = await transport!.sendRequest('session/prompt', { sessionId, prompt: [{ type: 'text', text: context ? `${context}\n\n${text}` : text }] });
+                        const result = await transport!.sendRequest('session/prompt', { sessionId, prompt: [{ type: 'text', text: nativeText }] });
                         await work;
                         if (failure)
                             throw failure;
-                        if (run.cancelled || !object(result) || result.stopReason === 'cancelled')
+                        if (object(result) && ['end_turn', 'max_tokens', 'max_turn_requests', 'refusal', 'cancelled'].includes(String(result.stopReason)) && (run.cancelled || result.stopReason === 'cancelled')) {
+                            cancellationConfirmed = true;
                             throw new Error('ACP prompt was cancelled; delivery outcome is uncertain');
-                        if (!['end_turn', 'max_tokens', 'max_turn_requests', 'refusal'].includes(String(result.stopReason)))
+                        }
+                        if (!object(result) || !['end_turn', 'max_tokens', 'max_turn_requests', 'refusal'].includes(String(result.stopReason)))
                             throw new Error('Invalid ACP stop reason');
                         if (assistant)
                             emit({ type: 'message_end', sessionId, messageId: assistantId, message: assistant });
@@ -264,7 +303,7 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
                             await persist(s => { s.deliveries[deliveryId] = 'completed'; });
                     }
                     catch (error) {
-                        fail(error);
+                        if (!cancellationConfirmed) fail(error);
                         emit({ type: 'error', sessionId, message: error instanceof Error ? error.message : String(error) });
                         throw failure ?? error;
                     }

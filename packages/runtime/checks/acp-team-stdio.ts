@@ -29,7 +29,7 @@ async function request(id: number, method: string, params: unknown) {
   return response;
 }
 try {
-  const init = await request(1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+  const init = await request(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   assert.equal(init.result.protocolVersion, '2025-11-25');
   child.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n');
   const list = await request(2, 'tools/list', {});
