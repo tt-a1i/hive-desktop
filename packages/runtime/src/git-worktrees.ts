@@ -32,14 +32,16 @@ export interface WorktreeCreation {
   originAgentId?: string;
   model?: {provider: string; id: string; name: string};
   forkOperationId?: string;
+  handoffOperationId?: string;
 }
-type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation; forkPublished?: boolean };
+type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation; forkPublished?: boolean; handoffPublished?: boolean };
 function validateIntentCreation(intent: Intent): void {
   if (intent?.version !== undefined && (![2, 3].includes(intent.version) || intent.creation === undefined)
     || intent?.creation !== undefined && ![2, 3].includes(intent.version!))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Versioned worktree creation provenance is missing or unsupported; legacy recovery was not used');
   if (intent.version === 3 ? intent.creation?.version !== 2 : intent.creation?.version === 2) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Setup creation intent version is invalid');
   if (intent.forkPublished !== undefined && (intent.forkPublished !== true || !intent.creation?.forkOperationId)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork publication provenance is invalid');
+  if (intent.handoffPublished !== undefined && (intent.handoffPublished !== true || !intent.creation?.handoffOperationId)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Handoff publication provenance is invalid');
   validateCreation(intent?.creation);
 }
 function validateCreation(creation: WorktreeCreation | undefined): void {
@@ -54,6 +56,7 @@ function validateCreation(creation: WorktreeCreation | undefined): void {
     || (creation.model !== undefined && (!creation.model || !text(creation.model.provider) || !text(creation.model.id) || !text(creation.model.name))))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree creation identity is invalid; it cannot be replaced with caller identity');
   if (creation.forkOperationId !== undefined && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(creation.forkOperationId)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fork operation identity');
+  if (creation.handoffOperationId !== undefined && (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(creation.handoffOperationId) || creation.forkOperationId !== undefined)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid handoff operation identity');
   if (creation.version === 2) validateInitializationPlan(creation.setup);
   else if (creation.setup !== undefined) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Legacy intent cannot carry setup');
 }
@@ -115,11 +118,17 @@ function ownerDir(dataRoot: string, chatId: string): string {
 }
 /** Explicit checkout: Git may invoke the user's configured checkout filters or hooks. */
 export async function createManagedWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation }): Promise<ManagedWorktree> {
-  if (input.creation?.forkOperationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork worktrees require the dedicated creation path');
+  if (input.creation?.forkOperationId || input.creation?.handoffOperationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Snapshot worktrees require their dedicated creation path');
   return createWorktree(input);
 }
 export async function createForkWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation: WorktreeCreation; operationId: string; baseOid: string }): Promise<ManagedWorktree> {
   if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(input.baseOid) || input.creation.forkOperationId !== input.operationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork provenance is invalid');
+  return createWorktree(input, input.baseOid);
+}
+/** A new backend conversation owns its own code snapshot; this is not a native history fork. */
+export async function createHandoffWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; creation: WorktreeCreation; operationId: string; baseOid: string }): Promise<ManagedWorktree> {
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(input.baseOid) || input.creation.handoffOperationId !== input.operationId || input.creation.forkOperationId)
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Handoff provenance is invalid');
   return createWorktree(input, input.baseOid);
 }
 async function createWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation }, forkBase?: string): Promise<ManagedWorktree> {
@@ -224,6 +233,7 @@ async function verify(dataRoot: string, record: ManagedWorktree): Promise<{ root
 export async function validateManagedWorktree(dataRoot: string, record: ManagedWorktree): Promise<string> {
   const { intent } = await verify(dataRoot, record);
   if (intent.creation?.forkOperationId && !intent.forkPublished) throw new GitWorktreeError('FORK_PENDING', 'Fork worktree requires its dedicated operation gate');
+  if (intent.creation?.handoffOperationId && !intent.handoffPublished) throw new GitWorktreeError('HANDOFF_PENDING', 'Handoff worktree requires its dedicated operation gate');
   if (intent.state !== 'ready') throw new GitWorktreeError('RECOVERY_REQUIRED', 'Worktree creation was interrupted; recovery is required');
   return record.executionPath;
 }
@@ -231,7 +241,7 @@ export async function validateManagedWorktree(dataRoot: string, record: ManagedW
 export async function removeManagedWorktree(dataRoot: string, record: ManagedWorktree, options: { active: boolean }): Promise<void> {
   if (options.active) throw new GitWorktreeError('WORKTREE_IN_USE', 'Worktree is in use');
   const { root, intent, locked } = await verify(dataRoot, record);
-  if (intent.creation?.forkOperationId) throw new GitWorktreeError('FORK_PENDING', 'Fork worktree requires its dedicated operation gate');
+  if (intent.creation?.forkOperationId || intent.creation?.handoffOperationId) throw new GitWorktreeError('FORK_PENDING', 'Snapshot worktree requires its dedicated operation gate');
   if (intent.state !== 'ready') throw new GitWorktreeError('RECOVERY_REQUIRED', 'Worktree creation was interrupted; recovery is required');
   if (locked) throw new GitWorktreeError('WORKTREE_LOCKED', 'Worktree is locked');
   if (await git(record.managedWorktreeRoot, 'status', '--porcelain', '--untracked-files=all')) throw new GitWorktreeError('WORKTREE_DIRTY', 'Worktree has uncommitted files');
@@ -260,7 +270,7 @@ export async function readWorktreeIntent(dataRoot: string, chatId: string): Prom
 /** Claim an already-created, verified worktree after an interrupted save. Never creates or overwrites a tree. */
 export async function recoverManagedWorktree(dataRoot: string, record: ManagedWorktree): Promise<ManagedWorktree> {
   const { root, intent, gitDir } = await verify(dataRoot, record);
-  if (intent.creation?.forkOperationId) throw new GitWorktreeError('FORK_PENDING', 'Fork worktree requires its dedicated recovery');
+  if (intent.creation?.forkOperationId || intent.creation?.handoffOperationId) throw new GitWorktreeError('FORK_PENDING', 'Snapshot worktree requires its dedicated recovery');
   const recovered = { ...record, gitDir };
   if (intent.state === 'creating') await writeIntent(ownerDir(root, record.chatId), { ...intent, state: 'ready', record: recovered });
   await validateManagedWorktree(root, recovered);
@@ -282,4 +292,18 @@ export async function publishForkWorktree(dataRoot: string, record: ManagedWorkt
   const materialization = JSON.parse(await readFile(join(ownerDir(root,record.chatId),'materialize.json'),'utf8')) as {version?: number; operationId?: string; state?: string};
   if (materialization.version !== 1 || materialization.operationId !== operationId || materialization.state !== 'ready') throw new GitWorktreeError('FORK_PENDING', 'Fork materialization is not ready');
   if (!intent.forkPublished) await writeIntent(ownerDir(root, record.chatId), {...intent, forkPublished:true});
+}
+
+export async function validateHandoffWorktree(dataRoot: string, record: ManagedWorktree, operationId: string): Promise<void> {
+  const { intent } = await verify(dataRoot, record);
+  if (intent.state !== 'ready' || intent.creation?.handoffOperationId !== operationId || intent.creation.forkOperationId)
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Handoff operation does not own this worktree');
+  if (await git(record.managedWorktreeRoot, 'rev-parse', 'HEAD^{commit}') !== record.baseOid) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Handoff HEAD changed');
+}
+export async function publishHandoffWorktree(dataRoot: string, record: ManagedWorktree, operationId: string): Promise<void> {
+  await validateHandoffWorktree(dataRoot, record, operationId);
+  const { root, intent } = await verify(dataRoot, record);
+  const materialization = JSON.parse(await readFile(join(ownerDir(root, record.chatId), 'materialize.json'), 'utf8')) as {version?:number;operationId?:string;state?:string};
+  if (materialization.version !== 1 || materialization.operationId !== operationId || materialization.state !== 'ready') throw new GitWorktreeError('HANDOFF_PENDING', 'Handoff materialization is not ready');
+  if (!intent.handoffPublished) await writeIntent(ownerDir(root, record.chatId), {...intent, handoffPublished:true});
 }

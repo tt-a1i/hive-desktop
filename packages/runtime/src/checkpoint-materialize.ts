@@ -4,7 +4,10 @@ import { lstat, mkdir, open, readdir, readFile, realpath, rename, symlink, unlin
 import { dirname, join } from 'node:path';
 import { checkpointDiskEntry, checkpointHash, checkpointPath, CodeCheckpointError } from './checkpoint-files.js';
 import type { ExportedCodeCheckpoint } from './code-checkpoints.js';
-import { validateForkWorktree, type ManagedWorktree } from './git-worktrees.js';
+import { validateForkWorktree, validateHandoffWorktree, type ManagedWorktree } from './git-worktrees.js';
+type MaterializationInput = {dataRoot:string;record:ManagedWorktree;operationId:string;checkpoint:ExportedCodeCheckpoint;operationKind?:'fork'|'handoff'};
+const validateOwner = (input: MaterializationInput) => input.operationKind === 'handoff'
+  ? validateHandoffWorktree(input.dataRoot,input.record,input.operationId) : validateForkWorktree(input.dataRoot,input.record,input.operationId);
 
 function fail(message: string): never { throw new CodeCheckpointError('MATERIALIZE_CONFLICT', message); }
 async function runGit(cwd: string, index: string, args: string[], input?: Buffer): Promise<void> {
@@ -21,9 +24,9 @@ async function entries(root: string): Promise<string[]> {
   await walk(root,''); return result.sort();
 }
 /** Materialize only into a private, operation-owned, unpublished worktree. Never modifies the source. */
-export async function materializeCheckpoint(input: {dataRoot:string; record:ManagedWorktree; operationId:string; checkpoint:ExportedCodeCheckpoint}): Promise<void> {
+export async function materializeCheckpoint(input: MaterializationInput): Promise<void> {
   const {dataRoot,record,operationId,checkpoint}=input;
-  await validateForkWorktree(dataRoot,record,operationId);
+  await validateOwner(input);
   if(record.projectPrefix || checkpoint.manifest.preview.workspace.headOid!==record.baseOid || checkpoint.manifest.preview.workspace.commonDir!==record.repoCommonDir) fail('Checkpoint repository, scope, or HEAD does not match the fork');
   const root=record.managedWorktreeRoot, gitDir=record.gitDir!;
   if(await realpath(root)!==root || await realpath(gitDir)!==gitDir) fail('Fork directories changed');
@@ -57,7 +60,7 @@ export async function materializeCheckpoint(input: {dataRoot:string; record:Mana
       const observed=await checkpointDiskEntry(root,entry.path,entry.bytes);
       if (!observed || observed.entry.sha256!==entry.sha256 || observed.entry.kind!==entry.kind || observed.entry.permissions!==entry.permissions) fail('Fork file changed during materialization');
     }
-    await validateForkWorktree(dataRoot,record,operationId);
+    await validateOwner(input);
     try {await lstat(indexPath); fail('Fork index changed during materialization');} catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT') throw error;}
     await lock.close(); await rename(lockPath,indexPath);
     const done=await open(journal,'w',0o600); try {await done.writeFile(JSON.stringify({version:1,operationId,checkpointId:checkpoint.manifest.checkpointId,state:'ready'}));await done.sync();} finally {await done.close();}
@@ -65,9 +68,9 @@ export async function materializeCheckpoint(input: {dataRoot:string; record:Mana
 }
 
 /** Read-only verification for publication or recovery; never repairs or overwrites target changes. */
-export async function verifyMaterializedCheckpoint(input: {dataRoot:string; record:ManagedWorktree; operationId:string; checkpoint:ExportedCodeCheckpoint}): Promise<void> {
+export async function verifyMaterializedCheckpoint(input: MaterializationInput): Promise<void> {
   const {dataRoot,record,operationId,checkpoint}=input;
-  await validateForkWorktree(dataRoot,record,operationId);
+  await validateOwner(input);
   if(record.projectPrefix || checkpoint.manifest.preview.workspace.headOid!==record.baseOid || checkpoint.manifest.preview.workspace.commonDir!==record.repoCommonDir) fail('Checkpoint repository, scope, or HEAD does not match the fork');
   const journal=JSON.parse(await readFile(join(dirname(record.managedWorktreeRoot),'materialize.json'),'utf8')) as {version?:number; operationId?:string; checkpointId?:string; state?:string};
   if(journal.version!==1 || journal.operationId!==operationId || journal.checkpointId!==checkpoint.manifest.checkpointId || journal.state!=='ready') fail('Fork materialization is not ready');
@@ -83,5 +86,5 @@ export async function verifyMaterializedCheckpoint(input: {dataRoot:string; reco
   if(JSON.stringify(actual)!==JSON.stringify(expected)) fail('Fork index changed after materialization');
   if(JSON.stringify(await entries(root))!==JSON.stringify(checkpoint.disk.map(x=>x.entry.path).sort())) fail('Fork files changed after materialization');
   for(const {entry,data} of checkpoint.disk){checkpointPath(entry.path);if(checkpointHash(data)!==entry.sha256||data.length!==entry.bytes)fail('Checkpoint disk content is invalid');const observed=await checkpointDiskEntry(root,entry.path,entry.bytes);if(!observed||observed.entry.sha256!==entry.sha256||observed.entry.kind!==entry.kind||observed.entry.permissions!==entry.permissions)fail('Fork file changed after materialization');}
-  await validateForkWorktree(dataRoot,record,operationId);
+  await validateOwner(input);
 }

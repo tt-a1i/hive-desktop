@@ -3,6 +3,7 @@ import type { AgentProfileRef } from './agent-profiles.js';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude' | 'acp';
 
@@ -19,6 +20,7 @@ export class SessionIdentityError extends Error {
 
 export interface ChatRecord {
   backend: ChatBackend;
+  handoff?: {operationId:string;snapshotId:string;snapshotHash:string;sourceSessionId:string};
   profile?: AgentProfileRef;
   legacyConfiguration?: true;
   lineage?: {operationId:string;parentSessionId:string;nativeUserItemId:string;edit:boolean;codeRelation:{kind:'current'|'checkpoint';checkpointId:string};inheritedItemIds:string[]};
@@ -53,6 +55,8 @@ export interface ChatRecord {
 // backend owns its conversation transcript. This index is not a second collaboration ledger.
 export class ChatIndex {
   private records: ChatRecord[];
+  private readonly generations = new Map<string,number>();
+  private generation = 0;
   private readonly file: string;
   constructor(directory: string) {
     mkdirSync(directory, { recursive: true });
@@ -67,9 +71,15 @@ export class ChatIndex {
       if (normalized.backend === 'pi' && isUnsetPiModel(normalized.model)) delete normalized.model;
       return normalized;
     });
+    for(const record of this.records)this.generations.set(record.id,++this.generation);
     if (JSON.stringify(value) !== JSON.stringify(this.records)) this.commit(this.records);
   }
   all(): ChatRecord[] { return this.records.map(recordSnapshot); }
+  /** Runtime-local mutation token. Detects equal-value saves and A→B→A without relying on clocks. */
+  snapshotVersion(id:string):number {
+    if(!this.records.some(record=>record.id===id))throw new Error('Conversation not found');
+    return this.generations.get(id)!;
+  }
   list(workspaceId: string): ChatRecord[] {
     return this.records.filter(record => record.workspaceId === workspaceId).map(recordSnapshot).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
   }
@@ -94,11 +104,13 @@ export class ChatIndex {
       const { agentId: previousAgentId, ...unbound } = record;
       return unbound;
     });
-    this.commit(next);
+    this.commit(next,id);
     return bound;
   }
   save(record: ChatRecord): void {
     const existing = this.peek(record.id);
+    if (existing?.handoff && JSON.stringify(existing.handoff) !== JSON.stringify(record.handoff))
+      throw new SessionIdentityError('SESSION_HANDOFF_CONFLICT', 'A fixed historical handoff cannot be changed.');
     if (existing && (existing.backend !== record.backend || existing.profile && (existing.profile.id !== record.profile?.id || existing.profile.revision !== record.profile?.revision)))
       throw new SessionIdentityError('SESSION_PROFILE_CONFLICT', 'The conversation backend and fixed profile cannot be changed.');
     if (existing?.identityState === 'unknown' && (record.agentId || record.originAgentId) && !existing.originAgentId)
@@ -109,7 +121,7 @@ export class ChatIndex {
     const normalized = normalizeIdentity(existing?.originAgentId
       ? {...record, originAgentId: existing.originAgentId, identityState: 'known'}
       : existing ? {...record, identityState: existing.identityState ?? 'unknown'} : record);
-    this.commit([...this.records.filter(item => item.id !== record.id), normalized]);
+    this.commit([...this.records.filter(item => item.id !== record.id), normalized],record.id);
   }
   /** Only precise persisted provenance may repair a legacy unknown identity. */
   establishOrigin(id: string, agentId: string): ChatRecord {
@@ -124,19 +136,22 @@ export class ChatIndex {
   removeWorkspace(workspaceId: string): void {
     this.commit(this.records.filter(record => record.workspaceId !== workspaceId));
   }
-  private commit(next: ChatRecord[]): void {
+  private commit(next: ChatRecord[], touchedId?:string): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     try {
       writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600, flush: true });
       renameSync(temporary, this.file);
       if(process.platform!=='win32'){const directory=openSync(dirname(this.file),'r');try{fsyncSync(directory);}finally{closeSync(directory);}}
+      const previous=new Map(this.records.map(record=>[record.id,record]));
+      for(const record of next)if(record.id===touchedId||!previous.has(record.id)||!isDeepStrictEqual(previous.get(record.id),record))this.generations.set(record.id,++this.generation);
+      const ids=new Set(next.map(record=>record.id));for(const id of this.generations.keys())if(!ids.has(id))this.generations.delete(id);
       this.records = next.map(recordSnapshot);
     } finally { rmSync(temporary, { force: true }); }
   }
 }
 
 function recordSnapshot(record: ChatRecord): ChatRecord {
-  return {...record, ...(record.profile && {profile: {...record.profile}})};
+  return structuredClone(record);
 }
 
 function normalizeIdentity(record: ChatRecord): ChatRecord {
@@ -151,6 +166,10 @@ function normalizeIdentity(record: ChatRecord): ChatRecord {
 function isChatRecord(value: unknown): value is ChatRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
+  if (record.handoff !== undefined) {
+    const h = record.handoff as Record<string,unknown>;
+    if (!h || typeof h !== 'object' || !['operationId','snapshotId','snapshotHash','sourceSessionId'].every(key=>typeof h[key]==='string' && !!h[key])) return false;
+  }
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
   if (record.profile !== undefined && (!record.profile || typeof record.profile !== 'object' || typeof (record.profile as Record<string, unknown>).id !== 'string' || !(record.profile as Record<string, unknown>).id || !Number.isSafeInteger((record.profile as Record<string, unknown>).revision) || ((record.profile as Record<string, unknown>).revision as number) < 1)) return false;

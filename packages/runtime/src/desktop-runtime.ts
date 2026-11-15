@@ -85,6 +85,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     (workspaceId, sessionId) => chats.initializationPlan(workspaceId, sessionId), workspaceId => chats.assertWorkspaceAvailable(workspaceId));
   chats.initialization = initialization;
   chats.configureHistory(executionMutations, () => terminal.hasAnyActiveShell());
+  chats.configureHandoffs(executionMutations, () => terminal.hasAnyActiveShell());
   let closing: Promise<void> | undefined;
   return { hive, chats, profiles, agents, executionMutations, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns, initialization,
     createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; profile?: AgentProfileRef; model?: {provider: string; id: string}; description?: unknown }) => {
@@ -111,8 +112,10 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     },
     close: () => closing ??= (async () => {
       chats.beginClose();
-      await chats.history?.close();
       unsubscribeAdmission();
+      // Seal both services immediately, then drain only the operations already admitted.
+      // Chats still rejects new starts and its abort signal is already canceled.
+      await Promise.all([chats.history?.close(),chats.handoffs?.close()]);
       initialization.close();
       const scripts = await Promise.allSettled([scriptRuns.close()]);
       const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), terminal.close(), agentModels.close()]);

@@ -1,5 +1,8 @@
 import { parseStructuredLaunch } from './structured-launch.js';
 import { isAgentDriver, validateAgentProfileLaunch, validateAgentProfileRef, type UpdateAgentProfile } from './agent-profiles.js';
+import type { HandoffInput,HandoffApplyInput } from './session-handoffs.js';
+import { HandoffError } from './handoff-operation-journal.js';
+import { SessionIdentityError } from './chat-index.js';
 import { HistoryOperationError } from './history-operation-journal.js';
 import { CodeCheckpointError } from './code-checkpoints.js';
 import { WorktreeInitializationError } from './project-worktree-initialization.js';
@@ -96,6 +99,12 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       exact(params, ['id', 'expectedStoreVersion']);
       return profiles.enableDisable(text(params, 'id'), method === 'agent.profiles.enable', storeVersion(params));
     }
+    case 'chat.handoff.capabilities': exact(params,['workspaceId','sourceSessionId']);return chats.handoffs!.capabilities(text(params,'workspaceId'),text(params,'sourceSessionId'));
+    case 'chat.handoff.preview': return chats.handoffs!.preview(params as unknown as HandoffInput);
+    case 'chat.handoff.apply': return chats.handoffs!.apply(params as unknown as HandoffApplyInput);
+    case 'chat.handoff.get':exact(params,['workspaceId','operationId']);return chats.handoffs!.get(text(params,'workspaceId'),text(params,'operationId'));
+    case 'chat.handoff.list':exact(params,['workspaceId']);return chats.handoffs!.list(text(params,'workspaceId'));
+    case 'chat.handoff.recover':exact(params,['workspaceId','operationId']);return chats.handoffs!.recover(text(params,'workspaceId'),text(params,'operationId'));
     case 'history.capabilities': return chats.history!.capabilities(text(params,'workspaceId'),text(params,'sessionId'));
     case 'checkpoint.preview': return chats.history!.checkpointPreview(text(params,'workspaceId'),text(params,'sessionId'));
     case 'checkpoint.capture': return chats.history!.checkpointCapture(text(params,'workspaceId'),text(params,'sessionId'),text(params,'expectedVersion'),text(params,'requestId'));
@@ -331,7 +340,7 @@ input.on('line', line => {
       await writeFrame({ id, result });
     } catch (error) {
       await writeFrame({ id, error: {
-        code: error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+        code: error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

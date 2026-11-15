@@ -11,6 +11,7 @@ export interface DeliveryItem {
  readonly triggerTurn: boolean;
  readonly presentation?: DeliveryPresentation;
  readonly images?: readonly PromptImage[];
+ readonly contextRef?: {operationId:string;snapshotHash:string};
 }
 
 type StoredItem = DeliveryItem & { readonly queueState?: "pending" | "started" | "canceled" };
@@ -22,6 +23,8 @@ interface DeliveryQueueOptions {
  execute(item: DeliveryItem): Promise<void>;
  steer?(item: DeliveryItem): Promise<boolean>;
  completedIds(): readonly string[];
+ /** Trusted local metadata, prepared before atomic spool persistence. Never a provider replay. */
+ prepare?(item:DeliveryItem):DeliveryItem;
  /** Session-specific capability restrictions, also used by snapshots. */
  userInputMutationReason?(item: DeliveryItem): string | undefined;
  onError(error: Error): void;
@@ -46,6 +49,7 @@ function readSpool(path: string): StoredItem[] {
   throw new Error(`Invalid delivery spool: ${path}`);
  }
  for (const item of stored) { if (item.images !== undefined && promptImages(item.images).length && !item.triggerTurn) throw new TypeError("Invalid context-only image delivery"); }
+ for (const item of stored) if(item.contextRef!==undefined && (!item.contextRef || typeof item.contextRef.operationId!=='string' || !/^[a-f0-9]{64}$/.test(item.contextRef.snapshotHash) || item.presentation?.origin!=='user' || !item.triggerTurn))throw new Error('Invalid historical context reference in spool');
  return stored.map((item, index) => item.queueState === undefined && index > 0
   ? { ...item, queueState: "pending" as const } : item);
 }
@@ -71,10 +75,24 @@ export class DeliveryQueue {
  static persistedCount(directory: string, sessionId: string): number {
   return readSpool(spoolPath(directory, sessionId)).length;
  }
+ static persistedItems(directory:string,sessionId:string):readonly DeliveryItem[]{return structuredClone(readSpool(spoolPath(directory,sessionId)));}
 
  get pending(): readonly DeliveryItem[] { return structuredClone(this.items); }
  get headId():string|undefined {return this.items[0]?.id;}
  get pendingCount(): number { return this.items.length; }
+ /** Reconcile trusted context metadata on the earliest unattempted user item while paused. */
+ prepareNextUserContext():void {
+  if(this.busy||!this.paused)return;
+  const index=this.items.findIndex(item=>item.queueState!=='canceled'&&item.triggerTurn&&item.presentation?.origin==='user');
+  if(index<0)return;
+  const item=this.items[index]!;
+  if(item.contextRef||item.queueState!=='pending'||this.attemptedId===item.id)return;
+  const prepared=this.options.prepare?.(item)??item;
+  if(prepared.id!==item.id||prepared.text!==item.text||prepared.triggerTurn!==item.triggerTurn||!isDeepStrictEqual(prepared.presentation,item.presentation)||!isDeepStrictEqual(prepared.images,item.images))throw new Error('Prepared context changed queued user input');
+  if(!prepared.contextRef)return;
+  this.replace(this.items.map((value,at)=>at===index?{...value,contextRef:prepared.contextRef!}:value));
+  this.emitState(undefined,true);
+ }
  get pendingReports() {
   return this.items.flatMap((item, index) => {
    const report = item.presentation;
@@ -99,7 +117,10 @@ export class DeliveryQueue {
   if (presentation !== undefined && !isDeliveryPresentation(presentation)) throw new Error("Invalid delivery presentation");
   const images = promptImages(imageInput);
   if (images.length && !triggerTurn) throw new TypeError("不触发模型回合的投递暂不支持图片。");
-  this.replace([...this.items, { id: randomUUID(), text, triggerTurn, queueState: "pending", ...(images.length && {images}), ...(presentation && { presentation: structuredClone(presentation) }) }]);
+  const original:DeliveryItem={id:randomUUID(),text,triggerTurn,...(images.length&&{images}),...(presentation&&{presentation:structuredClone(presentation)})};
+  const prepared=this.options.prepare?.(original)??original;
+  if(prepared.id!==original.id||prepared.text!==original.text||prepared.triggerTurn!==original.triggerTurn||!isDeepStrictEqual(prepared.presentation,original.presentation)||!isDeepStrictEqual(prepared.images,original.images))throw new Error('Prepared delivery changed its input identity');
+  this.replace([...this.items, { ...prepared, queueState: "pending" }]);
   const item = this.items.at(-1)!;
   // Asynchronous system input and worker reports may join the current turn. Never overtake a
   // queued user/task input; persist first and retain until native completion.
