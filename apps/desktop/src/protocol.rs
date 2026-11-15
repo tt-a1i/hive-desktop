@@ -183,6 +183,26 @@ pub struct PendingUserInput {
     #[serde(default)]
     pub reason: Option<String>,
 }
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Initialization {
+    pub(crate) version: String,
+    pub(crate) status: String,
+    pub(crate) script: Option<InitializationScript>,
+    pub(crate) error_code: Option<String>,
+    pub(crate) run_id: Option<String>,
+    pub(crate) actions: Option<InitializationActions>,
+}
+#[derive(Clone, Deserialize)]
+pub(crate) struct InitializationActions {
+    pub(crate) retry: bool,
+    pub(crate) skip: bool,
+    pub(crate) reason: Option<String>,
+}
+#[derive(Clone, Deserialize)]
+pub(crate) struct InitializationScript {
+    pub(crate) name: String,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
@@ -191,7 +211,7 @@ pub struct OpenSession {
     #[serde(default)]
     pub lineage: Option<Value>,
     #[serde(default)]
-    pub initialization: Option<crate::history_navigation::Initialization>,
+    pub initialization: Option<Initialization>,
     #[serde(default)]
     pub read_only: bool,
     pub identity_error: Option<SnapshotIdentityError>,
@@ -447,6 +467,28 @@ pub enum TerminalFrame {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn initialization_wire_fields_preserve_script_and_recovery_actions() {
+        let initialization: Initialization = serde_json::from_value(json!({
+            "version": "setup-revision-1",
+            "status": "failed",
+            "script": {"name": "prepare worktree"},
+            "errorCode": "SCRIPT_FAILED",
+            "runId": "script-run-1",
+            "actions": {"retry": true, "skip": false, "reason": "Review script output"}
+        }))
+        .unwrap();
+        assert_eq!(initialization.version, "setup-revision-1");
+        assert_eq!(initialization.status, "failed");
+        assert_eq!(initialization.script.unwrap().name, "prepare worktree");
+        assert_eq!(initialization.error_code.as_deref(), Some("SCRIPT_FAILED"));
+        assert_eq!(initialization.run_id.as_deref(), Some("script-run-1"));
+        let actions = initialization.actions.unwrap();
+        assert!(actions.retry);
+        assert!(!actions.skip);
+        assert_eq!(actions.reason.as_deref(), Some("Review script output"));
+    }
 
     #[test]
     fn queued_attachment_and_failure_wire_fields_preserve_original_data() {

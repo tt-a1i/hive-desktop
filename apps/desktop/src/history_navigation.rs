@@ -1,4 +1,8 @@
-use crate::{app::HiveApp, language::tr, protocol::Session};
+use crate::{
+    app::HiveApp,
+    language::tr,
+    protocol::{Initialization, Session},
+};
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -17,26 +21,6 @@ impl HistoryNavigation {
         self.access = Default::default();
         self.initialization = None;
     }
-}
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Initialization {
-    pub(crate) version: String,
-    pub(crate) status: String,
-    pub(crate) script: Option<InitializationScript>,
-    pub(crate) error_code: Option<String>,
-    pub(crate) run_id: Option<String>,
-    pub(crate) actions: Option<InitializationActions>,
-}
-#[derive(Clone, Deserialize)]
-pub(crate) struct InitializationActions {
-    pub(crate) retry: bool,
-    pub(crate) skip: bool,
-    pub(crate) reason: Option<String>,
-}
-#[derive(Clone, Deserialize)]
-pub(crate) struct InitializationScript {
-    pub(crate) name: String,
 }
 #[derive(Default)]
 pub(crate) struct HistoryAccess {
