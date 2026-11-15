@@ -131,6 +131,15 @@ pub struct HiveApp {
     pub interactions: crate::interactions::Interactions,
     pub terminal: crate::terminal::WorkspaceTerminal,
     pub(crate) history_navigation: crate::history_navigation::HistoryNavigation,
+    pub nav_back: Vec<(Option<String>, Option<String>)>,
+    pub nav_forward: Vec<(Option<String>, Option<String>)>,
+    pub nav_suppress_record: bool,
+    pub git_drawer_open: bool,
+    pub git_drawer_width: f32,
+    pub git_drawer_drag: Option<(f32, f32)>,
+    pub terminal_drawer_height: f32,
+    pub terminal_drawer_drag: Option<(f32, f32)>,
+    pub(crate) git_workspace: Option<Entity<crate::git_workspace::GitWorkspace>>,
     pub input: Entity<TextareaState>,
     pub(crate) draft_store: Option<crate::drafts::DraftStore>,
     pub(crate) draft_save_task: Option<Task<()>>,
@@ -499,7 +508,7 @@ impl HiveApp {
             }
         })
         .detach();
-        let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索设置，如模型、通知、快捷键…"));
+        let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder(crate::language::tr("搜索设置")));
         cx.subscribe_in(&settings_search, window, |this, _, event: &InputEvent, window, cx| {
             match event {
                 InputEvent::Change => {
@@ -570,7 +579,7 @@ impl HiveApp {
             TextareaState::new(window, cx)
                 .submit_on_enter(true)
                 .auto_grow(1, 7)
-                .placeholder("输入消息…")
+                .placeholder(crate::language::tr("输入任何问题，@ 引用文件，/ 命令"))
         });
         let composer_subscription = cx.subscribe_in(
             &input,
@@ -618,7 +627,16 @@ impl HiveApp {
             drafts: HashMap::new(),
             draft_owner: None,
             draft_target: None,
-            input_placeholder: "输入消息…".into(),
+            input_placeholder: crate::language::tr("输入任何问题，@ 引用文件，/ 命令").into(),
+            nav_back: Vec::new(),
+            nav_forward: Vec::new(),
+            nav_suppress_record: false,
+            git_drawer_open: false,
+            git_drawer_width: 460.,
+            git_drawer_drag: None,
+            terminal_drawer_height: 240.,
+            terminal_drawer_drag: None,
+            git_workspace: None,
             interface_locale: None,
             add_workspace_open: false,
             folder: cx.new(|cx| InputState::new(window, cx).placeholder("项目文件夹的绝对路径")),

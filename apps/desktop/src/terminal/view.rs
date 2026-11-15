@@ -43,21 +43,12 @@ struct TerminalDrawer {
 }
 
 impl RenderOnce for TerminalDrawer {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let _ = self.sidebar_open;
         let disabled = !self.connected
             || !self.has_workspace
             || !self.workspace_writes_allowed
             || self.loading;
-        let topbar_inset = if self.sidebar_open {
-            px(16.)
-        } else {
-            let inset = crate::chrome::traffic_light_inset(window);
-            if inset > px(0.) {
-                inset + px(8.)
-            } else {
-                px(12.)
-            }
-        };
         let status_color = if self.terminal_error.is_some() || !self.connected {
             Color::Error.get(cx)
         } else if self.ready {
@@ -86,17 +77,13 @@ impl RenderOnce for TerminalDrawer {
                 } else {
                     Some(self.terminal_title.clone())
                 }
-            });
-        let title = self
-            .workspace_name
-            .clone()
-            .unwrap_or_else(|| tr("工作区终端").to_owned());
+            })
+            .or(self.workspace_name);
 
         let refresh_target = self.target.clone();
         let start_target = self.target.clone();
         let stop_target = self.target.clone();
         let clear_target = self.target.clone();
-        let app_nav = self.app.clone();
         let app_refresh = self.app.clone();
         let app_start = self.app.clone();
         let app_stop = self.app.clone();
@@ -111,33 +98,18 @@ impl RenderOnce for TerminalDrawer {
             .h_full()
             .bg(Color::Surface.get(cx))
             .child(
-                crate::chrome::drag_bar("terminal-topbar", window, cx)
+                h_flex()
+                    .id("terminal-topbar")
                     .w_full()
-                    .pl(topbar_inset)
-                    .pr_3()
+                    .h(px(34.))
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_between()
+                    .px_3()
                     .gap_2()
+                    .bg(Color::Sidebar.get(cx))
                     .border_b_1()
                     .border_color(Color::Divider.get(cx))
-                    .when(!self.sidebar_open, |bar| {
-                        bar.child(
-                            Button::new("toggle-navigation")
-                                .custom(crate::palette::quiet_icon_variant(cx))
-                                .compact()
-                                .xsmall()
-                                .h(px(28.))
-                                .w(px(28.))
-                                .rounded_lg()
-                                .icon(Glyph::PanelLeft)
-                                .tooltip(tr("打开或收起导航"))
-                                .accessibility_label(tr("打开或收起工作区与会话导航"))
-                                .on_click(move |_, _, cx| {
-                                    app_nav.update(cx, |this, cx| {
-                                        this.sidebar_open = !this.sidebar_open;
-                                        cx.notify();
-                                    });
-                                }),
-                        )
-                    })
                     .child(
                         h_flex()
                             .flex_1()
@@ -146,17 +118,29 @@ impl RenderOnce for TerminalDrawer {
                             .gap_2()
                             .child(
                                 Icon::new(Glyph::SquareTerminal)
-                                    .size(px(14.))
+                                    .size(px(13.))
                                     .text_color(Color::Muted.get(cx))
                                     .flex_shrink_0(),
                             )
                             .child(
                                 div()
                                     .flex_shrink_0()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_xs()
+                                    .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(Color::Text.get(cx))
-                                    .child(title),
+                                    .child(tr("终端")),
+                            )
+                            .child(
+                                div()
+                                    .id("terminal-status-dot")
+                                    .flex_shrink_0()
+                                    .w(px(6.))
+                                    .h(px(6.))
+                                    .rounded_full()
+                                    .bg(status_color)
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::new(status_tooltip.clone()).build(window, cx)
+                                    }),
                             )
                             .when_some(subtitle, |row, dir| {
                                 row.child(
@@ -170,43 +154,32 @@ impl RenderOnce for TerminalDrawer {
                                         .child(dir.clone())
                                         .tooltip(move |window, cx| Tooltip::new(dir.clone()).build(window, cx)),
                                 )
-                            })
-                            .child(
-                                div()
-                                    .id("terminal-status-dot")
-                                    .flex_shrink_0()
-                                    .w(px(6.))
-                                    .h(px(6.))
-                                    .rounded_full()
-                                    .bg(status_color)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::new(status_tooltip.clone()).build(window, cx)
-                                    }),
-                            ),
+                            }),
                     )
                     .child(
                         h_flex()
                             .flex_shrink_0()
                             .items_center()
                             .gap_1()
-                            .children([(TerminalMode::Auto, "自动"), (TerminalMode::Workspace, "工作区终端"), (TerminalMode::Session, "当前会话终端")].into_iter().enumerate().map(|(i, (mode, label))| {
+                            .children([(TerminalMode::Auto, "自动"), (TerminalMode::Workspace, "工作区"), (TerminalMode::Session, "当前会话")].into_iter().enumerate().map(|(i, (mode, label))| {
                                 let app = self.app.clone();
                                 Button::new(("terminal-scope", i))
                                     .custom(crate::palette::sidebar_item_variant(self.mode == mode, cx))
-                                    .compact().xsmall().h(px(28.)).px_2().rounded_lg()
+                                    .compact().xsmall().h(px(22.)).px_2().rounded_md()
                                     .label(tr(label)).selected(self.mode == mode)
                                     .disabled(mode == TerminalMode::Session && !self.has_session)
                                     .tooltip(tr("自动选择：工作树会话使用独立终端，其他会话使用工作区终端"))
                                     .on_click(move |_, _, cx| { app.update(cx, |this, cx| this.select_terminal_mode(mode, cx)); })
                             }))
+                            .child(div().w(px(1.)).h(px(14.)).mx_0p5().bg(Color::Divider.get(cx)))
                             .child(
                                 Button::new("terminal-refresh")
                                     .custom(crate::palette::quiet_icon_variant(cx))
                                     .compact()
                                     .xsmall()
-                                    .h(px(28.))
-                                    .w(px(28.))
-                                    .rounded_lg()
+                                    .h(px(24.))
+                                    .w(px(24.))
+                                    .rounded_md()
                                     .icon(Glyph::RefreshCw)
                                     .tooltip(tr("刷新 Shell"))
                                     .accessibility_label(tr("刷新 Shell"))
@@ -222,9 +195,9 @@ impl RenderOnce for TerminalDrawer {
                                     .custom(crate::palette::quiet_icon_variant(cx))
                                     .compact()
                                     .xsmall()
-                                    .h(px(28.))
-                                    .w(px(28.))
-                                    .rounded_lg()
+                                    .h(px(24.))
+                                    .w(px(24.))
+                                    .rounded_md()
                                     .icon(Glyph::Eraser)
                                     .tooltip(tr("清除"))
                                     .accessibility_label(tr("清除"))
@@ -237,8 +210,8 @@ impl RenderOnce for TerminalDrawer {
                                     .custom(crate::palette::quiet_icon_variant(cx))
                                     .compact()
                                     .xsmall()
-                                    .h(px(28.))
-                                    .rounded_lg()
+                                    .h(px(24.))
+                                    .rounded_md()
                                     .icon(Glyph::Play)
                                     .tooltip(tr("启动 Shell"))
                                     .accessibility_label(tr("启动 Shell"))
@@ -252,7 +225,7 @@ impl RenderOnce for TerminalDrawer {
                                         });
                                     });
                                 if self.has_run {
-                                    btn.w(px(28.))
+                                    btn.w(px(24.))
                                 } else {
                                     btn.px_2().label(tr("启动 Shell"))
                                 }
@@ -262,9 +235,9 @@ impl RenderOnce for TerminalDrawer {
                                     .custom(crate::palette::quiet_icon_variant(cx))
                                     .compact()
                                     .xsmall()
-                                    .h(px(28.))
-                                    .w(px(28.))
-                                    .rounded_lg()
+                                    .h(px(24.))
+                                    .w(px(24.))
+                                    .rounded_md()
                                     .icon(Glyph::Square)
                                     .tooltip(tr("停止 Shell"))
                                     .accessibility_label(tr("停止 Shell"))
@@ -278,11 +251,10 @@ impl RenderOnce for TerminalDrawer {
                                     .custom(crate::palette::quiet_icon_variant(cx))
                                     .compact()
                                     .xsmall()
-                                    .h(px(28.))
-                                    .px_2()
-                                    .rounded_lg()
-                                    .icon(Glyph::CornerDownLeft)
-                                    .label(tr("返回会话"))
+                                    .h(px(24.))
+                                    .w(px(24.))
+                                    .rounded_md()
+                                    .icon(Glyph::X)
                                     .tooltip(tr("隐藏终端"))
                                     .accessibility_label(tr("隐藏终端"))
                                     .on_click(move |_, _, cx| {

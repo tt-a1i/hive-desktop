@@ -50,6 +50,12 @@ impl HiveApp {
             .session
             .as_ref()
             .map(|session| crate::composer_controls::backend_glyph(session.backend));
+        let profile_note = self
+            .session
+            .as_ref()
+            .and_then(|s| s.profile.as_ref())
+            .map(|profile| format!("\n{}", self.profile_label(profile)))
+            .unwrap_or_default();
         let trigger = Button::new("choose-model")
             .accessibility_label(tr("选择会话模型与推理强度"))
             .custom(crate::palette::quiet_icon_variant(cx))
@@ -58,11 +64,9 @@ impl HiveApp {
             .px_1p5()
             .rounded_lg()
             .selected(self.choosing_model)
-            .w_full()
             .min_w_0()
             .child(
                 h_flex()
-                    .w_full()
                     .min_w_0()
                     .items_center()
                     .gap_1p5()
@@ -76,8 +80,8 @@ impl HiveApp {
                     })
                     .child(
                         div()
-                            .flex_1()
                             .min_w_0()
+                            .max_w(px(180.))
                             .truncate()
                             .text_size(px(12.5))
                             .font_weight(FontWeight::MEDIUM)
@@ -101,7 +105,7 @@ impl HiveApp {
                     ),
             )
             .tooltip(format!(
-                "{label}\n{identity}\n{}\n{}",
+                "{label}\n{identity}{profile_note}\n{}\n{}",
                 tr("只影响当前会话，不修改 Agent 全局默认"),
                 crate::keybindings::hint(crate::keybindings::Target::ChooseModel, "快捷键", cx),
             ))
@@ -109,7 +113,7 @@ impl HiveApp {
         if unavailable {
             return trigger.into_any_element();
         }
-        let mut trigger_layout = div().w_full().min_w_0();
+        let mut trigger_layout = div().min_w_0();
         let trigger_style = trigger_layout.style().clone();
         Popover::new("session-model-picker").anchor(Anchor::BottomRight)
             .trigger_style(trigger_style)

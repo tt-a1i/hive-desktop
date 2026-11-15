@@ -66,7 +66,7 @@ impl HiveApp {
                                         .child(
                                             div()
                                                 .text_xs()
-                                                .text_color(Color::Secondary.get(cx))
+                                                .text_color(Color::Muted.get(cx))
                                                 .child(tr(
                                                     "跟随系统自动切换，或固定使用浅色、深色外观。",
                                                 )),
@@ -134,7 +134,7 @@ impl HiveApp {
                                         .child(
                                             div()
                                                 .text_xs()
-                                                .text_color(Color::Secondary.get(cx))
+                                                .text_color(Color::Muted.get(cx))
                                                 .child(tr(
                                                     "调整菜单、设置和普通聊天文字的大小，立即生效并保存在本机。",
                                                 )),
@@ -245,36 +245,37 @@ impl HiveApp {
                             cx,
                         )
                         .child(
-                            v_flex()
+                            h_flex()
                                 .w_full()
                                 .min_w_0()
-                                .gap_2p5()
+                                .items_center()
+                                .justify_between()
+                                .gap_4()
+                                .flex_wrap()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w(px(200.))
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .child(tr("对话内容宽度")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr("调节会话消息栏与输入框的最大排版宽度。")),
+                                        ),
+                                )
                                 .child(
                                     h_flex()
-                                        .w_full()
-                                        .min_w_0()
+                                        .flex_shrink_0()
                                         .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .child(
-                                            v_flex()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(Color::Text.get(cx))
-                                                        .child(tr("对话内容宽度")),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(Color::Secondary.get(cx))
-                                                        .child(tr("调节会话消息栏与输入框的最大排版宽度。")),
-                                                ),
-                                        )
+                                        .gap_1p5()
                                         .when(saved.chat_width() != ChatWidth::default(), |row| {
                                             row.child(crate::focus_scroll::Reveal::new(
                                                 "reset-appearance-chat-width-reveal",
@@ -292,37 +293,39 @@ impl HiveApp {
                                                     },
                                                 ),
                                             ))
-                                        }),
-                                )
-                                .child(crate::focus_scroll::Reveal::new(
-                                    "appearance-chat-width-reveal",
-                                    &self.appearance_scroll,
-                                    super::settings_segmented_bar(cx).children(
-                                        [
-                                            (ChatWidth::Standard, "standard"),
-                                            (ChatWidth::Comfortable, "comfortable"),
-                                            (ChatWidth::Wide, "wide"),
-                                        ]
-                                        .into_iter()
-                                        .map(|(width, key)| {
-                                            let active = saved.chat_width() == width;
-                                            Button::new(SharedString::from(format!(
-                                                "appearance-chat-width-{key}"
-                                            )))
-                                            .when(active, |b| b.outline())
-                                            .when(!active, |b| b.ghost())
-                                            .small()
-                                            .h(px(26.))
-                                            .px_3()
-                                            .rounded_md()
-                                            .label(width.label())
-                                            .disabled(!appearance::available(cx))
-                                            .on_click(move |_, window, cx| {
-                                                appearance::choose_chat_width(width, window, cx);
-                                            })
-                                        }),
-                                    ),
-                                )),
+                                        })
+                                        .child(crate::focus_scroll::Reveal::new(
+                                            "appearance-chat-width-reveal",
+                                            &self.appearance_scroll,
+                                            super::settings_segmented_bar(cx).children(
+                                                [
+                                                    (ChatWidth::Standard, "standard"),
+                                                    (ChatWidth::Comfortable, "comfortable"),
+                                                    (ChatWidth::Wide, "wide"),
+                                                ]
+                                                .into_iter()
+                                                .map(|(width, key)| {
+                                                    let active = saved.chat_width() == width;
+                                                    Button::new(SharedString::from(format!(
+                                                        "appearance-chat-width-{key}"
+                                                    )))
+                                                    .when(active, |b| b.outline())
+                                                    .when(!active, |b| b.ghost())
+                                                    .small()
+                                                    .h(px(26.))
+                                                    .px_2p5()
+                                                    .rounded_md()
+                                                    .label(width.label())
+                                                    .disabled(!appearance::available(cx))
+                                                    .on_click(move |_, window, cx| {
+                                                        appearance::choose_chat_width(
+                                                            width, window, cx,
+                                                        );
+                                                    })
+                                                }),
+                                            ),
+                                        )),
+                                ),
                         )
                     })
                     .child({
@@ -392,34 +395,41 @@ impl HiveApp {
                                             ))
                                         }),
                                 )
-                                .child(crate::focus_scroll::Reveal::new(
-                                    "appearance-code-font-family-reveal",
-                                    &self.appearance_scroll,
-                                    super::settings_segmented_bar(cx).flex_wrap().children(
-                                        MonoFontPreset::for_platform().iter().copied().map(
-                                            |preset| {
-                                                let active = saved.code_font_family() == preset;
-                                                Button::new(SharedString::from(format!(
-                                                    "appearance-code-font-{}",
-                                                    preset.label()
-                                                )))
-                                                .when(active, |b| b.outline())
-                                                .when(!active, |b| b.ghost())
-                                                .small()
-                                                .h(px(26.))
-                                                .px_2p5()
-                                                .rounded_md()
-                                                .label(preset.label())
-                                                .disabled(!appearance::available(cx))
-                                                .on_click(move |_, window, cx| {
-                                                    appearance::choose_code_font_family(
-                                                        preset, window, cx,
-                                                    );
-                                                })
-                                            },
-                                        ),
-                                    ),
-                                ))
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .items_center()
+                                        .child(crate::focus_scroll::Reveal::new(
+                                            "appearance-code-font-family-reveal",
+                                            &self.appearance_scroll,
+                                            super::settings_segmented_bar(cx).flex_wrap().children(
+                                                MonoFontPreset::for_platform().iter().copied().map(
+                                                    |preset| {
+                                                        let active =
+                                                            saved.code_font_family() == preset;
+                                                        Button::new(SharedString::from(format!(
+                                                            "appearance-code-font-{}",
+                                                            preset.label()
+                                                        )))
+                                                        .when(active, |b| b.outline())
+                                                        .when(!active, |b| b.ghost())
+                                                        .small()
+                                                        .h(px(26.))
+                                                        .px_2p5()
+                                                        .rounded_md()
+                                                        .label(preset.label())
+                                                        .disabled(!appearance::available(cx))
+                                                        .on_click(move |_, window, cx| {
+                                                            appearance::choose_code_font_family(
+                                                                preset, window, cx,
+                                                            );
+                                                        })
+                                                    },
+                                                ),
+                                            ),
+                                        )),
+                                )
                                 .child(
                                     h_flex()
                                         .w_full()
@@ -584,102 +594,116 @@ impl HiveApp {
                                             ))
                                         }),
                                 )
-                                .child(crate::focus_scroll::Reveal::new(
-                                    "appearance-terminal-font-family-reveal",
-                                    &self.appearance_scroll,
-                                    super::settings_segmented_bar(cx).flex_wrap().children(
-                                        MonoFontPreset::for_platform().iter().copied().map(
-                                            |preset| {
-                                                let active =
-                                                    saved.terminal_font_family() == preset;
-                                                Button::new(SharedString::from(format!(
-                                                    "appearance-terminal-font-{}",
-                                                    preset.label()
-                                                )))
-                                                .when(active, |b| b.outline())
-                                                .when(!active, |b| b.ghost())
-                                                .small()
-                                                .h(px(26.))
-                                                .px_2p5()
-                                                .rounded_md()
-                                                .label(preset.label())
-                                                .disabled(!appearance::available(cx))
-                                                .on_click(cx.listener(move |this, _, window, cx| {
-                                                    appearance::choose_terminal_font_family(
-                                                        preset, window, cx,
-                                                    );
-                                                    this.sync_terminal_typography(cx);
-                                                }))
-                                            },
-                                        ),
-                                    ),
-                                ))
-                                .child(crate::focus_scroll::Reveal::new(
-                                    "appearance-terminal-font-size-reveal",
-                                    &self.appearance_scroll,
-                                    super::settings_segmented_bar(cx)
-                                        .child(
-                                            Button::new("decrease-terminal-font")
-                                                .ghost()
-                                                .small()
-                                                .h(px(26.))
-                                                .px_2()
-                                                .rounded_md()
-                                                .label("A−")
-                                                .accessibility_label(tr("减小终端字号"))
-                                                .disabled(
-                                                    !appearance::available(cx)
-                                                        || saved.terminal_font_size()
-                                                            <= appearance::MIN_TERMINAL_FONT_SIZE,
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .items_center()
+                                        .child(crate::focus_scroll::Reveal::new(
+                                            "appearance-terminal-font-family-reveal",
+                                            &self.appearance_scroll,
+                                            super::settings_segmented_bar(cx).flex_wrap().children(
+                                                MonoFontPreset::for_platform().iter().copied().map(
+                                                    |preset| {
+                                                        let active =
+                                                            saved.terminal_font_family() == preset;
+                                                        Button::new(SharedString::from(format!(
+                                                            "appearance-terminal-font-{}",
+                                                            preset.label()
+                                                        )))
+                                                        .when(active, |b| b.outline())
+                                                        .when(!active, |b| b.ghost())
+                                                        .small()
+                                                        .h(px(26.))
+                                                        .px_2p5()
+                                                        .rounded_md()
+                                                        .label(preset.label())
+                                                        .disabled(!appearance::available(cx))
+                                                        .on_click(cx.listener(
+                                                            move |this, _, window, cx| {
+                                                                appearance::choose_terminal_font_family(
+                                                                    preset, window, cx,
+                                                                );
+                                                                this.sync_terminal_typography(cx);
+                                                            },
+                                                        ))
+                                                    },
+                                                ),
+                                            ),
+                                        )),
+                                )
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .min_w_0()
+                                        .items_center()
+                                        .child(crate::focus_scroll::Reveal::new(
+                                            "appearance-terminal-font-size-reveal",
+                                            &self.appearance_scroll,
+                                            super::settings_segmented_bar(cx)
+                                                .child(
+                                                    Button::new("decrease-terminal-font")
+                                                        .ghost()
+                                                        .small()
+                                                        .h(px(26.))
+                                                        .px_2()
+                                                        .rounded_md()
+                                                        .label("A−")
+                                                        .accessibility_label(tr("减小终端字号"))
+                                                        .disabled(
+                                                            !appearance::available(cx)
+                                                                || saved.terminal_font_size()
+                                                                    <= appearance::MIN_TERMINAL_FONT_SIZE,
+                                                        )
+                                                        .on_click(cx.listener(|this, _, window, cx| {
+                                                            let size = cx
+                                                                .global::<Appearance>()
+                                                                .terminal_font_size()
+                                                                .saturating_sub(1);
+                                                            appearance::choose_terminal_font_size(
+                                                                size, window, cx,
+                                                            );
+                                                            this.sync_terminal_typography(cx);
+                                                        })),
                                                 )
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    let size = cx
-                                                        .global::<Appearance>()
-                                                        .terminal_font_size()
-                                                        .saturating_sub(1);
-                                                    appearance::choose_terminal_font_size(
-                                                        size, window, cx,
-                                                    );
-                                                    this.sync_terminal_typography(cx);
-                                                })),
-                                        )
-                                        .child(
-                                            div()
-                                                .px_2()
-                                                .text_xs()
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(Color::Text.get(cx))
-                                                .child(format!(
-                                                    "{} px",
-                                                    saved.terminal_font_size()
-                                                )),
-                                        )
-                                        .child(
-                                            Button::new("increase-terminal-font")
-                                                .ghost()
-                                                .small()
-                                                .h(px(26.))
-                                                .px_2()
-                                                .rounded_md()
-                                                .label("A+")
-                                                .accessibility_label(tr("增大终端字号"))
-                                                .disabled(
-                                                    !appearance::available(cx)
-                                                        || saved.terminal_font_size()
-                                                            >= appearance::MAX_TERMINAL_FONT_SIZE,
+                                                .child(
+                                                    div()
+                                                        .px_2()
+                                                        .text_xs()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child(format!(
+                                                            "{} px",
+                                                            saved.terminal_font_size()
+                                                        )),
                                                 )
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    let size = cx
-                                                        .global::<Appearance>()
-                                                        .terminal_font_size()
-                                                        .saturating_add(1);
-                                                    appearance::choose_terminal_font_size(
-                                                        size, window, cx,
-                                                    );
-                                                    this.sync_terminal_typography(cx);
-                                                })),
-                                        ),
-                                )),
+                                                .child(
+                                                    Button::new("increase-terminal-font")
+                                                        .ghost()
+                                                        .small()
+                                                        .h(px(26.))
+                                                        .px_2()
+                                                        .rounded_md()
+                                                        .label("A+")
+                                                        .accessibility_label(tr("增大终端字号"))
+                                                        .disabled(
+                                                            !appearance::available(cx)
+                                                                || saved.terminal_font_size()
+                                                                    >= appearance::MAX_TERMINAL_FONT_SIZE,
+                                                        )
+                                                        .on_click(cx.listener(|this, _, window, cx| {
+                                                            let size = cx
+                                                                .global::<Appearance>()
+                                                                .terminal_font_size()
+                                                                .saturating_add(1);
+                                                            appearance::choose_terminal_font_size(
+                                                                size, window, cx,
+                                                            );
+                                                            this.sync_terminal_typography(cx);
+                                                        })),
+                                                ),
+                                        )),
+                                ),
                         )
                     })
                     .child(

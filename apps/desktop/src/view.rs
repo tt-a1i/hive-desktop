@@ -10,10 +10,27 @@ use gpui_kit::{
         button::{Button, ButtonVariants},
         input::{Input, Textarea},
         menu::{DropdownMenu, PopupMenuItem},
+        resizable::{HandleEdge, resize_handle},
         *,
     },
     *,
 };
+
+#[derive(Clone)]
+struct DragTerminalDrawer;
+impl Render for DragTerminalDrawer {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+#[derive(Clone)]
+struct DragGitDrawer;
+impl Render for DragGitDrawer {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
 
 pub(crate) fn untitled_session_label(session: &crate::protocol::Session) -> Option<&'static str> {
     // Saved origin labels an unnamed Worker without implying a current binding.
@@ -336,35 +353,39 @@ impl HiveApp {
         let reply_id = message.id.clone();
         let delivery = message.delivery.is_some();
         h_flex()
+            .flex_wrap()
+            .items_center()
             .gap_0p5()
             .when(message.role == "user", |row| row.justify_end())
-            .child(
-                Button::new(("copy", index))
-                    .custom(crate::palette::subtle_icon_variant(cx))
-                    .compact()
-                    .xsmall()
-                    .h(px(24.))
-                    .w(px(24.))
-                    .rounded_md()
-                    .icon(Glyph::Copy)
-                    .disabled(!delivery && message.text.is_empty())
-                    .tooltip(if delivery {
-                        tr("复制完整原文")
-                    } else {
-                        tr("复制消息")
-                    })
-                    .accessibility_label(if delivery {
-                        tr("复制完整消息原文")
-                    } else {
-                        tr("复制消息内容")
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(message) = this.messages.iter().find(|m| m.id == copy_id) {
-                            let text = message.delivery.as_ref().map_or(&message.text, |d| &d.raw);
-                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-                        }
-                    })),
-            )
+            .when(delivery || !message.text.is_empty(), |row| {
+                row.child(
+                    Button::new(("copy", index))
+                        .custom(crate::palette::subtle_icon_variant(cx))
+                        .compact()
+                        .xsmall()
+                        .h(px(24.))
+                        .w(px(24.))
+                        .rounded_md()
+                        .icon(Glyph::Copy)
+                        .tooltip(if delivery {
+                            tr("复制完整原文")
+                        } else {
+                            tr("复制消息")
+                        })
+                        .accessibility_label(if delivery {
+                            tr("复制完整消息原文")
+                        } else {
+                            tr("复制消息内容")
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(message) = this.messages.iter().find(|m| m.id == copy_id) {
+                                let text =
+                                    message.delivery.as_ref().map_or(&message.text, |d| &d.raw);
+                                cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                            }
+                        })),
+                )
+            })
             .when(
                 !message.text.is_empty()
                     && (message.role == "assistant" || message.explicit_user || delivery),
@@ -396,6 +417,66 @@ impl HiveApp {
                                         input.focus(window, cx);
                                     });
                                 }
+                            })),
+                    )
+                },
+            )
+            .when_some(
+                message
+                    .native_user_item_id
+                    .clone()
+                    .filter(|_| message.role == "user"),
+                |row, native_id| {
+                    let edit_id = native_id.clone();
+                    row.child(
+                        Button::new(("history-fork", index))
+                            .custom(crate::palette::subtle_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(24.))
+                            .px_1p5()
+                            .rounded_md()
+                            .label(tr("分叉"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_history_fork(native_id.clone(), false, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new(("history-edit-fork", index))
+                            .custom(crate::palette::subtle_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(24.))
+                            .px_1p5()
+                            .rounded_md()
+                            .label(tr("编辑并分叉"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_history_fork(edit_id.clone(), true, window, cx)
+                            })),
+                    )
+                },
+            )
+            .when_some(
+                message
+                    .handoff_item_id
+                    .clone()
+                    .filter(|_| matches!(message.role.as_str(), "user" | "assistant")),
+                |row, item| {
+                    row.child(
+                        Button::new(("history-handoff", index))
+                            .custom(crate::palette::subtle_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(24.))
+                            .px_1p5()
+                            .rounded_md()
+                            .label(if crate::language::english() {
+                                "Continue with another agent…"
+                            } else {
+                                "用其他 Agent 接续…"
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_session_handoff(item.clone(), window, cx)
                             })),
                     )
                 },
@@ -996,7 +1077,7 @@ impl Render for HiveApp {
             });
             self.draft_owner = self.draft_target.clone();
         }
-        let placeholder: String = tr("输入任何问题，支持粘贴图片与 / 命令").into();
+        let placeholder: String = tr("输入任何问题，@ 引用文件，/ 命令").into();
         if self.input_placeholder != placeholder {
             self.input_placeholder = placeholder.clone();
             self.input.update(cx, |input, cx| {
@@ -1005,6 +1086,13 @@ impl Render for HiveApp {
         }
         self.prepare_interactions(window, cx);
         self.prepare_terminal_view(cx);
+        let git_drawer = if self.git_drawer_open {
+            self.ensure_git_workspace(window, cx)
+        } else {
+            None
+        };
+        let terminal_view = cx.entity().downgrade();
+        let git_view = cx.entity().downgrade();
         let has_session_failure =
             self.agent_diagnostic.is_some() || self.delivery_failure.is_some();
         let running = self
@@ -1242,17 +1330,15 @@ impl Render for HiveApp {
                         view.child(self.render_navigation(narrow, window, cx))
                     })
                     .when(!narrow || !self.sidebar_open, |view| {
-                        view.child(if self.memory.visible || self.workflows.visible || self.collaboration.visible || self.member_panel || self.terminal.visible {
+                        view.child(if self.memory.visible || self.workflows.visible || self.collaboration.visible || self.member_panel {
                             let body = if self.memory.visible {
                                 self.render_memory(cx).into_any_element()
                             } else if self.workflows.visible {
                                 self.render_workflows(window, cx)
                             } else if self.collaboration.visible {
                                 self.render_collaboration(window, cx)
-                            } else if self.member_panel {
-                                self.render_members(window, narrow, cx)
                             } else {
-                                self.render_terminal(cx).into_any_element()
+                                self.render_members(window, narrow, cx)
                             };
                             v_flex()
                                 .flex_1()
@@ -1300,6 +1386,57 @@ impl Render for HiveApp {
                                 .drag_over::<ExternalPaths>(|style, _, _, cx| {
                                     style.bg(Color::Attention.get(cx))
                                 })
+                                .on_drag_move(cx.listener(
+                                    |this, event: &gpui::DragMoveEvent<DragGitDrawer>, window, cx| {
+                                        let x = f32::from(event.event.position.x);
+                                        let (start_x, start_width) = *this
+                                            .git_drawer_drag
+                                            .get_or_insert((x, this.git_drawer_width));
+                                        let max_width = (f32::from(window.viewport_size().width)
+                                            * 0.62)
+                                            .clamp(320., 760.);
+                                        this.git_drawer_width =
+                                            (start_width + (start_x - x)).clamp(300., max_width);
+                                        cx.notify();
+                                    },
+                                ))
+                                .on_drag_move(cx.listener(
+                                    |this,
+                                     event: &gpui::DragMoveEvent<DragTerminalDrawer>,
+                                     window,
+                                     cx| {
+                                        let y = f32::from(event.event.position.y);
+                                        let (start_y, start_height) = *this
+                                            .terminal_drawer_drag
+                                            .get_or_insert((y, this.terminal_drawer_height));
+                                        let max_height = (f32::from(window.viewport_size().height)
+                                            * 0.62)
+                                            .clamp(200., 620.);
+                                        this.terminal_drawer_height =
+                                            (start_height + (start_y - y)).clamp(140., max_height);
+                                        cx.notify();
+                                    },
+                                ))
+                                .on_mouse_up(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        if this.git_drawer_drag.take().is_some()
+                                            || this.terminal_drawer_drag.take().is_some()
+                                        {
+                                            cx.notify();
+                                        }
+                                    }),
+                                )
+                                .on_mouse_up_out(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        if this.git_drawer_drag.take().is_some()
+                                            || this.terminal_drawer_drag.take().is_some()
+                                        {
+                                            cx.notify();
+                                        }
+                                    }),
+                                )
                                 .key_context("HiveConversation")
                                 .on_action(cx.listener(
                                     |this, _: &crate::CloseConversationFind, window, cx| {
@@ -1312,7 +1449,7 @@ impl Render for HiveApp {
                                         .pl(topbar_inset)
                                         .pr_3()
                                         .gap_1p5()
-                                        .when(!welcome, |bar| {
+                                        .when(!welcome || self.terminal.visible || git_drawer.is_some(), |bar| {
                                             bar.border_b_1().border_color(Color::Divider.get(cx))
                                         })
                                         .when(!self.sidebar_open, |bar| {
@@ -1586,44 +1723,6 @@ impl Render for HiveApp {
                                                                             )
                                                                     },
                                                                 )
-                                                                .when_some(
-                                                                    active_project.clone(),
-                                                                    |tools, _| {
-                                                                        tools.child(
-                                                                            Button::new(
-                                                                                "topbar-quick-terminal",
-                                                                            )
-                                                                            .custom(
-                                                                                crate::palette::quiet_icon_variant(
-                                                                                    cx,
-                                                                                ),
-                                                                            )
-                                                                            .compact()
-                                                                            .xsmall()
-                                                                            .h(px(28.))
-                                                                            .w(px(28.))
-                                                                            .rounded_lg()
-                                                                            .icon(Glyph::SquareTerminal)
-                                                                            .tooltip(crate::keybindings::hint(
-                                                                                crate::keybindings::Target::ToggleTerminal,
-                                                                                "打开工作区终端",
-                                                                                cx,
-                                                                            ))
-                                                                            .accessibility_label(tr(
-                                                                                "打开工作区终端",
-                                                                            ))
-                                                                            .disabled(!self.connected)
-                                                                            .on_click(cx.listener(
-                                                                                |this, _, window, cx| {
-                                                                                    this.show_terminal(
-                                                                                        window, cx,
-                                                                                    );
-                                                                                    cx.notify();
-                                                                                },
-                                                                            )),
-                                                                        )
-                                                                    },
-                                                                )
                                                                 .when(show_conv_tools, |tools| {
                                                                     tools.child(
                                                                         Button::new(
@@ -1657,7 +1756,88 @@ impl Render for HiveApp {
                                                                             },
                                                                         )),
                                                                     )
-                                                                }),
+                                                                })
+                                                                .when_some(
+                                                                    active_project.clone(),
+                                                                    |tools, _| {
+                                                                        tools
+                                                                            .child(
+                                                                                Button::new(
+                                                                                    "topbar-quick-terminal",
+                                                                                )
+                                                                                .custom(
+                                                                                    crate::palette::quiet_icon_variant(
+                                                                                        cx,
+                                                                                    ),
+                                                                                )
+                                                                                .compact()
+                                                                                .xsmall()
+                                                                                .h(px(28.))
+                                                                                .w(px(28.))
+                                                                                .rounded_lg()
+                                                                                .icon(Glyph::PanelBottom)
+                                                                                .selected(self.terminal.visible)
+                                                                                .tooltip(crate::keybindings::hint(
+                                                                                    crate::keybindings::Target::ToggleTerminal,
+                                                                                    if self.terminal.visible {
+                                                                                        "隐藏终端"
+                                                                                    } else {
+                                                                                        "打开工作区终端"
+                                                                                    },
+                                                                                    cx,
+                                                                                ))
+                                                                                .accessibility_label(tr(
+                                                                                    if self.terminal.visible {
+                                                                                        "隐藏终端"
+                                                                                    } else {
+                                                                                        "打开工作区终端"
+                                                                                    },
+                                                                                ))
+                                                                                .disabled(!self.connected)
+                                                                                .on_click(cx.listener(
+                                                                                    |this, _, window, cx| {
+                                                                                        if this.terminal.visible {
+                                                                                            this.hide_terminal(cx);
+                                                                                        } else {
+                                                                                            this.show_terminal(
+                                                                                                window, cx,
+                                                                                            );
+                                                                                        }
+                                                                                        cx.notify();
+                                                                                    },
+                                                                                )),
+                                                                            )
+                                                                            .child(
+                                                                                Button::new(
+                                                                                    "topbar-git-drawer",
+                                                                                )
+                                                                                .custom(
+                                                                                    crate::palette::quiet_icon_variant(
+                                                                                        cx,
+                                                                                    ),
+                                                                                )
+                                                                                .compact()
+                                                                                .xsmall()
+                                                                                .h(px(28.))
+                                                                                .w(px(28.))
+                                                                                .rounded_lg()
+                                                                                .icon(Glyph::PanelRight)
+                                                                                .selected(self.git_drawer_open)
+                                                                                .tooltip(tr("Git 变更与差异"))
+                                                                                .accessibility_label(tr(
+                                                                                    "Git 变更与差异",
+                                                                                ))
+                                                                                .disabled(!self.connected)
+                                                                                .on_click(cx.listener(
+                                                                                    |this, _, window, cx| {
+                                                                                        this.toggle_git_workspace(
+                                                                                            window, cx,
+                                                                                        );
+                                                                                    },
+                                                                                )),
+                                                                            )
+                                                                    },
+                                                                ),
                                                         )
                                                     },
                                                 )
@@ -1718,9 +1898,32 @@ impl Render for HiveApp {
                                                 )
                                         }),
                                 )
-                                .when(self.conversation_find.is_some(), |view| {
-                                    view.child(self.render_conversation_find(cx))
-                                })
+                                .child(
+                                    h_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .min_h_0()
+                                        .w_full()
+                                        .child(
+                                            v_flex()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .h_full()
+                                                .child(
+                                                    v_flex()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .min_h_0()
+                                                        .when(
+                                                            self.conversation_find.is_some(),
+                                                            |view| {
+                                                                view.child(
+                                                                    self.render_conversation_find(
+                                                                        cx,
+                                                                    ),
+                                                                )
+                                                            },
+                                                        )
                                 .when(self.error.is_some(), |view| {
                                     let chat_width = cx
                                         .global::<crate::appearance::Appearance>()
@@ -1949,6 +2152,76 @@ impl Render for HiveApp {
                                             )),
                                     )
                                 })
+                                                )
+                                                .when(self.terminal.visible, |col| {
+                                                    col.child(
+                                                        v_flex()
+                                                            .id("terminal-bottom-drawer")
+                                                            .relative()
+                                                            .w_full()
+                                                            .h(px(self.terminal_drawer_height))
+                                                            .flex_shrink_0()
+                                                            .border_t_1()
+                                                            .border_color(Color::Divider.get(cx))
+                                                            .bg(Color::Surface.get(cx))
+                                                            .child(self.render_terminal(cx))
+                                                            .child(
+                                                                resize_handle(
+                                                                    "terminal-drawer-resize",
+                                                                    gpui::Axis::Vertical,
+                                                                )
+                                                                .inside(HandleEdge::Leading)
+                                                                .on_drag(
+                                                                    DragTerminalDrawer,
+                                                                    move |_, _, _, cx| {
+                                                                        let _ = terminal_view.update(
+                                                                            cx,
+                                                                            |this, _| {
+                                                                                this.terminal_drawer_drag =
+                                                                                    None;
+                                                                            },
+                                                                        );
+                                                                        cx.new(|_| DragTerminalDrawer)
+                                                                    },
+                                                                ),
+                                                            ),
+                                                    )
+                                                }),
+                                        )
+                                        .when_some(git_drawer, |row, drawer| {
+                                            row.child(
+                                                v_flex()
+                                                    .id("git-right-drawer")
+                                                    .relative()
+                                                    .w(px(self.git_drawer_width))
+                                                    .h_full()
+                                                    .flex_shrink_0()
+                                                    .border_l_1()
+                                                    .border_color(Color::Divider.get(cx))
+                                                    .bg(Color::Surface.get(cx))
+                                                    .child(drawer)
+                                                    .child(
+                                                        resize_handle(
+                                                            "git-drawer-resize",
+                                                            gpui::Axis::Horizontal,
+                                                        )
+                                                        .inside(HandleEdge::Leading)
+                                                        .on_drag(
+                                                            DragGitDrawer,
+                                                            move |_, _, _, cx| {
+                                                                let _ = git_view.update(
+                                                                    cx,
+                                                                    |this, _| {
+                                                                        this.git_drawer_drag = None;
+                                                                    },
+                                                                );
+                                                                cx.new(|_| DragGitDrawer)
+                                                            },
+                                                        ),
+                                                    ),
+                                            )
+                                        }),
+                                )
                                 .into_any_element()
                         })
                     }),

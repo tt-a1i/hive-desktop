@@ -7,6 +7,7 @@ use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
+        menu::{DropdownMenu, PopupMenuItem},
         *,
     },
     prelude::FluentBuilder,
@@ -135,10 +136,14 @@ impl HiveApp {
             })
             .unwrap_or(git_hint);
         let member_badge = self
-            .session
-            .as_ref()
-            .and_then(|s| s.agent_id.as_deref())
-            .map(|id| self.agent_name(id));
+            .has_active_team_context()
+            .then(|| {
+                self.session
+                    .as_ref()
+                    .and_then(|s| s.agent_id.as_deref())
+                    .map(|id| self.agent_name(id))
+            })
+            .flatten();
 
         let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
         h_flex()
@@ -157,49 +162,162 @@ impl HiveApp {
                     .items_center()
                     .gap_2()
                     .child({
-                        let folder_label = active_project
-                            .as_ref()
-                            .map(|ws| ws.name.clone())
-                            .unwrap_or_else(|| tr("打开项目文件夹").to_owned());
-                        let folder_tooltip = active_project
-                            .as_ref()
-                            .map(|ws| format!("{}\n{}", ws.path, tr("点击切换项目文件夹")))
-                            .unwrap_or_else(|| tr("打开项目文件夹").to_owned());
-                        Button::new("composer-project-folder")
-                            .custom(crate::palette::quiet_icon_variant(cx))
-                            .compact()
-                            .xsmall()
-                            .h(px(22.))
-                            .px_1p5()
-                            .rounded_md()
-                            .min_w_0()
-                            .tooltip(folder_tooltip)
-                            .accessibility_label(tr("打开项目文件夹"))
-                            .disabled(!self.connected)
-                            .child(
-                                h_flex()
-                                    .min_w_0()
-                                    .items_center()
-                                    .gap_1p5()
-                                    .child(
-                                        Icon::new(Glyph::Folder)
-                                            .size(px(12.5))
-                                            .text_color(Color::Muted.get(cx))
-                                            .flex_shrink_0(),
+                        if let Some(ws) = active_project.as_ref() {
+                            let folder_label = if execution.is_some() {
+                                format!("{} · {}", tr("独立工作树"), ws.name)
+                            } else {
+                                format!("{} · {}", tr("当前检出"), ws.name)
+                            };
+                            let folder_tooltip =
+                                format!("{}\n{}", ws.path, tr("点击切换工作区或新建工作树"));
+                            let ws_id = ws.id.clone();
+                            let workspaces: Vec<(String, String)> = self
+                                .workspaces
+                                .iter()
+                                .map(|item| (item.id.clone(), item.name.clone()))
+                                .collect();
+                            let weak = cx.entity().downgrade();
+                            Button::new("composer-project-folder")
+                                .custom(crate::palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(22.))
+                                .px_1p5()
+                                .rounded_md()
+                                .min_w_0()
+                                .tooltip(folder_tooltip)
+                                .accessibility_label(tr("打开项目文件夹"))
+                                .disabled(!self.connected || self.closing)
+                                .child(
+                                    h_flex()
+                                        .min_w_0()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(Glyph::Folder)
+                                                .size(px(12.5))
+                                                .text_color(Color::Muted.get(cx))
+                                                .flex_shrink_0(),
+                                        )
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .max_w(px(210.))
+                                                .truncate()
+                                                .text_size(px(12.))
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(folder_label),
+                                        )
+                                        .child(
+                                            Icon::new(Glyph::ChevronDown)
+                                                .size(px(10.5))
+                                                .text_color(Color::Muted.get(cx))
+                                                .flex_shrink_0(),
+                                        ),
+                                )
+                                .dropdown_menu(move |mut menu, _, _| {
+                                    let weak_new = weak.clone();
+                                    let new_ws = ws_id.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(tr("新建独立工作树会话…")).on_click(
+                                            move |_, window, cx| {
+                                                let _ = weak_new.update(cx, |this, cx| {
+                                                    this.open_session_execution(
+                                                        Some(new_ws.clone()),
+                                                        false,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            },
+                                        ),
+                                    );
+                                    let weak_recover = weak.clone();
+                                    let recover_ws = ws_id.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(tr("查看待恢复工作树…")).on_click(
+                                            move |_, window, cx| {
+                                                let _ = weak_recover.update(cx, |this, cx| {
+                                                    this.open_session_execution(
+                                                        Some(recover_ws.clone()),
+                                                        true,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            },
+                                        ),
+                                    );
+                                    if workspaces.len() > 1 {
+                                        menu = menu.separator();
+                                        for (id, name) in &workspaces {
+                                            let weak_ws = weak.clone();
+                                            let target = id.clone();
+                                            let selected = *id == ws_id;
+                                            menu = menu.item(
+                                                PopupMenuItem::new(name.clone())
+                                                    .checked(selected)
+                                                    .on_click(move |_, _, cx| {
+                                                        let _ = weak_ws.update(cx, |this, cx| {
+                                                            this.select_workspace(
+                                                                target.clone(),
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }),
+                                            );
+                                        }
+                                    }
+                                    let weak_browse = weak.clone();
+                                    menu.separator().item(
+                                        PopupMenuItem::new(tr("打开其他项目文件夹…")).on_click(
+                                            move |_, window, cx| {
+                                                let _ = weak_browse.update(cx, |this, cx| {
+                                                    this.choose_workspace_folder(window, cx);
+                                                });
+                                            },
+                                        ),
                                     )
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .max_w(px(220.))
-                                            .truncate()
-                                            .text_size(px(12.))
-                                            .text_color(Color::Muted.get(cx))
-                                            .child(folder_label),
-                                    ),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.choose_workspace_folder(window, cx);
-                            }))
+                                })
+                                .into_any_element()
+                        } else {
+                            Button::new("composer-project-folder")
+                                .custom(crate::palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(22.))
+                                .px_1p5()
+                                .rounded_md()
+                                .min_w_0()
+                                .tooltip(tr("打开项目文件夹"))
+                                .accessibility_label(tr("打开项目文件夹"))
+                                .disabled(!self.connected || self.closing)
+                                .child(
+                                    h_flex()
+                                        .min_w_0()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(Glyph::Folder)
+                                                .size(px(12.5))
+                                                .text_color(Color::Muted.get(cx))
+                                                .flex_shrink_0(),
+                                        )
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .max_w(px(220.))
+                                                .truncate()
+                                                .text_size(px(12.))
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr("打开项目文件夹")),
+                                        ),
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.choose_workspace_folder(window, cx);
+                                }))
+                                .into_any_element()
+                        }
                     })
                     .when_some(member_badge, |row, member| {
                         row.child(
@@ -231,7 +349,7 @@ impl HiveApp {
                 h_flex()
                     .flex_shrink_0()
                     .items_center()
-                    .gap_2p5()
+                    .gap_2()
                     .when(active_project.is_some(), |row| {
                         row.child(
                             Button::new("composer-git-branch")
@@ -242,6 +360,7 @@ impl HiveApp {
                                 .px_1p5()
                                 .rounded_md()
                                 .min_w_0()
+                                .selected(self.git_drawer_open)
                                 .icon(Glyph::GitBranch)
                                 .child(
                                     div()
@@ -256,9 +375,12 @@ impl HiveApp {
                                 .accessibility_label(tr("查看项目 Git 状态与差异"))
                                 .disabled(!self.connected || self.closing)
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_git_workspace(window, cx)
+                                    this.toggle_git_workspace(window, cx)
                                 })),
                         )
+                    })
+                    .when_some(self.render_composer_mode_pills(running, cx), |row, pills| {
+                        row.child(pills)
                     })
                     .when(self.session.is_some(), |row| {
                         row.when(!self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) && !self.current_history_access().is_some_and(|a| a.handoff_unconsumed()), |row| row.child(self.usage_button(window, running, cx)))
@@ -336,11 +458,85 @@ impl HiveApp {
                                     .line_height(px(34.))
                                     .whitespace_normal()
                                     .child(if let Some(ws) = active_project.as_ref() {
+                                        let workspaces: Vec<(String, String)> = self
+                                            .workspaces
+                                            .iter()
+                                            .map(|item| (item.id.clone(), item.name.clone()))
+                                            .collect();
+                                        let active_id = ws.id.clone();
+                                        let weak = cx.entity().downgrade();
+                                        let project_switcher = Button::new("hero-project-switcher")
+                                            .custom(crate::palette::quiet_icon_variant(cx))
+                                            .compact()
+                                            .px_2()
+                                            .py_0p5()
+                                            .rounded_lg()
+                                            .disabled(!self.connected || self.closing)
+                                            .accessibility_label(ws.name.clone())
+                                            .tooltip(format!(
+                                                "{}\n{}",
+                                                ws.path,
+                                                tr("点击切换工作区")
+                                            ))
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(hero_px))
+                                                            .line_height(px(34.))
+                                                            .font_weight(FontWeight::SEMIBOLD)
+                                                            .text_color(Color::Text.get(cx))
+                                                            .child(ws.name.clone()),
+                                                    )
+                                                    .child(
+                                                        Icon::new(Glyph::ChevronDown)
+                                                            .size(px(14.))
+                                                            .text_color(Color::Muted.get(cx)),
+                                                    ),
+                                            )
+                                            .dropdown_menu(move |mut menu, _, _| {
+                                                for (id, name) in &workspaces {
+                                                    let weak_ws = weak.clone();
+                                                    let target = id.clone();
+                                                    let selected = *id == active_id;
+                                                    menu = menu.item(
+                                                        PopupMenuItem::new(name.clone())
+                                                            .checked(selected)
+                                                            .on_click(move |_, _, cx| {
+                                                                let _ = weak_ws.update(
+                                                                    cx,
+                                                                    |this, cx| {
+                                                                        this.select_workspace(
+                                                                            target.clone(),
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                );
+                                                            }),
+                                                    );
+                                                }
+                                                let weak_browse = weak.clone();
+                                                menu.separator().item(
+                                                    PopupMenuItem::new(tr("打开其他项目文件夹…"))
+                                                        .on_click(move |_, window, cx| {
+                                                            let _ = weak_browse.update(
+                                                                cx,
+                                                                |this, cx| {
+                                                                    this.choose_workspace_folder(
+                                                                        window, cx,
+                                                                    );
+                                                                },
+                                                            );
+                                                        }),
+                                                )
+                                            });
                                         if english() {
                                             h_flex()
                                                 .flex_wrap()
                                                 .justify_center()
-                                                .items_baseline()
+                                                .items_center()
                                                 .gap_1p5()
                                                 .child(
                                                     div()
@@ -350,13 +546,8 @@ impl HiveApp {
                                                 )
                                                 .child(
                                                     h_flex()
-                                                        .items_baseline()
-                                                        .child(
-                                                            div()
-                                                                .font_weight(FontWeight::SEMIBOLD)
-                                                                .text_color(Color::Text.get(cx))
-                                                                .child(ws.name.clone()),
-                                                        )
+                                                        .items_center()
+                                                        .child(project_switcher)
                                                         .child(
                                                             div()
                                                                 .font_weight(FontWeight::NORMAL)
@@ -369,7 +560,7 @@ impl HiveApp {
                                             h_flex()
                                                 .flex_wrap()
                                                 .justify_center()
-                                                .items_baseline()
+                                                .items_center()
                                                 .gap_1p5()
                                                 .child(
                                                     div()
@@ -377,12 +568,7 @@ impl HiveApp {
                                                         .text_color(Color::Text.get(cx))
                                                         .child("在"),
                                                 )
-                                                .child(
-                                                    div()
-                                                        .font_weight(FontWeight::SEMIBOLD)
-                                                        .text_color(Color::Text.get(cx))
-                                                        .child(ws.name.clone()),
-                                                )
+                                                .child(project_switcher)
                                                 .child(
                                                     div()
                                                         .font_weight(FontWeight::NORMAL)
@@ -413,7 +599,7 @@ impl HiveApp {
                                         div()
                                             .text_size(px(13.))
                                             .text_color(Color::Muted.get(cx))
-                                            .child(tr("切换项目文件夹")),
+                                            .child(tr("或打开其他项目文件夹")),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.choose_workspace_folder(window, cx);

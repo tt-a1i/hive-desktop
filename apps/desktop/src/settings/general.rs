@@ -142,36 +142,37 @@ impl HiveApp {
                             cx,
                         )
                         .child(
-                            v_flex()
+                            h_flex()
                                 .w_full()
                                 .min_w_0()
-                                .gap_2p5()
+                                .items_center()
+                                .justify_between()
+                                .gap_4()
+                                .flex_wrap()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w(px(200.))
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .child(tr("默认打开工具")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr("点击顶栏“打开”按钮时默认调用的系统或编辑器工具。")),
+                                        ),
+                                )
                                 .child(
                                     h_flex()
-                                        .w_full()
-                                        .min_w_0()
+                                        .flex_shrink_0()
                                         .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .child(
-                                            v_flex()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(Color::Text.get(cx))
-                                                        .child(tr("默认打开工具")),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(Color::Muted.get(cx))
-                                                        .child(tr("点击顶栏“打开”按钮时默认调用的系统或编辑器工具。")),
-                                                ),
-                                        )
+                                        .gap_1p5()
                                         .when_some(
                                             reset_control(
                                                 "reset-general-open-target",
@@ -180,37 +181,38 @@ impl HiveApp {
                                                 |s, d| s.default_open_target = d.default_open_target,
                                             ),
                                             |row, btn| row.child(btn),
-                                        ),
-                                )
-                                .child(
-                                    Reveal::new(
-                                        "general-open-target-bar-reveal",
-                                        &self.general_scroll,
-                                        super::settings_segmented_bar(cx)
-                                            .flex_wrap()
-                                            .children(OpenTarget::for_platform().iter().copied().map(
-                                                |target| {
-                                                    let active =
-                                                        saved.default_open_target == target;
-                                                    Button::new(SharedString::from(format!(
-                                                        "general-open-target-{}",
-                                                        target.wire()
-                                                    )))
-                                                    .when(active, |b| b.outline())
-                                                    .when(!active, |b| b.ghost())
-                                                    .small()
-                                                    .h(px(26.))
-                                                    .px_3()
-                                                    .rounded_md()
-                                                    .label(target.label())
-                                                    .on_click(move |_, _, cx| {
-                                                        let mut next = general::current(cx);
-                                                        next.default_open_target = target;
-                                                        general::set(next, cx);
-                                                    })
-                                                },
-                                            )),
-                                    ),
+                                        )
+                                        .child(Reveal::new(
+                                            "general-open-target-bar-reveal",
+                                            &self.general_scroll,
+                                            super::settings_segmented_bar(cx)
+                                                .flex_wrap()
+                                                .children(
+                                                    OpenTarget::for_platform().iter().copied().map(
+                                                        |target| {
+                                                            let active =
+                                                                saved.default_open_target == target;
+                                                            Button::new(SharedString::from(format!(
+                                                                "general-open-target-{}",
+                                                                target.wire()
+                                                            )))
+                                                            .when(active, |b| b.outline())
+                                                            .when(!active, |b| b.ghost())
+                                                            .small()
+                                                            .h(px(26.))
+                                                            .px_2p5()
+                                                            .rounded_md()
+                                                            .label(target.label())
+                                                            .on_click(move |_, _, cx| {
+                                                                let mut next =
+                                                                    general::current(cx);
+                                                                next.default_open_target = target;
+                                                                general::set(next, cx);
+                                                            })
+                                                        },
+                                                    ),
+                                                ),
+                                        )),
                                 ),
                         )
                     })
@@ -224,36 +226,37 @@ impl HiveApp {
                             cx,
                         )
                         .child(
-                            v_flex()
+                            h_flex()
                                 .w_full()
                                 .min_w_0()
-                                .gap_2p5()
+                                .items_center()
+                                .justify_between()
+                                .gap_4()
+                                .flex_wrap()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w(px(200.))
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .child(tr("侧边栏项目排序")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr("控制左侧边栏中各工作区项目分组的排列顺序。")),
+                                        ),
+                                )
                                 .child(
                                     h_flex()
-                                        .w_full()
-                                        .min_w_0()
+                                        .flex_shrink_0()
                                         .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .child(
-                                            v_flex()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(Color::Text.get(cx))
-                                                        .child(tr("侧边栏项目排序")),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(Color::Muted.get(cx))
-                                                        .child(tr("控制左侧边栏中各工作区项目分组的排列顺序。")),
-                                                ),
-                                        )
+                                        .gap_1p5()
                                         .when_some(
                                             reset_control(
                                                 "reset-general-project-sort",
@@ -262,39 +265,37 @@ impl HiveApp {
                                                 |s, d| s.project_sort_order = d.project_sort_order,
                                             ),
                                             |row, btn| row.child(btn),
-                                        ),
-                                )
-                                .child(
-                                    Reveal::new(
-                                        "general-project-sort-bar-reveal",
-                                        &self.general_scroll,
-                                        super::settings_segmented_bar(cx).flex_wrap().children(
-                                            [
-                                                (ProjectSortOrder::AddedOrder, "added"),
-                                                (ProjectSortOrder::RecentActivity, "recent"),
-                                                (ProjectSortOrder::Alphabetical, "alpha"),
-                                            ]
-                                            .into_iter()
-                                            .map(|(order, key)| {
-                                                let active = saved.project_sort_order == order;
-                                                Button::new(SharedString::from(format!(
-                                                    "general-project-sort-{key}"
-                                                )))
-                                                .when(active, |b| b.outline())
-                                                .when(!active, |b| b.ghost())
-                                                .small()
-                                                .h(px(26.))
-                                                .px_3()
-                                                .rounded_md()
-                                                .label(project_sort_label(order))
-                                                .on_click(move |_, _, cx| {
-                                                    let mut next = general::current(cx);
-                                                    next.project_sort_order = order;
-                                                    general::set(next, cx);
-                                                })
-                                            }),
-                                        ),
-                                    ),
+                                        )
+                                        .child(Reveal::new(
+                                            "general-project-sort-bar-reveal",
+                                            &self.general_scroll,
+                                            super::settings_segmented_bar(cx).children(
+                                                [
+                                                    (ProjectSortOrder::AddedOrder, "added"),
+                                                    (ProjectSortOrder::RecentActivity, "recent"),
+                                                    (ProjectSortOrder::Alphabetical, "alpha"),
+                                                ]
+                                                .into_iter()
+                                                .map(|(order, key)| {
+                                                    let active = saved.project_sort_order == order;
+                                                    Button::new(SharedString::from(format!(
+                                                        "general-project-sort-{key}"
+                                                    )))
+                                                    .when(active, |b| b.outline())
+                                                    .when(!active, |b| b.ghost())
+                                                    .small()
+                                                    .h(px(26.))
+                                                    .px_2p5()
+                                                    .rounded_md()
+                                                    .label(project_sort_label(order))
+                                                    .on_click(move |_, _, cx| {
+                                                        let mut next = general::current(cx);
+                                                        next.project_sort_order = order;
+                                                        general::set(next, cx);
+                                                    })
+                                                }),
+                                            ),
+                                        )),
                                 ),
                         )
                     })
@@ -375,36 +376,37 @@ impl HiveApp {
                             cx,
                         )
                         .child(
-                            v_flex()
+                            h_flex()
                                 .w_full()
                                 .min_w_0()
-                                .gap_2p5()
+                                .items_center()
+                                .justify_between()
+                                .gap_4()
+                                .flex_wrap()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w(px(200.))
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .child(tr("会话时间格式")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr("控制侧边栏会话列表右侧展示更新时间的方式。")),
+                                        ),
+                                )
                                 .child(
                                     h_flex()
-                                        .w_full()
-                                        .min_w_0()
+                                        .flex_shrink_0()
                                         .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .child(
-                                            v_flex()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(Color::Text.get(cx))
-                                                        .child(tr("会话时间格式")),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(Color::Muted.get(cx))
-                                                        .child(tr("控制侧边栏会话列表右侧展示更新时间的方式。")),
-                                                ),
-                                        )
+                                        .gap_1p5()
                                         .when_some(
                                             reset_control(
                                                 "reset-general-time-format",
@@ -415,39 +417,38 @@ impl HiveApp {
                                                 },
                                             ),
                                             |row, btn| row.child(btn),
-                                        ),
-                                )
-                                .child(
-                                    Reveal::new(
-                                        "general-time-format-bar-reveal",
-                                        &self.general_scroll,
-                                        super::settings_segmented_bar(cx).flex_wrap().children(
-                                            [
-                                                (SessionTimeFormat::Relative, "relative"),
-                                                (SessionTimeFormat::Clock24h, "24h"),
-                                                (SessionTimeFormat::Clock12h, "12h"),
-                                            ]
-                                            .into_iter()
-                                            .map(|(format, key)| {
-                                                let active = saved.session_time_format == format;
-                                                Button::new(SharedString::from(format!(
-                                                    "general-time-format-{key}"
-                                                )))
-                                                .when(active, |b| b.outline())
-                                                .when(!active, |b| b.ghost())
-                                                .small()
-                                                .h(px(26.))
-                                                .px_3()
-                                                .rounded_md()
-                                                .label(time_format_label(format))
-                                                .on_click(move |_, _, cx| {
-                                                    let mut next = general::current(cx);
-                                                    next.session_time_format = format;
-                                                    general::set(next, cx);
-                                                })
-                                            }),
-                                        ),
-                                    ),
+                                        )
+                                        .child(Reveal::new(
+                                            "general-time-format-bar-reveal",
+                                            &self.general_scroll,
+                                            super::settings_segmented_bar(cx).children(
+                                                [
+                                                    (SessionTimeFormat::Relative, "relative"),
+                                                    (SessionTimeFormat::Clock24h, "24h"),
+                                                    (SessionTimeFormat::Clock12h, "12h"),
+                                                ]
+                                                .into_iter()
+                                                .map(|(format, key)| {
+                                                    let active =
+                                                        saved.session_time_format == format;
+                                                    Button::new(SharedString::from(format!(
+                                                        "general-time-format-{key}"
+                                                    )))
+                                                    .when(active, |b| b.outline())
+                                                    .when(!active, |b| b.ghost())
+                                                    .small()
+                                                    .h(px(26.))
+                                                    .px_2p5()
+                                                    .rounded_md()
+                                                    .label(time_format_label(format))
+                                                    .on_click(move |_, _, cx| {
+                                                        let mut next = general::current(cx);
+                                                        next.session_time_format = format;
+                                                        general::set(next, cx);
+                                                    })
+                                                }),
+                                            ),
+                                        )),
                                 ),
                         )
                     }),
@@ -464,36 +465,37 @@ impl HiveApp {
                             cx,
                         )
                         .child(
-                            v_flex()
+                            h_flex()
                                 .w_full()
                                 .min_w_0()
-                                .gap_2p5()
+                                .items_center()
+                                .justify_between()
+                                .gap_4()
+                                .flex_wrap()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w(px(200.))
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .child(tr("忙碌时发送行为")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr("选择 Agent 仍在处理上一轮输出时发送新消息的处理策略；不支持实时插话的运行时会自动按顺序排队。")),
+                                        ),
+                                )
                                 .child(
                                     h_flex()
-                                        .w_full()
-                                        .min_w_0()
+                                        .flex_shrink_0()
                                         .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .child(
-                                            v_flex()
-                                                .flex_1()
-                                                .min_w_0()
-                                                .gap_0p5()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .font_weight(FontWeight::MEDIUM)
-                                                        .text_color(Color::Text.get(cx))
-                                                        .child(tr("忙碌时发送行为")),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(Color::Muted.get(cx))
-                                                        .child(tr("选择 Agent 仍在处理上一轮输出时发送新消息的处理策略；不支持实时插话的运行时会自动按顺序排队。")),
-                                                ),
-                                        )
+                                        .gap_1p5()
                                         .when_some(
                                             reset_control(
                                                 "reset-general-busy-send",
@@ -501,39 +503,37 @@ impl HiveApp {
                                                 |s, d| s.busy_send_mode = d.busy_send_mode,
                                             ),
                                             |row, btn| row.child(btn),
-                                        ),
-                                )
-                                .child(
-                                    Reveal::new(
-                                        "general-busy-send-bar-reveal",
-                                        &self.general_scroll,
-                                        super::settings_segmented_bar(cx).flex_wrap().children(
-                                            [
-                                                (BusySendMode::Queue, "queue"),
-                                                (BusySendMode::SteerWhenSupported, "steer"),
-                                                (BusySendMode::BlockUntilIdle, "block"),
-                                            ]
-                                            .into_iter()
-                                            .map(|(mode, key)| {
-                                                let active = saved.busy_send_mode == mode;
-                                                Button::new(SharedString::from(format!(
-                                                    "general-busy-send-{key}"
-                                                )))
-                                                .when(active, |b| b.outline())
-                                                .when(!active, |b| b.ghost())
-                                                .small()
-                                                .h(px(26.))
-                                                .px_3()
-                                                .rounded_md()
-                                                .label(busy_send_label(mode))
-                                                .on_click(move |_, _, cx| {
-                                                    let mut next = general::current(cx);
-                                                    next.busy_send_mode = mode;
-                                                    general::set(next, cx);
-                                                })
-                                            }),
-                                        ),
-                                    ),
+                                        )
+                                        .child(Reveal::new(
+                                            "general-busy-send-bar-reveal",
+                                            &self.general_scroll,
+                                            super::settings_segmented_bar(cx).flex_wrap().children(
+                                                [
+                                                    (BusySendMode::Queue, "queue"),
+                                                    (BusySendMode::SteerWhenSupported, "steer"),
+                                                    (BusySendMode::BlockUntilIdle, "block"),
+                                                ]
+                                                .into_iter()
+                                                .map(|(mode, key)| {
+                                                    let active = saved.busy_send_mode == mode;
+                                                    Button::new(SharedString::from(format!(
+                                                        "general-busy-send-{key}"
+                                                    )))
+                                                    .when(active, |b| b.outline())
+                                                    .when(!active, |b| b.ghost())
+                                                    .small()
+                                                    .h(px(26.))
+                                                    .px_2p5()
+                                                    .rounded_md()
+                                                    .label(busy_send_label(mode))
+                                                    .on_click(move |_, _, cx| {
+                                                        let mut next = general::current(cx);
+                                                        next.busy_send_mode = mode;
+                                                        general::set(next, cx);
+                                                    })
+                                                }),
+                                            ),
+                                        )),
                                 ),
                         )
                     })

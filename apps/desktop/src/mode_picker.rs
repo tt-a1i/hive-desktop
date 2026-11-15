@@ -1,7 +1,9 @@
 use crate::{app::HiveApp, language::tr, palette::Color};
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
+        menu::{DropdownMenu, PopupMenuItem},
         *,
     },
     prelude::FluentBuilder,
@@ -190,6 +192,155 @@ impl HiveApp {
             });
         })
         .detach();
+    }
+
+    fn render_composer_mode_pill(
+        &self,
+        permission: bool,
+        disabled: bool,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let picker = if permission {
+            &self.mode_picker.permission
+        } else {
+            &self.mode_picker.mode
+        };
+        let state = picker.state.as_ref()?;
+        if state.options.is_empty() {
+            return None;
+        }
+        let current_id = state.selected.clone().or_else(|| state.applied.clone());
+        let label = current_id
+            .as_deref()
+            .map(|id| {
+                state
+                    .options
+                    .iter()
+                    .find(|o| o.id == id)
+                    .map(|o| mode_label(&state.backend, o))
+                    .unwrap_or_else(|| id.to_owned())
+            })
+            .unwrap_or_else(|| tr(if permission { "权限" } else { "模式" }).into());
+        let heading = if permission {
+            tr("Codex 访问权限")
+        } else {
+            tr("会话模式")
+        };
+        let options: Vec<(String, String, bool)> = state
+            .options
+            .iter()
+            .map(|option| {
+                (
+                    option.id.clone(),
+                    mode_label(&state.backend, option),
+                    current_id.as_deref() == Some(option.id.as_str()),
+                )
+            })
+            .collect();
+        let weak = cx.entity().downgrade();
+        let id = if permission {
+            "composer-permission-menu"
+        } else {
+            "composer-mode-menu"
+        };
+        Some(
+            Button::new(id)
+                .custom(crate::palette::quiet_icon_variant(cx))
+                .compact()
+                .xsmall()
+                .h(px(22.))
+                .px_1p5()
+                .rounded_md()
+                .min_w_0()
+                .disabled(disabled || picker.loading)
+                .tooltip(heading)
+                .accessibility_label(heading)
+                .child(
+                    h_flex()
+                        .min_w_0()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            Icon::new(if permission {
+                                Glyph::Lock
+                            } else {
+                                Glyph::Sparkles
+                            })
+                            .size(px(11.5))
+                            .text_color(Color::Muted.get(cx))
+                            .flex_shrink_0(),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .max_w(px(120.))
+                                .truncate()
+                                .text_size(px(12.))
+                                .text_color(Color::Muted.get(cx))
+                                .child(label),
+                        )
+                        .child(
+                            Icon::new(Glyph::ChevronDown)
+                                .size(px(10.5))
+                                .text_color(Color::Muted.get(cx))
+                                .flex_shrink_0(),
+                        ),
+                )
+                .dropdown_menu(move |mut menu, _, _| {
+                    for (option_id, option_label, selected) in &options {
+                        let weak_item = weak.clone();
+                        let next_id = option_id.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(option_label.clone())
+                                .checked(*selected)
+                                .on_click(move |_, _, cx| {
+                                    let _ = weak_item.update(cx, |this, cx| {
+                                        if permission {
+                                            this.load_permission_mode(Some(next_id.clone()), cx);
+                                        } else {
+                                            this.load_mode(Some(next_id.clone()), cx);
+                                        }
+                                    });
+                                }),
+                        );
+                    }
+                    menu
+                })
+                .into_any_element(),
+        )
+    }
+
+    pub(crate) fn render_composer_mode_pills(
+        &self,
+        running: bool,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let session = self.session.as_ref()?;
+        let blocked = self.pending.get(&session.id).copied().unwrap_or(0) > 0
+            || self.interaction_count(&session.id) > 0;
+        let disabled = running
+            || self.loading
+            || !self.conversation_ready
+            || !self.connected
+            || self.closing
+            || self.conversation_is_read_only()
+            || blocked;
+        let mode_pill = self.render_composer_mode_pill(false, disabled, cx);
+        let permission_pill = matches!(session.backend, crate::protocol::Backend::Codex)
+            .then(|| self.render_composer_mode_pill(true, disabled, cx))
+            .flatten();
+        if mode_pill.is_none() && permission_pill.is_none() {
+            return None;
+        }
+        Some(
+            h_flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap_1()
+                .children(mode_pill)
+                .children(permission_pill)
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn render_mode_settings(&self, running: bool, cx: &Context<Self>) -> AnyElement {

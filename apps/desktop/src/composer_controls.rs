@@ -61,7 +61,6 @@ impl HiveApp {
             .gap_2()
             .items_center()
             .pt_1()
-            .when_some(self.session.as_ref().and_then(|s| s.profile.as_ref()), |row, profile| row.child(div().text_xs().child(self.profile_label(profile))))
             .child(
                 h_flex()
                     .flex_shrink_0()
@@ -96,7 +95,7 @@ impl HiveApp {
                             .h(px(28.))
                             .w(px(28.))
                             .rounded_lg()
-                            .icon(Glyph::FileText)
+                            .icon(Glyph::AtSign)
                             .tooltip(crate::keybindings::hint(
                                 crate::keybindings::Target::SearchProjectFiles,
                                 "引用项目文件",
@@ -122,9 +121,8 @@ impl HiveApp {
                     .when(self.session.is_some(), |row| {
                         row.when(!self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Acp)) && !self.current_history_access().is_some_and(|a| a.handoff_unconsumed() && (a.handoff_passive() || !self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Pi)))), |row| row.child(
                             div()
-                                .flex_1()
                                 .min_w_0()
-                                .max_w(px(300.))
+                                .max_w(px(260.))
                                 .child(self.model_picker(window, running || self.conversation_is_read_only(), cx)),
                         ))
                         .when(native_commands && !compact, |row| {

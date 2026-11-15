@@ -52,8 +52,7 @@ impl HiveApp {
     }
 
     pub(crate) fn viewing_conversation(&self) -> bool {
-        !(self.terminal.visible
-            || self.member_panel
+        !(self.member_panel
             || self.memory.visible
             || self.roles.visible
             || self.settings_panel
@@ -72,7 +71,6 @@ impl HiveApp {
             .icon(Glyph::ArrowLeft)
             .label(tr("返回会话"))
             .on_click(cx.listener(|this, _, window, cx| {
-                this.hide_terminal(cx);
                 this.close_memory();
                 this.close_settings();
                 this.close_roles();
@@ -134,7 +132,7 @@ impl HiveApp {
             )
             .child(
                 div()
-                    .flex_1()
+                    .when(!in_sidebar, |view| view.flex_1())
                     .min_w_0()
                     .px_0p5()
                     .truncate()
@@ -155,6 +153,47 @@ impl HiveApp {
                             .unwrap_or_else(|| tr("桌面工作台").into())
                     }),
             )
+            .when(in_sidebar, |view| {
+                view.child(
+                    h_flex()
+                        .flex_1()
+                        .items_center()
+                        .gap_0p5()
+                        .pl_1()
+                        .child(
+                            Button::new("nav-history-back")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(24.))
+                                .w(px(24.))
+                                .rounded_md()
+                                .icon(Glyph::ArrowLeft)
+                                .tooltip(tr("后退"))
+                                .accessibility_label(tr("后退"))
+                                .disabled(self.nav_back.is_empty())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.navigate_history_back(cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("nav-history-forward")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(24.))
+                                .w(px(24.))
+                                .rounded_md()
+                                .icon(Glyph::ArrowRight)
+                                .tooltip(tr("前进"))
+                                .accessibility_label(tr("前进"))
+                                .disabled(self.nav_forward.is_empty())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.navigate_history_forward(cx);
+                                })),
+                        ),
+                )
+            })
             .when(!self.connected && self.runtime.is_some(), |view| {
                 view.child(
                     h_flex()
@@ -291,7 +330,6 @@ impl HiveApp {
                         if window.viewport_size().width < px(820.) {
                             this.sidebar_open = false;
                         }
-                        this.hide_terminal(cx);
                         if let Some(project) = &target {
                             this.new_session_in_project(project.clone(), backend, cx);
                         } else {
@@ -307,7 +345,6 @@ impl HiveApp {
                 menu = menu.item(PopupMenuItem::new(format!("{} · {} · r{}", profile.label, backend, profile.current_revision)).on_click(move |_, window, cx| {
                     let _ = weak.update(cx, |this, cx| {
                         if window.viewport_size().width < px(820.) { this.sidebar_open = false; }
-                        this.hide_terminal(cx);
                         if let Some(project) = &target { if this.workspace.as_ref() != Some(project) { this.select_workspace(project.clone(), cx); } }
                         this.new_session_with_profile(backend, Some(reference.clone()), cx);
                     });
@@ -1016,78 +1053,29 @@ impl HiveApp {
                 ))
             })
             .child(
-                v_flex()
-                    .flex_shrink_0()
-                    .w_full()
-                    .gap_1()
-                    .py_1()
-                    .border_t_1()
-                    .border_color(Color::Divider.get(cx))
-                    .child(
-                        Button::new("toggle-members")
-                            .custom(palette::sidebar_item_variant(self.member_panel, cx))
-                            .compact()
-                            .small()
-                            .h(px(30.))
-                            .w_full()
-                            .justify_start()
-                            .rounded_md()
-                            .icon(Glyph::Bot)
-                            .label(tr("团队成员"))
-                            .tooltip(tr("团队成员"))
-                            .accessibility_label(tr("团队成员"))
-                            .selected(self.member_panel)
-                            .disabled(!terminal_enabled)
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.show_team(window, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("open-collaboration")
-                            .custom(palette::sidebar_item_variant(
-                                self.collaboration.visible,
-                                cx,
-                            ))
-                            .compact()
-                            .small()
-                            .h(px(30.))
-                            .w_full()
-                            .justify_start()
-                            .rounded_md()
-                            .icon(Glyph::Network)
-                            .label(tr("协作概览"))
-                            .tooltip(tr("协作概览"))
-                            .accessibility_label(tr("协作概览"))
-                            .selected(self.collaboration.visible)
-                            .disabled(!terminal_enabled)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.hide_terminal(cx);
-                                this.open_collaboration(cx);
-                                if window.viewport_size().width < px(820.) {
-                                    this.sidebar_open = false;
-                                }
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
                 h_flex()
                     .flex_shrink_0()
                     .w_full()
-                    .h(px(32.))
+                    .h(px(34.))
                     .items_center()
+                    .border_t_1()
+                    .border_color(Color::Divider.get(cx))
                     .px_0p5()
-                    .gap_1()
+                    .gap_0p5()
                     .child(
                         Button::new("open-settings")
                             .custom(palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
-                            .h(px(28.))
-                            .w(px(28.))
+                            .h(px(26.))
+                            .w(px(26.))
                             .rounded_md()
                             .icon(Glyph::Settings)
-                            .tooltip(crate::keybindings::hint(crate::keybindings::Target::Preferences, "设置", cx))
+                            .tooltip(crate::keybindings::hint(
+                                crate::keybindings::Target::Preferences,
+                                "设置",
+                                cx,
+                            ))
                             .accessibility_label(tr("设置"))
                             .selected(self.settings_panel || self.roles.visible)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -1103,8 +1091,8 @@ impl HiveApp {
                             .custom(palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
-                            .h(px(28.))
-                            .w(px(28.))
+                            .h(px(26.))
+                            .w(px(26.))
                             .rounded_md()
                             .icon(Glyph::SquareTerminal)
                             .tooltip(crate::keybindings::hint(
@@ -1125,20 +1113,24 @@ impl HiveApp {
                             })),
                     )
                     .child(
-                        Button::new("sidebar-workflows")
+                        Button::new("sidebar-git-drawer")
                             .custom(palette::quiet_icon_variant(cx))
                             .compact()
                             .xsmall()
-                            .h(px(28.))
-                            .w(px(28.))
+                            .h(px(26.))
+                            .w(px(26.))
                             .rounded_md()
-                            .icon(Glyph::Workflow)
-                            .tooltip(tr("工作流"))
-                            .accessibility_label(tr("工作流"))
-                            .selected(self.workflows.visible)
-                            .disabled(!terminal_enabled)
+                            .icon(Glyph::GitBranch)
+                            .tooltip(crate::keybindings::hint(
+                                crate::keybindings::Target::OpenGitWorkspace,
+                                "Git 状态与差异",
+                                cx,
+                            ))
+                            .accessibility_label(tr("Git 状态与差异"))
+                            .selected(self.git_drawer_open)
+                            .disabled(!terminal_enabled || self.workspace.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_workflows(window, cx);
+                                this.toggle_git_workspace(window, cx);
                             })),
                     )
                     .child(div().flex_1())
@@ -1149,12 +1141,67 @@ impl HiveApp {
                                 .py(px(1.))
                                 .rounded_full()
                                 .bg(Color::AccentSoft.get(cx))
-                                .text_size(px(11.))
+                                .text_size(px(10.))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(Color::Accent.get(cx))
                                 .child(self.pending_reports.len().to_string()),
                         )
-                    }),
+                    })
+                    .child(
+                        Button::new("toggle-members")
+                            .custom(palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(26.))
+                            .w(px(26.))
+                            .rounded_md()
+                            .icon(Glyph::Bot)
+                            .tooltip(tr("团队成员"))
+                            .accessibility_label(tr("团队成员"))
+                            .selected(self.member_panel)
+                            .disabled(!terminal_enabled)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.show_team(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("open-collaboration")
+                            .custom(palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(26.))
+                            .w(px(26.))
+                            .rounded_md()
+                            .icon(Glyph::Network)
+                            .tooltip(tr("协作概览"))
+                            .accessibility_label(tr("协作概览"))
+                            .selected(self.collaboration.visible)
+                            .disabled(!terminal_enabled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_collaboration(cx);
+                                if window.viewport_size().width < px(820.) {
+                                    this.sidebar_open = false;
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("sidebar-workflows")
+                            .custom(palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .h(px(26.))
+                            .w(px(26.))
+                            .rounded_md()
+                            .icon(Glyph::Workflow)
+                            .tooltip(tr("工作流"))
+                            .accessibility_label(tr("工作流"))
+                            .selected(self.workflows.visible)
+                            .disabled(!terminal_enabled)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.show_workflows(window, cx);
+                            })),
+                    ),
             )
             .when(!narrow, |sidebar| {
                 sidebar.child(self.render_sidebar_resize(window, cx))

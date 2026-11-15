@@ -453,7 +453,7 @@ pub(super) fn settings_segmented_bar(cx: &App) -> Div {
     h_flex()
         .flex_shrink_0()
         .items_center()
-        .gap_1()
+        .gap_0p5()
         .p_0p5()
         .rounded_lg()
         .bg(Color::Inset.get(cx))
@@ -582,7 +582,7 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let (title_key, subtitle_key) = section_meta(self.settings_section);
+        let (_, subtitle_key) = section_meta(self.settings_section);
         let content = if self.roles.visible {
             self.render_roles(cx).into_any_element()
         } else {
@@ -594,29 +594,15 @@ impl HiveApp {
                 .min_h_0()
                 .min_w_0()
                 .px(if compact_settings { px(16.) } else { px(24.) })
-                .py_5()
-                .gap_4()
-                .map(|panel| {
-                    panel.child(
-                        v_flex()
-                            .flex_shrink_0()
-                            .gap_1()
-                            .pb_0p5()
-                            .child(
-                                div()
-                                    .text_size(px(18.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(Color::Text.get(cx))
-                                    .child(tr(title_key)),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(tr(subtitle_key)),
-                            ),
-                    )
-                })
+                .py_4()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(Color::Muted.get(cx))
+                        .child(tr(subtitle_key)),
+                )
                 .child({
                     let content = v_flex().flex_1().min_h_0().gap_3();
                     match self.settings_section {

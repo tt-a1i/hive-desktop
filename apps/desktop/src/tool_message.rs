@@ -88,7 +88,7 @@ impl HiveApp {
             Button::new(("tool-group", start))
                 .custom(crate::palette::quiet_icon_variant(cx))
                 .compact()
-                .h(px(24.))
+                .h(px(22.))
                 .px_1p5()
                 .rounded_md()
                 .w_full()
@@ -109,6 +109,16 @@ impl HiveApp {
                         .min_w_0()
                         .items_center()
                         .gap_1p5()
+                        .child(
+                            Icon::new(Glyph::Layers)
+                                .flex_shrink_0()
+                                .size(px(12.))
+                                .text_color(if expanded {
+                                    Color::Secondary.get(cx)
+                                } else {
+                                    Color::Muted.get(cx)
+                                }),
+                        )
                         .child(
                             div()
                                 .text_xs()
@@ -208,7 +218,7 @@ impl HiveApp {
                 Button::new(("tool-details", index))
                     .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
-                    .h(px(24.))
+                    .h(px(22.))
                     .px_1p5()
                     .rounded_md()
                     .w_full()

@@ -72,23 +72,6 @@ impl HiveApp {
             .gap_4()
             .child(
                 v_flex()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(Color::Text.get(cx))
-                            .child(tr("Diff 与 PR")),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx))
-                            .child(tr("配置代码差异查看器的默认展示方式，以及新建 Pull Request 时的默认参数。")),
-                    ),
-            )
-            .child(
-                v_flex()
                     .gap_2()
                     .child(
                         div()
@@ -153,50 +136,56 @@ impl HiveApp {
                                                         ),
                                                 )
                                                 .child(
-                                                    h_flex()
-                                                        .gap_1p5()
-                                                        .flex_wrap()
-                                                        .children(
-                                                            [
-                                                                (
-                                                                    PreferredDiffMode::Unified,
-                                                                    "diffs-mode-unified",
-                                                                    Glyph::Rows2,
-                                                                    "合并视图",
-                                                                ),
-                                                                (
-                                                                    PreferredDiffMode::Split,
-                                                                    "diffs-mode-split",
-                                                                    Glyph::Columns2,
-                                                                    "并排视图",
-                                                                ),
-                                                            ]
-                                                            .into_iter()
-                                                            .map(|(mode, id, icon, label)| {
-                                                                let active = saved.default_diff_mode == mode;
-                                                                Reveal::new(
-                                                                    SharedString::from(format!("{id}-reveal")),
-                                                                    &self.diffs_scroll,
-                                                                    Button::new(id)
-                                                                        .when(active, |b| b.outline())
-                                                                        .when(!active, |b| b.ghost())
-                                                                        .small()
-                                                                        .h(px(26.))
-                                                                        .px_2p5()
-                                                                        .rounded_md()
-                                                                        .icon(icon)
-                                                                        .label(tr(label))
-                                                                        .accessibility_label(tr(label))
-                                                                        .selected(active)
-                                                                        .toggled(active)
-                                                                        .on_click(move |_, _, cx| {
-                                                                            let mut next = diffs_settings::current(cx);
-                                                                            next.default_diff_mode = mode;
-                                                                            diffs_settings::set(next, cx);
-                                                                        }),
-                                                                )
-                                                            }),
-                                                        ),
+                                                    super::settings_segmented_bar(cx).children(
+                                                        [
+                                                            (
+                                                                PreferredDiffMode::Unified,
+                                                                "diffs-mode-unified",
+                                                                Glyph::Rows2,
+                                                                "合并视图",
+                                                            ),
+                                                            (
+                                                                PreferredDiffMode::Split,
+                                                                "diffs-mode-split",
+                                                                Glyph::Columns2,
+                                                                "并排视图",
+                                                            ),
+                                                        ]
+                                                        .into_iter()
+                                                        .map(|(mode, id, icon, label)| {
+                                                            let active =
+                                                                saved.default_diff_mode == mode;
+                                                            Reveal::new(
+                                                                SharedString::from(format!(
+                                                                    "{id}-reveal"
+                                                                )),
+                                                                &self.diffs_scroll,
+                                                                Button::new(id)
+                                                                    .when(active, |b| b.outline())
+                                                                    .when(!active, |b| b.ghost())
+                                                                    .small()
+                                                                    .h(px(26.))
+                                                                    .px_2p5()
+                                                                    .rounded_md()
+                                                                    .icon(icon)
+                                                                    .label(tr(label))
+                                                                    .accessibility_label(tr(label))
+                                                                    .selected(active)
+                                                                    .toggled(active)
+                                                                    .on_click(move |_, _, cx| {
+                                                                        let mut next =
+                                                                            diffs_settings::current(
+                                                                                cx,
+                                                                            );
+                                                                        next.default_diff_mode =
+                                                                            mode;
+                                                                        diffs_settings::set(
+                                                                            next, cx,
+                                                                        );
+                                                                    }),
+                                                            )
+                                                        }),
+                                                    ),
                                                 ),
                                         ),
                                 ),

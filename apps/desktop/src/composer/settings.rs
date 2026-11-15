@@ -1,7 +1,11 @@
 use super::preferences::{ChatSettings, ComposerPreferences, SendMode, ToolActivity};
 use crate::{app::HiveApp, language::tr, palette::Color};
 use gpui_kit::{
-    component::{button::Button, *},
+    component::{
+        button::{Button, ButtonVariants},
+        *,
+    },
+    prelude::FluentBuilder,
     *,
 };
 
@@ -55,30 +59,47 @@ impl HiveApp {
     ) -> impl IntoElement {
         let ready = cx.global::<ComposerPreferences>().ready();
         crate::settings::settings_row(divider, cx).child(
-            v_flex()
-                .gap_2p5()
-                .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
+            h_flex()
+                .w_full()
+                .min_w_0()
+                .items_center()
+                .justify_between()
+                .gap_4()
+                .flex_wrap()
                 .child(
-                    div()
-                        .text_sm()
-                        .text_color(Color::Secondary.get(cx))
-                        .child(description),
+                    v_flex()
+                        .flex_1()
+                        .min_w(px(220.))
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(Color::Text.get(cx))
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(Color::Muted.get(cx))
+                                .child(description),
+                        ),
                 )
                 .child(crate::focus_scroll::Reveal::new(
                     id,
                     &self.chat_settings_scroll,
-                    h_flex()
+                    crate::settings::settings_segmented_bar(cx)
                         .id(SharedString::from(format!("{id}-choices")))
                         .role(Role::Group)
                         .aria_label(title)
-                        .gap_2()
-                        .flex_wrap()
                         .children(choices.into_iter().map(|(id, label, active, change)| {
                             Button::new(id)
-                                .outline()
+                                .when(active, |b| b.outline())
+                                .when(!active, |b| b.ghost())
                                 .small()
-                                .rounded_lg()
-                                .px_3()
+                                .h(px(26.))
+                                .px_2p5()
+                                .rounded_md()
                                 .label(label)
                                 .accessibility_label(format!("{title}: {label}"))
                                 .selected(active)
@@ -103,10 +124,10 @@ impl HiveApp {
         } else {
             tr("Ctrl+Enter 发送")
         };
-        v_flex().gap_4()
-            .child(div().text_sm().text_color(Color::Secondary.get(cx))
-                .child(tr("设置自动保存在本机，适用于所有项目与 Agent，不修改 Agent 原生配置或聊天记录。")))
-            .child(crate::settings::settings_card(cx)
+        v_flex()
+            .gap_3()
+            .child(
+                crate::settings::settings_card(cx)
                 .child(self.chat_setting_choices("chat-send-mode-reveal", tr("发送消息"),
                     tr("选择习惯的发送方式。Shift+Enter 始终换行，点击发送按钮也可发送。适用于所有 Agent。"),
                     vec![

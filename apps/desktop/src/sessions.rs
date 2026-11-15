@@ -187,9 +187,121 @@ impl HiveApp {
             }
         });
     }
+    pub(crate) fn record_nav_snapshot(&mut self) {
+        if self.nav_suppress_record || self.workspace.is_none() {
+            return;
+        }
+        let current = (
+            self.workspace.clone(),
+            self.session.as_ref().map(|s| s.id.clone()),
+        );
+        if self.nav_back.last() != Some(&current) {
+            self.nav_back.push(current);
+            if self.nav_back.len() > 50 {
+                self.nav_back.remove(0);
+            }
+        }
+        self.nav_forward.clear();
+    }
+
+    fn clear_active_session_only(&mut self) {
+        self.collaboration.task_expanded = false;
+        self.focus_project_input = false;
+        self.conversation_sources.clear();
+        self.session = None;
+        self.conversation_ready = false;
+        self.history_navigation.invalidate();
+        self.conversation_find = None;
+        self.search_target = None;
+        self.conversation_list.reset(None);
+        self.messages.clear();
+        self.tool_inputs.clear();
+        self.expanded_tool_groups.clear();
+        self.pending_reports.clear();
+        self.pending_user_inputs.clear();
+        self.reset_reply_failures();
+        self.completed_deliveries.clear();
+        self.pending_events.clear();
+        self.event_sequence = 0;
+        self.models.clear();
+        self.refreshing_models = false;
+        self.model = None;
+        self.unavailable_model = None;
+    }
+
+    fn apply_history_entry(
+        &mut self,
+        target_ws: Option<String>,
+        target_sess: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.nav_suppress_record = true;
+        if let Some(ws) = target_ws {
+            if self.workspace.as_ref() != Some(&ws) {
+                self.select_workspace(ws.clone(), cx);
+            }
+            if let Some(sess) = target_sess {
+                if self.sessions.iter().any(|s| s.id == sess) {
+                    self.open_session(sess, cx);
+                } else {
+                    self.clear_active_session_only();
+                }
+            } else if self.session.is_some() {
+                self.clear_active_session_only();
+                self.switch_draft(Some(format!("workspace:{ws}")), cx);
+                self.sync_git_workspace(cx);
+            }
+        }
+        self.nav_suppress_record = false;
+        cx.notify();
+    }
+
+    pub fn navigate_history_back(&mut self, cx: &mut Context<Self>) {
+        let current = (
+            self.workspace.clone(),
+            self.session.as_ref().map(|s| s.id.clone()),
+        );
+        while let Some((ws, sess)) = self.nav_back.pop() {
+            let valid_ws = ws
+                .as_ref()
+                .is_some_and(|id| self.workspaces.iter().any(|w| &w.id == id));
+            if !valid_ws || (&ws, &sess) == (&current.0, &current.1) {
+                continue;
+            }
+            if current.0.is_some() && self.nav_forward.last() != Some(&current) {
+                self.nav_forward.push(current);
+            }
+            self.apply_history_entry(ws, sess, cx);
+            return;
+        }
+    }
+
+    pub fn navigate_history_forward(&mut self, cx: &mut Context<Self>) {
+        let current = (
+            self.workspace.clone(),
+            self.session.as_ref().map(|s| s.id.clone()),
+        );
+        while let Some((ws, sess)) = self.nav_forward.pop() {
+            let valid_ws = ws
+                .as_ref()
+                .is_some_and(|id| self.workspaces.iter().any(|w| &w.id == id));
+            if !valid_ws || (&ws, &sess) == (&current.0, &current.1) {
+                continue;
+            }
+            if current.0.is_some() && self.nav_back.last() != Some(&current) {
+                self.nav_back.push(current);
+            }
+            self.apply_history_entry(ws, sess, cx);
+            return;
+        }
+    }
+
     pub fn select_workspace(&mut self, id: String, cx: &mut Context<Self>) {
         if self.workspace_removing.as_ref() == Some(&id) {
             return;
+        }
+        if self.workspace.as_ref() != Some(&id) || self.session.is_some() {
+            self.record_nav_snapshot();
         }
         self.remember_conversation_position(cx);
         self.showing_welcome_guide = false;
@@ -206,6 +318,7 @@ impl HiveApp {
             self.save_navigation(cx);
         }
         self.reset_workspace_view();
+        self.sync_git_workspace(cx);
         self.sessions = self.project_sessions.remove(&id).unwrap_or_default();
         self.loading = true;
         if self.connected && !self.closing {
@@ -600,8 +713,14 @@ impl HiveApp {
         if window.viewport_size().width < px(820.) {
             self.sidebar_open = false;
         }
-        self.hide_terminal(cx);
         self.close_collaboration();
+        if self.workspace.as_ref() != Some(&session.workspace_id)
+            || self.session.as_ref().map(|s| &s.id) != Some(&session.id)
+        {
+            self.record_nav_snapshot();
+        }
+        let prev_suppress = self.nav_suppress_record;
+        self.nav_suppress_record = true;
         if self.workspace.as_ref() != Some(&session.workspace_id) {
             let cached = self
                 .project_sessions
@@ -615,6 +734,7 @@ impl HiveApp {
             self.sessions.push(session.clone());
         }
         self.open_session(session.id, cx);
+        self.nav_suppress_record = prev_suppress;
         true
     }
 
@@ -687,6 +807,9 @@ impl HiveApp {
         if self.removed_sessions.contains(&id) || !self.workspace_writes_allowed() {
             return;
         }
+        if self.session.as_ref().map(|s| &s.id) != Some(&id) {
+            self.record_nav_snapshot();
+        }
         self.remember_conversation_position(cx);
         self.close_memory();
         self.close_roles();
@@ -706,6 +829,7 @@ impl HiveApp {
         if let Some(session) = self.sessions.iter().find(|s| s.id == id) {
             self.session = Some(session.clone());
         }
+        self.sync_git_workspace(cx);
         self.conversation_find = None;
         self.search_target = None;
         self.conversation_list.reset(None);
@@ -780,6 +904,9 @@ impl HiveApp {
                         this.models = open.models;
                         this.model = open.model;
                         this.unavailable_model = open.unavailable_model;
+                        this.load_mode(None, cx);
+                        this.load_permission_mode(None, cx);
+                        this.sync_git_workspace(cx);
                         this.event_sequence = open.event_sequence;
                         for (i, message) in open.history.into_iter().enumerate() {
                             let message_id = open.history_message_ids[i].clone();

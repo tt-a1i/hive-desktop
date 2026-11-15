@@ -72,7 +72,7 @@ impl HiveApp {
                 Button::new(SharedString::from(format!("thinking-toggle-{row}-{index}")))
                     .custom(crate::palette::quiet_icon_variant(cx))
                     .compact()
-                    .h(px(24.))
+                    .h(px(22.))
                     .px_1p5()
                     .rounded_md()
                     .justify_start()

@@ -91,6 +91,7 @@ fn apply_screen(
             app.composer_commands_changed(cx);
         }
         "chat:resources" => app.open_session_resources(window, cx),
+        "chat:git-drawer" => app.preview_seed_git_workspace(window, cx),
         "chat:expanded-worklog" => {
             let mut ids = Vec::new();
             for message in &mut app.messages {

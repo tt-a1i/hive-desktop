@@ -250,18 +250,6 @@ impl HiveApp {
                 },
                 |view, actions| view.child(h_flex().w_full().justify_end().child(actions)),
             )
-            .when_some(message.native_user_item_id.clone().filter(|_| message.role == "user"), |view, native_id| {
-                let edit_id = native_id.clone();
-                view.child(h_flex().gap_2().justify_end()
-                    .child(Button::new(("history-fork", i)).outline().xsmall().label(tr("分叉"))
-                        .on_click(cx.listener(move |this, _, window, cx| this.open_history_fork(native_id.clone(), false, window, cx))))
-                    .child(Button::new(("history-edit-fork", i)).outline().xsmall().label(tr("编辑并分叉"))
-                        .on_click(cx.listener(move |this, _, window, cx| this.open_history_fork(edit_id.clone(), true, window, cx)))))
-            })
-            .when_some(message.handoff_item_id.clone().filter(|_| matches!(message.role.as_str(), "user" | "assistant")), |view, item| {
-                view.child(h_flex().justify_end().child(Button::new(("history-handoff", i)).outline().xsmall().label(if crate::language::english() { "Continue with another agent…" } else { "用其他 Agent 接续…" })
-                    .on_click(cx.listener(move |this, _, window, cx| this.open_session_handoff(item.clone(), window, cx)))))
-            })
             .when(
                 message.failure.is_some() && !self.hidden_current_failure(i),
                 |view| view.child(self.render_reply_failure(i, cx)),
@@ -438,7 +426,11 @@ impl HiveApp {
             .when(
                 !message.text.is_empty()
                     || !message.images.is_empty()
-                    || message.delivery.is_some(),
+                    || !message.files.is_empty()
+                    || message.delivery.is_some()
+                    || (message.role == "user"
+                        && (message.native_user_item_id.is_some()
+                            || message.handoff_item_id.is_some())),
                 |view| {
                     view.child(
                         div()

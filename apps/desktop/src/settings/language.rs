@@ -43,7 +43,7 @@ impl HiveApp {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(Color::Secondary.get(cx))
+                                        .text_color(Color::Muted.get(cx))
                                         .child(tr(
                                             "切换应用界面语言，不翻译会话正文、工具结果或用户配置内容。",
                                         )),
@@ -98,7 +98,7 @@ impl HiveApp {
         self.keybinding_settings
             .update(cx, |editor, cx| editor.localize_placeholders(window, cx));
         for (input, label) in [
-            (&self.settings_search, "搜索设置，如模型、通知、快捷键…"),
+            (&self.settings_search, "搜索设置"),
             (&self.archive_settings.search, "搜索已归档会话…"),
             (&self.diffs_pr_base_input, "例如 main"),
             (&self.session_name, "会话名称"),

@@ -155,51 +155,7 @@ impl HiveApp {
             .flex_shrink_0()
             .w_full()
             .min_w_0()
-            .gap_4()
-            .child(
-                h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .items_start()
-                    .justify_between()
-                    .gap_3()
-                    .flex_wrap()
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w(px(180.))
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_lg()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(Color::Text.get(cx))
-                                    .child(tr("归档会话")),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(tr("搜索、查看、恢复或直接打开已归档的历史会话。")),
-                            ),
-                    )
-                    .child(Reveal::new(
-                        "archive-refresh-reveal",
-                        &self.archive_scroll,
-                        Button::new("archive-refresh")
-                            .outline()
-                            .small()
-                            .h(px(28.))
-                            .px_2p5()
-                            .rounded_lg()
-                            .icon(Glyph::RotateCcw)
-                            .label(if loading { tr("加载中…") } else { tr("刷新") })
-                            .disabled(!self.connected || loading)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.load_archived_settings(false, cx);
-                            })),
-                    )),
-            )
+            .gap_3()
             .child(
                 h_flex()
                     .w_full()
@@ -272,7 +228,23 @@ impl HiveApp {
                                 }
                                 menu
                             }),
-                    ),
+                    )
+                    .child(Reveal::new(
+                        "archive-refresh-reveal",
+                        &self.archive_scroll,
+                        Button::new("archive-refresh")
+                            .outline()
+                            .small()
+                            .h(px(28.))
+                            .px_2p5()
+                            .rounded_lg()
+                            .icon(Glyph::RotateCcw)
+                            .label(if loading { tr("加载中…") } else { tr("刷新") })
+                            .disabled(!self.connected || loading)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.load_archived_settings(false, cx);
+                            })),
+                    )),
             )
             .when_some(state.error.clone(), |panel, error| {
                 panel.child(super::settings_notice_box(
