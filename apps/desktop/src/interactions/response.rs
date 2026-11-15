@@ -40,7 +40,10 @@ impl HiveApp {
             }
             json!({"decision":decision})
         } else {
-            if card.questions.is_empty() {
+            if card.attachment_save_failed
+                || card.questions.is_empty()
+                || card.questions.iter().any(|draft| draft.importing)
+            {
                 return;
             }
             let mut answers = serde_json::Map::new();
@@ -102,19 +105,73 @@ impl HiveApp {
             card.raw.item_id.clone(),
             card.raw.native_request_id.clone(),
         );
+        let attachments = card
+            .questions
+            .iter()
+            .filter(|draft| !draft.attachments.is_empty())
+            .map(|draft| {
+                (
+                    draft.question.id.clone(),
+                    json!(
+                        draft
+                            .attachments
+                            .iter()
+                            .map(|item| &item.id)
+                            .collect::<Vec<_>>()
+                    ),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
         self.refresh_interaction_status(&session);
         cx.notify();
         let connection = self.connection_generation;
+        let workspace = self.workspace.clone();
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .request(
-                    "chat.respondInteraction",
-                    json!({"sessionId":session,"interactionId":id,"response":response}),
-                )
-                .await;
+            let has_attachments = !attachments.is_empty();
+            let mut params = json!({"sessionId":session,"interactionId":id,"response":response});
+            if !attachments.is_empty() {
+                params["attachmentsByQuestionId"] = json!(attachments);
+            }
+            let result = runtime.request("chat.respondInteraction", params).await;
+            let safe_retry = if result.is_err() && has_attachments {
+                match runtime
+                    .request(
+                        "chat.interactionAttachments.list",
+                        json!({"sessionId":session}),
+                    )
+                    .await
+                {
+                    Ok(value) => value["receipts"]
+                        .as_array()
+                        .map(|receipts| {
+                            receipts
+                                .iter()
+                                .find(|receipt| {
+                                    receipt["interactionId"] == id
+                                        && receipt["threadId"].as_str() == identity.0.as_deref()
+                                        && receipt["turnId"].as_str() == identity.1.as_deref()
+                                        && receipt["itemId"].as_str() == identity.2.as_deref()
+                                        && receipt["nativeRequestId"] == identity.3
+                                })
+                                .is_none_or(|receipt| receipt["status"] == "draft")
+                        })
+                        .unwrap_or(false),
+                    Err(_) => false,
+                }
+            } else {
+                false
+            };
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection {
                     return;
+                }
+                if has_attachments {
+                    if let Some(workspace) = &workspace {
+                        this.interactions
+                            .receipt_requests
+                            .remove(&format!("{}:{}:{}", connection, workspace, session));
+                        cx.notify();
+                    }
                 }
                 let Some(card) = this
                     .interactions
@@ -154,7 +211,13 @@ impl HiveApp {
                     }
                     // Do not display provider error bodies: they may contain submitted secret values.
                     Err(_) if card.raw.state == "responding" => {}
-                    Err(_) => card.error = Some("提交失败，输入已保留。请检查连接后重试。".into()),
+                    Err(_) if !has_attachments || safe_retry => {
+                        card.error = Some("提交失败，输入已保留。请检查连接后重试。".into());
+                    }
+                    Err(_) => {
+                        card.submitting = true;
+                        card.error = Some("提交结果未知，请勿重复提交；请检查会话状态。".into());
+                    }
                 }
                 this.refresh_interaction_status(&session);
                 cx.notify();

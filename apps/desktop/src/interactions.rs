@@ -1,12 +1,13 @@
+mod attachments;
 mod claude;
 mod pi;
 mod questions;
 mod response;
 mod view;
 
-use crate::language::{english,tr};
+use crate::language::{english, tr};
 use crate::{
-    app::{HiveApp,Status},
+    app::{HiveApp, Status},
     protocol::{AgentInteraction, PiEvent},
 };
 use gpui_kit::{
@@ -19,6 +20,8 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct Interactions {
     pub sessions: HashMap<String, Vec<InteractionCard>>,
+    receipts: HashMap<String, Vec<serde_json::Value>>,
+    receipt_requests: std::collections::HashSet<String>,
 }
 pub struct InteractionCard {
     raw: AgentInteraction,
@@ -27,6 +30,7 @@ pub struct InteractionCard {
     questions: Vec<QuestionDraft>,
     initialized: bool,
     submitting: bool,
+    attachment_save_failed: bool,
     generation: u64,
     error: Option<InteractionError>,
 }
@@ -59,19 +63,35 @@ struct QuestionDraft {
     selected: Option<String>,
     multiple_selected: Vec<String>,
     other: bool,
+    attachments: Vec<crate::protocol::AttachmentRef>,
+    import_generation: u64,
+    importing: bool,
     _subscription: Subscription,
 }
-enum InteractionError { Message(&'static str), MissingIdentity(&'static str) }
+enum InteractionError {
+    Message(&'static str),
+    MissingIdentity(&'static str),
+}
 impl From<&'static str> for InteractionError {
-    fn from(key: &'static str) -> Self { Self::Message(key) }
+    fn from(key: &'static str) -> Self {
+        Self::Message(key)
+    }
 }
 impl InteractionError {
     fn text(&self) -> String {
         match self {
             Self::Message(key) => tr(key).to_owned(),
-            Self::MissingIdentity(backend) => if english() {
-                format!("Invalid {backend} interaction: native identity fields are missing. Use Stop in the input area to end this turn.")
-            } else { format!("{backend} 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。") },
+            Self::MissingIdentity(backend) => {
+                if english() {
+                    format!(
+                        "Invalid {backend} interaction: native identity fields are missing. Use Stop in the input area to end this turn."
+                    )
+                } else {
+                    format!(
+                        "{backend} 交互格式错误：缺少原生身份字段。请使用输入区的停止按钮结束本轮。"
+                    )
+                }
+            }
         }
     }
 }
@@ -79,13 +99,27 @@ impl Interactions {
     pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
         for card in self.sessions.values().flatten() {
             if card.is_pi() {
-                let label = card.raw.params["placeholder"].as_str().unwrap_or(tr("输入回答…"));
-                if let Some(input) = &card.pi_input { input.update(cx, |input,cx|input.set_placeholder(label,window,cx)); }
-                if let Some(input) = &card.pi_editor { input.update(cx, |input,cx|input.set_placeholder(label,window,cx)); }
+                let label = card.raw.params["placeholder"]
+                    .as_str()
+                    .unwrap_or(tr("输入回答…"));
+                if let Some(input) = &card.pi_input {
+                    input.update(cx, |input, cx| input.set_placeholder(label, window, cx));
+                }
+                if let Some(input) = &card.pi_editor {
+                    input.update(cx, |input, cx| input.set_placeholder(label, window, cx));
+                }
             } else {
                 for draft in &card.questions {
-                    let label = if card.is_claude() {tr("其他回答…")} else if draft.question.is_secret {tr("输入回答（隐藏内容）")} else {tr("输入回答…")};
-                    draft.input.update(cx, |input,cx|input.set_placeholder(label,window,cx));
+                    let label = if card.is_claude() {
+                        tr("其他回答…")
+                    } else if draft.question.is_secret {
+                        tr("输入回答（隐藏内容）")
+                    } else {
+                        tr("输入回答…")
+                    };
+                    draft
+                        .input
+                        .update(cx, |input, cx| input.set_placeholder(label, window, cx));
                 }
             }
         }
@@ -94,7 +128,11 @@ impl Interactions {
 impl InteractionCard {
     fn new(raw: AgentInteraction) -> Self {
         let error = (!raw.has_native_identity()).then(|| {
-            InteractionError::MissingIdentity(if raw.backend == "claude" { "Claude" } else { "Codex" })
+            InteractionError::MissingIdentity(if raw.backend == "claude" {
+                "Claude"
+            } else {
+                "Codex"
+            })
         });
         Self {
             raw,
@@ -103,6 +141,7 @@ impl InteractionCard {
             questions: vec![],
             initialized: false,
             submitting: false,
+            attachment_save_failed: false,
             generation: 0,
             error,
         }
@@ -215,9 +254,13 @@ impl HiveApp {
         }
         self.status = Status::Interaction {
             backend: card.backend_label(),
-            phase: if card.waiting() { "等待你的回应" }
-                else if card.is_pi() || card.is_claude() { "正在发送回应" }
-                else { "正在处理回应" },
+            phase: if card.waiting() {
+                "等待你的回应"
+            } else if card.is_pi() || card.is_claude() {
+                "正在发送回应"
+            } else {
+                "正在处理回应"
+            },
         };
         true
     }
@@ -231,6 +274,24 @@ impl HiveApp {
             .entry(session.into())
             .or_default();
         if let Some(card) = cards.iter_mut().find(|card| card.raw.id == raw.id) {
+            if (
+                card.raw.backend.as_str(),
+                card.raw.method.as_str(),
+                &card.raw.thread_id,
+                &card.raw.turn_id,
+                &card.raw.item_id,
+                &card.raw.native_request_id,
+            ) != (
+                raw.backend.as_str(),
+                raw.method.as_str(),
+                &raw.thread_id,
+                &raw.turn_id,
+                &raw.item_id,
+                &raw.native_request_id,
+            ) {
+                *card = InteractionCard::new(raw);
+                return;
+            }
             if raw.state == "responding" {
                 card.submitting = true;
                 card.questions.clear();
@@ -240,7 +301,13 @@ impl HiveApp {
                 card.error = None;
             }
             if !raw.has_native_identity() {
-                card.error = Some(InteractionError::MissingIdentity(if raw.backend == "claude" { "Claude" } else { "Codex" }));
+                card.error = Some(InteractionError::MissingIdentity(
+                    if raw.backend == "claude" {
+                        "Claude"
+                    } else {
+                        "Codex"
+                    },
+                ));
             }
             card.raw = raw;
         } else {
@@ -305,6 +372,7 @@ impl HiveApp {
         }
     }
     pub fn prepare_interactions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.load_question_receipts(cx);
         let Some(cards) = self
             .session
             .as_ref()
@@ -357,6 +425,9 @@ impl HiveApp {
                             input,
                             selected: None,
                             multiple_selected: vec![],
+                            attachments: vec![],
+                            import_generation: 0,
+                            importing: false,
                             _subscription: subscription,
                         });
                     }

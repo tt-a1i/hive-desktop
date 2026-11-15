@@ -357,6 +357,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     async permissionMode() { await modes.load(); return modes.permissionMode(); },
     async setPermissionMode(mode) { ensureIdle(); await modes.load(); ensureIdle(); return modes.setPermissionMode(mode); },
     interactions: () => interactions.snapshot(),
+    validateInteractionResponse: (id, response) => interactions.validateResponse(id, response),
     respondInteraction: (id, response) => interactions.respond(id, response),
     completedDeliveryIds: () => [...metadata.completed],
     hasContext: customType => metadata.context.some(entry => entry.customType === customType),

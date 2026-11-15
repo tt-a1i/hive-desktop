@@ -52,7 +52,7 @@ export class CodexInteractions {
       this.emit({ type: 'interaction', sessionId: this.sessionId(), interaction: structuredClone(entry.value) });
     }
   }
-  respond(id: string, response: unknown): void {
+  validateResponse(id: string, response: unknown): void {
     const entry = this.pending.get(id);
     if (!entry || entry.value.state !== 'pending') throw new CodexInteractionError('INTERACTION_STALE', 'This interaction is no longer awaiting a response');
     if (!object(response)) throw invalid();
@@ -69,6 +69,10 @@ export class CodexInteractions {
       if (entry.value.method === 'item/fileChange/requestApproval' && response.decision === 'accept'
         && (!object(entry.value.item) || !Array.isArray(entry.value.item.changes))) throw new CodexInteractionError('INTERACTION_INVALID_RESPONSE', 'Native file changes have not been received');
     }
+  }
+  respond(id: string, response: unknown): void {
+    this.validateResponse(id, response);
+    const entry = this.pending.get(id)!;
     entry.value.state = 'responding';
     this.emit({ type: 'interaction', sessionId: this.sessionId(), interaction: structuredClone(entry.value) });
     // Answers, especially isSecret values, only flow into the pending native RPC.

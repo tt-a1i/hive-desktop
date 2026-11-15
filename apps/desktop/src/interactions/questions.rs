@@ -2,7 +2,11 @@ use super::*;
 use crate::palette::Color;
 use gpui_kit::{
     assets::IconName as Glyph,
-    component::{button::{Button, ButtonVariants}, input::Input, *},
+    component::{
+        button::{Button, ButtonVariants},
+        input::Input,
+        *,
+    },
     prelude::FluentBuilder,
 };
 
@@ -310,6 +314,8 @@ impl HiveApp {
                                     )
                                     .on_click({
                                         let question_id = question.id.clone();
+                                        let session = session.clone();
+                                        let interaction = interaction.clone();
                                         cx.listener(move |this, _, _, cx| {
                                             if !this.connected
                                                 || this
@@ -361,6 +367,99 @@ impl HiveApp {
                         })
                         .disabled(disabled),
                 )
+            })
+            .when(!question.is_secret, |view| {
+                let codex = self
+                    .interactions
+                    .sessions
+                    .get(&session)
+                    .and_then(|cards| cards.iter().find(|card| card.raw.id == interaction))
+                    .is_some_and(|card| {
+                        card.raw.backend == "codex"
+                            && card.raw.method == "item/tool/requestUserInput"
+                    });
+                if !codex {
+                    return view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(
+                        if english() {
+                            "Attachments are not supported for this question."
+                        } else {
+                            "此问题不支持附件。"
+                        },
+                    ));
+                }
+                view.child(
+                    Button::new(("question-attachments", field))
+                        .compact()
+                        .label(if draft.importing {
+                            if english() {
+                                "Adding attachments…"
+                            } else {
+                                "正在添加附件…"
+                            }
+                        } else if english() {
+                            "Add files or images"
+                        } else {
+                            "添加文件或图片"
+                        })
+                        .disabled(disabled || draft.importing)
+                        .on_click({
+                            let session = session.clone();
+                            let interaction = interaction.clone();
+                            let question_id = question.id.clone();
+                            cx.listener(move |this, _, _, cx| {
+                                this.choose_question_attachments(
+                                    session.clone(),
+                                    interaction.clone(),
+                                    question_id.clone(),
+                                    cx,
+                                )
+                            })
+                        }),
+                )
+                .children(draft.attachments.iter().map(|item| {
+                    let session = session.clone();
+                    let interaction = interaction.clone();
+                    let question_id = question.id.clone();
+                    let attachment_id = item.id.clone();
+                    h_flex()
+                        .gap_2()
+                        .child(div().text_xs().child(item.name.clone()))
+                        .child(
+                            Button::new(SharedString::from(format!(
+                                "remove-question-attachment-{field}-{}",
+                                item.id
+                            )))
+                            .compact()
+                            .label(if english() { "Remove" } else { "移除" })
+                            .disabled(disabled || draft.importing)
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if let Some(draft) = this
+                                        .interactions
+                                        .sessions
+                                        .get_mut(&session)
+                                        .and_then(|cards| {
+                                            cards.iter_mut().find(|card| {
+                                                card.raw.id == interaction && card.waiting()
+                                            })
+                                        })
+                                        .and_then(|card| {
+                                            card.questions
+                                                .iter_mut()
+                                                .find(|q| q.question.id == question_id)
+                                        })
+                                    {
+                                        draft.attachments.retain(|a| a.id != attachment_id);
+                                        this.save_question_attachments(
+                                            session.clone(),
+                                            interaction.clone(),
+                                            cx,
+                                        );
+                                    }
+                                },
+                            )),
+                        )
+                }))
             })
             .when(question.is_secret, |view| {
                 view.child(
