@@ -148,6 +148,10 @@ try {
   child = spawn(executable, [], { env, cwd: directory, stdio: 'inherit' });
   exited = once(child, 'exit');
   reader = new DatabaseSync(join(state, 'hive/runtime.sqlite'), { readOnly: true });
+  const readProfiles = reader.prepare("SELECT value FROM app_state WHERE key = 'desktop_agent_profiles'");
+  const profilesBefore = JSON.parse(readProfiles.get().value);
+  const codexBefore = profilesBefore.profiles.find(profile => profile.id === 'default-codex');
+  assert.ok(codexBefore);
   const read = reader.prepare("SELECT value FROM app_state WHERE key = 'desktop_navigation'");
   async function waitForSelection(expected) {
     const deadline = Date.now() + 60_000;
@@ -174,8 +178,15 @@ try {
     const leadDraft = join(draftDir, `session-${leadChat}.json`);
     // The native restart flushes the unsubmitted input before replacing its sidecar.
     assert.equal(JSON.parse(await readFile(leadDraft, 'utf8')).input, '后台恢复核验草稿');
-    const commands = reader.prepare("SELECT value FROM app_state WHERE key = 'desktop_executables'").get();
-    assert.equal(JSON.parse(commands.value).codexCommand, String.raw`C:\Fixture Programs\codex.exe`);
+    // The canonical profile row publishes defaults and compatibility commands atomically.
+    const profilesAfter = JSON.parse(readProfiles.get().value);
+    const codexAfter = profilesAfter.profiles.find(profile => profile.id === 'default-codex');
+    assert.ok(codexAfter.currentRevision > codexBefore.currentRevision);
+    assert.deepEqual(codexAfter.revisions.find(revision => revision.revision === codexBefore.currentRevision),
+      codexBefore.revisions.find(revision => revision.revision === codexBefore.currentRevision));
+    assert.equal(codexAfter.revisions.find(revision => revision.revision === codexAfter.currentRevision).launch.command,
+      profilesAfter.desktopExecutables.codexCommand);
+    assert.equal(profilesAfter.desktopExecutables.codexCommand, String.raw`C:\Fixture Programs\codex.exe`);
     assert.equal(JSON.parse(await readFile(workerDraft, 'utf8')).input, `> ${prompt}\n\n${existingDraft}`);
   }
   console.log('Native desktop opened the saved project and recovered its missing chat selection from the extracted bundle.');

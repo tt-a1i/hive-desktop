@@ -350,7 +350,7 @@ Invoke-Action '保存设置'
 # The busy action is named '处理中…'. A disabled '保存设置' means the actual
 # response has restored that name and the saved inputs are no longer modified.
 Wait-EnabledState '保存设置' $false
-$savedNoticeName = '设置已保存。新启动的外部进程将使用更新后的配置。'
+$savedNoticeName = '设置已保存。后续新建会话使用更新后的配置，已有会话保留固定配置。'
 $savedNotice = Wait-Action $savedNoticeName
 if (-not (Test-VisibleControl $savedNotice)) { throw 'The saved program settings feedback is outside the native window.' }
 $savedNoticeCondition = New-Object System.Windows.Automation.PropertyCondition(
