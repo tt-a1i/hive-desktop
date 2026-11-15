@@ -250,6 +250,14 @@ impl HiveApp {
                 },
                 |view, actions| view.child(h_flex().w_full().justify_end().child(actions)),
             )
+            .when_some(message.native_user_item_id.clone().filter(|_| message.role == "user"), |view, native_id| {
+                let edit_id = native_id.clone();
+                view.child(h_flex().gap_2().justify_end()
+                    .child(Button::new(("history-fork", i)).outline().xsmall().label(tr("分叉"))
+                        .on_click(cx.listener(move |this, _, window, cx| this.open_history_fork(native_id.clone(), false, window, cx))))
+                    .child(Button::new(("history-edit-fork", i)).outline().xsmall().label(tr("编辑并分叉"))
+                        .on_click(cx.listener(move |this, _, window, cx| this.open_history_fork(edit_id.clone(), true, window, cx)))))
+            })
             .when(
                 message.failure.is_some() && !self.hidden_current_failure(i),
                 |view| view.child(self.render_reply_failure(i, cx)),

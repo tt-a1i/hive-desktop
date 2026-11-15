@@ -63,6 +63,8 @@ pub struct Message {
     pub(crate) _markdown_subscription: Option<Subscription>,
     pub id: String,
     pub role: String,
+    pub native_user_item_id: Option<String>,
+    pub source_session_id: Option<String>,
     pub text: String,
     pub markdown: Option<Entity<TextViewState>>,
     pub tool: Option<ToolPresentation>,
