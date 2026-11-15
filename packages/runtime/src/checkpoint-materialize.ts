@@ -63,3 +63,25 @@ export async function materializeCheckpoint(input: {dataRoot:string; record:Mana
     const done=await open(journal,'w',0o600); try {await done.writeFile(JSON.stringify({version:1,operationId,checkpointId:checkpoint.manifest.checkpointId,state:'ready'}));await done.sync();} finally {await done.close();}
   } catch(error) {await lock.close().catch(()=>{}); await unlink(lockPath).catch(()=>{}); throw error;}
 }
+
+/** Read-only verification for publication or recovery; never repairs or overwrites target changes. */
+export async function verifyMaterializedCheckpoint(input: {dataRoot:string; record:ManagedWorktree; operationId:string; checkpoint:ExportedCodeCheckpoint}): Promise<void> {
+  const {dataRoot,record,operationId,checkpoint}=input;
+  await validateForkWorktree(dataRoot,record,operationId);
+  if(record.projectPrefix || checkpoint.manifest.preview.workspace.headOid!==record.baseOid || checkpoint.manifest.preview.workspace.commonDir!==record.repoCommonDir) fail('Checkpoint repository, scope, or HEAD does not match the fork');
+  const journal=JSON.parse(await readFile(join(dirname(record.managedWorktreeRoot),'materialize.json'),'utf8')) as {version?:number; operationId?:string; checkpointId?:string; state?:string};
+  if(journal.version!==1 || journal.operationId!==operationId || journal.checkpointId!==checkpoint.manifest.checkpointId || journal.state!=='ready') fail('Fork materialization is not ready');
+  const root=record.managedWorktreeRoot;
+  const output=await new Promise<Buffer>((resolve,reject)=>{
+    const env={...process.env}; for(const key of Object.keys(env)) if(key.toUpperCase().startsWith('GIT_')) delete env[key];
+    Object.assign(env,{GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null',GIT_OPTIONAL_LOCKS:'0',GIT_NO_LAZY_FETCH:'1',LC_ALL:'C'});
+    const child=spawn('git',['-c','core.fsmonitor=false','-c',`core.hooksPath=${process.platform==='win32'?'NUL':'/dev/null'}`,'ls-files','--stage','-z'],{cwd:root,env,stdio:['ignore','pipe','pipe']});
+    const chunks:Buffer[]=[];let size=0;child.stdout.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>16*1024*1024)child.kill();else chunks.push(chunk);});child.on('error',reject);child.on('close',code=>code===0?resolve(Buffer.concat(chunks)):reject(new Error('Could not verify fork index')));
+  });
+  const actual=output.toString('utf8').split('\0').filter(Boolean).sort();
+  const expected=checkpoint.index.map(({entry,data})=>{checkpointPath(entry.path);if(!entry.gitOid||checkpointHash(data)!==entry.sha256||data.length!==entry.bytes)fail('Checkpoint index content is invalid');return `${entry.mode} ${entry.gitOid} 0\t${entry.path}`;}).sort();
+  if(JSON.stringify(actual)!==JSON.stringify(expected)) fail('Fork index changed after materialization');
+  if(JSON.stringify(await entries(root))!==JSON.stringify(checkpoint.disk.map(x=>x.entry.path).sort())) fail('Fork files changed after materialization');
+  for(const {entry,data} of checkpoint.disk){checkpointPath(entry.path);if(checkpointHash(data)!==entry.sha256||data.length!==entry.bytes)fail('Checkpoint disk content is invalid');const observed=await checkpointDiskEntry(root,entry.path,entry.bytes);if(!observed||observed.entry.sha256!==entry.sha256||observed.entry.kind!==entry.kind||observed.entry.permissions!==entry.permissions)fail('Fork file changed after materialization');}
+  await validateForkWorktree(dataRoot,record,operationId);
+}

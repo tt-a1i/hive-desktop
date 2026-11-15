@@ -5,8 +5,8 @@ import {mkdtemp,mkdir,writeFile,readFile,rm,symlink,readlink,chmod,stat} from 'n
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {CodeCheckpoints} from '../src/code-checkpoints.js';
-import {createForkWorktree,validateManagedWorktree,recoverManagedWorktree} from '../src/git-worktrees.js';
-import {materializeCheckpoint} from '../src/checkpoint-materialize.js';
+import {createForkWorktree,validateManagedWorktree,recoverManagedWorktree,publishForkWorktree} from '../src/git-worktrees.js';
+import {materializeCheckpoint,verifyMaterializedCheckpoint} from '../src/checkpoint-materialize.js';
 const dir=await mkdtemp(join(tmpdir(),'hive-materialize-')), repo=join(dir,'repo'), data=join(dir,'data');await mkdir(repo);
 const git=(cwd:string,...args:string[])=>execFileSync('git',['-c','user.name=Test','-c','user.email=test@example.test','-c','core.hooksPath=/dev/null',...args],{cwd}).toString().trim();
 try {
@@ -17,5 +17,8 @@ try {
  await assert.rejects(validateManagedWorktree(data,record),(error: any)=>error.code==='FORK_PENDING');await assert.rejects(recoverManagedWorktree(data,record),(error: any)=>error.code==='FORK_PENDING');
  await materializeCheckpoint({dataRoot:data,record,operationId,checkpoint});
  assert.equal(git(record.executionPath,'show',':file'),'B');assert.equal(await readFile(join(record.executionPath,'file'),'utf8'),'C');assert.equal(await readlink(join(record.executionPath,'link')),'file');assert.equal((await stat(join(record.executionPath,'extra'))).mode&0o777,0o751);await assert.rejects(readFile(join(record.executionPath,'.env')));assert.equal(await readFile(join(repo,'file'),'utf8'),'C');assert.equal(await readFile(join(repo,'.env'),'utf8'),'secret');
+ await verifyMaterializedCheckpoint({dataRoot:data,record,operationId,checkpoint});
+ await writeFile(join(record.executionPath,'file'),'outside');await assert.rejects(verifyMaterializedCheckpoint({dataRoot:data,record,operationId,checkpoint}));await writeFile(join(record.executionPath,'file'),'C');
+ await verifyMaterializedCheckpoint({dataRoot:data,record,operationId,checkpoint});await publishForkWorktree(data,record,operationId);assert.equal(await validateManagedWorktree(data,record),record.executionPath);await assert.rejects(recoverManagedWorktree(data,record),(error: any)=>error.code==='FORK_PENDING');
  console.log('CHECKPOINT_MATERIALIZE_OK');
 } finally {await rm(dir,{recursive:true,force:true});}
