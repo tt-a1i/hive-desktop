@@ -31,6 +31,7 @@ pub enum SettingsSection {
     Notifications,
     Remote,
     Programs,
+    Profiles,
     About,
 }
 
@@ -172,6 +173,7 @@ pub struct HiveApp {
     pub(crate) project_scripts: Entity<crate::project_scripts::Page>,
     pub(crate) keybinding_settings: Entity<crate::keybindings::Editor>,
     pub settings_search: Entity<InputState>,
+    pub profiles: crate::agent_profiles::Profiles,
     pub pi_accounts: crate::settings::pi_accounts::PiAccounts,
     pub pi_models: crate::settings::pi_models::PiModels,
     pub settings_loading: bool,
@@ -506,6 +508,7 @@ impl HiveApp {
             project_scripts: cx.new(|cx| crate::project_scripts::Page::new(scripts_owner, window, cx)),
             keybinding_settings: cx.new(|cx| crate::keybindings::Editor::new(window, cx)),
             settings_search,
+            profiles: crate::agent_profiles::Profiles::new(window, cx),
             pi_accounts: crate::settings::pi_accounts::PiAccounts::new(window, cx),
             pi_models: crate::settings::pi_models::PiModels::new(window, cx),
             settings_loading: false,

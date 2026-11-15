@@ -465,6 +465,10 @@ impl HiveApp {
     }
 
     pub fn new_session(&mut self, backend: &'static str, cx: &mut Context<Self>) {
+        self.new_session_with_profile(backend, None, cx);
+    }
+
+    pub(crate) fn new_session_with_profile(&mut self, backend: &'static str, profile: Option<crate::agent_profiles::ProfileRef>, cx: &mut Context<Self>) {
         if !self.workspace_writes_allowed() || !self.connected {
             return;
         }
@@ -483,11 +487,13 @@ impl HiveApp {
             return;
         };
         let connection = self.connection_generation;
+        let mut params = json!({"workspaceId":workspace,"backend":backend});
+        if let Some(profile) = profile { params["profile"] = json!(profile); }
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
                     "chat.createRecord",
-                    json!({"workspaceId":workspace,"backend":backend}),
+                    params,
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {

@@ -112,6 +112,7 @@ impl HiveApp {
         self.settings_search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.settings_section = section;
+        if section == SettingsSection::Profiles { self.load_profiles(cx); }
         if section == SettingsSection::Remote {
             self.refresh_remote(cx);
         }

@@ -1815,5 +1815,17 @@
   "在选中消息之前创建新分支；原消息成为未发送草稿。": "Create a branch before the selected message; the message becomes an unsent draft.",
   "保留选中回合，创建独立历史分支。": "Keep the selected turn and create a separate history branch.",
   "核验并恢复分叉": "Verify and recover fork",
-  "操作结果的身份不匹配。": "The operation result identity does not match."
+  "操作结果的身份不匹配。": "The operation result identity does not match.",
+  "Agent 配置": "Agent profiles",
+  "管理启动配置和历史版本": "Manage launch profiles and revision history",
+  "刷新配置": "Refresh profiles",
+  "新建配置": "New profile",
+  "编辑配置": "Edit profile",
+  "可执行文件": "Executable",
+  "配置目录（绝对路径，可留空）": "Configuration directory (absolute path, optional)",
+  "参数（JSON 字符串数组；每项是一个完整参数）": "Arguments (JSON string array; each item is one complete argument)",
+  "参数必须是 JSON 字符串数组，例如 [\"--flag\", \"value\"]": "Arguments must be a JSON string array, such as [\"--flag\", \"value\"]",
+  "Claude 不支持启动参数": "Claude does not support launch arguments",
+  "停用": "Disable",
+  "启用": "Enable"
 }

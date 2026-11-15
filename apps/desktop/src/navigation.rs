@@ -183,6 +183,7 @@ impl HiveApp {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let weak = cx.weak_entity();
+        let profiles = self.profiles.snapshot.as_ref().map(|s| s.profiles.clone()).unwrap_or_default();
         let target = project.map(|workspace| workspace.id.clone());
         let project_label = project.map(|workspace| {
             if crate::language::english() {
@@ -283,6 +284,19 @@ impl HiveApp {
                         } else {
                             this.new_session(backend, cx);
                         }
+                    });
+                }));
+            }
+            for profile in profiles.iter().filter(|p| p.enabled && !p.id.starts_with("default-")) {
+                let backend = match profile.driver.as_str() { "pi" => "pi", "codex" => "codex", "pi-rpc" => "pi-rpc", "claude" => "claude", _ => continue };
+                let reference = crate::agent_profiles::ProfileRef { id: profile.id.clone(), revision: profile.current_revision };
+                let weak = weak.clone(); let target = target.clone();
+                menu = menu.item(PopupMenuItem::new(format!("{} · {} · r{}", profile.label, backend, profile.current_revision)).on_click(move |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| {
+                        if window.viewport_size().width < px(820.) { this.sidebar_open = false; }
+                        this.hide_terminal(cx);
+                        if let Some(project) = &target { if this.workspace.as_ref() != Some(project) { this.select_workspace(project.clone(), cx); } }
+                        this.new_session_with_profile(backend, Some(reference.clone()), cx);
                     });
                 }));
             }

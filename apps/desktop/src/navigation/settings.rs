@@ -76,6 +76,7 @@ impl HiveApp {
                         Some(SettingsSection::Models),
                     ),
                     ("settings-project-scripts-tab", tr("项目脚本"), Glyph::SquareTerminal, Some(SettingsSection::ProjectScripts)),
+                    ("settings-profiles-tab", tr("Agent 配置"), Glyph::Bot, Some(SettingsSection::Profiles)),
                     (
                         "settings-programs-tab",
                         tr("外部程序"),

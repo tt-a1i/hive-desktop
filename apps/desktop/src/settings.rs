@@ -163,6 +163,7 @@ impl HiveApp {
             self.settings_request(false, window, cx);
         }
         self.load_pi_accounts(window, cx);
+        self.load_profiles(cx);
         if self.settings_section == SettingsSection::Models {
             self.load_pi_models(cx);
         }
@@ -418,6 +419,7 @@ fn section_meta(section: SettingsSection) -> (&'static str, &'static str) {
         SettingsSection::Team => ("团队", "自动组队引导"),
         SettingsSection::Notifications => ("通知", "本机系统提醒与 Webhook 通知地址"),
         SettingsSection::Remote => ("远程接入", "账号连接、设备配对与访问记录"),
+        SettingsSection::Profiles => ("Agent 配置", "管理启动配置和历史版本"),
         SettingsSection::Programs => ("外部程序", "外部 Pi、Codex 与 Claude Code 的路径和版本检查"),
         SettingsSection::About => ("关于与诊断", "版本、构建与后台连接信息"),
     }
@@ -608,6 +610,7 @@ impl HiveApp {
                             ))
                         }
                         SettingsSection::Notifications => content.id("settings-notification-container").child(crate::focus_scroll::Viewport::new("notifications-viewport", &self.notification_scroll, v_flex().id("settings-notification-content").flex_1().min_h_0().min_w_0().overflow_y_scroll().track_scroll(&self.notification_scroll).vertical_scrollbar(&self.notification_scroll).pr_1().child(self.render_notification_settings(cx)))),
+                        SettingsSection::Profiles => content.id("settings-profiles-container").child(self.render_profiles(cx)),
                         SettingsSection::Programs => content.id("settings-programs-container").child(self.render_program_settings(cx)),
                         SettingsSection::About => content.id("settings-about-container").child(crate::focus_scroll::Viewport::new(
                             "about-viewport", &self.about_scroll,

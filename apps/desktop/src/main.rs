@@ -1,4 +1,5 @@
 mod app;
+mod agent_profiles;
 mod appearance;
 mod chrome;
 mod language;

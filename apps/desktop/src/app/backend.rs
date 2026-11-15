@@ -97,6 +97,10 @@ impl HiveApp {
                         this.backend_initialized = true;
                         this.connected = true;
                         this.status = "后台已连接".into();
+                        this.profiles.snapshot = None;
+                        this.profiles.loading = false;
+                        this.profiles.generation += 1;
+                        this.load_profiles(cx);
                         this.load_workspaces(cx);
                         if recovering {
                             this.restore_backend_view(settings_window, cx);
