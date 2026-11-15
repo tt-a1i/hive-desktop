@@ -153,6 +153,7 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
                 emit({ type: 'assistant_delta', sessionId, messageId: assistantId, kind: type, contentIndex: content.length - 1, delta: u.content.text });
         }
         else if (kind === 'tool_call' || kind === 'tool_call_update') {
+            if (assistant && !loading) emit({type:'message_end',sessionId,messageId:assistantId,message:assistant});
             if (typeof u.toolCallId !== 'string')
                 throw new Error('Invalid ACP tool call');
             const old = tools.get(u.toolCallId);
@@ -287,7 +288,7 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
                         emit({ type: 'message_end', sessionId, messageId: userId, message: store!.state.history.at(-1) });
                         if (run.cancelled)
                             throw new Error('ACP turn cancelled before send');
-                        const result = await transport!.sendRequest('session/prompt', { sessionId, prompt: [{ type: 'text', text: nativeText }] });
+                        const result = await transport!.sendRequest('session/prompt', { sessionId, prompt: [{ type: 'text', text: nativeText }] }, options.requestTimeoutMs ?? 30 * 60_000);
                         await work;
                         if (failure)
                             throw failure;
