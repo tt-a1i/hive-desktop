@@ -128,11 +128,7 @@ impl Interactions {
 impl InteractionCard {
     fn new(raw: AgentInteraction) -> Self {
         let error = (!raw.has_native_identity()).then(|| {
-            InteractionError::MissingIdentity(if raw.backend == "claude" {
-                "Claude"
-            } else {
-                "Codex"
-            })
+            InteractionError::MissingIdentity(if raw.backend == "claude" { "Claude" } else if raw.backend == "acp" { "ACP" } else { "Codex" })
         });
         Self {
             raw,
@@ -156,6 +152,7 @@ impl InteractionCard {
         match self.raw.backend.as_str() {
             "pi-rpc" => "外部 Pi",
             "claude" => "Claude",
+            "acp" => "ACP",
             _ => "Codex",
         }
     }
@@ -265,7 +262,7 @@ impl HiveApp {
         true
     }
     fn upsert_interaction(&mut self, session: &str, raw: AgentInteraction) {
-        if !matches!(raw.backend.as_str(), "codex" | "pi-rpc" | "claude") {
+        if !matches!(raw.backend.as_str(), "codex" | "pi-rpc" | "claude" | "acp") {
             return;
         }
         let cards = self

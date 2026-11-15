@@ -136,7 +136,7 @@ struct MemberTarget {
     session_id: Option<String>,
 }
 fn valid_backend(backend: &str) -> bool {
-    matches!(backend, "pi" | "codex" | "pi-rpc" | "claude")
+    matches!(backend, "pi" | "codex" | "pi-rpc" | "claude" | "acp")
 }
 fn backend_key(backend: Backend) -> &'static str {
     match backend {
@@ -144,6 +144,7 @@ fn backend_key(backend: Backend) -> &'static str {
         Backend::Codex => "codex",
         Backend::PiRpc => "pi-rpc",
         Backend::Claude => "claude",
+        Backend::Acp => "acp",
     }
 }
 fn request_params(
@@ -613,6 +614,7 @@ impl WorktreeDialog {
                 return;
             }
         };
+        if item.is_none() && self.member.is_none() && self.backend == "acp" && self.profile.is_none() { self.error=Some("请选择已启用的 ACP 配置".into()); cx.notify(); return; }
         if item.is_none() {
             if let Some(profile) = self.member.as_ref().and_then(|m| m.profile.as_ref()).or(self.profile.as_ref()) { params["profile"] = json!(profile); }
             let Some(Ok((revision, _))) = &self.setup else {
@@ -770,7 +772,7 @@ impl Render for WorktreeDialog {
                 .child(div().text_sm().child(format!("{} · {} · {}",member.name,member.backend_label,member.model_label)))
                 .child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("继承此成员的后端与模型。创建后会打开并初始化原生会话，但不会切换此成员的当前会话。成员空闲后发送或继续才切换，后续派单才会到这里。"))))
             .when(!current,|view| view.child(div().id("worktree-target-changed").role(Role::Status).text_sm().child(tr("项目、成员、会话或后台连接已变化，请关闭后重新打开。"))))
-            .when(show_backend,|view| view.when(recovering, |view| view.child(div().text_xs().child(tr("已记录的后端保持不变；此选择仅用于旧记录的新主控会话。")))).child(h_flex().gap_2().flex_wrap().children([("pi","内置 Pi"),("codex","Codex"),("pi-rpc","外部 Pi"),("claude","Claude Code")].into_iter().enumerate().map(|(index,(value,label))|
+            .when(show_backend,|view| view.when(recovering, |view| view.child(div().text_xs().child(tr("已记录的后端保持不变；此选择仅用于旧记录的新主控会话。")))).child(h_flex().gap_2().flex_wrap().children([("pi","内置 Pi"),("codex","Codex"),("pi-rpc","外部 Pi"),("claude","Claude Code"),("acp","ACP")].into_iter().enumerate().map(|(index,(value,label))|
                 Button::new(("worktree-backend",index)).outline().small().label(tr(label)).selected(backend == value).disabled(disabled)
                     .on_click(cx.listener(move |this,_,_,cx| {this.backend = value;this.profile = None;cx.notify();}))))))
             .when(show_backend && !recovering, |view| view.child(h_flex().flex_wrap().gap_1().children(self.profiles.iter().filter(|p|p.enabled && p.driver == backend).enumerate().map(|(index,p)| {

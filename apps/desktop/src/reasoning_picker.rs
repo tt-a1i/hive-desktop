@@ -19,6 +19,7 @@ pub struct ReasoningPicker {
 }
 impl HiveApp {
     pub(crate) fn load_reasoning(&mut self, level: Option<String>, cx: &mut Context<Self>) {
+        if self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) { return; }
         if self.conversation_is_read_only()
             || self.reasoning_picker.loading
             || !self.conversation_ready

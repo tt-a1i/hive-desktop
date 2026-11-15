@@ -63,6 +63,7 @@ fn supported_driver(driver: &str) -> Option<&'static str> {
         "codex" => Some("codex"),
         "pi-rpc" => Some("pi-rpc"),
         "claude" => Some("claude"),
+        "acp" => Some("acp"),
         _ => None,
     }
 }
@@ -228,7 +229,7 @@ impl HiveApp {
             if !command.is_empty() {
                 launch["command"] = json!(command);
             }
-            if !config.is_empty() {
+            if driver != "acp" && !config.is_empty() {
                 launch["configDir"] = json!(config);
             }
             body["label"] = json!(self.profiles.label.read(cx).value().to_string());
@@ -365,6 +366,7 @@ impl HiveApp {
                         ("codex", "Codex"),
                         ("pi-rpc", "外部 Pi"),
                         ("claude", "Claude"),
+                        ("acp", "ACP"),
                     ]
                     .into_iter()
                     .enumerate()
@@ -420,8 +422,8 @@ impl HiveApp {
                 v.child(div().child(tr("可执行文件")))
                     .child(Input::new(&self.profiles.command).aria_label(tr("可执行文件")))
             })
-            .child(div().child(tr("配置目录（绝对路径，可留空）")))
-            .child(Input::new(&self.profiles.config).aria_label(tr("配置目录（绝对路径，可留空）")))
+            .when(driver != "acp", |v| v.child(div().child(tr("配置目录（绝对路径，可留空）"))).child(Input::new(&self.profiles.config).aria_label(tr("配置目录（绝对路径，可留空）"))))
+            .when(driver == "acp", |v| v.child(div().text_xs().child(if english() { "Pass native configuration through command arguments." } else { "通过原生命令参数配置。" })))
             .when(driver != "pi" && driver != "claude", |v| {
                 v.child(div().child(tr("参数（JSON 字符串数组；每项是一个完整参数）")))
                     .child(

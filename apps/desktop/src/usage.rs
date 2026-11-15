@@ -66,7 +66,7 @@ impl HiveApp {
         self.usage.dirty = false;
     }
     pub(crate) fn load_usage(&mut self, cx: &mut Context<Self>) {
-        if self.conversation_is_read_only() || !self.usage.visible
+        if self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) || self.conversation_is_read_only() || !self.usage.visible
             || !self.conversation_ready
             || self.loading
             || !self.connected

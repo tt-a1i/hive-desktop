@@ -243,7 +243,7 @@ impl HiveApp {
                         )
                     })
                     .when(self.session.is_some(), |row| {
-                        row.child(self.usage_button(window, running, cx))
+                        row.when(!self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)), |row| row.child(self.usage_button(window, running, cx)))
                     })
                     .when(self.session.is_none() && active_project.is_some(), |row| {
                         row.child(

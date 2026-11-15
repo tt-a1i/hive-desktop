@@ -68,6 +68,20 @@ impl HiveApp {
         card: &InteractionCard,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        if card.raw.backend == "acp" {
+            let session = session.to_owned(); let id = card.raw.id.clone();
+            let options = card.raw.params["options"].as_array().cloned().unwrap_or_default();
+            return v_flex().id(("acp-permission", i)).gap_2().p_3().border_1().border_color(Color::Divider.get(cx))
+                .child(div().id(("acp-permission-status", i)).role(Role::Status).child(if english() { "ACP requests permission" } else { "ACP 请求权限" }))
+                .child(div().text_xs().child(card.raw.params["toolCall"].to_string()))
+                .children(options.into_iter().enumerate().filter_map(|(index, option)| {
+                    let option_id = option["optionId"].as_str()?.to_owned(); let name = option["name"].as_str()?.to_owned();
+                    let session = session.clone(); let id = id.clone();
+                    Some(Button::new(("acp-permission-option", index)).label(name).disabled(!card.waiting() || !self.connected).on_click(cx.listener(move |this,_,_,cx| this.answer_acp_permission(session.clone(), id.clone(), option_id.clone(), cx))))
+                }))
+                .when_some(card.error.as_ref(), |v,error| v.child(div().id(("acp-permission-error", i)).role(Role::Status).child(error.text())))
+                .into_any_element();
+        }
         if card.is_claude() {
             return self
                 .render_claude_interaction(i, session, card, cx)

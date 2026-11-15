@@ -288,7 +288,7 @@ impl HiveApp {
                 }));
             }
             for profile in profiles.iter().filter(|p| p.enabled && !p.id.starts_with("default-")) {
-                let backend = match profile.driver.as_str() { "pi" => "pi", "codex" => "codex", "pi-rpc" => "pi-rpc", "claude" => "claude", _ => continue };
+                let backend = match profile.driver.as_str() { "pi" => "pi", "codex" => "codex", "pi-rpc" => "pi-rpc", "claude" => "claude", "acp" => "acp", _ => continue };
                 let reference = crate::agent_profiles::ProfileRef { id: profile.id.clone(), revision: profile.current_revision };
                 let weak = weak.clone(); let target = target.clone();
                 menu = menu.item(PopupMenuItem::new(format!("{} · {} · r{}", profile.label, backend, profile.current_revision)).on_click(move |_, window, cx| {

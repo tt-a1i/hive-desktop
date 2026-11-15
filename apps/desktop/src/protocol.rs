@@ -120,6 +120,7 @@ pub enum Backend {
     #[serde(rename = "pi-rpc")]
     PiRpc,
     Claude,
+    Acp,
 }
 impl Backend {
     pub fn label(self) -> &'static str {
@@ -128,6 +129,7 @@ impl Backend {
             Self::Codex => "Codex",
             Self::PiRpc => "外部 Pi",
             Self::Claude => "Claude",
+            Self::Acp => "ACP",
         }
     }
 }
@@ -292,6 +294,7 @@ impl AgentInteraction {
             "codex" => [&self.thread_id, &self.turn_id, &self.item_id]
                 .iter()
                 .all(|id| present(id)),
+            "acp" => self.method == "session/request_permission" && (self.native_request_id.as_str().is_some_and(|id| !id.is_empty()) || self.native_request_id.is_number()) && self.params["sessionId"].as_str().is_some_and(|id| !id.is_empty()) && self.params["toolCall"]["toolCallId"].as_str().is_some_and(|id| !id.is_empty()),
             "claude" => {
                 present(&self.turn_id)
                     && present(&self.item_id)

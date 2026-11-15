@@ -99,6 +99,7 @@ impl HiveApp {
             crate::protocol::Backend::Codex => Some("codex"),
             crate::protocol::Backend::Claude => Some("claude"),
             crate::protocol::Backend::PiRpc => Some("pi"),
+            crate::protocol::Backend::Acp => None,
         };
         h_flex()
             .min_w_0()

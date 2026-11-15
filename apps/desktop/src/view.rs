@@ -102,6 +102,7 @@ impl HiveApp {
             crate::protocol::Backend::Codex => "codex",
             crate::protocol::Backend::PiRpc => "pi-rpc",
             crate::protocol::Backend::Claude => "claude",
+            crate::protocol::Backend::Acp => "acp",
         };
         h_flex()
             .flex_1()
@@ -781,6 +782,7 @@ impl HiveApp {
                                     .with_priority(1),
                                 )
                             })
+                            .when(self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) && self.attachments.refs(self.draft_target.as_ref()).iter().any(|a| a.is_image()), |body| body.child(div().id("acp-image-unsupported").role(Role::Status).child(if crate::language::english() { "ACP does not support images here. Remove images before sending." } else { "当前 ACP 不支持图片，请移除图片后发送。" })))
                             .when_some(self.render_input_attachments(cx), |body, attachments| {
                                 body.child(crate::focus_scroll::Reveal::new(
                                     "composer-attachments-reveal",
@@ -1022,7 +1024,8 @@ impl Render for HiveApp {
             && self.model.is_none()
             && !self.loading;
         self.ensure_attachment_previews(cx);
-        let can_submit = !self.conversation_is_read_only()
+        let acp_images = self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) && self.attachments.refs(self.draft_target.as_ref()).iter().any(|a| a.is_image());
+        let can_submit = !acp_images && !self.conversation_is_read_only()
             && self.attachments.ready(self.draft_target.as_ref())
             && self.conversation_ready
             && self.session.is_some()
@@ -1078,8 +1081,8 @@ impl Render for HiveApp {
         let reasoning_key = self
             .session
             .as_ref()
-            .filter(|_| {
-                !self.conversation_is_read_only()
+            .filter(|session| {
+                !matches!(session.backend, crate::protocol::Backend::Acp) && !self.conversation_is_read_only()
                     && self.conversation_ready
                     && self.connected
                     && !self.loading

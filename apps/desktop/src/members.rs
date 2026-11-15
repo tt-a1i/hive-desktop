@@ -45,6 +45,7 @@ impl Member {
             Some("hive:codex") => "Codex",
             Some("hive:pi-rpc") => tr("外部 Pi"),
             Some("hive:claude") => "Claude",
+            Some("hive:acp") => "ACP",
             Some(_) => tr("其他后端"),
             None => tr("未配置后端"),
         }
@@ -61,6 +62,7 @@ pub fn command_backend(command: Option<&str>) -> Option<&'static str> {
         Some("hive:codex") => Some("codex"),
         Some("hive:pi-rpc") => Some("pi-rpc"),
         Some("hive:claude") => Some("claude"),
+        Some("hive:acp") => Some("acp"),
         _ => None,
     }
 }
@@ -135,6 +137,7 @@ impl HiveApp {
         if profile.is_none() { self.error = Some("成员配置引用未知，无法读取模型目录".into()); cx.notify(); return; }
         let mut params = json!({"workspaceId":workspace,"backend":backend});
         if let Some(reference) = &profile { params["profile"] = json!(reference); }
+        if backend == "acp" { self.error = Some("ACP 不支持模型目录".into()); cx.notify(); return; }
         self.member_catalog_generation += 1;
         let generation = self.member_catalog_generation;
         self.member_picker_target = Some(id.clone());
@@ -303,6 +306,7 @@ impl HiveApp {
         self.error = None;
         let submitted_description = self.member_description.read(cx).value().to_string();
         let description = submitted_description.trim().to_string();
+        if self.member_backend == "acp" && self.member_profile.is_none() { self.error = Some("请选择已启用的 ACP 配置".into()); cx.notify(); return; }
         let mut body = json!({"workspaceId":workspace,"name":name,"role":self.member_role,"backend":self.member_backend});
         if let Some(profile) = &self.member_profile { body["profile"] = json!(profile); }
         if !description.is_empty() {

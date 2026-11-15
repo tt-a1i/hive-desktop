@@ -16,6 +16,7 @@ pub(crate) fn backend_glyph(backend: Backend) -> Glyph {
         Backend::Codex => Glyph::Cpu,
         Backend::Claude => Glyph::Bot,
         Backend::PiRpc => Glyph::SquareTerminal,
+        Backend::Acp => Glyph::SquareTerminal,
     }
 }
 
@@ -115,13 +116,13 @@ impl HiveApp {
                         row.child(self.new_chat_menu("home-agent", tr("选择 Agent"), None, cx))
                     })
                     .when(self.session.is_some(), |row| {
-                        row.child(
+                        row.when(!self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Acp)), |row| row.child(
                             div()
                                 .flex_1()
                                 .min_w_0()
                                 .max_w(px(300.))
                                 .child(self.model_picker(window, running || self.conversation_is_read_only(), cx)),
-                        )
+                        ))
                         .when(native_commands && !compact, |row| {
                             row.child(self.command_button(cx))
                         })

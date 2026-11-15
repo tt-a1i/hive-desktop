@@ -380,6 +380,7 @@ impl HiveApp {
                                                                 ("codex", "Codex"),
                                                                 ("pi-rpc", tr("外部 Pi")),
                                                                 ("claude", "Claude"),
+                                                                ("acp", "ACP"),
                                                             ]
                                                             .into_iter()
                                                             .enumerate()
@@ -799,7 +800,7 @@ impl HiveApp {
                                                             ),
                                                     ))
                                                     .child(self.render_member_description(member, cx))
-                                                    .when(!running && backend.is_some(), |view| {
+                                                    .when(!running && backend.is_some() && backend != Some("acp"), |view| {
                                                         view.child(Reveal::new(
                                                             format!("member-{id}-model-trigger-reveal"),
                                                             &self.member_scroll,

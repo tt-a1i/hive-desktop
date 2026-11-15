@@ -2,6 +2,11 @@ use super::*;
 use serde_json::json;
 
 impl HiveApp {
+    pub(super) fn answer_acp_permission(&mut self, session: String, id: String, option: String, cx: &mut Context<Self>) {
+        let valid = self.interactions.sessions.get(&session).and_then(|cards| cards.iter().find(|card| card.raw.id == id)).is_some_and(|card| card.raw.backend == "acp" && card.raw.method == "session/request_permission" && card.waiting() && card.raw.params["options"].as_array().is_some_and(|options| options.iter().any(|entry| entry["optionId"].as_str() == Some(option.as_str()))));
+        if valid { self.submit_interaction(session, id, json!({"optionId":option}), cx); }
+    }
+
     pub(super) fn answer_interaction(
         &mut self,
         session: String,
