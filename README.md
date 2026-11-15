@@ -4,7 +4,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
-2026-11-15 历史分叉已取得[原生 Codex / Terra 实测](docs/validation/2026-11-15-native-history-live.md)：普通分叉、编辑草稿、新目录执行、源数据保持和冷恢复通过。[多实例配置及 ACP](docs/validation/2026-11-15-agent-profiles-acp.md)已接生产运行时，[跨后端文本接续](docs/validation/2026-11-15-session-handoffs.md)完成 Mac 受控原生窗口、冷恢复和 50 项包内检查。真实 ACP 完整协作尚未通过，Windows 最终包继续验证；本轮收尾后按用户要求暂停，尚未推广新安装包。
+2026-11-15 本轮已收尾并按用户要求暂停，见[收尾记录](docs/validation/2026-11-15-round-close.md)。[多实例配置及 ACP](docs/validation/2026-11-15-agent-profiles-acp.md)、[跨后端文本接续](docs/validation/2026-11-15-session-handoffs.md)已接生产运行时：Mac 50 项包内检查、106 项 Rust 检查及限定实际窗口/冷恢复通过；Windows 同一冻结 ZIP 的 47 项包内检查和原生 UIA 操作通过。真实 ACP 完整协作仍未通过，不与已通过的[原生 Codex / Terra 历史分叉](docs/validation/2026-11-15-native-history-live.md)混算。PR #46 保持 Draft，完整目标保持开放，尚未推广或替换用户安装实例。以下日期记录保留当时进展。
 
 2026-11-15 恢复进展：问题回复附件已合入并通过专项回归，初始化脚本、会话模式和成员工作树继续做真实流程验收；独立核实了测试夹具中“当前选择”与“最后启动会话”的区别。历史分叉、检查点和其余完整目标仍在实施，见[恢复核验](docs/validation/2026-11-15-functional-resume.md)。当前安装包状态保持下文所述。
 
