@@ -487,6 +487,7 @@ impl HiveApp {
             return;
         };
         let connection = self.connection_generation;
+        let open_request = self.open_request;
         let mut params = json!({"workspaceId":workspace,"backend":backend});
         if let Some(profile) = profile { params["profile"] = json!(profile); }
         cx.spawn(async move |this, cx| {
@@ -504,6 +505,7 @@ impl HiveApp {
                     Ok(value) => match serde_json::from_value::<Session>(value) {
                         Ok(session) => {
                             if this.workspace.as_ref() == Some(&session.workspace_id)
+                                && this.open_request == open_request
                                 && this.workspace_writes_allowed()
                             {
                                 this.sessions.retain(|existing| existing.id != session.id);

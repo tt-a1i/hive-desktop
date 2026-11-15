@@ -129,6 +129,7 @@ struct MemberTarget {
     model: Option<(String, String)>,
     role: String,
     description: String,
+    profile: Option<crate::agent_profiles::ProfileRef>,
     backend_label: String,
     model_label: String,
     open_request: u64,
@@ -234,6 +235,7 @@ fn member_context_matches(
                 && member.role == target.role
                 && member.description == target.description
                 && member.configured_command == target.command
+                && member.desktop_profile == target.profile
                 && member.desktop_model.as_ref().map(|model| (&model.provider, &model.id))
                     == target.model.as_ref().map(|(provider, id)| (provider, id))
         })
@@ -246,6 +248,8 @@ struct WorktreeDialog {
     connection: u64,
     branch: Entity<InputState>,
     backend: &'static str,
+    profiles: Vec<crate::agent_profiles::Profile>,
+    profile: Option<crate::agent_profiles::ProfileRef>,
     skip_setup: bool,
     setup: Option<Result<(String, Option<(String, String)>), String>>,
     setup_loading: bool,
@@ -312,6 +316,7 @@ impl HiveApp {
                 .desktop_model
                 .as_ref()
                 .map(|model| (model.provider.clone(), model.id.clone())),
+            profile: member.desktop_profile.clone(),
             backend_label: member.backend_label().into(),
             model_label: member
                 .desktop_model
@@ -346,6 +351,7 @@ impl HiveApp {
             .as_ref()
             .map(|session| backend_key(session.backend))
             .unwrap_or("pi");
+        let profiles = self.profiles.snapshot.as_ref().map(|s| s.profiles.clone()).unwrap_or_default();
         let app = cx.weak_entity();
         let editor = cx.new(|cx: &mut Context<WorktreeDialog>| {
             let branch =
@@ -360,6 +366,8 @@ impl HiveApp {
                 connection,
                 branch,
                 backend,
+                profiles,
+                profile: None,
                 skip_setup: false,
                 setup: None,
                 setup_loading: false,
@@ -604,6 +612,7 @@ impl WorktreeDialog {
             }
         };
         if item.is_none() {
+            if let Some(profile) = self.member.as_ref().and_then(|m| m.profile.as_ref()).or(self.profile.as_ref()) { params["profile"] = json!(profile); }
             let Some(Ok((revision, _))) = &self.setup else {
                 return;
             };
@@ -758,7 +767,12 @@ impl Render for WorktreeDialog {
             .when(!current,|view| view.child(div().id("worktree-target-changed").role(Role::Status).text_sm().child(tr("项目、成员、会话或后台连接已变化，请关闭后重新打开。"))))
             .when(show_backend,|view| view.when(recovering, |view| view.child(div().text_xs().child(tr("已记录的后端保持不变；此选择仅用于旧记录的新主控会话。")))).child(h_flex().gap_2().flex_wrap().children([("pi","内置 Pi"),("codex","Codex"),("pi-rpc","外部 Pi"),("claude","Claude Code")].into_iter().enumerate().map(|(index,(value,label))|
                 Button::new(("worktree-backend",index)).outline().small().label(tr(label)).selected(backend == value).disabled(disabled)
-                    .on_click(cx.listener(move |this,_,_,cx| {this.backend = value;cx.notify();}))))))
+                    .on_click(cx.listener(move |this,_,_,cx| {this.backend = value;this.profile = None;cx.notify();}))))))
+            .when(show_backend && !recovering, |view| view.child(h_flex().flex_wrap().gap_1().children(self.profiles.iter().filter(|p|p.enabled && p.driver == backend).enumerate().map(|(index,p)| {
+                let reference=crate::agent_profiles::ProfileRef{id:p.id.clone(),revision:p.current_revision};
+                let selected=self.profile.as_ref()==Some(&reference);
+                Button::new(("worktree-profile",index)).small().label(format!("{} · r{}",p.label,p.current_revision)).selected(selected).disabled(disabled).on_click(cx.listener(move |this,_,_,cx|{this.profile=Some(reference.clone());cx.notify();}))
+            }))))
             .when(!recovering && !history,|view| view
                  .child(div().id("worktree-setup-selection").role(Role::Status).text_sm().text_color(Color::Muted.get(cx)).child(match &self.setup {
                     Some(Ok((_, Some((name, version))))) => format!("{}: {} · {}: {}. {}", tr("工作树初始化脚本"), name, tr("版本"), version, tr(if self.skip_setup { "本次创建将跳过此脚本。" } else { "新会话会等待脚本完成后才能发送消息。" })),
@@ -915,6 +929,7 @@ mod tests {
             model: Some(("openai".into(), "gpt-6.1-terra".into())),
             role: "coder".into(),
             description: "Original responsibility".into(),
+            profile: None,
             backend_label: "Codex".into(),
             model_label: "Terra".into(),
             open_request: 5,

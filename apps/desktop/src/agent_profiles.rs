@@ -26,6 +26,10 @@ impl Profiles {
     }
 }
 impl HiveApp {
+    pub fn profile_label(&self, reference: &ProfileRef) -> String {
+        let name = self.profiles.snapshot.as_ref().and_then(|snapshot| snapshot.profiles.iter().find(|p| p.id == reference.id && p.revisions.iter().any(|r| r.revision == reference.revision))).map(|p| p.label.as_str()).unwrap_or(reference.id.as_str());
+        format!("{} · r{}", name, reference.revision)
+    }
     pub fn load_profiles(&mut self, cx: &mut Context<Self>) {
         if !self.connected || self.profiles.loading { return; }
         let Some(runtime)=self.runtime.clone() else { return; };

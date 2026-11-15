@@ -394,6 +394,7 @@ impl HiveApp {
                                                                     .on_click(cx.listener(
                                                                         move |this, _, _, cx| {
                                                                             this.member_backend = backend;
+                                                                            this.member_profile = None;
                                                                             cx.notify();
                                                                         },
                                                                     ))
@@ -401,6 +402,13 @@ impl HiveApp {
                                                         ),
                                                 )),
                                         )
+                                        .child(h_flex().flex_wrap().gap_1().children(
+                                            self.profiles.snapshot.as_ref().into_iter().flat_map(|snapshot| snapshot.profiles.iter()).filter(|profile| profile.enabled && profile.driver == self.member_backend).enumerate().map(|(index, profile)| {
+                                                let reference = crate::agent_profiles::ProfileRef { id: profile.id.clone(), revision: profile.current_revision };
+                                                let selected = self.member_profile.as_ref() == Some(&reference);
+                                                Button::new(("member-profile", index)).compact().xsmall().label(format!("{} · r{}", profile.label, profile.current_revision)).selected(selected).on_click(cx.listener(move |this, _, _, cx| { this.member_profile = Some(reference.clone()); cx.notify(); }))
+                                            })
+                                        ))
                                         .child(Reveal::new(
                                             "member-form-save-reveal",
                                             &self.member_scroll,
@@ -599,6 +607,8 @@ impl HiveApp {
                                                     })
                                                     .gap_2p5()
                                                     .p_4()
+                                                    .when_some(member.desktop_profile.as_ref(), |row, profile| row.child(div().text_xs().child(self.profile_label(profile))))
+                                                    .when_some(member.desktop_launch_error.as_ref(), |row, error| row.child(div().text_xs().child(error.clone())))
                                                     .child(Reveal::new(
                                                         format!("member-{id}-header-reveal"),
                                                         &self.member_scroll,

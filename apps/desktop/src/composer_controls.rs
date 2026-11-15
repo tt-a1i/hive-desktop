@@ -60,6 +60,7 @@ impl HiveApp {
             .gap_2()
             .items_center()
             .pt_1()
+            .when_some(self.session.as_ref().and_then(|s| s.profile.as_ref()), |row, profile| row.child(div().text_xs().child(self.profile_label(profile))))
             .child(
                 h_flex()
                     .flex_shrink_0()

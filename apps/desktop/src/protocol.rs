@@ -54,6 +54,8 @@ pub struct Session {
     pub execution: Option<SessionExecution>,
     #[serde(default)]
     pub execution_path: Option<String>,
+    #[serde(default)]
+    pub profile: Option<crate::agent_profiles::ProfileRef>,
 }
 impl Session {
     /// Presentation only: original identity is never a live run or token credential.
@@ -135,6 +137,10 @@ pub struct Member {
     #[serde(default)]
     pub configured_command: Option<String>,
     pub desktop_model: Option<ModelIdentity>,
+    #[serde(default)]
+    pub desktop_profile: Option<crate::agent_profiles::ProfileRef>,
+    #[serde(default)]
+    pub desktop_launch_error: Option<String>,
 }
 
 #[derive(Deserialize)]

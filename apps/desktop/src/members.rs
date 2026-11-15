@@ -130,6 +130,10 @@ impl HiveApp {
             cx.notify();
             return;
         };
+        if let Some(error) = self.members.iter().find(|member| member.id == id).and_then(|member| member.desktop_launch_error.clone()) { self.error = Some(crate::app::ErrorNotice::Detail("成员配置不可用", error)); cx.notify(); return; }
+        let profile = self.members.iter().find(|member| member.id == id).and_then(|member| member.desktop_profile.clone());
+        let mut params = json!({"workspaceId":workspace,"backend":backend});
+        if let Some(reference) = &profile { params["profile"] = json!(reference); }
         self.member_catalog_generation += 1;
         let generation = self.member_catalog_generation;
         self.member_picker_target = Some(id.clone());
@@ -143,7 +147,7 @@ impl HiveApp {
             let result = runtime
                 .request(
                     "agent.models",
-                    json!({"workspaceId":workspace,"backend":backend}),
+                    params,
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -154,6 +158,7 @@ impl HiveApp {
                     && this.member_catalog_generation == generation
                     && this.member_picker_target.as_ref() == Some(&id)
                     && this.member_catalog_backend.as_deref() == Some(backend)
+                    && this.members.iter().find(|member| member.id == id).is_some_and(|member| member.desktop_profile == profile)
                 {
                     this.member_catalog_loading = false;
                     match result.and_then(|v| {
@@ -294,6 +299,7 @@ impl HiveApp {
         let submitted_description = self.member_description.read(cx).value().to_string();
         let description = submitted_description.trim().to_string();
         let mut body = json!({"workspaceId":workspace,"name":name,"role":self.member_role,"backend":self.member_backend});
+        if let Some(profile) = &self.member_profile { body["profile"] = json!(profile); }
         if !description.is_empty() {
             body["description"] = json!(description);
         }
