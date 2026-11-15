@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { createServer, connect } from 'node:net';
+import { createServer, connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -17,7 +17,10 @@ export function createAcpTeamServer(binding: Binding) {
   const socketPath = process.platform === 'win32'
     ? `\\\\.\\pipe\\hive-acp-${nonce}` : join(tmpdir(), `hive-acp-${nonce}.sock`);
   let seen = false;
+  const sockets = new Set<Socket>();
   const proof = createServer((socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
     let data = '';
     socket.setEncoding('utf8');
     socket.on('data', (chunk: string) => {
@@ -37,12 +40,13 @@ export function createAcpTeamServer(binding: Binding) {
   let disposed = false;
   return {
     server: { name: 'hive-team', command: process.execPath, args, env: [] as { name: string; value: string }[] },
-    childEnv: { ...process.env, [BINDING_ENV]: JSON.stringify(binding), [PROOF_ENV]: JSON.stringify({ socketPath, nonce }) },
+    childEnv: { [BINDING_ENV]: JSON.stringify(binding), [PROOF_ENV]: JSON.stringify({ socketPath, nonce }) },
     connected: () => seen,
     dispose: async () => {
       if (disposed) return;
       disposed = true;
       if (!await listening) return;
+      for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => proof.close(() => resolve()));
     },
   };

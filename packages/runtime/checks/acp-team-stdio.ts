@@ -16,7 +16,7 @@ const address = http.address();
 assert(address && typeof address !== 'string');
 const bridge = createAcpTeamServer({ workspaceId: 'workspace-1', agentId: 'agent-1', token: 'secret-token', hivePort: String(address.port), cwd: process.cwd() });
 assert(!JSON.stringify(bridge.server).includes('secret-token'));
-const child = spawn(bridge.server.command, bridge.server.args, { env: bridge.childEnv, stdio: ['pipe', 'pipe', 'pipe'] });
+const child = spawn(bridge.server.command, bridge.server.args, { env: { ...process.env, ...bridge.childEnv }, stdio: ['pipe', 'pipe', 'pipe'] });
 let stderr = '';
 child.stderr.on('data', (chunk) => { stderr += chunk; });
 const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
