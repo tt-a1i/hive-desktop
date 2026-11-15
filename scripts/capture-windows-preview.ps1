@@ -3,6 +3,7 @@
     [Parameter(Mandatory)] [string] $WorkerFile,
     [Parameter(Mandatory)] [string] $WorkerPrompt,
     [Parameter(Mandatory)] [string] $ExistingDraft,
+    [Parameter(Mandatory)] [string] $TesterDraft,
     [Parameter(Mandatory)] [string] $TasksFile,
     [Parameter(Mandatory)] [string] $DispatchId,
     [Parameter(Mandatory)] [string] $DataDirectory,
@@ -169,6 +170,43 @@ function Invoke-MessageQuote([string] $Message) {
     }
     if (-not (Test-VisibleControl $quote)) { throw 'Fixture message quote action did not become visible.' }
     $quote.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
+
+function Wait-TesterHistoryAction {
+    $bodyName = 'Tester · 已提交: 核对测试入口'
+    $buttonName = '打开原成员会话'
+    $deadline = [DateTime]::UtcNow.AddSeconds(8)
+    do {
+        $body = Find-Action $bodyName
+        if ($null -ne $body) {
+            $node = $body
+            $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+            $condition = New-Object System.Windows.Automation.PropertyCondition(
+                [System.Windows.Automation.AutomationElement]::NameProperty, $buttonName)
+            while ($null -ne $node -and -not $node.Equals($root)) {
+                $buttons = $node.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+                if ($buttons.Count -eq 1 -and $buttons[0].Current.IsEnabled) { return $buttons[0] }
+                if ($buttons.Count -gt 1) { break }
+                $node = $walker.GetParent($node)
+            }
+        }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Could not uniquely associate the Tester responsibility with its original session action.'
+}
+function Invoke-TesterHistoryAction {
+    $action = Wait-TesterHistoryAction
+    if (-not (Test-VisibleControl $action)) {
+        $action.SetFocus()
+        $deadline = [DateTime]::UtcNow.AddSeconds(8)
+        do {
+            $action = Wait-TesterHistoryAction
+            if (Test-VisibleControl $action) { break }
+            Start-Sleep -Milliseconds 120
+        } while ([DateTime]::UtcNow -lt $deadline)
+    }
+    if (-not (Test-VisibleControl $action)) { throw 'Tester original session action did not become visible.' }
+    $action.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 }
 
 function Invoke-Action([string] $Name) {
@@ -406,13 +444,13 @@ Invoke-Action '收起工作过程，2 项工具已完成'
 Invoke-Action '打开主会话'
 Invoke-Action '打开关联派单'
 [void](Wait-Action '在文件资源管理器中显示：review.txt')
-[void](Wait-Action '打开成员会话: Tester')
+[void](Wait-TesterHistoryAction)
 Invoke-Action '设置'
 Invoke-Action '角色模板'
 [void](Wait-Action '角色模板名称')
 Invoke-Action '关闭设置'
 Wait-ActionsAbsent @('关闭设置', '搜索设置')
-[void](Wait-Action '打开成员会话: Tester')
+[void](Wait-TesterHistoryAction)
 Invoke-Action '复制派单编号'
 $deadline = [DateTime]::UtcNow.AddSeconds(8)
 while ((Get-Clipboard -Raw) -cne $DispatchId) {
@@ -420,7 +458,8 @@ while ((Get-Clipboard -Raw) -cne $DispatchId) {
     Start-Sleep -Milliseconds 120
 }
 Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-related-dispatch.png')
-Invoke-Action '打开成员会话: Tester'
+Invoke-TesterHistoryAction
+Wait-EditorText '聊天消息' $TesterDraft
 Invoke-Action '返回派单详情'
 [void](Wait-Action '在文件资源管理器中显示：review.txt')
 Invoke-Action '返回来源会话'

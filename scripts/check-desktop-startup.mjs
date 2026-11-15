@@ -33,6 +33,7 @@ try {
   let leadChat;
   let workerChat;
   let workerFile;
+  let testerSessionId;
   let dispatch;
   try {
     for (const name of ['Alpha', 'Beta']) {
@@ -68,8 +69,21 @@ try {
     await runtime.hive.request('POST', `${base}/agents/${tester.id}/config`, { command: 'hive:pi', args: [] });
     await runtime.hive.request('POST', `${base}/agents/${tester.id}/start`);
     const testerChat = runtime.chats.list(workspaceId).find(chat => chat.agentId === tester.id);
+    assert.ok(testerChat?.id, 'Starting Tester must create its actual member session');
+    testerSessionId = testerChat.id;
     await runtime.chats.live.get(testerChat.id).queue.pause();
     const child = JSON.parse(await team(`${workspaceId}:orchestrator`, ['send', 'Tester', '核对测试入口', '--related-to', dispatch])).dispatch_id;
+    const originDeadline = Date.now() + 8000;
+    let testerOrigin;
+    while (!testerOrigin && Date.now() < originDeadline) {
+      try { testerOrigin = await runtime.chats.dispatchSession(workspaceId, child, tester.id); }
+      catch (error) {
+        if (error.code !== 'DISPATCH_SOURCE_UNKNOWN') throw error;
+        await delay(100);
+      }
+    }
+    assert.equal(testerOrigin?.sourceSessionId, testerSessionId, 'Child dispatch must retain the real Tester session');
+    assert.equal(testerOrigin?.sourceAgentId, tester.id);
     const question = JSON.parse(await team(tester.id, ['message', '--dispatch', dispatch, '--from-dispatch', child, '--kind', 'question', '从哪个目录运行测试？'])).message;
     const answer = JSON.parse(await team(member.id, ['message', '--dispatch', child, '--from-dispatch', dispatch, '--kind', 'answer', '--reply-to', question.id, '从项目根目录运行。'])).message;
     for (const id of [dispatch, child]) {
@@ -119,11 +133,13 @@ try {
   // and replace the obsolete selection. Booting just the sidecar cannot do this.
   const windowsPreview = process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH;
   const existingDraft = '请保留这条跟进问题。';
+  const testerDraft = 'Tester 原成员会话的独立草稿。';
   const draftDir = join(state, 'desktop-drafts');
   const workerDraft = join(draftDir, `session-${workerChat}.json`);
   if (windowsPreview) {
     await mkdir(draftDir, { recursive: true });
     await writeFile(workerDraft, JSON.stringify({ key: `session:${workerChat}`, input: existingDraft, failed: [] }));
+    await writeFile(join(draftDir, `session-${testerSessionId}.json`), JSON.stringify({ key: `session:${testerSessionId}`, input: testerDraft, failed: [] }));
   }
   const env = { ...process.env, HIVE_DESKTOP_DATA_DIR: state, HIVE_DESKTOP_TRACE_RPC: '1' };
   if (language) await writeFile(join(state, 'desktop-language.json'), JSON.stringify(language));
@@ -147,7 +163,7 @@ try {
   if (windowsPreview) {
     const capture = fileURLToPath(new URL('./capture-windows-preview.ps1', import.meta.url));
     execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
-      '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-DispatchId', dispatch, '-DataDirectory', state, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
+      '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-TesterDraft', testerDraft, '-DispatchId', dispatch, '-DataDirectory', state, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
     { stdio: 'inherit', timeout: 120_000 });
     await waitForSelection(leadChat);
     const renamedLead = JSON.parse(await readFile(join(state, 'chats/index.json'), 'utf8')).find(session => session.id === leadChat);
