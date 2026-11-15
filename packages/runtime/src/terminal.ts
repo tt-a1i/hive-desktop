@@ -1,3 +1,4 @@
+import type { ExecutionMutations } from './execution-mutations.js';
 import type { HiveHost } from './hive-host.js';
 import { TerminalConnection, type TerminalAttachment, type TerminalEvent } from './terminal-connection.js';
 export type { TerminalEvent } from './terminal-connection.js';
@@ -13,7 +14,7 @@ export class Terminals {
   private readonly attachments = new Map<string, TerminalConnection>();
   private closing = false;
   private readonly pending = new Map<string, Set<Promise<unknown>>>();
-  constructor(private readonly hive: HiveHost, private readonly available: (workspaceId: string) => void, private readonly emit: (event: TerminalEvent) => void, private readonly executionDirectory?: (workspaceId: string, sessionId: string) => Promise<string>) {}
+  constructor(private readonly hive: HiveHost, private readonly available: (workspaceId: string) => void, private readonly emit: (event: TerminalEvent) => void, private readonly executionDirectory?: (workspaceId: string, sessionId: string) => Promise<string>, private readonly mutations?: ExecutionMutations) {}
   async list(workspaceId: string, sessionId?: string): Promise<{ workspaceId: string; sessionId?: string; runs: ShellRun[]; sourceUnavailable?: string }> {
     this.validateSessionId(sessionId);
     if (!workspaceId.trim()) throw new Error('workspaceId is required');
@@ -29,6 +30,17 @@ export class Terminals {
     if (sourceFailure && !runs.length) throw sourceFailure.error;
     return {workspaceId, ...(sessionId !== undefined && {sessionId}), runs, ...(sourceFailure && {sourceUnavailable: sourceFailure.error instanceof Error ? sourceFailure.error.message : String(sourceFailure.error)})};
   }
+  async hasAnyActiveShell(): Promise<boolean> {
+    const workspaces = await this.hive.request('GET', '/api/workspaces') as {id: string}[];
+    if (!Array.isArray(workspaces) || workspaces.some(workspace => typeof workspace.id !== 'string')) throw new Error('Invalid workspace list');
+    for (const workspace of workspaces) if (await this.hasActiveShell(workspace.id)) return true;
+    return false;
+  }
+  async hasActiveShell(workspaceId: string): Promise<boolean> {
+    const runs = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspaceId)}/runs`) as {agent_id: string; status: string}[];
+    if (!Array.isArray(runs)) throw new Error('Invalid workspace terminal list');
+    return runs.some(run => run.agent_id.startsWith(`${workspaceId}:`) && run.agent_id.endsWith(':shell') && ['starting', 'running'].includes(run.status));
+  }
   /** Run ownership comes from Hive's live shell registry, independent of source availability. */
   private async ownedRuns(workspaceId: string, sessionId?: string): Promise<ShellRun[]> {
     if (!workspaceId.trim()) throw new Error('workspaceId is required');
@@ -39,7 +51,11 @@ export class Terminals {
       return { runId: run.run_id, ...(sessionId !== undefined && {sessionId}), name: run.agent_name, status: run.status as ShellRun['status'], exitCode: null };
     });
   }
-  start(workspaceId: string, sessionId?: string): Promise<ShellRun> { return this.track(workspaceId, () => this.startShell(workspaceId, sessionId)); }
+  start(workspaceId: string, sessionId?: string): Promise<ShellRun> {
+    const release = this.mutations?.begin(workspaceId);
+    try { return this.track(workspaceId, () => this.startShell(workspaceId, sessionId)).finally(() => release?.()); }
+    catch (error) { release?.(); throw error; }
+  }
   private async startShell(workspaceId: string, sessionId?: string): Promise<ShellRun> {
     this.check(workspaceId); this.validateSessionId(sessionId);
     let sessionRun: {runId: string} | undefined;
@@ -97,6 +113,7 @@ export class Terminals {
   ack(input: { attachmentId: string; sequence: number; bytes: number }) { return this.require(input.attachmentId).ack(input.sequence, input.bytes); }
   input(input: { attachmentId: string; bytes: unknown; userInput?: boolean }) {
     const connection = this.require(input.attachmentId); this.check(connection.attachment.workspaceId);
+    if (this.mutations?.isLeased(connection.attachment.workspaceId)) throw new Error('Execution is temporarily unavailable during a history operation');
     if (input.userInput !== undefined && typeof input.userInput !== 'boolean') throw new Error('Invalid terminal input origin');
     return connection.input(bytes(input.bytes), input.userInput ?? true);
   }
