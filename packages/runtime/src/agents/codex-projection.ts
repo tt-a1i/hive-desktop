@@ -125,7 +125,7 @@ export class CodexProjection {
   private save(entries: CodexDisplayEntry[], completedTurns = this.completedTurns): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, JSON.stringify({ version: 1, entries, completedTurns, ...(this.completeHistory && this.searchEntries ? { completeHistory: true, searchVersion: 2, searchEntries: this.searchEntries } : {}) }), { mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify({ version: 1, entries, completedTurns, ...(this.completeHistory && this.searchEntries ? { completeHistory: true, searchVersion: 2, searchEntries: this.searchEntries } : {}) }), { mode: 0o600, flush: true });
       renameSync(temporary, this.file);
       this.entries = entries;
       this.completedTurns = completedTurns;

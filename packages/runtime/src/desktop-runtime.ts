@@ -1,3 +1,4 @@
+import { ExecutionMutations } from './execution-mutations.js';
 import { ProjectWorktreeInitialization } from './project-worktree-initialization.js';
 import { ProjectScriptSettings } from './project-script-settings.js';
 import { ProjectScriptRuns, type ScriptEvent } from './project-script-runs.js';
@@ -16,15 +17,48 @@ import { structuredCommand } from './structured-runtime.js';
 
 export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEvent) => void,
   options: { executableEnvironment?: DesktopExecutableEnvironment; onTerminalEvent?: (event: TerminalEvent) => void; onScriptEvent?: (event: ScriptEvent) => void } = {}) {
+  const executionMutations = new ExecutionMutations();
   let chats: Chats;
   let agents: HiveAgentRuntime | undefined;
   const hive = await createHiveHost({
     dataDir: join(dataDir, 'hive'),
     agentRuntimeFactory: context => {
-      agents = createStructuredRuntime(context, { start: input => chats.start(input) });
+      const structured = createStructuredRuntime(context, { start: input => chats.start(input) });
+      const gated = new Set(['startAgent', 'resumeRun', 'writeStatusPrompt', 'writeSendPrompt', 'writeCancelPrompt',
+        'writeUserInputPrompt', 'writeSystemMessageToAgent', 'deliverUserInputToOrchestrator', 'deliverSystemMessageToAgent']);
+      const deferred = new Set(['startAgent', 'writeStatusPrompt', 'writeSendPrompt', 'writeCancelPrompt', 'deliverUserInputToOrchestrator', 'deliverSystemMessageToAgent']);
+      agents = new Proxy(structured, {get(target, property, receiver) {
+        if (property === 'executionAdmissionBlocked') return () => executionMutations.isLeased('');
+        if (property === 'beginExecutionAdmission') return (workspaceId: string) => executionMutations.begin(workspaceId);
+        const value = Reflect.get(target, property, receiver) as unknown;
+        if (typeof property !== 'string' || !gated.has(property) || typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          const first = args[0];
+          const workspace = typeof first === 'string' ? first : (first as {id?: string} | undefined)?.id ?? '';
+          if (deferred.has(property) && executionMutations.isLeased(workspace)) {
+            // Preserve already-recorded Hive facts and claims; execute only after
+            // the operation releases its lease. Recheck if another lease begins.
+            const retry = async (): Promise<unknown> => {
+              await executionMutations.whenReleased();
+              if (executionMutations.isLeased(workspace)) return retry();
+              const release = executionMutations.begin(workspace);
+              try { return await Reflect.apply(value, target, args); }
+              finally { release(); }
+            };
+            return retry();
+          }
+          const release = executionMutations.begin(workspace);
+          try {
+            const result: unknown = Reflect.apply(value, target, args);
+            if (result instanceof Promise) return result.finally(release);
+            release(); return result;
+          } catch (error) { release(); throw error; }
+        };
+      }});
       return agents;
     },
   });
+  const unsubscribeAdmission = executionMutations.onRelease(() => hive.resumeExecutionDeliveries());
   const settings = new DesktopSettings(hive, options.executableEnvironment);
   const agentModels = new AgentModels(hive, settings);
   const piAuth = new PiAuth();
@@ -33,18 +67,19 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
     if (!agents) throw new Error('Hive runtime factory was not installed');
     chats = new Chats(hive, dataDir, emit, agents, settings, agentModels);
   } catch (error) { await hive.close(); throw error; }
-  const terminal = new Terminals(hive, workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onTerminalEvent ?? (() => {}), (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId));
+  const terminal = new Terminals(hive, workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onTerminalEvent ?? (() => {}), (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId), executionMutations);
   const projectScripts = new ProjectScriptSettings(hive.projectScriptState, workspaceId => chats.assertWorkspaceAvailable(workspaceId));
   let scriptRuns: ProjectScriptRuns;
   try {
     scriptRuns = new ProjectScriptRuns(hive, projectScripts, dataDir, workspaceId => chats.assertWorkspaceAvailable(workspaceId),
-      (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId), options.onScriptEvent);
+      (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId), options.onScriptEvent, executionMutations);
   } catch (error) { await hive.close(); await chats.close(); throw error; }
   const initialization = new ProjectWorktreeInitialization(dataDir, projectScripts, scriptRuns,
     (workspaceId, sessionId) => chats.initializationPlan(workspaceId, sessionId), workspaceId => chats.assertWorkspaceAvailable(workspaceId));
   chats.initialization = initialization;
+  chats.configureHistory(executionMutations, () => terminal.hasAnyActiveShell());
   let closing: Promise<void> | undefined;
-  return { hive, chats, agents, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns, initialization,
+  return { hive, chats, agents, executionMutations, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns, initialization,
     createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; description?: unknown }) => {
       chats.assertWorkspaceAvailable(workspaceId);
       if (typeof input.name !== 'string' || !input.name.trim() || !isWorkerRole(input.role)
@@ -65,6 +100,8 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return hive.request(method, path, body);
     },
     close: () => closing ??= (async () => {
+      await chats.history?.close();
+      unsubscribeAdmission();
       initialization.close();
       const scripts = await Promise.allSettled([scriptRuns.close()]);
       const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), terminal.close(), agentModels.close()]);

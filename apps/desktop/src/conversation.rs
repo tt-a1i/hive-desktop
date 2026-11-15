@@ -331,6 +331,8 @@ impl HiveApp {
             _markdown_subscription: markdown_subscription,
             id,
             role,
+            native_user_item_id: None,
+            source_session_id: None,
             text,
             markdown,
             tool: None,
@@ -489,6 +491,12 @@ impl HiveApp {
                 }
             }
             self.load_message_images(id.clone(), message, cx);
+        }
+        let rendered_id = if role == "toolResult" { message["toolCallId"].as_str().unwrap_or(&id) } else { &id };
+        if let Some(rendered) = self.messages.iter_mut().find(|m| m.id == rendered_id) {
+            rendered.native_user_item_id = (message["rawBackendItem"]["type"] == "userMessage")
+                .then(|| message["rawBackendItem"]["id"].as_str().map(str::to_owned)).flatten();
+            rendered.source_session_id = message["sourceSessionId"].as_str().map(str::to_owned);
         }
         self.refresh_conversation_find(&id, cx);
     }

@@ -6,7 +6,8 @@ export class CodexEvents {
   private readonly tools = new Map<string, { item: CodexItem; turnId: string }>();
   private readonly running = new Map<string, { messageId: string; message: unknown }>();
   constructor(private readonly sessionId: string, private readonly emit: (event: PiEvent) => void,
-    private readonly delivery: (turnId: string, itemId: string) => CodexDelivery | undefined) {}
+    private readonly delivery: (turnId: string, itemId: string) => CodexDelivery | undefined,
+    private readonly source: (itemId: string) => string | undefined = () => undefined) {}
 
   restore(items: { item: CodexItem; turnId: string }[]): void {
     this.items.clear();
@@ -20,11 +21,11 @@ export class CodexEvents {
   snapshot() {
     const entries = [...this.items.values()];
     const activeMessage = [...this.running.values()].at(-1);
-    return { history: entries.map(({ item, turnId }) => normalizeCodexItem(item, this.delivery(turnId, item.id))),
+    return { history: entries.map(({ item, turnId }) => normalizeCodexItem(item, this.delivery(turnId, item.id), this.source(item.id))),
       historyMessageIds: entries.map(({ item }) => item.id), ...(activeMessage && { activeMessage }) };
   }
   item(item: CodexItem, turnId: string, completed: boolean): void {
-    const message = normalizeCodexItem(item, this.delivery(turnId, item.id));
+    const message = normalizeCodexItem(item, this.delivery(turnId, item.id), this.source(item.id));
     if (['agentMessage', 'reasoning', 'plan'].includes(item.type) && !completed) {
       this.running.set(item.id, { messageId: item.id, message });
     } else if (isCodexToolItem(item)) {

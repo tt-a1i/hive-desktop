@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {createWorkflowRunner} from '@tt-a1i/hive/dist/src/server/workflow-runner.js';
+import {ExecutionMutations} from '../src/execution-mutations.js';
+const gate = new ExecutionMutations();
+const runner = createWorkflowRunner({beginExecutionAdmission: (workspaceId: string) => gate.begin(workspaceId), awaiter: {cancelAll() {}}} as never);
+const lease = gate.acquire('w');
+await assert.rejects(runner.startWorkflow({workspaceId:'w', scriptPath:'/definitely/missing/workflow.ts'} as never), /history operation/);
+lease();
+const pending = runner.startWorkflow({workspaceId:'w', scriptPath:'/definitely/missing/workflow.ts'} as never);
+assert.throws(() => gate.acquire('w'), /busy/);
+await assert.rejects(pending);
+const after = gate.acquire('w'); after();
+await runner.close();
+console.log('EXECUTION_WORKFLOW_ADMISSION_OK: pending load registered before await; failed start releases gate');

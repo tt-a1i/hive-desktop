@@ -37,6 +37,7 @@ export class CodexTransport {
   private readonly incoming = new Map<CodexRequestId, { cancelled: boolean }>();
   private readonly notifications = new Set<(notification: CodexNotification) => void>();
   private readonly process: OwnedCliProcess;
+  initializeResult: unknown;
   private nextId = 1;
   private closing = false;
   private closeTask: Promise<void> | undefined;
@@ -121,7 +122,7 @@ export class CodexTransport {
     const onAbort = () => { void transport.close(200).catch(() => {}); };
     options.signal?.addEventListener('abort', onAbort, { once: true });
     try {
-      await transport.sendRequest('initialize', {
+      transport.initializeResult = await transport.sendRequest('initialize', {
         clientInfo: { name: 'hive_desktop', title: 'Hive Desktop', version: '0.1.0' },
         capabilities: { experimentalApi: true, requestAttestation: false },
       });

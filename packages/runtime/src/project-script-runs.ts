@@ -1,3 +1,4 @@
+import type { ExecutionMutations } from './execution-mutations.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
@@ -24,7 +25,7 @@ const id = (value: unknown): value is string => typeof value === 'string' && /^[
 const workspaceId = (value: unknown): value is string => typeof value === 'string' && !!value && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
 const active = (run: ProjectScriptRun) => run.status === 'starting' || run.status === 'running';
 const LIMIT = 16 * 1024 * 1024;
-interface Live {run: ProjectScriptRun; file: string; fd: number; exited: Promise<void>; resolve: () => void; checkpointBytes: number; checkpointAt: number; persistenceError?: boolean}
+interface Live {run: ProjectScriptRun; file: string; fd: number; exited: Promise<void>; resolve: () => void; checkpointBytes: number; checkpointAt: number; persistenceError?: boolean; releaseMutation?: () => void}
 /** Captured run manifests are independent of editable settings. A request is durably claimed before spawning. */
 export class ProjectScriptRuns {
   private readonly directory: string;
@@ -35,7 +36,7 @@ export class ProjectScriptRuns {
   constructor(private readonly hive: HiveHost, private readonly settings: ProjectScriptSettings, directory: string,
     private readonly available: (workspaceId: string) => void,
     private readonly executionDirectory: (workspaceId: string, sessionId?: string) => Promise<string>,
-    private readonly emit: (event: ScriptEvent) => void = () => {}) {
+    private readonly emit: (event: ScriptEvent) => void = () => {}, private readonly mutations?: ExecutionMutations) {
     this.directory = join(directory, 'project-script-runs'); mkdirSync(this.directory, {recursive: true, mode: 0o700});
     for (const name of readdirSync(this.directory)) if (/^[0-9a-f]{64}\.json$/.test(name)) {
       const file = join(this.directory, name), run = this.read(file);
@@ -85,15 +86,17 @@ export class ProjectScriptRuns {
       return Promise.reject(new ProjectScriptRunError('SCRIPT_INPUT_INVALID', 'Supply only a saved script, expected version, source session and unique request identity'));
     const workspace = value.workspaceId;
     let tasks = this.pending.get(workspace); if (!tasks) { tasks = new Set(); this.pending.set(workspace, tasks); }
+    const release = this.mutations?.begin(workspace);
     const task = this.start(value as {workspaceId: string; scriptId: string; expectedVersion: string; sessionId?: string; requestId: string})
-      .finally(() => { tasks.delete(task); if (!tasks.size) this.pending.delete(workspace); });
+      .finally(() => { release?.(); tasks.delete(task); if (!tasks.size) this.pending.delete(workspace); });
     tasks.add(task); return task;
   }
   /** Internal coordinator entry; never exposed as an RPC accepting a command. */
   runCaptured(workspaceId: string, sessionId: string, requestId: string, script: ProjectScript): Promise<ProjectScriptRun> {
     let tasks = this.pending.get(workspaceId); if (!tasks) {tasks = new Set(); this.pending.set(workspaceId, tasks);}
+    const release = this.mutations?.begin(workspaceId);
     const task = this.start({workspaceId, sessionId, requestId, scriptId: script.id, expectedVersion: script.version}, script)
-      .finally(() => {tasks.delete(task); if (!tasks.size) this.pending.delete(workspaceId);});
+      .finally(() => {release?.(); tasks.delete(task); if (!tasks.size) this.pending.delete(workspaceId);});
     tasks.add(task); return task;
   }
   private async start(input: {workspaceId: string; scriptId: string; expectedVersion: string; sessionId?: string; requestId: string}, captured?: ProjectScript): Promise<ProjectScriptRun> {
@@ -118,6 +121,7 @@ export class ProjectScriptRuns {
     catch (error) { closeSync(fd); unlinkSync(this.logFile(run.runId)); if ((error as NodeJS.ErrnoException).code === 'EEXIST') return duplicate(); throw new ProjectScriptRunError('SCRIPT_RUN_WRITE_FAILED', 'Script run could not be recorded; no command was started'); }
     let resolve!: () => void;
     const live: Live = {run, file, fd, exited: new Promise<void>(done => {resolve = done;}), resolve: () => resolve(), checkpointBytes: 0, checkpointAt: Date.now()};
+    if (this.mutations) live.releaseMutation = this.mutations.begin(input.workspaceId);
     this.live.set(run.runId, live); this.event({type: 'status', run: structuredClone(run)});
     let nativeStarted = false;
     try {
@@ -151,7 +155,7 @@ export class ProjectScriptRuns {
           try {closeSync(fd);} catch {live.persistenceError = true; run.status = 'unknown'; run.errorCode ??= 'SCRIPT_LOG_WRITE_FAILED';}
           try {this.save(live);} catch {live.persistenceError = true;}
           if (live.persistenceError) {run.status = 'unknown'; run.errorCode ??= 'SCRIPT_RUN_WRITE_FAILED'; this.undurable.set(run.runId, structuredClone(run)); this.event({type: 'status', run: structuredClone(run)});}
-          this.live.delete(run.runId); live.resolve();
+          this.live.delete(run.runId); live.releaseMutation?.(); live.resolve();
         },
       });
       nativeStarted = true;
@@ -164,7 +168,7 @@ export class ProjectScriptRuns {
       }
       if (active(run)) {
         run.status = 'failed'; run.errorCode = 'SCRIPT_START_FAILED'; run.finishedAt = Date.now();
-        try { closeSync(fd); this.save(live); } finally {this.live.delete(run.runId); live.resolve();}
+        try { closeSync(fd); this.save(live); } finally {this.live.delete(run.runId); live.releaseMutation?.(); live.resolve();}
       }
     }
     if (live.persistenceError) fail('SCRIPT_RUN_WRITE_FAILED', 'Script process state could not be durably recorded; inspect this run before retrying');

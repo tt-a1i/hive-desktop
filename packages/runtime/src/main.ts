@@ -1,3 +1,5 @@
+import { HistoryOperationError } from './history-operation-journal.js';
+import { CodeCheckpointError } from './code-checkpoints.js';
 import { WorktreeInitializationError } from './project-worktree-initialization.js';
 import { ProjectScriptRunError } from './project-script-runs.js';
 import { ProjectScriptSettingsError } from './project-script-settings.js';
@@ -55,6 +57,23 @@ function text(params: Record<string, unknown>, name: string): string {
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
+    case 'history.capabilities': return chats.history!.capabilities(text(params,'workspaceId'),text(params,'sessionId'));
+    case 'checkpoint.preview': return chats.history!.checkpointPreview(text(params,'workspaceId'),text(params,'sessionId'));
+    case 'checkpoint.capture': return chats.history!.checkpointCapture(text(params,'workspaceId'),text(params,'sessionId'),text(params,'expectedVersion'),text(params,'requestId'));
+    case 'checkpoint.list': return chats.history!.checkpointList(text(params,'workspaceId'),text(params,'sessionId'));
+    case 'history.fork.preview': {
+      if(Object.keys(params).some(key=>!['workspaceId','sessionId','boundary','code','edit'].includes(key)))throw new Error('Supply only source session, exact native boundary, and code choice');
+      const boundary=record(params.boundary),code=record(params.code);
+      if(Object.keys(boundary).some(key=>key!=='nativeUserItemId')||Object.keys(code).some(key=>!['kind','checkpointId'].includes(key))||!['current','checkpoint'].includes(code.kind as string)||params.edit!==undefined&&typeof params.edit!=='boolean')throw new Error('Invalid history fork selection');
+      return chats.history!.preview({workspaceId:text(params,'workspaceId'),sessionId:text(params,'sessionId'),boundary:{nativeUserItemId:text(boundary,'nativeUserItemId')},code:code.kind==='current'?{kind:'current'}:{kind:'checkpoint',checkpointId:text(code,'checkpointId')},...(params.edit!==undefined&&{edit:params.edit as boolean})});
+    }
+    case 'history.fork.apply': {
+      if(Object.keys(params).some(key=>!['workspaceId','sessionId','previewToken','requestId'].includes(key)))throw new Error('Invalid history fork application');
+      return chats.history!.apply(text(params,'workspaceId'),text(params,'sessionId'),text(params,'previewToken'),text(params,'requestId'));
+    }
+    case 'history.operations.recover': return chats.history!.recover(text(params,'workspaceId'),text(params,'operationId'));
+    case 'history.operations.get': return chats.history!.get(text(params,'workspaceId'),text(params,'operationId'));
+    case 'history.operations.list': return chats.history!.list(text(params,'workspaceId'));
     case 'pi.models.get': return runtime.piModels.get();
     case 'pi.models.change': return runtime.piModels.change(params.revision, params.change);
     case 'pi.auth.providers': return piAuth.providers();
@@ -270,7 +289,7 @@ input.on('line', line => {
       await writeFrame({ id, result });
     } catch (error) {
       await writeFrame({ id, error: {
-        code: error instanceof WorktreeInitializationError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+        code: error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

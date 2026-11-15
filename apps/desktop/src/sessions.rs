@@ -733,6 +733,9 @@ impl HiveApp {
                             this.error = Some(crate::app::ErrorNotice::Conversation(Box::new("会话快照中的消息身份数量不匹配".into())));
                             return;
                         }
+                        if let (Some(draft), Some(operation)) = (open.fork_draft.clone(), open.lineage.as_ref().and_then(|v| v["operationId"].as_str()).map(str::to_owned)) {
+                            this.restore_fork_draft(id.clone(), request_workspace.clone(), operation, draft, cx);
+                        }
                         this.history_navigation.access = crate::history_navigation::HistoryAccess::snapshot(&open);
                         this.conversation_ready = true;
                         this.history_navigation.initialization = open.initialization.clone();

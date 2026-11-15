@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude';
 
@@ -17,6 +17,8 @@ export class SessionIdentityError extends Error {
 
 export interface ChatRecord {
   backend: ChatBackend;
+  lineage?: {operationId:string;parentSessionId:string;nativeUserItemId:string;edit:boolean;codeRelation:{kind:'current'|'checkpoint';checkpointId:string};inheritedItemIds:string[]};
+  forkDraft?: {text:string;attachmentIds:string[];missingAttachments:string[]};
   execution?: ChatExecution;
   codexThreadId?: string;
   nativeclaudeSessionId?: string;
@@ -93,6 +95,7 @@ export class ChatIndex {
       throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'An older unknown conversation needs exact persisted source evidence before it can be bound.');
     if (existing?.originAgentId && ((record.originAgentId && record.originAgentId !== existing.originAgentId)
       || (record.agentId && record.agentId !== existing.originAgentId))) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'The original agent identity cannot be changed.');
+    if (existing?.lineage && JSON.stringify(existing.lineage)!==JSON.stringify(record.lineage)) throw new SessionIdentityError('HISTORY_LINEAGE_CONFLICT', 'Fork lineage is immutable');
     const normalized = normalizeIdentity(existing?.originAgentId
       ? {...record, originAgentId: existing.originAgentId, identityState: 'known'}
       : existing ? {...record, identityState: existing.identityState ?? 'unknown'} : record);
@@ -116,6 +119,7 @@ export class ChatIndex {
     try {
       writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600, flush: true });
       renameSync(temporary, this.file);
+      if(process.platform!=='win32'){const directory=openSync(dirname(this.file),'r');try{fsyncSync(directory);}finally{closeSync(directory);}}
       this.records = next;
     } finally { rmSync(temporary, { force: true }); }
   }
@@ -135,6 +139,11 @@ function isChatRecord(value: unknown): value is ChatRecord {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
+  if (record.lineage !== undefined) {
+    const lineage=record.lineage as ChatRecord['lineage'];
+    if(!lineage||typeof lineage.operationId!=='string'||typeof lineage.parentSessionId!=='string'||typeof lineage.nativeUserItemId!=='string'||typeof lineage.edit!=='boolean'||!['current','checkpoint'].includes(lineage.codeRelation?.kind)||typeof lineage.codeRelation.checkpointId!=='string'||!Array.isArray(lineage.inheritedItemIds)||!lineage.inheritedItemIds.every(id=>typeof id==='string')) return false;
+  }
+  if(record.forkDraft!==undefined){const draft=record.forkDraft as ChatRecord['forkDraft'];if(!draft||typeof draft.text!=='string'||![draft.attachmentIds,draft.missingAttachments].every(ids=>Array.isArray(ids)&&ids.every(id=>typeof id==='string')))return false;}
   if (record.pinned !== undefined && typeof record.pinned !== 'boolean') return false;
   if (record.archived !== undefined && typeof record.archived !== 'boolean') return false;
   if (record.execution !== undefined) {

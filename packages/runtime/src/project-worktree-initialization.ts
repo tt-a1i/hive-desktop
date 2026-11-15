@@ -110,12 +110,12 @@ export class ProjectWorktreeInitialization {
     void task.finally(() => {if (this.locks.get(sessionId) === task) this.locks.delete(sessionId);}).catch(() => {}); return task;
   }
   /** Called only for the creation that published its index in this process. */
-  created(workspaceId: string, sessionId: string): Promise<void> {
+  created(workspaceId: string, sessionId: string, options: {deferLaunch?: boolean} = {}): Promise<void> {
     return this.locked(sessionId, async () => {
       this.check(workspaceId); const plan = await this.source(workspaceId, sessionId); if (!plan) return; validateInitializationPlan(plan);
       const file = this.file(workspaceId, sessionId); if (existsSync(file)) return;
       const state: State = {schema: 1, workspaceId, sessionId, planHash: this.hash(plan), version: randomUUID(), status: plan.enabled ? 'pending' : 'disabled', ...(plan.enabled && {requestId: plan.requestId})};
-      this.write(state); if (plan.enabled) void this.launch(plan, state).catch(() => {});
+      this.write(state); if (plan.enabled && !options.deferLaunch) void this.launch(plan, state).catch(() => {});
     });
   }
   private async launch(plan: InitializationPlan, state: State) {

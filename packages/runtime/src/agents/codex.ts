@@ -25,6 +25,7 @@ export interface CodexSessionOptions {
   cwd: string;
   sessionDir: string;
   threadId?: string;
+  deferGoalContinuation?: boolean;
   command?: string;
   signal?: AbortSignal;
   model?: { provider: string; id: string };
@@ -213,9 +214,12 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       }
     },
   });
+  const nativeVersion=(transport.initializeResult as {userAgent?:unknown}|null)?.userAgent;
+  const defersNativeGoals=typeof nativeVersion==='string'&&/\bcodex_cli_rs\/0\.169\.0(?:\s|$)/.test(nativeVersion);
+  if(options.deferGoalContinuation&&!defersNativeGoals){await transport.close();throw new Error('This native history fork requires Codex 0.169.0 deferred continuation support');}
   const modes = new CodexModes(transport, options.mode, options.permissionMode);
   const resume = async (extra: Record<string, unknown> = {}) => {
-    response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, excludeTurns: true, ...extra });
+    response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, excludeTurns: true, ...(defersNativeGoals&&{deferGoalContinuation:true}), ...extra });
     if (response.thread.historyMode === 'legacy' && response.thread.turns.length === 0 && response.thread.path) {
       response = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: true });
     }
@@ -298,7 +302,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     if (options.mode || options.permissionMode) await modes.validateInitial();
     const modelParams = options.model ? { model: options.model.id, modelProvider: options.model.provider } : {};
     if (options.threadId) {
-      await resume({ ...modelParams, ...modes.threadParams() });
+      await resume({ ...modelParams, ...modes.threadParams(), ...(options.deferGoalContinuation&&{deferGoalContinuation:true}) });
       if (response!.thread.id !== options.threadId) throw new Error('Codex returned a different thread ID');
     }
     else response = await transport.sendRequest<CodexThreadResponse>('thread/start', { cwd: options.cwd, allowProviderModelFallback: false, ...modelParams, ...modes.threadParams(),
@@ -310,7 +314,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     events = new CodexEvents(threadId, emit, (id, itemId) => {
       if (!deliveryIndex) {
         deliveryIndex = new Map();
-        for (const entry of metadata.deliveries) {
+        for (const entry of [...(metadata.inheritedDeliveries ?? []), ...metadata.deliveries]) {
           let turn = deliveryIndex.get(entry.turnId);
           if (!turn) { turn = new Map(); deliveryIndex.set(entry.turnId, turn); }
           // Preserve the original first exact match, then turn-level fallback.
@@ -319,7 +323,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       }
       const turn = deliveryIndex.get(id);
       return turn?.get(itemId) ?? turn?.get(undefined);
-    });
+    }, itemId => metadata.inheritedSources?.find(source => source.itemId === itemId)?.sourceSessionId);
     if (materialized) await recoverHistory(response!.thread);
     else if (!['legacy', 'paginated'].includes(response!.thread.historyMode)) throw new Error('Unsupported Codex history contract');
     options.signal?.throwIfAborted();

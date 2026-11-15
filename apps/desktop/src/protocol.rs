@@ -207,6 +207,10 @@ pub(crate) struct InitializationScript {
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
     #[serde(default)]
+    pub fork_draft: Option<Value>,
+    #[serde(default)]
+    pub lineage: Option<Value>,
+    #[serde(default)]
     pub initialization: Option<Initialization>,
     #[serde(default)]
     pub read_only: bool,
