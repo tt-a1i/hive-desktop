@@ -43,8 +43,19 @@ try {
   const archived = await seed(0, 'Archived ordinary', 'Needle marker 世界 café', true);
   const broken = await seed(0, 'Broken history', 'old');
   await writeFile(broken.sessionFile!, '{broken\n');
-  const before = await readFile(join(data, 'chats', 'index.json'), 'utf8');
+  const legacy = JSON.parse(await readFile(join(data, 'chats', 'index.json'), 'utf8')) as ChatRecord[];
   runtime = await createDesktopRuntime(data, () => events++);
+  // Startup migrates legacy configuration references before serving requests.
+  // Search must leave that initialized index unchanged, including cold reads.
+  const before = await readFile(join(data, 'chats', 'index.json'), 'utf8');
+  const initialized = JSON.parse(before) as ChatRecord[];
+  assert.equal(initialized.length, legacy.length);
+  for (const [i, entry] of initialized.entries()) {
+    const {profile, legacyConfiguration, ...original} = entry;
+    assert.deepEqual(profile, {id: 'default-pi', revision: 1});
+    assert.equal(legacyConfiguration, true);
+    assert.deepEqual(original, legacy[i]);
+  }
   let page = await runtime.chats.search('needle 世界', false, 0, workspaces[0]);
   assert.equal(page.total, 101);
   assert.equal(page.matches.length, 100);
@@ -83,6 +94,7 @@ try {
   const cold = await runtime.chats.search('appended unique', false, 0, workspaces[0]);
   assert.equal(cold.matches[0]?.bodyMatch?.messageId, 'fresh-message');
   assert.equal(events, 0);
+  assert.equal(await readFile(join(data, 'chats', 'index.json'), 'utf8'), before);
   console.log('SESSION_BODY_SEARCH_OK: cold corpus, full body, Unicode, scope, archives, pagination, invalidation, warnings; no Agents/model calls.');
 } finally {
   await runtime?.close();
