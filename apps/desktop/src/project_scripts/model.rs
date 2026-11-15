@@ -63,7 +63,7 @@ impl Snapshot {
         }
     }
     pub fn validate(self) -> Result<Self, String> {
-        if self.version != 1
+        if self.version != 2
             || !(uuid4(&self.revision) || self.revision == "0" && self.scripts.is_empty())
             || self.scripts.len() > 100
         {
@@ -382,7 +382,7 @@ mod tests {
         let old = "00000000-0000-4000-8000-000000000001";
         let new = "00000000-0000-4000-8000-000000000002";
         let snapshot = Snapshot {
-            version: 1,
+            version: 2,
             revision: new.into(),
             scripts: vec![
                 Script {
@@ -493,6 +493,36 @@ mod tests {
         assert!(!recovery.releasable());
     }
     #[test]
+    fn version_two_wire_accepts_migrated_scripts_and_an_explicit_setup_role() {
+        // The backend upgrades stored v1 rows to this v2 response without
+        // changing their script identity or adding an enabled setup role.
+        let wire = serde_json::json!({
+            "version": 2,
+            "revision": "00000000-0000-4000-8000-000000000001",
+            "scripts": [
+                {"id":"00000000-0000-4000-8000-000000000002","version":"00000000-0000-4000-8000-000000000003","name":"Existing command","command":"printf existing"},
+                {"id":"00000000-0000-4000-8000-000000000004","version":"00000000-0000-4000-8000-000000000005","name":"Setup","command":"printf setup","runOnWorktreeCreate":true}
+            ]
+        });
+        let snapshot = decode::<Snapshot>(wire.clone())
+            .unwrap()
+            .validate()
+            .unwrap();
+        assert_eq!(snapshot.scripts.len(), 2);
+        assert!(!snapshot.scripts[0].run_on_worktree_create);
+        assert!(snapshot.scripts[1].run_on_worktree_create);
+        for version in [0, 1, 3] {
+            let mut incompatible = wire.clone();
+            incompatible["version"] = version.into();
+            assert!(
+                decode::<Snapshot>(incompatible)
+                    .unwrap()
+                    .validate()
+                    .is_err()
+            );
+        }
+    }
+    #[test]
     fn malformed_or_unknown_settings_are_not_an_empty_editable_table() {
         assert!(
             decode::<Snapshot>(serde_json::json!({"version":1,"revision":"invalid","scripts":[]}))
@@ -501,19 +531,19 @@ mod tests {
                 .is_err()
         );
         assert!(
-            decode::<Snapshot>(serde_json::json!({"version":2,"revision":"x","scripts":[]}))
+            decode::<Snapshot>(serde_json::json!({"version":3,"revision":"x","scripts":[]}))
                 .unwrap()
                 .validate()
                 .is_err()
         );
         assert!(
             decode::<Snapshot>(
-                serde_json::json!({"version":1,"revision":"0","scripts":[],"unexpected":true})
+                serde_json::json!({"version":2,"revision":"0","scripts":[],"unexpected":true})
             )
             .is_err()
         );
         assert!(
-            decode::<Snapshot>(serde_json::json!({"version":1,"revision":"0","scripts":[]}))
+            decode::<Snapshot>(serde_json::json!({"version":2,"revision":"0","scripts":[]}))
                 .unwrap()
                 .validate()
                 .is_ok()
