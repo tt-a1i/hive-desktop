@@ -33,6 +33,13 @@ try{
  const main=await first.chats.create(ws.id,'codex');await first.chats.setModel(main.id,'openai','gpt-6.1-terra');await first.chats.resume(main.id);
  const token=first.agents.peekAgentToken(`${ws.id}:orchestrator`)!;assert.ok(token);
  const start=async(name:string,body:string)=>{const result=await first.hive.request('POST','/api/team/workflow/run',{project_id:ws.id,from_agent_id:`${ws.id}:orchestrator`,token,source:`export const meta={name:${JSON.stringify(name)},description:'Owned check',maxDurationMs:60000};${body}`}) as {run_id:string};return {run:{id:result.run_id}};};
+ first.createMember(ws.id,{name:'Admission worker',role:'coder',backend:'codex'});
+ const ledgerBefore=first.hive.executionLedgerRevision();
+ const admissionLease=first.executionMutations.acquire(ws.id);
+ await assert.rejects(first.hive.request('POST',`/api/workspaces/${ws.id}/user-input`,{text:'locked input'}));
+ await assert.rejects(first.hive.request('POST','/api/team/send',{project_id:ws.id,from_agent_id:`${ws.id}:orchestrator`,token,to:'Admission worker',text:'locked dispatch'}));
+ await assert.rejects(start('Locked','return 1;'));
+ assert.equal(first.hive.executionLedgerRevision(),ledgerBefore);admissionLease();
  const get=async(id:string)=>(await first.hive.request('GET',`/api/workflows/runs/${id}`) as {run:Run}).run;
  const finished=async(id:string)=>wait(()=>get(id),x=>x.status!=='running');
  const completed=await start('Complete','return 7;');assert.equal((await finished(completed.run.id)).status,'completed');
@@ -58,6 +65,7 @@ try{
  if(!process.argv.includes('--agents-only')){
   const cpu=await start('CPU workflow',"await log('Owned CPU entered');while(true){}");cpuId=cpu.run.id;
   await wait(async()=>first.hive.request('GET',`/api/workflows/runs/${cpuId}/logs`) as Promise<{logs:{message:string}[]}>,x=>x.logs.some(l=>l.message==='Owned CPU entered'));
+  assert.throws(()=>first.executionMutations.acquire(ws.id),/busy/);
  }
  // Wait for native input evidence, rather than assuming dispatch delivery means process activity.
  await wait(()=>readdir(project),xs=>xs.filter(x=>x.startsWith('peer-')).length>=(process.argv.includes('--agents-only')?4:5));
