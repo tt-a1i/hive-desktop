@@ -88,7 +88,12 @@ function runServer(binding: Binding) {
   let initialized = false;
   let ready = false;
   let ended = false;
-  const redact = (value: unknown): unknown => typeof value === 'string' ? value.replaceAll(binding.token, '[redacted]') : Array.isArray(value) ? value.map(redact) : object(value) ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key.replaceAll(binding.token, '[redacted]'), redact(item)])) : value;
+  const privateValues = [JSON.stringify(binding), ...(proofRaw ? [proofRaw] : [])];
+  let proofNonce:string|undefined;
+  try { const parsed:unknown=JSON.parse(proofRaw??'{}');if(object(parsed)&&typeof parsed.nonce==='string')proofNonce=parsed.nonce; } catch { /* A malformed proof is never used. */ }
+  const secrets = [...privateValues.flatMap(value => { const forms:string[]=[]; for(let depth=0;depth<4;depth++){forms.push(value);value=JSON.stringify(value).slice(1,-1);} return forms; }), binding.token, ...(proofNonce?[proofNonce]:[])].sort((a,b)=>b.length-a.length);
+  const redactString = (value:string) => secrets.reduce((result,secret)=>result.replaceAll(secret,'[redacted]'),value);
+  const redact = (value: unknown): unknown => typeof value === 'string' ? redactString(value) : Array.isArray(value) ? value.map(redact) : object(value) ? Object.fromEntries(Object.entries(value).map(([key, item]) => [redactString(key), redact(item)])) : value;
   const send = (value: unknown) => { if (!ended) process.stdout.write(`${JSON.stringify(redact(value))}\n`); };
   const markConnected = () => {
     if (!proofRaw) return;

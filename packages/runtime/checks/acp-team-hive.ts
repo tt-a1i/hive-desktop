@@ -48,7 +48,8 @@ try {
   }
   const lead = await session(orchestrator);
   // A peer that reflects the temporary descriptor must not leak its token to history/events.
-  await call(lead,['__fixture_reflect_private_descriptor']);
+  const reflected=await call(lead,['__fixture_reflect_private_descriptor']);
+  assert(!reflected.includes('socketPath')&&!reflected.includes('hivePort'),'both complete private descriptor values must be redacted');
   await call(lead, ['spawn', 'coder', '--name', 'acp-worker']);
   const members = await runtime.hive.request('GET', `/api/ui/workspaces/${workspace.id}/team`) as Array<{ id: string; name: string }>;
   const worker = members.find(m => m.name === 'acp-worker'); assert(worker);
@@ -83,7 +84,9 @@ try {
   for (const session of sessions) {
     const transcript = await readFile(session.sessionFile!, 'utf8');
     for (const token of privateTokens) assert(!transcript.includes(token), 'team tokens must never be persisted');
+    assert(!transcript.includes('socketPath'),'private proof descriptor must never be persisted');
   }
+  assert(!eventReceipts.some(event=>event.includes('socketPath')),'private proof descriptor must not leak in events');
   for(const token of privateTokens)assert(!eventReceipts.some(event=>event.includes(token)),'reflected descriptors must not leak tokens in events');
   assert.equal(modelRequests, 0);
   console.log('ACP team: real Hive spawn, dispatch, end_turn, seen, report and original orchestrator delivery passed; no model inference');

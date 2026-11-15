@@ -69,10 +69,15 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
     const tools = new Map<string, Record<string, unknown>>();
     const nativeMessages = new Map<string, Record<string, unknown>>();
     let userChunk: { id: string; message: Record<string, unknown> } | undefined;
+    const privateEnvValues = team?.server.env.map(entry => entry.value) ?? [];
+    const proofValue = team?.server.env.find(entry => entry.name === 'HIVE_ACP_TEAM_PROOF')?.value;
+    const proofNonce: string | undefined = proofValue ? (JSON.parse(proofValue) as {nonce:string}).nonce : undefined;
+    const secrets = [...privateEnvValues.flatMap(value => { const forms:string[]=[]; for(let depth=0;depth<4;depth++){forms.push(value);value=JSON.stringify(value).slice(1,-1);} return forms; }), ...(binding?.token ? [binding.token] : []), ...(proofNonce ? [proofNonce] : [])].sort((a,b)=>b.length-a.length);
+    const redactString = (value: string): string => secrets.reduce((result, secret) => result.replaceAll(secret, '[redacted]'), value);
     const redact = (value: unknown): unknown => { if (typeof value === 'string')
-        return binding?.token ? value.replaceAll(binding.token, '[redacted]') : value; if (Array.isArray(value))
+        return redactString(value); if (Array.isArray(value))
         return value.map(redact); if (object(value))
-        return Object.fromEntries(Object.entries(value).map(([k, v]) => [binding?.token ? k.replaceAll(binding.token, '[redacted]') : k, redact(v)])); return value; };
+        return Object.fromEntries(Object.entries(value).map(([k, v]) => [redactString(k), redact(v)])); return value; };
     const emit = (event: PiEvent) => { try {
         options.onEvent(redact(event) as PiEvent);
     }
