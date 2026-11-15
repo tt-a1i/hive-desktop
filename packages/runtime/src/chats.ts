@@ -1,3 +1,6 @@
+import { AcpHistory } from './agents/acp-history.js';
+import type { AcpSessionHandle } from './agents/acp.js';
+import { acpCapabilities, agentCapabilities } from './agent-capabilities.js';
 import { AgentProfiles, defaultAgentProfileId, type AgentProfileRef } from './agent-profiles.js';
 import { parseStructuredLaunch, resolveStructuredLaunch, StructuredLaunchError } from './structured-launch.js';
 import { nativeProfileLaunch, createAgentSession } from './agent-session-factory.js';
@@ -12,7 +15,7 @@ import { artifactSourceRequest, ArtifactSourceError, resolveArtifactFile, type R
 import { searchProjectFiles, readProjectFile } from './project-files.js';
 import { ChatAttachments, attachmentIds, encodeImageInput, decodeImageInput } from './image-attachments.js';
 import { promptImages } from './prompt-images.js';
-import { restoreHistoricalReport } from './delivery-presentation.js';
+import { isDeliveryPresentation, restoreHistoricalReport } from './delivery-presentation.js';
 import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { randomUUID } from 'node:crypto';
@@ -175,7 +178,7 @@ export class Chats implements StructuredSessionPort {
     return this.profilesReady ??= (async () => {
       await this.profiles.initialize(await this.settings.get());
       for (const record of this.index.all()) {
-        if (record.profile) continue;
+        if (record.profile || record.backend === 'acp') continue;
         const profile = await this.profiles.legacyRef(record.backend);
         await this.profiles.getRef(profile, record.backend);
         this.index.save({...record, profile, legacyConfiguration: true});
@@ -191,6 +194,7 @@ export class Chats implements StructuredSessionPort {
   assertWorkspaceAvailable(workspaceId: string): void {
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
   }
+  capabilities(id:string){const record=this.index.get(id),live=this.live.get(id);return record.backend==='acp'?{...acpCapabilities(live?.handle as AcpSessionHandle|undefined,!!record.sessionFile),...(!live&&record.capabilities&&{lastObserved:record.capabilities})}:agentCapabilities(record.backend);}
   list(workspaceId: string) { return this.index.list(workspaceId); }
   private originIdentity(record: ChatRecord): ChatRecord {
     const current = this.index.get(record.id);
@@ -619,7 +623,7 @@ export class Chats implements StructuredSessionPort {
     }
     const matches = candidates.filter(hit => {
       if (this.removing.has(hit.session.workspaceId) || !this.index.peek(hit.session.id)) return false;
-      const backendName = { pi: '内置 Pi Built-in Pi', codex: 'Codex', 'pi-rpc': '外部 Pi External Pi', claude: 'Claude Code' }[hit.session.backend];
+      const backendName = { pi: '内置 Pi Built-in Pi', codex: 'Codex', 'pi-rpc': '外部 Pi External Pi', claude: 'Claude Code', acp: 'ACP' }[hit.session.backend];
       const defaultTitleAlias = !hit.session.customTitle && !hit.session.agentId && hit.session.title === '新会话' ? 'New conversation' : '';
       const roleAlias = !hit.session.agentId ? ''
         : hit.session.agentId.endsWith(':orchestrator') ? '主控 Orchestrator'
@@ -744,7 +748,12 @@ export class Chats implements StructuredSessionPort {
     record = await this.runnableIdentity(record);
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = await this.executionPath(record, workspace);
+    if (record.backend === 'acp' && (record.model || record.reasoning || record.nativeMode)) throw new SessionIdentityError('ACP_SETTING_UNSUPPORTED','ACP model, reasoning and native mode selection are not implemented');
     const sessionFile = record.sessionFile;
+    if (record.backend === 'acp' && sessionFile) {
+      const source=await AcpHistory.load(sessionFile);
+      if(!record.acpSessionId || source?.state.sessionId!==record.acpSessionId) throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT','The saved ACP transcript and native session identity disagree');
+    }
     if (sessionFile && !existsSync(sessionFile)) {
       throw new Error(`找不到已保存的 Pi 会话文件。恢复文件后可重新打开会话：${sessionFile}`);
     }
@@ -770,7 +779,9 @@ export class Chats implements StructuredSessionPort {
     const command = createTeamCommand(binding);
     const profile = await this.selectedProfile(record.backend, record.profile);
     this.closeAbort.signal.throwIfAborted();
-    const handle = await createAgentSession({backend: record.backend, profile, ...(record.backend === 'codex'
+    const handle = await createAgentSession({backend: record.backend, profile, ...(record.backend === 'acp'
+      ? {acp:{command:profile.launch.command!,cwd:executionPath,sessionDir:join(this.sessionDir,'..','acp'),...(sessionFile&&{sessionFile}),signal:this.closeAbort.signal,onEvent,onUnexpectedExit,teamBinding:binding}}
+      : record.backend === 'codex'
       ? {codex: { cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'codex'),
         signal: this.closeAbort.signal,
         ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.lineage&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
@@ -793,6 +804,13 @@ export class Chats implements StructuredSessionPort {
     try {
       this.closeAbort.signal.throwIfAborted();
       if (earlyFailure) throw earlyFailure;
+      if (record.backend === 'acp') {
+        const acp=handle as AcpSessionHandle;
+        this.index.save({...this.index.get(record.id),sessionFile:handle.sessionFile??null,acpSessionId:handle.sessionId,capabilities:acpCapabilities(acp,true)});
+        if(acp.readOnly) throw new SessionIdentityError('ACP_NATIVE_RESUME_UNAVAILABLE','The agent does not support loadSession; the local transcript is read-only and no replacement native session was created');
+        if(!await acp.waitForTeamReady({signal:this.closeAbort.signal})) throw new SessionIdentityError('ACP_TEAM_UNAVAILABLE','The ACP agent did not connect the Hive MCP team bridge within the startup deadline and cannot run as a Hive member');
+        this.index.save({...this.index.get(record.id),capabilities:acpCapabilities(acp,true)});
+      }
       let reasoningFailure = recoveryFailure;
       if (!recoveryFailure && record.reasoning && handle.reasoning && handle.setReasoning) {
         let applying = false;
@@ -830,6 +848,7 @@ export class Chats implements StructuredSessionPort {
       this.index.save({ ...this.index.get(record.id), ...(record.backend === 'codex'
         ? (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}
         : record.backend === 'claude' ? { sessionFile: null, nativeclaudeSessionId: handle.sessionId }
+        : record.backend === 'acp' ? {sessionFile:handle.sessionFile??null,acpSessionId:handle.sessionId}
         : { sessionFile: handle.sessionFile ?? null, ...(record.backend === 'pi-rpc'
           ? { externalPiSessionId: handle.sessionId } : { piSessionId: handle.sessionId }) }), ...(model ? { model } : {}) });
       let wasBusy = false;
@@ -882,7 +901,7 @@ export class Chats implements StructuredSessionPort {
     const history = agentId ? snapshot.history.map(message => restoreHistoricalReport(message,
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
     return {
-      ...record, executionPath: chat.executionPath, ...(record.backend === 'pi' && { model, unavailableModel: model ? undefined : record.model }), ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
+      ...record, ...(record.backend === 'acp' && {capabilities:acpCapabilities(chat.handle as AcpSessionHandle,!!record.sessionFile),uncertainDeliveryIds:(chat.handle as AcpSessionHandle).uncertainDeliveryIds()}), executionPath: chat.executionPath, ...(record.backend === 'pi' && { model, unavailableModel: model ? undefined : record.model }), ...snapshot, history, interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
       busy: chat.queue.busy, pending: chat.queue.pendingCount, pendingReports: chat.queue.pendingReports, pendingUserInputs: chat.queue.pendingUserInputs, deliveryFailure:this.deliveryFailure(id,chat.queue),
       completedDeliveryIds: chat.handle.completedDeliveryIds(),
       runId: record.agentId ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId)?.runId ?? null : null,
@@ -894,11 +913,14 @@ export class Chats implements StructuredSessionPort {
     const workspace = await this.workspace(record.workspaceId);
     let history: unknown[] = [], historyMessageIds: string[] = [];
     let historyWarning: string | undefined;
-    const hasDurableSource = record.backend === 'pi' || record.backend === 'pi-rpc' ? !!record.sessionFile
+    const hasDurableSource = record.backend === 'pi' || record.backend === 'pi-rpc' || record.backend === 'acp' ? !!record.sessionFile
       : record.backend === 'codex' ? !!record.codexThreadId : !!record.nativeclaudeSessionId;
     if (!hasDurableSource) historyWarning = 'No durable native history source is recorded for this older conversation; history completeness cannot be verified';
     try {
-      if (record.backend === 'pi' || record.backend === 'pi-rpc') {
+      if (record.backend === 'acp') {
+        if(record.sessionFile){const transcript=await AcpHistory.load(record.sessionFile);if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new Error('ACP native session identity does not match its local transcript');history=transcript.state.history;historyMessageIds=transcript.state.historyIds;}
+        historyWarning=record.sessionFile?'This is the local ACP transcript; native restore support is checked only on explicit activation':undefined;
+      } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
         if (record.sessionFile) {
           const lines = readFileSync(record.sessionFile, 'utf8').split('\n').filter(line => line.trim());
           const values = lines.map(line => { try { return JSON.parse(line) as Record<string, unknown>; } catch { throw new Error('Saved Pi transcript contains malformed JSON; the original file was not changed'); } });
@@ -944,7 +966,7 @@ export class Chats implements StructuredSessionPort {
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, sourceAgent, dispatchId, payload)));
     const queue = new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
       completedIds: () => [], userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }});
-    return {...record, executionPath: record.execution?.path ?? workspace.path, history, historyMessageIds,
+    return {...record, ...(record.backend==='acp'&&{capabilities:{...acpCapabilities(undefined,!!record.sessionFile),...(record.capabilities&&{lastObserved:record.capabilities})}}), executionPath: record.execution?.path ?? workspace.path, history, historyMessageIds,
       readOnly: true, identityError: {code: identityError.code, message: identityError.message},
       ...(historyWarning && {historyIncomplete: true, historyWarning}),
       interactions: [], models: [], model: record.model, busy: false, pending: queue.pendingCount,
@@ -1013,7 +1035,7 @@ export class Chats implements StructuredSessionPort {
       const team = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspaceId)}/team`) as {id: string}[];
       if (!team.some(member => member.id === memberId)) throw new SessionIdentityError('MEMBER_NOT_FOUND', 'Select an existing Worker in this workspace.');
       const config = this.runtime.peekAgentLaunchConfig(workspaceId, memberId);
-      const backends: Record<string, ChatBackend> = {'hive:pi': 'pi', 'hive:codex': 'codex', 'hive:pi-rpc': 'pi-rpc', 'hive:claude': 'claude'};
+      const backends: Record<string, ChatBackend> = {'hive:pi': 'pi', 'hive:codex': 'codex', 'hive:pi-rpc': 'pi-rpc', 'hive:claude': 'claude', 'hive:acp':'acp'};
       const backend = config && backends[config.command];
       if (!backend) throw new SessionIdentityError('MEMBER_BACKEND_UNSUPPORTED', 'This Worker has no supported structured backend configuration.');
       if (options.backend !== undefined && options.backend !== backend) throw new SessionIdentityError('MEMBER_BACKEND_MISMATCH', 'The requested backend differs from this Worker configuration. Create using the Worker backend.');
@@ -1061,6 +1083,13 @@ export class Chats implements StructuredSessionPort {
   async open(id: string) {
     try {
     const record=this.index.get(id);
+    if(record.backend==='acp'&&this.live.get(id)?.cleanup)await this.live.get(id)!.cleanup;
+    if(record.backend==='acp'&&!this.live.has(id)){
+      await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
+      const {identityError,readOnly,...snapshot}=await this.readOnlySnapshot(this.index.get(id),new SessionIdentityError('ACP_PASSIVE_SESSION','Activate explicitly to negotiate native restore and the Hive team bridge'));
+      const nativeReadOnly=!!record.sessionFile&&record.capabilities?.features?.nativeResume?.state==='unsupported';
+      return {...snapshot,readOnly:nativeReadOnly,passive:true,...(nativeReadOnly&&{identityError:{code:'ACP_NATIVE_RESUME_UNAVAILABLE',message:'The last agent handshake did not support native restore; only the local transcript is available. Explicit activation can recheck this capability.'}})};
+    }
     if(record.lineage&&!this.live.has(id)){
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.initialization?.created(record.workspaceId,id,{deferLaunch:true});
@@ -1162,6 +1191,7 @@ export class Chats implements StructuredSessionPort {
         }
       },
       ready: () => {
+        if(record.backend==='acp'&&chat.queue.pending.some(item=>(chat.handle as AcpSessionHandle).uncertainDeliveryIds().includes(item.id)))return;
         void this.initializationReady(this.index.get(id)).then(() => {if (!this.keepingPaused.has(id) && !chat.modeChanging) chat.queue.resume();})
           .catch(error => this.recordDeliveryFailure(id, chat.queue, error instanceof Error ? error : new Error(String(error))));
       },
@@ -1169,7 +1199,7 @@ export class Chats implements StructuredSessionPort {
     };
   }
   private launchConfig(record: ChatRecord) {
-    return { command: record.backend === 'codex' ? 'hive:codex' : record.backend === 'pi-rpc' ? 'hive:pi-rpc' : record.backend === 'claude' ? 'hive:claude' : 'hive:pi', commandPresetId: null,
+    return { command: `hive:${record.backend}`, commandPresetId: null,
       args: [...(record.profile ? ['--profile-id', record.profile.id, '--profile-revision', String(record.profile.revision)] : []), ...(record.model ? ['--provider', record.model.provider, '--model', record.model.id] : [])] };
   }
   private async withWorkspace<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
@@ -1225,6 +1255,12 @@ export class Chats implements StructuredSessionPort {
     const inputText = encodeImageInput(text, ids);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       await this.activationAvailable(id);
+      if(this.index.get(id).backend==='acp'){
+        if(ids.length&&(await this.attachments.get(this.index.get(id).workspaceId,ids)).some(item=>item.image))throw new Error('ACP image input is not implemented');
+        const pending=this.live.get(id)?.queue.pendingCount??DeliveryQueue.persistedCount(this.queueDir,id);
+        if(pending)this.keepingPaused.add(id);
+        try{await this.activateOnce(id,true);}catch(error){this.keepingPaused.delete(id);throw error;}
+      }
       const opened = await this.require(id);
       if (opened.reasoningFailure) throw new Error(`原推理设置未能恢复，请重新选择强度后发送：${opened.reasoningFailure.message}`);
       if (this.index.get(id).backend === 'pi' && !opened.handle.currentModel()) {
@@ -1235,7 +1271,7 @@ export class Chats implements StructuredSessionPort {
         if (staged.some(item=>item.image) && opened.handle.supportsImages?.() === false) throw new Error('当前模型不支持图片，请切换模型后重试。');
       }
       const keepPaused = !opened.queue.busy && opened.queue.pendingCount > 0;
-      if (keepPaused) this.keepingPaused.add(id);
+      if (keepPaused) this.keepingPaused.add(id);else this.keepingPaused.delete(id);
       try {
         await this.activateOnce(id, true);
       } finally {
@@ -1317,6 +1353,44 @@ export class Chats implements StructuredSessionPort {
         chat.queue.notifyPendingUserInputs();
       }
       return { ok: true };
+    });
+  }
+  private async uncertainAcpState(id:string) {
+    const record=this.originIdentity(this.index.get(id));
+    this.assertWorkspaceAvailable(record.workspaceId);
+    if(record.backend!=='acp'||!record.profile||!record.sessionFile||!record.acpSessionId||record.identityState!=='known'||!record.originAgentId)
+      throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT','A known original ACP session is required to resolve an uncertain queued delivery');
+    await this.profiles.getRef(record.profile,'acp');
+    const live=this.live.get(id);
+    if(live?.cleanup||this.opening.has(id))throw new Error('Wait for the ACP session to finish opening or closing');
+    const transcript=await AcpHistory.load(record.sessionFile);
+    if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT','The native session and transcript identities disagree');
+    if(this.live.get(id)!==live||this.opening.has(id)||live?.cleanup)throw new Error('ACP session ownership changed; refresh the uncertain delivery');
+    const queue=live?.queue??new DeliveryQueue({directory:this.queueDir,sessionId:id,startPaused:true,completedIds:()=>[],onError:()=>{},onState:()=>{},execute:async()=>{throw new Error('Offline ACP queue cannot execute');}});
+    return {record,transcript,queue};
+  }
+  async uncertainAcpDeliveries(id:string){
+    return this.withWorkspace(this.index.get(id).workspaceId,async()=>{
+      const {record,transcript,queue}=await this.uncertainAcpState(id);
+      if(!queue.isPaused||queue.busy)return {sessionId:id,profile:record.profile,deliveries:[],blockedReason:'Pause and finish the ACP turn before resolving delivery uncertainty'};
+      return {sessionId:id,profile:record.profile,deliveries:queue.pending.flatMap(item=>transcript.state.deliveries[item.id]==='sent'&&item.presentation?[{
+        deliveryId:item.id,text:item.presentation.displayText,origin:item.presentation.origin,...(item.presentation.dispatchId&&{dispatchId:item.presentation.dispatchId}),
+        notice:'The native agent may already have handled this input. Discarding removes only this queued wait; it cannot undo native work or settle a Hive task.'
+      }]:[])};
+    });
+  }
+  async discardUncertainAcpDelivery(id:string,deliveryId:string,expectedText:string){
+    return this.withWorkspace(this.index.get(id).workspaceId,async()=>{
+      const {transcript,queue}=await this.uncertainAcpState(id);
+      if(transcript.state.deliveries[deliveryId]!=='sent')throw new Error('This delivery has no persisted uncertain ACP outcome');
+      const inputs=transcript.state.inputs?.filter(input=>input.id===deliveryId)??[],input=inputs[0];
+      if(inputs.length!==1||!input||!isDeliveryPresentation(input.presentation)||input.presentation.displayText!==expectedText)throw new Error('The uncertain delivery summary changed; refresh it before discarding');
+      const pending=queue.pending.find(item=>item.id===deliveryId);
+      if(pending&&(!queue.isPaused||queue.busy))throw new Error('Pause and finish the ACP turn before discarding an uncertain delivery');
+      if(pending&&(!pending.presentation||pending.presentation.displayText!==expectedText))throw new Error('The queued delivery changed; refresh it before discarding');
+      // Exact ID only. A retry after a lost response cannot remove a later delivery.
+      if(pending)queue.discardPending(new Set([deliveryId]));
+      return {sessionId:id,deliveryId,discarded:true,alreadyDiscarded:!pending,nativeOutcome:'unknown' as const};
     });
   }
   listInteractionAttachments(id: string) {
@@ -1406,10 +1480,12 @@ export class Chats implements StructuredSessionPort {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       await this.activationAvailable(id);
+      if(this.index.get(id).backend==='acp')await this.activateOnce(id,true);
       // Drain failed native ownership and reload/reconcile the spool before an
       // existing active Hive run can take activateOnce's fast path.
       const chat = await this.require(id);
       if (chat.failure) throw chat.failure;
+      if(this.index.get(id).backend==='acp'&&chat.queue.pending.some(item=>(chat.handle as AcpSessionHandle).uncertainDeliveryIds().includes(item.id)))throw new Error('ACP delivery outcome is uncertain; inspect it and explicitly discard or reconcile the queued delivery before resuming');
       this.reconcileUserInputs(this.index.get(id), chat.queue);
       await this.activateOnce(id);
       const ready = await this.require(id);
@@ -1432,17 +1508,20 @@ export class Chats implements StructuredSessionPort {
   async commands(id: string) {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);
+    if(record.backend==='acp')return {supported:false,commands:[],reason:'ACP command discovery is not implemented'};
     const chat = await this.require(id);
     return {supported: !!chat.handle.commands, commands: chat.handle.commands ? await chat.handle.commands() : []};
   }
   async usage(id:string) {
     const record=this.index.get(id);this.assertWorkspaceAvailable(record.workspaceId);
+    if(record.backend==='acp')return {source:'acp',reports:[],notice:'ACP usage reporting is not implemented'};
     const chat=await this.require(id);
     return chat.handle.usage ? chat.handle.usage() : {source:record.backend,reports:[],notice:'该原生后端未提供用量读取接口。'};
   }
   async mode(id: string, selected?: unknown, permission = false) {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);
+    if(record.backend==='acp'){if(selected!==undefined)throw new Error('ACP native mode selection is not implemented');return {backend:'acp',selected:null,applied:null,pendingNextTurn:false,options:[],description:'ACP native modes are not implemented'};}
     if (selected !== undefined && typeof selected !== 'string') throw new TypeError('Session mode must be text');
     return this.withWorkspace(record.workspaceId, async () => {
       const chat = await this.require(id);
@@ -1484,6 +1563,7 @@ export class Chats implements StructuredSessionPort {
     const record = this.index.get(id);
     const workspaceId = record.workspaceId;
     this.assertWorkspaceAvailable(workspaceId);
+    if(record.backend==='acp')throw new Error('ACP reasoning selection is not implemented');
     if (level !== undefined && typeof level !== 'string') throw new TypeError('推理强度必须是文本。');
     return this.withWorkspace(workspaceId, async () => {
       const chat = await this.require(id);
@@ -1521,6 +1601,7 @@ export class Chats implements StructuredSessionPort {
     }
   }
   async setModel(id: string, provider: string, modelId: string) {
+    if(this.index.get(id).backend==='acp')throw new Error('ACP model selection is not implemented');
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
       const chat = await this.require(id);

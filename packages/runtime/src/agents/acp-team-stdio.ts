@@ -17,6 +17,8 @@ export function createAcpTeamServer(binding: Binding) {
   const socketPath = process.platform === 'win32'
     ? `\\\\.\\pipe\\hive-acp-${nonce}` : join(tmpdir(), `hive-acp-${nonce}.sock`);
   let seen = false;
+  let finishConnection!: (connected:boolean)=>void;
+  const connection=new Promise<boolean>(resolve=>{finishConnection=resolve;});
   const sockets = new Set<Socket>();
   const proof = createServer((socket) => {
     sockets.add(socket);
@@ -26,13 +28,13 @@ export function createAcpTeamServer(binding: Binding) {
     socket.on('data', (chunk: string) => {
       data += chunk;
       if (data.length > 128) socket.destroy();
-      else if (data === nonce) { seen = true; socket.end(); }
+      else if (data === nonce) { seen = true; finishConnection(true); socket.end(); }
     });
     socket.on('error', () => {});
   });
   // A failed proof channel must not prevent normal tool use.
   const listening = new Promise<boolean>((resolve) => {
-    proof.once('error', () => resolve(false));
+    proof.once('error', () => {finishConnection(false);resolve(false);});
     proof.listen(socketPath, () => resolve(true));
   });
   const path = fileURLToPath(import.meta.url);
@@ -42,9 +44,22 @@ export function createAcpTeamServer(binding: Binding) {
     server: { name: 'hive-team', command: process.execPath, args, env: [] as { name: string; value: string }[] },
     childEnv: { [BINDING_ENV]: JSON.stringify(binding), [PROOF_ENV]: JSON.stringify({ socketPath, nonce }) },
     connected: () => seen,
+    waitForConnection: (options: {signal?:AbortSignal;timeoutMs?:number}={}) => {
+      if(options.signal?.aborted)return Promise.reject(options.signal.reason??new Error('ACP bridge wait aborted'));
+      if(seen||disposed)return Promise.resolve(seen&&!disposed);
+      return new Promise<boolean>((resolve,reject)=>{
+        let settled=false;
+        const finish=(value:boolean,error?:unknown)=>{if(settled)return;settled=true;clearTimeout(timer);options.signal?.removeEventListener('abort',abort);if(error!==undefined)reject(error);else resolve(value);};
+        const abort=()=>finish(false,options.signal?.reason??new Error('ACP bridge wait aborted'));
+        const timer=setTimeout(()=>finish(false),options.timeoutMs??30_000);
+        options.signal?.addEventListener('abort',abort,{once:true});
+        void connection.then(value=>finish(value));
+      });
+    },
     dispose: async () => {
       if (disposed) return;
       disposed = true;
+      finishConnection(false);
       if (!await listening) return;
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => proof.close(() => resolve()));

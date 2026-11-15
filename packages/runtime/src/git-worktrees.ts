@@ -25,7 +25,7 @@ export interface WorktreeCreation {
   version: 1 | 2;
   setup?: InitializationPlan;
   workspaceId: string;
-  backend: 'pi' | 'codex' | 'pi-rpc' | 'claude';
+  backend: 'pi' | 'codex' | 'pi-rpc' | 'claude' | 'acp';
   profile?: AgentProfileRef;
   legacyConfiguration?: true;
   identityState: 'new' | 'known';
@@ -46,7 +46,7 @@ function validateCreation(creation: WorktreeCreation | undefined): void {
   if (creation === undefined) return; // Older generic intents have no recoverable Worker identity.
   const text = (value: unknown): value is string => typeof value === 'string' && !!value.trim() && value.length <= 4096 && !value.includes('\0');
   if (!creation || ![1, 2].includes(creation.version) || !text(creation.workspaceId)
-    || !['pi','codex','pi-rpc','claude'].includes(creation.backend)
+    || !['pi','codex','pi-rpc','claude','acp'].includes(creation.backend)
     || creation.profile !== undefined && (!creation.profile || typeof creation.profile.id !== 'string' || !creation.profile.id || !Number.isSafeInteger(creation.profile.revision) || creation.profile.revision < 1)
     || creation.legacyConfiguration !== undefined && creation.legacyConfiguration !== true
     || !['new','known'].includes(creation.identityState)

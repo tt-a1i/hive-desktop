@@ -59,12 +59,13 @@ export class DesktopSettings {
     if (ref) {
       if (!this.profiles) throw new DesktopSettingsValidationError('Profiles are not initialized');
       const profile = await this.profiles.resolveForExecution(ref);
+      if(profile.driver==='acp')throw new DesktopSettingsValidationError('ACP version probe compatibility metadata is not declared');
       if (backend !== profile.driver && !(backend === 'pi' && profile.driver === 'pi-rpc')) throw new DesktopSettingsValidationError('Profile backend mismatch');
       const launch = nativeProfileLaunch(profile);
       if (!launch.command) throw new DesktopSettingsValidationError('Built-in Pi has no executable to probe');
       const task = probeExecutable(launch.command, this.probeAbort.signal, launch);
       this.probes.add(task);
-      try { return {backend, profile: profile.ref, command: launch.command, source: 'profile', ...await task, verifiedVersion: verifiedVersions[backend as keyof typeof verifiedVersions]}; }
+      try { return {backend, profile: profile.ref, command: launch.command, source: 'profile', ...await task, verifiedVersion: verifiedVersions[profile.driver === 'pi-rpc' ? 'pi' : profile.driver]}; }
       finally { this.probes.delete(task); }
     }
     if (backend !== 'pi' && backend !== 'codex' && backend !== 'claude') throw new DesktopSettingsValidationError('Unknown external program');

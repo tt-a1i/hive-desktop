@@ -1,9 +1,10 @@
+import type { AgentCapabilities } from './agent-capabilities.js';
 import type { AgentProfileRef } from './agent-profiles.js';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 
-export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude';
+export type ChatBackend = 'pi' | 'codex' | 'pi-rpc' | 'claude' | 'acp';
 
 // Pi core uses this identity until an actual model has been selected.
 export function isUnsetPiModel(model: { provider: string; id: string } | undefined): boolean {
@@ -41,6 +42,8 @@ export interface ChatRecord {
   identityState?: 'new' | 'known' | 'unknown';
   piSessionId?: string;
   externalPiSessionId?: string;
+  acpSessionId?: string;
+  capabilities?: AgentCapabilities;
   startupContext?: string;
   model?: { provider: string; id: string; name: string };
   updatedAt: number;
@@ -182,13 +185,14 @@ function isChatRecord(value: unknown): value is ChatRecord {
     if (!setting || typeof setting !== 'object' || Array.isArray(setting) || !['provider','modelId','level'].every(key=>typeof setting[key]==='string' && (setting[key] as string).length>0)) return false;
   }
   if (record.customTitle !== undefined && typeof record.customTitle !== 'boolean') return false;
-  if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex' && record.backend !== 'pi-rpc' && record.backend !== 'claude') return false;
+  if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex' && record.backend !== 'pi-rpc' && record.backend !== 'claude' && record.backend !== 'acp') return false;
   if (record.nativeclaudeSessionId !== undefined && typeof record.nativeclaudeSessionId !== 'string') return false;
   if (record.codexThreadId !== undefined && typeof record.codexThreadId !== 'string') return false;
   if (record.agentId !== undefined && typeof record.agentId !== 'string') return false;
   if (record.originAgentId !== undefined && (typeof record.originAgentId !== 'string' || !record.originAgentId)) return false;
   if (record.identityState !== undefined && !['new','known','unknown'].includes(record.identityState as string)) return false;
   if (record.identityState === 'known' && !record.originAgentId && !record.agentId) return false;
+  if (record.acpSessionId !== undefined && typeof record.acpSessionId !== 'string') return false;
   if (record.externalPiSessionId !== undefined && typeof record.externalPiSessionId !== 'string') return false;
   if (record.piSessionId !== undefined && typeof record.piSessionId !== 'string') return false;
   if (record.startupContext !== undefined && typeof record.startupContext !== 'string') return false;

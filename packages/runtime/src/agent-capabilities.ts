@@ -1,3 +1,4 @@
+import type { AcpSessionHandle } from './agents/acp.js';
 import { isAgentDriver, type AgentDriver } from './agent-profiles.js';
 
 export const AGENT_CAPABILITIES = ['text', 'images', 'thinking', 'toolEvents', 'interactions',
@@ -29,4 +30,19 @@ export function agentCapabilities(driver: AgentDriver,
       ...(declaration.reason !== undefined && { reason: declaration.reason }) };
   }
   return { driver, features };
+}
+
+/** Reflect only this adapter's implemented protocol and current successful session negotiation. */
+export function acpCapabilities(handle?: Pick<AcpSessionHandle,'nativeResume'|'teamConnected'>, hasHistory=false): AgentCapabilities {
+  const declarations: Partial<Record<AgentCapability,AgentCapabilityDeclaration>>={};
+  for(const feature of ['images','modelSelection','reasoning','nativeModes','steer'] as const)
+    declarations[feature]={state:'unsupported',source:'driver',reason:`ACP ${feature} is not implemented by this adapter`};
+  if(hasHistory)declarations.historyRead={state:'supported',source:'driver',reason:'Local ACP transcript is available; this does not imply native restore'};
+  if(handle){
+    for(const feature of ['text','thinking','toolEvents','interactions'] as const)declarations[feature]={state:'supported',source:'session'};
+    declarations.interactions={state:'supported',source:'session',reason:'ACP session/request_permission with native option IDs only'};
+    declarations.nativeResume={state:handle.nativeResume?'supported':'unsupported',source:'handshake',...(!handle.nativeResume&&{reason:'The agent did not advertise loadSession'})};
+    declarations.teamTool={state:handle.teamConnected()?'supported':'unsupported',source:'session',...(!handle.teamConnected()&&{reason:'The agent has not connected the Hive MCP team bridge'})};
+  }
+  return agentCapabilities('acp',declarations);
 }

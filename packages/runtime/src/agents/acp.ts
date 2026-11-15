@@ -30,6 +30,7 @@ export interface AcpSessionHandle extends PiSessionHandle {
     readonly nativeResume: boolean;
     readonly readOnly: boolean;
     teamConnected(): boolean;
+    waitForTeamReady(options?:{signal?:AbortSignal;timeoutMs?:number}):Promise<boolean>;
     uncertainDeliveryIds(): readonly string[];
     dispose(): Promise<void>;
 }
@@ -81,7 +82,7 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
         emit({ type: 'interaction_resolved', sessionId, interactionId: id, reason });
     } permissions.clear(); };
     const fail = (error: unknown) => { if (failure || disposed)
-        return; failure = new Error(String(redact(error instanceof Error ? error.message : String(error)))); clearPermissions('disconnected'); void transport?.close(100).catch(() => { }); if (ready && !active)
+        return; failure = new Error(String(redact(error instanceof Error ? error.message : String(error)))); clearPermissions('disconnected'); void team?.dispose().catch(()=>{}); void transport?.close(100).catch(() => { }); if (ready && !active)
         options.onUnexpectedExit?.(failure); };
     const persist = async (change: Parameters<AcpHistory['write']>[0]) => { try {
         await store!.write(s => { change(s); Object.assign(s, redact(s)); });
@@ -246,7 +247,7 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
         const validate = (id: string, response: unknown) => { const p = permissions.get(id); if (!p)
             throw new Error('Permission request is no longer pending'); if (!object(response) || typeof response.optionId !== 'string' || !p.options.includes(response.optionId))
             throw new Error('Choose a native ACP permission optionId'); return { p, optionId: response.optionId }; };
-        return { sessionId, sessionFile: file, nativeResume, readOnly, teamConnected: () => team?.connected() ?? false, uncertainDeliveryIds: () => Object.keys(store!.state.deliveries).filter(id => store!.state.deliveries[id] === 'sent'),
+        return { sessionId, sessionFile: file, nativeResume, readOnly, teamConnected: () => team?.connected() ?? false, waitForTeamReady: options => team?.waitForConnection(options) ?? Promise.resolve(false), uncertainDeliveryIds: () => Object.keys(store!.state.deliveries).filter(id => store!.state.deliveries[id] === 'sent'),
             history: () => structuredClone(store!.state.history), snapshot: () => ({ history: structuredClone(store!.state.history), historyMessageIds: [...store!.state.historyIds] }), hasContext: type => store!.state.contextTypes?.includes(type) === true || store!.state.contexts.some(c => c.customType === type) || store!.state.history.some(m => object(m) && m.customType === type),
             completedDeliveryIds: () => Object.keys(store!.state.deliveries).filter(id => store!.state.deliveries[id] === 'completed'), supportsImages: () => false, currentModel: () => undefined, listModels: () => [], async setModel() { throw new Error('ACP model selection is not implemented'); },
             interactions: () => [...permissions.values()].map(p => p.interaction), validateInteractionResponse: (id, response) => { validate(id, response); }, respondInteraction(id, response) { check(); const { p, optionId } = validate(id, response); permissions.delete(id); p.resolve({ outcome: { outcome: 'selected', optionId } }); emit({ type: 'interaction_resolved', sessionId, interactionId: id, reason: 'resolved' }); },

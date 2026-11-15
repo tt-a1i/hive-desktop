@@ -325,6 +325,6 @@ export function createStructuredRuntime(
 	};
 }
 
-export function structuredCommand(command: string | undefined): command is "hive:pi" | "hive:codex" | "hive:pi-rpc" | "hive:claude" {
-  return command === "hive:pi" || command === "hive:codex" || command === "hive:pi-rpc" || command === "hive:claude";
+export function structuredCommand(command: string | undefined): command is "hive:pi" | "hive:codex" | "hive:pi-rpc" | "hive:claude" | "hive:acp" {
+  return command === "hive:pi" || command === "hive:codex" || command === "hive:pi-rpc" || command === "hive:claude" || command === "hive:acp";
 }

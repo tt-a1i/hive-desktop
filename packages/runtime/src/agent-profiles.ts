@@ -3,7 +3,7 @@ import { isAbsolute } from 'node:path';
 import type { DesktopExecutables, DesktopSettingsSnapshot } from './desktop-settings.js';
 import type { HiveHost } from './hive-host.js';
 
-export const AGENT_DRIVERS = ['pi', 'codex', 'pi-rpc', 'claude'] as const;
+export const AGENT_DRIVERS = ['pi', 'codex', 'pi-rpc', 'claude', 'acp'] as const;
 export type AgentDriver = typeof AGENT_DRIVERS[number];
 export interface AgentProfileRef { id: string; revision: number }
 /** Nonsecret invocation/configuration references only. This is not a credential store. */
@@ -36,15 +36,18 @@ export class AgentProfileError extends Error {
   }
 }
 export const AGENT_PROFILES_STATE_PATH = '/api/settings/app-state/desktop_agent_profiles';
-const defaultIds: Record<AgentDriver, string> = {
+export type DefaultAgentDriver = Exclude<AgentDriver, 'acp'>;
+export const DEFAULT_AGENT_DRIVERS = ['pi','codex','pi-rpc','claude'] as const;
+const defaultIds: Record<DefaultAgentDriver, string> = {
   pi: 'default-pi', codex: 'default-codex', 'pi-rpc': 'default-pi-rpc', claude: 'default-claude',
 };
-const labels: Record<AgentDriver, string> = { pi: 'Built-in Pi', codex: 'Codex', 'pi-rpc': 'External Pi', claude: 'Claude Code' };
+const labels: Record<DefaultAgentDriver, string> = { pi: 'Built-in Pi', codex: 'Codex', 'pi-rpc': 'External Pi', claude: 'Claude Code' };
 export function isAgentDriver(value: unknown): value is AgentDriver {
   return typeof value === 'string' && (AGENT_DRIVERS as readonly string[]).includes(value);
 }
 export function defaultAgentProfileId(driver: AgentDriver): string {
   if (!isAgentDriver(driver)) throw invalid('Unknown agent driver');
+  if (driver === 'acp') throw invalid('ACP requires an explicitly configured profile; no default executable is assumed');
   return defaultIds[driver];
 }
 const invalid = (message: string) => new AgentProfileError('PROFILE_INVALID', message);
@@ -85,6 +88,7 @@ export function validateAgentProfileLaunch(driver: AgentDriver, value: unknown):
   if (driver === 'claude' && args.length) throw invalid('Claude SDK profiles do not accept ordered invocation arguments');
   const command = input.command === undefined ? undefined : text(input.command, 4096, 'executable').trim();
   if (driver !== 'pi' && command === undefined) throw invalid('External agent profiles require an executable');
+  if (driver === 'acp' && input.configDir !== undefined) throw invalid('ACP has no universal configuration directory; supply explicit nonsecret native arguments');
   const configDir = input.configDir === undefined ? undefined : text(input.configDir, 4096, 'configuration directory');
   // Profiles launch on this host. A Windows-looking path on POSIX would be relative
   // when passed to a native CLI's configuration-home environment variable.
@@ -122,7 +126,7 @@ function storedProfiles(value: unknown): StoredProfiles {
     || !Array.isArray(input.profiles)) throw invalid('Invalid profile store');
   const profiles = input.profiles.map(profile);
   const ids = new Set(profiles.map(entry => entry.id));
-  if (ids.size !== profiles.length || AGENT_DRIVERS.some(driver => !ids.has(defaultIds[driver]))) throw invalid('Invalid default/duplicate profiles');
+  if (ids.size !== profiles.length || DEFAULT_AGENT_DRIVERS.some(driver => !ids.has(defaultIds[driver]))) throw invalid('Invalid default/duplicate profiles');
   return { schemaVersion: 1, storeVersion: input.storeVersion as number, profiles, ...(input.desktopExecutables !== undefined && {desktopExecutables: desktopExecutables(input.desktopExecutables)}) };
 }
 function resolved(store: StoredProfiles, rawRef: AgentProfileRef, expectedDriver?: AgentDriver): ResolvedAgentProfile {
@@ -197,7 +201,7 @@ export class AgentProfiles {
         return this.snapshot(existing);
       }
       const effective = object(object(captured).effective);
-      const profiles = AGENT_DRIVERS.map(driver => {
+      const profiles = DEFAULT_AGENT_DRIVERS.map(driver => {
         const executable = driver === 'pi' ? undefined : object(effective[driver === 'pi-rpc' ? 'pi' : driver]).command;
         return profile({ id: defaultIds[driver], driver, label: labels[driver], enabled: true, currentRevision: 1,
           revisions: [{ revision: 1, legacyConfiguration: true,

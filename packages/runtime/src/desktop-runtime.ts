@@ -92,8 +92,9 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       if (typeof input.name !== 'string' || !input.name.trim() || !isWorkerRole(input.role)
         || typeof input.backend !== 'string' || !structuredCommand(`hive:${input.backend}`)
         || (input.description !== undefined && typeof input.description !== 'string')) throw new TypeError('Invalid desktop member configuration');
+      if (input.backend === 'acp' && input.model) throw new TypeError('ACP model selection is not implemented');
       const profile = profiles.resolveForExecutionSnapshot(input.profile ?? profiles.currentRefSnapshot(defaultAgentProfileId(input.backend as import('./chat-index.js').ChatBackend)), input.backend as import('./chat-index.js').ChatBackend);
-      const launch = withStructuredProfile({command: `hive:${input.backend}`, args: input.model ? ['--provider', input.model.provider, '--model', input.model.id] : [], commandPresetId: null}, profile.ref);
+      const launch = withStructuredProfile({command: `hive:${input.backend}`, args: [...(input.backend === 'acp' ? ['--profile-id',profile.ref.id,'--profile-revision',String(profile.ref.revision)] : []), ...(input.model ? ['--provider', input.model.provider, '--model', input.model.id] : [])], commandPresetId: null}, profile.ref);
       return hive.createMember(workspaceId, { name: input.name, role: input.role,
         ...(input.description !== undefined && { description: input.description as string }) }, launch);
     },

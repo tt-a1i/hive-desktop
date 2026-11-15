@@ -74,6 +74,9 @@ function optionalModel(params: Record<string, unknown>) {
 async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
+    case 'chat.acp.uncertainDeliveries': exact(params,['sessionId']);return chats.uncertainAcpDeliveries(text(params,'sessionId'));
+    case 'chat.acp.discardUncertainDelivery': {exact(params,['sessionId','deliveryId','expectedText']);if(typeof params.expectedText!=='string')throw new Error('expectedText is required');return chats.discardUncertainAcpDelivery(text(params,'sessionId'),text(params,'deliveryId'),params.expectedText);}
+    case 'agent.capabilities': exact(params,['sessionId']);return chats.capabilities(text(params,'sessionId'));
     case 'agent.profiles.list': exact(params, []); return profiles.list();
     case 'agent.profiles.create': {
       exact(params, ['driver', 'label', 'launch', 'expectedStoreVersion']);
@@ -136,13 +139,13 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       ...(params.description !== undefined && { description: params.description }) }); }
     case 'member.worktree.create': {
       exact(params, ['workspaceId', 'memberId', 'backend', 'branch', 'skipSetup', 'expectedSetupRevision', 'profile']);
-      if (params.backend !== undefined && !['pi','codex','pi-rpc','claude'].includes(params.backend as string)) throw new Error('Unsupported chat backend');
+      if (params.backend !== undefined && !['pi','codex','pi-rpc','claude','acp'].includes(params.backend as string)) throw new Error('Unsupported chat backend');
       if (params.branch !== undefined && typeof params.branch !== 'string') throw new Error('Branch must be text');
       if (params.expectedSetupRevision !== undefined && typeof params.expectedSetupRevision !== 'string') throw new Error('Invalid setup revision');
       if (params.skipSetup !== undefined && typeof params.skipSetup !== 'boolean') throw new Error('Invalid setup selection');
       return chats.createMemberWorktree(text(params, 'workspaceId'), text(params, 'memberId'), { ...optionalProfile(params),
         ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}),
-        ...(params.backend !== undefined && {backend: params.backend as 'pi' | 'codex' | 'pi-rpc' | 'claude'}),
+        ...(params.backend !== undefined && {backend: params.backend as 'pi' | 'codex' | 'pi-rpc' | 'claude' | 'acp'}),
         ...(typeof params.branch === 'string' && {branch: params.branch})});
     }
     case 'member.worktrees': return chats.memberWorktrees(text(params, 'workspaceId'), text(params, 'memberId'));
@@ -258,13 +261,13 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.worktrees.pending': return chats.pendingWorktrees(text(params, 'workspaceId'));
     case 'chat.worktrees.recover': {
       exact(params, ['workspaceId', 'sessionId', 'backend', 'memberId', 'profile']);
-      if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');
+      if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
       return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend, params.memberId === undefined ? undefined : text(params, 'memberId'), optionalProfile(params).profile);
     }
     case 'chat.createRecord':
     case 'chat.create': {
       exact(params, ['workspaceId', 'backend', 'profile', 'isolation', 'branch', 'skipSetup', 'expectedSetupRevision']);
-      if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude') throw new Error('Unsupported chat backend');
+      if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
       if (params.isolation !== undefined && params.isolation !== 'worktree') throw new Error('Unsupported session isolation');
       if (params.branch !== undefined && (params.isolation !== 'worktree' || typeof params.branch !== 'string')) throw new Error('A branch is only valid for a new worktree session');
       const workspace = text(params, 'workspaceId');

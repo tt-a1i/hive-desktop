@@ -11,7 +11,7 @@ import type { HiveHost } from './hive-host.js';
 import type { WorkspaceSummary } from './hive-runtime-contract.js';
 
 type Model = { provider: string; id: string; name: string };
-export interface AgentModelCatalog { models: (Model & { available: boolean })[]; current?: Model }
+export interface AgentModelCatalog { supported?: boolean; reason?: string; models: (Model & { available: boolean })[]; current?: Model }
 export class AgentModelsInputError extends Error {
   constructor(message: string) { super(message); this.name = 'AgentModelsInputError'; }
 }
@@ -25,7 +25,7 @@ export class AgentModels {
   constructor(private readonly hive: HiveHost, private readonly settings: DesktopSettings, private readonly profiles = new AgentProfiles(hive)) {}
   async list(workspaceId: string, backend: unknown, ref?: AgentProfileRef): Promise<AgentModelCatalog> {
     if (this.closing) return Promise.reject(new Error('Model catalog runtime is closing'));
-    if (backend !== 'pi' && backend !== 'codex' && backend !== 'pi-rpc' && backend !== 'claude') {
+    if (backend !== 'pi' && backend !== 'codex' && backend !== 'pi-rpc' && backend !== 'claude' && backend !== 'acp') {
       return Promise.reject(new AgentModelsInputError('Unsupported model catalog backend'));
     }
     if (typeof workspaceId !== 'string' || !workspaceId.trim()) return Promise.reject(new AgentModelsInputError('workspaceId is required'));
@@ -34,6 +34,11 @@ export class AgentModels {
     const profile = await this.profiles.resolveForExecution(ref ?? await this.profiles.currentRef(defaultAgentProfileId(backend)), backend);
     if (this.removing.has(workspaceId)) throw workspaceRemovalBlocked(workspaceId);
     if (this.closing) throw new Error('Model catalog runtime is closing');
+    if (backend === 'acp') {
+      const workspaces=await this.hive.request('GET','/api/workspaces') as WorkspaceSummary[];
+      if(!workspaces.some(workspace=>workspace.id===workspaceId))throw new AgentModelsInputError('Workspace not found');
+      return {models:[],supported:false,reason:'ACP model catalog and model selection are not implemented'};
+    }
     const key = JSON.stringify([workspaceId, profile.ref.id, profile.ref.revision]);
     const pending = this.pending.get(key);
     if (pending) return pending;

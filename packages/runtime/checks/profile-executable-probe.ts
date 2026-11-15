@@ -10,7 +10,7 @@ let runtime:Awaited<ReturnType<typeof createDesktopRuntime>>|undefined;
 try{
  const peer=join(directory,'version.cjs');await writeFile(peer,"if(process.argv[2]!=='--version')throw Error('Version only');process.stdout.write('1.2.3\\n');");
  runtime=await createDesktopRuntime(join(directory,'state'),()=>{},{executableEnvironment:{}});
- for(const [driver,backend,verifiedVersion]of [['codex','codex','0.167.0'],['pi-rpc','pi','1.4.0']] as const){
+ for(const [driver,backend,verifiedVersion]of [['codex','codex','0.167.0'],['pi-rpc','pi','1.4.0'],['pi-rpc','pi-rpc','1.4.0']] as const){
   const profile=(await runtime.profiles.create({driver,label:'Version-only fixture',launch:{command:process.execPath,args:[peer]}},(await runtime.profiles.list()).storeVersion)).profile;
   const result=await runtime.settings.probe(backend,undefined,profile.ref);assert.equal(result.verifiedVersion,verifiedVersion);assert.equal(typeof result.verifiedVersion,'string');assert.equal(result.status,'available');assert.equal(result.version,'1.2.3');assert.equal(result.source,'profile');assert.deepEqual(result.profile,profile.ref);
  }

@@ -24,7 +24,7 @@ type Flag = typeof flags[number];
 function parse(config: AgentLaunchConfigInput): ParsedStructuredLaunch {
   if (!config || typeof config !== 'object' || Array.isArray(config)
     || typeof config.command !== 'string' || !config.command.startsWith('hive:') || !isAgentDriver(config.command.slice(5)))
-    throw new StructuredLaunchError('Expected one of the four structured Hive backend commands');
+    throw new StructuredLaunchError('Expected a registered structured Hive backend command');
   const driver = config.command.slice(5) as AgentDriver;
   if (config.args !== undefined && !Array.isArray(config.args)) throw new StructuredLaunchError('Launch arguments must be an array');
   const args = config.args ?? [];
@@ -52,7 +52,8 @@ function parse(config: AgentLaunchConfigInput): ParsedStructuredLaunch {
   if ((provider === undefined) !== (modelId === undefined)) throw new StructuredLaunchError('Structured model selection requires both --provider and --model');
   const id = values.get('--profile-id'), revisionText = values.get('--profile-revision');
   if ((id === undefined) !== (revisionText === undefined)) throw new StructuredLaunchError('Structured profile selection requires both ID and revision');
-  let profile: StructuredProfileSelection = { kind: 'legacy-default', id: defaultAgentProfileId(driver) };
+  let profile: StructuredProfileSelection;
+  if (driver === 'acp' && (provider !== undefined || modelId !== undefined)) throw new StructuredLaunchError('ACP model selection is not implemented');
   if (id !== undefined && revisionText !== undefined) {
     if (!/^[1-9][0-9]*$/u.test(revisionText)) throw new StructuredLaunchError('Profile revision must be a positive integer');
     try { profile = { kind: 'explicit', ref: validateAgentProfileRef({ id, revision: Number(revisionText) }) }; }
@@ -60,6 +61,10 @@ function parse(config: AgentLaunchConfigInput): ParsedStructuredLaunch {
       if (!(error instanceof AgentProfileError)) throw error;
       throw new StructuredLaunchError('Invalid structured profile reference');
     }
+  }
+  else {
+    if (driver === 'acp') throw new StructuredLaunchError('ACP requires an explicit profile ID and revision');
+    profile = {kind: 'legacy-default', id: defaultAgentProfileId(driver)};
   }
   return { config: structuredClone(config), driver, profile, extraArgs,
     ...(provider !== undefined && modelId !== undefined && { model: { provider, id: modelId } }) };
@@ -79,7 +84,8 @@ export async function resolveStructuredLaunch(parsed: ParsedStructuredLaunch, pr
 /** Replace only profile flags, retaining model, generic flags, order and all Hive config fields. */
 export function withStructuredProfile(config: AgentLaunchConfigInput, ref: AgentProfileRef): AgentLaunchConfigInput {
   validateAgentProfileRef(ref);
-  parse(config);
+  if (config.command === 'hive:acp' && !(config.args ?? []).some(arg=>arg==='--profile-id'||arg==='--profile-revision')) parse({...config,args:['--profile-id',ref.id,'--profile-revision',String(ref.revision),...(config.args??[])]});
+  else parse(config);
   const args: string[] = [];
   const original = config.args ?? [];
   let separator = original.length;

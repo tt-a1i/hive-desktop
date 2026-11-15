@@ -1,3 +1,4 @@
+import { AcpHistory } from './agents/acp-history.js';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
@@ -257,7 +258,9 @@ export async function searchConversation(record: ChatRecord, query: string, opti
   let truncated = false;
   let unresolved = false;
   try {
-    if (record.backend === 'pi' || record.backend === 'pi-rpc') {
+    if(record.backend==='acp'){
+      if(record.sessionFile){const transcript=await AcpHistory.load(record.sessionFile);if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new Error('ACP transcript identity mismatch');rows=transcript.state.history.map((message,index)=>({id:desktopMessageId(transcript.state.historyIds[index]!,message),message}));warning='ACP local transcript may differ from native history; no agent was started for search';}
+    } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
       if (record.sessionFile) {
         const file = record.sessionFile;
         const loaded = await freshRows([file], async () => ({ rows: await piRows(file, record.backend as 'pi' | 'pi-rpc'), complete: true }));
