@@ -505,7 +505,8 @@ pub(crate) fn handoff_origin(
     );
     v_flex().id("handoff-origin").gap_1().p_2().border_1().border_color(Color::Divider.get(cx))
         .child(div().id("handoff-origin-heading").role(Role::Label).aria_value(heading.clone()).child(heading))
-        .child(div().text_xs().child(text("这是冻结的历史文本，不是目标厂商的原生历史；来源会话保持原样。首次普通文本发送才激活目标。","This is frozen historical text, not the target provider's native history. The source is unchanged. The first ordinary text input activates the target.")))
+        .child(div().text_xs().child(text("这是冻结的历史文本，不是目标厂商的原生历史；来源会话保持原样。","This is frozen historical text, not the target provider's native history. The source is unchanged.")))
+        .when(state == "pending", |v| v.child(div().text_xs().child(text("首次普通文本发送才激活接续。","The first ordinary text input activates the handoff."))))
         .when(state != "consumed",|v|v.child(Button::new("handoff-refresh-target").outline().small().label(text("刷新目标状态与模型","Refresh target status and models")).on_click(cx.listener(|this,_,_,cx|{if let Some(id)=this.session.as_ref().map(|s|s.id.clone()){this.show_session(id,cx);}}))))
         .when(matches!(state,"attempted"|"uncertain"|"unknown"),|v|v.child(div().id("handoff-delivery-uncertain").role(Role::Alert).child(text("历史文本可能已经交付；请核验目标，不会自动重试。","The historical text may have been delivered. Inspect the target; it will not be retried automatically."))))
         .child(div().text_xs().child(format!("{}: {} · {}",text("覆盖","Coverage"),history["coverage"]["completeness"].as_str().unwrap_or("unknown"),history["coverage"]["nativeFreshness"].as_str().unwrap_or("unknown"))))
