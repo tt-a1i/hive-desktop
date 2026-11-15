@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, realpath, rename, link, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, realpath, readdir, rename, link, unlink } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { getGitWorkspaceStatus, getGitWorkspaceVersion, GitWorkspaceError, type GitReadOptions, type GitWorkspaceVersion } from './git-workspace.js';
 import { CodeCheckpointError, checkpointDiskEntry, checkpointFilesystemInventory, checkpointHash, checkpointInside, checkpointPath, readCheckpointRegular, type CheckpointEntry } from './checkpoint-files.js';
@@ -153,12 +153,30 @@ export class CodeCheckpoints {
     }catch{ return fail('CORRUPT','Checkpoint request metadata is invalid; it was not recaptured'); }
   }
   async get(requestId:string):Promise<CodeCheckpointOperation|undefined>{const op=await this.operation(requestId);if(op?.state==='ready')await this.readManifest(op);return op;}
+  async list():Promise<{checkpointId:string;capturedAt:number;coverage:CheckpointCoverage;exclusions:string[]}[]> {
+    const root=await this.initialise(), requests=join(root,'requests');
+    if(await realpath(root)!==root||await realpath(requests)!==requests)fail('STORAGE_UNSAFE','Checkpoint request directory was replaced or linked');
+    const names=await readdir(requests), result:{checkpointId:string;capturedAt:number;coverage:CheckpointCoverage;exclusions:string[]}[]=[];
+    for(const name of names.sort()) {
+      const match=/^([0-9a-f-]+)\.json$/i.exec(name);
+      if(!match||!UUID.test(match[1]!))fail('CORRUPT','Unknown checkpoint request metadata');
+      const op=await this.operation(match[1]!);if(!op)fail('CORRUPT','Checkpoint request disappeared while listing');
+      if(op.state!=='ready')continue;
+      const manifest=await this.readManifest(op);
+      result.push({checkpointId:manifest.checkpointId,capturedAt:manifest.capturedAt,coverage:structuredClone(manifest.preview.coverage),exclusions:[...manifest.preview.exclusions]});
+    }
+    return result.sort((a,b)=>b.capturedAt-a.capturedAt||a.checkpointId.localeCompare(b.checkpointId));
+  }
   private async scan():Promise<Scan>{
     let workspace:GitWorkspaceVersion;try{workspace=await getGitWorkspaceVersion(this.context.executionPath,this.options);}catch(error){if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))throw new CodeCheckpointError('SOURCE_UNAVAILABLE','The source execution directory is unavailable',{cause:error});throw error;}
     const empty:Scan={preview:{version:'',workspace,headFingerprint:checkpointHash(workspace.headOid??'unborn'),indexFingerprint:workspace.indexFingerprint,diskFingerprint:null,exclusions:[],coverage:{...coverage},unsupported:[],canCapture:false,limits:{...this.limits}},head:[],index:[],disk:[],rawIndex:null,blobs:new Map()};
     const finish=()=>{empty.preview.version=checkpointHash(JSON.stringify({...empty.preview,version:undefined}));return empty;};
     try{
       if(!workspace.headOid)fail('UNBORN_REPOSITORY','A code checkpoint currently requires an existing HEAD commit');
+      for(const base of new Set([workspace.gitDir,workspace.commonDir]))for(const name of ['exclude','attributes']){
+        try{const info=await lstat(join(base,'info',name));if(!info.isFile())fail('UNSUPPORTED_SPECIAL_FILE','Git metadata rule files must be regular files');}
+        catch(error){if(!noFile(error))throw error;}
+      }
       for(const name of ['core.sparseCheckout','index.sparse','core.splitIndex']){
         const configured=text(await git(workspace.projectRoot,['config','--bool','--get',name],this.options,4096,[0,1])).replace(/\n$/,'');
         if(configured==='true')fail(name==='core.splitIndex'?'SPLIT_INDEX':'SPARSE_INDEX','Sparse/split index configurations are not supported by code checkpoints');
@@ -258,7 +276,8 @@ export class CodeCheckpoints {
     try{
       const bytes=await this.privateRead(file,defaults.manifestBytes);if(checkpointHash(bytes)!==op.manifestSha256)throw 0;
       const manifest=JSON.parse(text(bytes)) as CodeCheckpointManifest;
-      if(manifest.version!==2||manifest.checkpointId!==op.checkpointId||manifest.requestId!==op.requestId||manifest.workspaceId!==op.workspaceId||manifest.sessionId!==op.sessionId||manifest.preview.version!==op.expectedVersion||!manifest.preview.canCapture||!Array.isArray(manifest.preview.exclusions))throw 0;
+      if(manifest.version!==2||manifest.checkpointId!==op.checkpointId||manifest.requestId!==op.requestId||manifest.workspaceId!==op.workspaceId||manifest.sessionId!==op.sessionId||!Number.isSafeInteger(manifest.capturedAt)||manifest.capturedAt<0||manifest.preview.version!==op.expectedVersion||manifest.preview.canCapture!==true||JSON.stringify(manifest.preview.coverage)!==JSON.stringify(coverage)||!Array.isArray(manifest.preview.exclusions)||manifest.preview.exclusions.some(value=>typeof value!=='string'))throw 0;
+      for(const value of manifest.preview.exclusions)checkpointPath(value.endsWith('/')?value.slice(0,-1):value);
       let count=0;
       for(const list of [manifest.head,manifest.index,manifest.disk]){if(!Array.isArray(list))throw 0;const paths=new Set<string>();for(const entry of list){checkpointPath(entry.path);if(paths.has(entry.path)||++count>defaults.entries||!['file','symlink'].includes(entry.kind)||!['100644','100755','120000'].includes(entry.mode)||entry.kind==='symlink'&&entry.mode!=='120000'||entry.kind==='file'&&entry.mode==='120000'||entry.gitOid!==undefined&&!OID.test(entry.gitOid)||entry.permissions!==undefined&&(!Number.isSafeInteger(entry.permissions)||entry.permissions<0||entry.permissions>0o777)||!HASH.test(entry.sha256)||!Number.isSafeInteger(entry.bytes)||entry.bytes<0||entry.bytes>defaults.fileBytes)throw 0;paths.add(entry.path);}}
       if(manifest.rawIndex&&(!HASH.test(manifest.rawIndex.sha256)||!Number.isSafeInteger(manifest.rawIndex.bytes)||manifest.rawIndex.bytes<0||manifest.rawIndex.bytes>defaults.indexBytes))throw 0;

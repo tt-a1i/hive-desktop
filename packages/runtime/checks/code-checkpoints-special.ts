@@ -39,11 +39,17 @@ try{
  const originalRules=await readFile(join(repo,'.gitignore'));await writeFile(join(repo,'.gitignore'),Buffer.concat([originalRules,Buffer.from('*.pipe\n!negated.pipe\n')]));execFileSync('mkfifo',[join(repo,'negated.pipe')]);await refused();await rm(join(repo,'negated.pipe'));await writeFile(join(repo,'.gitignore'),originalRules);
  // Git itself would block reading a FIFO .gitignore: detect it before ignore/status commands.
  const rules=await readFile(join(repo,'.gitignore'));await rm(join(repo,'.gitignore'));execFileSync('mkfifo',[join(repo,'.gitignore')]);await refused();await rm(join(repo,'.gitignore'));await writeFile(join(repo,'.gitignore'),rules);
+ // Classification of a directory can read that directory's rules first.
+ await mkdir(join(repo,'nested'));for(const name of ['.gitignore','.gitattributes']){execFileSync('mkfifo',[join(repo,'nested',name)]);await refused();await rm(join(repo,'nested',name));}await rm(join(repo,'nested'),{recursive:true});
+ execFileSync('mkfifo',[join(repo,'.git','info','attributes')]);await refused();await rm(join(repo,'.git','info','attributes'));
  assert.deepEqual(await readFile(join(repo,'.git','index')),index);assert.deepEqual(git('rev-parse','HEAD'),head);assert.equal(await readFile(join(repo,'tracked'),'utf8'),'A');assert.ok(ignoredSocket.listening);
  // A previously published v1 checkpoint has no proof of complete real-FS inventory.
  const legacyRequest=randomUUID(),legacy=await module.capture({expectedVersion:(await module.preview()).version,requestId:legacyRequest});
+ const listed=await module.list();assert.ok(listed.some(value=>value.checkpointId===legacy.checkpointId));assert.ok(listed.every(value=>value.coverage.content==='raw'));
+ const other=new CodeCheckpoints({...context,sessionId:'other'});assert.deepEqual(await other.list(),[]);
  const scope=join(data,'code-checkpoints',createHash('sha256').update(JSON.stringify([context.workspaceId,context.sessionId])).digest('hex')),manifestFile=join(scope,'snapshots',legacy.checkpointId,'manifest.json'),requestFile=join(scope,'requests',legacyRequest+'.json');
  const legacyManifest=Buffer.from(JSON.stringify({...JSON.parse(await readFile(manifestFile,'utf8')),version:1}));await writeFile(manifestFile,legacyManifest);await writeFile(requestFile,JSON.stringify({...legacy,manifestSha256:createHash('sha256').update(legacyManifest).digest('hex')}));
  const noGit=new CodeCheckpoints(context,{gitExecutable:join(root,'does-not-exist')});await assert.rejects(noGit.get(legacyRequest),error=>(error as {code:string}).code==='CORRUPT');await assert.rejects(noGit.capture({expectedVersion:legacy.expectedVersion,requestId:legacyRequest}),error=>(error as {code:string}).code==='CORRUPT');
+ await assert.rejects(noGit.list(),error=>(error as {code:string}).code==='CORRUPT');
  console.log('CODE_CHECKPOINT_SPECIAL_OK: actual nonignored FIFO/socket refused, ignored special nodes pruned/preserved/excluded, no symlink-follow, special rule files rejected before Git reads, full inventory affects source version; source index/HEAD/code unchanged.');
 }finally{for(const server of servers)if(server.listening)await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}

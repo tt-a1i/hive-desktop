@@ -105,6 +105,17 @@ export async function checkpointFilesystemInventory(root: string, tracked: Reado
           throw new CodeCheckpointError('UNSUPPORTED_SPECIAL_FILE','Special Git rule files cannot be safely read for checkpoint classification');
         candidates.push({path: local, kind});
       }
+      // check-ignore may read a candidate directory's rules even when the
+      // directory itself is ignored. Inspect those names without opening them.
+      for (const candidate of candidates) if (candidate.kind === 'directory') {
+        for (const name of ['.gitignore', '.gitattributes']) {
+          try {
+            const info = await lstat(join(root, candidate.path, name));
+            if (!info.isFile() && !info.isSymbolicLink() && !info.isDirectory())
+              throw new CodeCheckpointError('UNSUPPORTED_SPECIAL_FILE','Special Git rule files cannot be safely read for checkpoint classification');
+          } catch (error) {if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;}
+        }
+      }
       const after = await lstat(path);
       if (before.dev !== after.dev || before.ino !== after.ino || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs || await realpath(path) !== path)
         throw new CodeCheckpointError('CONCURRENT_CHANGE', 'Filesystem inventory changed while enumerating a directory');
