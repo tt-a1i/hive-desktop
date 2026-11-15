@@ -40,6 +40,10 @@ ACP 使用明确配置的 stdio 程序，不创建虚构默认路径。已接生
 
 官方 `@agentclientprotocol/codex-acp@2.6.0` 与已安装 Codex `0.169.0` 已做隔离零模型预检，初始化、新建原生会话及生产 MCP 工具发现通过，原生返回基础模型为 Terra。实际空会话还未生成 rollout，随后 load 失败；未新建替代、发送提示或修改账号配置。此次预检未保留实际 provider 字段，不能宣称完整模型身份或冷恢复已验证。新一轮混合协作必须从原生响应核对模型和 provider，并独立记录预算。预检原始失败和版本化守卫证据保留于 `.artifacts/functional-parity/acp-vendor-plan/`。
 
+后续独立 `run-woSexD` 使用冻结 `e1c2b88`，两端本次原生回包均确认 Terra、OpenAI provider 和对应执行目录，真实厂商 ACP 的 MCP 工具发现通过。实际总计 2 次 start、0 steer；Worker 首次调用 Hive MCP `status` 时，测试守卫收到未识别的原生请求并停止。守卫没有记录该请求的方法，MCP elicitation 只能列为源码支持的候选，不能确认为根因或账号/产品故障。
+
+此例整体未通过：原派单仍为 submitted，没有完成 seen/report、产物核验、默认切换或非空冷恢复。原 delivery 保持队列 started、ACP `sent` 未知状态；3397 字节队列和两套备份 hash 一致，没有清理丢失、补写 SQL、重建或继续调用模型。隐私扫描通过，12 个观察到的自有进程均复查退出。原回合已中止，不能只凭 spool 原地恢复。完整事实与诊断分别在 `.artifacts/functional-parity/native-acp-collaboration-prep/run-woSexD/{canonical-receipt.json,FINAL_REPORT.md}` 和 `.artifacts/functional-parity/acp-failure-diagnosis/run-woSexD-report.md`。本轮保留未验收状态，不据此关闭 #52。
+
 Mac 隔离 QA 已用真实窗口验证 ACP 配置创建、固定 revision 和发送前零进程。原工作区主控存在未结责任时，首次发送正确拒绝并保留草稿；换用独立 Worker/worktree 后，明确发送启动受控 peer，并穿透生产 Hive MCP bridge。原生权限选择 `deny-once` 和停止 `session/cancel` 均由对端实际收到。
 
 受控 peer 在收到输入后退出，界面提供原文及来源预览、两步放弃和结果反馈。最初这些正文未出现在辅助功能树，`8da3800` 补齐文本标签后，实际 AX 操作读到了原文、风险说明和成功提示。正常冷重开明确显示空预览；Root 另只读核对两条具体 delivery 已不在持久队列，原始 ACP `sent` 未知审计仍保留，未宣称原生工作成功或撤销。原生程序 SHA256 `7bf47f2586833ace4425e6027351b056497bcb81a514ec55ed51ff2b795a9f6e`，QA runtime 为冻结 `e1c2b88`；原便携包未修改。

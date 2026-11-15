@@ -24,6 +24,9 @@ const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queue
   'profile-settings-atomic', 'profile-claude-offline-history', 'codex-history-profile-launch',
   'acp-session', 'acp-team-stdio', 'acp-team-hive', 'acp-runtime-registration', 'acp-startup-shutdown',
   'profile-executable-probe',
+  'chat-index-snapshot-cas', 'handoff-snapshot', 'session-handoffs', 'handoff-delivery',
+  'handoff-native-receipts', 'session-handoff-runtime', 'handoff-runtime-failures',
+  'handoff-runtime-delivery', 'handoff-queue-retraction',
   process.platform === 'win32' ? 'session-terminals-windows' : 'session-terminals',
   ...(process.platform === 'win32' ? ['project-scripts-windows'] : []),
   // These fixtures use POSIX executable peers/hooks. The Windows PTY and
