@@ -184,6 +184,7 @@ export class Chats implements StructuredSessionPort {
   private readonly dispatchOrigins: DispatchExecutionOrigins;
   private readonly closeAbort = new AbortController();
   private closing = false;
+  private disposing = false;
   private readonly mutatingQueues = new Set<string>();
   private readonly removing = new Set<string>();
   private readonly gitOperations = new Set<Promise<unknown>>();
@@ -1874,7 +1875,7 @@ export class Chats implements StructuredSessionPort {
       try {
         // Terminal dispatches no longer authorize work, even if retirement
         // interrupts the native turn before it records a successful delivery.
-        if (!abortError && !this.closing && this.index.peek(id)) {
+        if (!abortError && !this.disposing && this.index.peek(id)) {
           this.pruneSettledDispatches(this.index.get(id), chat.queue);
         }
       } finally {
@@ -1911,6 +1912,7 @@ export class Chats implements StructuredSessionPort {
   }
   async close() {
     this.beginClose();
+    this.disposing = true;
     await Promise.allSettled([...this.activating.values(), ...this.gitOperations]);
     await Promise.allSettled(this.opening.values());
     const results = await Promise.allSettled([...this.live.entries()].map(([id, chat]) => this.stopLive(id, chat)));

@@ -47,7 +47,7 @@ try {
  assert.deepEqual((await runtime.chats.open(removed.chat.id)).history,saved.history);
  // The same validated store path must still configure existing members.
  await runtime.chats.setModel(kept.chat.id,'owned-openai','gpt-6.1-terra');
- assert.deepEqual(runtime.agents.peekAgentLaunchConfig(ws.id,kept.worker.id)?.args,['--provider','owned-openai','--model','gpt-6.1-terra']);
+ assert.deepEqual(runtime.agents.peekAgentLaunchConfig(ws.id,kept.worker.id)?.args,['--profile-id','default-pi','--profile-revision','1','--provider','owned-openai','--model','gpt-6.1-terra']);
  assert.equal(requests,0);
  await runtime.close();runtime=undefined;
  runtime=await createDesktopRuntime(state,()=>{});absent();
