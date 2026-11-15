@@ -159,9 +159,13 @@ impl HiveApp {
                     && this.member_catalog_generation == generation
                     && this.member_picker_target.as_ref() == Some(&id)
                     && this.member_catalog_backend.as_deref() == Some(backend)
-                    && this.members.iter().find(|member| member.id == id).is_some_and(|member| member.desktop_profile == profile)
                 {
                     this.member_catalog_loading = false;
+                    if !this.members.iter().find(|member| member.id == id).is_some_and(|member| member.desktop_profile == profile) {
+                        this.member_catalog_error = Some((backend.to_owned(), tr("成员配置已变化，请重新读取模型").into()));
+                        cx.notify();
+                        return;
+                    }
                     match result.and_then(|v| {
                         serde_json::from_value::<ModelCatalog>(v).map_err(|e| e.to_string())
                     }) {

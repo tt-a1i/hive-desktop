@@ -1832,5 +1832,6 @@
   "成员配置引用未知，无法读取模型目录": "The member profile reference is unknown; models cannot be loaded.",
   "成员配置引用不可用，无法创建工作树会话": "The member profile reference is unavailable; a worktree session cannot be created.",
   "创建会话返回的配置引用不匹配": "The created session returned a different profile reference.",
-  "成员配置不可用": "Member profile unavailable"
+  "成员配置不可用": "Member profile unavailable",
+  "成员配置已变化，请重新读取模型": "The member profile changed. Reload the model list."
 }
