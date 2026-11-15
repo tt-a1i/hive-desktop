@@ -45,7 +45,7 @@ impl HiveApp {
             self.workspace.as_deref().unwrap_or_default(),
             session
         );
-        v_flex().w_full().min_w_0().gap_3().children(
+        v_flex().w_full().min_w_0().gap_3().when(self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)), |v| v.child(self.render_uncertain_acp(cx))).children(
             self.interactions.receipts.get(&receipt_key).into_iter().flatten().map(|receipt| {
                 let status = receipt["status"].as_str().unwrap_or("unknown");
                 let label = match (english(), status) { (true, "draft") => "Saved draft", (true, "prepared") => "Prepared; callback outcome unknown", (true, "callback-handed") => "Callback handed off (model read not confirmed)", (false, "draft") => "已保存草稿", (false, "prepared") => "已准备，回调结果未知", (false, "callback-handed") => "已交付回调（尚未确认模型读取）", (true, _) => "Unknown status", _ => "状态未知" };

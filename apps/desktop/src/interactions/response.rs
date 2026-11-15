@@ -1,9 +1,12 @@
 use super::*;
 use serde_json::json;
 
+fn acp_offers_option(params: &serde_json::Value, option: &str) -> bool {
+    params["options"].as_array().is_some_and(|options| options.iter().any(|entry| entry["optionId"].as_str() == Some(option)))
+}
 impl HiveApp {
     pub(super) fn answer_acp_permission(&mut self, session: String, id: String, option: String, cx: &mut Context<Self>) {
-        let valid = self.interactions.sessions.get(&session).and_then(|cards| cards.iter().find(|card| card.raw.id == id)).is_some_and(|card| card.raw.backend == "acp" && card.raw.method == "session/request_permission" && card.waiting() && card.raw.params["options"].as_array().is_some_and(|options| options.iter().any(|entry| entry["optionId"].as_str() == Some(option.as_str()))));
+        let valid = self.interactions.sessions.get(&session).and_then(|cards| cards.iter().find(|card| card.raw.id == id)).is_some_and(|card| card.raw.backend == "acp" && card.raw.method == "session/request_permission" && card.waiting() && acp_offers_option(&card.raw.params, &option));
         if valid { self.submit_interaction(session, id, json!({"optionId":option}), cx); }
     }
 
@@ -300,5 +303,15 @@ impl HiveApp {
             });
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod acp_tests {
+    #[test]
+    fn permission_accepts_only_native_option_id() {
+        let params=serde_json::json!({"options":[{"optionId":"deny-id","name":"Deny","kind":"reject_once"}]});
+        assert!(super::acp_offers_option(&params,"deny-id"));
+        assert!(!super::acp_offers_option(&params,"accept"));
     }
 }

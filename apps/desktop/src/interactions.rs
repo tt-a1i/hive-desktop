@@ -1,3 +1,4 @@
+mod acp;
 mod attachments;
 mod claude;
 mod pi;
@@ -19,6 +20,7 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct Interactions {
+    uncertain: acp::Uncertain,
     pub sessions: HashMap<String, Vec<InteractionCard>>,
     receipts: HashMap<String, Vec<serde_json::Value>>,
     receipt_requests: std::collections::HashSet<String>,

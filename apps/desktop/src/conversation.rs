@@ -15,6 +15,7 @@ impl HiveApp {
         let text = self.input.read(cx).value().to_string();
         let attachment_key = format!("session:{id}");
         let refs = self.attachments.refs(Some(&attachment_key));
+        if self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Acp)) && refs.iter().any(|item| item.is_image()) { self.error = Some("当前 ACP 不支持图片，请移除图片后发送。".into()); cx.notify(); return; }
         if (text.trim().is_empty() && refs.is_empty())
             || !self.attachments.ready(Some(&attachment_key))
             || self.inflight_inputs.contains_key(&id)
