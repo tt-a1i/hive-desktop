@@ -1,3 +1,6 @@
+import { SessionHistoryOperations } from './session-history-operations.js';
+import { HistoryOperationError, historyHash } from './history-operation-journal.js';
+import type { ExecutionMutations } from './execution-mutations.js';
 import { InteractionAttachments, interactionIdentity, composeQuestionAttachmentResponse } from './interaction-attachments.js';
 import { ProjectWorktreeInitialization, WorktreeInitializationError, type InitializationPlan } from './project-worktree-initialization.js';
 import { ProjectFileReferences } from './project-file-references.js';
@@ -65,6 +68,64 @@ function githubTarget(params: Record<string, unknown>): GithubPrTarget {
 export class Chats implements StructuredSessionPort {
   private readonly index: ChatIndex;
   initialization?: ProjectWorktreeInitialization;
+  history?: SessionHistoryOperations;
+  private executionMutations?: ExecutionMutations;
+  configureHistory(mutations:ExecutionMutations, hasAnyShell:()=>Promise<boolean>) {
+    this.executionMutations=mutations;
+    this.history=new SessionHistoryOperations(this.dataDir,{
+      lease:workspaceId=>mutations.acquire(workspaceId),
+      source:async(workspaceId,sessionId)=>{
+        const record=await this.runnableIdentity(this.index.get(sessionId));
+        if(record.workspaceId!==workspaceId||record.identityState!=='known'||!record.originAgentId||record.originAgentId===`${workspaceId}:__workflow__`)throw new HistoryOperationError('SOURCE_READ_ONLY','Only a known original orchestrator or existing Worker can fork');
+        await this.assertHistoryReady(record);
+        const workspace=await this.workspace(workspaceId), executionPath=await this.executionPath(record,workspace);
+        const command=(await this.settings.get()).effective.codex.command;
+        return {record,executionPath,projectRoot:workspace.path,command};
+      },
+      quiescent:async(workspaceId)=>{
+        if(this.closing||this.opening.size||this.activating.size||this.startingForInput.size||this.preparingInteractions.size||this.mutatingQueues.size||this.gitOperations.size)throw new HistoryOperationError('SOURCE_BUSY','Finish pending session operations before creating a history fork');
+        if(await hasAnyShell())throw new HistoryOperationError('SOURCE_BUSY','End all application terminals before creating a history fork');
+        const workspaces=await this.hive.request('GET','/api/workspaces') as WorkspaceSummary[];
+        const facts:unknown[]=[];
+        for(const workspace of workspaces){
+          const team=await this.hive.request('GET',`/api/ui/workspaces/${encodeURIComponent(workspace.id)}/team`) as {id:string;pending_task_count:number;open_dispatches?:unknown[];status?:string}[];
+          if(team.some(member=>member.pending_task_count>0||member.open_dispatches?.length||member.status==='working'))throw new HistoryOperationError('SOURCE_BUSY','Settle pending Hive tasks and dispatches before creating a history fork');
+          const ids=[`${workspace.id}:orchestrator`,`${workspace.id}:__workflow__`,...team.map(member=>member.id)];
+          if(ids.some(id=>{const run=this.runtime.getActiveRunByAgentId(workspace.id,id);return run&&['starting','running'].includes(run.status);}))throw new HistoryOperationError('SOURCE_BUSY','Stop active agents before creating a history fork');
+          for(const record of this.index.list(workspace.id)){
+            const live=this.live.get(record.id);if(live?.queue.busy||live?.handle.interactions?.().length||(live?.queue.pendingCount??DeliveryQueue.persistedCount(this.queueDir,record.id)))throw new HistoryOperationError('SOURCE_BUSY','Finish pending conversation input or interactions before creating a history fork');
+          }
+          facts.push([workspace.id,team]);
+        }
+        return historyHash([facts,this.hive.executionLedgerRevision()]);
+      },
+      setup:workspaceId=>this.initialization?.capture(workspaceId)??Promise.resolve(undefined),
+      draft:async(workspaceId,sessionId,itemId,turnId,turns)=>{
+        const source=this.index.get(sessionId), metadata=readCodexMetadata(join(this.sessionDir,'..','codex'),source.codexThreadId!);
+        const exact=[...(metadata.inheritedDeliveries??[]),...metadata.deliveries].find(x=>x.turnId===turnId&&(x.itemId===itemId||x.itemId===undefined));
+        if(exact&&exact.presentation.origin!=='user')throw new HistoryOperationError('NOT_USER_INPUT','Hive dispatches and reports cannot become edited user drafts');
+        const raw=turns.find(t=>t.id===turnId)!.items.find(i=>i.id===itemId)!;
+        const text=exact?.presentation.displayText??(Array.isArray(raw.content)&&raw.content.every(p=>p.type==='text'&&typeof p.text==='string')?raw.content.map(p=>p.text as string).join('\n'):undefined);
+        if(text===undefined)throw new HistoryOperationError('DRAFT_UNAVAILABLE','Native input has no exact recoverable text and attachment mapping');
+        const ids=exact?.presentation.attachments?.map(a=>a.id)??[];const missingAttachments:string[]=[];
+        for(const id of ids){try{await this.attachments.get(workspaceId,[id]);}catch{missingAttachments.push(id);}}
+        return {text,attachmentIds:ids,missingAttachments};
+      },
+      publish:async(record)=>{this.index.save(record);return this.publicSession(record,record.execution!.path);},
+      session:async id=>{const record=this.index.get(id);return this.publicSession(record,await this.executionDirectory(record.workspaceId,id));},
+    });
+  }
+  private async assertHistoryReady(record:ChatRecord){
+    if(!record.lineage)return;
+    const operation=await this.history?.journal.byId(record.workspaceId,record.lineage.operationId);
+    if(!operation||operation.state!=='ready'||operation.childSessionId!==record.id)throw new HistoryOperationError('HISTORY_OPERATION_PENDING','This fork is pending verification; inspect its history operation before continuing');
+    if(record.backend!=='codex'||!record.codexThreadId)throw new HistoryOperationError('HISTORY_SOURCE_INVALID','Fork native identity is missing');
+    const metadata=readCodexMetadata(join(this.sessionDir,'..','codex'),record.codexThreadId);
+    const inherited=new Map(metadata.inheritedSources?.map(source=>[source.itemId,source.sourceSessionId]));
+    if(inherited.size!==(metadata.inheritedSources?.length??0)||record.lineage.inheritedItemIds.some(id=>!inherited.has(id)))throw new HistoryOperationError('HISTORY_PROVENANCE_MISSING','Inherited history source metadata is missing or conflicting; child directory was not substituted');
+    for(const sourceId of inherited.values()){const source=this.index.peek(sourceId);if(source&&(source.workspaceId!==record.workspaceId||source.originAgentId!==record.originAgentId))throw new HistoryOperationError('HISTORY_PROVENANCE_MISMATCH','Inherited history belongs to another workspace or member');}
+
+  }
   async initializationPlan(workspaceId: string, id: string): Promise<InitializationPlan | undefined> {
     const record = this.index.get(id);
     if (record.workspaceId !== workspaceId) throw new Error('Session belongs to another workspace');
@@ -116,6 +177,7 @@ export class Chats implements StructuredSessionPort {
   }
   private async runnableIdentity(record: ChatRecord): Promise<ChatRecord> {
     const current = this.originIdentity(record);
+    await this.assertHistoryReady(current);
     if (current.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its saved history is read-only; create a new conversation to continue.');
     if (current.identityState === 'new') return current;
     if (!current.originAgentId || current.agentId && current.agentId !== current.originAgentId)
@@ -155,10 +217,11 @@ export class Chats implements StructuredSessionPort {
   }
   private async withGitOperation<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closing) throw new Error('Chat runtime is closing');
-    const action = operation();
+    const release = this.executionMutations?.begin('git');
+    const action = Promise.resolve().then(operation);
     this.gitOperations.add(action);
     try { return await action; }
-    finally { this.gitOperations.delete(action); }
+    finally { this.gitOperations.delete(action); release?.(); }
   }
   /** Resolve only persisted ownership. A missing worktree never falls back to the team root. */
   private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
@@ -639,6 +702,7 @@ export class Chats implements StructuredSessionPort {
     return workspace;
   }
   private async load(record: ChatRecord, recoveryFailure?: Error): Promise<LiveChat> {
+    await this.assertHistoryReady(record);
     await this.initializationReady(record);
     record = await this.runnableIdentity(record);
     const workspace = await this.workspace(record.workspaceId);
@@ -672,7 +736,7 @@ export class Chats implements StructuredSessionPort {
     const handle = record.backend === 'codex'
       ? await createCodexSession({ cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'codex'),
         command: executables!.codex.command, signal: this.closeAbort.signal,
-        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
+        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.lineage&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
         onUnexpectedExit,
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
         customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
@@ -741,7 +805,7 @@ export class Chats implements StructuredSessionPort {
             && item.presentation?.messageSequence === undefined ? 'legacy' : undefined;
         },
         ...(handle.steer && {steer: (item: import('./delivery-queue.js').DeliveryItem) => handle.steer!(item.text, {deliveryId: item.id, presentation: item.presentation!})}),
-        execute: async item => {await this.initializationReady(this.index.get(record.id)); return item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.images && {images:item.images}), ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text);},
+        execute: async item => {const release=this.executionMutations?.begin(record.workspaceId);try{await this.assertHistoryReady(this.index.get(record.id));await this.initializationReady(this.index.get(record.id)); return await (item.triggerTurn ? handle.prompt(item.text, { automated: true, deliveryId: item.id, ...(item.images && {images:item.images}), ...(item.presentation && { presentation: item.presentation }) }) : handle.addContext(item.text));}finally{release?.();}},
         onError: error => { if (!chat?.aborted) this.recordDeliveryFailure(record.id, queue, chat?.failure ?? error); },
         onState: (busy, completedReportId) => {
           if (this.mutatingQueues.has(record.id)) return;
@@ -822,7 +886,7 @@ export class Chats implements StructuredSessionPort {
         for (const {item, turnId} of projection.current()) {
           const delivery = metadata.deliveries.find(entry => entry.turnId === turnId && entry.itemId === item.id)
             ?? metadata.deliveries.find(entry => entry.turnId === turnId && entry.itemId === undefined && item.type === 'userMessage');
-          history.push(normalizeCodexItem(item, delivery)); historyMessageIds.push(item.id);
+          history.push(normalizeCodexItem(item, delivery ?? metadata.inheritedDeliveries?.find(entry=>entry.turnId===turnId&&(entry.itemId===item.id||entry.itemId===undefined)), metadata.inheritedSources?.find(source=>source.itemId===item.id)?.sourceSessionId ?? record.id)); historyMessageIds.push(item.id);
         }
         if (!journal || typeof journal !== 'object' || !('completeHistory' in journal) || journal.completeHistory !== true
           || !('searchVersion' in journal) || journal.searchVersion !== 2)
@@ -862,7 +926,8 @@ export class Chats implements StructuredSessionPort {
     if (existing) return existing;
     const pending = this.opening.get(id);
     if (pending) return pending;
-    const opening = this.load(this.index.get(id)).finally(() => this.opening.delete(id));
+    const release=this.executionMutations?.begin(this.index.get(id).workspaceId);
+    const opening = this.load(this.index.get(id)).finally(() => {this.opening.delete(id);release?.();});
     this.opening.set(id, opening);
     return opening;
   }
@@ -946,7 +1011,15 @@ export class Chats implements StructuredSessionPort {
     return this.open(record.id);
   }
   async open(id: string) {
-    try { return this.snapshot(id, await this.require(id)); }
+    try {
+    const record=this.index.get(id);
+    if(record.lineage&&!this.live.has(id)){
+      await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
+      await this.initialization?.created(record.workspaceId,id,{deferLaunch:true});
+      const {readOnly,identityError,...snapshot}=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_FORK','Fork opened without activating an Agent'));
+      return {...snapshot,readOnly:false,initialization:await this.initialization?.get(record.workspaceId,id)};
+    }
+    return this.snapshot(id, await this.require(id)); }
     catch (error) {
       if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError || error instanceof WorktreeInitializationError)) throw error;
       const live = this.live.get(id);
@@ -1055,12 +1128,13 @@ export class Chats implements StructuredSessionPort {
       args: record.model ? ['--provider', record.model.provider, '--model', record.model.id] : [] };
   }
   private async withWorkspace<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
+    const release=this.executionMutations?.begin(workspaceId);
     const previous = this.activating.get(workspaceId) ?? Promise.resolve();
     const action = previous.then(operation, operation);
     const barrier = action.then(() => {}, () => {});
     this.activating.set(workspaceId, barrier);
     try { return await action; }
-    finally { if (this.activating.get(workspaceId) === barrier) this.activating.delete(workspaceId); }
+    finally { if (this.activating.get(workspaceId) === barrier) this.activating.delete(workspaceId); release?.(); }
   }
   private async activationAvailable(id: string) {
     await this.initializationReady(this.index.get(id));
