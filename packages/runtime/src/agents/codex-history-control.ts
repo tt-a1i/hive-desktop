@@ -18,8 +18,8 @@ export type CodexHistoryForkOptions = {
 };
 
 /** Read-only history and native branch creation. Never opens or executes a turn. */
-export async function openCodexHistoryControl(options: { cwd: string; command?: string; signal?: AbortSignal }) {
-  const transport = await CodexTransport.start({ cwd: options.cwd, ...(options.command && { command: options.command }), ...(options.signal && { signal: options.signal }) });
+export async function openCodexHistoryControl(options: { cwd: string; command?: string; args?: readonly string[]; env?: NodeJS.ProcessEnv; signal?: AbortSignal }) {
+  const transport = await CodexTransport.start({ cwd: options.cwd, ...(options.command && { command: options.command }), ...(options.args && {args:options.args}), ...(options.env && {env:options.env}), ...(options.signal && { signal: options.signal }) });
   if (!supportsCodexDeferredContinuation(transport.initializeResult)) {
     await transport.close();
     throw new Error('Unsupported Codex app-server version for history operations');
