@@ -7,13 +7,27 @@ import { createHiveHost } from '../src/hive-host.js';
 import { DesktopSettings } from '../src/desktop-settings.js';
 import {
   AgentProfiles, AgentProfileError, AGENT_PROFILES_STATE_PATH, defaultAgentProfileId,
-  type CreateAgentProfile, type UpdateAgentProfile,
+  validateAgentProfileLaunch, type CreateAgentProfile, type UpdateAgentProfile,
 } from '../src/agent-profiles.js';
 import { agentCapabilities } from '../src/agent-capabilities.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'hive-agent-profiles-'));
 let host: Awaited<ReturnType<typeof createHiveHost>> | undefined;
 const errorCode = (code: string) => (error: unknown) => error instanceof AgentProfileError && error.code === code;
+// Native config-home references must remain absolute when passed straight to the CLI.
+// On macOS/Linux, accepting a Windows drive/UNC spelling creates a relative directory.
+const configPaths = [
+  { value: '/native/config with spaces', accepted: true },
+  { value: 'relative/config', accepted: false },
+  { value: 'C:relative-config', accepted: false },
+  { value: 'C:\\Agent Config\\Codex', accepted: process.platform === 'win32' },
+  { value: '\\\\server\\share\\Agent Config', accepted: process.platform === 'win32' },
+];
+for (const { value, accepted } of configPaths) {
+  const input = { command: 'codex', args: [], configDir: value };
+  if (accepted) assert.equal(validateAgentProfileLaunch('codex', input).configDir, value);
+  else assert.throws(() => validateAgentProfileLaunch('codex', input), errorCode('PROFILE_INVALID'));
+}
 let failBefore = false, failAfter = false, writes = 0;
 let writeGate: Promise<void> | undefined, onWrite: (() => void) | undefined;
 const transport = { async request(method: string, path: string, body?: unknown) {
@@ -61,7 +75,7 @@ try {
     launch: { command: '/Applications/CLI With Spaces/codex', args: ['-c', 'model_provider="work"'], configDir: '/nonsecret/config-reference' } }, version);
   version = created.storeVersion;
   const pinned = structuredClone(created.profile.ref);
-  const edited = await store.update(pinned.id, { label: 'Renamed work', launch: { command: '/different/codex', args: [], configDir: 'C:\\Agent Config\\Codex' } }, version);
+  const edited = await store.update(pinned.id, { label: 'Renamed work', launch: { command: '/different/codex', args: [], configDir: join(directory, 'config reference') } }, version);
   version = edited.storeVersion;
   assert.equal(edited.profile.ref.revision, 2);
   assert.equal((await store.getRef(pinned)).label, 'Renamed work');
@@ -83,6 +97,10 @@ try {
   assert.equal((await store.resolveForExecution(pinned)).launch.command, '/Applications/CLI With Spaces/codex');
 
   const beforeFailures = await store.list();
+  for (const { value, accepted } of configPaths) {
+    if (!accepted) await assert.rejects(store.update(pinned.id, { launch: { command: '/codex', args: [], configDir: value } }, version), errorCode('PROFILE_INVALID'));
+  }
+  assert.deepEqual(await store.list(), beforeFailures, 'Host-relative config references must not create a new SQLite revision');
   for (const launch of [{ command: '/pi', args: [] }, { args: ['-c'] }, { args: [], environment: { HIVE_AGENT_TOKEN: 'never-store' } }]) {
     await assert.rejects(store.create({ driver: 'pi', label: 'invalid', launch } as CreateAgentProfile, version), errorCode('PROFILE_INVALID'));
   }

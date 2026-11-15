@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isAbsolute, win32 } from 'node:path';
+import { isAbsolute } from 'node:path';
 import type { DesktopSettingsSnapshot } from './desktop-settings.js';
 import type { HiveHost } from './hive-host.js';
 
@@ -86,7 +86,9 @@ export function validateAgentProfileLaunch(driver: AgentDriver, value: unknown):
   const command = input.command === undefined ? undefined : text(input.command, 4096, 'executable').trim();
   if (driver !== 'pi' && command === undefined) throw invalid('External agent profiles require an executable');
   const configDir = input.configDir === undefined ? undefined : text(input.configDir, 4096, 'configuration directory');
-  if (configDir !== undefined && !(isAbsolute(configDir) || win32.isAbsolute(configDir))) throw invalid('Configuration directory must be absolute');
+  // Profiles launch on this host. A Windows-looking path on POSIX would be relative
+  // when passed to a native CLI's configuration-home environment variable.
+  if (configDir !== undefined && !isAbsolute(configDir)) throw invalid('Configuration directory must be absolute on this host');
   return { ...(command !== undefined && { command }), args, ...(configDir !== undefined && { configDir }) };
 }
 function profile(value: unknown): AgentProfile {
