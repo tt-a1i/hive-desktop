@@ -18,6 +18,7 @@ export class DesktopSettingsValidationError extends Error {
 const path = '/api/settings/app-state/desktop_executables';
 const defaults: DesktopExecutables = { piCommand: null, codexCommand: null, claudeCommand: null };
 const maxCommandLength = 4096;
+const verifiedVersions = {pi:'1.4.0',codex:'0.167.0',claude:'2.1.317'} as const;
 function command(value: unknown, field: string): string | null {
   if (value === null) return null;
   if (typeof value !== 'string' || value.length > maxCommandLength || /[\u0000-\u001f\u007f-\u009f]/.test(value) || !value.trim()) {
@@ -63,7 +64,7 @@ export class DesktopSettings {
       if (!launch.command) throw new DesktopSettingsValidationError('Built-in Pi has no executable to probe');
       const task = probeExecutable(launch.command, this.probeAbort.signal, launch);
       this.probes.add(task);
-      try { return {backend, profile: profile.ref, command: launch.command, source: 'profile', ...await task}; }
+      try { return {backend, profile: profile.ref, command: launch.command, source: 'profile', ...await task, verifiedVersion: verifiedVersions[backend as keyof typeof verifiedVersions]}; }
       finally { this.probes.delete(task); }
     }
     if (backend !== 'pi' && backend !== 'codex' && backend !== 'claude') throw new DesktopSettingsValidationError('Unknown external program');
@@ -75,7 +76,7 @@ export class DesktopSettings {
     const task = probeExecutable(effective.command, this.probeAbort.signal);
     this.probes.add(task);
     try {
-      return {backend,...effective,source:effective.source === 'app' && candidate !== saved[key] ? 'draft' : effective.source,...await task,verifiedVersion:{pi:'1.4.0',codex:'0.167.0',claude:'2.1.317'}[backend]};
+      return {backend,...effective,source:effective.source === 'app' && candidate !== saved[key] ? 'draft' : effective.source,...await task,verifiedVersion:verifiedVersions[backend]};
     } finally { this.probes.delete(task); }
   }
   async codexLimits(draft:unknown, ref?: AgentProfileRef) {
