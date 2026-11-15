@@ -70,6 +70,7 @@ impl HiveApp {
         let selected=self.profiles.selected.as_ref().and_then(|id|entries.iter().find(|p|&p.id==id)).cloned();
         let driver=self.profiles.driver; let busy=self.profiles.loading || !self.connected;
         v_flex().id("profile-settings").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.profiles.scroll).vertical_scrollbar(&self.profiles.scroll).gap_3().p_4()
+            .child(div().text_xs().child(tr("只填写非机密的路径和参数；请勿填写凭据。")))
             .child(Button::new("profiles-refresh").label(tr("刷新配置")).disabled(busy).on_click(cx.listener(|this,_,_,cx|this.load_profiles(cx))))
             .when_some(self.profiles.error.clone(),|v,error|v.child(div().text_color(crate::palette::Color::Text.get(cx)).child(error)))
             .children(entries.into_iter().enumerate().map(|(i,p)| { let id=p.id.clone();let driver=match p.driver.as_str(){"codex"=>"codex","pi-rpc"=>"pi-rpc","claude"=>"claude",_=>"pi"};

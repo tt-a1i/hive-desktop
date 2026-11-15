@@ -123,6 +123,9 @@ impl HiveApp {
                         match event {
                             RuntimeEvent::Failed(error) => {
                                 this.connected = false;
+                                this.profiles.generation += 1;
+                                this.profiles.loading = false;
+                                this.profiles.snapshot = None;
                                 this.backend_info = None;
                                 this.diagnostics_copied = false;
                                 this.codex_account = Default::default();

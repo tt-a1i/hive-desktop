@@ -132,6 +132,7 @@ impl HiveApp {
         };
         if let Some(error) = self.members.iter().find(|member| member.id == id).and_then(|member| member.desktop_launch_error.clone()) { self.error = Some(crate::app::ErrorNotice::Detail("成员配置不可用", error)); cx.notify(); return; }
         let profile = self.members.iter().find(|member| member.id == id).and_then(|member| member.desktop_profile.clone());
+        if profile.is_none() { self.error = Some("成员配置引用未知，无法读取模型目录".into()); cx.notify(); return; }
         let mut params = json!({"workspaceId":workspace,"backend":backend});
         if let Some(reference) = &profile { params["profile"] = json!(reference); }
         self.member_catalog_generation += 1;

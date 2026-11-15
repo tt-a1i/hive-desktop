@@ -1827,5 +1827,10 @@
   "参数必须是 JSON 字符串数组，例如 [\"--flag\", \"value\"]": "Arguments must be a JSON string array, such as [\"--flag\", \"value\"]",
   "Claude 不支持启动参数": "Claude does not support launch arguments",
   "停用": "Disable",
-  "启用": "Enable"
+  "启用": "Enable",
+  "只填写非机密的路径和参数；请勿填写凭据。": "Enter only nonsecret paths and arguments; do not enter credentials.",
+  "成员配置引用未知，无法读取模型目录": "The member profile reference is unknown; models cannot be loaded.",
+  "成员配置引用不可用，无法创建工作树会话": "The member profile reference is unavailable; a worktree session cannot be created.",
+  "创建会话返回的配置引用不匹配": "The created session returned a different profile reference.",
+  "成员配置不可用": "Member profile unavailable"
 }

@@ -304,8 +304,10 @@ impl HiveApp {
             return;
         };
         if !history
-            && crate::members::command_backend(member.configured_command.as_deref()).is_none()
+            && (crate::members::command_backend(member.configured_command.as_deref()).is_none() || member.desktop_profile.is_none() || member.desktop_launch_error.is_some())
         {
+            self.error = Some("成员配置引用不可用，无法创建工作树会话".into());
+            cx.notify();
             return;
         }
         let target = MemberTarget {
@@ -621,6 +623,7 @@ impl WorktreeDialog {
                 params["skipSetup"] = json!(true);
             }
         }
+        let expected_profile = if item.is_none() { self.member.as_ref().and_then(|m| m.profile.clone()).or(self.profile.clone()) } else { None };
         let runtime = self.runtime.clone();
         let workspace = self.workspace.clone();
         let window = window.window_handle();
@@ -654,14 +657,16 @@ impl WorktreeDialog {
                 return;
             }
             let result = runtime.request(method, params).await.and_then(|value| {
-                response_session(
+                let session = response_session(
                     value,
                     &workspace,
                     pending.as_deref(),
                     member.as_deref(),
                     expected_backend.as_deref(),
                     recovery_kind.as_deref(),
-                )
+                )?;
+                if expected_profile.as_ref().is_some_and(|reference| session.profile.as_ref() != Some(reference)) { return Err(tr("创建会话返回的配置引用不匹配").into()); }
+                Ok(session)
             });
             let _ = this.update(cx, |this, cx| {
                 if this.generation != generation {

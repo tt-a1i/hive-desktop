@@ -489,7 +489,7 @@ impl HiveApp {
         let connection = self.connection_generation;
         let open_request = self.open_request;
         let mut params = json!({"workspaceId":workspace,"backend":backend});
-        if let Some(profile) = profile { params["profile"] = json!(profile); }
+        if let Some(profile) = &profile { params["profile"] = json!(profile); }
         cx.spawn(async move |this, cx| {
             let result = runtime
                 .request(
@@ -504,6 +504,11 @@ impl HiveApp {
                 match result {
                     Ok(value) => match serde_json::from_value::<Session>(value) {
                         Ok(session) => {
+                            if profile.as_ref().is_some_and(|reference| session.profile.as_ref() != Some(reference)) {
+                                this.error = Some("创建会话返回的配置引用不匹配".into());
+                                cx.notify();
+                                return;
+                            }
                             if this.workspace.as_ref() == Some(&session.workspace_id)
                                 && this.open_request == open_request
                                 && this.workspace_writes_allowed()
