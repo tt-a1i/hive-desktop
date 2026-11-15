@@ -4,6 +4,8 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
+2026-11-15 历史分叉已取得[原生 Codex / Terra 实测](docs/validation/2026-11-15-native-history-live.md)：普通分叉、编辑草稿、新目录执行、源数据保持和冷恢复通过。多实例配置及 ACP 的功能接线继续实施和独立审查，仍未推广新安装包。
+
 2026-11-15 恢复进展：问题回复附件已合入并通过专项回归，初始化脚本、会话模式和成员工作树继续做真实流程验收；独立核实了测试夹具中“当前选择”与“最后启动会话”的区别。历史分叉、检查点和其余完整目标仍在实施，见[恢复核验](docs/validation/2026-11-15-functional-resume.md)。当前安装包状态保持下文所述。
 
 2026-11-15 源码进展：已补充手动项目脚本与真实进程生命周期、成员独立工作树创建/恢复及 Codex 账号额度读取，见[本批验收范围](docs/validation/2026-11-15-project-scripts-worker-worktrees-account-limits.md)。自动初始化、新入口真实协作、Mac 操作及 Windows 原生验证仍在推进，尚未推广为 current/candidate。

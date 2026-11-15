@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileRef {
+    pub id: String,
+    pub revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AttachmentRef {
     pub id: String,
@@ -55,7 +61,7 @@ pub struct Session {
     #[serde(default)]
     pub execution_path: Option<String>,
     #[serde(default)]
-    pub profile: Option<crate::agent_profiles::ProfileRef>,
+    pub profile: Option<ProfileRef>,
 }
 impl Session {
     /// Presentation only: original identity is never a live run or token credential.
@@ -138,7 +144,7 @@ pub struct Member {
     pub configured_command: Option<String>,
     pub desktop_model: Option<ModelIdentity>,
     #[serde(default)]
-    pub desktop_profile: Option<crate::agent_profiles::ProfileRef>,
+    pub desktop_profile: Option<ProfileRef>,
     #[serde(default)]
     pub desktop_launch_error: Option<String>,
 }
