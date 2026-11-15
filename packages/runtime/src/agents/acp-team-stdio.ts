@@ -128,7 +128,7 @@ function runServer(binding: Binding) {
     if (method === 'ping') return result({});
     if (method === 'tools/list') {
       markConnected();
-      return result({ tools: [{ name: team.name, description: team.description, inputSchema: { type: 'object', properties: { args: { type: 'array', items: { type: 'string' }, description: 'CLI arguments after team, one argument per array item.' }, stdin: { type: 'string', description: 'Input for commands using --stdin.' } }, required: ['args'] } }] });
+      return result({ tools: [{ name: team.name, description: team.description, annotations: { title: 'Hive Team', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }, inputSchema: { type: 'object', properties: { args: { type: 'array', items: { type: 'string' }, description: 'CLI arguments after team, one argument per array item.' }, stdin: { type: 'string', description: 'Input for commands using --stdin.' } }, required: ['args'] } }] });
     }
     if (method !== 'tools/call') return error(-32601, 'Method not found');
     if (!object(params) || params.name !== 'team' || !object(params.arguments) || !Array.isArray(params.arguments.args) || !params.arguments.args.every((arg: unknown) => typeof arg === 'string') || (params.arguments.stdin !== undefined && typeof params.arguments.stdin !== 'string')) return error(-32602, 'Invalid tool arguments');

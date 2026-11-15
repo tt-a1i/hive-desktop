@@ -64,7 +64,11 @@ impl HiveApp {
                 }
                 match result {
                     Err(error) => {
-                        if this.session.as_ref().is_some_and(|s| s.id == id) && this.current_history_access().is_some_and(|a| a.handoff_unconsumed()) { this.history_navigation.access.handoff_delivery = Some(json!({"status":"unknown"})); }
+                        let refresh_handoff = this.session.as_ref().is_some_and(|s| s.id == id)
+                            && this.current_history_access().is_some_and(|a| a.handoff_unconsumed());
+                        if refresh_handoff {
+                            this.history_navigation.access.handoff_delivery = Some(json!({"status":"unknown"}));
+                        }
                         if !was_busy { this.busy.remove(&id); }
                         if this.session.as_ref().is_some_and(|s| s.id == id)
                             && this.input.read(cx).value().is_empty()
@@ -95,9 +99,19 @@ impl HiveApp {
                         }
                         this.schedule_draft_save(cx);
                         this.error = Some(error.into());
+                        if refresh_handoff {
+                            this.refresh_handoff_target_state(id.clone(), cx);
+                        }
                     }
                     Ok(value) => {
-                        if this.session.as_ref().is_some_and(|s| s.id == id) && this.current_history_access().is_some_and(|a| a.handoff_unconsumed()) { this.history_navigation.access.handoff_delivery = Some(json!({"status":"unknown"})); }
+                        let refresh_handoff = this.session.as_ref().is_some_and(|s| s.id == id)
+                            && this.current_history_access().is_some_and(|a| a.handoff_unconsumed());
+                        if refresh_handoff {
+                            if value.get("passive").and_then(Value::as_bool) == Some(false) {
+                                this.history_navigation.access.passive = Some(false);
+                            }
+                            this.history_navigation.access.handoff_delivery = Some(json!({"status":"unknown"}));
+                        }
                         match serde_json::from_value::<Session>(value["session"].clone()) {
                             Ok(session) if session.id == id => {
                                 if let Some(item) =
@@ -111,6 +125,9 @@ impl HiveApp {
                             }
                             Ok(_) => this.error = Some("发送响应中的会话身份不匹配".into()),
                             Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("发送响应格式错误",error.to_string())),
+                        }
+                        if refresh_handoff && !this.busy.contains(&id) {
+                            this.refresh_handoff_target_state(id.clone(), cx);
                         }
                     }
                 }
@@ -711,6 +728,11 @@ impl HiveApp {
                 if aborted {
                     self.status = "已停止当前回复".into();
                 }
+                if let Some(id) = self.session.as_ref().map(|s| s.id.clone()) {
+                    if self.current_history_access().is_some_and(|a| a.handoff_unconsumed()) {
+                        self.refresh_handoff_target_state(id, cx);
+                    }
+                }
             }
             PiEvent::Error {
                 message,
@@ -722,7 +744,12 @@ impl HiveApp {
                     message,
                     expanded: false,
                     diagnostic_write_failed,
-                })
+                });
+                if let Some(id) = self.session.as_ref().map(|s| s.id.clone()) {
+                    if self.current_history_access().is_some_and(|a| a.handoff_unconsumed()) {
+                        self.refresh_handoff_target_state(id, cx);
+                    }
+                }
             }
         }
         if follow {

@@ -57,6 +57,13 @@ struct MutationProfile {
     #[serde(rename = "ref")]
     reference: ProfileRef,
 }
+fn localized_profile_label<'a>(id: &str, label: &'a str) -> &'a str {
+    match (id, label) {
+        ("default-pi", "Built-in Pi") => tr("内置 Pi"),
+        ("default-pi-rpc", "External Pi") => tr("外部 Pi"),
+        _ => label,
+    }
+}
 fn supported_driver(driver: &str) -> Option<&'static str> {
     match driver {
         "pi" => Some("pi"),
@@ -111,7 +118,7 @@ impl HiveApp {
                         && p.revisions.iter().any(|r| r.revision == reference.revision)
                 })
             })
-            .map(|p| p.label.as_str())
+            .map(|p| localized_profile_label(&reference.id, p.label.as_str()))
             .unwrap_or(reference.id.as_str());
         format!("{} · r{}", name, reference.revision)
     }
@@ -337,10 +344,10 @@ impl HiveApp {
                         Button::new(("profile-edit", i))
                             .label(format!(
                                 "{} · {} · r{}{}",
-                                p.label,
+                                localized_profile_label(&p.id, &p.label),
                                 p.driver,
                                 p.current_revision,
-                                if p.enabled { "" } else { " · disabled" }
+                                if p.enabled { String::new() } else { format!(" · {}", tr("已停用")) }
                             ))
                             .disabled(busy || driver.is_none())
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -351,11 +358,7 @@ impl HiveApp {
                     )
                     .child(div().text_xs().child(history))
                     .when(driver.is_none(), |v| {
-                        v.child(div().text_xs().child(if english() {
-                            "Unsupported driver; read only."
-                        } else {
-                            "不支持此后端，只能查看。"
-                        }))
+                        v.child(div().text_xs().child(tr("不支持此后端，只能查看。")))
                     })
             }))
             .child(div().child(tr("新建配置")))
@@ -372,7 +375,7 @@ impl HiveApp {
                     .enumerate()
                     .map(|(i, (driver, label))| {
                         Button::new(("new-profile", i))
-                            .label(label)
+                            .label(tr(label))
                             .disabled(busy)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.edit_profile(None, driver, window, cx)
@@ -386,10 +389,11 @@ impl HiveApp {
                 let usable = !busy && profile.enabled && backend.is_some()
                     && profile.revisions.iter().any(|revision| revision.revision == profile.current_revision)
                     && self.workspace.is_some() && self.workspace_writes_allowed();
+                let display_label = localized_profile_label(&profile.id, &profile.label);
                 let accessible = if english() {
-                    format!("New conversation using saved profile {} · r{}", profile.label, profile.current_revision)
+                    format!("New conversation using saved profile {display_label} · r{}", profile.current_revision)
                 } else {
-                    format!("按已保存配置新建会话：{} · r{}", profile.label, profile.current_revision)
+                    format!("按已保存配置新建会话：{display_label} · r{}", profile.current_revision)
                 };
                 view.child(Button::new("profile-create-session")
                     .label(tr("按已保存配置新建会话"))
@@ -423,7 +427,7 @@ impl HiveApp {
                     .child(Input::new(&self.profiles.command).aria_label(tr("可执行文件")))
             })
             .when(driver != "acp", |v| v.child(div().child(tr("配置目录（绝对路径，可留空）"))).child(Input::new(&self.profiles.config).aria_label(tr("配置目录（绝对路径，可留空）"))))
-            .when(driver == "acp", |v| v.child(div().text_xs().child(if english() { "Pass native configuration through command arguments." } else { "通过原生命令参数配置。" })))
+            .when(driver == "acp", |v| v.child(div().text_xs().child(tr("通过原生命令参数配置。"))))
             .when(driver != "pi" && driver != "claude", |v| {
                 v.child(div().child(tr("参数（JSON 字符串数组；每项是一个完整参数）")))
                     .child(
@@ -459,7 +463,7 @@ impl HiveApp {
                                 .accessibility_label(format!(
                                     "{} · {}",
                                     if enabled { tr("停用") } else { tr("启用") },
-                                    p.label
+                                    localized_profile_label(&p.id, &p.label)
                                 ))
                                 .disabled(busy)
                                 .on_click(cx.listener(move |this, _, _, cx| {

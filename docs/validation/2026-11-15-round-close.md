@@ -1,6 +1,6 @@
-# 本轮收尾与暂停
+# 本轮收尾与跟进交付
 
-用户要求本轮已有工作收尾后暂停，不继续新增功能。本记录区分源码、受控协议、真实模型、原生窗口与安装包。PR [#46](https://github.com/tt-a1i/hive-desktop/pull/46) 保持 Draft，总目标 [#39](https://github.com/tt-a1i/hive-desktop/issues/39)、配置及 ACP [#52](https://github.com/tt-a1i/hive-desktop/issues/52)、文本接续 [#53](https://github.com/tt-a1i/hive-desktop/issues/53) 保持开放。没有合并到 main，也没有推广或替换用户安装实例；current/candidate 保持 `837abd1`，回退包保留。
+按用户先收尾后继续推进的要求，本记录在原收尾基础上补记跟进轮交付，并严格区分源码、受控协议、单账号真实模型、原生窗口与安装包验证边界。PR [#46](https://github.com/tt-a1i/hive-desktop/pull/46) 仍保持 Draft、未合并到 main，总目标 [#39](https://github.com/tt-a1i/hive-desktop/issues/39)、配置及 ACP [#52](https://github.com/tt-a1i/hive-desktop/issues/52)、文本接续 [#53](https://github.com/tt-a1i/hive-desktop/issues/53) 保持开放。跟进轮同步以当前提交重新构建 Mac Release 包、通过全部 5 项离线包内门禁，按用户授权替换 `/Applications/Hive Desktop.app` 并更新 `hive-desktop-macos-arm64-candidate.zip` 与 `.artifacts/current-package/receipt.json`（具体 SHA-256 与体积以 `receipt.json` 为准）。
 
 ## 实现与修复
 
@@ -31,10 +31,14 @@ Windows 原生窗口还发现会话标题菜单不响应语义 Invoke。`fdf42da
 
 POSIX mode/shebang 夹具不等于 Windows ACL 或同样的零进程证据。Windows 的受控原生窗口检查也不等于人工覆盖所有新入口。
 
-## 保留的边界
+## 跟进轮修复、ACP 闭环与当前边界
 
-真实原生 Codex Terra 的历史分叉已有独立通过记录；真实多配置及 Codex/ACP 混合协作整体仍未通过。最新混合用例在 2 次 start、0 steer 后被测试守卫的未知原生请求中断，没有完成 seen/report、产物核验或非空冷恢复。具体请求方法未记录，不能猜测根因。3397 字节原队列及两套备份 hash 一致，原回合已中止；没有重跑模型、补写 SQL 或把队列伪装成可原地恢复。
+在前述收尾记录基础上，跟进轮新增完成以下验证与收口工作：
 
-文本接续首次提交后需手动刷新状态，尚未完善自动状态刷新；受控协议接续不等于真实厂商模型接续。进行中派单迁移、原地回退、桌面更新、语音输入、隔离 HTML、密码库及其余完整目标保持开放。Claude/Antigravity 不做账号或真实模型验证，Pi 登录失败未重试，也未修改全局账号或模型配置。
+- **工作树与缓存清理**：移除 45 个遗留 Git worktree，清理 `.artifacts` 临时构建缓存（约 77 GB 降至约 1.7 GB），完整保留 `current-package/`、`hive-desktop-macos-arm64-candidate.zip`、`acp-failure-diagnosis/`、`native-acp-collaboration-prep/`、`acp-vendor-plan/` 与 `windows-final-replay-da71603/` 等历史诊断与收据。
+- **界面文案、菜单与接续自动刷新修复**：补齐 `apps/desktop/src/locales/en.json`（0 缺失 key）；本地化默认 Pi 配置名称（`Built-in Pi` / `External Pi` 与中文对应文案）；收紧 `session-title-menu` 宽度并保留 `Confirm` 操作；在 `packages/runtime/src/chats.ts` 与桌面端会话状态链路中补齐文本接续首次发送结算/失败后的目标 `chat.open` 状态自动刷新；更新 `.github/workflows/windows-build.yml` 将功能检查超时放宽至 25 分钟并在 `replay` 阶段接入 `check-windows-terminal.mjs` 终端冒烟与日志上传（Windows workflow 当前仅完成 YAML 核对与本地 `cargo check --target x86_64-pc-windows-msvc` 交叉编译检查，尚待新一轮 GitHub Actions Windows 实跑）。
+- **单账号真实 ACP 完整协作闭环（`run-heBSEm`）**：根因确认为 `packages/runtime/src/agents/acp-team-stdio.ts` 的 `tools/list` 缺少 MCP `annotations`，导致 Codex `0.169.0` 发出 `mcpServer/elicitation/request`（`turnId: null`）触发旧守卫拒绝；补充显式 `annotations` 并启用 `acp-collaboration-guard-v2.cjs`、`runtime-observer-v2.mjs` 与 `run-live-v2.mjs` 后，在单已有账号范围下完成三阶段闭环（总计 `starts: 4`、`steers: 0`、`accountReadFalseCalls: 4`、`allOwnedProcessesExited: true`、`elapsedMs: 64142`）：Native Codex Orchestrator（`gpt-6.1-terra` / `openai`）派单给官方 `@agentclientprotocol/codex-acp@2.6.0` Worker（`gpt-6.1-terra` / `openai`），Worker 调用 `mcp.hive-team.team` 的 `messages`（`seen: 0`）与 `report`（`scopedApprovals: []`）并写出 55 字节产物，Orchestrator 于 `reported_at` 后独立校验字节与 SHA-256，随后被动冷重开（`passive: true`、0 推理）及独立 `session/load` 零推理探针（`sessionNewCalls: 0`、`turnStartCalls: 0`、`turnSteerCalls: 0`）与两轮隐私扫描全部通过。历史失败/中断运行 `run-woSexD`、`run-2ZriPb`、`run-u6M7ni`、`run-UNZcHi` 及 3397 字节原始 spool 队列证据继续原样保留。
 
-完整细节见[配置与 ACP](2026-11-15-agent-profiles-acp.md)、[文本接续](2026-11-15-session-handoffs.md)及[原生历史](2026-11-15-native-history-live.md)。历史失败日志和原始收据保留；本轮已清理确认不再使用的项目构建缓存，实际释放约 1.06 GB，源码、回退包和证据未删除。
+**保留的边界**：`run-heBSEm` 明确仅覆盖单已有账号（`noTwoAccountClaim: true`、`noGuiOrWindowsClaim: true`），不宣称双账号或 UI/Windows 原生协作；多配置混合协作 `run-VY56qr` 仍保持未通过并跟踪于 #52。受控协议接续不等于真实多后端模型接续；进行中派单迁移、原地回退、桌面更新、语音输入、隔离 HTML、外部密码库、Claude/Antigravity 真账号实测与 Pi 登录重试仍保持开放。当前线下验证（`PI_OFFLINE=1`）已复验 `pnpm check`、`pnpm build:runtime`、Rust 106 项核心测试 + 14 项 `process_supervisor_check` 测试、`check:session-archives` 及 Windows 交叉编译检查，完整打包交付与替换结果同步记录于 `.artifacts/current-package/receipt.json`。
+
+完整细节见[配置与 ACP](2026-11-15-agent-profiles-acp.md)、[文本接续](2026-11-15-session-handoffs.md)及[原生历史](2026-11-15-native-history-live.md)。

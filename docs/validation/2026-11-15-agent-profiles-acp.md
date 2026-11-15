@@ -1,6 +1,6 @@
 # 后端配置、多实例与 ACP 验证范围
 
-2026-11-15。本地开发分支已集成四后端固定配置、必要桌面入口及 ACP 生产注册。本文区分实际模型、实际界面、受控协议和包内验证；不代表完整产品交付，用户安装实例及 current/candidate `837abd1` 未替换。跟踪于 #39、#52。
+2026-11-15。本地开发分支已集成四后端固定配置、必要桌面入口及 ACP 生产注册。本文区分实际模型、实际界面、受控协议和包内验证；跟进轮已基于当前提交同步重打包 Mac Release 并更新 `hive-desktop-macos-arm64-candidate.zip` 与 `/Applications/Hive Desktop.app`（具体构建 SHA-256 见 `.artifacts/current-package/receipt.json`），PR [#46](https://github.com/tt-a1i/hive-desktop/pull/46) 保持 Draft，仍不代表完整产品交付。跟踪于 #39、#52。
 
 ## 四后端配置
 
@@ -44,6 +44,8 @@ ACP 使用明确配置的 stdio 程序，不创建虚构默认路径。已接生
 
 此例整体未通过：原派单仍为 submitted，没有完成 seen/report、产物核验、默认切换或非空冷恢复。原 delivery 保持队列 started、ACP `sent` 未知状态；3397 字节队列和两套备份 hash 一致，没有清理丢失、补写 SQL、重建或继续调用模型。隐私扫描通过，12 个观察到的自有进程均复查退出。原回合已中止，不能只凭 spool 原地恢复。完整事实与诊断分别在 `.artifacts/functional-parity/native-acp-collaboration-prep/run-woSexD/{canonical-receipt.json,FINAL_REPORT.md}` 和 `.artifacts/functional-parity/acp-failure-diagnosis/run-woSexD-report.md`。本轮保留未验收状态，不据此关闭 #52。
 
+跟进定位确认前述阻塞根因为 `packages/runtime/src/agents/acp-team-stdio.ts` 在 `tools/list` 中缺少 MCP `annotations`，导致 Codex `0.169.0` 触发 `mcpServer/elicitation/request`（`turnId: null`）被守卫阻断。在补齐显式 `annotations`（`readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false`）并启用 `acp-collaboration-guard-v2.cjs`、`runtime-observer-v2.mjs` 与 `run-live-v2.mjs` 后，独立运行 `run-heBSEm`（`.artifacts/functional-parity/native-acp-collaboration-prep/run-heBSEm/`）在**单已有账号**范围通过全部三阶段实证（`starts: 4, steers: 0, accountReadFalseCalls: 4, allOwnedProcessesExited: true, elapsedMs: 64142`）：(1) `collaboration`：Native Codex Orchestrator（`gpt-6.1-terra` / `openai`）派单给官方 `@agentclientprotocol/codex-acp@2.6.0` Worker（`gpt-6.1-terra` / `openai`），Worker 调用 `mcp.hive-team.team` 的 `messages`（`seen: 0`）与 `report`（`scopedApprovals: []`）并写入 55 字节 `acp-worker-marker.txt`，守卫静默拦截 1 次 Post-turn 临时标题线程启动（`suppressedEphemeralThreadStarts: 1`），Orchestrator 于 `reported_at` 后独立复核文件字节与 SHA-256；(2) `cold-passive`：Orchestrator 通过 `thread/resume`（仅 `thread/turns/list`，零推理）与 Worker 被动恢复（`passive: true`，零 ACP 拉起）；(3) `cold-vendor-load-only`：`vendor-load-probe.mjs` 通过 `codex-acp@2.6.0` `session/load` 加载 Worker 原生会话，确认 `sessionNewCalls: 0, turnStartCalls: 0, turnSteerCalls: 0`，且两轮 `private-scan-boot-{1,2}.json` 隐私扫描均通过。历史 `run-woSexD`、`run-2ZriPb`、`run-u6M7ni` 与 `run-UNZcHi` 原样保留；本次证明仅限单已有账号与无界面运行环境（`noTwoAccountClaim: true`、`noGuiOrWindowsClaim: true`），多配置协作 `run-VY56qr` 仍保持开放，故不据此关闭 #52。
+
 Mac 隔离 QA 已用真实窗口验证 ACP 配置创建、固定 revision 和发送前零进程。原工作区主控存在未结责任时，首次发送正确拒绝并保留草稿；换用独立 Worker/worktree 后，明确发送启动受控 peer，并穿透生产 Hive MCP bridge。原生权限选择 `deny-once` 和停止 `session/cancel` 均由对端实际收到。
 
 受控 peer 在收到输入后退出，界面提供原文及来源预览、两步放弃和结果反馈。最初这些正文未出现在辅助功能树，`8da3800` 补齐文本标签后，实际 AX 操作读到了原文、风险说明和成功提示。正常冷重开明确显示空预览；Root 另只读核对两条具体 delivery 已不在持久队列，原始 ACP `sent` 未知审计仍保留，未宣称原生工作成功或撤销。原生程序 SHA256 `7bf47f2586833ace4425e6027351b056497bcb81a514ec55ed51ff2b795a9f6e`，QA runtime 为冻结 `e1c2b88`；原便携包未修改。
@@ -52,7 +54,7 @@ Mac 隔离 QA 已用真实窗口验证 ACP 配置创建、固定 revision 和发
 
 ## 平台与包
 
-本轮最终状态见[收尾记录](2026-11-15-round-close.md)：Mac 50 项包内检查、更新后原生程序的实际 AX 操作通过；Windows `fdf42da` 原包在 `43688926660` 完成 47 项包内检查及原生 UIA 流程。以下较早失败保留为诊断证据，不能据最终受控检查把真实多配置或 ACP 模型协作标为通过。用户要求本轮完成后暂停，PR 保持 Draft，安装实例及 current/candidate 未替换。
+本轮最终与跟进状态见[收尾记录](2026-11-15-round-close.md)：Mac 50 项包内检查、既有原生程序 AX 核验及跟进提交的 Mac Release 重打包交付通过；Windows `fdf42da` 原包在 `43688926660` 完成 47 项包内检查及原生 UIA 流程（`.github/workflows/windows-build.yml` 后续 25 分钟超时与 `replay` 终端冒烟配置待新一轮 CI 实跑）。以下较早失败保留为诊断证据；单账号 `run-heBSEm` 已通过受限闭环，多配置 `run-VY56qr` 仍保持开放。PR [#46](https://github.com/tt-a1i/hive-desktop/pull/46) 保持 Draft，已按用户授权更新 candidate 并替换 `/Applications/Hive Desktop.app`。
 
 Windows 运行 `43665961985` 在 `9b1b5c2` 整组通过，包含进程监督、原生 PTY、项目脚本、解包及 Tester 原成员会话实际 UIA 操作。它不包含后续配置与 ACP 注册，不能推为最新平台验收。
 

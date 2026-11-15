@@ -171,15 +171,15 @@ impl HiveApp {
                 let pinning = self.session_pin_loading.contains(&session.id)
                     || self.session_archive_loading.contains(&session.id);
                 crumb.child(
-                    v_flex().flex_1().min_w_0().max_w(px(420.)).child(
+                    div().flex_shrink_1().min_w_0().max_w(px(420.)).child(
                         Button::new("session-title-menu")
                             .custom(crate::palette::quiet_icon_variant(cx))
                             .compact()
                             .h(px(26.))
                             .px_1p5()
                             .rounded_md()
-                            .w_full()
                             .min_w_0()
+                            .max_w_full()
                             .tooltip(title.clone())
                             .accessibility_label(if english() {
                                 format!("Current conversation actions: {title}")
@@ -189,8 +189,8 @@ impl HiveApp {
                             .disabled(disabled || pinning)
                             .child(
                                 h_flex()
-                                    .w_full()
                                     .min_w_0()
+                                    .max_w_full()
                                     .items_center()
                                     .gap_1()
                                     .child(
@@ -198,7 +198,7 @@ impl HiveApp {
                                             .id("session-title")
                                             .role(Role::Label)
                                             .aria_value(title.clone())
-                                            .flex_1()
+                                            .flex_shrink_1()
                                             .min_w_0()
                                             .truncate()
                                             .text_size(px(13.))

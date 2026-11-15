@@ -2,7 +2,7 @@
 
 日期：2026-11-06。
 
-2026-11-15 执行状态：按用户“这轮做完暂停”的要求，本轮配置、ACP、文本接续及验证修复已收尾，后续实施暂停。源码、Mac/Windows 包和限定原生操作的证据及未完成边界见[收尾记录](validation/2026-11-15-round-close.md)。真实 ACP 完整协作及其余产品目标保持开放；不继续更新、语音或其他新功能，不因本轮结束将产品标为完成。
+2026-11-15 跟进状态：在收尾基准上完成工作树与 `.artifacts` 缓存清理、遗漏修复（`en.json` 全量文案对齐、默认内置/外部 Pi 本地化命名、紧凑 `session-title-menu` 宽度、文本接续首次发送结算/失败后的目标 `chat.open` 自动状态刷新、Windows CI 25 分钟超时与 `replay` 终端冒烟配置）及单账号真实 Native Codex（`codex-cli 0.169.0`）+ 官方 `@agentclientprotocol/codex-acp@2.6.0`（`gpt-6.1-terra` / `openai`）完整协作与冷恢复闭环证据（`run-heBSEm`）。当前 commit 同步交付对应 Mac Release 打包与 5 项离线包内门禁（含 50 项功能检查）验证、更新 `hive-desktop-macos-arm64-candidate.zip` 与 `.artifacts/current-package/receipt.json`，并按用户授权直接替换 `/Applications/Hive Desktop.app`；详细边界见[收尾记录](validation/2026-11-15-round-close.md)。多配置混合协作 `run-VY56qr`、Windows 新一轮 CI 实跑验证、PR [#46](https://github.com/tt-a1i/hive-desktop/pull/46)（保持 Draft）及其余 [#39](https://github.com/tt-a1i/hive-desktop/issues/39) 产品目标保持开放。
 
 2026-11-14 功能范围更新：用户已批准补齐源码比较列出的全部能力，重新设定实施目标，跟踪于[功能总任务 #39](https://github.com/tt-a1i/hive-desktop/issues/39)。本轮以功能和后端正确性为先，停止继续视觉样式改造，仅为新功能增加必要操作。先完成待发消息编辑/撤回、跨会话历史正文搜索和项目文件引用；再推进 Git/worktree/项目脚本、检查点/历史编辑/分叉、跨后端接续、交互附件、快捷键、会话模式、多实例/ACP、账号额度、桌面更新、语音、隔离 HTML 与外部密码库。实际可用、持久化、生命周期和平台验收要求继续适用，不能把不完整历史或缺少厂商能力静默视为已支持。此前 T3 UI 复刻仍是既有样式来源，不是当前实施任务。
 

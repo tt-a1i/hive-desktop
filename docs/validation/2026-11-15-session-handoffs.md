@@ -34,9 +34,9 @@
 
 隔离窗口实际操作 ACP 来源到受控 Codex 目标：按历史项打开预览，选择已保存目标配置与当前代码，阅读事实、来源、覆盖/遗漏、代码 HEAD 及两个 hash，明确确认创建独立工作树。创建和打开目标前后没有启动目标程序；首次普通输入才启动，实际原生请求包含源事实和用户输入各一次。冷重开后第二条输入不再携带源事实。
 
-首次提交后 UI 保守显示未知状态，需点击“刷新目标状态与模型”显示已消费；刷新不重复发送。这是现有操作边界，不宣称自动状态刷新已完善。源历史/测试文件 SHA、HEAD、原始归属、profile 和原生 ID 保持，当前绑定仅在明确激活后正常转移。本次 GUI 未捕获操作前 Git index 字节 hash，因此不声称 GUI 的 index 字节比对通过；HEAD/索引/磁盘分离保持另由后端实际夹具验证。
+早期 GUI 检查记录时首次提交后 UI 曾保守显示未知状态，需手动点击“刷新目标状态与模型”显示已消费；跟进轮已在 `packages/runtime/src/chats.ts`（首次 `chats.prompt` 从 `passive: false` / `handoffDelivery` 结算或失败路径）及桌面端（`HiveApp::refresh_handoff_target_state` 调用受控 `chat.open` 刷新状态）补齐自动状态刷新，并通过 Rust `handoff_state_tests`、`check:handoff` 及 `check-packaged-functional` 验证。历史 `portable-2e339b5` GUI 核对与手动刷新前置基线继续原样保留；该次 GUI 未捕获操作前 Git index 字节 hash，因此不声称历史 GUI 的 index 字节比对通过，HEAD/索引/磁盘分离保持由后端实际夹具验证。
 
-窗口及 Root 独立只读核对证据在 `.artifacts/functional-parity/ui-qa/handoff-checks/`，包括 `handoff-preview.txt`、`target-{passive,refresh,cold,second}.txt` 与 `root-independent-receipt.json`。受控对端只有两次实际请求，首次含历史、第二次无历史；QA 与对端均退出。用户安装实例及 current/candidate 未替换。
+窗口及 Root 独立只读核对证据在 `.artifacts/functional-parity/ui-qa/handoff-checks/`，包括 `handoff-preview.txt`、`target-{passive,refresh,cold,second}.txt` 与 `root-independent-receipt.json`。历史受控对端只有两次实际请求，首次含历史、第二次无历史；QA 与对端均退出。跟进轮已基于当前提交重新打包并更新 Mac candidate 与 `/Applications/Hive Desktop.app`（见 `.artifacts/current-package/receipt.json`）。
 
 ## 平台与真实账号边界
 

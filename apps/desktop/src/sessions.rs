@@ -815,4 +815,63 @@ impl HiveApp {
         );
         cx.notify();
     }
+
+    pub(crate) fn refresh_handoff_target_state(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.connected
+            || self.closing
+            || self.removed_sessions.contains(&id)
+            || self.session.as_ref().map(|s| &s.id) != Some(&id)
+        {
+            return;
+        }
+        let Some(request_workspace) = self.workspace.clone() else {
+            return;
+        };
+        let request = self.open_request;
+        self.request(
+            "chat.open",
+            json!({"sessionId": id}),
+            cx,
+            move |this, value, cx| {
+                if this.open_request != request
+                    || this.workspace.as_ref() != Some(&request_workspace)
+                    || this.session.as_ref().map(|s| &s.id) != Some(&id)
+                {
+                    return;
+                }
+                if let Ok(open) = serde_json::from_value::<OpenSession>(value) {
+                    if !crate::history_navigation::open_session_identity_matches(
+                        &open.session,
+                        &id,
+                        &request_workspace,
+                    ) {
+                        return;
+                    }
+                    this.history_navigation.access =
+                        crate::history_navigation::HistoryAccess::snapshot(&open);
+                    this.history_navigation.initialization = open.initialization.clone();
+                    if open.busy {
+                        this.busy.insert(id.clone());
+                    } else {
+                        this.busy.remove(&id);
+                    }
+                    if let Some(item) = this.sessions.iter_mut().find(|item| item.id == id) {
+                        *item = open.session.clone();
+                    }
+                    this.session = Some(open.session);
+                    this.models = open.models;
+                    this.model = open.model;
+                    this.unavailable_model = open.unavailable_model;
+                    this.sync_interactions(&id, open.interactions);
+                    this.pending.insert(id.clone(), open.pending);
+                    this.pending_reports = open.pending_reports;
+                    this.pending_user_inputs = open.pending_user_inputs;
+                    this.set_delivery_failure(open.delivery_failure);
+                    this.completed_deliveries =
+                        open.completed_delivery_ids.into_iter().collect();
+                    cx.notify();
+                }
+            },
+        );
+    }
 }

@@ -1416,7 +1416,7 @@ export class Chats implements StructuredSessionPort {
           requireActiveRun: true, presentation: { version: 1, origin: 'user', displayText: inputText },
         });
       }
-      return { accepted: true, session: this.index.get(id) };
+      return { accepted: true, session: this.index.get(id), ...(before.handoff && { passive: false, handoffDelivery: this.handoffDeliveries.get(id) ?? { status: 'pending' } }) };
       }finally{this.handoffStarting.delete(id);}
     });
   }

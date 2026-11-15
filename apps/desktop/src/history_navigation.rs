@@ -489,6 +489,7 @@ mod handoff_state_tests {
         let live=make(json!({"status":"pending"}),Some(false));assert!(!live.handoff_passive());assert!(!live.handoff_blocked());
         let uncertain=make(json!({"status":"uncertain"}),Some(false));assert!(uncertain.handoff_blocked());
         let unknown=make(json!({}),None);assert!(unknown.handoff_passive());assert!(unknown.handoff_blocked());
-        let consumed=make(json!({"status":"consumed"}),Some(false));assert!(!consumed.handoff_unconsumed());assert!(!consumed.handoff_blocked());
+        let in_flight=make(json!({"status":"unknown"}),Some(false));assert!(!in_flight.handoff_passive());assert!(in_flight.handoff_blocked());assert!(in_flight.handoff_unconsumed());
+        let consumed=make(json!({"status":"consumed"}),Some(false));assert!(!consumed.handoff_unconsumed());assert!(!consumed.handoff_blocked());assert!(!consumed.handoff_passive());
     }
 }

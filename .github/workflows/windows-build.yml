@@ -191,7 +191,7 @@ jobs:
         timeout-minutes: 3
         run: node scripts/check-packaged-codex.mjs --bundle target/portable-windows-extracted
       - name: Check extracted functional runtime
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: node scripts/check-packaged-functional.mjs --bundle target/portable-windows-extracted --receipt target/functional-receipt.json
       - name: Upload extracted functional receipt
         if: always()
@@ -336,8 +336,14 @@ jobs:
           if (-not (Test-Path -LiteralPath 'target/replay-extracted/hive-desktop.exe' -PathType Leaf)) { throw 'Extracted artifact is not a portable desktop bundle.' }
       - name: Check original extracted functional runtime
         if: ${{ inputs.replay_functional }}
-        timeout-minutes: 15
+        timeout-minutes: 25
         run: node scripts/check-packaged-functional.mjs --bundle target/replay-extracted --receipt target/replay-functional-receipt.json
+      - name: Smoke extracted Windows terminal bridge
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          node scripts/check-windows-terminal.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-terminal-smoke.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay native window fixture
         timeout-minutes: 4
         shell: pwsh
@@ -354,6 +360,7 @@ jobs:
           path: |
             target/windows-*.png
             target/windows-replay.log
+            target/windows-terminal-smoke.log
             target/replay-provenance.json
             target/replay-functional-receipt.json
           if-no-files-found: warn
