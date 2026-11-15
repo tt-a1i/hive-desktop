@@ -28,6 +28,9 @@ export interface CodexSessionOptions {
   threadId?: string;
   deferGoalContinuation?: boolean;
   command?: string;
+  args?: readonly string[];
+  configDir?: string;
+  env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   model?: { provider: string; id: string };
   mode?: string;
@@ -110,6 +113,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   };
   transport = await CodexTransport.start({ cwd: options.cwd,
     ...(options.command && { command: options.command }),
+    ...(options.args && { args: options.args }), ...(options.configDir && { configDir: options.configDir }), ...(options.env && { env: options.env }),
     ...(options.signal && { signal: options.signal }),
     onClose(info) {
       lifetime.abort(info.error);

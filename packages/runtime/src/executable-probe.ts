@@ -14,9 +14,9 @@ function versionOutput(stdout: string, stderr: string): string | undefined {
 }
 
 /** Only --version; retain the same Windows shim/Job ownership as actual CLI sessions. */
-export async function probeExecutable(command: string, signal: AbortSignal): Promise<ExecutableProbeResult> {
+export async function probeExecutable(command: string, signal: AbortSignal, launch: { args?: readonly string[]; env?: NodeJS.ProcessEnv } = {}): Promise<ExecutableProbeResult> {
   if (signal.aborted) return { status: 'cancelled', message: '检查已取消。' };
-  const owned = new OwnedCliProcess(command, ['--version'], { cwd: process.cwd() });
+  const owned = new OwnedCliProcess(command, [...(launch.args ?? []), '--version'], { cwd: process.cwd(), ...(launch.env && { env: { ...process.env, ...launch.env } }) });
   const child = owned.child;
   let stdout = '', stderr = '', bytes = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;

@@ -20,6 +20,8 @@ export interface ExternalPiSessionOptions {
   sessionFile?: string;
   model?: { provider: string; id: string };
   command?: string;
+  args?: readonly string[];
+  configDir?: string;
   signal?: AbortSignal;
   onEvent: (event: PiEvent) => void;
   onUnexpectedExit?: (error: Error) => void;
@@ -158,6 +160,7 @@ export async function createExternalPiSession(options: ExternalPiSessionOptions)
     }
   };
   transport = await ExternalPiTransport.start({ cwd: options.cwd, sessionDir: options.sessionDir,
+    ...(options.args && { args: options.args }), ...(options.configDir && { configDir: options.configDir }),
     ...(options.sessionFile && { sessionFile: options.sessionFile }), ...(options.command && { command: options.command }), ...(options.signal && { signal: options.signal }), ...(options.model && { model: options.model }),
     extensionPath: fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './external-pi-extension.ts' : './external-pi-extension.js', import.meta.url)), onEvent,
     onDialogRequest(request, write) {

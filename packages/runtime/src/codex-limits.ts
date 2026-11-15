@@ -22,11 +22,11 @@ export function parseCodexLimits(value: unknown, checkedAt: string): CodexLimits
   }
   return {status:windows.length || ordinaryUsageAllowed !== null ? 'ok' : 'unavailable',checkedAt,ordinaryUsageAllowed,windows};
 }
-export async function probeCodexLimits(command:string,signal:AbortSignal):Promise<CodexLimits> {
+export async function probeCodexLimits(command:string,signal:AbortSignal, launch: { args?: readonly string[]; env?: NodeJS.ProcessEnv } = {}):Promise<CodexLimits> {
   const empty = (status:CodexLimits['status']):CodexLimits => ({status,checkedAt:new Date().toISOString(),ordinaryUsageAllowed:null,windows:[]});
   if(signal.aborted)return empty('cancelled');
   let transport:CodexTransport|undefined;
-  const starting=CodexTransport.start({command,cwd:process.cwd(),requestTimeoutMs:5000,shutdownGraceMs:200,signal});
+  const starting=CodexTransport.start({...launch,command,cwd:process.cwd(),requestTimeoutMs:5000,shutdownGraceMs:200,signal});
   const abort=()=>{void starting.then(value=>value.close(),()=>{}).catch(()=>{});};
   signal.addEventListener('abort',abort,{once:true});
   try {

@@ -16,7 +16,11 @@ export interface ClaudeInteraction {
   id: string; backend: 'claude'; method: 'tool-permission' | 'ask-user-question';
   nativeRequestId: string; turnId: string; itemId: string; state: 'pending' | 'responding'; params: Record<string, unknown>;
 }
-export type AgentInteraction = CodexInteraction | ExternalPiInteraction | ClaudeInteraction;
+export interface AcpInteraction {
+  id: string; backend: 'acp'; method: 'session/request_permission';
+  nativeRequestId: string | number; sessionId: string; state: 'pending' | 'responding'; params: Record<string, unknown>;
+}
+export type AgentInteraction = AcpInteraction | CodexInteraction | ExternalPiInteraction | ClaudeInteraction;
 export type InteractionResolutionReason = 'resolved' | 'turn-ended' | 'aborted' | 'disconnected' | 'disposed' | 'expired';
 
 export type PiEvent =

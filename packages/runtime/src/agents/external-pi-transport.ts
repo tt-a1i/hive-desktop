@@ -9,6 +9,8 @@ export interface ExternalPiTransportOptions {
   sessionDir: string;
   extensionPath: string;
   command?: string;
+  args?: readonly string[];
+  configDir?: string;
   model?: { provider: string; id: string };
   env?: NodeJS.ProcessEnv;
   requestTimeoutMs?: number;
@@ -38,13 +40,14 @@ export class ExternalPiTransport {
   readonly teamToolName = `hive_team_${randomUUID().replaceAll('-', '')}`;
 
   private constructor(private readonly options: ExternalPiTransportOptions) {
+    if (options.args?.some(arg => /^(?:--(?:mode|session|session-id|session-dir|no-session|continue|resume|fork|extension|no-extensions|print|export|help|version)(?:=|$)|-(?:c|r|e|ne|p|h|v)$|--$)/.test(arg))) throw new TypeError('External Pi profile arguments cannot override the managed RPC session or extension');
     if (options.onEvent) this.listeners.add(options.onEvent);
     this.process = new OwnedCliProcess(options.command ?? process.env.HIVE_PI_COMMAND ?? 'pi', [
-      '--mode', 'rpc', '--session-dir', options.sessionDir,
+      ...(options.args ?? []), '--mode', 'rpc', '--session-dir', options.sessionDir,
       ...(options.model ? ['--provider', options.model.provider, '--model', options.model.id] : []),
       ...(options.sessionFile ? ['--session', options.sessionFile] : []), '--extension', options.extensionPath,
     ], { cwd: options.cwd,
-      env: { ...process.env, ...options.env, HIVE_PI_BRIDGE_COMMAND: this.bridgeCommand, HIVE_PI_TEAM_TOOL: this.teamToolName } });
+      env: { ...process.env, ...options.env, ...(options.configDir && { PI_CODING_AGENT_DIR: options.configDir }), HIVE_PI_BRIDGE_COMMAND: this.bridgeCommand, HIVE_PI_TEAM_TOOL: this.teamToolName } });
     this.child = this.process.child;
     this.child.once('close', (code, signal) => {
       this.finish(new Error(`External Pi closed (${code ?? signal ?? 'unknown'})`));

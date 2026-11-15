@@ -8,6 +8,10 @@ export type CodexCloseInfo = { code: number | null; signal: NodeJS.Signals | nul
 export interface CodexTransportOptions {
   cwd: string;
   command?: string;
+  /** Global CLI arguments, before app-server. */
+  args?: readonly string[];
+  configDir?: string;
+  env?: NodeJS.ProcessEnv;
   requestTimeoutMs?: number;
   shutdownGraceMs?: number;
   signal?: AbortSignal;
@@ -45,8 +49,10 @@ export class CodexTransport {
   private diagnosticBuffer = Buffer.alloc(0);
 
   private constructor(private readonly options: CodexTransportOptions) {
-    this.process = new OwnedCliProcess(options.command ?? 'codex', ['app-server', '--listen', 'stdio://'], {
+    if (options.args?.some(arg => /^(?:--listen(?:=|$)|--$)/.test(arg))) throw new TypeError('Codex profile arguments cannot override the managed stdio transport');
+    this.process = new OwnedCliProcess(options.command ?? 'codex', [...(options.args ?? []), 'app-server', '--listen', 'stdio://'], {
       cwd: options.cwd,
+      ...((options.env || options.configDir) && { env: { ...process.env, ...options.env, ...(options.configDir && { CODEX_HOME: options.configDir }) } }),
     });
     this.child = this.process.child;
     this.child.once('close', (code, signal) => {

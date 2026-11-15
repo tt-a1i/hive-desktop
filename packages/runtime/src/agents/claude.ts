@@ -1,7 +1,8 @@
 import { claudeUsage } from '../agent-usage.js';
 import { readClaudeReasoning } from './claude-reasoning.js';
 import { promptImages } from '../prompt-images.js';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomUUID, type UUID } from 'node:crypto';
 import { accessSync, constants, statSync } from 'node:fs';
 import { extname, isAbsolute, resolve } from 'node:path';
@@ -19,6 +20,9 @@ import type { PiEvent, PiSessionHandle } from './types.js';
 export interface ClaudeSessionOptions {
   cwd: string; sessionDir: string; sessionId?: string; command?: string; signal?: AbortSignal;
   mode?: string;
+  args?: readonly string[];
+  configDir?: string;
+  env?: NodeJS.ProcessEnv;
   model?: { provider: string; id: string }; onEvent: (event: PiEvent) => void;
   teamBinding?: () => ClaudeTeamBinding | undefined;
   onUnexpectedExit?: (error: Error) => void;
@@ -34,6 +38,8 @@ type Run = { uuid: UUID; cancelled: boolean; controller: AbortController; tools:
 
 /** Launches the user's original Claude Code with the official SDK; never handles its credentials. */
 export async function createClaudeSession(options: ClaudeSessionOptions): Promise<ClaudeSessionHandle> {
+  if (options.args?.length) throw new TypeError('Claude profile arguments are unsupported by the SDK adapter');
+  const nativeEnv = options.configDir || options.env ? { ...process.env, ...options.env, ...(options.configDir && { CLAUDE_CONFIG_DIR: options.configDir }) } : undefined;
   if (options.model && options.model.provider !== 'claude') throw new Error('Unsupported Claude model provider');
   const modes = ['default', 'acceptEdits', 'plan'] as const;
   const validMode = (value: string): value is typeof modes[number] => modes.some(mode => mode === value);
@@ -83,7 +89,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     }
   };
   const refresh = async () => {
-    const messages = await getSessionMessages(sessionId, { dir: options.cwd });
+    const messages = await readSessionMessages(sessionId, options.cwd, nativeEnv, controller.signal);
     projection.clear(); for (const message of messages) present(message, false);
     return messages;
   };
@@ -97,6 +103,7 @@ export async function createClaudeSession(options: ClaudeSessionOptions): Promis
     track(execution) { const run = active; if (!run) throw new Error('Claude requested a Hive tool outside an active turn');
       run.tools.add(execution); void execution.then(() => run.tools.delete(execution), () => run.tools.delete(execution)); } });
   const running: Query = query({ prompt: input, options: {
+    ...(nativeEnv && { env: nativeEnv }),
     cwd: options.cwd, pathToClaudeCodeExecutable: executable, abortController: controller,
     ...(options.sessionId ? { resume: options.sessionId } : { sessionId }), ...(options.model && { model: options.model.id }),
     includePartialMessages: true, permissionMode: selectedMode, mcpServers: { [team.name]: team.server },
@@ -298,3 +305,15 @@ export function resolveClaudeExecutable(command: string, platform: NodeJS.Platfo
   throw new Error('Original Claude Code executable was not found; configure HIVE_CLAUDE_COMMAND');
 }
 function asError(value: unknown): Error { return value instanceof Error ? value : new Error(String(value)); }
+
+// The SDK history API has no per-call config directory. Run the same official
+// reader in a short-lived Node process with the native child environment, rather
+// than changing the shared host environment or reimplementing transcript parsing.
+async function readSessionMessages(sessionId: string, cwd: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<SessionMessage[]> {
+  if (!env) return getSessionMessages(sessionId, { dir: cwd });
+  const script = `import { getSessionMessages } from ${JSON.stringify(import.meta.resolve('@anthropic-ai/claude-agent-sdk'))};
+    const [sessionId, dir] = process.argv.slice(1);
+    process.stdout.write(JSON.stringify(await getSessionMessages(sessionId, { dir })));`;
+  const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script, sessionId, cwd], { env, ...(signal && { signal }), timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  return JSON.parse(stdout) as SessionMessage[];
+}
