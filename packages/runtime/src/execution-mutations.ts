@@ -4,6 +4,10 @@
 export class ExecutionMutations {
   private writers = 0;
   private leased = false;
+  private waiters: Array<() => void> = [];
+  whenReleased(): Promise<void> {
+    return this.leased ? new Promise(resolve => { this.waiters.push(resolve); }) : Promise.resolve();
+  }
   registerWorkspace(_workspaceId: string, _commonDir?: string): void {}
   isLeased(_workspaceId: string): boolean { return this.leased; }
   begin(_workspaceId: string): () => void {
@@ -16,6 +20,6 @@ export class ExecutionMutations {
     if (this.leased || this.writers) throw new Error('Execution is busy; finish active work before the history operation');
     this.leased = true;
     let released = false;
-    return () => { if (!released) { released = true; this.leased = false; } };
+    return () => { if (!released) { released = true; this.leased = false; for (const wake of this.waiters.splice(0)) wake(); } };
   }
 }

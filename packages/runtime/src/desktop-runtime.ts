@@ -26,12 +26,25 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       const structured = createStructuredRuntime(context, { start: input => chats.start(input) });
       const gated = new Set(['startAgent', 'resumeRun', 'writeStatusPrompt', 'writeSendPrompt', 'writeCancelPrompt',
         'writeUserInputPrompt', 'writeSystemMessageToAgent', 'deliverUserInputToOrchestrator', 'deliverSystemMessageToAgent']);
+      const deferred = new Set(['startAgent', 'writeStatusPrompt', 'writeSendPrompt', 'writeCancelPrompt', 'deliverUserInputToOrchestrator', 'deliverSystemMessageToAgent']);
       agents = new Proxy(structured, {get(target, property, receiver) {
         const value = Reflect.get(target, property, receiver) as unknown;
         if (typeof property !== 'string' || !gated.has(property) || typeof value !== 'function') return value;
         return (...args: unknown[]) => {
           const first = args[0];
           const workspace = typeof first === 'string' ? first : (first as {id?: string} | undefined)?.id ?? '';
+          if (deferred.has(property) && executionMutations.isLeased(workspace)) {
+            // Preserve already-recorded Hive facts and claims; execute only after
+            // the operation releases its lease. Recheck if another lease begins.
+            const retry = async (): Promise<unknown> => {
+              await executionMutations.whenReleased();
+              if (executionMutations.isLeased(workspace)) return retry();
+              const release = executionMutations.begin(workspace);
+              try { return await Reflect.apply(value, target, args); }
+              finally { release(); }
+            };
+            return retry();
+          }
           const release = executionMutations.begin(workspace);
           try {
             const result: unknown = Reflect.apply(value, target, args);
