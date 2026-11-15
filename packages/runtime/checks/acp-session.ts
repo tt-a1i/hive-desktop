@@ -9,6 +9,7 @@ const handles: Awaited<ReturnType<typeof createAcpSession>>[] = [];
 let events: PiEvent[] = [];
 const start = async (mode = 'normal', sessionFile?: string, id = mode) => { const h = await createAcpSession({ command: process.execPath, args: [resolve('checks/fixtures/acp-peer.cjs'), mode, id], cwd: root, sessionDir: root, ...(sessionFile && { sessionFile }), onEvent: e => events.push(e), requestTimeoutMs: 300, cancelTimeoutMs: 40 }); handles.push(h); return h; };
 try {
+    await assert.rejects(start('normal', join(root, 'missing.json')), /missing/);
     await assert.rejects(start('version'), /version/);
     await assert.rejects(start('auth'), /auth_required/);
     const a = await start('normal', undefined, 'a');
@@ -22,6 +23,8 @@ try {
     assert(a.hasContext('fixture'));
     const file = a.sessionFile!;
     await a.dispose();
+    await b.prompt('B continues after A closes', {deliveryId:'db2'});
+    assert.deepEqual(b.completedDeliveryIds(), ['db','db2']);
     const restored = await start('normal', file, 'a');
     assert.equal(restored.history().length, 2);
     assert.match(JSON.stringify(restored.history()), /restored once/);
@@ -53,6 +56,9 @@ try {
         await h.dispose();
         const raw = JSON.parse(await readFile(h.sessionFile!, 'utf8'));
         assert.equal(raw.deliveries[mode], 'sent');
+        const cold = await start('normal', h.sessionFile!, mode);
+        assert.deepEqual(cold.uncertainDeliveryIds(), [mode]);
+        await assert.rejects(cold.prompt('must not replay', { deliveryId: mode }), /uncertain/);
     }
     for (const mode of ['cancel', 'ignore-cancel']) {
         const h = await start(mode);

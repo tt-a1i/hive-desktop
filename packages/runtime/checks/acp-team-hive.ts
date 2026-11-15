@@ -1,7 +1,7 @@
 /** Synthetic ACP peers, real MCP bridge, Hive HTTP/SQLite and native team CLI. No model requests. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
@@ -63,6 +63,26 @@ try {
   assert.equal((await detail()).state, 'reported');
   assert.equal((await detail()).report_text, 'fixture report');
   assert(queues(runtime.chats).get(chat.id)!.queue.pending.some(item => item.presentation?.dispatchId === dispatchId && item.presentation.displayText === 'fixture report'));
+  // Changing the current Worker conversation must not retarget the original dispatch source.
+  const workerRun = runtime.agents.getActiveRunByAgentId(workspace.id, worker.id)!;
+  runtime.agents.stopAgentRun(workerRun.runId);
+  assert.equal(await runtime.agents.waitForRunExit(workerRun.runId, 5000), true);
+  const replacement = await runtime.chats.createRecord(workspace.id, 'pi');
+  const index = (runtime.chats as unknown as { index: import('../src/chat-index.js').ChatIndex }).index;
+  index.bind(replacement.id, worker.id);
+  await runtime.chats.open(replacement.id);
+  await queues(runtime.chats).get(replacement.id)!.queue.pause();
+  const source = await runtime.chats.dispatchSession(workspace.id, dispatchId, worker.id);
+  assert.equal(source.sourceSessionId, workerChat.id);
+  assert.equal(source.session.originAgentId, worker.id);
+  assert.equal(index.forAgent(workspace.id, worker.id)!.id, replacement.id);
+  for (const session of sessions) {
+    const transcript = await readFile(session.sessionFile!, 'utf8');
+    for (const agentId of [orchestrator, worker.id]) {
+      const token = runtime.agents.peekAgentToken(agentId);
+      if (token) assert(!transcript.includes(token), 'team tokens must never be persisted');
+    }
+  }
   assert.equal(modelRequests, 0);
   console.log('ACP team: real Hive spawn, dispatch, end_turn, seen, report and original orchestrator delivery passed; no model inference');
 } finally {
