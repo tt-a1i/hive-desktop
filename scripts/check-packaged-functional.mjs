@@ -19,6 +19,7 @@ const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queue
   'conversation-search', 'conversation-search-codex', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity',
   'member-worktrees-wire', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments',
+  'codex-history-control', 'codex-fork-provenance', 'session-history-wire',
   process.platform === 'win32' ? 'session-terminals-windows' : 'session-terminals',
   ...(process.platform === 'win32' ? ['project-scripts-windows'] : []),
   // These two fixtures use POSIX executable peers/hooks. The Windows PTY and
@@ -29,6 +30,7 @@ try {
   await mkdir(join(directory, 'agent'));
   await mkdir(join(directory, 'fixtures'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/codex-queue-peer.cjs'), join(directory, 'fixtures/codex-queue-peer.cjs'));
+  await copyFile(join(root, 'packages/runtime/checks/fixtures/session-history-peer.cjs'), join(directory, 'fixtures/session-history-peer.cjs'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/git-remotes-wire-peer.cjs'), join(directory, 'fixtures/git-remotes-wire-peer.cjs'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/windows-conpty-resize-80x24.bin'), join(directory, 'fixtures/windows-conpty-resize-80x24.bin'));
   // Test-only package resolution: no source-workspace dependencies can satisfy

@@ -62,6 +62,16 @@ jobs:
       - name: Check Codex history and tool lifecycle without vendor requests
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:codex
+      - name: Check history control, fork provenance and session wire without vendor requests
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          pnpm --filter @hive-desktop/runtime exec tsx checks/codex-history-control.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @hive-desktop/runtime exec tsx checks/codex-fork-provenance.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @hive-desktop/runtime exec tsx checks/session-history-wire.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check question attachment ownership and reply lifecycle without vendor requests
         timeout-minutes: 3
         run: pnpm --filter @hive-desktop/runtime check:interaction-attachments
