@@ -28,6 +28,7 @@ export interface WorktreeCreation {
   identityState: 'new' | 'known';
   originAgentId?: string;
   model?: {provider: string; id: string; name: string};
+  forkOperationId?: string;
 }
 type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation };
 function validateIntentCreation(intent: Intent): void {
@@ -46,6 +47,7 @@ function validateCreation(creation: WorktreeCreation | undefined): void {
     || (creation.identityState === 'known' ? !text(creation.originAgentId) : creation.originAgentId !== undefined)
     || (creation.model !== undefined && (!creation.model || !text(creation.model.provider) || !text(creation.model.id) || !text(creation.model.name))))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree creation identity is invalid; it cannot be replaced with caller identity');
+  if (creation.forkOperationId !== undefined && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(creation.forkOperationId)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fork operation identity');
   if (creation.version === 2) validateInitializationPlan(creation.setup);
   else if (creation.setup !== undefined) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Legacy intent cannot carry setup');
 }
@@ -62,7 +64,7 @@ function environment(): NodeJS.ProcessEnv {
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const checkout = args[0] === 'worktree' && args[1] === 'add';
   const config = ['--no-pager', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', '-c', 'protocol.allow=never'];
-  if (!checkout) config.push('-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`);
+  if (!checkout || args.includes('--no-checkout')) config.push('-c', `core.hooksPath=${process.platform === 'win32' ? 'NUL' : '/dev/null'}`);
   try {
     const result = await run('git', [...config, ...args], { cwd, maxBuffer: 16 * 1024 * 1024, env: environment(), timeout: 30000, windowsHide: true });
     // NUL-framed output must retain every byte. A line-oriented Git response
@@ -107,6 +109,14 @@ function ownerDir(dataRoot: string, chatId: string): string {
 }
 /** Explicit checkout: Git may invoke the user's configured checkout filters or hooks. */
 export async function createManagedWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation }): Promise<ManagedWorktree> {
+  if (input.creation?.forkOperationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork worktrees require the dedicated creation path');
+  return createWorktree(input);
+}
+export async function createForkWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation: WorktreeCreation; operationId: string; baseOid: string }): Promise<ManagedWorktree> {
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/i.test(input.baseOid) || input.creation.forkOperationId !== input.operationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork provenance is invalid');
+  return createWorktree(input, input.baseOid);
+}
+async function createWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation }, forkBase?: string): Promise<ManagedWorktree> {
   if (!chatIdValid(input.chatId)) throw new TypeError('Invalid chat ID');
   validateCreation(input.creation);
   const project = await realpath(input.projectRoot);
@@ -114,7 +124,9 @@ export async function createManagedWorktree(input: { projectRoot: string; dataRo
   const prefix = relative(repository, project);
   if (prefix && !contained(repository, project)) throw new Error('Project is outside repository');
   const common = await commonDir(project);
-  const baseOid = await git(project, 'rev-parse', '--verify', 'HEAD^{commit}');
+  const baseOid = await git(project, 'rev-parse', '--verify', `${forkBase ?? 'HEAD'}^{commit}`);
+  if (forkBase && baseOid !== forkBase) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork base commit changed');
+  if (forkBase && prefix) throw new GitWorktreeError('UNSUPPORTED_PROJECT_PREFIX', 'Fork materialization requires the repository root');
   if (prefix) {
     try {
       const gitPath = prefix.split(sep).join('/');
@@ -139,7 +151,7 @@ export async function createManagedWorktree(input: { projectRoot: string; dataRo
     managedWorktreeRoot: worktree, executionPath: join(worktree, prefix), projectPrefix: prefix, branch, baseOid };
   try { await writeIntent(dir, { state: 'creating', record, ...(input.creation && {creation: input.creation}) }); }
   catch (error) { await rmdir(dir).catch(() => {}); throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Could not save worktree creation intent', { cause: error }); }
-  await git(project, 'worktree', 'add', '-b', branch, '--', worktree, baseOid);
+  await git(project, 'worktree', 'add', ...(forkBase ? ['--no-checkout'] : []), '-b', branch, '--', worktree, baseOid);
   try {
     const gitDir = await worktreeGitDir(worktree, common);
     const marker = await open(join(gitDir, 'hive-desktop-owner.json'), 'wx', 0o600);
@@ -151,7 +163,7 @@ export async function createManagedWorktree(input: { projectRoot: string; dataRo
   }
   try { await writeIntent(dir, { state: 'ready', record, ...(input.creation && {creation: input.creation}) }); }
   catch (error) { throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Worktree created but ownership publication failed; inspect creation intent to recover', { cause: error }); }
-  await validateManagedWorktree(root, record);
+  if (!forkBase) await validateManagedWorktree(root, record);
   return record;
 }
 async function worktreeGitDir(worktree: string, common: string): Promise<string> {
@@ -205,6 +217,7 @@ async function verify(dataRoot: string, record: ManagedWorktree): Promise<{ root
 }
 export async function validateManagedWorktree(dataRoot: string, record: ManagedWorktree): Promise<string> {
   const { intent } = await verify(dataRoot, record);
+  if (intent.creation?.forkOperationId) throw new GitWorktreeError('FORK_PENDING', 'Fork worktree requires its dedicated operation gate');
   if (intent.state !== 'ready') throw new GitWorktreeError('RECOVERY_REQUIRED', 'Worktree creation was interrupted; recovery is required');
   return record.executionPath;
 }
@@ -212,6 +225,7 @@ export async function validateManagedWorktree(dataRoot: string, record: ManagedW
 export async function removeManagedWorktree(dataRoot: string, record: ManagedWorktree, options: { active: boolean }): Promise<void> {
   if (options.active) throw new GitWorktreeError('WORKTREE_IN_USE', 'Worktree is in use');
   const { root, intent, locked } = await verify(dataRoot, record);
+  if (intent.creation?.forkOperationId) throw new GitWorktreeError('FORK_PENDING', 'Fork worktree requires its dedicated operation gate');
   if (intent.state !== 'ready') throw new GitWorktreeError('RECOVERY_REQUIRED', 'Worktree creation was interrupted; recovery is required');
   if (locked) throw new GitWorktreeError('WORKTREE_LOCKED', 'Worktree is locked');
   if (await git(record.managedWorktreeRoot, 'status', '--porcelain', '--untracked-files=all')) throw new GitWorktreeError('WORKTREE_DIRTY', 'Worktree has uncommitted files');
@@ -240,8 +254,15 @@ export async function readWorktreeIntent(dataRoot: string, chatId: string): Prom
 /** Claim an already-created, verified worktree after an interrupted save. Never creates or overwrites a tree. */
 export async function recoverManagedWorktree(dataRoot: string, record: ManagedWorktree): Promise<ManagedWorktree> {
   const { root, intent, gitDir } = await verify(dataRoot, record);
+  if (intent.creation?.forkOperationId) throw new GitWorktreeError('FORK_PENDING', 'Fork worktree requires its dedicated recovery');
   const recovered = { ...record, gitDir };
   if (intent.state === 'creating') await writeIntent(ownerDir(root, record.chatId), { ...intent, state: 'ready', record: recovered });
   await validateManagedWorktree(root, recovered);
   return recovered;
+}
+
+/** Verify private fork ownership without making it available to generic recovery. */
+export async function validateForkWorktree(dataRoot: string, record: ManagedWorktree, operationId: string): Promise<void> {
+  const { intent } = await verify(dataRoot, record);
+  if (intent.state !== 'ready' || intent.creation?.forkOperationId !== operationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork operation does not own this worktree');
 }
