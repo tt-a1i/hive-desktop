@@ -1813,5 +1813,7 @@
   "预览分叉": "Preview fork",
   "预览当前代码检查点": "Preview current code checkpoint",
   "在选中消息之前创建新分支；原消息成为未发送草稿。": "Create a branch before the selected message; the message becomes an unsent draft.",
-  "保留选中回合，创建独立历史分支。": "Keep the selected turn and create a separate history branch."
+  "保留选中回合，创建独立历史分支。": "Keep the selected turn and create a separate history branch.",
+  "核验并恢复分叉": "Verify and recover fork",
+  "操作结果的身份不匹配。": "The operation result identity does not match."
 }

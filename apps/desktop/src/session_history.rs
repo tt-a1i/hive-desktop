@@ -174,9 +174,9 @@ impl HistoryDialog {
                                 this.preview = Some(v);
                                 this.request_id = None;
                             }
-                            "history.fork.apply" | "history.operations.get" => {
-                                this.operation = Some(v)
-                            }
+                            "history.fork.apply"
+                            | "history.operations.get"
+                            | "history.operations.recover" => this.operation = Some(v),
                             "history.operations.list" => {
                                 this.operations =
                                     v["operations"].as_array().cloned().unwrap_or_default()
@@ -262,6 +262,16 @@ impl HistoryDialog {
         self.call("history.fork.apply", json!({"workspaceId":self.workspace,"sessionId":self.session,"previewToken":token,"requestId":request}), cx);
     }
 }
+fn recoverable(value: &Value) -> bool {
+    value["recoverable"] == true
+        && matches!(
+            value["state"].as_str(),
+            Some("uncertain" | "nativeKnown" | "metadataReady")
+        )
+        && value["operationId"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+}
 fn strings(value: &Value) -> String {
     value
         .as_array()
@@ -326,10 +336,13 @@ impl Render for HistoryDialog {
             .when_some(self.operation.clone(), |v, op| {
                 let state = op["state"].as_str().unwrap_or("unknown").to_owned();
                 let operation_id = op["operationId"].as_str().unwrap_or_default().to_owned();
+                let recovery_id = operation_id.clone(); let can_recover = recoverable(&op);
                 v.child(div().id("history-operation-status").role(Role::Status).text_sm().child(format!("{}: {} · {}", tr("操作状态"), state, operation_id)))
                     .when_some(op["error"].as_str().map(str::to_owned), |v, e| v.child(div().text_sm().child(e)))
                     .when(op["state"] == "ready", |v| v.child(Button::new("history-open-ready").outline().small().disabled(!current || self.busy).label(tr("打开分叉会话"))
                         .on_click(cx.listener(move |this, _, window, cx| this.open_ready(op.clone(), window, cx)))))
+                    .when(can_recover, |v| v.child(Button::new("history-operation-recover").outline().small().disabled(!current || self.busy).label(tr("核验并恢复分叉"))
+                        .on_click(cx.listener(move |this, _, _, cx| this.call("history.operations.recover", json!({"workspaceId":this.workspace,"operationId":recovery_id}), cx)))))
                     .child(Button::new("history-operation-refresh").outline().small().disabled(!current || self.busy || operation_id.is_empty()).label(tr("刷新操作状态"))
                         .on_click(cx.listener(move |this, _, _, cx| this.call("history.operations.get", json!({"workspaceId":this.workspace,"operationId":operation_id}), cx))))
             })
@@ -450,6 +463,50 @@ impl OperationsDialog {
         .detach();
         cx.notify();
     }
+    fn recover(&mut self, operation_id: String, cx: &mut Context<Self>) {
+        if self.busy
+            || !self.current(cx)
+            || !self
+                .operations
+                .iter()
+                .any(|op| op["operationId"].as_str() == Some(&operation_id) && recoverable(op))
+        {
+            return;
+        }
+        self.busy = true;
+        self.error = None;
+        let runtime = self.runtime.clone();
+        let workspace = self.workspace.clone();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request(
+                    "history.operations.recover",
+                    json!({"workspaceId":workspace,"operationId":operation_id}),
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = false;
+                if this.current(cx) {
+                    match result {
+                        Ok(value) if value["operationId"].as_str() == Some(&operation_id) => {
+                            if let Some(op) = this
+                                .operations
+                                .iter_mut()
+                                .find(|op| op["operationId"].as_str() == Some(&operation_id))
+                            {
+                                *op = value;
+                            }
+                        }
+                        Ok(_) => this.error = Some(tr("操作结果的身份不匹配。").into()),
+                        Err(e) => this.error = Some(e),
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
     fn open_ready(&mut self, value: Value, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy || !self.current(cx) || value["state"] != "ready" {
             return;
@@ -535,11 +592,25 @@ impl Render for OperationsDialog {
                     .map(|(i, op)| {
                         let id = op["operationId"].as_str().unwrap_or_default();
                         let state = op["state"].as_str().unwrap_or("unknown");
+                        let recovery_id = id.to_owned();
+                        let can_recover = recoverable(&op);
                         v_flex()
                             .gap_1()
                             .child(div().text_sm().child(format!("{id} · {state}")))
                             .when_some(op["error"].as_str().map(str::to_owned), |v, e| {
                                 v.child(div().text_sm().child(e))
+                            })
+                            .when(can_recover, |v| {
+                                v.child(
+                                    Button::new(("recover-history-operation", i))
+                                        .outline()
+                                        .small()
+                                        .disabled(!current || self.busy)
+                                        .label(tr("核验并恢复分叉"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.recover(recovery_id.clone(), cx)
+                                        })),
+                                )
                             })
                             .when(op["state"] == "ready", |v| {
                                 v.child(
@@ -705,5 +776,30 @@ impl HiveApp {
             });
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::recoverable;
+    use serde_json::json;
+    #[test]
+    fn recovery_requires_server_authorization_and_a_recoverable_state() {
+        for state in ["uncertain", "nativeKnown", "metadataReady"] {
+            assert!(recoverable(
+                &json!({"operationId":"op", "state":state, "recoverable":true})
+            ));
+            assert!(!recoverable(
+                &json!({"operationId":"op", "state":state, "recoverable":false})
+            ));
+        }
+        for state in ["ready", "failed", "nativeRequested", "prepared"] {
+            assert!(!recoverable(
+                &json!({"operationId":"op", "state":state, "recoverable":true})
+            ));
+        }
+        assert!(!recoverable(
+            &json!({"state":"uncertain", "recoverable":true})
+        ));
     }
 }
