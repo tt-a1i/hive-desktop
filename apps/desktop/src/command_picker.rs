@@ -50,7 +50,7 @@ impl CatalogNotice {
 }
 impl HiveApp {
     pub(crate) fn pi_commands_available(&self) -> bool {
-        !self.conversation_is_read_only() && self.session
+        !self.current_history_access().is_some_and(|a|a.handoff_unconsumed()) && !self.conversation_is_read_only() && self.session
             .as_ref()
             .is_some_and(|s| matches!(s.backend, Backend::Pi | Backend::PiRpc))
     }

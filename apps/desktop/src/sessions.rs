@@ -779,7 +779,10 @@ impl HiveApp {
                         this.unavailable_model = open.unavailable_model;
                         this.event_sequence = open.event_sequence;
                         for (i, message) in open.history.into_iter().enumerate() {
-                            this.receive_message(open.history_message_ids[i].clone(), &message, cx);
+                            let message_id = open.history_message_ids[i].clone();
+                            let handoff_id = crate::session_handoff::historical_item_id(&message);
+                            this.receive_message(message_id.clone(), &message, cx);
+                            if let Some(rendered) = this.messages.iter_mut().find(|m| m.id == message_id && matches!(m.role.as_str(), "user" | "assistant")) { rendered.handoff_item_id = handoff_id; }
                         }
                         if let Some(active) = open.active_message {
                             this.receive_message(active.message_id.clone(), &active.message, cx);

@@ -65,6 +65,7 @@ pub struct Message {
     pub id: String,
     pub role: String,
     pub native_user_item_id: Option<String>,
+    pub handoff_item_id: Option<String>,
     pub source_session_id: Option<String>,
     pub text: String,
     pub markdown: Option<Entity<TextViewState>>,

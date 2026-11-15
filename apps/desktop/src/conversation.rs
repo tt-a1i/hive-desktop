@@ -13,6 +13,11 @@ impl HiveApp {
             return;
         };
         let text = self.input.read(cx).value().to_string();
+        if self.current_history_access().is_some_and(|a| a.handoff_blocked()) { self.error = Some("接续状态需要先刷新核验。".into()); cx.notify(); return; }
+        if self.current_history_access().is_some_and(|a| a.handoff_unconsumed()) && (text.trim().is_empty() || text.trim_start().starts_with('/')) {
+            self.error = Some(if crate::language::english() { "The first handoff input must be ordinary nonempty text." } else { "接续会话的第一条输入必须是普通非空文本。" }.into());
+            cx.notify(); return;
+        }
         let attachment_key = format!("session:{id}");
         let refs = self.attachments.refs(Some(&attachment_key));
         if self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Acp)) && refs.iter().any(|item| item.is_image()) { self.error = Some("当前 ACP 不支持图片，请移除图片后发送。".into()); cx.notify(); return; }
@@ -59,6 +64,7 @@ impl HiveApp {
                 }
                 match result {
                     Err(error) => {
+                        if this.session.as_ref().is_some_and(|s| s.id == id) && this.current_history_access().is_some_and(|a| a.handoff_unconsumed()) { this.history_navigation.access.handoff_delivery = Some(json!({"status":"unknown"})); }
                         if !was_busy { this.busy.remove(&id); }
                         if this.session.as_ref().is_some_and(|s| s.id == id)
                             && this.input.read(cx).value().is_empty()
@@ -91,6 +97,7 @@ impl HiveApp {
                         this.error = Some(error.into());
                     }
                     Ok(value) => {
+                        if this.session.as_ref().is_some_and(|s| s.id == id) && this.current_history_access().is_some_and(|a| a.handoff_unconsumed()) { this.history_navigation.access.handoff_delivery = Some(json!({"status":"unknown"})); }
                         match serde_json::from_value::<Session>(value["session"].clone()) {
                             Ok(session) if session.id == id => {
                                 if let Some(item) =
@@ -333,6 +340,7 @@ impl HiveApp {
             id,
             role,
             native_user_item_id: None,
+            handoff_item_id: None,
             source_session_id: None,
             text,
             markdown,

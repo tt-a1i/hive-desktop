@@ -258,6 +258,10 @@ impl HiveApp {
                     .child(Button::new(("history-edit-fork", i)).outline().xsmall().label(tr("编辑并分叉"))
                         .on_click(cx.listener(move |this, _, window, cx| this.open_history_fork(edit_id.clone(), true, window, cx)))))
             })
+            .when_some(message.handoff_item_id.clone().filter(|_| matches!(message.role.as_str(), "user" | "assistant")), |view, item| {
+                view.child(h_flex().justify_end().child(Button::new(("history-handoff", i)).outline().xsmall().label(if crate::language::english() { "Continue with another agent…" } else { "用其他 Agent 接续…" })
+                    .on_click(cx.listener(move |this, _, window, cx| this.open_session_handoff(item.clone(), window, cx)))))
+            })
             .when(
                 message.failure.is_some() && !self.hidden_current_failure(i),
                 |view| view.child(self.render_reply_failure(i, cx)),

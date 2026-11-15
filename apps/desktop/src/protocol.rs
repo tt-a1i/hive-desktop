@@ -223,6 +223,12 @@ pub struct OpenSession {
     #[serde(default)]
     pub fork_draft: Option<Value>,
     #[serde(default)]
+    pub handoff_snapshot: Option<Value>,
+    #[serde(default)]
+    pub handoff_delivery: Option<Value>,
+    #[serde(default)]
+    pub passive: Option<bool>,
+    #[serde(default)]
     pub lineage: Option<Value>,
     #[serde(default)]
     pub initialization: Option<Initialization>,

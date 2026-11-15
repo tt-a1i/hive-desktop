@@ -43,6 +43,7 @@ mod runtime_location;
 mod sessions;
 mod session_execution;
 mod session_history;
+mod session_handoff;
 mod settings;
 #[cfg(target_os = "macos")]
 mod shell_owner;

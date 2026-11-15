@@ -30,6 +30,9 @@ pub(crate) struct HistoryAccess {
     pub(crate) identity_error: Option<crate::protocol::SnapshotIdentityError>,
     pub(crate) history_incomplete: bool,
     pub(crate) history_warning: Option<String>,
+    pub(crate) handoff_snapshot: Option<serde_json::Value>,
+    pub(crate) handoff_delivery: Option<serde_json::Value>,
+    pub(crate) passive: Option<bool>,
 }
 impl HistoryAccess {
     pub(crate) fn snapshot(open: &crate::protocol::OpenSession) -> Self {
@@ -39,11 +42,23 @@ impl HistoryAccess {
             read_only: open.read_only,
             identity_error: open.identity_error.clone(),
             history_incomplete: open.history_incomplete,
+            handoff_snapshot: open.handoff_snapshot.clone(),
+            handoff_delivery: open.handoff_delivery.clone(),
+            passive: open.passive,
             history_warning: open
                 .history_warning
                 .clone()
                 .filter(|warning| !warning.trim().is_empty()),
         }
+    }
+    pub(crate) fn handoff_unconsumed(&self) -> bool {
+        self.handoff_snapshot.is_some() && self.handoff_delivery.as_ref().and_then(|d|d["status"].as_str()) != Some("consumed")
+    }
+    pub(crate) fn handoff_blocked(&self) -> bool {
+        self.handoff_snapshot.is_some() && !matches!(self.handoff_delivery.as_ref().and_then(|d|d["status"].as_str()), Some("pending" | "consumed"))
+    }
+    pub(crate) fn handoff_passive(&self) -> bool {
+        self.handoff_unconsumed() && self.passive != Some(false)
     }
     fn matches(&self, workspace: Option<&str>, session: Option<&str>) -> bool {
         workspace == Some(self.workspace.as_str()) && session == Some(self.session.as_str())
@@ -455,5 +470,25 @@ mod access_tests {
             "same-id",
             "requested-workspace"
         ));
+    }
+}
+
+#[cfg(test)]
+mod handoff_state_tests {
+    use super::HistoryAccess;
+    use crate::protocol::OpenSession;
+    use serde_json::json;
+    #[test]
+    fn handoff_requires_known_delivery_state_and_only_passive_pi_skips_model_gate() {
+        let make = |delivery: serde_json::Value, passive: Option<bool>| {
+            let mut value=json!({"id":"s","workspaceId":"w","title":"t","backend":"pi","historyMessageIds":[],"eventSequence":0,"handoffSnapshot":{},"handoffDelivery":delivery});
+            if let Some(passive)=passive { value["passive"]=json!(passive); }
+            HistoryAccess::snapshot(&serde_json::from_value::<OpenSession>(value).unwrap())
+        };
+        let cold=make(json!({"status":"pending"}),Some(true));assert!(cold.handoff_passive());assert!(!cold.handoff_blocked());
+        let live=make(json!({"status":"pending"}),Some(false));assert!(!live.handoff_passive());assert!(!live.handoff_blocked());
+        let uncertain=make(json!({"status":"uncertain"}),Some(false));assert!(uncertain.handoff_blocked());
+        let unknown=make(json!({}),None);assert!(unknown.handoff_passive());assert!(unknown.handoff_blocked());
+        let consumed=make(json!({"status":"consumed"}),Some(false));assert!(!consumed.handoff_unconsumed());assert!(!consumed.handoff_blocked());
     }
 }

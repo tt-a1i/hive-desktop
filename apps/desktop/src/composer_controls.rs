@@ -116,7 +116,7 @@ impl HiveApp {
                         row.child(self.new_chat_menu("home-agent", tr("选择 Agent"), None, cx))
                     })
                     .when(self.session.is_some(), |row| {
-                        row.when(!self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Acp)), |row| row.child(
+                        row.when(!self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Acp)) && !self.current_history_access().is_some_and(|a| a.handoff_unconsumed() && (a.handoff_passive() || !self.session.as_ref().is_some_and(|s| matches!(s.backend, Backend::Pi)))), |row| row.child(
                             div()
                                 .flex_1()
                                 .min_w_0()
