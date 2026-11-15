@@ -7,6 +7,11 @@ on:
         description: Existing Windows run ID whose portable artifact will be replayed
         required: false
         type: string
+      replay_functional:
+        description: Check the exact retained package before replaying its native window
+        required: false
+        type: boolean
+        default: false
   push:
     paths:
       - 'apps/desktop/**'
@@ -186,7 +191,7 @@ jobs:
         timeout-minutes: 3
         run: node scripts/check-packaged-codex.mjs --bundle target/portable-windows-extracted
       - name: Check extracted functional runtime
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: node scripts/check-packaged-functional.mjs --bundle target/portable-windows-extracted --receipt target/functional-receipt.json
       - name: Upload extracted functional receipt
         if: always()
@@ -290,7 +295,7 @@ jobs:
   replay:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.replay_run != '' }}
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       REPLAY_RUN: ${{ inputs.replay_run }}
     steps:
@@ -298,6 +303,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22.23.3
+      - uses: pnpm/action-setup@v6
+        if: ${{ inputs.replay_functional }}
+        with:
+          version: 10.30.3
+      - name: Install package-check compiler only without lifecycle scripts
+        if: ${{ inputs.replay_functional }}
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Validate original run ID
         shell: pwsh
         run: |
@@ -322,6 +334,10 @@ jobs:
           [ordered]@{ originalRun = $env:REPLAY_RUN; originalHead = $origin.head_sha; fixtureHead = $env:GITHUB_SHA; archiveSha256 = (Get-FileHash -Algorithm SHA256 $archive).Hash } | ConvertTo-Json | Set-Content -Encoding utf8 target/replay-provenance.json
           Expand-Archive -LiteralPath $archive -DestinationPath target/replay-extracted
           if (-not (Test-Path -LiteralPath 'target/replay-extracted/hive-desktop.exe' -PathType Leaf)) { throw 'Extracted artifact is not a portable desktop bundle.' }
+      - name: Check original extracted functional runtime
+        if: ${{ inputs.replay_functional }}
+        timeout-minutes: 15
+        run: node scripts/check-packaged-functional.mjs --bundle target/replay-extracted --receipt target/replay-functional-receipt.json
       - name: Replay native window fixture
         timeout-minutes: 4
         shell: pwsh
@@ -339,4 +355,5 @@ jobs:
             target/windows-*.png
             target/windows-replay.log
             target/replay-provenance.json
+            target/replay-functional-receipt.json
           if-no-files-found: warn
