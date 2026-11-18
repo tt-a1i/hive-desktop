@@ -1,5 +1,11 @@
 # 完整产品实施与验收
 
+2026-11-19 当前工作以 [功能总任务 #39](https://github.com/tt-a1i/hive-desktop/issues/39) 的本地可用性和后端正确性为先。T3 Code、Cindy 和 Beluga 提供功能参考。界面改动限于实际操作所需的入口、状态和错误反馈。Apache Maka 的 Rust 分支提供内存及运行时回收参考。[Maka 源码对比](research/2026-11-19-maka-rust-preview.md)
+
+macOS 本地优化包已验证原生 Codex 和官方 ACP 的真实协作及被动冷恢复，并实测长会话 Markdown 导出的内存。当前版本的 Windows 原生包与实际窗口仍待复验。更新使用隔离渠道，本轮交付本地证据。[协作验收](validation/2026-11-19-native-acp-collaboration.md) · [导出内存实测](validation/2026-11-19-streaming-markdown-export.md)
+
+## 2026-11-14 历史计划
+
 2026-11-14。用户已在当前会话确认并授权持续推进。本文整理执行顺序；需求和工作项继续使用 GitHub Issues，父任务为 #1，首批工作为 [#29](https://github.com/tt-a1i/hive-desktop/issues/29)。完整目标仍未完成。
 
 ## 产品约定
