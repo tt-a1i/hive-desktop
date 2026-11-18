@@ -10,7 +10,7 @@ macOS 使用系统 Speech 和 AVFoundation。麦克风和语音识别的系统�
 - 使用带 `ui-preview` 特性的原生验收包，将录音来源换成实际 WAV，并通过正式的原生识别、进程、输入和保存流程。文字准确追加在含 emoji 的原草稿之后，冷重开保持只追加一次。长音频覆盖取消、切换到另一会话及听写中退出。两个会话的预期草稿逐字核对，三个主程序以 0 退出，观测到的三个听写进程全部回收。
 - 听写包、系统状态、产物和日志保存在 `.artifacts/voice-mac-4abIQt/`。主要证据为 `production-audio.json`、`production-ui.log`、`packaged-entry/receipt.json`、`production-smoke.log`、`ui-fixed/receipt.json` 及 `ui-fixed/inserted.ax.txt`。测试使用本机合成音频，未开启麦克风或改变语音授权。
 
-Rust 测试 114 项通过、1 项忽略。macOS 构建和 Windows 交叉编译通过，本地编译限单作业。Windows CI 从实际解压便携包调用系统识别器识别本地 WAV，环境缺少已装识别器时只记录缺失诊断。Windows 原生语音运行和两个平台的物理麦克风、首次授权弹窗仍需实测。本轮没有发布。[Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44363050501)
+Rust 测试 114 项通过、1 项忽略。macOS 构建和 Windows 交叉编译通过，本地编译限单作业。Windows `aca54bb` 作业从解压的便携包调用系统英语识别器，离线将 WAV 识别为 “The garden has seven bright red flowers”。同一包通过 50 项运行时检查，原生进程监督作业也通过。Windows 从麦克风听写并写入草稿的窗口流程，以及两个平台的物理麦克风和首次授权弹窗，仍需实测。本轮没有发布。[Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44363997413) · [语音收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44363997413/artifacts/14457827224)
 
 ## Windows 进程监督夹具
 
