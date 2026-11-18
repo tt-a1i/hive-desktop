@@ -29,7 +29,10 @@ else if(role==='child') {
  require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
   const q=JSON.parse(line);
   if(q.method==='initialize') {
-   spawn(process.execPath,[__filename,'child',dir],{stdio:['ignore',process.stdout,process.stderr]});
+   // Skip libuv's parent-owned Job on Windows so the pipe really survives this
+   // leader's exit. The child still belongs to Hive's enclosing Windows Job.
+   // On macOS detaching would escape the process group under test.
+   spawn(process.execPath,[__filename,'child',dir],{detached:process.platform==='win32',stdio:['ignore',process.stdout,process.stderr]});
    process.stdout.write(JSON.stringify({id:q.id,result:{ready:true}})+'\n');
   } else if(q.method==='crash') process.exit(17);
  });
@@ -63,7 +66,8 @@ else if(role==='child') {
         })
         .await
         .expect("Leader watcher did not settle the pending request while stdout remained open");
-        assert!(reply.is_err());
+        let error = reply.expect_err("The leader exited without replying");
+        assert!(error.contains("后台已退出"), "{error}");
         runtime.shutdown_checked(Duration::ZERO).await
     })
     .unwrap();

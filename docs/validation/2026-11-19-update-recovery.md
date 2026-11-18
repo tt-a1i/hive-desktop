@@ -16,4 +16,4 @@
 
 真实子进程回归验证安装程序仍运行时拒绝恢复、终止后可恢复、重复运行可读取同一终态。更新后的实际应用通过全部 52 项包内功能检查，以及包内 Node、实际 PTY、Hive HTTP/SQLite 和退出冒烟。收据为 `.artifacts/update-recovery-mac-SxyNx3/functional-receipt.json` 和 `post-install-smoke.log`。类型检查、运行时构建、macOS 构建及 Windows 交叉编译通过。本机 Cargo 限制为单作业。
 
-Windows 恢复入口已经过源码检查，仍需实际验证 Windows 便携包更新、`.cmd` 执行及更新时进程中断。新版 Windows 主作业仍在运行。独立 CLI 检查的进程枚举命令失败，发生于官方 CLI 检查之前。实际断电、重启以及迁移用户数据后的降级仍待验收。测试只使用隔离开发包，没有对外发布。[Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44352782083)
+Windows 主作业通过编译、49 项便携包内功能检查及原生窗口。包内安装子进程测试通过，覆盖第一次目录移动后终止进程并恢复。Windows 桌面应用实际替换和 `.cmd` 恢复入口仍需实测。独立 CLI 检查在官方 CLI 启动前的进程枚举阶段失败。实际断电、重启以及迁移用户数据后的降级仍待验收。测试只使用隔离开发包，没有对外发布。[Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44352782083)

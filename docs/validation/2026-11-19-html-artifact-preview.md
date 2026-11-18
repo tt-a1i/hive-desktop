@@ -17,4 +17,4 @@
 
 真实 Git 与 Hive 回归覆盖同名项目和工作树文件、跨工作区拒绝、重复捕获、工作树移除后的冷恢复、大小和编码校验，以及已存副本的摘要检查。类型检查、运行时构建、macOS 构建及 Windows 交叉编译通过。本机 Rust 构建使用单作业。
 
-Windows 版使用 WebView2，并在载入产物前设置资源与子框架导航拦截。CI 增加了从真实报告打开 WebView2、验证隔离并操作按钮的原生检查。主作业仍在运行，独立的进程监督作业已报告失败，详细日志尚未取得。没有安装到用户目录或发布开发包。[Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44358925746)
+Windows 版使用 WebView2，并在载入产物前设置资源与子框架导航拦截。CI 增加了从真实报告打开 WebView2、验证隔离并操作按钮的原生检查。主作业仍在运行。独立进程监督作业失败于 `leader_exit_is_detected_while_descendants_hold_stdout` 的强制回收断言。该夹具已调整，详见[听写与进程监督验证](2026-11-19-voice-input.md)。没有安装到用户目录或发布开发包。[Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44358925746)
