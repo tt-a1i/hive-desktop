@@ -153,6 +153,9 @@ impl HiveApp {
                             }
                             RuntimeEvent::Agent(event) => this.agent_event(event, cx),
                             RuntimeEvent::Terminal(event) => this.terminal_wire_event(event, cx),
+                            RuntimeEvent::WorktreeInitializationChanged { workspace, session } => {
+                                this.worktree_initialization_changed(&workspace, &session, cx);
+                            }
                         }
                         cx.notify();
                     })

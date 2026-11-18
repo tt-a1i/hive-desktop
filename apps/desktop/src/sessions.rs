@@ -850,6 +850,8 @@ impl HiveApp {
                         this.history_navigation.access = crate::history_navigation::HistoryAccess::snapshot(&open);
                         this.conversation_ready = true;
                         this.history_navigation.initialization = open.initialization.clone();
+                        // A short script can exit before the open response reaches this window.
+                        this.reconcile_active_initialization(cx);
                         this.status = "后台已连接".into();
                         if open.busy {
                             this.busy.insert(id.clone());

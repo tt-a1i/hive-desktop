@@ -10,6 +10,7 @@ use std::sync::Arc;
 #[derive(Default)]
 pub(crate) struct HistoryNavigation {
     generation: u64,
+    initialization_request: u64,
     pub(crate) loading: bool,
     pub(crate) access: HistoryAccess,
     pub(crate) initialization: Option<Initialization>,
@@ -173,6 +174,33 @@ impl HiveApp {
         self.current_history_access()
             .is_some_and(|access| access.read_only)
     }
+    pub(crate) fn reconcile_active_initialization(&mut self, cx: &mut Context<Self>) {
+        if self.connected
+            && !self.closing
+            && self.history_navigation.initialization.as_ref().is_some_and(|setup| {
+                matches!(setup.status.as_str(), "pending" | "running")
+            })
+        {
+            self.refresh_initialization(cx);
+        }
+    }
+    pub(crate) fn worktree_initialization_changed(
+        &mut self,
+        workspace: &str,
+        session: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.as_deref() == Some(workspace)
+            && self.session.as_ref().is_some_and(|current| current.id == session)
+            && self.connected
+            && !self.closing
+            && self.history_navigation.initialization.as_ref().is_some_and(|setup| {
+                !matches!(setup.status.as_str(), "disabled" | "succeeded" | "skipped")
+            })
+        {
+            self.refresh_initialization(cx);
+        }
+    }
     pub(crate) fn refresh_initialization(&mut self, cx: &mut Context<Self>) {
         let (Some(workspace), Some(session)) = (
             self.workspace.clone(),
@@ -180,6 +208,8 @@ impl HiveApp {
         ) else {
             return;
         };
+        self.history_navigation.initialization_request += 1;
+        let request = self.history_navigation.initialization_request;
         let generation = self.open_request;
         self.request(
             "worktree.initialization.get",
@@ -187,6 +217,7 @@ impl HiveApp {
             cx,
             move |this, value, cx| {
                 if this.open_request != generation
+                    || this.history_navigation.initialization_request != request
                     || this.workspace.as_ref() != Some(&workspace)
                     || this.session.as_ref().map(|s| &s.id) != Some(&session)
                 {

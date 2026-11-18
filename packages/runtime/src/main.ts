@@ -54,7 +54,11 @@ const send = (message: unknown) => { void writeFrame(message); };
 const runtimeInfo = captureRuntimeInfo();
 const dataDir = desktopDataDir();
 mkdirSync(dataDir, { recursive: true });
-const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }), { onTerminalEvent: data => send({ event: 'terminal', data }), onScriptEvent: data => send({ event: 'script', data }) });
+const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agent', data: event }), {
+  onTerminalEvent: data => send({ event: 'terminal', data }),
+  onScriptEvent: data => send({ event: 'script', data }),
+  onInitializationChange: data => send({ event: 'worktreeInitializationChanged', data }),
+});
 const updates = new DesktopUpdates(dataDir, new URL('../../desktop-update-channel.json', import.meta.url));
 const { hive, chats, profiles, settings, agentModels, terminal, piAuth } = runtime;
 let closing: Promise<void> | undefined;

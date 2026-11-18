@@ -961,8 +961,9 @@ impl HiveApp {
                 let can_skip = setup.actions.as_ref().map(|a| a.skip).unwrap_or(!uncertain);
                 let unavailable_reason = setup.actions.as_ref().and_then(|a| a.reason.as_ref());
                 let status = match setup.status.as_str() { "disabled" => tr("未启用"), "pending" => tr("等待中"), "running" => tr("运行中"), "succeeded" => tr("已成功"), "failed" => tr("失败"), "cancelled" => tr("已取消"), "interrupted" => tr("已中断"), "unknown" => tr("状态未知"), "skipped" => tr("已跳过"), _ => tr("状态未知") };
-                surface.child(div().id("worktree-initialization-status").role(Role::Status).px_1().text_xs().child(format!("{}: {} · {}{}", tr("工作树初始化"), status, setup.script.as_ref().map(|s| s.name.as_str()).unwrap_or("—"), setup.error_code.as_ref().map(|e| format!(" · {e}")).unwrap_or_default())))
-                     .when((!can_retry || !can_skip) && !ready, |v| v.child(div().px_1().text_xs().text_color(Color::Error.get(cx)).child(if uncertain { tr("无法确认原脚本进程已退出，不能重试或跳过。可刷新状态，或新建独立会话。") } else { tr("部分操作当前不可用；请刷新状态。") })))
+                let summary = format!("{}: {} · {}{}", tr("工作树初始化"), status, setup.script.as_ref().map(|s| s.name.as_str()).unwrap_or("—"), setup.error_code.as_ref().map(|e| format!(" · {e}")).unwrap_or_default());
+                surface.child(div().id("worktree-initialization-status").role(Role::Status).aria_label(summary.clone()).px_1().text_xs().child(summary))
+                    .when(uncertain, |v| v.child(div().px_1().text_xs().text_color(Color::Error.get(cx)).child(tr("无法确认原脚本进程已退出，不能重试或跳过。可刷新状态，或新建独立会话。"))))
                     .when_some(unavailable_reason, |v, reason| v.child(div().px_1().text_xs().child(reason.clone())))
                     .child(h_flex().flex_wrap().gap_2()
                         .child(Button::new("refresh-worktree-initialization").outline().small().label(tr("刷新初始化状态")).on_click(cx.listener(|this,_,_,cx| this.refresh_initialization(cx))))

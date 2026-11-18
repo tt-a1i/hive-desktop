@@ -87,5 +87,6 @@
 | [Cindy](https://github.com/makecindy/cindy/tree/4fd670b72af9d060785e29c553a14b6794dfe8eb) | `4fd670b` | 原生 Agent 接入、统一聊天、可替换 Lead/Worker、配置体验 |
 | [Raven](https://github.com/EverMind-AI/Raven/tree/8448cc6280923a7b20525af259a3b6d465844c42) | `8448cc6` | ACP 接入、能力协商、事件转换和执行过程展示 |
 | [Maka](https://github.com/apache/maka/tree/b511478d0a01d2a20437a56cd435ab71a6cb2815) | `b511478` | 共享后台、会话管理和执行器边界 |
+| [Maka Rust preview](https://github.com/apache/maka/tree/158d79f514dbd5bb6be89b668a5cfb81e5b3a2a2) | `158d79f` | Rust 进程所有权、原生终端退出与输出排空、重新打开会话时的结果恢复 |
 
 参考结论来自源码和文档检查，未对这些项目进行同条件可靠性实测。只借鉴适合 Hive 的设计，不整体搬入它们的协作状态机、DAG、记忆或权限体系。

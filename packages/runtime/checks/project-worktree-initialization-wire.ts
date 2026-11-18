@@ -19,6 +19,7 @@ createInterface({input:child.stdout}).on('line',line=>{const frame=JSON.parse(li
 child.on('exit',()=>{for(const request of pending.values())request.reject(new Error('Runtime exited: '+stderr));pending.clear();});
 const rpc=(method:string,params:unknown={})=>new Promise<any>((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});child.stdin.write(JSON.stringify({id,method,params})+'\n');});
 const until=async<T>(read:()=>T|Promise<T>,ready:(value:T)=>boolean)=>{const end=Date.now()+15000;for(;;){const value=await read();if(ready(value))return value;if(Date.now()>end)throw new Error('Wire timeout');await new Promise(done=>setTimeout(done,20));}};
+const changes=()=>events.filter(frame=>frame.event==='worktreeInitializationChanged');
 try{
  assert.ok((await rpc('initialize')).result.hivePort);
  const ws=(await rpc('hive.request',{method:'POST',path:'/api/workspaces',body:{path:project,name:'Script wire',autostart_orchestrator:false}})).result;
@@ -27,6 +28,8 @@ try{
  const session=(await rpc('chat.createRecord',{workspaceId:ws.id,backend:'codex',isolation:'worktree'})).result;
  const params={workspaceId:ws.id,sessionId:session.id};
  const failed=await until(()=>rpc('worktree.initialization.get',params),value=>value.result?.status==='failed');
+ const firstChanges=await until(changes,value=>value.length>=2);
+ for(const frame of firstChanges) assert.deepEqual(frame.data,params);
  assert.equal(failed.result.script.name,'Setup wire');assert.ok(failed.result.runId);assert.equal('command' in failed.result.script,false);
  const opened=(await rpc('chat.open',{sessionId:session.id})).result;
  assert.equal(opened.readOnly,true);assert.equal(opened.identityError.code,'WORKTREE_INITIALIZATION_BLOCKED');assert.equal(opened.initialization.status,'failed');
@@ -38,6 +41,8 @@ try{
  await rpc('script.settings.remove',{workspaceId:ws.id,expectedRevision:saved.revision,scriptId:script.id});
  const retry=await rpc('worktree.initialization.retry',{...params,expectedVersion:failed.result.version});assert.ok(retry.result);
  const second=await until(()=>rpc('worktree.initialization.get',params),value=>value.result?.status==='failed' && value.result.runId!==failed.result.runId);
+ const retryChanges=await until(changes,value=>value.length>=firstChanges.length+2);
+ for(const frame of retryChanges) assert.deepEqual(frame.data,params);
  assert.notEqual(second.result.requestId,failed.result.requestId);assert.equal(second.result.script.version,script.version);
  const skipped=await rpc('worktree.initialization.skip',{...params,expectedVersion:second.result.version});assert.equal(skipped.result.status,'skipped');
  const runs=(await rpc('script.runs',{workspaceId:ws.id})).result.runs;assert.equal(runs.length,2);assert.equal(runs[0].script.command,script.command);

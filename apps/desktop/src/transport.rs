@@ -24,8 +24,17 @@ type Pending = Arc<Mutex<HashMap<u64, Sender<Reply>>>>;
 pub enum RuntimeEvent {
     Agent(PiEvent),
     Terminal(TerminalWireEvent),
+    WorktreeInitializationChanged { workspace: String, session: String },
     Failed(String),
 }
+
+fn worktree_initialization_changed(data: &Value) -> Option<RuntimeEvent> {
+    Some(RuntimeEvent::WorktreeInitializationChanged {
+        workspace: data["workspaceId"].as_str()?.to_owned(),
+        session: data["sessionId"].as_str()?.to_owned(),
+    })
+}
+
 pub struct Runtime {
     tx: mpsc::Sender<Value>,
     pending: Pending,
@@ -175,6 +184,10 @@ impl Runtime {
                             return;
                         }
                     }
+                } else if value["event"] == "worktreeInitializationChanged"
+                    && let Some(event) = worktree_initialization_changed(&value["data"])
+                {
+                    let _ = e.try_send(event);
                 }
             }
             fail(

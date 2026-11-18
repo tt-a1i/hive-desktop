@@ -92,14 +92,14 @@ export class ProjectScriptRuns {
     tasks.add(task); return task;
   }
   /** Internal coordinator entry; never exposed as an RPC accepting a command. */
-  runCaptured(workspaceId: string, sessionId: string, requestId: string, script: ProjectScript): Promise<ProjectScriptRun> {
+  runCaptured(workspaceId: string, sessionId: string, requestId: string, script: ProjectScript, onExit: () => void): Promise<ProjectScriptRun> {
     let tasks = this.pending.get(workspaceId); if (!tasks) {tasks = new Set(); this.pending.set(workspaceId, tasks);}
     const release = this.mutations?.begin(workspaceId);
-    const task = this.start({workspaceId, sessionId, requestId, scriptId: script.id, expectedVersion: script.version}, script)
+    const task = this.start({workspaceId, sessionId, requestId, scriptId: script.id, expectedVersion: script.version}, script, onExit)
       .finally(() => {release?.(); tasks.delete(task); if (!tasks.size) this.pending.delete(workspaceId);});
     tasks.add(task); return task;
   }
-  private async start(input: {workspaceId: string; scriptId: string; expectedVersion: string; sessionId?: string; requestId: string}, captured?: ProjectScript): Promise<ProjectScriptRun> {
+  private async start(input: {workspaceId: string; scriptId: string; expectedVersion: string; sessionId?: string; requestId: string}, captured?: ProjectScript, onCapturedExit?: () => void): Promise<ProjectScriptRun> {
     this.check(input.workspaceId);
     const file = this.requestFile(input.workspaceId, input.requestId);
     const duplicate = () => {
@@ -156,6 +156,7 @@ export class ProjectScriptRuns {
           try {this.save(live);} catch {live.persistenceError = true;}
           if (live.persistenceError) {run.status = 'unknown'; run.errorCode ??= 'SCRIPT_RUN_WRITE_FAILED'; this.undurable.set(run.runId, structuredClone(run)); this.event({type: 'status', run: structuredClone(run)});}
           this.live.delete(run.runId); live.releaseMutation?.(); live.resolve();
+          onCapturedExit?.();
         },
       });
       nativeStarted = true;

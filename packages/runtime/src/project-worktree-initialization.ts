@@ -5,6 +5,7 @@ import type { ProjectScript, ProjectScriptSettings } from './project-script-sett
 import type { ProjectScriptRuns, ScriptStatus } from './project-script-runs.js';
 
 export type InitializationPlan = {enabled: false} | {enabled: true; requestId: string; script: ProjectScript};
+export interface InitializationChange {workspaceId: string; sessionId: string}
 type Status = 'disabled' | 'pending' | 'running' | ScriptStatus | 'skipped';
 interface State {schema: 1; workspaceId: string; sessionId: string; planHash: string; version: string; status: Status; requestId?: string; runId?: string | undefined; errorCode?: string | undefined}
 const uuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
@@ -31,8 +32,12 @@ export class ProjectWorktreeInitialization {
   private readonly launching = new Set<string>();
   constructor(directory: string, private readonly settings: ProjectScriptSettings, private readonly runs: ProjectScriptRuns,
     private readonly source: (workspaceId: string, sessionId: string) => Promise<InitializationPlan | undefined>,
-    private readonly available: (workspaceId: string) => void) {
+    private readonly available: (workspaceId: string) => void, private readonly emit?: (event: InitializationChange) => void) {
     this.directory = join(directory, 'worktree-initialization'); mkdirSync(this.directory, {recursive: true, mode: 0o700});
+  }
+  private changed(workspaceId: string, sessionId: string) {
+    if (this.closing) return;
+    try {this.emit?.({workspaceId, sessionId});} catch { /* A disconnected viewer cannot change setup state. */ }
   }
   async capture(workspaceId: string, skip = false, expectedRevision?: string): Promise<InitializationPlan> {
     this.check(workspaceId);
@@ -128,10 +133,14 @@ export class ProjectWorktreeInitialization {
       const original = await this.source(state.workspaceId, state.sessionId);
       if (!original || this.hash(original) !== state.planHash) fail('The original setup plan changed; no command was run.');
       this.check(state.workspaceId);
-      const run = await this.runs.runCaptured(state.workspaceId, state.sessionId, state.requestId!, plan.script);
+      const {workspaceId, sessionId} = state;
+      const run = await this.runs.runCaptured(workspaceId, sessionId, state.requestId!, plan.script, () => this.changed(workspaceId, sessionId));
       this.save(state, {runId: run.runId, status: run.status === 'starting' ? 'running' : run.status});
     } catch (error) {this.save(state, {status: 'unknown', errorCode: error instanceof Error ? error.message : String(error)});}
-    finally {this.launching.delete(state.sessionId);}
+    finally {
+      this.launching.delete(state.sessionId);
+      this.changed(state.workspaceId, state.sessionId);
+    }
   }
   retry(workspaceId: string, sessionId: string, expectedVersion: string) {
     return this.locked(sessionId, async () => {

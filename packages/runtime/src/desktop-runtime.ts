@@ -1,7 +1,7 @@
 import { AgentProfiles, defaultAgentProfileId, type AgentProfileRef } from './agent-profiles.js';
 import { withStructuredProfile } from './structured-launch.js';
 import { ExecutionMutations } from './execution-mutations.js';
-import { ProjectWorktreeInitialization } from './project-worktree-initialization.js';
+import { ProjectWorktreeInitialization, type InitializationChange } from './project-worktree-initialization.js';
 import { ProjectScriptSettings } from './project-script-settings.js';
 import { ProjectScriptRuns, type ScriptEvent } from './project-script-runs.js';
 import { Terminals, type TerminalEvent } from './terminal.js';
@@ -19,7 +19,7 @@ import { isWorkerRole } from '@tt-a1i/hive/dist/src/shared/types.js';
 import { structuredCommand } from './structured-runtime.js';
 
 export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEvent) => void,
-  options: { executableEnvironment?: DesktopExecutableEnvironment; onTerminalEvent?: (event: TerminalEvent) => void; onScriptEvent?: (event: ScriptEvent) => void } = {}) {
+  options: { executableEnvironment?: DesktopExecutableEnvironment; onTerminalEvent?: (event: TerminalEvent) => void; onScriptEvent?: (event: ScriptEvent) => void; onInitializationChange?: (event: InitializationChange) => void } = {}) {
   const executionMutations = new ExecutionMutations();
   let chats: Chats;
   let agents: HiveAgentRuntime | undefined;
@@ -84,7 +84,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId), options.onScriptEvent, executionMutations);
   } catch (error) { await hive.close(); await chats.close(); throw error; }
   const initialization = new ProjectWorktreeInitialization(dataDir, projectScripts, scriptRuns,
-    (workspaceId, sessionId) => chats.initializationPlan(workspaceId, sessionId), workspaceId => chats.assertWorkspaceAvailable(workspaceId));
+    (workspaceId, sessionId) => chats.initializationPlan(workspaceId, sessionId), workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onInitializationChange);
   chats.initialization = initialization;
   chats.configureHistory(executionMutations, () => terminal.hasAnyActiveShell());
   chats.configureHandoffs(executionMutations, () => terminal.hasAnyActiveShell());
