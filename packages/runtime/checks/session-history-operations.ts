@@ -36,6 +36,9 @@ try{
  const one=await apply('u1',false,'11111111-1111-4111-8111-111111111111');assert.equal(one.result.state,'ready',JSON.stringify(one.result));
  const sourceProfile=runtime.chats.list(project.id).find(record=>record.id==='session-source')!.profile;assert.deepEqual(one.result.session.profile,sourceProfile);assert.deepEqual((await readWorktreeIntent(data,one.result.session.id)).creation!.profile,sourceProfile);
  const durableOperation=await runtime.chats.history!.journal.byId(project.id,one.result.operationId);assert.equal(JSON.stringify(durableOperation).includes(process.env.HIVE_PROFILE_SECRET_SENTINEL!),false);assert.equal(JSON.stringify(durableOperation).includes('HIVE_PROFILE_SECRET_SENTINEL'),false);
+ const storedPreview=durableOperation.preview as Record<string,unknown>;
+ assert.equal(storedPreview.lastTurnId,'t1');assert.match(String(storedPreview.prefixFingerprint),/^[a-f0-9]{64}$/);
+ for(const field of ['turns','prefix','public'])assert.ok(!Object.hasOwn(storedPreview,field));
  const sourceNativeBefore=JSON.parse(await readFile(join(dir,'peer.json'),'utf8')).source.turns;const child=one.result.session;assert.deepEqual(JSON.parse(await readFile(join(dir,'peer.json'),'utf8')).child1.turns.map((t:any)=>t.id),['t1']);assert.equal(await readFile(join(child.executionPath,'file.txt'),'utf8'),'C');assert.equal(execFileSync('git',['-C',child.executionPath,'show',':file.txt'],{encoding:'utf8'}),'B');
  assert.equal(execFileSync('git',['-C',child.executionPath,'show','HEAD:file.txt'],{encoding:'utf8'}),'A');await assert.rejects(readFile(join(child.executionPath,'.secret')));assert.equal(await readFile(join(repo,'.secret'),'utf8'),'private');
  assert.equal(runtime.hive.executionLedgerRevision(),ledger);
@@ -46,6 +49,12 @@ try{
  await runtime.close();runtime=await open();const replay=await runtime.chats.history!.apply(project.id,'session-source',one.preview.previewToken as string,'11111111-1111-4111-8111-111111111111') as any;assert.equal(replay.session.id,child.id);assert.equal((await requests()).filter(x=>x.method==='thread/fork').length,3);
  const index=(runtime.chats as any).index;const originalSave=index.save.bind(index);let injected=false;index.save=(record:any)=>{if(record.lineage&&!injected){injected=true;throw Error('injected index write failure');}return originalSave(record);};
  const failed=await apply('u1',false,'55555555-5555-4555-8555-555555555555');assert.equal(failed.result.state,'uncertain',JSON.stringify(failed.result));assert.ok(injected);const countBeforeRecover=(await requests()).filter(x=>x.method==='thread/fork').length;
+ // Exercise recovery of an operation written by an older installed build.
+ const legacyJournal=runtime.chats.history!.journal;
+ const legacy=await legacyJournal.byId(project.id,failed.result.operationId);
+ const {prefixFingerprint,lastTurnId,...oldPreview}=legacy.preview as Record<string,unknown>;
+ assert.equal(lastTurnId,'t1');assert.ok(prefixFingerprint);
+ await legacyJournal.save({...legacy,preview:{...oldPreview,turns:sourceNativeBefore,prefix:sourceNativeBefore.slice(0,1),public:failed.preview}});
  await runtime.close();runtime=await open();const recovered=await runtime.chats.history!.recover(project.id,failed.result.operationId) as any;assert.equal(recovered.state,'ready',JSON.stringify(recovered));assert.equal((await requests()).filter(x=>x.method==='thread/fork').length,countBeforeRecover);
  const journal=runtime.chats.history!.journal, originalJournalSave=journal.save.bind(journal);let readyFault=false;journal.save=async op=>{if(op.state==='ready'&&!readyFault){readyFault=true;throw Error('injected journal ready failure');}return originalJournalSave(op);};
  const incomplete=await apply('u1',false,'88888888-8888-4888-8888-888888888888');assert.equal(incomplete.result.state,'uncertain');const incompleteOperation=await journal.byId(project.id,incomplete.result.operationId);

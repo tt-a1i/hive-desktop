@@ -36,3 +36,9 @@
 Rust 界面已通过独立目录 `cargo check` 和草稿/恢复操作专项单元检查。真实 GUI、Terra、Windows 原生、打包和完整验收尚未完成。新增 `checks/execution-sqlite-outbox.ts` 复用独立审查的真实 Hive HTTP / SQLite / team 工具验证：租约期间 note 不领取、report 不确认；释放监听自动领取并执行一次，无手动 drain。未读 note 使旧 `--seen` 报告被拒，刷新 messages 后才允许真实 report；pending note 跨冷启动由正常 Worker 启动恢复，之后 note/report 均无重复执行、卡片或 ledger 行。冷启动 recovery 摘要可以引用历史报告，其 origin=recovery，与真正 origin=report 的投递分别验证。SQL 全程只读，loopback 网络隔离，不使用真实厂商 CLI、模型或登录。
 
 版本门槛回归采用真实只读初始化响应 `hive_desktop/0.169.0 (Mac OS 26.7.3; arm64) dumb (hive_desktop; 0.1.0)`。共享解析器只从开头的客户端标识及原生版本取值，不把结尾客户端 0.1.0 当作 CLI 版本；其它版本、未知前缀、预发布和畸形版本均拒绝。历史控制和会话恢复使用同一解析器。0.169.0 本地生成的 `v2/TurnStatus.ts` 明确枚举 completed / interrupted / failed / inProgress。
+
+## 2026-11-19 分叉预览与恢复记录
+
+新分叉预览按源历史摘要、保留前缀摘要及原生回合 ID 核验。后台内存和新操作日志无需保存整段源会话或保留前缀的副本。编辑草稿仍保存精确文本和附件引用。冷恢复支持旧日志，其前缀数组会生成等价摘要供核验。
+
+回归覆盖正常分叉、编辑首条消息、旧日志恢复、响应丢失后的核验、错误前缀保留待查以及 Hive 账本和源代码保持原状。包内 JSONL 及恢复日志位于 `.artifacts/history-digests-mac-VAYu9I/`。当前 Codex 0.169.0 生成的 `ThreadRevertParams.ts` 明确原生回退操作处理持久化会话历史。代码恢复及未来分支备份仍需一起实现和验收。[安全回退范围](https://github.com/tt-a1i/hive-desktop/issues/50)
