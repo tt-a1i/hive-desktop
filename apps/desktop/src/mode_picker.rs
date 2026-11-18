@@ -21,6 +21,28 @@ struct ModeState {
     options: Vec<ModeOption>,
     description: Option<String>,
 }
+impl ModeState {
+    fn label(&self, id: &str) -> String {
+        self.options
+            .iter()
+            .find(|option| option.id == id)
+            .map(|option| mode_label(&self.backend, option))
+            .unwrap_or_else(|| id.to_owned())
+    }
+
+    fn status(&self) -> String {
+        let display = |id: Option<&str>| {
+            id.map(|id| self.label(id))
+                .unwrap_or_else(|| tr("未报告").to_owned())
+        };
+        let active = format!("{}: {}", tr("当前生效"), display(self.applied.as_deref()));
+        if self.pending_next_turn {
+            format!("{}: {} · {active}", tr("下回合使用"), display(self.selected.as_deref()))
+        } else {
+            active
+        }
+    }
+}
 #[derive(serde::Deserialize)]
 struct ModeOption {
     id: String,
@@ -57,6 +79,17 @@ fn mode_label(backend: &str, option: &ModeOption) -> String {
 impl HiveApp {
     pub(crate) fn load_mode(&mut self, mode: Option<String>, cx: &mut Context<Self>) {
         self.load_mode_axis(false, mode, cx);
+    }
+
+    /// Read native state after a turn settles, including when turn/start was
+    /// rejected. The selection only becomes active after native acceptance.
+    pub(crate) fn refresh_pending_session_modes(&mut self, cx: &mut Context<Self>) {
+        if self.mode_picker.mode.state.as_ref().is_some_and(|state| state.pending_next_turn) {
+            self.load_mode(None, cx);
+        }
+        if self.mode_picker.permission.state.as_ref().is_some_and(|state| state.pending_next_turn) {
+            self.load_permission_mode(None, cx);
+        }
     }
 
     pub(crate) fn cycle_session_mode(&mut self, cx: &mut Context<Self>) {
@@ -209,23 +242,16 @@ impl HiveApp {
         if state.options.is_empty() {
             return None;
         }
-        let current_id = state.selected.clone().or_else(|| state.applied.clone());
+        let current_id = state.selected.as_deref().or(state.applied.as_deref());
         let label = current_id
-            .as_deref()
-            .map(|id| {
-                state
-                    .options
-                    .iter()
-                    .find(|o| o.id == id)
-                    .map(|o| mode_label(&state.backend, o))
-                    .unwrap_or_else(|| id.to_owned())
-            })
+            .map(|id| state.label(id))
             .unwrap_or_else(|| tr(if permission { "权限" } else { "模式" }).into());
         let heading = if permission {
             tr("Codex 访问权限")
         } else {
             tr("会话模式")
         };
+        let accessibility_label = format!("{heading}. {}", state.status());
         let options: Vec<(String, String, bool)> = state
             .options
             .iter()
@@ -233,7 +259,7 @@ impl HiveApp {
                 (
                     option.id.clone(),
                     mode_label(&state.backend, option),
-                    current_id.as_deref() == Some(option.id.as_str()),
+                    current_id == Some(option.id.as_str()),
                 )
             })
             .collect();
@@ -253,8 +279,8 @@ impl HiveApp {
                 .rounded_md()
                 .min_w_0()
                 .disabled(disabled || picker.loading)
-                .tooltip(heading)
-                .accessibility_label(heading)
+                .tooltip(accessibility_label.clone())
+                .accessibility_label(accessibility_label)
                 .child(
                     h_flex()
                         .min_w_0()
@@ -431,31 +457,12 @@ impl HiveApp {
                 )
             })
             .when_some(picker.state.as_ref(), |view, state| {
-                let display = |id: &Option<String>| {
-                    id.as_ref()
-                        .map(|id| {
-                            state
-                                .options
-                                .iter()
-                                .find(|o| o.id == *id)
-                                .map(|o| mode_label(&state.backend, o))
-                                .unwrap_or_else(|| id.clone())
-                        })
-                        .unwrap_or_else(|| tr("未报告").to_owned())
-                };
-                let status = if state.pending_next_turn {
-                    format!(
-                        "{}: {} · {}: {}",
-                        tr("下回合使用"),
-                        display(&state.selected),
-                        tr("当前生效"),
-                        display(&state.applied)
-                    )
-                } else {
-                    format!("{}: {}", tr("当前生效"), display(&state.applied))
-                };
+                let status = state.status();
                 view.child(
                     div()
+                        .id(format!("mode-current-status-{permission}"))
+                        .role(Role::Status)
+                        .aria_label(status.clone())
                         .text_xs()
                         .text_color(Color::Muted.get(cx))
                         .child(status),

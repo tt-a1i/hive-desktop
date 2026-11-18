@@ -760,6 +760,7 @@ impl HiveApp {
             }
             PiEvent::Settled { aborted, .. } => {
                 self.load_usage(cx);
+                self.refresh_pending_session_modes(cx);
                 self.finish_thinking(aborted);
                 if aborted {
                     self.status = "已停止当前回复".into();
