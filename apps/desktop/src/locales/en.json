@@ -2111,7 +2111,7 @@
   "更新渠道与当前桌面版本不匹配。": "The update channel does not match this installed version.",
   "更新下载收据不匹配。": "The download confirmation did not match the selected update.",
   "安装更新并重启？": "Install the update and restart?",
-  "Hive 将保存草稿、关闭后台和终端，再启动更新后的桌面应用。": "Hive will save drafts, close the backend and terminals, and start the updated desktop app.",
+  "Hive 将保存草稿、关闭后台和终端，再启动更新后的桌面应用。如果安装被中断，请关闭所有 Hive 窗口，再运行安装目录旁的 Recover Hive Desktop 文件。": "Hive will save drafts, close the backend and terminals, and start the updated desktop app. If installation is interrupted, close all Hive windows and run Recover Hive Desktop next to the installation folder.",
   "安装并重启": "Install and restart",
   "正在准备安装…": "Preparing installation…",
   "已安装桌面更新": "Desktop update installed",

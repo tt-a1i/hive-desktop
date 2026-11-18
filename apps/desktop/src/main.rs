@@ -111,11 +111,16 @@ fn main() {
             "version": env!("CARGO_PKG_VERSION"),
             "platform": platform,
             "arch": arch,
+            "installerProtocol": 2,
         }));
         return;
     }
     #[cfg(target_os = "macos")]
     shell_owner::run_if_requested();
+    if let Err(error) = desktop_update::authorize_candidate_startup() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
     gpui_kit::application()
         .with_assets(gpui_kit::assets::AllAssets)
         .with_quit_mode(QuitMode::LastWindowClosed)

@@ -161,7 +161,7 @@ impl HiveApp {
             dialog
                 .title(tr("安装更新并重启？"))
                 .description(tr(
-                    "Hive 将保存草稿、关闭后台和终端，再启动更新后的桌面应用。",
+                    "Hive 将保存草稿、关闭后台和终端，再启动更新后的桌面应用。如果安装被中断，请关闭所有 Hive 窗口，再运行安装目录旁的 Recover Hive Desktop 文件。",
                 ))
                 .show_cancel(true)
                 .cancel_text(tr("取消"))

@@ -139,4 +139,5 @@ export async function verifyDesktopPackage(root: string, expectedVersion: string
       throw new Error('macOS application metadata does not match the selected release');
     }
   }
+  return { executableSha256: identity.executableSha256 as string, installerProtocol: identity.installerProtocol as unknown };
 }

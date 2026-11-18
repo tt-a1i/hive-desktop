@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { constants } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { desktopPackagePaths, hashDesktopFile, installDesktopUpdate } from '../src/desktop-update-installer.js';
+import { promisify } from 'node:util';
+import { desktopPackagePaths, hashDesktopFile, installDesktopUpdate, prepareDesktopRecoveryEntry } from '../src/desktop-update-installer.js';
 
 const fixture = await realpath(await mkdtemp(join(tmpdir(), 'hive-install-')));
 const preload = join(fixture, 'startup.cjs');
@@ -69,10 +72,85 @@ async function checkTransaction(healthy: boolean) {
   assert.equal(await readFile(draft, 'utf8'), 'User draft must survive replacement.');
 }
 
+async function checkInterruptedReplacement() {
+  const root = join(fixture, 'interrupted');
+  const installation = join(root, 'installation');
+  const dataDirectory = join(root, 'data');
+  await mkdir(join(dataDirectory, 'desktop-updates'), { recursive: true });
+  const draft = join(dataDirectory, 'draft.txt');
+  await writeFile(draft, 'Draft before interruption');
+  const current = await executable(installation, '0.1.0', true);
+  const transaction = await mkdtemp(join(root, '.hive-desktop-install-'));
+  await executable(join(transaction, 'next'), '0.1.1', true);
+  const program = join(transaction, 'installer.mjs');
+  const node = join(transaction, process.platform === 'win32' ? 'node.exe' : 'node');
+  const packagedRuntime = process.env.HIVE_DESKTOP_TEST_RUNTIME;
+  const compiledInstaller = packagedRuntime
+    ? join(dirname(packagedRuntime), 'desktop-update-installer.js')
+    : new URL('../dist/desktop-update-installer.js', import.meta.url);
+  await copyFile(compiledInstaller, program);
+  await copyFile(binary, node, constants.COPYFILE_FICLONE);
+  await writeFile(join(transaction, 'install-plan.json'), JSON.stringify({
+    installation, dataDirectory, fromVersion: '0.1.0', toVersion: '0.1.1',
+    oldExecutableSha256: checksum, newExecutableSha256: checksum,
+  }));
+  const entry = await prepareDesktopRecoveryEntry(transaction);
+  const gate = join(transaction, 'after-first-rename.cjs');
+  const marker = join(transaction, 'backup-moved');
+  // The real first rename has happened when the process reaches this barrier.
+  // Pause only this test child so termination lands before the second rename.
+  await writeFile(gate, `
+    const fs = require('node:fs/promises');
+    const {syncBuiltinESMExports} = require('node:module');
+    const rename = fs.rename;
+    fs.rename = async (from, to) => {
+      await rename(from, to);
+      if (to === process.env.HIVE_TEST_PREVIOUS) {
+        await fs.writeFile(process.env.HIVE_TEST_MARKER, 'moved');
+        await new Promise(resolve => setTimeout(resolve, 30000));
+      }
+    };
+    syncBuiltinESMExports();
+  `);
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.NODE_OPTIONS;
+  const original = spawn(binary, ['-e', ''], { env, stdio: 'ignore' });
+  await once(original, 'exit');
+  const installer = spawn(node, [program, String(original.pid)], {
+    stdio: 'ignore',
+    env: { ...env, NODE_OPTIONS: `--require "${gate.replaceAll('\\', '/')}"`,
+      HIVE_TEST_PREVIOUS: join(transaction, 'previous'), HIVE_TEST_MARKER: marker },
+  });
+  const exited = once(installer, 'exit');
+  const recover = () => promisify(execFile)(node, [program, '--recover'], { env, timeout: 10000 });
+  try {
+    for (let i = 0; i < 200; i++) {
+      assert.equal(installer.exitCode, null, 'installer exited before first rename');
+      if (await readFile(marker, 'utf8').catch(() => '') === 'moved') break;
+      await delay(25);
+    }
+    assert.equal(await readFile(marker, 'utf8'), 'moved');
+    await assert.rejects(readFile(current), { code: 'ENOENT' });
+    await assert.rejects(recover(), /Another desktop installer is running/);
+  } finally {
+    if (installer.exitCode === null && installer.signalCode === null) installer.kill('SIGKILL');
+    await exited;
+  }
+  assert.match(await readFile(entry, 'utf8'), /installer\.mjs.*--recover/);
+  const { stdout } = await recover();
+  assert.match(stdout, /0\.1\.0 was recovered/);
+  assert.equal(JSON.parse(await readFile(join(dirname(current), 'fixture.json'), 'utf8')).version, '0.1.0');
+  const receipt = JSON.parse(await readFile(join(dataDirectory, 'desktop-updates/install-result.json'), 'utf8'));
+  assert.equal(receipt.state, 'rolledBack');
+  assert.equal(await readFile(draft, 'utf8'), 'Draft before interruption');
+  assert.match((await recover()).stdout, /already available/);
+}
+
 try {
   await checkTransaction(true);
   await checkTransaction(false);
-  console.log('DESKTOP_UPDATE_INSTALLER_OK: real process readiness, installation replacement, failed-start rollback, and unchanged user data.');
+  await checkInterruptedReplacement();
+  console.log('DESKTOP_UPDATE_INSTALLER_OK: replacement, failed-start rollback, interrupted-installer recovery, and unchanged user data.');
 } finally {
   if (previousOptions === undefined) delete process.env.NODE_OPTIONS;
   else process.env.NODE_OPTIONS = previousOptions;

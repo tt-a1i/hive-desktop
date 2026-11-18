@@ -3,7 +3,7 @@ import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpa
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractDesktopUpdate, verifyDesktopPackage } from './desktop-update-archive.js';
-import { desktopPackagePaths, hashDesktopFile, type DesktopInstallPlan } from './desktop-update-installer.js';
+import { desktopPackagePaths, hashDesktopFile, prepareDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
 
 const manifestLimit = 64 * 1024;
 const archiveLimit = 2 * 1024 * 1024 * 1024;
@@ -18,7 +18,8 @@ type Check =
   | { state: 'unsupported'; installedVersion: string; version: string }
   | ({ state: 'available'; installedVersion: string; staged?: true } & Candidate);
 type Available = Extract<Check, { state: 'available' }>;
-type Prepared = { directory: string; packageRoot: string; version: string; sha256: string };
+type Prepared = { directory: string; packageRoot: string; version: string; sha256: string;
+  identity: Awaited<ReturnType<typeof verifyDesktopPackage>> };
 type Installer = { executable: string; program: string; version: string; sha256: string };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -225,8 +226,11 @@ export class DesktopUpdates {
     }
   }
 
-  prepare(expectedVersion: string, sha256: string): Promise<Prepared> {
-    return this.prepareExclusively(() => this.preparePackage(expectedVersion, sha256));
+  prepare(expectedVersion: string, sha256: string): Promise<Omit<Prepared, 'identity'>> {
+    return this.prepareExclusively(async () => {
+      const { directory, packageRoot, version, sha256: digest } = await this.preparePackage(expectedVersion, sha256);
+      return { directory, packageRoot, version, sha256: digest };
+    });
   }
 
   prepareInstaller(expectedVersion: string, sha256: string): Promise<Installer> {
@@ -245,15 +249,16 @@ export class DesktopUpdates {
       if (!relativeData || (!isAbsolute(relativeData) && relativeData !== '..' && !relativeData.startsWith(`..${sep}`))) {
         throw new Error('Desktop update cannot move an installation containing its own user data');
       }
-      await verifyDesktopPackage(installation, policy.installedVersion, signal);
+      const currentIdentity = await verifyDesktopPackage(installation, policy.installedVersion, signal);
       const prepared = await this.preparePackage(expectedVersion, sha256, dirname(installation));
       try {
+        if (prepared.identity.installerProtocol !== 2) throw new Error('This update does not support recoverable installation');
         const next = join(prepared.directory, 'next');
         await rename(prepared.packageRoot, next);
         const plan: DesktopInstallPlan = {
           installation, dataDirectory, fromVersion: policy.installedVersion, toVersion: expectedVersion,
-          oldExecutableSha256: await hashDesktopFile(current.executable, signal),
-          newExecutableSha256: await hashDesktopFile(desktopPackagePaths(next).executable, signal),
+          oldExecutableSha256: currentIdentity.executableSha256,
+          newExecutableSha256: prepared.identity.executableSha256,
         };
         const executable = join(prepared.directory, process.platform === 'win32' ? 'node.exe' : 'node');
         const program = join(prepared.directory, 'installer.mjs');
@@ -262,6 +267,7 @@ export class DesktopUpdates {
         await copyFile(new URL('./desktop-update-installer.js', import.meta.url), program);
         await writeFile(join(prepared.directory, 'install-plan.json'), JSON.stringify(plan), { flag: 'wx', mode: 0o600, flush: true });
         signal.throwIfAborted();
+        await prepareDesktopRecoveryEntry(prepared.directory);
         return { executable, program, version: prepared.version, sha256: prepared.sha256 };
       } catch (error) {
         await rm(prepared.directory, { recursive: true, force: true });
@@ -304,10 +310,10 @@ export class DesktopUpdates {
         throw new Error('Staged desktop update archive verification failed');
       }
       const packageRoot = await extractDesktopUpdate(snapshot, join(directory, 'package'), signal);
-      await verifyDesktopPackage(packageRoot, expectedVersion, signal);
+      const identity = await verifyDesktopPackage(packageRoot, expectedVersion, signal);
       signal.throwIfAborted();
       await rm(snapshot);
-      return { directory, packageRoot, version: expectedVersion, sha256 };
+      return { directory, packageRoot, version: expectedVersion, sha256, identity };
     } catch (error) {
       await rm(directory, { recursive: true, force: true });
       throw error;

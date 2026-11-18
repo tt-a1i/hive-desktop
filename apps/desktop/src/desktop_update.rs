@@ -41,6 +41,45 @@ impl Installer {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CandidateLaunch {
+    state: String,
+    to_version: String,
+    candidate_pid: Option<u32>,
+}
+
+pub(crate) fn authorize_candidate_startup() -> std::io::Result<()> {
+    if std::env::var_os("HIVE_DESKTOP_UPDATE_AUTHORIZE").as_deref()
+        != Some(std::ffi::OsStr::new("1"))
+    {
+        return Ok(());
+    }
+    let Some(path) = std::env::var_os("HIVE_DESKTOP_UPDATE_READY").map(PathBuf::from) else {
+        return Err(std::io::Error::other("Missing update startup path"));
+    };
+    if path.file_name().and_then(|name| name.to_str()) != Some("ready.json") {
+        return Err(std::io::Error::other("Invalid update startup path"));
+    }
+    let journal = path.with_file_name("install-status.json");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if let Some(record) = read_small_json::<CandidateLaunch>(&journal)
+            && record.state == "starting"
+            && record.to_version == env!("CARGO_PKG_VERSION")
+            && record.candidate_pid == Some(std::process::id())
+        {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(std::io::Error::other(
+                "Desktop installer did not confirm startup",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 pub(crate) fn report_startup() -> std::io::Result<()> {
     use std::io::Write;
     let Some(path) = std::env::var_os("HIVE_DESKTOP_UPDATE_READY").map(PathBuf::from) else {
@@ -72,10 +111,11 @@ pub(crate) struct InstallReceipt {
 }
 
 pub(crate) fn read_receipt(data_directory: &Path) -> Option<InstallReceipt> {
-    let path = data_directory.join("desktop-updates/install-result.json");
+    read_small_json(&data_directory.join("desktop-updates/install-result.json"))
+}
+
+fn read_small_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    use std::io::Read;
     let file = std::fs::File::open(path).ok()?;
-    if file.metadata().ok()?.len() > 16_384 {
-        return None;
-    }
-    serde_json::from_reader(file).ok()
+    serde_json::from_reader(file.take(16_384)).ok()
 }
