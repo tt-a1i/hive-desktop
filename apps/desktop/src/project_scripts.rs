@@ -237,8 +237,15 @@ impl Page {
     pub(crate) fn new(
         app: WeakEntity<HiveApp>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        if let Some(owner) = app.upgrade() {
+            cx.observe(&owner, |page, _, cx| {
+                if !page.visible(cx) {
+                    page.release_output(cx);
+                }
+            }).detach();
+        }
         Self {
             app,
             workspace: None,
@@ -277,6 +284,9 @@ impl Page {
                 (None, None) => false,
                 _ => true,
             };
+        if changed {
+            self.release_output(cx);
+        }
         self.workspace = workspace;
         self.scope = scope;
         if let Some(workspace) = &self.workspace {
@@ -367,6 +377,17 @@ impl Page {
         self.workspace
             .as_ref()
             .and_then(|ws| self.states.get_mut(ws))
+    }
+    fn release_output(&mut self, cx: &mut Context<Self>) {
+        if self.log_busy || self.state().is_some_and(|state| state.output.bytes.capacity() > 0) {
+            self.log_generation += 1;
+            self.log_busy = false;
+            if let Some(state) = self.state_mut() {
+                state.output = Output::default();
+            }
+            self.output_scroll = ScrollHandle::new();
+            cx.notify();
+        }
     }
     fn reload_settings(&mut self, cx: &mut Context<Self>) {
         if self.settings_busy || !self.valid(cx) {
@@ -836,20 +857,20 @@ impl Page {
         .detach();
     }
     fn load_output(&mut self, next_segment: bool, cx: &mut Context<Self>) {
-        if self.log_busy || !self.valid(cx) {
+        if self.log_busy || !self.visible(cx) {
             return;
         }
         let scope = self.scope.clone().unwrap();
-        let state = self.state_mut().unwrap();
+        let state = self.state().unwrap();
         let Some(run_id) = state.selected_run.clone() else {
             return;
         };
-        let mut output = state.output.clone();
-        if next_segment {
-            output.next_segment();
-        }
-        let offset = output.next;
-        let limit = 65536.min(UI_LOG_LIMIT - output.bytes.len());
+        let offset = state.output.next;
+        let limit = if next_segment {
+            65536
+        } else {
+            65536.min(UI_LOG_LIMIT - state.output.bytes.len())
+        };
         if limit == 0 {
             return;
         }
@@ -858,10 +879,50 @@ impl Page {
         let log_generation = self.log_generation;
         self.log_busy = true;
         self.error = None;
-        cx.spawn(async move|this,cx|{
-            if !this.read_with(cx,|this,cx|this.accepts(epoch,cx)&&this.log_generation==log_generation).unwrap_or(false){return;}
-            let result=scope.runtime.request("script.get",json!({"workspaceId":scope.workspace,"runId":run_id,"offset":offset,"limit":limit})).await.and_then(decode::<RunPage>).and_then(|page|{page.run.validate(&scope.workspace)?;if page.run.run_id!=run_id{return Err("Script output identity mismatch".into());}Ok(page)});
-            let _=this.update(cx,|this,cx|{if !this.accepts(epoch,cx)||this.log_generation!=log_generation{return;}this.log_busy=false;match result{Ok(page)=>{let state=this.state_mut().unwrap();if state.selected_run.as_ref()!=Some(&run_id){return;}if let Err(error)=output.append(page.output,limit){this.error=Some(error);}else{state.output=output;if let Some(run)=state.runs.iter_mut().find(|r|r.run_id==run_id){*run=page.run;}}},Err(error)=>this.error=Some(error)}cx.notify();});
+        cx.spawn(async move |this, cx| {
+            let current = |page: &Self, cx: &App| {
+                page.epoch == epoch && page.log_generation == log_generation && page.visible(cx)
+            };
+            if !this.read_with(cx, current).unwrap_or(false) {
+                return;
+            }
+            let result = scope.runtime.request(
+                "script.get",
+                json!({"workspaceId":scope.workspace,"runId":run_id,"offset":offset,"limit":limit}),
+            ).await.and_then(decode::<RunPage>).and_then(|page| {
+                page.run.validate(&scope.workspace)?;
+                if page.run.run_id != run_id {
+                    return Err("Script output identity mismatch".into());
+                }
+                Ok(page)
+            });
+            let _ = this.update(cx, |this, cx| {
+                if !current(this, cx) {
+                    return;
+                }
+                this.log_busy = false;
+                let state = this.state_mut().unwrap();
+                if state.selected_run.as_ref() != Some(&run_id) {
+                    return;
+                }
+                match result {
+                    Ok(page) => {
+                        let update = if next_segment {
+                            let mut segment = state.output.next_segment();
+                            segment.append(page.output, limit).map(|()| state.output = segment)
+                        } else {
+                            state.output.append(page.output, limit)
+                        };
+                        if let Err(error) = update {
+                            this.error = Some(error);
+                        } else if let Some(run) = state.runs.iter_mut().find(|run| run.run_id == run_id) {
+                            *run = page.run;
+                        }
+                    }
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
         }).detach();
         cx.notify();
     }
@@ -1005,7 +1066,7 @@ impl Render for Page {
                     .child(crate::text_reading::region("script-output".into(),tr("项目脚本输出").to_owned(),&self.output_scroll,px(320.),cx).child(crate::text_reading::selectable_text("script-output-text",state.output.text())))
                     .child(h_flex().flex_wrap().gap_2()
                         .child(crate::focus_scroll::Reveal::new("load-script-output-reveal",&scroll,Button::new("load-script-output").outline().small().label(if state.output.bytes.len()>=UI_LOG_LIMIT{tr("读取下一段（替换当前显示）")}else{tr("读取下一页输出")}).disabled(!online||self.log_busy).on_click(cx.listener(|this,_,_,cx|{let next=this.state().is_some_and(|s|s.output.bytes.len()>=UI_LOG_LIMIT);this.load_output(next,cx);}))))
-                        .child(crate::focus_scroll::Reveal::new("copy-script-output-reveal",&scroll,Button::new("copy-script-output").outline().small().label(tr("复制当前输出")).on_click(cx.listener(|this,_,_,cx|{if let Some(state)=this.state(){cx.write_to_clipboard(ClipboardItem::new_string(state.output.text()));}}))))))
+                        .child(crate::focus_scroll::Reveal::new("copy-script-output-reveal",&scroll,Button::new("copy-script-output").outline().small().label(tr("复制当前输出")).on_click(cx.listener(|this,_,_,cx|{if let Some(state)=this.state(){cx.write_to_clipboard(ClipboardItem::new_string(state.output.text().to_string()));}}))))))
         } else {
             content
         };

@@ -1,4 +1,6 @@
+use gpui_kit::SharedString;
 use serde::Deserialize;
+use std::cell::OnceCell;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Navigation<'a> {
@@ -185,12 +187,13 @@ pub struct OutputPage {
     pub bytes: Vec<u8>,
     pub truncated: bool,
 }
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct Output {
     pub start: usize,
     pub next: usize,
     pub bytes: Vec<u8>,
     pub truncated: bool,
+    display: OnceCell<SharedString>,
 }
 impl Output {
     pub fn append(&mut self, page: OutputPage, requested: usize) -> Result<(), String> {
@@ -207,10 +210,13 @@ impl Output {
         }
         self.next = page.next_offset;
         self.truncated = page.truncated;
+        if !page.bytes.is_empty() {
+            self.display.take();
+        }
         self.bytes.extend(page.bytes);
         Ok(())
     }
-    pub fn next_segment(&mut self) {
+    pub fn next_segment(&self) -> Self {
         // Carry a split final UTF-8 scalar into the next bounded display segment.
         let tail = (1..=3.min(self.bytes.len()))
             .find(|length| {
@@ -220,11 +226,18 @@ impl Output {
             })
             .unwrap_or(0);
         let carry = self.bytes[self.bytes.len() - tail..].to_vec();
-        self.start = self.next - carry.len();
-        self.bytes = carry;
+        Self {
+            start: self.next - carry.len(),
+            next: self.next,
+            bytes: carry,
+            truncated: self.truncated,
+            display: OnceCell::new(),
+        }
     }
-    pub fn text(&self) -> String {
-        String::from_utf8_lossy(&self.bytes).into_owned()
+    pub fn text(&self) -> SharedString {
+        self.display
+            .get_or_init(|| SharedString::new(String::from_utf8_lossy(&self.bytes)))
+            .clone()
     }
 }
 pub fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, String> {
@@ -233,6 +246,22 @@ pub fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn output_only_rebuilds_its_display_when_bytes_change() {
+        let mut output = Output::default();
+        let first = vec![b'a'; 4096];
+        output.append(OutputPage {
+            offset: 0, next_offset: first.len(), bytes: first, truncated: false,
+        }, 65536).unwrap();
+        let display = output.text();
+        assert_eq!(display.as_str().as_ptr(), output.text().as_str().as_ptr());
+        output.append(OutputPage {
+            offset: 4096, next_offset: 4097, bytes: vec![b'!'], truncated: false,
+        }, 65536).unwrap();
+        assert_eq!(display.len(), 4096);
+        assert!(output.text().ends_with('!'));
+    }
+
     #[test]
     fn byte_pages_reassemble_split_utf8_and_reject_skipped_or_oversized_pages() {
         let mut output = Output::default();
@@ -258,7 +287,7 @@ mod tests {
                 65536,
             )
             .unwrap();
-        assert_eq!(output.text(), "中");
+        assert_eq!(output.text().as_str(), "中");
         assert!(
             output
                 .append(
@@ -288,7 +317,7 @@ mod tests {
         assert_eq!(output.next, 3);
         output.bytes.extend([0xf0, 0x9f]);
         output.next += 2;
-        output.next_segment();
+        output = output.next_segment();
         output
             .append(
                 OutputPage {
@@ -300,7 +329,7 @@ mod tests {
                 65536,
             )
             .unwrap();
-        assert_eq!(output.text(), "😀");
+        assert_eq!(output.text().as_str(), "😀");
         assert_eq!(output.start, 3);
         assert!(output.truncated);
     }
