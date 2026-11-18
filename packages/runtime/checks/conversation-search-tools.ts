@@ -9,7 +9,7 @@ import { projectClaudeMessage } from '../src/agents/claude-history.js';
 import type { ChatRecord } from '../src/chat-index.js';
 const dir = await mkdtemp(join(tmpdir(), 'hive-search-tools-'));
 try {
-  const opts = { workspacePath:dir, codexDirectory:dir, claudeDirectory:dir };
+  const opts = { codexDirectory:dir, claudeDirectory:dir };
   const base: ChatRecord = {id:'s',workspaceId:'w',backend:'codex',codexThreadId:'codex',title:'',sessionFile:null,updatedAt:1};
   const projection = new CodexProjection(dir, 'codex');
   projection.put({id:'cmd',type:'commandExecution',status:'completed',command:'rg 旧文 docs/路径.md',aggregatedOutput:'shown output'},'t');

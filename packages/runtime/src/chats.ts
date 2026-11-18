@@ -638,9 +638,9 @@ export class Chats implements StructuredSessionPort {
           try {
             const directory = hit.session.execution ? await this.executionDirectory(hit.session.workspaceId, hit.session.id) : hit.workspacePath;
             result = await searchConversation(hit.session, query, {
-              workspacePath: directory,
               codexDirectory: join(this.sessionDir, '..', 'codex'),
               claudeDirectory: join(this.sessionDir, '..', 'claude'),
+              ...(hit.session.backend === 'claude' && {readClaudeHistory: () => this.readProfileClaudeHistory(hit.session, directory)}),
               ...(live && !live.failure && !live.cleanup && {liveHistory: live.handle.snapshot(), liveBusy: live.queue.busy}),
             });
           } catch (error) {
@@ -960,6 +960,11 @@ export class Chats implements StructuredSessionPort {
       eventSequence: this.sequences.get(id) ?? 0,
     };
   }
+  private async readProfileClaudeHistory(record: ChatRecord, directory: string) {
+    if (!record.nativeclaudeSessionId || !record.profile) throw new Error('The saved Claude session or profile reference is missing; its native history directory is unavailable');
+    const profile = await this.profiles.getRef(record.profile, 'claude');
+    return readClaudeSessionMessages(record.nativeclaudeSessionId, directory, nativeProfileLaunch(profile).env, this.closeAbort.signal);
+  }
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
   private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError) {
     const workspace = await this.workspace(record.workspaceId);
@@ -1005,9 +1010,7 @@ export class Chats implements StructuredSessionPort {
       } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
         const metadata = readClaudeMetadata(join(this.sessionDir, '..', 'claude'), record.nativeclaudeSessionId);
         const projection = new ClaudeProjection(() => metadata);
-        if (!record.profile) throw new Error('The saved Claude profile reference is missing; its native history directory is unavailable');
-        const profile=await this.profiles.getRef(record.profile,'claude');
-        const messages=await readClaudeSessionMessages(record.nativeclaudeSessionId,record.execution?.path ?? workspace.path,nativeProfileLaunch(profile).env,this.closeAbort.signal);
+        const messages = await this.readProfileClaudeHistory(record, record.execution?.path ?? workspace.path);
         for (const message of messages) projection.put(message);
         const snapshot = projection.snapshot(); history = snapshot.history; historyMessageIds = snapshot.historyMessageIds;
         historyWarning = 'Claude SDK history completeness cannot be verified; no native process was opened';

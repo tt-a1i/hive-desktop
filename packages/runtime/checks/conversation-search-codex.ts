@@ -9,7 +9,7 @@ import type { ChatRecord } from '../src/chat-index.js';
 const dir = await mkdtemp(join(tmpdir(), 'hive-search-codex-'));
 try {
   const record: ChatRecord = { id: 's', workspaceId: 'w', title: '', backend: 'codex', codexThreadId: 'native', sessionFile: null, updatedAt: 1 };
-  const options = {workspacePath: dir, codexDirectory: dir, claudeDirectory: dir};
+  const options = {codexDirectory: dir, claudeDirectory: dir};
   const projection = new CodexProjection(dir, 'native');
   const turn = (id: string, text: string) => ({id, status: 'completed', items: [{id: `${id}-item`, type: 'agentMessage', text}]});
   projection.recover([turn('first', 'hello'), turn('second', 'discard this')], true);

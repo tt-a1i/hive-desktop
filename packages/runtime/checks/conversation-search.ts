@@ -11,7 +11,7 @@ import type { ChatRecord } from '../src/chat-index.js';
 const dir = await mkdtemp(join(tmpdir(), 'hive-search-'));
 try {
   const file = join(dir, 'session.jsonl');
-  const options = { workspacePath: dir, codexDirectory: dir, claudeDirectory: dir };
+  const options = { codexDirectory: dir, claudeDirectory: dir };
   const record: ChatRecord = { id: 's', workspaceId: 'w', title: 'test', backend: 'pi', sessionFile: file, updatedAt: 1 };
   const header = { type: 'session', id: 'session', version: 3, timestamp: '2026-01-01T00:00:00Z', cwd: dir };
   const entry = (id: string, parentId: string | null, text: string) => ({ type: 'message', id, parentId, timestamp: '2026-01-01T00:00:00Z', message: { role: 'user', content: [{type: 'text', text}], timestamp: 1 } });

@@ -2,7 +2,7 @@ import { AcpHistory } from './agents/acp-history.js';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
-import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
+import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { ChatRecord } from './chat-index.js';
 import { externalPiBranch, externalPiMessage } from './agents/external-pi-history.js';
@@ -16,11 +16,12 @@ import { readFile } from 'node:fs/promises';
 export type ConversationSearchMatch = { messageId: string; snippet: string };
 export type ConversationSearchResult = { matches: ConversationSearchMatch[]; complete: boolean; warning?: string };
 export type ConversationSearchOptions = {
-  workspacePath: string;
   /** Runtime currently processing a turn; some providers emit tool updates outside snapshots. */
   liveBusy?: boolean;
   codexDirectory: string;
   claudeDirectory: string;
+  /** Reads the native transcript through the session's pinned profile. */
+  readClaudeHistory?: () => Promise<SessionMessage[]>;
   /** A live snapshot supplies native message IDs; delivery IDs are normalized here. */
   liveHistory?: { history: readonly unknown[]; historyMessageIds: readonly string[]; activeMessage?: { messageId: string; message: unknown } };
 };
@@ -274,7 +275,8 @@ export async function searchConversation(record: ChatRecord, query: string, opti
         const sessionId = record.nativeclaudeSessionId;
         const metadata = readClaudeMetadata(options.claudeDirectory, sessionId);
         const projection = new ClaudeProjection(() => metadata);
-        const messages = await getSessionMessages(sessionId, { dir: options.workspacePath });
+        if (!options.readClaudeHistory) throw new Error('The saved Claude profile is unavailable for history search');
+        const messages = await options.readClaudeHistory();
         for (const message of messages) projection.put(message);
         const snapshot = projection.snapshot();
         rows = snapshot.history.map((message, i) => ({ id: desktopMessageId(snapshot.historyMessageIds[i]!, message), message }));

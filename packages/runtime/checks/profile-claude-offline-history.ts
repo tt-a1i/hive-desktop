@@ -28,5 +28,10 @@ try{
  index=(runtime.chats as unknown as {index:ChatIndex}).index;
  const unknownId=randomUUID();index.save({...index.get(chat.id),id:unknownId,profile:{id:'unknown-profile-fixture',revision:1}});
  const unknown=await runtime.chats.open(unknownId);assert.equal(unknown.readOnly,true);assert.equal(unknown.history.length,0);assert.match(unknown.historyWarning!,/PROFILE_NOT_FOUND/);assert.equal(process.env.CLAUDE_CONFIG_DIR,hostDir);
- console.log(JSON.stringify({pass:true,directory,officialReader:true,disabledProfileHistory:true,unknownRefNoHostFallback:true,coldIdentity:true,noVendorProcess:true,noInference:true}));
+ const profileSearch=await runtime.chats.search('PROFILE_ONLY_SYNTHETIC_HISTORY',false,0,workspace.id);
+ assert.deepEqual(profileSearch.matches.map(hit=>hit.session.id),[chat.id],'search reads the pinned profile, including disabled profiles');
+ assert.match(profileSearch.incompleteHistory.find(hit=>hit.sessionId===unknownId)?.message??'',/PROFILE_NOT_FOUND/);
+ assert.equal((await runtime.chats.search('HOST_HISTORY_MUST_NOT_LEAK',false,0,workspace.id)).total,0);
+ assert.equal(process.env.CLAUDE_CONFIG_DIR,hostDir,'search does not mutate the host environment');
+ console.log(JSON.stringify({pass:true,directory,officialReader:true,disabledProfileHistory:true,unknownRefNoHostFallback:true,coldIdentity:true,searchProfileIsolation:true,noVendorProcess:true,noInference:true}));
 }finally{await runtime?.close();for(const [key,value]of Object.entries(old)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
