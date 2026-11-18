@@ -556,7 +556,9 @@ impl HiveApp {
                                                 let picker_open =
                                                     self.member_picker_target.as_ref() == Some(&id);
                                                 let chosen = member.desktop_model.as_ref();
-                                                let member_model_ready = chosen.is_some();
+                                                // ACP negotiates its model at the adapter, outside the desktop picker.
+                                                let member_model_ready =
+                                                    backend == Some("acp") || chosen.is_some();
                                                 let session_id = self
                                                     .sessions
                                                     .iter()
