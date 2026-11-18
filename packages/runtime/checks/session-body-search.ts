@@ -1,7 +1,8 @@
 /** Actual Hive workspaces + cold persisted transcripts. Never opens an Agent. */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, readFile, appendFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, appendFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ChatIndex, type ChatRecord } from '../src/chat-index.js';
@@ -95,7 +96,44 @@ try {
   assert.equal(cold.matches[0]?.bodyMatch?.messageId, 'fresh-message');
   assert.equal(events, 0);
   assert.equal(await readFile(join(data, 'chats', 'index.json'), 'utf8'), before);
-  console.log('SESSION_BODY_SEARCH_OK: cold corpus, full body, Unicode, scope, archives, pagination, invalidation, warnings; no Agents/model calls.');
+
+  // The saved transcript belongs to the conversation, even while its real Git
+  // worktree is missing. Reading must not grant permission to run at the root.
+  const project = projects[0]!;
+  const git = (...args: string[]) => execFileSync('git', ['-C', project, ...args], {stdio: 'pipe'});
+  git('init', '--template=');
+  await writeFile(join(project, 'tracked.txt'), 'original project\n');
+  git('add', 'tracked.txt');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=qa@example.invalid', '-c', 'commit.gpgSign=false', 'commit', '-m', 'fixture');
+  const owned = await runtime.chats.createRecord(workspaces[0]!, 'pi', {isolation: 'worktree'});
+  const {path: executionPath} = await runtime.chats.sessionExecution(owned.id);
+  const sessionFile = join(data, 'chats', `${owned.id}.jsonl`);
+  await writeFile(sessionFile, [
+    {type: 'session', id: owned.id, version: 3, timestamp: '2026-11-14T00:00:00Z', cwd: executionPath},
+    {type: 'message', id: 'owned-message', parentId: null, timestamp: '2026-11-14T00:00:00Z',
+      message: {role: 'user', content: [{type: 'text', text: 'recoverable worktree transcript'}], timestamp: 1}},
+  ].map(value => JSON.stringify(value)).join('\n') + '\n');
+  await runtime.close(); runtime = undefined;
+  new ChatIndex(join(data, 'chats')).save({...owned, sessionFile});
+  await rename(executionPath, executionPath + '.fixture-missing');
+  runtime = await createDesktopRuntime(data, () => events++);
+  const saved = await runtime.chats.search('recoverable worktree transcript', false, 0, workspaces[0]);
+  assert.equal(saved.matches[0]?.session.id, owned.id);
+  assert.equal(saved.matches[0]?.bodyMatch?.messageId, 'owned-message');
+  assert.ok(!saved.incompleteHistory.some(item => item.sessionId === owned.id));
+  const snapshot = await runtime.chats.open(owned.id);
+  assert.ok('readOnly' in snapshot && snapshot.readOnly);
+  assert.equal(snapshot.executionPath, executionPath);
+  assert.deepEqual(snapshot.historyMessageIds, ['owned-message']);
+  await assert.rejects(runtime.chats.sessionExecution(owned.id));
+  await assert.rejects(runtime.chats.prompt(owned.id, 'Sending must stay blocked'));
+  await assert.rejects(runtime.chats.projectFilesSearch(owned.workspaceId, 'tracked', 0, owned.id));
+  assert.equal(await readFile(join(project, 'tracked.txt'), 'utf8'), 'original project\n');
+  assert.equal(events, 0, 'Cold read of a missing worktree must not start an Agent');
+  await rename(executionPath + '.fixture-missing', executionPath);
+  assert.equal((await runtime.chats.sessionExecution(owned.id)).path, executionPath);
+  assert.deepEqual((await runtime.chats.projectFilesSearch(owned.workspaceId, 'tracked', 0, owned.id)).paths, ['tracked.txt']);
+  console.log('SESSION_BODY_SEARCH_OK: cold corpus, full body, Unicode, scope, archives, pagination, invalidation, warnings, offline worktree; no Agents/model calls.');
 } finally {
   await runtime?.close();
   await rm(directory, {recursive: true, force: true});

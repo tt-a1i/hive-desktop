@@ -111,21 +111,24 @@ try {
       assert.equal(wire.filter(row => row.backend === backend && row.method === 'turn/start').length, 1, 'Exactly one synthetic fixture turn materializes the ID');
     }
   }
-  // A missing source must be a per-chat search warning, while other title hits
-  // remain usable. Search must not launch another backend to hide the problem.
+  // A missing checkout restricts execution, while the saved transcript and
+  // other title hits remain available without relaunching any backend.
   await runtime.close(); runtime = await createDesktopRuntime(data, () => {}, options);
   const missing = records.get('pi')!; await rename(missing.root, missing.root + '.missing');
   try {
     const result = await runtime.chats.search('cwd-', false, 0, workspace.id);
-    assert.ok(result.incompleteHistory.some(item => item.sessionId === missing.record.id));
+    assert.ok(!result.incompleteHistory.some(item => item.sessionId === missing.record.id));
     assert.ok(result.matches.some(item => item.session.id === records.get('codex')!.record.id));
-    await assert.rejects(runtime.chats.open(missing.record.id), /worktree|工作树|ENOENT/i);
+    const snapshot = await runtime.chats.open(missing.record.id);
+    assert.ok('readOnly' in snapshot && snapshot.readOnly);
+    assert.equal(snapshot.executionPath, missing.root);
+    await assert.rejects(runtime.chats.sessionExecution(missing.record.id), /worktree|工作树|ENOENT/i);
   } finally { await rename(missing.root + '.missing', missing.root); }
   assert.equal((await readFile(process.env.HIVE_CWD_FIXTURE_WIRE!, 'utf8')).trim().split('\n').filter(line => JSON.parse(line).event === 'start').length,
-    wire.filter(row => row.event === 'start').length, 'Search and rejected missing-source open never launch another child');
+    wire.filter(row => row.event === 'start').length, 'Search and read-only open never launch another child');
   const after = await runtime.hive.request('GET', '/api/workspaces') as {id: string; path: string}[];
   assert.equal(after.length, 1); assert.equal(after[0]!.path, project); assert.equal(requests, 0);
-  console.log('WORKTREE_BACKEND_CWD_OK: four actual Chats.open adapters, real Pi SDK header, controlled Codex/Pi-RPC child cwd+restore args and official Claude SDK transcript; cold native identity/path retained, one unchanged Hive workspace, missing-source search warning. Synthetic protocol only; zero model requests.');
+  console.log('WORKTREE_BACKEND_CWD_OK: four actual Chats.open adapters, real Pi SDK header, controlled Codex/Pi-RPC child cwd+restore args and official Claude SDK transcript; cold native identity/path retained, one unchanged Hive workspace, read-only open of missing checkout. Synthetic protocol only; zero model requests.');
 } finally {
   await runtime?.close();
   if (server.listening) { server.close(); await once(server, 'close'); }

@@ -47,7 +47,7 @@ import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffO
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
 import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
 import { previewGithubPr, createGithubPr, updateGithubPr, type GithubPrTarget, type GithubPrWriteRequest } from './github-prs.js';
-import { createManagedWorktree, readWorktreeIntent, recoverManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
+import { createManagedWorktree, GitWorktreeError, readWorktreeIntent, recoverManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
 import { readdir, realpath } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
@@ -332,16 +332,21 @@ export class Chats implements StructuredSessionPort {
   private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
     await this.assertHistoryReady(record);
     if (!record.execution) return workspace.path;
-    const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
-    if (creation && (creation.workspaceId !== record.workspaceId || creation.backend !== record.backend
-      || creation.profile && (creation.profile.id !== record.profile?.id || creation.profile.revision !== record.profile?.revision)
-      || creation.originAgentId && creation.originAgentId !== record.originAgentId))
-      throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Worktree creation provenance and conversation identity disagree.');
-    const original = await realpath(workspace.path);
-    if (owned.projectRoot !== original || owned.executionPath !== record.execution.path || owned.branch !== record.execution.branch) {
-      throw new Error('会话工作树与团队项目或保存的执行目录不匹配；已停止恢复，请检查工作树。');
+    try {
+      const {record: owned, creation} = await readWorktreeIntent(this.dataDir, record.id);
+      if (creation && (creation.workspaceId !== record.workspaceId || creation.backend !== record.backend
+        || creation.profile && (creation.profile.id !== record.profile?.id || creation.profile.revision !== record.profile?.revision)
+        || creation.originAgentId && creation.originAgentId !== record.originAgentId))
+        throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'Worktree creation provenance and conversation identity disagree.');
+      const original = await realpath(workspace.path);
+      if (owned.projectRoot !== original || owned.executionPath !== record.execution.path || owned.branch !== record.execution.branch) {
+        throw new GitWorktreeError('IDENTITY_MISMATCH', '会话工作树与团队项目或保存的执行目录不匹配；已停止恢复，请检查工作树。');
+      }
+      return await validateManagedWorktree(this.dataDir, owned);
+    } catch (error) {
+      if (error instanceof GitWorktreeError || error instanceof SessionIdentityError) throw error;
+      throw new GitWorktreeError('WORKTREE_UNAVAILABLE', error instanceof Error ? error.message : String(error), {cause: error});
     }
-    return validateManagedWorktree(this.dataDir, owned);
   }
   async sessionExecution(id: string) {
     const record = this.index.get(id);
@@ -695,11 +700,13 @@ export class Chats implements StructuredSessionPort {
           const live = this.live.get(hit.session.id);
           let result: Awaited<ReturnType<typeof searchConversation>>;
           try {
-            const directory = hit.session.execution ? await this.executionDirectory(hit.session.workspaceId, hit.session.id) : hit.workspacePath;
+            // Search persisted history even when the original checkout is
+            // offline. Fork and rewind operation gates still apply.
+            await this.assertHistoryReady(hit.session);
             result = await searchConversation(hit.session, query, {
               codexDirectory: join(this.sessionDir, '..', 'codex'),
               claudeDirectory: join(this.sessionDir, '..', 'claude'),
-              ...(hit.session.backend === 'claude' && {readClaudeHistory: () => this.readProfileClaudeHistory(hit.session, directory)}),
+              ...(hit.session.backend === 'claude' && {readClaudeHistory: () => this.readProfileClaudeHistory(hit.session, hit.session.execution?.path ?? hit.workspacePath)}),
               ...(live && !live.failure && !live.cleanup && {liveHistory: live.handle.snapshot(), liveBusy: live.queue.busy}),
             });
           } catch (error) {
@@ -1030,7 +1037,7 @@ export class Chats implements StructuredSessionPort {
     return readClaudeSessionMessages(record.nativeclaudeSessionId, directory, nativeProfileLaunch(profile).env, this.closeAbort.signal);
   }
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
-  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError) {
+  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError) {
     const workspace = await this.workspace(record.workspaceId);
     let history: unknown[] = [], historyMessageIds: string[] = [];
     let historyWarning: string | undefined;
@@ -1279,7 +1286,7 @@ export class Chats implements StructuredSessionPort {
     const snapshot=this.snapshot(id,await this.require(id),includeLiveHistory);
     return record.handoff?{...snapshot,passive:false,handoffSnapshot:await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}:snapshot; }
     catch (error) {
-      if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError || error instanceof WorktreeInitializationError || error instanceof HandoffError)) throw error;
+      if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError || error instanceof WorktreeInitializationError || error instanceof HandoffError || error instanceof GitWorktreeError)) throw error;
       const live = this.live.get(id);
       if (live) await this.stopLive(id, live);
       const current=this.index.get(id);

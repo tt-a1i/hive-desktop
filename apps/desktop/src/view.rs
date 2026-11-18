@@ -948,7 +948,10 @@ impl HiveApp {
             .when_some(self.current_history_access(), |surface, access| {
                 surface
                     .when_some(access.handoff_snapshot.as_ref(), |surface, snapshot| surface.child(crate::session_handoff::handoff_origin(snapshot, access.handoff_delivery.as_ref(), cx)))
-                    .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("此历史会话仅供阅读；草稿已保留，不能发送、继续或更改模型。"))))
+                    .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none(), |surface| {
+                        let notice = tr("此历史会话仅供阅读；草稿已保留，不能发送、继续或更改模型。");
+                        surface.child(div().id("read-only-conversation-status").role(Role::Status).aria_label(notice).px_1().text_xs().text_color(Color::Secondary.get(cx)).child(notice))
+                    })
                     .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
                     .when_some(access.identity_error.as_ref().filter(|error| error.code != "PASSIVE_HANDOFF"), |surface, error| surface.child(div().px_1().text_xs().text_color(Color::Error.get(cx)).child(format!("{}: {}", error.code, error.message))))
                     .when(access.history_incomplete || access.history_warning.is_some(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(access.history_warning.clone().unwrap_or_else(|| tr("此会话的历史记录不完整。").to_owned()))))
@@ -1141,6 +1144,7 @@ impl Render for HiveApp {
             .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Pi))
             && self.conversation_ready
             && self.model.is_none()
+            && !self.conversation_is_read_only()
             && !self.current_history_access().is_some_and(|a| a.handoff_passive())
             && !self.loading;
         self.ensure_attachment_previews(cx);
