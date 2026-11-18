@@ -20,10 +20,12 @@
 
 命令行记录的总结果仍为失败，因为退出后立即采样发现三个后台后代短时存活，稍后独立检查均已消失。随后用同一测试数据在 Mac 包的实际窗口重开主控并恢复最终结果，原生守卫记录 `thread/resume` 和历史读取，零新推理。用窗口关闭退出为 0，受桌面进程监管的后台进程组已经为空。证据见该目录的 `receipt.json`、`owned-pid-exits.json` 和 `native-cold-lifecycle-receipt.json`。
 
-截至本记录，[当前代码的 Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44336630371) 的 CLI 与进程监督独立作业通过，主作业在冷恢复后显式继续队列的检查中超时，原因待定位。正式发布和安装替换均未执行。
+`6c683e1` 的 [Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44336630371) 的 CLI 与进程监督独立作业通过，主作业在冷恢复后显式继续队列的检查中超时。已增加失败诊断。正式发布和安装替换均未执行。
 
 ## 桌面更新检查与下载
 
 测试包可通过 `package-desktop.mjs --update-channel` 内置渠道地址与 Ed25519 公钥。桌面在“关于与维护”手动检查，核对签名、当前版本和平台，再在用户选择下载时重新确认清单。下载逐块写盘并核对长度及 SHA-256。失败或退出时移除未完成写入，保留已经验证的同一归档。源码回归覆盖错误签名、旧版本、目标不兼容、清单变化、归档损坏、重试及下载中退出。
 
-Mac 隔离包 `.artifacts/desktop-update-staging-OUzXbY/` 连接本地回环测试服务。第一次包请求返回截断数据，窗口显示失败。点击重试后下载实际桌面 ZIP，写出的 161,354,479 字节与源 ZIP 的 SHA-256 一致。测试清单使用临时版本，验证范围截止到压缩包校验与正常退出。安装身份验证、替换、启动、恢复与回退仍待实施；参见该目录的 `receipt.json` 和 `native.log`。
+Mac 隔离包 `.artifacts/desktop-update-staging-OUzXbY/` 连接本地回环测试服务。第一次包请求返回截断数据，窗口显示失败。点击重试后下载实际桌面 ZIP，写出的 161,354,479 字节与源 ZIP 的 SHA-256 一致。测试清单使用临时版本，验证范围截止到压缩包校验与正常退出。另有 51 项包内回归及真实 Node、PTY、Hive HTTP/SQLite 冒烟通过。验收文件为该目录的 `receipt.json`、`native.log` 和 `functional-receipt.json`。
+
+更新代码通过 Windows 交叉编译。[Windows 原生 CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44340284767) 跟踪当前源码的编译、原生进程及包。安装身份验证、替换、启动、恢复与回退仍待实施。
