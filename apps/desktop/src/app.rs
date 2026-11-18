@@ -95,7 +95,6 @@ impl Message {
     }
 }
 pub struct ConversationPosition {
-    pub anchor: Option<crate::conversation_list::ReadingAnchor>,
     pub expanded: HashSet<String>,
     pub expanded_tool_groups: HashSet<String>,
     pub thinking: crate::thinking::ThinkingPosition,
@@ -286,6 +285,7 @@ pub struct HiveApp {
     pub error: Option<ErrorNotice>,
     pub loading: bool,
     pub positions: HashMap<String, ConversationPosition>,
+    pub(crate) reading_positions: crate::sessions::reading_position::ReadingPositions,
     pub conversation_list: crate::conversation_list::ConversationList,
     pub collaboration_scroll: ScrollHandle,
     pub welcome_scroll: ScrollHandle,
@@ -794,6 +794,7 @@ impl HiveApp {
             error: None,
             loading: true,
             positions: HashMap::new(),
+            reading_positions: Default::default(),
             conversation_list: crate::conversation_list::ConversationList::new(cx.focus_handle()),
             collaboration_scroll: ScrollHandle::new(),
             welcome_scroll: ScrollHandle::new(),
@@ -820,6 +821,7 @@ impl HiveApp {
             events: Task::ready(()),
             workspace_updates: Task::ready(()),
             _quit: cx.on_app_quit(|this: &mut Self, cx| {
+                this.flush_reading_positions();
                 if let Err(error) = this.flush_drafts(cx) {
                     eprintln!("无法保存本地草稿：{error}");
                 }
@@ -833,7 +835,10 @@ impl HiveApp {
         };
         app.conversation_list
             .state
-            .set_scroll_handler(cx.listener(|_, _, _, cx| cx.notify()));
+            .set_scroll_handler(cx.listener(|this, _, _, cx| {
+                this.schedule_reading_position_save(cx);
+                cx.notify();
+            }));
         app.start_backend(window.window_handle(), cx);
         app.start_workspace_updates(cx);
         app
@@ -927,6 +932,7 @@ impl HiveApp {
             cx.notify();
             return;
         }
+        self.flush_reading_positions();
         self.closing = true;
         self.status = "正在保存会话并退出…".into();
         if self.runtime.is_some() || !self.loading {

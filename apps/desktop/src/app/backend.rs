@@ -67,6 +67,9 @@ impl HiveApp {
                         this.backend_info = Some(crate::diagnostics::BackendInfo::from_initialize(&info));
                         if let Some(root) = info["dataDir"].as_str() {
                             this.data_dir = Some(std::path::PathBuf::from(root));
+                            if !this.backend_initialized {
+                                this.reading_positions.restore(std::path::Path::new(root));
+                            }
                             this.load_update_receipt(cx);
                             crate::language::restore(std::path::Path::new(root), cx);
                             crate::appearance::restore(std::path::Path::new(root), cx);
@@ -187,6 +190,7 @@ impl HiveApp {
             return;
         }
         self.inflight_inputs.clear();
+        self.flush_reading_positions();
         let _ = self.voice.cancel();
         window.close_all_dialogs(cx);
         self.connection_generation += 1;

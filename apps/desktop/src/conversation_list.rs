@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum RowKey {
     Message(String),
     Group(String),
@@ -235,11 +235,15 @@ impl HiveApp {
         }
     }
 
-    pub(crate) fn scroll_to_conversation_message(&mut self, id: &str, cx: &App) -> bool {
+    pub(crate) fn reveal_conversation_tool_group(&mut self, id: &str) {
         if let Some(group) = self.messages.chunk_by(|a, b| a.completed_tool() && b.completed_tool())
             .find(|group| group.len() > 1 && group.iter().any(|message| message.id == id)) {
             self.expanded_tool_groups.insert(group[0].id.clone());
         }
+    }
+
+    pub(crate) fn scroll_to_conversation_message(&mut self, id: &str, cx: &App) -> bool {
+        self.reveal_conversation_tool_group(id);
         self.sync_conversation_list(cx);
         if let Some(index) = self
             .conversation_list

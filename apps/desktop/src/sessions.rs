@@ -1,6 +1,7 @@
 mod archiving;
 mod naming;
 mod pinning;
+pub(crate) mod reading_position;
 pub(crate) use pinning::PinnedSessions;
 pub(crate) mod search;
 use crate::{app::HiveApp, protocol::*};
@@ -8,10 +9,11 @@ use gpui_kit::*;
 use serde_json::json;
 impl HiveApp {
     fn remember_conversation_position(&mut self, cx: &App) {
+        self.flush_reading_positions();
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        if self.loading || self.messages.is_empty() {
+        if self.loading || !self.conversation_ready || self.messages.is_empty() {
             return;
         }
         let expanded = self
@@ -26,14 +28,9 @@ impl HiveApp {
             })
             .map(|message| message.id.clone())
             .collect();
-        let anchor = self
-            .reading_above_latest()
-            .then(|| self.conversation_list.anchor())
-            .flatten();
         self.positions.insert(
             session.id.clone(),
             crate::app::ConversationPosition {
-                anchor,
                 expanded,
                 expanded_tool_groups: self.expanded_tool_groups.clone(),
                 thinking: crate::thinking::ThinkingPosition::new(
@@ -83,8 +80,19 @@ impl HiveApp {
                 }
             }
         }
-        self.conversation_list
-            .reset(position.and_then(|p| p.anchor.clone()));
+        let anchor = self.workspace.as_deref()
+            .and_then(|workspace| self.reading_positions.anchor(workspace, id))
+            .filter(|anchor| match &anchor.key {
+                crate::conversation_list::RowKey::Message(id) | crate::conversation_list::RowKey::Group(id) => self.message_indices.contains_key(id),
+                crate::conversation_list::RowKey::Tail => false,
+            });
+        if let Some(crate::conversation_list::ReadingAnchor {
+            key: crate::conversation_list::RowKey::Message(id),
+            ..
+        }) = &anchor {
+            self.reveal_conversation_tool_group(id);
+        }
+        self.conversation_list.reset(anchor);
     }
 
     fn switch_draft(&mut self, next: Option<String>, cx: &mut Context<Self>) {
@@ -253,9 +261,11 @@ impl HiveApp {
                 if self.sessions.iter().any(|s| s.id == sess) {
                     self.open_session(sess, cx);
                 } else {
+                    self.remember_conversation_position(cx);
                     self.clear_active_session_only(cx);
                 }
             } else if self.session.is_some() {
+                self.remember_conversation_position(cx);
                 self.clear_active_session_only(cx);
                 self.switch_draft(Some(format!("workspace:{ws}")), cx);
                 self.sync_git_workspace(cx);
@@ -900,7 +910,9 @@ impl HiveApp {
                         this.restore_conversation_position(&id, cx);
                         if let Some((target_request, target_session, message_id)) = this.search_target.take() {
                             if target_request == request && target_session == id {
-                                if !this.scroll_to_conversation_message(&message_id, cx) {
+                                if this.scroll_to_conversation_message(&message_id, cx) {
+                                    this.schedule_reading_position_save(cx);
+                                } else {
                                     this.error = Some(crate::app::ErrorNotice::Conversation(Box::new(
                                         if crate::language::english() {
                                             "The matched message is no longer available. Search again.".to_owned()

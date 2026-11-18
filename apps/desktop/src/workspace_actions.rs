@@ -273,6 +273,8 @@ impl HiveApp {
             .records
             .retain(|hit| hit.session.workspace_id != workspace);
         self.navigation.sessions.remove(workspace);
+        self.reading_positions.remove_workspace(workspace);
+        self.save_reading_positions();
         if self.navigation.workspace.as_deref() == Some(workspace) {
             self.navigation.workspace = None;
         }

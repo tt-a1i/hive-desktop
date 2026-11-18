@@ -338,11 +338,13 @@ impl HiveApp {
     }
     pub(crate) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
         self.conversation_find = None;
+        self.conversation_list.pending_anchor = None;
         // Update the header action now, then pin to the final offset after layout.
         self.conversation_list
             .state
             .set_follow_mode(FollowMode::Tail);
         self.conversation_list.state.scroll_to_end();
+        self.schedule_reading_position_save(cx);
         cx.notify();
     }
 

@@ -120,6 +120,7 @@ impl HiveApp {
             .collect();
         find.selected = find.hits.first().cloned();
         self.reveal_conversation_match(cx);
+        self.schedule_reading_position_save(cx);
         cx.notify();
     }
 
@@ -146,6 +147,7 @@ impl HiveApp {
         };
         find.selected = Some(find.hits[index].clone());
         self.reveal_conversation_match(cx);
+        self.schedule_reading_position_save(cx);
         cx.notify();
     }
 
