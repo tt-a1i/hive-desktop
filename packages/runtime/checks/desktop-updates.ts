@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { DesktopUpdates } from '../src/desktop-updates.js';
 import { desktopPackagePaths } from '../src/desktop-update-archive.js';
 
@@ -15,7 +17,7 @@ if (!['darwin', 'win32'].includes(process.platform)) {
   process.exit(0);
 }
 
-const root = await mkdtemp(join(tmpdir(), 'hive-update-channel-'));
+const root = await realpath(await mkdtemp(join(tmpdir(), 'hive-update-channel-')));
 const policyPath = pathToFileURL(join(root, 'channel.json'));
 const staging = join(root, 'desktop-updates');
 const archive = Buffer.from('bytes of the update fixture');
@@ -100,7 +102,7 @@ try {
   const executableSha256 = createHash('sha256').update(await readFile(paths.executable)).digest('hex');
   await writeFile(join(paths.resources, 'desktop-update-identity.json'), JSON.stringify({
     schemaVersion: 1, app: 'com.hive.desktop.dev', version: '0.1.3', platform: process.platform, arch: process.arch, executableSha256,
-    files: mac ? 5 : 4,
+    files: mac ? 5 : 4, installerProtocol: 2,
   }));
   const zipped = join(root, 'fixture.zip');
   if (mac) execFileSync('/usr/bin/zip', ['-q', '-y', '-r', zipped, 'Hive Desktop.app'], { cwd: fixture });
@@ -115,6 +117,77 @@ try {
   const prepared = await updates.prepare('0.1.3', zippedHash);
   assert.deepEqual(await readFile(desktopPackagePaths(prepared.packageRoot).executable), await readFile(paths.executable));
   assert.equal(manifestsRequested, beforePrepare, 'an attested staged update can be prepared offline');
+
+  // The running Node must belong to the installed bundle. The update is inert
+  // in this test, but its verification, preparation and removal use real files.
+  const parent = join(root, 'installed-packages');
+  const installation = join(parent, mac ? 'Hive Desktop.app' : 'portable');
+  const installed = desktopPackagePaths(installation);
+  for (const path of [installed.executable, installed.node, installed.runtime]) {
+    await mkdir(dirname(path), { recursive: true });
+  }
+  await copyFile(paths.executable, installed.executable);
+  await copyFile(paths.runtime, installed.runtime);
+  await copyFile(process.execPath, installed.node, constants.COPYFILE_FICLONE);
+  const installedPolicy = join(installed.resources, 'desktop-update-channel.json');
+  await copyFile(policyPath, installedPolicy);
+  if (mac) {
+    const plist = await readFile(join(packageRoot, 'Contents/Info.plist'), 'utf8');
+    await writeFile(join(installation, 'Contents/Info.plist'), plist.replaceAll('0.1.3', '0.1.0'));
+  }
+  await writeFile(join(installed.resources, 'desktop-update-identity.json'), JSON.stringify({
+    schemaVersion: 1, app: 'com.hive.desktop.dev', version: '0.1.0', platform: process.platform, arch: process.arch,
+    executableSha256, files: mac ? 6 : 5, installerProtocol: 2,
+  }));
+  const compiledRuntime = process.env.HIVE_DESKTOP_TEST_RUNTIME;
+  const updateModule = compiledRuntime
+    ? pathToFileURL(join(dirname(compiledRuntime), 'desktop-updates.js'))
+    : new URL('../dist/desktop-updates.js', import.meta.url);
+  const runOwnershipCheck = join(root, 'installer-ownership.mjs');
+  await writeFile(runOwnershipCheck, `
+    import assert from 'node:assert/strict';
+    import {readFile,readdir} from 'node:fs/promises';
+    import {dirname,join} from 'node:path';
+    import {DesktopUpdates} from ${JSON.stringify(updateModule.href)};
+    const directory = ${JSON.stringify(root)};
+    const parent = ${JSON.stringify(parent)};
+    const candidates = async () => (await readdir(parent)).filter(name =>
+      name.startsWith('.hive-desktop-install-') || name.startsWith('Recover Hive Desktop '));
+    const make = () => new DesktopUpdates(directory, new URL(${JSON.stringify(pathToFileURL(installedPolicy).href)}));
+    const prepare = owner => owner.prepareInstaller('0.1.3', ${JSON.stringify(zippedHash)});
+
+    const ordinaryExit = make();
+    await prepare(ordinaryExit);
+    assert.equal((await candidates()).length, 2);
+    await ordinaryExit.close();
+    assert.deepEqual(await candidates(), [], 'ordinary exit must release the unused installer and recovery entry');
+
+    const owner = make();
+    const cancelled = await prepare(owner);
+    await assert.rejects(owner.discardInstaller('an older installer id'), /installer changed/);
+    assert.equal((await candidates()).length, 2);
+    await owner.discardInstaller(cancelled.id);
+    assert.deepEqual(await candidates(), []);
+    const abandoned = await prepare(owner);
+    const replacement = await prepare(owner);
+    assert.notEqual(abandoned.id, replacement.id);
+    assert.equal((await candidates()).length, 2);
+    await assert.rejects(readFile(abandoned.program), {code:'ENOENT'});
+    await owner.close();
+    assert.deepEqual(await candidates(), []);
+
+    const closing = make();
+    const handedOff = await prepare(closing);
+    await closing.close(handedOff.id);
+    assert.equal((await candidates()).length, 2);
+    assert.equal(JSON.parse(await readFile(join(dirname(handedOff.program), 'install-plan.json'), 'utf8')).toVersion, '0.1.3');
+    const stranger = make();
+    await assert.rejects(stranger.close(handedOff.id), /installer is no longer available/);
+    assert.equal((await candidates()).length, 2);
+    assert.equal((await readFile(join(directory, 'desktop-updates', ${JSON.stringify(zippedHash + '.zip')}))).length, ${zippedBytes.length});
+  `);
+  await promisify(execFile)(installed.node, [runOwnershipCheck], { timeout: 25000, windowsHide: true });
+
   const original = await readFile(join(staging, `${zippedHash}.zip`));
   try {
     const tampered = Buffer.from(original);
@@ -154,7 +227,7 @@ try {
   await pending;
   assert.ok((await readdir(staging)).every(name => !name.endsWith('.part') && !name.endsWith('.part.manifest')));
   assert.deepEqual(await readFile(join(staging, `${sha256}.zip`)), archive);
-  console.log('DESKTOP_UPDATE_STAGING_OK: signed download, verified offline package preparation, tamper and version rejection, failure retry and shutdown.');
+  console.log('DESKTOP_UPDATE_STAGING_OK: signed download, offline preparation, installer ownership and cleanup, tamper and version rejection, failure retry and shutdown.');
 } finally {
   await updates.close();
   server.closeAllConnections();

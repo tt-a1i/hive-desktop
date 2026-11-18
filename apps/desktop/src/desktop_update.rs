@@ -6,6 +6,7 @@ use std::{
 
 #[derive(Deserialize)]
 pub(crate) struct Installer {
+    pub(crate) id: String,
     executable: PathBuf,
     program: PathBuf,
     pub(crate) version: String,

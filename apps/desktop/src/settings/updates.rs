@@ -214,24 +214,52 @@ impl HiveApp {
                 }
                 this.desktop_updates.preparing = false;
                 match result {
-                    Ok(_) if this.has_busy_work() => {
-                        this.desktop_updates.error =
-                            Some(tr("请等待正在运行的会话结束后再安装更新。").to_owned());
-                    }
-                    Ok(installer)
-                        if installer.version == candidate.version
-                            && installer.sha256 == candidate.asset.sha256 =>
-                    {
-                        this.desktop_updates.installer = Some(installer);
-                        this.exit(cx);
-                        if !this.closing {
-                            this.desktop_updates.installer.take();
+                    Ok(installer) => {
+                        let rejection = if this.has_busy_work() {
+                            Some(tr("请等待正在运行的会话结束后再安装更新。"))
+                        } else if installer.version != candidate.version
+                            || installer.sha256 != candidate.asset.sha256
+                        {
+                            Some(tr("更新下载收据不匹配。"))
+                        } else {
+                            None
+                        };
+                        if let Some(error) = rejection {
+                            this.desktop_updates.error = Some(error.to_owned());
+                            this.discard_desktop_installer(installer.id, cx);
+                        } else {
+                            this.desktop_updates.installer = Some(installer);
+                            this.exit(cx);
+                            if !this.closing
+                                && let Some(installer) = this.desktop_updates.installer.take()
+                            {
+                                this.discard_desktop_installer(installer.id, cx);
+                            }
                         }
                     }
-                    Ok(_) => {
-                        this.desktop_updates.error = Some(tr("更新下载收据不匹配。").to_owned())
-                    }
                     Err(error) => this.desktop_updates.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn discard_desktop_installer(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let generation = self.connection_generation;
+        self.desktop_updates.preparing = true;
+        cx.spawn(async move |this, cx| {
+            let result = runtime.request("desktop.updates.discardInstaller", json!({"id": id})).await;
+            let _ = this.update(cx, |this, cx| {
+                if generation != this.connection_generation {
+                    return;
+                }
+                this.desktop_updates.preparing = false;
+                if let Err(error) = result {
+                    this.desktop_updates.error = Some(error);
                 }
                 cx.notify();
             });

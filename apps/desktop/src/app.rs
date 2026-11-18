@@ -934,13 +934,26 @@ impl HiveApp {
     fn shutdown_and_quit(&mut self, cx: &mut Context<Self>) {
         let runtime = self.runtime.take();
         let voice = self.voice.cancel();
+        let installer_id = self
+            .desktop_updates
+            .installer
+            .as_ref()
+            .map(|installer| installer.id.clone());
         cx.spawn(async move |this, cx| {
             if let Some(voice) = voice {
                 let _ = voice.recv().await;
             }
             if let Some(runtime) = runtime {
-                match runtime.shutdown_checked(std::time::Duration::from_secs(3)).await {
-                    Ok(_) => { let _ = this.update(cx, |this, cx| this.finish_exit(cx)); }
+                let grace = std::time::Duration::from_secs(3);
+                let shutdown = match installer_id.as_deref() {
+                    Some(id) => runtime.shutdown_for_install(grace, id).await,
+                    None => runtime.shutdown_checked(grace).await.map(|_| Ok(())),
+                };
+                match shutdown {
+                    Ok(Ok(())) => { let _ = this.update(cx, |this, cx| this.finish_exit(cx)); }
+                    Ok(Err(error)) => {
+                        let _ = this.update(cx, |this, cx| this.desktop_install_failed(error, cx));
+                    }
                     Err(error) => {
                         let _ = this.update(cx, move |this, cx| {
                             // Keep the owner/identity so another explicit Exit can
@@ -961,13 +974,18 @@ impl HiveApp {
         .detach();
     }
 
+    fn desktop_install_failed(&mut self, error: String, cx: &mut Context<Self>) {
+        self.desktop_updates.installer.take();
+        self.connected = false;
+        self.closing = false;
+        self.error = Some(ErrorNotice::Detail("无法启动桌面安装程序", error));
+        cx.notify();
+    }
+
     fn finish_exit(&mut self, cx: &mut Context<Self>) {
         if let Some(installer) = self.desktop_updates.installer.take() {
             if let Err(error) = installer.start() {
-                self.connected = false;
-                self.closing = false;
-                self.error = Some(ErrorNotice::Detail("无法启动桌面安装程序", error.to_string()));
-                cx.notify();
+                self.desktop_install_failed(error.to_string(), cx);
                 return;
             }
         }

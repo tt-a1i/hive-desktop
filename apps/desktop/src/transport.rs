@@ -269,6 +269,32 @@ impl Runtime {
         let _ = self
             .tx
             .send(json!({"id":0,"method":"shutdown","params":{}}));
+        self.finish_shutdown(grace).await
+    }
+    // Reaping the sidecar and authorizing the installer are separate results.
+    pub async fn shutdown_for_install(
+        &self,
+        grace: Duration,
+        installer_id: &str,
+    ) -> Result<Result<(), String>, String> {
+        let reply = self.begin_request("shutdown", json!({"desktopInstallerId": installer_id}));
+        self.closing.store(true, Ordering::Release);
+        self.finish_shutdown(grace).await?;
+        let confirmation = smol::future::race(reply, async {
+            smol::Timer::after(Duration::from_secs(1)).await;
+            Err("未收到后台安装交接确认".into())
+        })
+        .await
+        .and_then(|receipt| {
+            if receipt["desktopInstallerId"].as_str() == Some(installer_id) {
+                Ok(())
+            } else {
+                Err("后台安装交接确认不匹配".into())
+            }
+        });
+        Ok(confirmation)
+    }
+    async fn finish_shutdown(&self, grace: Duration) -> Result<CleanupReport, String> {
         let owned = self.owned.clone();
         // Serialize concurrent cleanup callers. A second caller receives the
         // same completed report, never "done" merely because Child was taken.

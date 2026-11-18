@@ -1,9 +1,9 @@
 import { createHash, createPublicKey, randomUUID, verify, type KeyObject } from 'node:crypto';
 import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractDesktopUpdate, verifyDesktopPackage } from './desktop-update-archive.js';
-import { desktopPackagePaths, hashDesktopFile, prepareDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
+import { desktopPackagePaths, hashDesktopFile, prepareDesktopRecoveryEntry, removeDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
 
 const manifestLimit = 64 * 1024;
 const archiveLimit = 2 * 1024 * 1024 * 1024;
@@ -20,7 +20,7 @@ type Check =
 type Available = Extract<Check, { state: 'available' }>;
 type Prepared = { directory: string; packageRoot: string; version: string; sha256: string;
   identity: Awaited<ReturnType<typeof verifyDesktopPackage>> };
-type Installer = { executable: string; program: string; version: string; sha256: string };
+type Installer = { id: string; executable: string; program: string; version: string; sha256: string };
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid desktop update document');
@@ -113,12 +113,36 @@ export class DesktopUpdates {
   private readonly closing = new AbortController();
   private staging: Promise<{ version: string; sha256: string }> | undefined;
   private preparing: Promise<unknown> | undefined;
+  private pendingInstaller: Installer | undefined;
 
   constructor(private readonly dataDirectory: string, private readonly policyPath: URL) {}
 
-  async close(): Promise<void> {
+  async close(installerId?: string): Promise<void> {
     this.closing.abort();
     await Promise.allSettled([this.staging, this.preparing]);
+    if (installerId !== undefined && this.pendingInstaller?.id === installerId) {
+      // The closing desktop owns this transaction from here on.
+      this.pendingInstaller = undefined;
+      return;
+    }
+    await this.discardPendingInstaller();
+    if (installerId !== undefined) throw new Error('The prepared desktop installer is no longer available');
+  }
+
+  async discardInstaller(id: string): Promise<void> {
+    return this.prepareExclusively(async () => {
+      if (this.pendingInstaller?.id !== id) throw new Error('The prepared desktop installer changed');
+      return this.discardPendingInstaller();
+    });
+  }
+
+  private async discardPendingInstaller() {
+    const pending = this.pendingInstaller;
+    if (!pending) return;
+    const directory = dirname(pending.program);
+    await removeDesktopRecoveryEntry(directory);
+    await rm(directory, { recursive: true, force: true });
+    this.pendingInstaller = undefined;
   }
 
   private async fetchManifest(policy: Policy): Promise<Buffer> {
@@ -235,6 +259,7 @@ export class DesktopUpdates {
 
   prepareInstaller(expectedVersion: string, sha256: string): Promise<Installer> {
     return this.prepareExclusively(async () => {
+      await this.discardPendingInstaller();
       const policy = await loadPolicy(this.policyPath);
       if (!policy) throw new Error('This desktop package has no update channel');
       const signal = this.closing.signal;
@@ -268,7 +293,9 @@ export class DesktopUpdates {
         await writeFile(join(prepared.directory, 'install-plan.json'), JSON.stringify(plan), { flag: 'wx', mode: 0o600, flush: true });
         signal.throwIfAborted();
         await prepareDesktopRecoveryEntry(prepared.directory);
-        return { executable, program, version: prepared.version, sha256: prepared.sha256 };
+        const installer = { id: basename(prepared.directory), executable, program, version: prepared.version, sha256: prepared.sha256 };
+        this.pendingInstaller = installer;
+        return installer;
       } catch (error) {
         await rm(prepared.directory, { recursive: true, force: true });
         throw error;
@@ -277,6 +304,7 @@ export class DesktopUpdates {
   }
 
   private prepareExclusively<T>(operation: () => Promise<T>): Promise<T> {
+    this.closing.signal.throwIfAborted();
     if (this.staging || this.preparing) throw new Error('A desktop update is already downloading or preparing');
     const task = operation().finally(() => { this.preparing = undefined; });
     this.preparing = task;

@@ -155,9 +155,9 @@ export async function prepareDesktopRecoveryEntry(transaction: string) {
   return entry;
 }
 
-async function clearRecoveryEntry(transaction: string) {
+export async function removeDesktopRecoveryEntry(transaction: string) {
   const entry = recoveryEntry(transaction);
-  if (entry) await rm(entry, { force: true }).catch(() => {});
+  if (entry) await rm(entry, { force: true });
 }
 
 async function transactionPaths(plan: DesktopInstallPlan, transaction: string) {
@@ -228,7 +228,7 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
     await record('installed');
     await atomicJson(receipt, { state: 'installed', version: toVersion, requestedVersion: toVersion });
     await rm(previous, { recursive: true, force: true }).catch(() => {});
-    await clearRecoveryEntry(transaction);
+    await removeDesktopRecoveryEntry(transaction).catch(() => {});
   } catch (error) {
     // Once the application has accepted the workspace, keep it running even
     // if writing the final receipt fails. Recovery can finish that commit.
@@ -245,7 +245,7 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
       const original = launch(installation, dataDirectory);
       await once(original, 'spawn');
       original.unref();
-      await clearRecoveryEntry(transaction);
+      await removeDesktopRecoveryEntry(transaction).catch(() => {});
     } catch (recoveryError) {
       const detail = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
       await record('recoveryRequired', `${message}\n${detail}`);

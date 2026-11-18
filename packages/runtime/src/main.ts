@@ -57,7 +57,17 @@ const runtime = await createDesktopRuntime(dataDir, event => send({ event: 'agen
 const updates = new DesktopUpdates(dataDir, new URL('../../desktop-update-channel.json', import.meta.url));
 const { hive, chats, profiles, settings, agentModels, terminal, piAuth } = runtime;
 let closing: Promise<void> | undefined;
-const close = () => closing ??= Promise.all([updates.close(), runtime.close()]).then(() => {});
+let closingInstallerId: string | undefined;
+const close = (installerId?: string) => {
+  if (!closing) {
+    closingInstallerId = installerId;
+    closing = Promise.allSettled([updates.close(installerId), runtime.close()]).then(([update, sidecar]) => {
+      if (sidecar.status === 'rejected') throw sidecar.reason;
+      if (update.status === 'rejected') throw update.reason;
+    });
+  }
+  return closing;
+};
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected an object');
@@ -91,6 +101,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'desktop.updates.stage': exact(params, ['version', 'sha256']); return updates.stage(text(params, 'version'), text(params, 'sha256'));
     case 'desktop.updates.prepare': exact(params, ['version', 'sha256']); return updates.prepare(text(params, 'version'), text(params, 'sha256'));
     case 'desktop.updates.prepareInstaller': exact(params, ['version', 'sha256']); return updates.prepareInstaller(text(params, 'version'), text(params, 'sha256'));
+    case 'desktop.updates.discardInstaller': exact(params, ['id']); await updates.discardInstaller(text(params, 'id')); return { ok: true };
     case 'chat.acp.uncertainDeliveries': exact(params,['sessionId']);return chats.uncertainAcpDeliveries(text(params,'sessionId'));
     case 'chat.acp.discardUncertainDelivery': {exact(params,['sessionId','deliveryId','expectedText']);if(typeof params.expectedText!=='string')throw new Error('expectedText is required');return chats.discardUncertainAcpDelivery(text(params,'sessionId'),text(params,'deliveryId'),params.expectedText);}
     case 'agent.capabilities': exact(params,['sessionId']);return chats.capabilities(text(params,'sessionId'));
@@ -348,7 +359,13 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.reasoning': return chats.reasoning(text(params, 'sessionId'));
     case 'chat.setReasoning': return chats.reasoning(text(params, 'sessionId'), text(params, 'level'));
     case 'chat.setModel': return chats.setModel(text(params, 'sessionId'), text(params, 'provider'), text(params, 'modelId'));
-    case 'shutdown': await close(); return { ok: true };
+    case 'shutdown': {
+      exact(params, ['desktopInstallerId']);
+      const installerId = params.desktopInstallerId === undefined ? undefined : text(params, 'desktopInstallerId');
+      await close(installerId);
+      if (installerId !== undefined && closingInstallerId !== installerId) throw new Error('The prepared desktop installer was not transferred');
+      return { ok: true, ...(installerId !== undefined && { desktopInstallerId: installerId }) };
+    }
     default: throw new Error(`Unknown desktop method: ${method}`);
   }
 }
