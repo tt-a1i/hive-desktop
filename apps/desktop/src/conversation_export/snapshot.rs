@@ -97,7 +97,10 @@ impl Snapshot {
                                     .map(|path| format!("{}: {path}",tr("汇报产物"))),
                             );
                         }
-                        let images = message.image_sources.len().max(message.images.len());
+                        let images = message.history_images.as_ref().map_or_else(
+                            || message.image_sources.len().max(message.images.len()),
+                            |images| images.count,
+                        );
                         if images > 0 {
                             files.push(if english() {format!("{images} native images · filenames unavailable in this chat projection · image data excluded")} else {format!("原生图片 {images} 张 · 此聊天投影未提供文件名 · 不含图片本体")});
                         } else if message.images_loading {

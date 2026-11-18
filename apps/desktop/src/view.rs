@@ -1056,6 +1056,9 @@ impl Render for HiveApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(feature = "ui-preview")]
         crate::ui_preview::maybe_apply(self, window, cx);
+        if !self.viewing_conversation() && !self.conversation_list.visible_history_images.is_empty() {
+            self.sync_history_image_visibility(Default::default(), cx);
+        }
         let locale = cx.global::<crate::language::Language>().locale;
         if self.interface_locale != Some(locale) {
             self.localize_placeholders(window, cx);

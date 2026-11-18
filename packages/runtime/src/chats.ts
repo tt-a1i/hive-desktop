@@ -4,6 +4,7 @@ import { HandoffError } from './handoff-operation-journal.js';
 import { HandoffDeliveries, assertHandoffFirstInput } from './handoff-delivery.js';
 import { handoffNativeCompletedIds } from './handoff-native-receipts.js';
 import { handoffMessage } from './handoff-message.js';
+import { desktopHistoryImage } from './desktop-history-images.js';
 import type { SessionHandoffs } from './session-handoffs.js';
 import type { AcpSessionHandle } from './agents/acp.js';
 import { acpCapabilities, agentCapabilities } from './agent-capabilities.js';
@@ -1286,6 +1287,19 @@ export class Chats implements StructuredSessionPort {
         ...(current.handoff&&{handoffSnapshot:await this.handoffs!.getSnapshot(current.workspaceId,current.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}),
         ...(error instanceof WorktreeInitializationError && {initialization: await this.initialization?.get(this.index.get(id).workspaceId, id)})};
     }
+  }
+
+  async historyImage(workspaceId: string, id: string, messageId: string, imageIndex: number) {
+    const record = this.index.get(id);
+    if (record.workspaceId !== workspaceId) throw new Error('History image belongs to another workspace');
+    const live = this.live.get(id);
+    const snapshot = live && !live.failure && !live.cleanup ? live.handle.snapshot()
+      : await this.readOnlySnapshot(record, new SessionIdentityError('HISTORY_IMAGE_READ', 'Read history without launching an Agent'));
+    const position = snapshot.historyMessageIds.indexOf(messageId);
+    if (position < 0 || snapshot.historyMessageIds.lastIndexOf(messageId) !== position) throw new Error('History image message is unavailable');
+    const data = desktopHistoryImage(snapshot.history[position], imageIndex);
+    if (data === undefined) throw new Error('History image is unavailable');
+    return { messageId, imageIndex, data };
   }
 
   /** Hive invokes this for both the selected orchestrator and spawned workers. */

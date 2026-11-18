@@ -74,6 +74,7 @@ pub struct Message {
     pub explicit_user: bool,
     pub failure: Option<crate::failures::Diagnostic>,
     pub files: Vec<crate::attachments::AttachmentRef>,
+    pub(crate) history_images: Option<crate::attachments::HistoryImages>,
     pub images: Vec<std::sync::Arc<RenderImage>>,
     pub image_sources: Vec<Arc<Image>>,
     pub images_loading: bool,

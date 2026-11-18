@@ -304,9 +304,11 @@ impl HiveApp {
                     )
                 },
             )
-            .when(message.images_loading, |view| {
+            .when(message.images_loading
+                || (message.history_images.is_some() && message.images.is_empty() && message.images_error.is_none()), |view| {
                 view.child(
                     div()
+                        .when(message.history_images.is_some(), |body| body.flex().items_center().h(px(112.)))
                         .text_xs()
                         .text_color(Color::Muted.get(cx))
                         .child(tr("读取图片…")),

@@ -22,6 +22,7 @@ import { desktopDataDir } from './paths.js';
 import { remoteCommands } from './remote-commands.js';
 import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
+import { deferDesktopHistoryImages } from './desktop-history-images.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
 let outputClosed = false;
@@ -333,7 +334,20 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       if (params.includeLiveHistory !== undefined && typeof params.includeLiveHistory !== 'boolean') {
         throw new TypeError('includeLiveHistory must be a boolean');
       }
-      return chats.open(text(params, 'sessionId'), params.includeLiveHistory);
+      if (params.deferHistoryImages !== undefined && typeof params.deferHistoryImages !== 'boolean') {
+        throw new TypeError('deferHistoryImages must be a boolean');
+      }
+      const snapshot = await chats.open(text(params, 'sessionId'), params.includeLiveHistory);
+      return params.deferHistoryImages ? {...snapshot, history: snapshot.history.map(
+        (message, index) => deferDesktopHistoryImages(message, snapshot.historyMessageIds[index])
+      )} : snapshot;
+    }
+    case 'chat.historyImage': {
+      exact(params, ['workspaceId', 'sessionId', 'messageId', 'imageIndex']);
+      if (typeof params.imageIndex !== 'number' || !Number.isSafeInteger(params.imageIndex) || params.imageIndex < 0) {
+        throw new TypeError('imageIndex must be a nonnegative integer');
+      }
+      return chats.historyImage(text(params, 'workspaceId'), text(params, 'sessionId'), text(params, 'messageId'), params.imageIndex);
     }
     case 'chat.prompt': {
       if (typeof params.text !== 'string') throw new TypeError('text must be a string');

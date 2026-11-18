@@ -375,6 +375,7 @@ impl HiveApp {
             images: vec![],
             files: vec![],
             image_sources: vec![],
+            history_images: None,
             images_loading: false,
             images_error: None,
             image_task: None,

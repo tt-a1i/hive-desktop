@@ -823,7 +823,7 @@ impl HiveApp {
         }
         self.request(
             "chat.open",
-            json!({"sessionId":id}),
+            json!({"sessionId":id,"deferHistoryImages":true}),
             cx,
             move |this, value, cx| {
                 if this.open_request != request || this.workspace.as_ref() != Some(&request_workspace) || this.session.as_ref().map(|s| &s.id) != Some(&id)
@@ -931,7 +931,7 @@ impl HiveApp {
         let request = self.open_request;
         self.request(
             "chat.open",
-            json!({"sessionId": id, "includeLiveHistory": false}),
+            json!({"sessionId": id, "includeLiveHistory": false, "deferHistoryImages": true}),
             cx,
             move |this, value, cx| {
                 if this.open_request != request

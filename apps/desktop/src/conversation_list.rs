@@ -50,6 +50,7 @@ pub struct ConversationList {
     hint_width: Rc<Cell<Pixels>>,
     font_size: Pixels,
     pub(crate) markdown: HashMap<String, markdown::MarkdownView>,
+    pub(crate) visible_history_images: HashSet<String>,
 }
 impl ConversationList {
     pub fn new(tail_focus: FocusHandle) -> Self {
@@ -63,6 +64,7 @@ impl ConversationList {
             hint_width: Rc::new(Cell::new(px(0.))),
             font_size: px(0.),
             markdown: HashMap::new(),
+            visible_history_images: HashSet::new(),
         }
     }
     pub fn anchor(&self) -> Option<ReadingAnchor> {
@@ -75,6 +77,7 @@ impl ConversationList {
     pub fn reset(&mut self, anchor: Option<ReadingAnchor>) {
         self.rows = Vec::new();
         self.markdown = HashMap::new();
+        self.visible_history_images = HashSet::new();
         self.state.reset(0);
         self.state.set_follow_mode(FollowMode::Tail);
         self.pending_anchor = anchor;
@@ -115,6 +118,7 @@ impl HiveApp {
                         && message.text.is_empty()
                         && message.thinking.is_empty()
                         && message.images.is_empty()
+                        && message.history_images.is_none()
                         && message.files.is_empty()
                     {
                         continue;
@@ -260,6 +264,8 @@ impl HiveApp {
     ) -> impl IntoElement {
         let rendered_markdown = Rc::new(RefCell::new(HashSet::new()));
         let rendered_rows = rendered_markdown.clone();
+        let rendered_history_images = Rc::new(RefCell::new(HashSet::new()));
+        let image_rows = rendered_history_images.clone();
         let content = list(
             self.conversation_list.state.clone(),
             cx.processor(move |this, index: usize, _, cx| {
@@ -271,6 +277,9 @@ impl HiveApp {
                         let markdown = this.show_message_markdown(index, cx);
                         if markdown.is_some() {
                             rendered_rows.borrow_mut().insert(this.messages[index].id.clone());
+                        }
+                        if this.messages[index].history_images.is_some() {
+                            image_rows.borrow_mut().insert(this.messages[index].id.clone());
                         }
                         this.render_conversation_message(index, markdown.as_ref(), cx)
                     }
@@ -332,22 +341,30 @@ impl HiveApp {
         div()
             .on_children_prepainted(move |bounds, window, cx| {
                 let rendered = std::mem::take(&mut *rendered_markdown.borrow_mut());
+                let history_images = std::mem::take(&mut *rendered_history_images.borrow_mut());
                 let view = weak.clone();
                 window.defer(cx, move |window, cx| {
                     let Some(view) = view.upgrade() else {
                         return;
                     };
                     let app = view.read(cx);
-                    if app.open_request != open_request {
+                    if app.open_request != open_request || !app.viewing_conversation() {
                         return;
                     }
                     let keep = |id: &String, markdown: &markdown::MarkdownView, cx: &App| {
                         rendered.contains(id)
                             || markdown.state.read(cx).focus_handle().contains_focused(window, cx)
                     };
-                    if app.conversation_list.markdown.iter().any(|(id, view)| !keep(id, view, cx)) {
+                    let release_markdown = app.conversation_list.markdown.iter().any(|(id, view)| !keep(id, view, cx));
+                    let images_changed = app.conversation_list.visible_history_images != history_images;
+                    if release_markdown || images_changed {
                         view.update(cx, |app, cx| {
-                            app.conversation_list.markdown.retain(|id, view| keep(id, view, cx));
+                            if release_markdown {
+                                app.conversation_list.markdown.retain(|id, view| keep(id, view, cx));
+                            }
+                            if images_changed {
+                                app.sync_history_image_visibility(history_images, cx);
+                            }
                         });
                     }
                 });

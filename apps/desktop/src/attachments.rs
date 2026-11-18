@@ -42,6 +42,19 @@ impl AttachmentRef {
 struct ImageWire {
     data: String,
 }
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryImages {
+    message_id: String,
+    pub(crate) count: usize,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryImageWire {
+    message_id: String,
+    image_index: usize,
+    data: String,
+}
 #[derive(Deserialize)]
 struct StagedImage {
     attachment: AttachmentRef,
@@ -629,6 +642,15 @@ impl HiveApp {
         let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
             return;
         };
+        if let Some(metadata) = source.get("desktopHistoryImages")
+            && let Ok(images) = serde_json::from_value::<HistoryImages>(metadata.clone())
+            && images.count > 0
+        {
+            message.history_images = Some(images);
+        }
+        if message.history_images.is_some() {
+            return;
+        }
         if message.images_loading || !message.images.is_empty() || message.images_error.is_some() {
             return;
         }
@@ -664,6 +686,100 @@ impl HiveApp {
                             }
                             Err(error) => message.images_error = Some(error),
                         }
+                    }
+                    message.layout_revision += 1;
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    pub(crate) fn sync_history_image_visibility(
+        &mut self,
+        visible: HashSet<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let previously = std::mem::replace(&mut self.conversation_list.visible_history_images, visible);
+        for id in previously.difference(&self.conversation_list.visible_history_images) {
+            let Some(message) = self.messages.iter_mut().find(|message| &message.id == id) else {
+                continue;
+            };
+            message.image_task = None;
+            message.images_loading = false;
+            message.images_error = None;
+            message.image_sources = Vec::new();
+            let rendered = std::mem::take(&mut message.images);
+            if !rendered.is_empty() {
+                cx.defer(move |cx| {
+                    for image in rendered {
+                        cx.drop_image(image, None);
+                    }
+                });
+            }
+        }
+        let entered = self
+            .conversation_list
+            .visible_history_images
+            .difference(&previously)
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in entered {
+            self.request_history_images(id, cx);
+        }
+    }
+
+    fn request_history_images(&mut self, id: String, cx: &mut Context<Self>) {
+        let (Some(runtime), Some(session)) = (&self.runtime, &self.session) else {
+            return;
+        };
+        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+            return;
+        };
+        let Some(images) = message.history_images.clone() else {
+            return;
+        };
+        let runtime = runtime.clone();
+        let session_id = session.id.clone();
+        let workspace_id = session.workspace_id.clone();
+        let request = self.open_request;
+        message.images_loading = true;
+        message.image_task = Some(cx.spawn(async move |this, cx| {
+            static READERS: smol::lock::Semaphore = smol::lock::Semaphore::new(2);
+            let _permit = READERS.acquire().await;
+            let mut previews = Vec::new();
+            let mut error = None;
+            for image_index in 0..images.count {
+                let result = runtime.request(
+                    "chat.historyImage",
+                    json!({"workspaceId":workspace_id, "sessionId":session_id, "messageId":images.message_id, "imageIndex":image_index}),
+                ).await.and_then(|value| {
+                    let image = serde_json::from_value::<HistoryImageWire>(value).map_err(|error| error.to_string())?;
+                    if image.message_id != images.message_id || image.image_index != image_index {
+                        return Err(tr("图片预览失败").to_owned());
+                    }
+                    Ok(image.data)
+                });
+                match result {
+                    Ok(data) => match prepare_preview(data).await {
+                        Ok(preview) => previews.push(preview),
+                        Err(failure) => error = Some(failure),
+                    },
+                    Err(failure) => {
+                        error = Some(failure);
+                        break;
+                    }
+                }
+            }
+            let _ = this.update(cx, |this, cx| {
+                if this.open_request != request || !this.conversation_list.visible_history_images.contains(&id) {
+                    return;
+                }
+                if let Some(message) = this.messages.iter_mut().find(|message| message.id == id) {
+                    message.images_loading = false;
+                    message.images_error = error;
+                    for preview in previews {
+                        message.images.push(preview.render);
+                        message.image_sources.push(preview.original);
                     }
                     message.layout_revision += 1;
                 }
