@@ -938,13 +938,14 @@ impl HiveApp {
         cx.spawn(async move |this, cx| {
             if let Some(runtime) = runtime {
                 match runtime.shutdown_checked(std::time::Duration::from_secs(3)).await {
-                    Ok(_) => { let _ = this.update(cx, |_, cx| cx.quit()); }
+                    Ok(_) => { let _ = this.update(cx, |this, cx| this.finish_exit(cx)); }
                     Err(error) => {
                         let _ = this.update(cx, move |this, cx| {
                             // Keep the owner/identity so another explicit Exit can
                             // retry cleanup. Never create a replacement or resume work.
                             this.runtime = Some(runtime);
                             this.closing = false;
+                            this.desktop_updates.installer.take();
                             this.status = "后台进程清理未确认，已保留窗口".into();
                             this.error = Some(ErrorNotice::Context("未能确认后台进程已退出",Box::new(error.into()),"请重试退出；当前不会启动新的后台。"));
                             cx.notify();
@@ -952,10 +953,23 @@ impl HiveApp {
                     }
                 }
             } else {
-                let _ = this.update(cx, |_, cx| cx.quit());
+                let _ = this.update(cx, |this, cx| this.finish_exit(cx));
             }
         })
         .detach();
+    }
+
+    fn finish_exit(&mut self, cx: &mut Context<Self>) {
+        if let Some(installer) = self.desktop_updates.installer.take() {
+            if let Err(error) = installer.start() {
+                self.connected = false;
+                self.closing = false;
+                self.error = Some(ErrorNotice::Detail("无法启动桌面安装程序", error.to_string()));
+                cx.notify();
+                return;
+            }
+        }
+        cx.quit();
     }
     pub fn request(
         &mut self,

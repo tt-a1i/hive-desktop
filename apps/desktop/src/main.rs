@@ -21,6 +21,7 @@ mod focus_scroll;
 mod conversation_list;
 mod drafts;
 mod diagnostics;
+mod desktop_update;
 mod failures;
 mod general;
 mod image_input;

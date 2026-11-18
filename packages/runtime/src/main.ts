@@ -82,6 +82,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'desktop.updates.check': exact(params, []); return updates.check();
     case 'desktop.updates.stage': exact(params, ['version', 'sha256']); return updates.stage(text(params, 'version'), text(params, 'sha256'));
     case 'desktop.updates.prepare': exact(params, ['version', 'sha256']); return updates.prepare(text(params, 'version'), text(params, 'sha256'));
+    case 'desktop.updates.prepareInstaller': exact(params, ['version', 'sha256']); return updates.prepareInstaller(text(params, 'version'), text(params, 'sha256'));
     case 'chat.acp.uncertainDeliveries': exact(params,['sessionId']);return chats.uncertainAcpDeliveries(text(params,'sessionId'));
     case 'chat.acp.discardUncertainDelivery': {exact(params,['sessionId','deliveryId','expectedText']);if(typeof params.expectedText!=='string')throw new Error('expectedText is required');return chats.discardUncertainAcpDelivery(text(params,'sessionId'),text(params,'deliveryId'),params.expectedText);}
     case 'agent.capabilities': exact(params,['sessionId']);return chats.capabilities(text(params,'sessionId'));

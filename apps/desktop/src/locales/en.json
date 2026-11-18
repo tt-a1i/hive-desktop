@@ -2109,5 +2109,14 @@
   "已下载并校验": "Downloaded and verified",
   "有可用更新": "Update available",
   "更新渠道与当前桌面版本不匹配。": "The update channel does not match this installed version.",
-  "更新下载收据不匹配。": "The download confirmation did not match the selected update."
+  "更新下载收据不匹配。": "The download confirmation did not match the selected update.",
+  "安装更新并重启？": "Install the update and restart?",
+  "Hive 将保存草稿、关闭后台和终端，再启动更新后的桌面应用。": "Hive will save drafts, close the backend and terminals, and start the updated desktop app.",
+  "安装并重启": "Install and restart",
+  "正在准备安装…": "Preparing installation…",
+  "已安装桌面更新": "Desktop update installed",
+  "安装失败，已恢复旧版本": "Installation failed. The previous version was restored",
+  "桌面更新失败": "Desktop update failed",
+  "无法启动桌面安装程序": "Could not start the desktop installer",
+  "请等待正在运行的会话结束后再安装更新。": "Wait for running conversations to finish before installing the update."
 }

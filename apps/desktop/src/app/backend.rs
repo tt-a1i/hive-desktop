@@ -67,6 +67,7 @@ impl HiveApp {
                         this.backend_info = Some(crate::diagnostics::BackendInfo::from_initialize(&info));
                         if let Some(root) = info["dataDir"].as_str() {
                             this.data_dir = Some(std::path::PathBuf::from(root));
+                            this.load_update_receipt(cx);
                             crate::language::restore(std::path::Path::new(root), cx);
                             crate::appearance::restore(std::path::Path::new(root), cx);
                             crate::general::restore(std::path::Path::new(root), cx);

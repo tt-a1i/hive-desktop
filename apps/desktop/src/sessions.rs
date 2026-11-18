@@ -123,6 +123,9 @@ impl HiveApp {
             |this, value, cx| match serde_json::from_value::<Vec<Workspace>>(value) {
                 Ok(workspaces) => {
                     this.workspaces = workspaces;
+                    if let Err(error) = crate::desktop_update::report_startup() {
+                        eprintln!("Could not report updated desktop startup: {error}");
+                    }
                     this.pinned_sessions.records.retain(|hit| {
                         this.workspaces
                             .iter()

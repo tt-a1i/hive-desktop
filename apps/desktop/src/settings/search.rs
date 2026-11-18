@@ -397,6 +397,9 @@ impl HiveApp {
         if section == SettingsSection::Archive {
             self.load_archived_settings(false, cx);
         }
+        if section == SettingsSection::About {
+            self.load_update_receipt(cx);
+        }
         if !self.settings_panel {
             self.open_settings(window, cx);
         }

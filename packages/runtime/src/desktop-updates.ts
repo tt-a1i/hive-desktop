@@ -1,7 +1,9 @@
 import { createHash, createPublicKey, randomUUID, verify, type KeyObject } from 'node:crypto';
-import { copyFile, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { extractDesktopUpdate, hashDesktopFile, verifyDesktopPackage } from './desktop-update-archive.js';
+import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { extractDesktopUpdate, verifyDesktopPackage } from './desktop-update-archive.js';
+import { desktopPackagePaths, hashDesktopFile, type DesktopInstallPlan } from './desktop-update-installer.js';
 
 const manifestLimit = 64 * 1024;
 const archiveLimit = 2 * 1024 * 1024 * 1024;
@@ -14,8 +16,10 @@ type Check =
   | { state: 'disabled' }
   | { state: 'current'; installedVersion: string }
   | { state: 'unsupported'; installedVersion: string; version: string }
-  | ({ state: 'available'; installedVersion: string } & Candidate);
+  | ({ state: 'available'; installedVersion: string; staged?: true } & Candidate);
+type Available = Extract<Check, { state: 'available' }>;
 type Prepared = { directory: string; packageRoot: string; version: string; sha256: string };
+type Installer = { executable: string; program: string; version: string; sha256: string };
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid desktop update document');
@@ -107,7 +111,7 @@ async function consume(url: URL, limit: number, signal: AbortSignal, receive: (c
 export class DesktopUpdates {
   private readonly closing = new AbortController();
   private staging: Promise<{ version: string; sha256: string }> | undefined;
-  private preparing: Promise<Prepared> | undefined;
+  private preparing: Promise<unknown> | undefined;
 
   constructor(private readonly dataDirectory: string, private readonly policyPath: URL) {}
 
@@ -135,7 +139,47 @@ export class DesktopUpdates {
 
   async check(): Promise<Check> {
     const policy = await loadPolicy(this.policyPath);
-    return policy ? this.inspect(policy, await this.fetchManifest(policy)) : { state: 'disabled' };
+    if (!policy) return { state: 'disabled' };
+    let manifest: Buffer;
+    try {
+      manifest = await this.fetchManifest(policy);
+    } catch (error) {
+      this.closing.signal.throwIfAborted();
+      const cached = await this.cachedUpdate(policy);
+      if (cached) return cached;
+      throw error;
+    }
+    const candidate = this.inspect(policy, manifest);
+    return candidate.state === 'available' ? (await this.cachedUpdate(policy, candidate) ?? candidate) : candidate;
+  }
+
+  private async cachedUpdate(policy: Policy, selected?: Available): Promise<Available | undefined> {
+    const directory = join(this.dataDirectory, 'desktop-updates');
+    const names = selected ? [`${selected.asset.sha256}.manifest.json`] : await readdir(directory).catch(error => {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    });
+    let best: Available | undefined;
+    for (const name of names) {
+      if (!/^[a-f0-9]{64}\.manifest\.json$/.test(name)) continue;
+      try {
+        const attestation = join(directory, name);
+        const manifest = await lstat(attestation);
+        if (!manifest.isFile() || manifest.size > manifestLimit) continue;
+        const candidate = this.inspect(policy, await readFile(attestation));
+        if (candidate.state !== 'available' || name !== `${candidate.asset.sha256}.manifest.json`
+          || (selected && selected.version !== candidate.version) || (best && !newer(candidate.version, best.version))) continue;
+        const path = join(directory, `${candidate.asset.sha256}.zip`);
+        const archive = await lstat(path);
+        if (archive.isFile() && archive.size === candidate.asset.bytes && await hashDesktopFile(path, this.closing.signal) === candidate.asset.sha256) {
+          best = { ...candidate, staged: true };
+        }
+      } catch {
+        this.closing.signal.throwIfAborted();
+        // A stale or invalid download can be replaced by another signed download.
+      }
+    }
+    return best;
   }
 
   stage(expectedVersion: string, expectedSha256: string): Promise<{ version: string; sha256: string }> {
@@ -182,12 +226,58 @@ export class DesktopUpdates {
   }
 
   prepare(expectedVersion: string, sha256: string): Promise<Prepared> {
-    if (this.staging || this.preparing) throw new Error('A desktop update is already downloading or preparing');
-    this.preparing = this.preparePackage(expectedVersion, sha256).finally(() => { this.preparing = undefined; });
-    return this.preparing;
+    return this.prepareExclusively(() => this.preparePackage(expectedVersion, sha256));
   }
 
-  private async preparePackage(expectedVersion: string, sha256: string): Promise<Prepared> {
+  prepareInstaller(expectedVersion: string, sha256: string): Promise<Installer> {
+    return this.prepareExclusively(async () => {
+      const policy = await loadPolicy(this.policyPath);
+      if (!policy) throw new Error('This desktop package has no update channel');
+      const signal = this.closing.signal;
+      const resources = dirname(fileURLToPath(this.policyPath));
+      const installation = await realpath(resolve(resources, process.platform === 'darwin' ? '../..' : '..'));
+      const current = desktopPackagePaths(installation);
+      if (await realpath(resources) !== current.resources || await realpath(process.execPath) !== current.node) {
+        throw new Error('Updates require the installed desktop and its bundled Node');
+      }
+      const dataDirectory = await realpath(this.dataDirectory);
+      const relativeData = relative(installation, dataDirectory);
+      if (!relativeData || (!isAbsolute(relativeData) && relativeData !== '..' && !relativeData.startsWith(`..${sep}`))) {
+        throw new Error('Desktop update cannot move an installation containing its own user data');
+      }
+      await verifyDesktopPackage(installation, policy.installedVersion, signal);
+      const prepared = await this.preparePackage(expectedVersion, sha256, dirname(installation));
+      try {
+        const next = join(prepared.directory, 'next');
+        await rename(prepared.packageRoot, next);
+        const plan: DesktopInstallPlan = {
+          installation, dataDirectory, fromVersion: policy.installedVersion, toVersion: expectedVersion,
+          oldExecutableSha256: await hashDesktopFile(current.executable, signal),
+          newExecutableSha256: await hashDesktopFile(desktopPackagePaths(next).executable, signal),
+        };
+        const executable = join(prepared.directory, process.platform === 'win32' ? 'node.exe' : 'node');
+        const program = join(prepared.directory, 'installer.mjs');
+        await copyFile(current.node, executable);
+        if (process.platform === 'darwin') await chmod(executable, 0o700);
+        await copyFile(new URL('./desktop-update-installer.js', import.meta.url), program);
+        await writeFile(join(prepared.directory, 'install-plan.json'), JSON.stringify(plan), { flag: 'wx', mode: 0o600, flush: true });
+        signal.throwIfAborted();
+        return { executable, program, version: prepared.version, sha256: prepared.sha256 };
+      } catch (error) {
+        await rm(prepared.directory, { recursive: true, force: true });
+        throw error;
+      }
+    });
+  }
+
+  private prepareExclusively<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.staging || this.preparing) throw new Error('A desktop update is already downloading or preparing');
+    const task = operation().finally(() => { this.preparing = undefined; });
+    this.preparing = task;
+    return task;
+  }
+
+  private async preparePackage(expectedVersion: string, sha256: string, besideInstallation?: string): Promise<Prepared> {
     if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('Invalid desktop update digest');
     version(expectedVersion);
     const signal = this.closing.signal;
@@ -206,7 +296,7 @@ export class DesktopUpdates {
     const archiveInfo = await lstat(archive);
     if (!archiveInfo.isFile() || archiveInfo.size !== checked.asset.bytes) throw new Error('Staged desktop update archive verification failed');
 
-    const directory = await mkdtemp(join(staging, 'prepare-'));
+    const directory = await mkdtemp(besideInstallation ? join(besideInstallation, '.hive-desktop-install-') : join(staging, 'prepare-'));
     try {
       const snapshot = join(directory, 'bundle.zip');
       await copyFile(archive, snapshot);

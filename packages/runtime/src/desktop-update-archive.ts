@@ -1,26 +1,16 @@
-import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import { chmod, lstat, mkdir, readFile, readdir, realpath, symlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { openPromise } from 'yauzl';
+import { desktopPackagePaths, hashDesktopFile } from './desktop-update-installer.js';
+export { desktopPackagePaths, hashDesktopFile } from './desktop-update-installer.js';
 
 const maxEntries = 100_000;
 const maxExpandedBytes = 4 * 1024 * 1024 * 1024;
 const maxLinkBytes = 4096;
-
-export function desktopPackagePaths(root: string) {
-  const contents = process.platform === 'darwin' ? join(root, 'Contents') : root;
-  const resources = join(contents, process.platform === 'darwin' ? 'Resources' : 'resources');
-  return {
-    resources,
-    executable: join(contents, process.platform === 'darwin' ? 'MacOS/hive-desktop' : 'hive-desktop.exe'),
-    node: join(resources, process.platform === 'darwin' ? 'node/bin/node' : 'node/node.exe'),
-    runtime: join(resources, 'runtime/dist/main.js'),
-  };
-}
 
 function inside(root: string, path: string): boolean {
   const rel = relative(root, path);
@@ -32,12 +22,6 @@ function checkPart(part: string) {
     || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(part)) {
     throw new Error('Desktop update archive contains an invalid path');
   }
-}
-
-export async function hashDesktopFile(path: string, signal?: AbortSignal): Promise<string> {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(path, { signal })) hash.update(chunk);
-  return hash.digest('hex');
 }
 
 /** Extract a verified ZIP to a fresh directory. Links are only created after all regular writes. */

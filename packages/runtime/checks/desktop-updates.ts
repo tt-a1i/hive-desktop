@@ -28,10 +28,12 @@ const envelope = (version: string, assets = [asset]) => {
 };
 let manifest = envelope('0.1.1');
 let manifestsRequested = 0;
+let unavailable = false;
 let serve = (response: import('node:http').ServerResponse) => response.end(archive);
 const server = createServer((request, response) => {
   if (request.url === '/feed/manifest.json') {
     manifestsRequested++;
+    if (unavailable) return response.writeHead(503).end();
     response.end(JSON.stringify(manifest));
   }
   else if (request.url === '/feed/fixture.zip') serve(response);
@@ -71,6 +73,14 @@ try {
   serve = response => response.end(archive);
   assert.deepEqual(await updates.stage('0.1.2', sha256), { version: '0.1.2', sha256 });
   assert.deepEqual(await readFile(join(staging, `${sha256}.zip`)), archive);
+  unavailable = true;
+  const cold = new DesktopUpdates(root, policyPath);
+  try {
+    assert.deepEqual(await cold.check(), {state:'available', installedVersion:'0.1.0', version:'0.1.2', asset, staged:true});
+  } finally {
+    unavailable = false;
+    await cold.close();
+  }
 
   const fixture = join(root, 'fixture');
   const mac = process.platform === 'darwin';
