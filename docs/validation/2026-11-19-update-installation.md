@@ -17,4 +17,4 @@
 
 类型检查、运行时构建、更新下载与准备回归、实际子进程的安装和启动失败测试，以及 macOS 构建和 Windows 交叉编译通过。本机 Rust 编译限制为一个作业。Windows 已完成上一便携包的原生窗口重放，包含主题切换后保留代码字号和换行。[便携包重放](https://github.com/tt-a1i/hive-desktop/actions/runs/44345398611)
 
-新版 Windows CI 覆盖包内安装进程测试。完整 Windows 原生安装和替换有待实测。安装程序本身被中断、电源中断、磁盘文件迁移后恢复旧版，以及 macOS 代码签名和公证的验证仍待完成。安装事务记录保留现场供诊断。所有安装测试使用开发包，没有对外发布。[新版 Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44349718516)
+新版 Windows CI 覆盖包内安装进程测试。完整 Windows 原生安装和替换有待实测。后续 macOS 安装程序被终止的验证见[安装中断恢复](2026-11-19-update-recovery.md)。实际断电、磁盘文件迁移后恢复旧版，以及 macOS 代码签名和公证的验证仍待完成。所有安装测试使用开发包，没有对外发布。[新版 Windows CI](https://github.com/tt-a1i/hive-desktop/actions/runs/44349718516)
