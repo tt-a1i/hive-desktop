@@ -16,9 +16,9 @@ await writeFile(join(project, 'app-server'),
 const events: any[] = [];
 let runtime = await createDesktopRuntime(join(directory, 'state'), event => events.push(event),
   { executableEnvironment: { HIVE_CODEX_COMMAND: process.execPath } });
-const wait = async (condition: () => Promise<boolean>) => {
+const wait = async (phase: string, condition: () => Promise<boolean>) => {
   const deadline = Date.now() + 10000;
-  while (!await condition()) { assert.ok(Date.now() < deadline, 'Owned exit check timed out'); await delay(10); }
+  while (!await condition()) { assert.ok(Date.now() < deadline, `Owned exit check timed out during ${phase}`); await delay(10); }
 };
 try {
   const workspace = await runtime.hive.request('POST', '/api/workspaces', {
@@ -26,7 +26,7 @@ try {
   }) as { id: string };
   const chat = await runtime.chats.create(workspace.id, 'codex');
   await runtime.chats.prompt(chat.id, 'Owned active input');
-  await wait(async () => (await runtime.chats.open(chat.id)).busy);
+  await wait('initial delivery', async () => (await runtime.chats.open(chat.id)).busy);
   await runtime.chats.prompt(chat.id, 'Owned queued input');
   const accepted = (await runtime.chats.open(chat.id)).pendingUserInputs;
   assert.equal(accepted.length, 2);
@@ -34,7 +34,7 @@ try {
   const { pid } = JSON.parse(await readFile(join(project, 'owned-peer-pid.json'), 'utf8'));
   assert.ok(Number.isInteger(pid) && pid > 0);
   process.kill(pid, 'SIGTERM');
-  await wait(async () => Boolean(live.cleanup));
+  await wait('cleanup after peer exit', async () => Boolean(live.cleanup));
   // Cleanup must reap the dead session, not reject with the already-reported run error.
   await live.cleanup;
   assert.equal((runtime.chats as any).live.has(chat.id), false);
@@ -52,7 +52,22 @@ try {
   assert.equal(JSON.parse(await readFile(join(project, 'queue-peer-thread.json'), 'utf8')).turns.length, 1);
   await writeFile(join(project, 'queue-peer-control.json'), '{"complete":true}');
   await runtime.chats.resume(chat.id);
-  await wait(async () => { const s = await runtime.chats.open(chat.id); return !s.busy && s.pending === 0; });
+  let recovery = cold;
+  try {
+    await wait('explicit queue recovery', async () => {
+      recovery = await runtime.chats.open(chat.id);
+      return !recovery.busy && recovery.pending === 0;
+    });
+  } catch (error) {
+    console.error(JSON.stringify({
+      busy: recovery.busy,
+      pending: recovery.pendingUserInputs.map(({deliveryId, processing}) => ({deliveryId, processing})),
+      completedDeliveryIds: recovery.completedDeliveryIds,
+      deliveryFailure: recovery.deliveryFailure,
+      recentErrors: events.filter(event => event.type === 'error').slice(-5).map(event => event.message),
+    }));
+    throw error;
+  }
   const completed = await runtime.chats.open(chat.id);
   for (const input of accepted) assert.ok(completed.completedDeliveryIds.includes(input.deliveryId));
   const turns = JSON.parse(await readFile(join(project, 'queue-peer-thread.json'), 'utf8')).turns;
