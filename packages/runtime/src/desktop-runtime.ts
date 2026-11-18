@@ -14,6 +14,7 @@ import { DesktopSettings, type DesktopExecutableEnvironment } from './desktop-se
 import { createStructuredRuntime } from './structured-runtime.js';
 import { PiAuth } from './pi-auth.js';
 import { PiModelConfig } from './pi-model-config.js';
+import { PiVault } from './pi-vault.js';
 import { isWorkerRole } from '@tt-a1i/hive/dist/src/shared/types.js';
 import { structuredCommand } from './structured-runtime.js';
 
@@ -65,13 +66,14 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
   const settings = new DesktopSettings(hive, options.executableEnvironment);
   profiles = new AgentProfiles(hive);
   settings.attachProfiles(profiles);
-  const agentModels = new AgentModels(hive, settings, profiles);
+  const piVault = new PiVault(dataDir);
+  const agentModels = new AgentModels(hive, settings, profiles, piVault);
   const piAuth = new PiAuth();
   const piModels = new PiModelConfig();
   try {
     if (!agents) throw new Error('Hive runtime factory was not installed');
     await profiles.initialize(await settings.get());
-    chats = new Chats(hive, dataDir, emit, agents, settings, agentModels, profiles);
+    chats = new Chats(hive, dataDir, emit, agents, settings, agentModels, profiles, piVault);
     await chats.initializeProfiles();
   } catch (error) { await hive.close(); throw error; }
   const terminal = new Terminals(hive, workspaceId => chats.assertWorkspaceAvailable(workspaceId), options.onTerminalEvent ?? (() => {}), (workspaceId, sessionId) => chats.executionDirectory(workspaceId, sessionId), executionMutations);
@@ -87,7 +89,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
   chats.configureHistory(executionMutations, () => terminal.hasAnyActiveShell());
   chats.configureHandoffs(executionMutations, () => terminal.hasAnyActiveShell());
   let closing: Promise<void> | undefined;
-  return { hive, chats, profiles, agents, executionMutations, settings, agentModels, terminal, piAuth, piModels, projectScripts, scriptRuns, initialization,
+  return { hive, chats, profiles, agents, executionMutations, settings, agentModels, terminal, piAuth, piModels, piVault, projectScripts, scriptRuns, initialization,
     createMember: (workspaceId: string, input: { name: unknown; role: unknown; backend: unknown; profile?: AgentProfileRef; model?: {provider: string; id: string}; description?: unknown }) => {
       chats.assertWorkspaceAvailable(workspaceId);
       if (typeof input.name !== 'string' || !input.name.trim() || !isWorkerRole(input.role)
@@ -118,7 +120,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       await Promise.all([chats.history?.close(),chats.handoffs?.close()]);
       initialization.close();
       const scripts = await Promise.allSettled([scriptRuns.close()]);
-      const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), terminal.close(), agentModels.close()]);
+      const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), piVault.close(), terminal.close(), agentModels.close()]);
       const stage2 = await Promise.allSettled([hive.close()]);
       const stage3 = await Promise.allSettled([chats.close()]);
       const errors = [...scripts, ...stage1, ...stage2, ...stage3].flatMap(result => result.status === 'rejected' ? [result.reason] : []);

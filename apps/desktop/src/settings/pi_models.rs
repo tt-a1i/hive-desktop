@@ -9,6 +9,7 @@ use gpui_kit::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 mod draft;
+mod vault;
 mod view;
 
 #[derive(Clone, Deserialize)]
@@ -61,6 +62,7 @@ struct Values {
 }
 
 pub struct PiModels {
+    pub(super) vault: vault::VaultSettings,
     draft_root: Option<std::path::PathBuf>,
     form_path: String,
     draft_checked: Option<String>,
@@ -133,6 +135,7 @@ impl PiModels {
             }
         }));
         Self {
+            vault: Default::default(),
             draft_root: None,
             form_path: String::new(),
             draft_checked: None,
@@ -178,6 +181,7 @@ impl PiModels {
         self.target.is_some() && self.values(cx) != self.initial
     }
     pub fn reset_connection(&mut self) {
+        self.vault.close();
         self.generation += 1;
         self.loading = false;
         self.snapshot = None;
@@ -281,6 +285,7 @@ impl HiveApp {
         if self.pi_models.loading || self.pi_models.snapshot.is_none() {
             return;
         }
+        self.pi_models.vault.close();
         if self.pi_models.dirty(cx) {
             let weak = cx.weak_entity();
             window.open_alert_dialog(cx, move |dialog, _, _| {

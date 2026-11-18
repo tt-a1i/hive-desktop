@@ -149,6 +149,7 @@ impl HiveApp {
                         },
                     ),
             ))
+            .when(state.target.is_none(), |view| view.child(self.render_pi_vault(cx)))
             .when_some(
                 state.message.as_ref().filter(|_| state.target.is_none()),
                 |view, notice| {

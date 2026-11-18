@@ -184,6 +184,7 @@ impl HiveApp {
     pub fn close_settings(&mut self) {
         if self.settings_panel {
             self.settings_panel = false;
+            self.pi_models.vault.close();
             self.program_setup_focus = None;
             self.executable_picker_generation += 1;
         }
@@ -210,6 +211,8 @@ impl HiveApp {
         self.load_profiles(cx);
         if self.settings_section == SettingsSection::Models {
             self.load_pi_models(cx);
+        } else {
+            self.pi_models.vault.close();
         }
         if self.settings_section == SettingsSection::Archive {
             self.load_archived_settings(false, cx);

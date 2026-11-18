@@ -22,7 +22,8 @@ export class AgentModels {
   private readonly closeAbort = new AbortController();
   private closing = false;
   private readonly removing = new Set<string>();
-  constructor(private readonly hive: HiveHost, private readonly settings: DesktopSettings, private readonly profiles = new AgentProfiles(hive)) {}
+  constructor(private readonly hive: HiveHost, private readonly settings: DesktopSettings, private readonly profiles = new AgentProfiles(hive),
+    private readonly piVault?: import('./pi-vault.js').PiVault) {}
   async list(workspaceId: string, backend: unknown, ref?: AgentProfileRef): Promise<AgentModelCatalog> {
     if (this.closing) return Promise.reject(new Error('Model catalog runtime is closing'));
     if (backend !== 'pi' && backend !== 'codex' && backend !== 'pi-rpc' && backend !== 'claude' && backend !== 'acp') {
@@ -60,7 +61,7 @@ export class AgentModels {
       this.closeAbort.signal.throwIfAborted();
       const options = { cwd: workspace.path, sessionDir: directory, onEvent };
       handle = await createAgentSession({backend, profile,
-        ...(backend === 'pi' ? {pi: {...options, onUnexpectedExit}}
+        ...(backend === 'pi' ? {pi: {...options, ...(this.piVault && {vault: this.piVault}), onUnexpectedExit}}
           : backend === 'codex' ? {codex: {...options, signal: this.closeAbort.signal, onUnexpectedExit}}
           : backend === 'claude' ? {claude: {...options, signal: this.closeAbort.signal, onUnexpectedExit}}
           : {externalPi: {...options, signal: this.closeAbort.signal, onUnexpectedExit}})});

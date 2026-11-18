@@ -3,11 +3,13 @@ import { externalPiMessage } from './external-pi-history.js';
 import { piUsage } from '../agent-usage.js';
 import { promptImages, imageMessage } from '../prompt-images.js';
 import { randomUUID } from 'node:crypto';
-import { createAgentSession } from '@earendil-works/pi-coding-agent';
+import { join } from 'node:path';
+import { createAgentSession, getAgentDir, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { isUnsetPiModel } from '../chat-index.js';
 import { createDesktopSessionManager } from './pi-session-manager.js';
 import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-presentation.js';
 import type { PiSessionHandle, PiSessionOptions } from './types.js';
+import { PiVaultSession } from '../pi-vault.js';
 
 type DeliveryMetadata = DeliveryPresentation & { deliveryId: string };
 
@@ -34,10 +36,22 @@ function presentedMessage<T>(message: T): T | (T & { presentation: DeliveryMetad
 /** Uses Pi's normal resource loader, user settings, credentials and tool defaults. */
 export async function createPiSession(options: PiSessionOptions): Promise<PiSessionHandle> {
   const manager = createDesktopSessionManager(options.cwd, options.sessionDir, options.sessionFile);
+  const directory = options.agentDir ?? getAgentDir();
+  let models: ModelRuntime | undefined;
+  let vault: PiVaultSession | undefined;
+  if (options.vault?.agentDirectory === directory) {
+    models = await ModelRuntime.create(options.agentDir ? {
+      authPath: join(directory, 'auth.json'), modelsPath: join(directory, 'models.json'),
+    } : {});
+    const binding = new PiVaultSession(options.vault, directory, models);
+    await binding.reload();
+    vault = binding;
+  }
   const { session } = await createAgentSession({
     cwd: options.cwd,
     ...(options.agentDir !== undefined && { agentDir: options.agentDir }),
     sessionManager: manager,
+    ...(models && {modelRuntime: models}),
     ...(options.customTools !== undefined && { customTools: options.customTools }),
   });
   const sessionId = manager.getSessionId();
@@ -80,7 +94,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
     return id;
   };
   const userInputs = new WeakMap<object, PiUserInput>();
-  let active: { nativeInput: PiUserInput | undefined; handled: boolean; cancelled: boolean; done: Promise<void>; finalError: string | undefined; sdkAborted: boolean; deliveryId: string | undefined; deliveryReceived: boolean } | undefined;
+  let active: { nativeInput: PiUserInput | undefined; handled: boolean; cancelled: boolean; done: Promise<void>; finalError: string | undefined; sdkAborted: boolean; deliveryId: string | undefined; deliveryReceived: boolean; controller: AbortController } | undefined;
   let disposed = false;
   const unsubscribe = session.subscribe((event) => {
     switch (event.type) {
@@ -89,13 +103,16 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
         if (active?.cancelled) void session.abort();
         break;
       case 'message_start':
-        if (event.message.role === 'assistant') {
+        if (event.message.role === 'assistant' && !vault?.hasSecret) {
           messageId = idForMessage(event.message);
           activeMessage = { messageId, message: event.message };
           activeHistoryIndex = session.messages.length;
         }
         break;
       case 'message_update': {
+        // A provider can echo a credential across multiple chunks. Vault-backed
+        // replies appear when a complete message is available for redaction.
+        if (vault?.hasSecret) break;
         const update = event.assistantMessageEvent;
         if (event.message.role === 'assistant') {
           messageId ??= idForMessage(event.message);
@@ -110,7 +127,13 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
         }
         break;
       }
-      case 'message_end':
+      case 'message_end': {
+        if (vault?.hasSecret && (event.message.role === 'assistant' || event.message.role === 'toolResult')) {
+          // Pi shares this message with its in-memory context and appends it
+          // after subscribers run. Keep a credential echo out of both.
+          const safe = vault.redactPayload(event.message);
+          if (safe !== event.message) Object.assign(event.message, safe);
+        }
         if (event.message.role === 'user' || (event.message.role === 'custom' && event.message.customType === 'hive-delivery')) {
           if (event.message.role === 'user' && active?.nativeInput && !active.deliveryReceived) {
             userInputs.set(event.message, active.nativeInput);
@@ -125,22 +148,24 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
           messageIds.set(event.message, finalId);
           activeMessage = undefined;
           activeHistoryIndex = undefined;
-          options.onEvent({ type: 'message_end', sessionId, messageId: finalId, message: event.message });
+          const message = event.message;
+          options.onEvent({ type: 'message_end', sessionId, messageId: finalId, message });
           if (active) {
-            if (event.message.stopReason === 'error') active.finalError = event.message.errorMessage ?? 'Pi request failed';
+            if (message.stopReason === 'error') active.finalError = message.errorMessage ?? 'Pi request failed';
             else active.finalError = undefined;
           }
           messageId = undefined;
         }
         break;
+      }
       case 'tool_execution_start':
-        options.onEvent({ type: 'tool_start', sessionId, toolCallId: event.toolCallId, toolName: event.toolName, args: event.args });
+        options.onEvent({ type: 'tool_start', sessionId, toolCallId: event.toolCallId, toolName: event.toolName, args: vault?.redactPayload(event.args) ?? event.args });
         break;
       case 'tool_execution_update':
-        options.onEvent({ type: 'tool_update', sessionId, toolCallId: event.toolCallId, toolName: event.toolName, result: event.partialResult });
+        options.onEvent({ type: 'tool_update', sessionId, toolCallId: event.toolCallId, toolName: event.toolName, result: vault?.redactPayload(event.partialResult) ?? event.partialResult });
         break;
       case 'tool_execution_end':
-        options.onEvent({ type: 'tool_end', sessionId, toolCallId: event.toolCallId, toolName: event.toolName, result: event.result, isError: event.isError });
+        options.onEvent({ type: 'tool_end', sessionId, toolCallId: event.toolCallId, toolName: event.toolName, result: vault?.redactPayload(event.result) ?? event.result, isError: event.isError });
         break;
       case 'agent_settled':
         if (active) active.sdkAborted ||= event.aborted;
@@ -150,13 +175,15 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   const unsubscribeErrors = session.extensionRunner.onError(error => {
     // SDK event-hook diagnostics do not fail a completed run. Commands report
     // handler failures here while still returning a handled-input disposition.
-    if (active && error.event === 'command') active.finalError = error.error;
-    options.onEvent({ type: 'error', sessionId, message: error.error });
+    const message = vault?.redact(error.error) ?? error.error;
+    if (active && error.event === 'command') active.finalError = message;
+    options.onEvent({ type: 'error', sessionId, message });
   });
   let savedModelUnavailable = false;
   const setModel = async (provider: string, id: string) => {
     if (disposed) throw new Error('Pi session is disposed');
     if (persistenceFailure) throw persistenceFailure;
+    await vault?.reload();
     const model = session.modelRuntime.getModel(provider, id);
     if (!model) throw new Error(`Unknown Pi model: ${provider}/${id}`);
     try { await session.setModel(model, { persist: false }); }
@@ -183,11 +210,11 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
   return {
     sessionId,
     get sessionFile() { return manager.getSessionFile(); },
-    history: () => session.messages,
+    history: () => vault?.redactPayload(session.messages) ?? session.messages,
     hasContext: customType => session.messages.some(message => message.role === 'custom' && message.customType === customType),
     snapshot() {
       const history = [...session.messages];
-      const streaming = session.state.streamingMessage;
+      const streaming = vault?.hasSecret ? undefined : session.state.streamingMessage;
       if (!activeMessage && streaming?.role === 'assistant') {
         messageId = idForMessage(streaming);
         activeMessage = { messageId, message: streaming };
@@ -233,7 +260,9 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
         const id = idForMessage(original);
         if (displayIds.includes(id)) continue;
         const input = userInputs.get(original);
-        displayed.push(input ? { ...original, presentation: input } : presentedMessage(original));
+        const safe = original.role === 'assistant' || original.role === 'toolResult'
+          ? vault?.redactPayload(original) ?? original : original;
+        displayed.push(input ? { ...original, presentation: input } : presentedMessage(safe));
         displayIds.push(id);
       }
       return { history: displayed, historyMessageIds: displayIds,
@@ -255,10 +284,11 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       if (persistenceFailure) return Promise.reject(persistenceFailure);
       if (savedModelUnavailable) return Promise.reject(new Error('原先的 Pi 模型不可用，请重新选择。'));
       if (active) return Promise.reject(new Error('Pi session is already processing a prompt'));
-      const run = { nativeInput: undefined as PiUserInput | undefined, handled: false, cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, deliveryId: promptOptions?.deliveryId, deliveryReceived: false };
+      const run = { nativeInput: undefined as PiUserInput | undefined, handled: false, cancelled: false, sdkAborted: false, done: Promise.resolve(), finalError: undefined as string | undefined, deliveryId: promptOptions?.deliveryId, deliveryReceived: false, controller: new AbortController() };
       active = run;
       run.done = Promise.resolve().then(async () => {
         try {
+          if (vault) await vault.begin(run.controller.signal, session.model);
           if (promptOptions?.deliveryId) {
             const presentation: DeliveryPresentation = isDeliveryPresentation(promptOptions.presentation)
               ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text };
@@ -297,12 +327,16 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
           // filesystem exception for this JSONL, without treating model or
           // extension failures as storage failures.
           const fileError = cause as NodeJS.ErrnoException;
-          const error = cause instanceof Error && fileError.path === manager.getSessionFile()
+          const message = cause instanceof Error ? cause.message : String(cause);
+          const safe = vault?.redact(message) ?? message;
+          let error = safe === message ? cause : new Error(safe);
+          if (cause instanceof Error && fileError.path === manager.getSessionFile()
             && typeof fileError.syscall === 'string' && typeof fileError.code === 'string'
-            ? failPersistence(cause) : cause;
+          ) error = failPersistence(error);
           if (!run.cancelled) options.onEvent({ type: 'error', sessionId, message: error instanceof Error ? error.message : String(error) });
           throw error;
         } finally {
+          vault?.end();
           active = undefined;
           options.onEvent({ type: 'settled', sessionId, aborted: run.cancelled || run.sdkAborted });
           if (persistenceFailure) options.onUnexpectedExit?.(persistenceFailure);
@@ -314,6 +348,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       const run = active;
       if (!run) return;
       run.cancelled = true;
+      run.controller.abort(new Error('Pi delivery was aborted'));
       await session.abort();
       // Covers input/auth preflight, for which Pi has no cancellation signal.
       await run.done.catch(() => {});
@@ -334,6 +369,7 @@ export async function createPiSession(options: PiSessionOptions): Promise<PiSess
       if (disposed) throw new Error('Pi session is disposed');
       if (persistenceFailure) throw persistenceFailure;
       await session.modelRuntime.refresh({ allowNetwork: false });
+      await vault?.reload();
       const selected = session.model;
       const current = selected && session.modelRuntime.getModel(selected.provider, selected.id);
       const available = current && session.modelRuntime.getAvailableSnapshot().some(model => model.provider === current.provider && model.id === current.id);

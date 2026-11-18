@@ -192,7 +192,8 @@ export class Chats implements StructuredSessionPort {
   private readonly gitOperations = new Set<Promise<unknown>>();
 
   constructor(private readonly hive: HiveHost, private readonly dataDir: string, private readonly emit: (event: ChatEvent) => void,
-    private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels, readonly profiles = new AgentProfiles(hive)) {
+    private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels,
+    readonly profiles = new AgentProfiles(hive), private readonly piVault?: import('./pi-vault.js').PiVault) {
     const directory = join(dataDir, 'chats');
     this.attachments=new ChatAttachments(hive, new ProjectFileReferences(join(directory, 'project-file-references')));
     this.interactionAttachments = new InteractionAttachments(join(directory, 'interaction-attachments'), this.attachments);
@@ -847,6 +848,7 @@ export class Chats implements StructuredSessionPort {
         signal: this.closeAbort.signal,
         ...(sessionFile && { sessionFile }), ...(model && { model }), onEvent, onUnexpectedExit, teamBinding: binding }}
       : {pi: { cwd: executionPath, sessionDir: this.sessionDir,
+        ...(this.piVault && {vault: this.piVault}),
         ...(sessionFile && { sessionFile }), ...(model && { model }),
         customTools: [createTeamTool(binding)], onEvent, onUnexpectedExit }})});
     try {
@@ -1787,9 +1789,10 @@ export class Chats implements StructuredSessionPort {
       const chat = await this.require(id);
       if (chat.queue.busy) throw new Error('Stop the current response before changing model');
       const previous = chat.handle.currentModel();
-      if (previous?.provider === provider && previous.id === modelId) return {ok:true};
+      const alreadySelected = previous?.provider === provider && previous.id === modelId;
+      if (alreadySelected && existing.model?.provider === provider && existing.model.id === modelId) return {ok:true};
       return this.changeNativeSettings(id, chat, async () => {
-        await chat.handle.setModel(provider, modelId);
+        if (!alreadySelected) await chat.handle.setModel(provider, modelId);
         const model = chat.handle.currentModel();
         const record = { ...this.index.get(id), ...(model ? { model } : {}), updatedAt: Date.now() };
         delete record.reasoning;

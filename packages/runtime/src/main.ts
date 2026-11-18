@@ -130,6 +130,11 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'history.operations.list': return chats.history!.list(text(params,'workspaceId'));
     case 'pi.models.get': return runtime.piModels.get();
     case 'pi.models.change': return runtime.piModels.change(params.revision, params.change);
+    case 'pi.vault.get': exact(params, []); return runtime.piVault.view();
+    case 'pi.vault.change': {
+      exact(params, ['revision', 'configRevision', 'provider', 'reference']);
+      return runtime.piVault.change(params.revision, params.configRevision, text(params, 'provider'), params.reference);
+    }
     case 'pi.auth.providers': return piAuth.providers();
     case 'pi.auth.start': return piAuth.start(text(params, 'providerId'), params.authType);
     case 'pi.auth.status': return piAuth.status();

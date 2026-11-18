@@ -38,6 +38,7 @@ export interface PiSessionOptions {
   cwd: string;
   sessionDir: string;
   agentDir?: string;
+  vault?: import('../pi-vault.js').PiVault;
   sessionFile?: string;
   model?: { provider: string; id: string };
   onEvent: (event: PiEvent) => void;

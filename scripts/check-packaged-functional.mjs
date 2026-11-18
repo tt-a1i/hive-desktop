@@ -25,7 +25,7 @@ const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queue
   'acp-session', 'acp-team-stdio', 'acp-team-hive', 'acp-runtime-registration', 'acp-startup-shutdown',
   'profile-executable-probe',
   'chat-index-snapshot-cas', 'handoff-snapshot', 'session-handoffs', 'handoff-delivery',
-  'session-archives', 'session-archives-wire',
+  'session-archives', 'session-archives-wire', 'pi-vault',
   'handoff-native-receipts', 'session-handoff-runtime', 'handoff-runtime-failures',
   'handoff-runtime-delivery', 'handoff-queue-retraction', 'desktop-updates', 'desktop-update-installer',
   process.platform === 'win32' ? 'session-terminals-windows' : 'session-terminals',
@@ -39,7 +39,7 @@ try {
   await mkdir(join(directory, 'fixtures'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/codex-queue-peer.cjs'), join(directory, 'fixtures/codex-queue-peer.cjs'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/session-history-peer.cjs'), join(directory, 'fixtures/session-history-peer.cjs'));
-  for (const fixture of ['worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs', 'acp-runtime-peer.cjs']) {
+  for (const fixture of ['worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs', 'acp-runtime-peer.cjs', 'pi-vault-op.cs']) {
     await copyFile(join(root, 'packages/runtime/checks/fixtures', fixture), join(directory, 'fixtures', fixture));
   }
   await copyFile(join(root, 'packages/runtime/checks/fixtures/git-remotes-wire-peer.cjs'), join(directory, 'fixtures/git-remotes-wire-peer.cjs'));
