@@ -83,17 +83,27 @@ try{
  await wire.rpc('chat.refreshPiModels',{sessionId:pi.id});
  await wire.rpc('chat.setModel',{sessionId:pi.id,provider:'owned-handoff-fixture',modelId:'gpt-6.1-terra'});
  const selected=await wire.rpc('chat.open',{sessionId:pi.id});assert.equal(selected.model.provider,'owned-handoff-fixture');assert.equal(selected.handoffDelivery.status,'pending');assert.equal(selected.pending,0);assert.equal(modelRequests,0);assert.equal(await readFile(join(root,'target-pi','models.json'),'utf8'),ownedModels);
+ const selectedState=await wire.rpc('chat.open',{sessionId:pi.id,includeLiveHistory:false});
+ assert.deepEqual(selectedState, {...selected,history:[],historyMessageIds:[]});
+ await assert.rejects(wire.rpc('chat.open',{sessionId:pi.id,includeLiveHistory:'false'}),/includeLiveHistory must be a boolean/);
  const target=targets.find(item=>item.driver==='acp')!;
  const retry=await wire.rpc('chat.handoff.apply',target.apply);assert.equal(retry.childSessionId,target.id);
  await wire.rpc('chat.prompt',{sessionId:target.id,text:'Please inspect this new worktree.\nACP_TEST_COMMAND:["list"]'});
  let opened:any;
  for(let count=0;count<200;count++){opened=await wire.rpc('chat.open',{sessionId:target.id});if(!opened.busy&&opened.pending===0)break;await new Promise(resolve=>setTimeout(resolve,25));}
  assert.equal(opened.pending,0,JSON.stringify(opened.deliveryFailure));assert.ok(opened.acpSessionId);assert.equal(opened.originAgentId,worker.id);assert.deepEqual(opened.profile,target.profile);
+ assert.ok(opened.history.length>0);
+ const metadata=await wire.rpc('chat.open',{sessionId:target.id,includeLiveHistory:false});
+ assert.deepEqual(metadata, {...opened,history:[],historyMessageIds:[]});
+ const full=await wire.rpc('chat.open',{sessionId:target.id});
+ assert.deepEqual(full.history,opened.history);
+ assert.deepEqual(full.historyMessageIds,opened.historyMessageIds);
  const native=JSON.parse(await readFile(join(acp,opened.acpSessionId+'.json'),'utf8'));const user=native.history.find((row:any)=>row.kind==='user_message_chunk');
  assert.ok(user.text.includes('Please inspect this new worktree.'));assert.equal(user.text.split('[Historical context — recorded material only]').length-1,1);assert.ok(user.text.includes(sourcePath));assert.ok(user.text.includes('Recorded assistant statement'));
  const members=await wire.rpc('team.members',{workspaceId:ws.id});const actual=members.find((item:any)=>item.id===worker.id);assert.equal(actual.configured_command,'hive:acp');assert.deepEqual(actual.desktop_profile,target.profile);
  const old=await wire.rpc('chat.list',{workspaceId:ws.id});assert.equal(old.find((item:any)=>item.id===source.id).originAgentId,worker.id);assert.equal(old.find((item:any)=>item.id===source.id).codexThreadId,'source-synthetic-native');
  await wire.close();wire=undefined;wire=startWire();await wire.rpc('initialize');const cold=await wire.rpc('chat.open',{sessionId:target.id});assert.equal(cold.handoffDelivery.status,'consumed');assert.equal(cold.acpSessionId,opened.acpSessionId);
+ assert.deepEqual(await wire.rpc('chat.open',{sessionId:target.id,includeLiveHistory:false}),cold);
  const protocol=(await readFile(join(acp,'protocol.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));assert.equal(protocol.filter((row:any)=>row.method==='session/prompt').length,1);assert.equal(protocol.filter((row:any)=>row.method==='session/new').length,1);
  const coldPi=await wire.rpc('chat.open',{sessionId:pi.id});assert.equal(coldPi.passive,true);assert.equal(coldPi.handoffDelivery.status,'pending');
  await wire.rpc('chat.setModel',{sessionId:pi.id,provider:'owned-handoff-fixture',modelId:'gpt-6.1-terra'});assert.equal((await wire.rpc('chat.open',{sessionId:pi.id})).model.provider,'owned-handoff-fixture');assert.equal(modelRequests,0);

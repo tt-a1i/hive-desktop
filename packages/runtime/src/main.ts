@@ -304,7 +304,12 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       return { session, sessions: chats.list(session.workspaceId) };
     }
     case 'chat.rename': return chats.rename(text(params, 'sessionId'), params.title);
-    case 'chat.open': return chats.open(text(params, 'sessionId'));
+    case 'chat.open': {
+      if (params.includeLiveHistory !== undefined && typeof params.includeLiveHistory !== 'boolean') {
+        throw new TypeError('includeLiveHistory must be a boolean');
+      }
+      return chats.open(text(params, 'sessionId'), params.includeLiveHistory);
+    }
     case 'chat.prompt': {
       if (typeof params.text !== 'string') throw new TypeError('text must be a string');
       return chats.prompt(text(params, 'sessionId'), params.text, params.attachmentIds, params.busyMode);

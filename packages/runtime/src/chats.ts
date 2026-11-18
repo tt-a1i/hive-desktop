@@ -961,20 +961,22 @@ export class Chats implements StructuredSessionPort {
       this.event(id,{type:'error',sessionId:id,diagnosticWriteFailed:true,message:`处理失败：${error.message}\n失败原因无法保存；原消息仍在待处理队列。${detail}`});
     }
   }
-  private snapshot(id: string, chat: LiveChat) {
+  private snapshot(id: string, chat: LiveChat, includeLiveHistory: boolean) {
     const record = this.index.get(id);
-    const snapshot = chat.handle.snapshot();
     const model = chat.handle.currentModel();
-    const agentId = record.agentId ?? record.originAgentId;
-    const history = agentId ? snapshot.history.map(message => restoreHistoricalReport(message,
-      (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
-    return {
-      ...record, ...(record.backend === 'acp' && {capabilities:acpCapabilities(chat.handle as AcpSessionHandle,!!record.sessionFile),uncertainDeliveryIds:(chat.handle as AcpSessionHandle).uncertainDeliveryIds()}), executionPath: chat.executionPath, ...(record.backend === 'pi' && { model, unavailableModel: model ? undefined : record.model }), ...snapshot, history:history.map((message,index)=>handoffMessage(record.backend,message,snapshot.historyMessageIds[index])), interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
+    const state = {
+      ...record, ...(record.backend === 'acp' && {capabilities:acpCapabilities(chat.handle as AcpSessionHandle,!!record.sessionFile),uncertainDeliveryIds:(chat.handle as AcpSessionHandle).uncertainDeliveryIds()}), executionPath: chat.executionPath, ...(record.backend === 'pi' && { model, unavailableModel: model ? undefined : record.model }), interactions: chat.handle.interactions?.() ?? [], models: chat.handle.listModels(),
       busy: chat.queue.busy, pending: chat.queue.pendingCount, pendingReports: chat.queue.pendingReports, pendingUserInputs: chat.queue.pendingUserInputs, deliveryFailure:this.deliveryFailure(id,chat.queue),
       completedDeliveryIds: chat.handle.completedDeliveryIds(),
       runId: record.agentId ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId)?.runId ?? null : null,
       eventSequence: this.sequences.get(id) ?? 0,
     };
+    if (!includeLiveHistory) return {...state, history: [], historyMessageIds: [], activeMessage: undefined};
+    const snapshot = chat.handle.snapshot();
+    const agentId = state.agentId ?? state.originAgentId;
+    const history = agentId ? snapshot.history.map(message => restoreHistoricalReport(message,
+      (dispatchId, payload) => this.hive.findReportPresentation(state.workspaceId, agentId, dispatchId, payload))) : snapshot.history;
+    return {...state, ...snapshot, history: history.map((message, index) => handoffMessage(state.backend, message, snapshot.historyMessageIds[index]))};
   }
   private async readProfileClaudeHistory(record: ChatRecord, directory: string) {
     if (!record.nativeclaudeSessionId || !record.profile) throw new Error('The saved Claude session or profile reference is missing; its native history directory is unavailable');
@@ -1204,7 +1206,7 @@ export class Chats implements StructuredSessionPort {
     const record = await this.createRecord(workspaceId, backend, options);
     return this.open(record.id);
   }
-  async open(id: string) {
+  async open(id: string, includeLiveHistory = true) {
     try {
     const cleanup=this.live.get(id)?.cleanup;
     if(cleanup)await cleanup;
@@ -1227,7 +1229,7 @@ export class Chats implements StructuredSessionPort {
       const {readOnly,identityError,...snapshot}=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_FORK','Fork opened without activating an Agent'));
       return {...snapshot,readOnly:false,initialization:await this.initialization?.get(record.workspaceId,id)};
     }
-    const snapshot=this.snapshot(id,await this.require(id));
+    const snapshot=this.snapshot(id,await this.require(id),includeLiveHistory);
     return record.handoff?{...snapshot,passive:false,handoffSnapshot:await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}:snapshot; }
     catch (error) {
       if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError || error instanceof WorktreeInitializationError || error instanceof HandoffError)) throw error;

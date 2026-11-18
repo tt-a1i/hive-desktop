@@ -208,29 +208,33 @@ impl HiveApp {
         self.nav_forward.clear();
     }
 
-    fn clear_active_session_only(&mut self, cx: &mut Context<Self>) {
-        self.collaboration.task_expanded = false;
-        self.focus_project_input = false;
-        self.conversation_sources.clear();
-        self.session = None;
+    fn reset_conversation_view(&mut self, cx: &mut Context<Self>) {
         self.conversation_ready = false;
         self.history_navigation.invalidate();
         self.conversation_find = None;
         self.search_target = None;
         self.conversation_list.reset(None);
         self.clear_conversation_messages(cx);
-        self.tool_inputs.clear();
-        self.expanded_tool_groups.clear();
-        self.pending_reports.clear();
-        self.pending_user_inputs.clear();
+        self.tool_inputs = Default::default();
+        self.expanded_tool_groups = Default::default();
+        self.pending_reports = Vec::new();
+        self.pending_user_inputs = Vec::new();
         self.reset_reply_failures();
-        self.completed_deliveries.clear();
-        self.pending_events.clear();
+        self.completed_deliveries = Default::default();
+        self.pending_events = Vec::new();
         self.event_sequence = 0;
-        self.models.clear();
+        self.models = Vec::new();
         self.refreshing_models = false;
         self.model = None;
         self.unavailable_model = None;
+    }
+
+    fn clear_active_session_only(&mut self, cx: &mut Context<Self>) {
+        self.collaboration.task_expanded = false;
+        self.focus_project_input = false;
+        self.conversation_sources.clear();
+        self.session = None;
+        self.reset_conversation_view(cx);
     }
 
     fn apply_history_entry(
@@ -393,31 +397,14 @@ impl HiveApp {
         .detach();
     }
     pub(crate) fn reset_workspace_view(&mut self, cx: &mut Context<Self>) {
-        self.collaboration.task_expanded = false;
-        self.focus_project_input = false;
         self.reset_workflows_workspace();
-        self.conversation_sources.clear();
-        self.session = None;
-        self.conversation_ready = false;
-        self.history_navigation.invalidate();
-        self.conversation_find = None;
-        self.search_target = None;
-        self.conversation_list.reset(None);
-        self.clear_conversation_messages(cx);
-        self.tool_inputs.clear();
-        self.expanded_tool_groups.clear();
-        self.pending_reports.clear();
-        self.pending_user_inputs.clear();
-        self.reset_reply_failures();
-        self.completed_deliveries.clear();
-        self.pending_events.clear();
-        self.event_sequence = 0;
-        self.sessions.clear();
-        self.members.clear();
-        self.member_details_open.clear();
+        self.clear_active_session_only(cx);
+        self.sessions = Vec::new();
+        self.members = Vec::new();
+        self.member_details_open = Default::default();
         self.member_catalog_generation += 1;
         self.member_catalog_loading = false;
-        self.member_catalog.clear();
+        self.member_catalog = Vec::new();
         self.member_picker_target = None;
         self.member_catalog_backend = None;
         self.member_generation += 1;
@@ -426,10 +413,6 @@ impl HiveApp {
         self.member_error = None;
         self.editing_member = None;
         self.deleting_member = None;
-        self.models.clear();
-        self.refreshing_models = false;
-        self.model = None;
-        self.unavailable_model = None;
         self.choosing_model = false;
         self.reasoning_picker = Default::default();
         self.mode_picker = Default::default();
@@ -821,8 +804,7 @@ impl HiveApp {
         self.close_settings();
         self.member_panel = false;
         self.open_request += 1;
-        self.conversation_ready = false;
-        self.history_navigation.invalidate();
+        self.reset_conversation_view(cx);
         self.unread.remove(&id);
         self.choosing_model = false;
         self.reasoning_picker = Default::default();
@@ -834,22 +816,6 @@ impl HiveApp {
             self.session = Some(session.clone());
         }
         self.sync_git_workspace(cx);
-        self.conversation_find = None;
-        self.search_target = None;
-        self.conversation_list.reset(None);
-        self.clear_conversation_messages(cx);
-        self.tool_inputs.clear();
-        self.expanded_tool_groups.clear();
-        self.pending_reports.clear();
-        self.pending_user_inputs.clear();
-        self.reset_reply_failures();
-        self.completed_deliveries.clear();
-        self.pending_events.clear();
-        self.event_sequence = 0;
-        self.models.clear();
-        self.refreshing_models = false;
-        self.model = None;
-        self.unavailable_model = None;
         self.loading = true;
         if self.connected && !self.closing {
             self.status = "正在打开会话…".into();
@@ -964,7 +930,7 @@ impl HiveApp {
         let request = self.open_request;
         self.request(
             "chat.open",
-            json!({"sessionId": id}),
+            json!({"sessionId": id, "includeLiveHistory": false}),
             cx,
             move |this, value, cx| {
                 if this.open_request != request

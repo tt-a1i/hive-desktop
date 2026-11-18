@@ -66,7 +66,7 @@ impl ConversationList {
         })
     }
     pub fn reset(&mut self, anchor: Option<ReadingAnchor>) {
-        self.rows.clear();
+        self.rows = Vec::new();
         self.state.reset(0);
         self.state.set_follow_mode(FollowMode::Tail);
         self.pending_anchor = anchor;
