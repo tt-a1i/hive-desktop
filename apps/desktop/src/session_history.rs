@@ -19,6 +19,7 @@ struct HistoryDialog {
     open_request: u64,
     item: String,
     edit: bool,
+    rewind: bool,
     capabilities: Option<Value>,
     checkpoints: Vec<Value>,
     selected: Option<String>,
@@ -36,6 +37,26 @@ impl HiveApp {
         &mut self,
         item: String,
         edit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_history_dialog(item, edit, false, window, cx);
+    }
+
+    pub(crate) fn open_history_rewind(
+        &mut self,
+        item: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_history_dialog(item, false, true, window, cx);
+    }
+
+    fn open_history_dialog(
+        &mut self,
+        item: String,
+        edit: bool,
+        rewind: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -60,6 +81,7 @@ impl HiveApp {
                 open_request,
                 item,
                 edit,
+                rewind,
                 capabilities: None,
                 checkpoints: vec![],
                 selected: None,
@@ -83,13 +105,28 @@ impl HiveApp {
             let busy = editor.read(cx).busy;
             let cancel = cancel.clone();
             dialog
-                .title(tr("历史分叉"))
+                .title(tr(if rewind {
+                    "原地回退"
+                } else {
+                    "历史分叉"
+                }))
                 .w(px(650.))
                 .overlay_closable(false)
                 .keyboard(!busy)
                 .close_button(!busy)
                 .on_ok(|_, _, _| false)
-                .on_cancel(move |_, _, cx| !cancel.read(cx).busy)
+                .on_cancel(move |_, _, cx| {
+                    let dialog = cancel.read(cx);
+                    if dialog.busy {
+                        return false;
+                    }
+                    if dialog.rewind && dialog.request_id.is_some() && dialog.current(cx) {
+                        let app = dialog.app.clone();
+                        let session = dialog.session.clone();
+                        let _ = app.update(cx, |app, cx| app.show_session(session, cx));
+                    }
+                    true
+                })
                 .child(editor.clone())
         });
     }
@@ -170,11 +207,12 @@ impl HistoryDialog {
                                 this.checkpoint_preview = None;
                                 this.load(cx);
                             }
-                            "history.fork.preview" => {
+                            "history.fork.preview" | "history.rewind.preview" => {
                                 this.preview = Some(v);
                                 this.request_id = None;
                             }
                             "history.fork.apply"
+                            | "history.rewind.apply"
                             | "history.operations.get"
                             | "history.operations.recover" => this.operation = Some(v),
                             "history.operations.list" => {
@@ -200,7 +238,12 @@ impl HistoryDialog {
         self.preview = None;
         self.operation = None;
         self.request_id = None;
-        self.call("history.fork.preview", json!({"workspaceId":self.workspace,"sessionId":self.session,"boundary":{"nativeUserItemId":self.item},"code":code,"edit":self.edit}), cx);
+        let method = if self.rewind {
+            "history.rewind.preview"
+        } else {
+            "history.fork.preview"
+        };
+        self.call(method, json!({"workspaceId":self.workspace,"sessionId":self.session,"boundary":{"nativeUserItemId":self.item},"code":code,"edit":self.edit}), cx);
     }
     fn open_ready(&mut self, value: Value, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy || !self.current(cx) || value["state"] != "ready" {
@@ -238,7 +281,7 @@ impl HistoryDialog {
                     })
                     .is_ok_and(|r| r.is_ok());
                 if !accepted {
-                    this.error = Some(tr("无法打开分叉会话。").into());
+                    this.error = Some(tr("无法打开历史操作中的会话。").into());
                 }
                 cx.notify();
             });
@@ -259,7 +302,14 @@ impl HistoryDialog {
             .request_id
             .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
             .clone();
-        self.call("history.fork.apply", json!({"workspaceId":self.workspace,"sessionId":self.session,"previewToken":token,"requestId":request}), cx);
+        let mut params = json!({"workspaceId":self.workspace,"sessionId":self.session,"previewToken":token,"requestId":request});
+        let method = if self.rewind {
+            params["confirmed"] = json!(true);
+            "history.rewind.apply"
+        } else {
+            "history.fork.apply"
+        };
+        self.call(method, params, cx);
     }
 }
 fn recoverable(value: &Value) -> bool {
@@ -271,6 +321,12 @@ fn recoverable(value: &Value) -> bool {
         && value["operationId"]
             .as_str()
             .is_some_and(|id| !id.is_empty())
+}
+fn rewind_backup(operation: &Value) -> Option<Value> {
+    if operation["state"] == "ready" && operation["backupSession"].is_object() {
+        return Some(json!({"state": "ready", "session": operation["backupSession"]}));
+    }
+    None
 }
 fn strings(value: &Value) -> String {
     value
@@ -286,31 +342,45 @@ impl Render for HistoryDialog {
         let current = self.current(cx);
         let disabled = !current || self.busy || self.operation.is_some();
         let selection_disabled = disabled || self.request_id.is_some();
-        let allowed = self
-            .capabilities
-            .as_ref()
-            .is_some_and(|v| v[if self.edit { "edit" } else { "fork" }] == true);
-        let can_checkpoint = self
-            .capabilities
-            .as_ref()
-            .is_some_and(|v| v["checkpoint"] == true);
-        let checkpoints = self.checkpoints.clone();
+        let allowed = self.capabilities.as_ref().is_some_and(|v| {
+            v[if self.rewind {
+                "rewind"
+            } else if self.edit {
+                "edit"
+            } else {
+                "fork"
+            }] == true
+        });
+        let can_checkpoint = self.capabilities.as_ref().is_some_and(|v| {
+            v[if self.rewind {
+                "rewindCode"
+            } else {
+                "checkpoint"
+            }] == true
+        });
+        let rewind = self.rewind;
+        let checkpoints = if rewind && !can_checkpoint {
+            vec![]
+        } else {
+            self.checkpoints.clone()
+        };
         v_flex().id("history-dialog-content").gap_2().min_w_0().max_h(window.viewport_size().height * 0.75).overflow_y_scroll()
-            .child(div().text_sm().child(tr(if self.edit {"在选中消息之前创建新分支；原消息成为未发送草稿。"} else {"保留选中回合，创建独立历史分支。"})))
-            .child(div().text_sm().child(tr("原会话和 Hive 协作状态保持不变。创建后不会自动发送或激活新会话。")))
-            .child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("当前代码表示操作时的代码，并非该历史回合的代码。忽略文件保留在原目录，不会复制到新工作树。")))
+            .child(div().text_sm().child(tr(if rewind {"将原会话退回到所选消息之前。完整历史和当前代码会先备份到新的会话与工作树。"} else if self.edit {"在选中消息之前创建新分支；原消息成为未发送草稿。"} else {"保留选中回合，创建独立历史分支。"})))
+            .child(div().text_sm().child(tr(if rewind {"回退仅处理对话和选定的代码。Hive 的任务、派发和汇报保留现状。"} else {"原会话和 Hive 协作状态保持不变。创建后不会自动发送或激活新会话。"})))
+            .when(!rewind, |v| v.child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr("当前代码表示操作时的代码，并非该历史回合的代码。忽略文件保留在原目录，不会复制到新工作树。"))))
+            .when(rewind && allowed && !can_checkpoint, |v| v.child(div().text_sm().child(tr("共享项目目录仅支持对话回退。"))))
             .when(!current, |v| v.child(div().id("history-context-changed").role(Role::Alert).child(tr("项目、会话或后台连接已变化，请关闭后重新打开。"))))
             .when_some(self.capabilities.as_ref().and_then(|v| v["reason"].as_str()).map(str::to_owned), |v, reason| v.child(div().text_sm().child(reason)))
             .child(h_flex().gap_2().flex_wrap()
-                .child(Button::new("history-current-code").outline().small().selected(self.selected.is_none()).disabled(selection_disabled).label(tr("历史对话 + 当前代码"))
+                .child(Button::new("history-current-code").outline().small().selected(self.selected.is_none()).disabled(selection_disabled).label(tr(if rewind { "保留当前代码" } else { "历史对话 + 当前代码" }))
                     .on_click(cx.listener(|this, _, _, cx| {this.selected = None; this.preview = None; cx.notify();})))
                 .children(checkpoints.into_iter().enumerate().filter_map(|(i, checkpoint)| {
                     let id = checkpoint["checkpointId"].as_str()?.to_owned(); let selected = self.selected.as_ref() == Some(&id); let label = format!("{} {}", tr("检查点"), id);
                     Some(Button::new(("history-checkpoint", i)).outline().small().selected(selected).disabled(selection_disabled).label(label)
                         .on_click(cx.listener(move |this, _, _, cx| {this.selected = Some(id.clone()); this.preview = None; cx.notify();})))
                 })))
-            .child(Button::new("history-checkpoint-preview").outline().small().disabled(selection_disabled || !can_checkpoint).label(tr("预览当前代码检查点"))
-                .on_click(cx.listener(|this, _, _, cx| this.call("checkpoint.preview", this.params(), cx))))
+            .when(!rewind || can_checkpoint, |v| v.child(Button::new("history-checkpoint-preview").outline().small().disabled(selection_disabled || !can_checkpoint).label(tr("预览当前代码检查点"))
+                .on_click(cx.listener(|this, _, _, cx| this.call("checkpoint.preview", this.params(), cx)))))
             .when_some(self.checkpoint_preview.clone(), |v, p| {
                 let exclusions = strings(&p["exclusions"]); let version = p["version"].as_str().unwrap_or_default().to_owned();
                 let can = p["canCapture"] == true && !version.is_empty();
@@ -319,29 +389,35 @@ impl Render for HistoryDialog {
                     .child(Button::new("history-checkpoint-capture").outline().small().disabled(selection_disabled || !can).label(tr("保存检查点"))
                         .on_click(cx.listener(move |this, _, _, cx| {let mut params = this.params(); params["expectedVersion"] = json!(version); params["requestId"] = json!(this.capture_request_id.get_or_insert_with(|| uuid::Uuid::new_v4().to_string()).clone()); this.call("checkpoint.capture", params, cx);})))
             })
-            .child(Button::new("history-fork-preview").outline().small().disabled(selection_disabled || !allowed).label(tr("预览分叉"))
+            .child(Button::new("history-fork-preview").outline().small().disabled(selection_disabled || !allowed).label(tr(if rewind { "预览回退" } else { "预览分叉" }))
                 .on_click(cx.listener(|this, _, _, cx| this.fork_preview(cx))))
             .when_some(self.preview.clone(), |v, p| {
                 let relation = p["codeRelation"]["label"].as_str().unwrap_or_default().to_owned();
                 let exclusions = strings(&p["exclusions"]); let warnings = strings(&p["warnings"]);
                 let draft = p["draft"]["text"].as_str().map(str::to_owned); let missing = strings(&p["draft"]["missingAttachments"]); let attachments = strings(&p["draft"]["attachmentIds"]);
                 v.child(div().text_sm().child(relation)).child(div().text_sm().child(format!("{}: {}", tr("排除的忽略文件"), exclusions)))
+                    .when_some(p["removedTurns"].as_u64(), |v, count| v.child(div().text_sm().child(format!("{} · {count}", tr("原会话将移除的回合数")))))
                     .when(!warnings.is_empty(), |v| v.child(div().text_sm().child(warnings)))
                     .when_some(draft, |v, draft| v.child(div().text_sm().child(format!("{}: {}", tr("未发送草稿"), draft))))
                     .when(!attachments.is_empty(), |v| v.child(div().text_sm().child(format!("{}: {}", tr("附件"), attachments))))
                     .when(!missing.is_empty(), |v| v.child(div().text_sm().text_color(Color::Error.get(cx)).child(format!("{}: {}", tr("缺失的附件"), missing))))
-                    .child(Button::new("history-fork-apply").primary().small().disabled(disabled || p["previewToken"].as_str().is_none()).label(tr("创建分叉"))
+                    .child(Button::new("history-fork-apply").primary().small().disabled(disabled || p["previewToken"].as_str().is_none()).label(tr(if rewind { "确认原地回退" } else { "创建分叉" }))
                         .on_click(cx.listener(|this, _, _, cx| this.apply(cx))))
             })
             .when_some(self.operation.clone(), |v, op| {
                 let state = op["state"].as_str().unwrap_or("unknown").to_owned();
                 let operation_id = op["operationId"].as_str().unwrap_or_default().to_owned();
                 let recovery_id = operation_id.clone(); let can_recover = recoverable(&op);
+                let rewound = op["rewind"] == true;
+                let backup = rewind_backup(&op);
                 v.child(div().id("history-operation-status").role(Role::Status).text_sm().child(format!("{}: {} · {}", tr("操作状态"), state, operation_id)))
                     .when_some(op["error"].as_str().map(str::to_owned), |v, e| v.child(div().text_sm().child(e)))
-                    .when(op["state"] == "ready", |v| v.child(Button::new("history-open-ready").outline().small().disabled(!current || self.busy).label(tr("打开分叉会话"))
+                    .when_some(op["sessionUnavailable"].as_str().map(str::to_owned), |v, e| v.child(div().text_sm().child(e)))
+                    .when(op["state"] == "ready" && op["session"].is_object(), |v| v.child(Button::new("history-open-ready").outline().small().disabled(!current || self.busy).label(tr(if rewound { "重新打开原会话" } else { "打开分叉会话" }))
                         .on_click(cx.listener(move |this, _, window, cx| this.open_ready(op.clone(), window, cx)))))
-                    .when(can_recover, |v| v.child(Button::new("history-operation-recover").outline().small().disabled(!current || self.busy).label(tr("核验并恢复分叉"))
+                    .when_some(backup, |v, backup| v.child(Button::new("history-open-backup").outline().small().disabled(!current || self.busy).label(tr("打开回退前的备份"))
+                        .on_click(cx.listener(move |this, _, window, cx| this.open_ready(backup.clone(), window, cx)))))
+                    .when(can_recover, |v| v.child(Button::new("history-operation-recover").outline().small().disabled(!current || self.busy).label(tr(if rewound { "核验并恢复回退" } else { "核验并恢复分叉" }))
                         .on_click(cx.listener(move |this, _, _, cx| this.call("history.operations.recover", json!({"workspaceId":this.workspace,"operationId":recovery_id}), cx)))))
                     .child(Button::new("history-operation-refresh").outline().small().disabled(!current || self.busy || operation_id.is_empty()).label(tr("刷新操作状态"))
                         .on_click(cx.listener(move |this, _, _, cx| this.call("history.operations.get", json!({"workspaceId":this.workspace,"operationId":operation_id}), cx))))
@@ -563,7 +639,7 @@ impl Render for OperationsDialog {
             .child(
                 div()
                     .text_sm()
-                    .child(tr("查看此项目的历史分叉操作。未确定的操作不会自动重试。")),
+                    .child(tr("查看项目的分叉与回退记录。结果未确认时可以手动核验。")),
             )
             .when(!current, |v| {
                 v.child(
@@ -594,9 +670,18 @@ impl Render for OperationsDialog {
                         let state = op["state"].as_str().unwrap_or("unknown");
                         let recovery_id = id.to_owned();
                         let can_recover = recoverable(&op);
+                        let rewind = op["rewind"] == true;
+                        let backup = rewind_backup(&op);
                         v_flex()
                             .gap_1()
-                            .child(div().text_sm().child(format!("{id} · {state}")))
+                            .child(div().text_sm().child(format!(
+                                "{} · {state} · {id}",
+                                tr(if rewind {
+                                    "原地回退"
+                                } else {
+                                    "历史分叉"
+                                })
+                            )))
                             .when_some(op["error"].as_str().map(str::to_owned), |v, e| {
                                 v.child(div().text_sm().child(e))
                             })
@@ -606,21 +691,45 @@ impl Render for OperationsDialog {
                                         .outline()
                                         .small()
                                         .disabled(!current || self.busy)
-                                        .label(tr("核验并恢复分叉"))
+                                        .label(tr(if rewind {
+                                            "核验并恢复回退"
+                                        } else {
+                                            "核验并恢复分叉"
+                                        }))
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.recover(recovery_id.clone(), cx)
                                         })),
                                 )
                             })
-                            .when(op["state"] == "ready", |v| {
+                            .when_some(
+                                op["sessionUnavailable"].as_str().map(str::to_owned),
+                                |v, e| v.child(div().text_sm().child(e)),
+                            )
+                            .when(op["state"] == "ready" && op["session"].is_object(), |v| {
                                 v.child(
                                     Button::new(("open-history-child", i))
                                         .outline()
                                         .small()
                                         .disabled(!current || self.busy)
-                                        .label(tr("打开分叉会话"))
+                                        .label(tr(if rewind {
+                                            "重新打开原会话"
+                                        } else {
+                                            "打开分叉会话"
+                                        }))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.open_ready(op.clone(), window, cx)
+                                        })),
+                                )
+                            })
+                            .when_some(backup, |v, backup| {
+                                v.child(
+                                    Button::new(("open-history-rewind-backup", i))
+                                        .outline()
+                                        .small()
+                                        .disabled(!current || self.busy)
+                                        .label(tr("打开回退前的备份"))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_ready(backup.clone(), window, cx)
                                         })),
                                 )
                             })

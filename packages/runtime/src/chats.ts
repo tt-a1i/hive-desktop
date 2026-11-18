@@ -104,10 +104,10 @@ export class Chats implements StructuredSessionPort {
     this.executionMutations=mutations;
     this.history=new SessionHistoryOperations(this.dataDir,{
       lease:workspaceId=>mutations.acquire(workspaceId),
-      source:async(workspaceId,sessionId)=>{
-        const record=await this.runnableIdentity(this.index.get(sessionId));
+      source:async(workspaceId,sessionId,rewindId)=>{
+        const current=await this.runnableIdentity(this.index.get(sessionId),rewindId);
+        const {rewindOperationId:_guard,...record}=current;
         if(record.workspaceId!==workspaceId||record.identityState!=='known'||!record.originAgentId||record.originAgentId===`${workspaceId}:__workflow__`)throw new HistoryOperationError('SOURCE_READ_ONLY','Only a known original orchestrator or existing Worker can fork');
-        await this.assertHistoryReady(record);
         const workspace=await this.workspace(workspaceId), executionPath=await this.executionPath(record,workspace);
         const profile=await this.selectedProfile(record.backend,record.profile);
         const command=profile.launch.command ?? 'codex';
@@ -117,20 +117,30 @@ export class Chats implements StructuredSessionPort {
         const launch = nativeProfileLaunch(await this.selectedProfile(record.backend, record.profile));
         return {...launch, command: launch.command ?? 'codex'};
       },
-      quiescent:async(workspaceId)=>{
+      quiescent:async(workspaceId,idleSourceId)=>{
         if(this.opening.size||this.activating.size||this.startingForInput.size||this.preparingInteractions.size||this.mutatingQueues.size||this.gitOperations.size)throw new HistoryOperationError('SOURCE_BUSY','Finish pending session operations before creating a history fork');
         if(await hasAnyShell())throw new HistoryOperationError('SOURCE_BUSY','End all application terminals before creating a history fork');
         const workspaces=await this.hive.request('GET','/api/workspaces') as WorkspaceSummary[];
         const facts:unknown[]=[];
+        const source=idleSourceId?this.index.get(idleSourceId):undefined;
         for(const workspace of workspaces){
           const team=await this.hive.request('GET',`/api/ui/workspaces/${encodeURIComponent(workspace.id)}/team`) as {id:string;pending_task_count:number;open_dispatches?:unknown[];status?:string}[];
           if(team.some(member=>member.pending_task_count>0||member.open_dispatches?.length||member.status==='working'))throw new HistoryOperationError('SOURCE_BUSY','Settle pending Hive tasks and dispatches before creating a history fork');
           const ids=[`${workspace.id}:orchestrator`,`${workspace.id}:__workflow__`,...team.map(member=>member.id)];
-          if(ids.some(id=>{const run=this.runtime.getActiveRunByAgentId(workspace.id,id);return run&&['starting','running'].includes(run.status);}))throw new HistoryOperationError('SOURCE_BUSY','Stop active agents before creating a history fork');
+          if(ids.some(id=>{
+            const run=this.runtime.getActiveRunByAgentId(workspace.id,id);
+            if(!run||!['starting','running'].includes(run.status))return false;
+            const sourceRun=source?.workspaceId===workspace.id&&source.agentId===id
+              &&this.index.forAgent(workspace.id,id)?.id===source.id&&this.live.get(source.id)?.onExit;
+            return !sourceRun||run.status!=='running'||!run.startupReadyAt||!!run.userStopped;
+          }))throw new HistoryOperationError('SOURCE_BUSY','Stop other active agents and let the source settle before changing history');
           for(const record of this.index.list(workspace.id)){
-            const live=this.live.get(record.id);if(live?.queue.busy||live?.handle.interactions?.().length||(live?.queue.pendingCount??DeliveryQueue.persistedCount(this.queueDir,record.id)))throw new HistoryOperationError('SOURCE_BUSY','Finish pending conversation input or interactions before creating a history fork');
+            const live=this.live.get(record.id);if(live?.cleanup||live?.queue.busy||live?.handle.interactions?.().length||(live?.queue.pendingCount??DeliveryQueue.persistedCount(this.queueDir,record.id)))throw new HistoryOperationError('SOURCE_BUSY','Finish pending conversation input or interactions before creating a history fork');
           }
-          facts.push([workspace.id,team]);
+          // Check the source's live status above. Retirement may change that
+          // status while its membership and collaboration facts stay intact.
+          facts.push([workspace.id,team.map(member=>source?.workspaceId===workspace.id&&member.id===source.agentId
+            ? {...member,status:undefined,last_pty_line:undefined} : member)]);
         }
         return historyHash([facts,this.hive.executionLedgerRevision()]);
       },
@@ -147,10 +157,41 @@ export class Chats implements StructuredSessionPort {
         return {text,attachmentIds:ids,missingAttachments};
       },
       publish:async(record)=>{this.index.save(record);return this.publicSession(record,record.execution!.path);},
-      session:async id=>{const record=this.index.get(id);return this.publicSession(record,await this.executionDirectory(record.workspaceId,id));},
+      session:async id=>{const record=this.index.get(id);return this.publicSession(record,await this.executionPath(record,await this.workspace(record.workspaceId)));},
+      retire: async id => {
+        const record = this.index.get(id);
+        const live = this.live.get(id);
+        if (!live) return;
+        const run = live.onExit && record.agentId && this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId);
+        if (run) {
+          this.runtime.stopAgentRun(run.runId);
+          if (!await this.runtime.waitForRunExit(run.runId, 15_000))
+            throw new HistoryOperationError('SOURCE_BUSY','The original Agent did not stop before rewind');
+        } else {
+          await this.stopLive(id, live);
+        }
+      },
+      guardRewind: async (id, operationId, blocked) => {
+        const current = this.index.get(id);
+        if (blocked) {
+          await this.assertHistoryReady(current, operationId);
+          this.index.save({...current, rewindOperationId: operationId});
+        } else if (current.rewindOperationId === operationId) {
+          const operation = await this.history!.journal.byId(current.workspaceId, operationId);
+          if (operation.state === 'ready') current.rewound = true;
+          delete current.rewindOperationId;
+          this.index.save(current);
+        }
+      },
     });
   }
-  private async assertHistoryReady(record:ChatRecord){
+  private async assertHistoryReady(record:ChatRecord,rewindId?:string){
+    if(record.rewindOperationId&&record.rewindOperationId!==rewindId){
+      const operation=await this.history?.journal.byId(record.workspaceId,record.rewindOperationId).catch(()=>undefined);
+      if(!operation||operation.sourceSessionId!==record.id||!['ready','failed'].includes(operation.state)){
+        throw new SessionIdentityError('HISTORY_REWIND_PENDING','This conversation is paused until its rewind operation is verified.');
+      }
+    }
     if(record.handoff){if(!this.handoffRuntime)throw new HandoffError('HANDOFF_UNAVAILABLE','Handoff runtime is not configured');await this.handoffRuntime.assertReady(record);}
     if(!record.lineage)return;
     const operation=await this.history?.journal.byId(record.workspaceId,record.lineage.operationId);
@@ -234,13 +275,13 @@ export class Chats implements StructuredSessionPort {
       throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'The saved binding and exact dispatch sources disagree. History is read-only; no agent was activated.');
     return source ? this.index.establishOrigin(current.id, source) : current;
   }
-  private async runnableIdentity(record: ChatRecord): Promise<ChatRecord> {
+  private async runnableIdentity(record: ChatRecord, rewindId?: string): Promise<ChatRecord> {
     await this.initializeProfiles();
     record = this.index.get(record.id);
     if (!record.profile) throw new SessionIdentityError('SESSION_PROFILE_UNAVAILABLE', 'The conversation has no fixed profile reference.');
     await this.selectedProfile(record.backend, record.profile);
     const current = this.originIdentity(record);
-    await this.assertHistoryReady(current);
+    await this.assertHistoryReady(current,rewindId);
     if (current.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its saved history is read-only; create a new conversation to continue.');
     if (current.identityState === 'new') return current;
     if (!current.originAgentId || current.agentId && current.agentId !== current.originAgentId)
@@ -833,7 +874,7 @@ export class Chats implements StructuredSessionPort {
       : record.backend === 'codex'
       ? {codex: { cwd: executionPath, sessionDir: join(this.sessionDir, '..', 'codex'),
         signal: this.closeAbort.signal,
-        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.lineage&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
+        ...(record.codexThreadId && { threadId: record.codexThreadId }), ...((record.lineage||record.rewound||record.rewindOperationId)&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
         onUnexpectedExit,
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
         customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
@@ -1052,6 +1093,7 @@ export class Chats implements StructuredSessionPort {
   private async require(id: string): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const requested=this.index.get(id);
+    if(requested.rewindOperationId) await this.assertHistoryReady(requested);
     if(requested.handoff&&!this.live.has(id)&&!this.handoffStarting.has(id)&&this.handoffDeliveries.get(id)?.status!=='consumed')
       throw new SessionIdentityError('HANDOFF_INPUT_REQUIRED','This new context handoff starts only after an explicit ordinary text input');
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);

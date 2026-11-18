@@ -24,12 +24,20 @@ import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
+let outputClosed = false;
+let closeInput: (() => void) | undefined;
+process.stdout.on('error', (error: NodeJS.ErrnoException) => {
+  outputClosed = true;
+  if (error.code !== 'EPIPE') console.error(error);
+  closeInput?.();
+});
 // The SDK and user extensions may log at any point. Keep ordinary stdout writes
 // away from the desktop wire; only this captured writer sends protocol frames.
 process.stdout.write = process.stderr.write.bind(process.stderr);
 console.log = (...args: unknown[]) => { process.stderr.write(`${format(...args)}\n`); };
 const pendingWrites = new Set<Promise<void>>();
 const writeFrame = (message: unknown): Promise<void> => {
+  if (outputClosed) return Promise.resolve();
   // Keep legacy malformed text readable by Rust without rewriting stored history.
   const frame = JSON.stringify(message, (_key, value: unknown) =>
     typeof value === 'string' ? value.replace(/[\uD800-\uDFFF]/gu, '\uFFFD') : value);
@@ -115,15 +123,16 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'checkpoint.preview': return chats.history!.checkpointPreview(text(params,'workspaceId'),text(params,'sessionId'));
     case 'checkpoint.capture': return chats.history!.checkpointCapture(text(params,'workspaceId'),text(params,'sessionId'),text(params,'expectedVersion'),text(params,'requestId'));
     case 'checkpoint.list': return chats.history!.checkpointList(text(params,'workspaceId'),text(params,'sessionId'));
-    case 'history.fork.preview': {
+    case 'history.fork.preview': case 'history.rewind.preview': {
       if(Object.keys(params).some(key=>!['workspaceId','sessionId','boundary','code','edit'].includes(key)))throw new Error('Supply only source session, exact native boundary, and code choice');
       const boundary=record(params.boundary),code=record(params.code);
       if(Object.keys(boundary).some(key=>key!=='nativeUserItemId')||Object.keys(code).some(key=>!['kind','checkpointId'].includes(key))||!['current','checkpoint'].includes(code.kind as string)||params.edit!==undefined&&typeof params.edit!=='boolean')throw new Error('Invalid history fork selection');
-      return chats.history!.preview({workspaceId:text(params,'workspaceId'),sessionId:text(params,'sessionId'),boundary:{nativeUserItemId:text(boundary,'nativeUserItemId')},code:code.kind==='current'?{kind:'current'}:{kind:'checkpoint',checkpointId:text(code,'checkpointId')},...(params.edit!==undefined&&{edit:params.edit as boolean})});
+      return chats.history!.preview({workspaceId:text(params,'workspaceId'),sessionId:text(params,'sessionId'),boundary:{nativeUserItemId:text(boundary,'nativeUserItemId')},code:code.kind==='current'?{kind:'current'}:{kind:'checkpoint',checkpointId:text(code,'checkpointId')},...(params.edit!==undefined&&{edit:params.edit as boolean}),...(method==='history.rewind.preview'&&{rewind:true})});
     }
-    case 'history.fork.apply': {
-      if(Object.keys(params).some(key=>!['workspaceId','sessionId','previewToken','requestId'].includes(key)))throw new Error('Invalid history fork application');
-      return chats.history!.apply(text(params,'workspaceId'),text(params,'sessionId'),text(params,'previewToken'),text(params,'requestId'));
+    case 'history.fork.apply': case 'history.rewind.apply': {
+      exact(params, method==='history.rewind.apply'?['workspaceId','sessionId','previewToken','requestId','confirmed']:['workspaceId','sessionId','previewToken','requestId']);
+      if(method==='history.rewind.apply'&&params.confirmed!==true)throw new Error('Explicit confirmation is required for an in-place rewind');
+      return chats.history!.apply(text(params,'workspaceId'),text(params,'sessionId'),text(params,'previewToken'),text(params,'requestId'),method==='history.rewind.apply');
     }
     case 'history.operations.recover': return chats.history!.recover(text(params,'workspaceId'),text(params,'operationId'));
     case 'history.operations.get': return chats.history!.get(text(params,'workspaceId'),text(params,'operationId'));
@@ -382,6 +391,8 @@ input.on('close', () => {
     process.exit(ok ? 0 : 1);
   })();
 });
+closeInput = () => input.close();
+if (outputClosed) closeInput();
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => input.close());
 }

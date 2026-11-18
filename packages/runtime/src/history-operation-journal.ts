@@ -7,7 +7,7 @@ export const historyHash=(value:unknown)=>createHash('sha256').update(JSON.strin
 export type HistoryState='prepared'|'worktreeReady'|'nativeRequested'|'nativeKnown'|'metadataReady'|'ready'|'failed'|'uncertain';
 export interface HistoryOperation {
  version:1; operationId:string; requestId:string; requestHash:string; workspaceId:string; sourceSessionId:string; childSessionId:string;
- state:HistoryState; createdAt:number; updatedAt:number; preview:unknown; checkpointId?:string; childThreadId?:string; error?:string;
+ state:HistoryState; createdAt:number; updatedAt:number; preview:unknown; checkpointId?:string; childThreadId?:string; rewindRequested?:true; error?:string;
 }
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 /** Private claim is durable before any checkout or non-idempotent native request. */

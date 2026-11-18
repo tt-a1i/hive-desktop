@@ -35,6 +35,10 @@ export interface ExportedCodeCheckpoint {
    * Reconstruct the exported index entries with native Git against the captured HEAD. */
   rawIndex: Buffer | null;
 }
+export interface CodeCheckpointReader {
+  manifest: CodeCheckpointManifest;
+  read: (entry: {sha256: string; bytes: number}) => Promise<Buffer>;
+}
 const coverage: CheckpointCoverage = {content:'raw',tracked:true,nonIgnoredUntracked:true,index:'separate',ignored:'excluded-preserved-at-source',emptyDirectories:'not-recorded',metadata:'bytes-symlink-target-permission-bits'};
 const defaults: CheckpointLimits = {fileBytes:32*1024*1024,totalBytes:128*1024*1024,entries:10000,indexBytes:64*1024*1024,manifestBytes:8*1024*1024};
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, HASH = /^[0-9a-f]{64}$/, OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -287,14 +291,29 @@ export class CodeCheckpoints {
       return manifest;
     }catch(error){throw new CodeCheckpointError('CORRUPT','Checkpoint is missing or corrupt; it was not treated as ready or recaptured',{cause:error});}
   }
-  async export(checkpointId:string):Promise<ExportedCodeCheckpoint>{
+  async reader(checkpointId:string):Promise<CodeCheckpointReader>{
     if(typeof checkpointId!=='string'||!UUID.test(checkpointId))fail('INVALID_ARGUMENT','Invalid checkpoint identity');
     const file=join(await this.initialise(),'snapshots',checkpointId,'manifest.json');let raw:CodeCheckpointManifest;
     try{raw=JSON.parse(text(await this.privateRead(file,defaults.manifestBytes))) as CodeCheckpointManifest;}catch(error){throw new CodeCheckpointError('CORRUPT','Checkpoint manifest is unavailable',{cause:error});}
     if(!UUID.test(raw.requestId??''))fail('CORRUPT','Checkpoint request identity is invalid');
     const op=await this.operation(raw.requestId);if(!op||op.state!=='ready'||op.checkpointId!==checkpointId)fail('INCOMPLETE','Checkpoint publication did not complete');
-    const manifest=await this.readManifest(op),blob=async(hash:string,size:number)=>{const data=await this.privateRead(join(dirname(file),'blobs',hash),size);if(data.length!==size||checkpointHash(data)!==hash)fail('CORRUPT','Checkpoint content changed during export');return data;};
-    const entries=async(list:CheckpointEntry[])=>Promise.all(list.map(async entry=>({entry,data:await blob(entry.sha256,entry.bytes)})));
-    return {manifest,head:await entries(manifest.head),index:await entries(manifest.index),disk:await entries(manifest.disk),rawIndex:manifest.rawIndex?await blob(manifest.rawIndex.sha256,manifest.rawIndex.bytes):null};
+    const manifest = await this.readManifest(op);
+    const read = async ({sha256, bytes}: {sha256: string; bytes: number}) => {
+      if (!HASH.test(sha256) || !Number.isSafeInteger(bytes) || bytes < 0 || bytes > defaults.indexBytes) fail('CORRUPT','Invalid checkpoint content identity');
+      const data = await this.privateRead(join(dirname(file), 'blobs', sha256), bytes);
+      if (data.length !== bytes || checkpointHash(data) !== sha256) fail('CORRUPT','Checkpoint content changed during export');
+      return data;
+    };
+    return {manifest, read};
+  }
+  async export(checkpointId:string):Promise<ExportedCodeCheckpoint>{
+    const {manifest, read} = await this.reader(checkpointId);
+    const entries=async(list:CheckpointEntry[])=>Promise.all(list.map(async entry=>({entry,data:await read(entry)})));
+    return {manifest,head:await entries(manifest.head),index:await entries(manifest.index),disk:await entries(manifest.disk),rawIndex:manifest.rawIndex?await read(manifest.rawIndex):null};
+  }
+  async matchesLayout(manifest: CodeCheckpointManifest): Promise<boolean> {
+    const {preview, head, index, disk} = await this.stableScan();
+    return preview.canCapture && preview.workspace.headOid === manifest.preview.workspace.headOid
+      && JSON.stringify([head, index, disk]) === JSON.stringify([manifest.head, manifest.index, manifest.disk]);
   }
 }

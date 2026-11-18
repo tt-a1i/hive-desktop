@@ -428,6 +428,7 @@ impl HiveApp {
                     .filter(|_| message.role == "user"),
                 |row, native_id| {
                     let edit_id = native_id.clone();
+                    let rewind_id = native_id.clone();
                     row.child(
                         Button::new(("history-fork", index))
                             .custom(crate::palette::subtle_icon_variant(cx))
@@ -454,6 +455,21 @@ impl HiveApp {
                                 this.open_history_fork(edit_id.clone(), true, window, cx)
                             })),
                     )
+                    .when(!self.conversation_is_read_only(), |row| {
+                        row.child(
+                            Button::new(("history-rewind", index))
+                                .custom(crate::palette::subtle_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .h(px(24.))
+                                .px_1p5()
+                                .rounded_md()
+                                .label(tr("原地回退"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_history_rewind(rewind_id.clone(), window, cx)
+                                })),
+                        )
+                    })
                 },
             )
             .when_some(

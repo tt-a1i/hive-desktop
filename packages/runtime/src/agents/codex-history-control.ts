@@ -17,7 +17,7 @@ export type CodexHistoryForkOptions = {
   onNativeKnown: (threadId: string) => void | Promise<void>;
 };
 
-/** Read-only history and native branch creation. Never opens or executes a turn. */
+/** Reads native history and applies explicit history changes without executing a turn. */
 export async function openCodexHistoryControl(options: { cwd: string; command?: string; args?: readonly string[]; env?: NodeJS.ProcessEnv; signal?: AbortSignal }) {
   const transport = await CodexTransport.start({ cwd: options.cwd, ...(options.command && { command: options.command }), ...(options.args && {args:options.args}), ...(options.env && {env:options.env}), ...(options.signal && { signal: options.signal }) });
   if (!supportsCodexDeferredContinuation(transport.initializeResult)) {
@@ -54,6 +54,32 @@ export async function openCodexHistoryControl(options: { cwd: string; command?: 
   };
   return {
     read,
+    async rewind(input: {threadId: string; beforeTurnId: string; expectedSource: string; fingerprint: (turns: CodexTurn[]) => string; onRequested: () => Promise<void>}): Promise<CodexHistory> {
+      const resume = await transport.sendRequest<{thread: CodexHistoryThread}>('thread/resume', {
+        threadId: input.threadId, excludeTurns: true, deferGoalContinuation: true,
+      });
+      const source = await read(input.threadId);
+      if (resume?.thread?.id !== source.thread.id || resume.thread.path !== source.thread.path
+        || resolve(resume.thread.cwd) !== resolve(source.thread.cwd) || input.fingerprint(source.turns) !== input.expectedSource) {
+        throw new Error('Codex source identity or history changed before rewind');
+      }
+      const index = source.turns.findIndex(turn => turn.id === input.beforeTurnId);
+      if (index < 0) throw new Error('Codex rewind boundary not found');
+      const expected = input.fingerprint(source.turns.slice(0, index));
+      await input.onRequested();
+      try {
+        // Codex can open a new rollout file while keeping the thread ID.
+        const reverted = await transport.sendRequest<{thread: CodexHistoryThread}>('thread/revert', {
+          threadId: input.threadId, beforeTurnId: input.beforeTurnId,
+        });
+        const result = await read(input.threadId);
+        if (reverted?.thread?.id !== input.threadId || reverted.thread.path !== result.thread.path
+          || result.thread.cwd !== source.thread.cwd || input.fingerprint(result.turns) !== expected) {
+          throw new Error('Unexpected history after native rewind');
+        }
+        return result;
+      } catch (error) { throw new CodexHistoryUncertainError('revert', error); }
+    },
     async fork(input: CodexHistoryForkOptions): Promise<CodexHistory> {
       if (input.lastTurnId && input.beforeFirstTurnId) throw new Error('Conflicting Codex history boundaries');
       const source = await read(input.threadId);

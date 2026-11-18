@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## Codex 原地回退与代码检查点（2026-11-19）
+
+原地回退已接入桌面消息操作与后端恢复。实验使用本地 macOS 开发包、真实 Git 和真实 Codex GPT-6.1 Terra，完成备份、故障后核验、原会话代码恢复与同一会话 ID 续聊。继续核验 Windows 原生运行。见[本批证据与边界](validation/2026-11-19-native-rewind.md)。
+
 ## 项目脚本、成员工作树与账号额度（2026-11-15，源码）
 
 手动项目脚本、成员独立工作树创建/恢复、Codex 账号额度已合入开发分支。真实 Hive/Git/SQLite/PTY、关闭和删除竞态、相同请求不重复执行、原始成员归属及冷恢复检查通过；额度完成一次真实原生只读读取，没有模型请求。合并后 Rust 为 94 passed、1 ignored。自动初始化、新入口真实协作、Mac 操作与 Windows 原生验证继续，见[本批证据与边界](validation/2026-11-15-project-scripts-worker-worktrees-account-limits.md)。current/candidate 仍为 `837abd1`；新源码和未推广的 `f545105` 包需分别核对，未替换用户安装实例。

@@ -19,7 +19,7 @@ const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queue
   'conversation-search', 'conversation-search-codex', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity', 'html-artifacts',
   'member-worktrees-wire', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments',
-  'codex-history-control', 'codex-fork-provenance', 'session-history-wire',
+  'codex-history-control', 'codex-fork-provenance', 'session-history-wire', 'session-history-rewind', 'checkpoint-restore',
   'agent-profiles', 'structured-launch', 'profile-runtime-binding', 'profile-runtime-wire',
   'profile-settings-atomic', 'profile-claude-offline-history', 'codex-history-profile-launch',
   'acp-session', 'acp-team-stdio', 'acp-team-hive', 'acp-runtime-registration', 'acp-startup-shutdown',
@@ -58,8 +58,8 @@ try {
     console.log(`[packaged-functional] ${name}`);
     // Registration includes a no-MCP deadline. Handoff runtime checks boot
     // several real runtimes/worktrees; Windows source runs measured 122/92/76s.
-    const multiBootHandoff = ['session-handoff-runtime', 'handoff-runtime-failures', 'handoff-runtime-delivery'].includes(name);
-    const timeout = multiBootHandoff ? 180_000 : name === 'acp-runtime-registration' ? 120_000 : 60_000;
+    const multipleBoots = ['session-history-rewind', 'session-handoff-runtime', 'handoff-runtime-failures', 'handoff-runtime-delivery'].includes(name);
+    const timeout = multipleBoots ? 180_000 : name === 'acp-runtime-registration' ? 120_000 : 60_000;
     execFileSync(node, [file], {cwd: directory, stdio: 'inherit', timeout,
       env: {...process.env, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_OFFLINE: '1',
         HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js')}});
