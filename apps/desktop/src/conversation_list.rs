@@ -1,8 +1,13 @@
+mod markdown;
 mod view;
 pub(crate) const CHAT_COLUMN_WIDTH: f32 = 736.;
 use crate::app::HiveApp;
 use gpui_kit::{component::v_flex, prelude::FluentBuilder, *};
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RowKey {
@@ -44,6 +49,7 @@ pub struct ConversationList {
     pub tail_focus: FocusHandle,
     hint_width: Rc<Cell<Pixels>>,
     font_size: Pixels,
+    pub(crate) markdown: HashMap<String, markdown::MarkdownView>,
 }
 impl ConversationList {
     pub fn new(tail_focus: FocusHandle) -> Self {
@@ -56,6 +62,7 @@ impl ConversationList {
             tail_focus,
             hint_width: Rc::new(Cell::new(px(0.))),
             font_size: px(0.),
+            markdown: HashMap::new(),
         }
     }
     pub fn anchor(&self) -> Option<ReadingAnchor> {
@@ -67,6 +74,7 @@ impl ConversationList {
     }
     pub fn reset(&mut self, anchor: Option<ReadingAnchor>) {
         self.rows = Vec::new();
+        self.markdown = HashMap::new();
         self.state.reset(0);
         self.state.set_follow_mode(FollowMode::Tail);
         self.pending_anchor = anchor;
@@ -158,10 +166,7 @@ impl HiveApp {
                 prefix..list.rows.len(),
                 rows[prefix..].iter().map(|row| match row.kind {
                     Kind::Tail => Some(list.tail_focus.clone()),
-                    Kind::Message { index, .. } => self.messages[index]
-                        .markdown
-                        .as_ref()
-                        .map(|state| state.read(cx).focus_handle().clone()),
+                    Kind::Message { index, .. } => self.messages[index].markdown_focus.clone(),
                     _ => None,
                 }),
             );
@@ -253,6 +258,8 @@ impl HiveApp {
         narrow: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let rendered_markdown = Rc::new(RefCell::new(HashSet::new()));
+        let rendered_rows = rendered_markdown.clone();
         let content = list(
             self.conversation_list.state.clone(),
             cx.processor(move |this, index: usize, _, cx| {
@@ -260,7 +267,13 @@ impl HiveApp {
                     return div().into_any_element();
                 };
                 let content = match row.kind {
-                    Kind::Message { index, .. } => this.render_conversation_message(index, cx),
+                    Kind::Message { index, .. } => {
+                        let markdown = this.show_message_markdown(index, cx);
+                        if markdown.is_some() {
+                            rendered_rows.borrow_mut().insert(this.messages[index].id.clone());
+                        }
+                        this.render_conversation_message(index, markdown.as_ref(), cx)
+                    }
                     Kind::Group { start, end, .. } => this
                         .render_completed_tools_header(start, &this.messages[start..end], cx)
                         .into_any_element(),
@@ -315,8 +328,29 @@ impl HiveApp {
         let hint_width = self.conversation_list.hint_width.clone();
         let state = self.conversation_list.state.clone();
         let weak = cx.weak_entity();
+        let open_request = self.open_request;
         div()
-            .on_children_prepainted(move |bounds, window, _| {
+            .on_children_prepainted(move |bounds, window, cx| {
+                let rendered = std::mem::take(&mut *rendered_markdown.borrow_mut());
+                let view = weak.clone();
+                window.defer(cx, move |window, cx| {
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+                    let app = view.read(cx);
+                    if app.open_request != open_request {
+                        return;
+                    }
+                    let keep = |id: &String, markdown: &markdown::MarkdownView, cx: &App| {
+                        rendered.contains(id)
+                            || markdown.state.read(cx).focus_handle().contains_focused(window, cx)
+                    };
+                    if app.conversation_list.markdown.iter().any(|(id, view)| !keep(id, view, cx)) {
+                        view.update(cx, |app, cx| {
+                            app.conversation_list.markdown.retain(|id, view| keep(id, view, cx));
+                        });
+                    }
+                });
                 let Some(bounds) = bounds.first() else {
                     return;
                 };

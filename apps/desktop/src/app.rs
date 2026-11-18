@@ -7,10 +7,7 @@ use crate::{
 };
 use gpui_kit::component::WindowExt;
 use gpui_kit::{
-    component::{
-        input::{InputEvent, InputState, TextareaState},
-        text::TextViewState,
-    },
+    component::input::{InputEvent, InputState, TextareaState},
     *,
 };
 use serde_json::{Value, json};
@@ -64,14 +61,13 @@ impl DeliveryCard {
 }
 pub struct Message {
     pub layout_revision: u64,
-    pub(crate) _markdown_subscription: Option<Subscription>,
     pub id: String,
     pub role: String,
     pub native_user_item_id: Option<String>,
     pub handoff_item_id: Option<String>,
     pub source_session_id: Option<String>,
     pub text: String,
-    pub markdown: Option<Entity<TextViewState>>,
+    pub(crate) markdown_focus: Option<FocusHandle>,
     pub tool: Option<ToolPresentation>,
     pub thinking: Vec<crate::thinking::ThinkingBlock>,
     pub delivery: Option<DeliveryCard>,

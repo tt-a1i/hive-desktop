@@ -2,7 +2,7 @@ use crate::{
     app::{DeliveryCard, HiveApp, Message, ToolPresentation},
     protocol::*,
 };
-use gpui_kit::{component::text::TextViewState, *};
+use gpui_kit::*;
 use serde_json::{Value, json};
 impl HiveApp {
     pub(crate) fn clear_conversation_messages(&mut self, cx: &mut Context<Self>) {
@@ -355,35 +355,18 @@ impl HiveApp {
         ) {
             return;
         }
-        let markdown =
-            (role == "assistant").then(|| cx.new(|cx| TextViewState::markdown(&text, cx)));
-        let markdown_subscription = markdown.as_ref().map(|state| {
-            let id = id.clone();
-            let mut rendered = state.read(cx).rendered_text();
-            cx.observe(state, move |this, state, cx| {
-                let next = state.read(cx).rendered_text();
-                // Parse completion can change an offscreen row's height. Ignore
-                // selection/fade notifications that keep the same document.
-                if std::ptr::eq(next.source(), rendered.source()) {
-                    return;
-                }
-                rendered = next;
-                if let Some(message) = this.messages.iter_mut().find(|m| m.id == id) {
-                    message.layout_revision += 1;
-                    cx.notify();
-                }
-            })
-        });
+        // The row's focus region is stable. GPUI can keep a focused message
+        // alive during scrolling even when the parsed body is viewport-owned.
+        let markdown_focus = (role == "assistant").then(|| cx.focus_handle());
         self.messages.push(Message {
             layout_revision: 0,
-            _markdown_subscription: markdown_subscription,
             id,
             role,
             native_user_item_id: None,
             handoff_item_id: None,
             source_session_id: None,
             text,
-            markdown,
+            markdown_focus,
             tool: None,
             thinking: vec![],
             delivery: None,
@@ -593,6 +576,7 @@ impl HiveApp {
         {
             if let Some(index) = self.messages.iter().position(|message| message.id == id) {
                 let message = self.messages.remove(index);
+                self.conversation_list.markdown.remove(&id);
                 if !message.images.is_empty() {
                     cx.defer(move |cx| {
                         for image in message.images {
@@ -611,8 +595,8 @@ impl HiveApp {
             } else {
                 message.text = text;
             }
-            if let Some(markdown) = &message.markdown {
-                markdown.update(cx, |state, cx| state.set_text(&message.text, cx));
+            if let Some(markdown) = self.conversation_list.markdown.get(&id) {
+                markdown.state.update(cx, |state, cx| state.set_text(&message.text, cx));
             }
         } else {
             self.push_message(id.clone(), role.into(), text, cx);

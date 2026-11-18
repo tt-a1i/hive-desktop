@@ -6,7 +6,7 @@ use crate::{
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
-        text::TextView,
+        text::{TextView, TextViewState},
         *,
     },
     prelude::FluentBuilder,
@@ -17,6 +17,7 @@ impl HiveApp {
     pub(crate) fn render_conversation_message(
         &self,
         i: usize,
+        markdown: Option<&Entity<TextViewState>>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let message = &self.messages[i];
@@ -126,6 +127,9 @@ impl HiveApp {
         });
         v_flex()
             .id(("message", i))
+            .when_some(message.markdown_focus.as_ref(), |view, focus| {
+                view.track_focus(focus)
+            })
             .role(Role::Group)
             .aria_label(heading.clone())
             .min_w_0()
@@ -261,10 +265,7 @@ impl HiveApp {
                     .map(|block| self.render_thinking(i, &message.id, block, cx)),
             )
             .when_some(
-                message
-                    .markdown
-                    .as_ref()
-                    .filter(|_| !message.text.is_empty()),
+                markdown,
                 |view, markdown| {
                     view.child(
                         div()
@@ -276,7 +277,7 @@ impl HiveApp {
                 },
             )
             .when(
-                message.markdown.is_none() && !message.display_body().is_empty(),
+                markdown.is_none() && !message.display_body().is_empty(),
                 |view| {
                     let body = message.display_body().to_owned();
                     view.child(
