@@ -1,0 +1,171 @@
+import { createHash, createPublicKey, randomUUID, verify, type KeyObject } from 'node:crypto';
+import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+
+const manifestLimit = 64 * 1024;
+const archiveLimit = 2 * 1024 * 1024 * 1024;
+
+type Policy = { feed: URL; key: KeyObject; installedVersion: string };
+type Asset = { platform: string; arch: string; file: string; bytes: number; sha256: string };
+type Release = { version: string; assets: Asset[] };
+type Candidate = { version: string; asset: Asset };
+type Check =
+  | { state: 'disabled' }
+  | { state: 'current'; installedVersion: string }
+  | { state: 'unsupported'; installedVersion: string; version: string }
+  | ({ state: 'available'; installedVersion: string } & Candidate);
+
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid desktop update document');
+  return value as Record<string, unknown>;
+}
+
+function version(value: unknown): string {
+  if (typeof value !== 'string' || !/^(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})\.(0|[1-9]\d{0,8})$/.test(value)) {
+    throw new Error('Invalid desktop update version');
+  }
+  return value;
+}
+
+function newer(candidate: string, current: string): boolean {
+  const old = current.split('.').map(Number);
+  const firstDifference = candidate.split('.').map(Number).map((part, i) => part - old[i]!).find(value => value !== 0);
+  return (firstDifference ?? 0) > 0;
+}
+
+async function loadPolicy(path: URL): Promise<Policy | undefined> {
+  let input: string;
+  try {
+    input = await readFile(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+  const raw = asObject(JSON.parse(input));
+  if (raw.schemaVersion !== 1 || typeof raw.feedUrl !== 'string' || typeof raw.publicKey !== 'string') {
+    throw new Error('Invalid desktop update channel');
+  }
+  const feed = new URL(raw.feedUrl);
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(feed.hostname);
+  if (feed.username || feed.password || feed.hash || feed.search || !(feed.protocol === 'https:' || (loopback && feed.protocol === 'http:'))) {
+    throw new Error('The desktop update channel requires HTTPS or a local test server');
+  }
+  const key = createPublicKey({ key: Buffer.from(raw.publicKey, 'base64'), format: 'der', type: 'spki' });
+  if (key.asymmetricKeyType !== 'ed25519') throw new Error('Invalid desktop update verification key');
+  return { feed, key, installedVersion: version(raw.installedVersion) };
+}
+
+function releaseDocument(data: Buffer, key: KeyObject): Release {
+  const envelope = asObject(JSON.parse(data.toString('utf8')));
+  if (typeof envelope.payload !== 'string' || typeof envelope.signature !== 'string') throw new Error('Missing signed desktop update manifest');
+  const payload = Buffer.from(envelope.payload, 'base64');
+  if (!verify(null, payload, key, Buffer.from(envelope.signature, 'base64'))) throw new Error('Desktop update signature verification failed');
+  const release = asObject(JSON.parse(payload.toString('utf8')));
+  if (release.schemaVersion !== 1 || !Array.isArray(release.assets)) throw new Error('Invalid signed desktop update manifest');
+  const targets = new Set<string>();
+  const assets = release.assets.map((input: unknown): Asset => {
+    const { platform, arch, file, bytes, sha256 } = asObject(input);
+    if ((platform !== 'darwin' && platform !== 'win32') || (arch !== 'arm64' && arch !== 'x64')
+      || typeof file !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,126}\.zip$/.test(file)
+      || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 1 || bytes > archiveLimit
+      || typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) {
+      throw new Error('Invalid desktop update asset');
+    }
+    const target = `${platform}/${arch}`;
+    if (targets.has(target)) throw new Error('The desktop update manifest contains duplicate targets');
+    targets.add(target);
+    return { platform, arch, file, bytes, sha256 };
+  });
+  return { version: version(release.version), assets };
+}
+
+async function consume(url: URL, limit: number, signal: AbortSignal, receive: (chunk: Uint8Array) => void | Promise<void>): Promise<number> {
+  const response = await fetch(url, { redirect: 'error', signal, headers: { 'Accept-Encoding': 'identity' } });
+  if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`Desktop update server returned HTTP ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  let bytes = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) return bytes;
+      bytes += next.value.byteLength;
+      if (bytes > limit) throw new Error('Desktop update response exceeded its expected size');
+      await receive(next.value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+
+/** Downloads a verified portable bundle without opening or applying it. */
+export class DesktopUpdates {
+  private readonly closing = new AbortController();
+  private staging: Promise<{ version: string; sha256: string }> | undefined;
+
+  constructor(private readonly dataDirectory: string, private readonly policyPath: URL) {}
+
+  async close(): Promise<void> {
+    this.closing.abort();
+    await this.staging?.catch(() => {});
+  }
+
+  private async inspect(policy: Policy): Promise<Check> {
+    const chunks: Buffer[] = [];
+    await consume(policy.feed, manifestLimit, AbortSignal.any([this.closing.signal, AbortSignal.timeout(10_000)]), chunk => {
+      chunks.push(Buffer.from(chunk));
+    });
+    const release = releaseDocument(Buffer.concat(chunks), policy.key);
+    const { installedVersion } = policy;
+    if (!newer(release.version, installedVersion)) return { state: 'current', installedVersion };
+    const asset = release.assets.find(entry => entry.platform === process.platform && entry.arch === process.arch);
+    if (!asset) return { state: 'unsupported', installedVersion, version: release.version };
+    return { state: 'available', installedVersion, version: release.version, asset };
+  }
+
+  async check(): Promise<Check> {
+    const policy = await loadPolicy(this.policyPath);
+    return policy ? this.inspect(policy) : { state: 'disabled' };
+  }
+
+  stage(expectedVersion: string, expectedSha256: string): Promise<{ version: string; sha256: string }> {
+    if (this.staging) throw new Error('A desktop update is already downloading');
+    this.staging = this.download(expectedVersion, expectedSha256).finally(() => { this.staging = undefined; });
+    return this.staging;
+  }
+
+  private async download(expectedVersion: string, expectedSha256: string) {
+    this.closing.signal.throwIfAborted();
+    const policy = await loadPolicy(this.policyPath);
+    if (!policy) throw new Error('This desktop package has no update channel');
+    const checked = await this.inspect(policy);
+    if (checked.state !== 'available' || checked.version !== expectedVersion || checked.asset.sha256 !== expectedSha256) {
+      throw new Error('The available desktop update changed. Check again before downloading.');
+    }
+    const { asset } = checked;
+    const directory = join(this.dataDirectory, 'desktop-updates');
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const pending = join(directory, `${randomUUID()}.part`);
+    const file = await open(pending, 'wx', 0o600);
+    try {
+      const hash = createHash('sha256');
+      const signal = AbortSignal.any([this.closing.signal, AbortSignal.timeout(180_000)]);
+      const bytes = await consume(new URL(asset.file, policy.feed), asset.bytes, signal, async chunk => {
+        hash.update(chunk);
+        await file.writeFile(chunk);
+      });
+      if (bytes !== asset.bytes || hash.digest('hex') !== asset.sha256) throw new Error('Desktop update archive verification failed');
+      await file.sync();
+      await file.close();
+      this.closing.signal.throwIfAborted();
+      await rename(pending, join(directory, `${asset.sha256}.zip`));
+      return { version: checked.version, sha256: asset.sha256 };
+    } finally {
+      await file.close();
+      await rm(pending, { force: true });
+    }
+  }
+}

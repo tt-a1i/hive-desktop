@@ -10,8 +10,10 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = name => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
 const executable = arg('--executable');
 const runtime = arg('--runtime');
+const updateChannel = arg('--update-channel');
 if (!runtime || runtime.startsWith('--')) throw new Error('Pass --runtime PATH to a production-deployed runtime');
 if (!executable || executable.startsWith('--')) throw new Error('Pass --executable PATH to a native build for this host');
+if (process.argv.includes('--update-channel') && (!updateChannel || updateChannel.startsWith('--'))) throw new Error('Pass --update-channel PATH to an update channel file');
 if (!['darwin', 'win32'].includes(process.platform) || !['arm64', 'x64'].includes(process.arch)) throw new Error('Packaging supports native macOS or Windows arm64/x64 hosts only');
 const output = resolve(arg('--output') ?? join(root, '.artifacts', `portable-${process.platform}-${process.arch}`));
 if (output === root || root.startsWith(output + '/') || output === resolve('/')) throw new Error('Refusing unsafe output path');
@@ -54,8 +56,13 @@ try {
   }
   await cp(join(root, 'apps/desktop/licenses/LICENSE-LUCIDE'), join(resources, 'licenses/LICENSE-LUCIDE'));
   await cp(join(root, 'apps/desktop/licenses/LICENSE-T3CODE'), join(resources, 'licenses/LICENSE-T3CODE'));
+  const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  if (updateChannel) {
+    const { feedUrl, publicKey } = JSON.parse(await readFile(resolve(updateChannel), 'utf8'));
+    if (typeof feedUrl !== 'string' || typeof publicKey !== 'string') throw new Error('Update channel needs a feed URL and a public verification key');
+    await writeFile(join(resources, 'desktop-update-channel.json'), JSON.stringify({schemaVersion: 1, feedUrl, publicKey, installedVersion: metadata.version}));
+  }
   if (process.platform === 'darwin') {
-    const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
     await prepareMacBundle(app, { version: metadata.version,
       iconSource: join(resources, 'runtime', 'node_modules', '@tt-a1i', 'hive', 'assets', 'logo.png') });
   }

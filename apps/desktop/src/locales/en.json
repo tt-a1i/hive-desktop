@@ -2097,5 +2097,17 @@
   "默认目标分支名称过长。": "Default base branch name is too long.",
   "默认视图模式": "Default View Mode",
   "（原生估算）": " (native estimate)",
-  "（文档为空）": "(Empty document)"
+  "（文档为空）": "(Empty document)",
+  "桌面更新": "Desktop updates",
+  "检查更新": "Check for updates",
+  "下载更新": "Download update",
+  "正在检查更新…": "Checking for updates…",
+  "正在下载并校验更新…": "Downloading and verifying update…",
+  "此开发包未配置更新渠道。": "This development bundle has no update channel.",
+  "当前版本已是最新版本。": "This version is up to date.",
+  "新版本暂不支持此平台": "The new version is unavailable for this platform",
+  "已下载并校验": "Downloaded and verified",
+  "有可用更新": "Update available",
+  "更新渠道与当前桌面版本不匹配。": "The update channel does not match this installed version.",
+  "更新下载收据不匹配。": "The download confirmation did not match the selected update."
 }

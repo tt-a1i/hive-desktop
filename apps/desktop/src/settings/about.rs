@@ -412,6 +412,7 @@ impl HiveApp {
                         cx,
                     )),
             )
+            .child(self.render_desktop_updates(cx))
             .child(
                 v_flex()
                     .gap_2()

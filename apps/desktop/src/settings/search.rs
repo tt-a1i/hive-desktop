@@ -328,7 +328,7 @@ const ENTRIES: &[Entry] = &[
         keybinding: None,
         title: "关于与维护",
         description: "版本、后台诊断、临时缓存清理与开源许可",
-        keywords: "about version build revision runtime node hive diagnostics maintenance clean logs tmp welcome guide license 版本 构建 诊断 清理 维护 引导 开源许可",
+        keywords: "about version build revision runtime node hive diagnostics maintenance clean logs tmp welcome guide license check update download 版本 构建 诊断 清理 维护 引导 开源许可 检查 更新 下载",
     },
     Entry {
         section: Some(SettingsSection::About),

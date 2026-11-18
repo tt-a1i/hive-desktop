@@ -16,6 +16,7 @@ use serde_json::json;
 pub mod archive;
 mod appearance;
 mod about;
+pub(crate) mod updates;
 mod diffs;
 mod general;
 mod language;

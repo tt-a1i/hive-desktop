@@ -184,6 +184,7 @@ impl HiveApp {
         self.inflight_inputs.clear();
         window.close_all_dialogs(cx);
         self.connection_generation += 1;
+        self.desktop_updates = Default::default();
         self.remote = Default::default();
         self.restarting = true;
         self.backend_info = None;
