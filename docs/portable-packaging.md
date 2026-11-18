@@ -43,6 +43,12 @@ In an independent job parallel to packaging, CI installs official Pi 1.4.0 and C
 
 Claude sessions always select the user's original CLI explicitly. The workspace therefore excludes the SDK's eight precisely named optional native CLI packages through pnpm's `ignoredOptionalDependencies`; it retains the SDK itself and other platform dependencies, including node-pty. No vendor files are manually deleted and `--no-optional` is not used. A scratch frozen install/deploy without these binaries passed actual external Claude controls, hidden-context resume, shared runtime recovery, and the Mac package's real PTY/Hive/HTTP smoke without inference. The removed Mac ARM64 executable alone was approximately 298 MiB. The candidate app occupies approximately 612 MiB, but comparison bundles used different native builds, so this is not a controlled whole-package size benchmark. Evidence: `.artifacts/claude-optional-candidate/.artifacts/claude-runtime-vY1DSv/receipt.json` and `.artifacts/claude-optional-candidate-bundle`. Windows must validate this dependency selection independently.
 
+## Isolated update archives
+
+To build a bundle and its update ZIP, add `--update-channel PATH --update-archive OUTPUT.zip` to the packaging command. The channel file contains `feedUrl` and `publicKey`. The public key is a base64-encoded Ed25519 SPKI key. The packager reads the native executable's compiled version and target, then records its checksum and the bundle's file count. Keep the test signing key outside the bundle.
+
+Use the ZIP produced by this command for the signed update feed. On macOS, the archive preserves internal links and omits AppleDouble metadata. Large `ditto` archives can report a wrapped directory entry count, which prevents reliable extraction. The preparation check verifies the cached signature, exact archive digest, extracted file count and executable identity before returning a package for installation.
+
 ## macOS application identity and development disk image
 
 Fresh Mac bundles now include the existing Hive logo as an ICNS family, display/short/build versions, a developer-tools category and high-resolution capability. The minimum OS field is taken from the native executable's Mach-O deployment target; it is a binary floor, not evidence of testing every older macOS release. The 512px upstream asset is not upscaled to invent a 1024px variant. Its original notices stay in the bundled Hive package and the icon provenance is recorded in `Resources/hive-icon-source.txt`. The developer bundle identifier remains `com.hive.desktop.dev`.

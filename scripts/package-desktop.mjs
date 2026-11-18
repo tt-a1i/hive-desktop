@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { mkdtemp, mkdir, cp, readFile, rm, writeFile, realpath, readdir, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, relative, isAbsolute } from 'node:path';
@@ -11,9 +12,11 @@ const arg = name => { const i = process.argv.indexOf(name); return i < 0 ? undef
 const executable = arg('--executable');
 const runtime = arg('--runtime');
 const updateChannel = arg('--update-channel');
+const updateArchive = arg('--update-archive');
 if (!runtime || runtime.startsWith('--')) throw new Error('Pass --runtime PATH to a production-deployed runtime');
 if (!executable || executable.startsWith('--')) throw new Error('Pass --executable PATH to a native build for this host');
 if (process.argv.includes('--update-channel') && (!updateChannel || updateChannel.startsWith('--'))) throw new Error('Pass --update-channel PATH to an update channel file');
+if (process.argv.includes('--update-archive') && (!updateChannel || !updateArchive || !/\.zip$/i.test(updateArchive))) throw new Error('Pass --update-channel and --update-archive PATH.zip together');
 if (!['darwin', 'win32'].includes(process.platform) || !['arm64', 'x64'].includes(process.arch)) throw new Error('Packaging supports native macOS or Windows arm64/x64 hosts only');
 const output = resolve(arg('--output') ?? join(root, '.artifacts', `portable-${process.platform}-${process.arch}`));
 if (output === root || root.startsWith(output + '/') || output === resolve('/')) throw new Error('Refusing unsafe output path');
@@ -57,9 +60,18 @@ try {
   await cp(join(root, 'apps/desktop/licenses/LICENSE-LUCIDE'), join(resources, 'licenses/LICENSE-LUCIDE'));
   await cp(join(root, 'apps/desktop/licenses/LICENSE-T3CODE'), join(resources, 'licenses/LICENSE-T3CODE'));
   const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+  let updateIdentity;
   if (updateChannel) {
     const { feedUrl, publicKey } = JSON.parse(await readFile(resolve(updateChannel), 'utf8'));
     if (typeof feedUrl !== 'string' || typeof publicKey !== 'string') throw new Error('Update channel needs a feed URL and a public verification key');
+    const probe = spawnSync(binary, ['--desktop-update-identity'], {encoding: 'utf8', timeout: 10_000, windowsHide: true});
+    if (probe.error || probe.status !== 0) throw probe.error ?? new Error('Could not read native update identity');
+    const identity = JSON.parse(probe.stdout);
+    if (identity.schemaVersion !== 1 || identity.app !== 'com.hive.desktop.dev' || identity.version !== metadata.version
+      || identity.platform !== process.platform || identity.arch !== process.arch) throw new Error('Native update identity does not match package version or target');
+    const executableHash = createHash('sha256');
+    for await (const chunk of createReadStream(bin)) executableHash.update(chunk);
+    updateIdentity = {...identity, executableSha256: executableHash.digest('hex')};
     await writeFile(join(resources, 'desktop-update-channel.json'), JSON.stringify({schemaVersion: 1, feedUrl, publicKey, installedVersion: metadata.version}));
   }
   if (process.platform === 'darwin') {
@@ -87,15 +99,29 @@ try {
   await cp(join(temp, basename, 'LICENSE'), join(nodeDir, 'LICENSE'));
   // Deployment may use links, but no target may escape the portable bundle.
   const base = await realpath(output);
+  let files = 0;
   async function checkLinks(path) {
     for (const entry of await readdir(path, { withFileTypes: true })) {
       const child = join(path, entry.name);
       if (entry.isSymbolicLink()) { const target = await realpath(child); const rel = relative(base, target); if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`External link in bundle: ${child}`); }
       else if (entry.isDirectory()) await checkLinks(child);
+      if (!entry.isDirectory()) files++;
     }
   }
   progress('Checking bundle links');
   await checkLinks(output);
+  if (updateIdentity) {
+    await writeFile(join(resources, 'desktop-update-identity.json'), JSON.stringify({...updateIdentity, files: files + 1}));
+  }
+  if (updateArchive) {
+    const destination = resolve(updateArchive);
+    const within = relative(base, destination);
+    if (!within || (!within.startsWith('..') && !isAbsolute(within))) throw new Error('Update archive must be outside the bundle');
+    try { await lstat(destination); throw new Error('Update archive already exists'); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (process.platform === 'darwin') run('/usr/bin/zip', ['-q', '-y', '-r', destination, 'Hive Desktop.app'], { cwd: base });
+    else run('tar.exe', ['-a', '-cf', destination, '-C', base, 'hive-desktop.exe', 'resources']);
+  }
   progress('Bundle link check completed');
   console.log(`Packaged ${output}\nNode archive SHA256: ${actual}`);
 } finally { await rm(temp, { recursive: true, force: true }); }

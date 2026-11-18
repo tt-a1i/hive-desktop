@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, randomUUID, verify, type KeyObject } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { extractDesktopUpdate, hashDesktopFile, verifyDesktopPackage } from './desktop-update-archive.js';
 
 const manifestLimit = 64 * 1024;
 const archiveLimit = 2 * 1024 * 1024 * 1024;
@@ -14,6 +15,7 @@ type Check =
   | { state: 'current'; installedVersion: string }
   | { state: 'unsupported'; installedVersion: string; version: string }
   | ({ state: 'available'; installedVersion: string } & Candidate);
+type Prepared = { directory: string; packageRoot: string; version: string; sha256: string };
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid desktop update document');
@@ -105,20 +107,25 @@ async function consume(url: URL, limit: number, signal: AbortSignal, receive: (c
 export class DesktopUpdates {
   private readonly closing = new AbortController();
   private staging: Promise<{ version: string; sha256: string }> | undefined;
+  private preparing: Promise<Prepared> | undefined;
 
   constructor(private readonly dataDirectory: string, private readonly policyPath: URL) {}
 
   async close(): Promise<void> {
     this.closing.abort();
-    await this.staging?.catch(() => {});
+    await Promise.allSettled([this.staging, this.preparing]);
   }
 
-  private async inspect(policy: Policy): Promise<Check> {
+  private async fetchManifest(policy: Policy): Promise<Buffer> {
     const chunks: Buffer[] = [];
     await consume(policy.feed, manifestLimit, AbortSignal.any([this.closing.signal, AbortSignal.timeout(10_000)]), chunk => {
       chunks.push(Buffer.from(chunk));
     });
-    const release = releaseDocument(Buffer.concat(chunks), policy.key);
+    return Buffer.concat(chunks);
+  }
+
+  private inspect(policy: Policy, signedManifest: Buffer): Check {
+    const release = releaseDocument(signedManifest, policy.key);
     const { installedVersion } = policy;
     if (!newer(release.version, installedVersion)) return { state: 'current', installedVersion };
     const asset = release.assets.find(entry => entry.platform === process.platform && entry.arch === process.arch);
@@ -128,11 +135,11 @@ export class DesktopUpdates {
 
   async check(): Promise<Check> {
     const policy = await loadPolicy(this.policyPath);
-    return policy ? this.inspect(policy) : { state: 'disabled' };
+    return policy ? this.inspect(policy, await this.fetchManifest(policy)) : { state: 'disabled' };
   }
 
   stage(expectedVersion: string, expectedSha256: string): Promise<{ version: string; sha256: string }> {
-    if (this.staging) throw new Error('A desktop update is already downloading');
+    if (this.staging || this.preparing) throw new Error('A desktop update is already downloading or preparing');
     this.staging = this.download(expectedVersion, expectedSha256).finally(() => { this.staging = undefined; });
     return this.staging;
   }
@@ -141,7 +148,8 @@ export class DesktopUpdates {
     this.closing.signal.throwIfAborted();
     const policy = await loadPolicy(this.policyPath);
     if (!policy) throw new Error('This desktop package has no update channel');
-    const checked = await this.inspect(policy);
+    const signedManifest = await this.fetchManifest(policy);
+    const checked = this.inspect(policy, signedManifest);
     if (checked.state !== 'available' || checked.version !== expectedVersion || checked.asset.sha256 !== expectedSha256) {
       throw new Error('The available desktop update changed. Check again before downloading.');
     }
@@ -149,6 +157,7 @@ export class DesktopUpdates {
     const directory = join(this.dataDirectory, 'desktop-updates');
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const pending = join(directory, `${randomUUID()}.part`);
+    const attestation = `${pending}.manifest`;
     const file = await open(pending, 'wx', 0o600);
     try {
       const hash = createHash('sha256');
@@ -161,11 +170,57 @@ export class DesktopUpdates {
       await file.sync();
       await file.close();
       this.closing.signal.throwIfAborted();
+      await writeFile(attestation, signedManifest, { flag: 'wx', mode: 0o600, flush: true });
       await rename(pending, join(directory, `${asset.sha256}.zip`));
+      await rename(attestation, join(directory, `${asset.sha256}.manifest.json`));
       return { version: checked.version, sha256: asset.sha256 };
     } finally {
       await file.close();
       await rm(pending, { force: true });
+      await rm(attestation, { force: true });
+    }
+  }
+
+  prepare(expectedVersion: string, sha256: string): Promise<Prepared> {
+    if (this.staging || this.preparing) throw new Error('A desktop update is already downloading or preparing');
+    this.preparing = this.preparePackage(expectedVersion, sha256).finally(() => { this.preparing = undefined; });
+    return this.preparing;
+  }
+
+  private async preparePackage(expectedVersion: string, sha256: string): Promise<Prepared> {
+    if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('Invalid desktop update digest');
+    version(expectedVersion);
+    const signal = this.closing.signal;
+    signal.throwIfAborted();
+    const policy = await loadPolicy(this.policyPath);
+    if (!policy) throw new Error('This desktop package has no update channel');
+    const staging = await realpath(join(this.dataDirectory, 'desktop-updates'));
+    const attestation = join(staging, `${sha256}.manifest.json`);
+    const info = await lstat(attestation);
+    if (!info.isFile() || info.size > manifestLimit) throw new Error('Invalid cached desktop update manifest');
+    const checked = this.inspect(policy, await readFile(attestation));
+    if (checked.state !== 'available' || checked.version !== expectedVersion || checked.asset.sha256 !== sha256) {
+      throw new Error('The cached desktop update does not match the selected release');
+    }
+    const archive = join(staging, `${sha256}.zip`);
+    const archiveInfo = await lstat(archive);
+    if (!archiveInfo.isFile() || archiveInfo.size !== checked.asset.bytes) throw new Error('Staged desktop update archive verification failed');
+
+    const directory = await mkdtemp(join(staging, 'prepare-'));
+    try {
+      const snapshot = join(directory, 'bundle.zip');
+      await copyFile(archive, snapshot);
+      if ((await lstat(snapshot)).size !== checked.asset.bytes || await hashDesktopFile(snapshot, signal) !== sha256) {
+        throw new Error('Staged desktop update archive verification failed');
+      }
+      const packageRoot = await extractDesktopUpdate(snapshot, join(directory, 'package'), signal);
+      await verifyDesktopPackage(packageRoot, expectedVersion, signal);
+      signal.throwIfAborted();
+      await rm(snapshot);
+      return { directory, packageRoot, version: expectedVersion, sha256 };
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true });
+      throw error;
     }
   }
 }

@@ -90,6 +90,29 @@ actions!(
 );
 
 fn main() {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--desktop-update-identity")
+    {
+        let platform = match std::env::consts::OS {
+            "macos" => "darwin",
+            "windows" => "win32",
+            other => other,
+        };
+        let arch = match std::env::consts::ARCH {
+            "aarch64" => "arm64",
+            "x86_64" => "x64",
+            other => other,
+        };
+        println!("{}", serde_json::json!({
+            "schemaVersion": 1,
+            "app": "com.hive.desktop.dev",
+            "version": env!("CARGO_PKG_VERSION"),
+            "platform": platform,
+            "arch": arch,
+        }));
+        return;
+    }
     #[cfg(target_os = "macos")]
     shell_owner::run_if_requested();
     gpui_kit::application()
