@@ -517,6 +517,11 @@ impl Render for Editor {
                                                         .ghost()
                                                         .small()
                                                         .label(tr("停用"))
+                                                        .accessibility_label(format!(
+                                                            "{}: {}",
+                                                            tr("停用"),
+                                                            target.label(),
+                                                        ))
                                                         .on_click(cx.listener(
                                                             move |this, _, _, cx| {
                                                                 this.stop(cx);

@@ -1,4 +1,4 @@
-use super::{Bindings, FILE, Preferences, Target, default_unbinds, load, save, validate_chord};
+use super::{Bindings, FILE, Preferences, Target, load, save, validate_chord};
 use gpui_kit::{KeyBinding, Keymap, Keystroke, OperatingSystem};
 use std::fs;
 
@@ -113,47 +113,6 @@ fn unknown_or_partial_files_are_not_migrated_or_overwritten() {
     );
 }
 #[test]
-fn targeted_default_unbinds_leave_input_and_other_app_bindings_alive() {
-    let mut saved = Bindings::defaults(OperatingSystem::Mac);
-    saved.set(Target::Search, Some("cmd-shift-j".to_owned()));
-    saved.set(Target::Find, None);
-    let mut map = Keymap::new(vec![
-        KeyBinding::new("cmd-k", crate::OpenSessionSearch, None),
-        KeyBinding::new("cmd-f", crate::OpenConversationFind, None),
-        KeyBinding::new("cmd-,", crate::OpenPreferences, None),
-        KeyBinding::new("cmd-q", crate::Quit, None),
-        KeyBinding::new("cmd-c", gpui_kit::base::input::Copy, None),
-    ]);
-    map.add_bindings(default_unbinds(&saved, OperatingSystem::Mac));
-    map.add_bindings([KeyBinding::new(
-        "cmd-shift-j",
-        crate::OpenSessionSearch,
-        None,
-    )]);
-    assert!(
-        map.bindings_for_input(&[Keystroke::parse("cmd-k").unwrap()], &[])
-            .0
-            .is_empty()
-    );
-    assert!(
-        map.bindings_for_input(&[Keystroke::parse("cmd-f").unwrap()], &[])
-            .0
-            .is_empty()
-    );
-    assert_eq!(
-        map.bindings_for_action(&crate::OpenSessionSearch).count(),
-        1
-    );
-    assert_eq!(map.bindings_for_action(&crate::OpenPreferences).count(), 1);
-    assert_eq!(map.bindings_for_action(&crate::Quit).count(), 1);
-    assert_eq!(
-        map.bindings_for_action(&gpui_kit::base::input::Copy)
-            .count(),
-        1
-    );
-}
-
-#[test]
 fn shifted_punctuation_finishes_when_primary_modifier_is_released() {
     use super::primary_released;
     use gpui_kit::Modifiers;
@@ -209,7 +168,7 @@ fn component_shortcuts_are_protected_from_new_global_chords() {
         crate::OpenSessionSearch,
         None
     )));
-    assert!(!protected_binding(&KeyBinding::new(
+    assert!(protected_binding(&KeyBinding::new(
         "cmd-k",
         gpui_kit::Unbind("hive_desktop::OpenSessionSearch".into()),
         None
@@ -241,84 +200,53 @@ fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
 }
 
 #[test]
-fn keymap_delta_supports_live_rebind_disable_and_restore_roundtrip() {
-    use super::{keymap_delta_with, startup_bindings};
+fn repeated_live_rebinds_keep_the_keymap_bounded_and_preserve_other_bindings() {
+    use super::{replace_bindings, startup_bindings};
+    use gpui_kit::{Action, KeyContext, Unbind, base::input::Copy};
 
-    let intern = |chord: &str| -> &'static str {
-        match chord {
-            "cmd-k" => "cmd-k",
-            "cmd-`" => "cmd-`",
-            "cmd-shift-j" => "cmd-shift-j",
-            "cmd-shift-t" => "cmd-shift-t",
-            other => panic!("unexpected chord in test: {other}"),
-        }
-    };
     let os = OperatingSystem::Mac;
-    let defaults = Bindings::defaults(os);
     let mut map = Keymap::new(startup_bindings(os));
-    assert_eq!(
-        map.bindings_for_action(&crate::OpenSessionSearch).count(),
-        1
-    );
-    assert_eq!(
-        map.bindings_for_action(&crate::ToggleWorkspaceTerminal).count(),
-        1
-    );
+    map.add_bindings([
+        KeyBinding::new("cmd-q", crate::Quit, None),
+        KeyBinding::new("cmd-c", Copy, None),
+        KeyBinding::new("cmd-shift-c", Copy, None),
+        KeyBinding::new("cmd-shift-c", Unbind(Copy.name().into()), None),
+        KeyBinding::new("cmd-shift-h", crate::OpenSessionSearch, Some("TestContext")),
+    ]);
+    let initial_count = map.bindings().len();
+    let initial_version = map.version();
+    let search = crate::OpenSessionSearch.name();
+    let terminal = crate::ToggleWorkspaceTerminal.name();
+    let matches = |map: &Keymap, chord| {
+        map.bindings_for_input(&[Keystroke::parse(chord).unwrap()], &[]).0.len()
+    };
+    for _ in 0..200 {
+        replace_bindings(&mut map, vec![
+            (search, Some(KeyBinding::new("cmd-shift-j", crate::OpenSessionSearch, None))),
+            (terminal, Some(KeyBinding::new("cmd-shift-t", crate::ToggleWorkspaceTerminal, None))),
+        ]);
+        assert_eq!(map.bindings().len(), initial_count);
+        assert_eq!(matches(&map, "cmd-k"), 0);
+        assert_eq!(matches(&map, "cmd-shift-j"), 1);
+        assert_eq!(matches(&map, "cmd-shift-t"), 1);
 
-    // Step 1: Rebind A -> B
-    let mut step1 = defaults.clone();
-    step1.set(Target::Search, Some("cmd-shift-j".to_owned()));
-    step1.set(Target::ToggleTerminal, Some("cmd-shift-t".to_owned()));
-    map.add_bindings(keymap_delta_with(&defaults, &step1, intern));
-    assert!(
-        map.bindings_for_input(&[Keystroke::parse("cmd-k").unwrap()], &[])
-            .0
-            .is_empty()
-    );
-    assert!(
-        map.bindings_for_input(&[Keystroke::parse("cmd-`").unwrap()], &[])
-            .0
-            .is_empty()
-    );
-    assert_eq!(
-        map.bindings_for_input(&[Keystroke::parse("cmd-shift-j").unwrap()], &[])
-            .0
-            .len(),
-        1
-    );
-    assert_eq!(
-        map.bindings_for_input(&[Keystroke::parse("cmd-shift-t").unwrap()], &[])
-            .0
-            .len(),
-        1
-    );
+        replace_bindings(&mut map, vec![(search, None), (terminal, None)]);
+        assert_eq!(map.bindings().len(), initial_count - 2);
+        assert_eq!(matches(&map, "cmd-shift-j"), 0);
+        assert_eq!(matches(&map, "cmd-shift-t"), 0);
+        let context = [KeyContext::parse("TestContext").unwrap()];
+        assert_eq!(map.bindings_for_input(&[Keystroke::parse("cmd-shift-h").unwrap()], &context).0.len(), 1);
 
-    // Step 2: Disable B -> None
-    let mut step2 = step1.clone();
-    step2.set(Target::Search, None);
-    step2.set(Target::ToggleTerminal, None);
-    map.add_bindings(keymap_delta_with(&step1, &step2, intern));
-    assert_eq!(
-        map.bindings_for_action(&crate::OpenSessionSearch).count(),
-        0
-    );
-    assert_eq!(
-        map.bindings_for_action(&crate::ToggleWorkspaceTerminal).count(),
-        0
-    );
-
-    // Step 3: Restore None -> A
-    map.add_bindings(keymap_delta_with(&step2, &defaults, intern));
-    assert_eq!(
-        map.bindings_for_input(&[Keystroke::parse("cmd-k").unwrap()], &[])
-            .0
-            .len(),
-        1
-    );
-    assert_eq!(
-        map.bindings_for_input(&[Keystroke::parse("cmd-`").unwrap()], &[])
-            .0
-            .len(),
-        1
-    );
+        replace_bindings(&mut map, vec![
+            (search, Some(KeyBinding::new("cmd-k", crate::OpenSessionSearch, None))),
+            (terminal, Some(KeyBinding::new("cmd-`", crate::ToggleWorkspaceTerminal, None))),
+        ]);
+        assert_eq!(map.bindings().len(), initial_count);
+        assert_eq!(matches(&map, "cmd-k"), 1);
+        assert_eq!(matches(&map, "cmd-`"), 1);
+        assert_eq!(matches(&map, "cmd-q"), 1);
+        assert_eq!(matches(&map, "cmd-c"), 1);
+        assert_eq!(matches(&map, "cmd-shift-c"), 0);
+    }
+    assert!(map.version() != initial_version);
 }

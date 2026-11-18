@@ -232,7 +232,7 @@
   "保存失败": "Save failed",
   "保存失败，快照仍保留": "Save failed; the snapshot is still available",
   "保存常用职责。创建成员时可选择模板，仍需确认后创建。": "Save reusable responsibilities. Choose a template when creating a member, review it and confirm creation.",
-  "保存并立即生效": "Saved and applied immediately",
+  "保存并立即生效": "Save and apply now",
   "保存快捷键失败，原文件和当前快捷键均未改变。": "Could not save shortcuts. The original file and active shortcuts are unchanged.",
   "保存快捷键，重启后生效": "Save shortcuts for next app restart",
   "保存执行器设置": "Save executor settings",

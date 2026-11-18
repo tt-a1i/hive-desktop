@@ -77,6 +77,20 @@ impl Keymap {
         self.version.0 += 1;
     }
 
+    /// Remove bindings rejected by the predicate. Retained bindings keep
+    /// their order, predicates, and source metadata.
+    pub fn retain_bindings(&mut self, keep: impl FnMut(&KeyBinding) -> bool) {
+        let old_len = self.bindings.len();
+        self.bindings.retain(keep);
+        if self.bindings.len() != old_len {
+            // Rebuild both indices after the stable compaction.
+            let bindings = std::mem::take(&mut self.bindings);
+            self.binding_indices_by_action_id.clear();
+            self.disabled_binding_indices.clear();
+            self.add_bindings(bindings);
+        }
+    }
+
     /// Reset this keymap to its initial state.
     pub fn clear(&mut self) {
         self.bindings.clear();

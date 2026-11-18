@@ -3,7 +3,7 @@ pub(crate) use editor::Editor;
 
 use crate::language::tr;
 use gpui_kit::{
-    Action, App, Global, KeyBinding, Keystroke, Modifiers, OperatingSystem, Unbind,
+    Action, App, Global, KeyBinding, Keymap, Keystroke, Modifiers, OperatingSystem,
     component::kbd::Kbd,
 };
 use serde::{Deserialize, Serialize};
@@ -220,10 +220,6 @@ impl Target {
         }
     }
 
-    #[cfg(test)]
-    fn unbind_binding(self, chord: &'static str) -> KeyBinding {
-        KeyBinding::new(chord, Unbind(self.action().name().into()), None)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -485,52 +481,10 @@ pub(crate) fn startup_bindings(os: OperatingSystem) -> Vec<KeyBinding> {
         .collect()
 }
 
-#[cfg(test)]
-fn default_unbinds(bindings: &Bindings, os: OperatingSystem) -> Vec<KeyBinding> {
-    TARGETS
-        .into_iter()
-        .filter(|target| bindings.get(*target).as_deref() != Some(target.default(os)))
-        .map(|target| target.unbind_binding(target.default(os)))
-        .collect()
-}
-
-#[cfg(test)]
-pub(crate) fn keymap_delta_with<F>(prev: &Bindings, next: &Bindings, mut static_chord: F) -> Vec<KeyBinding>
-where
-    F: FnMut(&str) -> &'static str,
-{
-    let mut delta = Vec::new();
-    for target in TARGETS {
-        if prev.get(target) == next.get(target) {
-            continue;
-        }
-        if let Some(old_chord) = prev.get(target) {
-            delta.push(target.unbind_binding(static_chord(old_chord)));
-        }
-        if let Some(new_chord) = next.get(target) {
-            delta.push(target.key_binding(static_chord(new_chord)));
-        }
-    }
-    delta
-}
-
 fn protected_binding(binding: &KeyBinding) -> bool {
-    let action = binding.action();
-    if TARGETS
+    binding.predicate().is_some() || !TARGETS
         .into_iter()
-        .any(|target| target.action().name() == action.name())
-    {
-        return false;
-    }
-    if let Some(unbind) = action.as_any().downcast_ref::<Unbind>() {
-        if TARGETS
-            .into_iter()
-            .any(|target| unbind.0.as_ref() == target.action().name())
-        {
-            return false;
-        }
-    }
-    true
+        .any(|target| target.action().name() == binding.action().name())
 }
 
 fn check_registered(bindings: &Bindings, cx: &App) -> Result<(), &'static str> {
@@ -557,7 +511,9 @@ fn check_registered(bindings: &Bindings, cx: &App) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn live_delta(prev: &Bindings, next: &Bindings, cx: &App) -> Result<(Bindings, Vec<KeyBinding>), String> {
+type BindingChanges = Vec<(&'static str, Option<KeyBinding>)>;
+
+fn live_delta(prev: &Bindings, next: &Bindings, cx: &App) -> Result<(Bindings, BindingChanges), String> {
     let os = cx.platform_info().os;
     let normalized = next.normalized(os).map_err(str::to_owned)?;
     check_registered(&normalized, cx).map_err(str::to_owned)?;
@@ -566,27 +522,23 @@ fn live_delta(prev: &Bindings, next: &Bindings, cx: &App) -> Result<(Bindings, V
         if prev.get(target) == normalized.get(target) {
             continue;
         }
-        if let Some(old_chord) = prev.get(target) {
-            delta.push(
-                KeyBinding::load(
-                    old_chord,
-                    Box::new(Unbind(target.action().name().into())),
-                    None,
-                    false,
-                    None,
-                    cx,
-                )
-                .map_err(|error| error.to_string())?,
-            );
-        }
-        if let Some(new_chord) = normalized.get(target) {
-            delta.push(
-                KeyBinding::load(new_chord, target.action(), None, false, None, cx)
-                    .map_err(|error| error.to_string())?,
-            );
-        }
+        let binding = normalized.get(target).as_ref()
+            .map(|chord| KeyBinding::load(chord, target.action(), None, false, None, cx))
+            .transpose().map_err(|error| error.to_string())?;
+        delta.push((target.action().name(), binding));
     }
     Ok((normalized, delta))
+}
+
+fn replace_bindings(keymap: &mut Keymap, changes: BindingChanges) {
+    if changes.is_empty() {
+        return;
+    }
+    keymap.retain_bindings(|binding| {
+        binding.predicate().is_some()
+            || !changes.iter().any(|(action, _)| *action == binding.action().name())
+    });
+    keymap.add_bindings(changes.into_iter().filter_map(|(_, binding)| binding));
 }
 
 enum Notice {
@@ -650,7 +602,7 @@ pub(crate) fn restore(root: &Path, cx: &mut App) {
     if cx.global::<Preferences>().root.is_some() {
         return;
     }
-    // Register only this bounded delta; never clear component/input bindings.
+    // Replace only changed Hive bindings. Component and input bindings stay registered.
     let active_before = cx.global::<Preferences>().active.clone();
     let loaded = load(root, cx.platform_info().os).and_then(|bindings| {
         live_delta(&active_before, &bindings, cx)
@@ -669,7 +621,7 @@ pub(crate) fn restore(root: &Path, cx: &mut App) {
             state.active = bindings.clone();
             state.saved = bindings;
             state.draft = draft;
-            cx.bind_keys(delta);
+            replace_bindings(&mut cx.key_bindings().borrow_mut(), delta);
         }
         Err(error) => {
             state.load_failed = true;
@@ -695,7 +647,7 @@ fn reload(cx: &mut App) {
             state.draft = bindings;
             state.load_failed = false;
             state.notice = None;
-            cx.bind_keys(delta);
+            replace_bindings(&mut cx.key_bindings().borrow_mut(), delta);
         }
         Err(error) => {
             let state = cx.global_mut::<Preferences>();
@@ -730,7 +682,7 @@ fn save_pending(cx: &mut App) {
                 state.saved = normalized.clone();
                 state.draft = normalized;
                 state.notice = Some(Notice::Saved);
-                cx.bind_keys(delta);
+                replace_bindings(&mut cx.key_bindings().borrow_mut(), delta);
             } else if has_root {
                 let saved_ok = {
                     let state = cx.global_mut::<Preferences>();
@@ -741,7 +693,7 @@ fn save_pending(cx: &mut App) {
                 if saved_ok {
                     let state = cx.global_mut::<Preferences>();
                     state.active = state.saved.clone();
-                    cx.bind_keys(delta);
+                    replace_bindings(&mut cx.key_bindings().borrow_mut(), delta);
                 }
             }
         }
