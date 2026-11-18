@@ -339,7 +339,7 @@ fn local_clock_from_unix_secs(secs: i64) -> Option<LocalClock> {
 #[cfg(windows)]
 fn now_local_clock() -> Option<LocalClock> {
     use windows_sys::Win32::Foundation::SYSTEMTIME;
-    use windows_sys::Win32::System::Time::GetLocalTime;
+    use windows_sys::Win32::System::SystemInformation::GetLocalTime;
     let mut local: SYSTEMTIME = unsafe { std::mem::zeroed() };
     unsafe { GetLocalTime(&mut local) };
     Some(LocalClock {
