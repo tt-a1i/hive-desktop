@@ -120,7 +120,7 @@ impl HiveApp {
                         {
                             items.retain(|item| item.id != id);
                         }
-                        this.attachments.prune();
+                        this.prune_draft_attachments(cx);
                         this.schedule_draft_save(cx);
                         cx.notify();
                     })),

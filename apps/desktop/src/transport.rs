@@ -48,6 +48,21 @@ fn fail(
     }
     let _ = events.try_send(RuntimeEvent::Failed(message));
 }
+
+fn read_frame(reader: &mut impl BufRead, scratch: &mut Vec<u8>) -> Result<Option<Value>, String> {
+    scratch.clear();
+    if reader.read_until(b'\n', scratch).map_err(|error| error.to_string())? == 0 {
+        return Ok(None);
+    }
+    let result = serde_json::from_slice(scratch).map_err(|error| error.to_string());
+    // Keep the buffer for frequent small RPCs, but release an entire history
+    // or attachment frame as soon as the parsed value owns its contents.
+    if scratch.capacity() > 256 * 1024 {
+        *scratch = Vec::new();
+    }
+    result.map(Some)
+}
+
 impl Runtime {
     pub fn launch() -> Result<Arc<Self>, String> {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -109,11 +124,12 @@ impl Runtime {
         });
         let (p, e, f) = (pending.clone(), events_tx.clone(), failure.clone());
         thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let value = match line
-                    .and_then(|s| serde_json::from_str::<Value>(&s).map_err(std::io::Error::other))
-                {
-                    Ok(value) => value,
+            let mut reader = BufReader::new(stdout);
+            let mut scratch = Vec::new();
+            loop {
+                let mut value = match read_frame(&mut reader, &mut scratch) {
+                    Ok(Some(value)) => value,
+                    Ok(None) => break,
                     Err(error) => {
                         fail(&p, &e, &f, format!("后台协议错误：{error}"));
                         return;
@@ -135,12 +151,12 @@ impl Runtime {
                                 .unwrap_or("后台请求失败，请查看后台日志。")
                                 .to_owned())
                         } else {
-                            Ok(value["result"].clone())
+                            Ok(value.get_mut("result").map(std::mem::take).unwrap_or_default())
                         };
                         let _ = reply.try_send(result);
                     }
                 } else if value["event"] == "terminal" {
-                    match serde_json::from_value(value["data"].clone()) {
+                    match serde_json::from_value(value.get_mut("data").map(std::mem::take).unwrap_or_default()) {
                         Ok(event) => {
                             let _ = e.try_send(RuntimeEvent::Terminal(event));
                         }
@@ -150,7 +166,7 @@ impl Runtime {
                         }
                     }
                 } else if value["event"] == "agent" {
-                    match serde_json::from_value(value["data"].clone()) {
+                    match serde_json::from_value(value.get_mut("data").map(std::mem::take).unwrap_or_default()) {
                         Ok(event) => {
                             let _ = e.try_send(RuntimeEvent::Agent(event));
                         }

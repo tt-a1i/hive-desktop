@@ -215,6 +215,7 @@ impl HiveApp {
         self.command_picker = Default::default();
         self.reset_usage();
         self.attachments.reset_connection();
+        self.release_attachment_previews(false, cx);
         self.pinned_sessions.loading = false;
         self.pinned_sessions.dirty = false;
         self.refreshing_models = false;

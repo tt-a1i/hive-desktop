@@ -117,11 +117,27 @@ impl Attachments {
             .drafts
             .values()
             .flatten()
-            .map(|item| item.id.clone())
+            .map(|item| item.id.as_str())
             .collect::<HashSet<_>>();
-        self.previews.retain(|id, _| ids.contains(id));
-        self.failed.retain(|id, _| ids.contains(id));
-        self.verified.retain(|id| ids.contains(id));
+        self.failed.retain(|id, _| ids.contains(id.as_str()));
+        self.verified.retain(|id| ids.contains(id.as_str()));
+    }
+    fn retain_previews(&mut self, active: Option<&str>) -> Vec<Arc<RenderImage>> {
+        let items = active.and_then(|key| self.drafts.get(key));
+        let mut released = Vec::new();
+        self.previews.retain(|id, image| {
+            let keep = items.is_some_and(|items| items.iter().any(|item| item.id == *id));
+            if !keep {
+                released.push(image.render.clone());
+            }
+            keep
+        });
+        released
+    }
+    fn contains(&self, key: Option<&str>, attachment: &AttachmentRef) -> bool {
+        key.and_then(|key| self.drafts.get(key)).is_some_and(|items| {
+            items.iter().any(|item| item.id == attachment.id && item.workspace_id == attachment.workspace_id)
+        })
     }
     pub fn reset_connection(&mut self) {
         self.loading.clear();
@@ -151,6 +167,23 @@ impl Attachments {
     }
 }
 impl HiveApp {
+    pub(crate) fn release_attachment_previews(&mut self, keep_active: bool, cx: &mut Context<Self>) {
+        let active = if keep_active { self.draft_target.as_deref() } else { None };
+        let released = self.attachments.retain_previews(active);
+        if !released.is_empty() {
+            cx.defer(move |cx| {
+                for image in released {
+                    cx.drop_image(image, None);
+                }
+            });
+        }
+    }
+
+    pub(crate) fn prune_draft_attachments(&mut self, cx: &mut Context<Self>) {
+        self.attachments.prune();
+        self.release_attachment_previews(true, cx);
+    }
+
     pub(crate) fn choose_images(&mut self, cx: &mut Context<Self>) {
         let target = self.draft_target.clone();
         let workspace = self.workspace.clone();
@@ -265,6 +298,7 @@ impl HiveApp {
                 if !this.workspaces.iter().any(|item| item.id == workspace) {
                     return;
                 }
+                let active = this.draft_target.as_ref() == Some(&key);
                 let items = this.attachments.drafts.entry(key).or_default();
                 for (item, image) in ready {
                     if items.len() < 10 && !items.iter().any(|existing| existing.id == item.id) {
@@ -279,7 +313,9 @@ impl HiveApp {
                             continue;
                         }
                         if let Some(image) = image {
-                            this.attachments.previews.insert(item.id.clone(), image);
+                            if active {
+                                this.attachments.previews.insert(item.id.clone(), image);
+                            }
                         } else {
                             this.attachments.verified.insert(item.id.clone());
                         }
@@ -296,6 +332,7 @@ impl HiveApp {
         .detach();
     }
     pub(crate) fn ensure_attachment_previews(&mut self, cx: &mut Context<Self>) {
+        static PREVIEW_READS: smol::lock::Semaphore = smol::lock::Semaphore::new(2);
         if !self.connected {
             return;
         }
@@ -314,6 +351,14 @@ impl HiveApp {
             }
             let runtime = runtime.clone();
             cx.spawn(async move |this, cx| {
+                let _read = PREVIEW_READS.acquire().await;
+                let wanted = this.update(cx, |this, _| {
+                    if this.connection_generation != connection { return false; }
+                    if this.attachments.contains(this.draft_target.as_deref(), &item) { return true; }
+                    this.attachments.preparing.remove(&item.id);
+                    false
+                }).unwrap_or(false);
+                if !wanted { return; }
                 let result = match runtime
                     .request(
                         "chat.attachments.get",
@@ -338,6 +383,11 @@ impl HiveApp {
                         return;
                     }
                     this.attachments.preparing.remove(&item.id);
+                    if !this.attachments.contains(this.draft_target.as_deref(), &item) {
+                        // The draft or this attachment can leave the window
+                        // while its RPC or decoder still owns the result.
+                        return;
+                    }
                     match result {
                         Ok(Some(image)) => {
                             this.attachments.previews.insert(item.id, image);
@@ -517,7 +567,7 @@ impl HiveApp {
                                                     items.retain(|item| item.id != remove_id);
                                                 }
                                             }
-                                            this.attachments.prune();
+                                            this.prune_draft_attachments(cx);
                                             this.schedule_draft_save(cx);
                                             cx.notify();
                                         }

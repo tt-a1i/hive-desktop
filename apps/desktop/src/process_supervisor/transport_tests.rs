@@ -1,8 +1,23 @@
 use super::*;
 use std::{
     fs,
+    io::Cursor,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[test]
+fn a_large_history_frame_releases_the_wire_buffer_before_the_next_frame() {
+    let history = "厚".repeat(2 * 1024 * 1024);
+    let wire = format!("{}\r\n{{\"id\":2,\"result\":true}}", json!({"id":1,"result":{"history":history}}));
+    let mut reader = BufReader::new(Cursor::new(wire));
+    let mut scratch = Vec::new();
+    let value = read_frame(&mut reader, &mut scratch).unwrap().unwrap();
+    assert_eq!(value["result"]["history"].as_str(), Some(history.as_str()));
+    assert_eq!(scratch.capacity(), 0);
+    assert_eq!(read_frame(&mut reader, &mut scratch).unwrap().unwrap()["result"], true);
+    assert!(scratch.capacity() <= 256 * 1024);
+    assert!(read_frame(&mut reader, &mut scratch).unwrap().is_none());
+}
 
 #[test]
 fn leader_exit_is_detected_while_descendants_hold_stdout() {

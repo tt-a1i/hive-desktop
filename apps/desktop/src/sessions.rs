@@ -93,8 +93,9 @@ impl HiveApp {
         if self.draft_target != next {
             let _ = self.voice.cancel();
             self.attachments.scroll.set_offset(point(px(0.), px(0.)));
+            self.draft_target = next;
+            self.release_attachment_previews(true, cx);
         }
-        self.draft_target = next;
     }
     pub(crate) fn save_navigation(&self, cx: &mut Context<Self>) {
         let Some(runtime) = &self.runtime else { return };

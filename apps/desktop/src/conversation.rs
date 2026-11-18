@@ -82,7 +82,7 @@ impl HiveApp {
                 }
                 if result.is_ok() {
                     if let Some(items)=this.attachments.drafts.get_mut(&attachment_key) {items.retain(|item| !refs.iter().any(|sent| sent.id==item.id));}
-                    this.attachments.prune();
+                    this.prune_draft_attachments(cx);
                     this.schedule_draft_save(cx);
                 }
                 match result {
