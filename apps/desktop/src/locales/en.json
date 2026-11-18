@@ -2118,5 +2118,12 @@
   "安装失败，已恢复旧版本": "Installation failed. The previous version was restored",
   "桌面更新失败": "Desktop update failed",
   "无法启动桌面安装程序": "Could not start the desktop installer",
-  "请等待正在运行的会话结束后再安装更新。": "Wait for running conversations to finish before installing the update."
+  "请等待正在运行的会话结束后再安装更新。": "Wait for running conversations to finish before installing the update.",
+  "隔离 HTML 预览": "Isolated HTML preview",
+  "此平台暂不支持隔离 HTML 预览。": "Isolated HTML preview is unavailable on this platform.",
+  "无法打开隔离 HTML 预览": "Could not open isolated HTML preview",
+  "交互预览返回的内容或会话来源无效。": "The interactive preview returned invalid content or session provenance.",
+  "正在打开交互预览…": "Opening interactive preview…",
+  "交互预览": "Interactive preview",
+  "打开隔离预览。首次打开时保存副本，重开读取该副本。": "Open an isolated preview. The first opening saves a copy that can be reopened."
 }

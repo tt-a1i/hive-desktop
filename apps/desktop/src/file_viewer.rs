@@ -1,4 +1,5 @@
 use crate::artifacts::{ArtifactSource, ArtifactTarget, ResolvedArtifact};
+use crate::html_preview::{self, HtmlPreview};
 use crate::language::tr;
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
@@ -171,6 +172,8 @@ struct FileViewer {
     text: Option<String>,
     error: Option<PreviewError>,
     loading: bool,
+    html_loading: bool,
+    html_preview: Option<WindowHandle<HtmlPreview>>,
     scroll: ScrollHandle,
 }
 impl HiveApp {
@@ -294,6 +297,8 @@ fn open_viewer(
             text: None,
             error: None,
             loading: false,
+            html_loading: false,
+            html_preview: None,
             scroll: ScrollHandle::new(),
         };
         // HiveApp is still borrowed by the click handler. Read its target only
@@ -310,6 +315,84 @@ fn open_viewer(
     });
 }
 impl FileViewer {
+    fn html_source(&self) -> Option<(&Arc<crate::transport::Runtime>, &ArtifactSource)> {
+        match &self.source {
+            FileSource::Artifact { runtime, source } | FileSource::Session { runtime, source }
+                if html_preview::supported_path(&source.path) =>
+            {
+                Some((runtime, source))
+            }
+            _ => None,
+        }
+    }
+
+    fn preview_html(&mut self, cx: &mut Context<Self>) {
+        if self.html_loading || !self.current(cx) {
+            return;
+        }
+        if let Some(open) = self.html_preview
+            && open
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+        let Some((runtime, source)) = self.html_source() else {
+            return;
+        };
+        let (runtime, source) = (runtime.clone(), source.clone());
+        self.html_loading = true;
+        self.error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct Snapshot {
+                html: String,
+                source_session_id: Option<String>,
+                warning: Option<String>,
+            }
+            let result = match serde_json::to_value(&source) {
+                Ok(params) => runtime
+                    .request("artifact.htmlSnapshot", params)
+                    .await
+                    .and_then(|value| {
+                        let snapshot = serde_json::from_value::<Snapshot>(value)
+                            .map_err(|error| error.to_string())?;
+                        if snapshot.html.len() > 2 * 1024 * 1024
+                            || source.source_session_id.as_ref().is_some_and(|expected| {
+                                snapshot.source_session_id.as_ref() != Some(expected)
+                            })
+                        {
+                            return Err(tr("交互预览返回的内容或会话来源无效。").into());
+                        }
+                        Ok(snapshot)
+                    }),
+                Err(error) => Err(error.to_string()),
+            };
+            let name = Path::new(&source.path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or(&source.path);
+            let _ = this.update(cx, |this, cx| {
+                this.html_loading = false;
+                if !this.current(cx) {
+                    this.stale();
+                } else {
+                    match result.and_then(|snapshot| {
+                        this.warning = snapshot.warning;
+                        HtmlPreview::open(cx, name, snapshot.html)
+                    }) {
+                        Ok(handle) => this.html_preview = Some(handle),
+                        Err(error) => this.error = Some(PreviewError::Source(error)),
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn current(&self, cx: &App) -> bool {
         self.target
             .as_ref()
@@ -521,6 +604,19 @@ impl Render for FileViewer {
                                     .flex_shrink_0()
                                     .items_center()
                                     .gap_1()
+                                    .when(self.html_source().is_some(), |row| {
+                                        row.child(
+                                            Button::new("interactive-html-preview")
+                                                .custom(crate::palette::quiet_icon_variant(cx))
+                                                .compact()
+                                                .h(px(28.))
+                                                .px_2()
+                                                .label(if self.html_loading { tr("正在打开交互预览…") } else { tr("交互预览") })
+                                                .tooltip(tr("打开隔离预览。首次打开时保存副本，重开读取该副本。"))
+                                                .disabled(self.html_loading)
+                                                .on_click(cx.listener(|this, _, _, cx| this.preview_html(cx))),
+                                        )
+                                    })
                                     .child(
                                         Button::new("reload-file-preview")
                                             .custom(crate::palette::quiet_icon_variant(cx))

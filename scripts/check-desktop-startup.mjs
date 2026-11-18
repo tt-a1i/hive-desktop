@@ -96,7 +96,23 @@ try {
     }
     const inbox = JSON.parse(await team(member.id, ['messages', '--dispatch', dispatch]));
     await writeFile(join(directory, 'Beta', 'review.txt'), 'pnpm dev');
-    await team(member.id, ['report', '已核对启动方式。', '--dispatch', dispatch, '--seen', String(inbox.required_seen_seq), '--artifact', 'review.txt']);
+    const artifacts = ['--artifact', 'review.txt'];
+    if (process.platform === 'win32' && process.env.HIVE_WINDOWS_HTML_PREVIEW === '1') {
+      await writeFile(join(directory, 'Beta', 'review.html'), `<!doctype html><meta charset="utf-8">
+        <button id="add">Increment packaged artifact</button><p id="state">Artifact has not run</p>
+        <script>
+          function denied(access) { try { access(); return false; } catch { return true; } }
+          const isolated = denied(() => parent.document.body) && denied(() => localStorage.getItem('fixture')) &&
+            typeof RTCPeerConnection === 'undefined' && typeof window.ipc === 'undefined';
+          const state = document.querySelector('#state');
+          state.textContent = isolated ? 'Packaged artifact counter 0' : 'Artifact isolation failed';
+          document.querySelector('#add').onclick = () => {
+            if (isolated) state.textContent = 'Packaged artifact counter 1';
+          };
+        </script>`);
+      artifacts.push('--artifact', 'review.html');
+    }
+    await team(member.id, ['report', '已核对启动方式。', '--dispatch', dispatch, '--seen', String(inbox.required_seen_seq), ...artifacts]);
     assert.equal((await runtime.chats.open(leadChat)).pendingReports[0].dispatchId, dispatch);
     chatId = (await runtime.chats.create(workspaceId)).id;
     assert.equal(runtime.chats.list(workspaceId)[0].id, chatId);

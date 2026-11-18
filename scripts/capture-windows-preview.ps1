@@ -20,6 +20,7 @@ public static class PreviewWindow {
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll", EntryPoint = "PostMessageW")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("dwmapi.dll")] public static extern int DwmFlush();
 }
 '@
@@ -611,6 +612,48 @@ Invoke-Action '取消置顶'
 Wait-SessionPin $false
 Wait-EditorText '聊天消息' '后台恢复核验草稿'
 Write-Host 'Pinned and unpinned the named conversation without changing its timestamp or draft.'
+
+if ($env:HIVE_WINDOWS_HTML_PREVIEW -eq '1') {
+    Invoke-Action '打开关联派单'
+    Invoke-Action '预览文件: review.html'
+    Invoke-Action '交互预览'
+    $desktop = [System.Windows.Automation.AutomationElement]::RootElement
+    $windowName = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '隔离 HTML 预览 — review.html')
+    $windowOwner = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppProcessId)
+    $artifactWindow = New-Object System.Windows.Automation.AndCondition($windowName, $windowOwner)
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    do {
+        $preview = $desktop.FindFirst([System.Windows.Automation.TreeScope]::Children, $artifactWindow)
+        if ($null -ne $preview) { break }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($null -eq $preview) { throw 'Could not find the owned HTML preview window.' }
+    function Wait-ArtifactControl([string] $Name) {
+        $condition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+        $deadline = [DateTime]::UtcNow.AddSeconds(20)
+        do {
+            $element = $preview.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+            if ($null -ne $element) { return $element }
+            Start-Sleep -Milliseconds 150
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw "WebView2 did not expose '$Name'."
+    }
+    try {
+        [void](Wait-ArtifactControl 'Packaged artifact counter 0')
+        $increment = Wait-ArtifactControl 'Increment packaged artifact'
+        $increment.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl 'Packaged artifact counter 1')
+        Write-Host 'Opened the actual report in isolated WebView2 and interacted with its HTML.'
+    } finally {
+        $previewHandle = [IntPtr]$preview.Current.NativeWindowHandle
+        if ($previewHandle -eq [IntPtr]::Zero -or -not [PreviewWindow]::PostMessage($previewHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+            throw 'Could not close the owned HTML preview window.'
+        }
+    }
+}
 } catch {
     Save-FixtureFailure $_.Exception.Message
     throw

@@ -57,6 +57,7 @@ mod tool_message;
 mod tool_diff;
 mod text_reading;
 mod file_viewer;
+mod html_preview;
 mod transport;
 #[cfg(feature = "ui-preview")]
 mod ui_preview;

@@ -249,6 +249,10 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       const {workspaceId: _workspaceId, ...source} = params;
       return chats.resolveArtifact(text(params, 'workspaceId'), source);
     }
+    case 'artifact.htmlSnapshot': {
+      const {workspaceId: _workspaceId, ...source} = params;
+      return chats.artifactHtmlSnapshot(text(params, 'workspaceId'), source);
+    }
     case 'dispatch.session': return chats.dispatchSession(text(params, 'workspaceId'), params.dispatchId, params.sourceAgentId);
     case 'chat.attachments.clipboard': {
       const workspace = text(params, 'workspaceId');

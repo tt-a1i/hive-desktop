@@ -214,9 +214,10 @@ jobs:
           path: target/windows-terminal-smoke.log
           if-no-files-found: ignore
       - name: Open the saved workspace in the extracted native application
-        timeout-minutes: 4
+        timeout-minutes: 5
         env:
           HIVE_WINDOWS_PREVIEW_PATH: target/windows-native-workspace.png
+          HIVE_WINDOWS_HTML_PREVIEW: '1'
         run: node scripts/check-desktop-startup.mjs --bundle target/portable-windows-extracted
       - name: Upload native workspace preview
         if: always()

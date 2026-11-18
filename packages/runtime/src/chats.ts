@@ -17,7 +17,8 @@ import { InteractionAttachments, interactionIdentity, composeQuestionAttachmentR
 import { ProjectWorktreeInitialization, WorktreeInitializationError, type InitializationPlan } from './project-worktree-initialization.js';
 import { ProjectFileReferences } from './project-file-references.js';
 import { DispatchExecutionOrigins, DispatchOriginError } from './dispatch-execution-origins.js';
-import { artifactSourceRequest, ArtifactSourceError, resolveArtifactFile, type ResolvedArtifact } from './artifact-files.js';
+import { artifactSourceRequest, ArtifactSourceError, resolveArtifactFile, type ArtifactSourceRequest, type ResolvedArtifact } from './artifact-files.js';
+import { snapshotHtmlArtifact } from './html-artifacts.js';
 import { searchProjectFiles, readProjectFile } from './project-files.js';
 import { ChatAttachments, attachmentIds, encodeImageInput, decodeImageInput } from './image-attachments.js';
 import { promptImages } from './prompt-images.js';
@@ -315,46 +316,61 @@ export class Chats implements StructuredSessionPort {
     return this.executionPath(record, workspace);
   }
   async resolveArtifact(workspaceId: string, input: unknown): Promise<ResolvedArtifact> {
+    return this.withArtifactSource(workspaceId, input, request => this.readArtifactSource(workspaceId, request));
+  }
+  async artifactHtmlSnapshot(workspaceId: string, input: unknown) {
+    return this.withArtifactSource(workspaceId, input, async request => {
+      // A saved view can outlive its original worktree or file, but only this
+      // workspace and the same saved source address can retrieve it.
+      await this.workspace(workspaceId);
+      return snapshotHtmlArtifact(this.dataDir, workspaceId, request, () => this.readArtifactSource(workspaceId, request));
+    });
+  }
+  private async withArtifactSource<T>(workspaceId: string, input: unknown,
+    operation: (request: ArtifactSourceRequest) => Promise<T>): Promise<T> {
     const request = artifactSourceRequest(input);
     this.assertWorkspaceAvailable(workspaceId);
     if (this.closing) throw new ArtifactSourceError('ARTIFACT_SOURCE_UNAVAILABLE', 'Chat runtime is closing');
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
-      const origin = request.dispatchId ? this.dispatchOrigins.get(workspaceId, request.dispatchId) : undefined;
-      if (origin && ((request.sourceAgentId && request.sourceAgentId !== origin.sourceAgentId)
-        || (request.sourceSessionId && request.sourceSessionId !== origin.sourceSessionId))) {
-        throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact source does not match the dispatch execution session');
-      }
-      if (request.dispatchId && !origin && request.sourceSessionId) {
-        throw new ArtifactSourceError('ARTIFACT_SOURCE_UNKNOWN', 'This dispatch has no saved execution source; an explicit session cannot replace its historical source');
-      }
-      const sourceSessionId = origin?.sourceSessionId ?? request.sourceSessionId;
-      let legacy = false;
-      if (sourceSessionId) {
-        const source = this.index.peek(sourceSessionId);
-        if (!source || source.workspaceId !== workspaceId) throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact session is missing or belongs to another workspace');
-        // Dispatch origins retain the historical agent identity even after the
-        // same worker is rebound. Direct tool links normally specify just session.
-        if (!origin && request.sourceAgentId && source.agentId !== request.sourceAgentId)
-          throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact agent cannot be verified for this session');
-      } else {
-        const pending = await this.pendingWorktrees(workspaceId);
-        if (this.index.list(workspaceId).some(record => record.execution) || pending.pending.length || pending.unreadable) {
-          throw new ArtifactSourceError('ARTIFACT_SOURCE_UNKNOWN', 'Artifact has no saved execution source; this workspace contains isolated sessions. Select a source session or restore the dispatch source metadata');
-        }
-        legacy = true;
-      }
-      let root: string;
-      try { root = await this.executionDirectory(workspaceId, sourceSessionId); }
-      catch (error) { throw new ArtifactSourceError('ARTIFACT_SOURCE_UNAVAILABLE', 'The original artifact execution directory cannot be verified; no other session or project directory was used', {cause: error}); }
-      const resolved = await resolveArtifactFile(root, request.path);
-      this.assertWorkspaceAvailable(workspaceId);
-      return {...resolved, ...(sourceSessionId && {sourceSessionId}), ...(legacy && {legacy: true,
-        warning: 'Legacy artifact has no saved execution source. Resolved only against the original shared workspace directory; no current worker session was inferred.'})};
+      return operation(request);
     }).catch((error: unknown) => {
       if (error instanceof ArtifactSourceError || error instanceof DispatchOriginError) throw error;
       throw new ArtifactSourceError('ARTIFACT_SOURCE_UNAVAILABLE', 'Artifact source metadata or workspace is unavailable; restore the original source before opening this artifact', {cause: error});
     });
+  }
+  private async readArtifactSource(workspaceId: string, request: ArtifactSourceRequest): Promise<ResolvedArtifact> {
+    const origin = request.dispatchId ? this.dispatchOrigins.get(workspaceId, request.dispatchId) : undefined;
+    if (origin && ((request.sourceAgentId && request.sourceAgentId !== origin.sourceAgentId)
+      || (request.sourceSessionId && request.sourceSessionId !== origin.sourceSessionId))) {
+      throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact source does not match the dispatch execution session');
+    }
+    if (request.dispatchId && !origin && request.sourceSessionId) {
+      throw new ArtifactSourceError('ARTIFACT_SOURCE_UNKNOWN', 'This dispatch has no saved execution source; an explicit session cannot replace its historical source');
+    }
+    const sourceSessionId = origin?.sourceSessionId ?? request.sourceSessionId;
+    let legacy = false;
+    if (sourceSessionId) {
+      const source = this.index.peek(sourceSessionId);
+      if (!source || source.workspaceId !== workspaceId) throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact session is missing or belongs to another workspace');
+      // Dispatch origins retain the historical agent identity even after the
+      // same worker is rebound. Direct tool links normally specify just session.
+      if (!origin && request.sourceAgentId && source.agentId !== request.sourceAgentId)
+        throw new ArtifactSourceError('ARTIFACT_SOURCE_MISMATCH', 'Artifact agent cannot be verified for this session');
+    } else {
+      const pending = await this.pendingWorktrees(workspaceId);
+      if (this.index.list(workspaceId).some(record => record.execution) || pending.pending.length || pending.unreadable) {
+        throw new ArtifactSourceError('ARTIFACT_SOURCE_UNKNOWN', 'Artifact has no saved execution source; this workspace contains isolated sessions. Select a source session or restore the dispatch source metadata');
+      }
+      legacy = true;
+    }
+    let root: string;
+    try { root = await this.executionDirectory(workspaceId, sourceSessionId); }
+    catch (error) { throw new ArtifactSourceError('ARTIFACT_SOURCE_UNAVAILABLE', 'The original artifact execution directory cannot be verified; no other session or project directory was used', {cause: error}); }
+    const resolved = await resolveArtifactFile(root, request.path);
+    this.assertWorkspaceAvailable(workspaceId);
+    return {...resolved, ...(sourceSessionId && {sourceSessionId}), ...(legacy && {legacy: true,
+      warning: 'Legacy artifact has no saved execution source. Resolved only against the original shared workspace directory; no current worker session was inferred.'})};
   }
   async pendingWorktrees(workspaceId: string) {
     this.assertWorkspaceAvailable(workspaceId);
