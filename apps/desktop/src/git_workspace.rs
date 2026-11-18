@@ -25,7 +25,7 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -263,7 +263,7 @@ struct FileDiff {
     after_path: Option<String>,
     before: Snapshot,
     after: Snapshot,
-    patch: Option<String>,
+    patch: Option<SharedString>,
     binary: bool,
     complete: bool,
     limitations: Vec<String>,
@@ -300,7 +300,7 @@ struct CommitPreview {
     version: String,
     workspace: Identity,
     changes: Vec<StagedChange>,
-    patch: String,
+    patch: SharedString,
     outside_project_paths: Vec<String>,
     signing_required: bool,
     hooks: Vec<String>,
@@ -370,9 +370,9 @@ impl Fault {
         )
     }
 }
-fn decode<T: serde::de::DeserializeOwned>(value: Value, field: &str) -> Result<T, Fault> {
+fn decode<T: serde::de::DeserializeOwned>(mut value: Value, field: &str) -> Result<T, Fault> {
     if value["ok"] == true {
-        serde_json::from_value(value[field].clone()).map_err(|error| Fault {
+        serde_json::from_value(value.get_mut(field).map(Value::take).unwrap_or_default()).map_err(|error| Fault {
             code: "INVALID_RESPONSE".to_owned(),
             message: error.to_string(),
         })
@@ -428,6 +428,7 @@ pub(crate) struct GitWorkspace {
     diff_error: Option<Fault>,
     diff_loading: bool,
     diff_generation: u64,
+    reload_diff_on_open: bool,
     body_scroll: ScrollHandle,
     files_scroll: ScrollHandle,
     diff_scroll: ScrollHandle,
@@ -535,6 +536,7 @@ impl HiveApp {
                 diff_error: None,
                 diff_loading: false,
                 diff_generation: 0,
+                reload_diff_on_open: false,
                 body_scroll: ScrollHandle::new(),
                 files_scroll: ScrollHandle::new(),
                 diff_scroll: ScrollHandle::new(),
@@ -611,21 +613,41 @@ impl HiveApp {
             self.sidebar_open = false;
         }
         if let Some(state) = self.ensure_git_workspace(window, cx) {
-            let needs_refresh = state.read(cx).status.is_none() && !state.read(cx).status_loading;
-            if needs_refresh {
-                state.update(cx, |ws, cx| ws.refresh(cx));
-            }
+            // The drawer validates its selection against HiveApp. Wait until
+            // the parent is readable again before calling into the drawer.
+            let drawer = state.downgrade();
+            cx.defer(move |cx| {
+                let _ = drawer.update(cx, |ws, cx| {
+                    if ws.status.is_none() && !ws.status_loading {
+                        ws.refresh(cx);
+                    } else if ws.reload_diff_on_open {
+                        ws.load_diff(cx);
+                    }
+                });
+            });
         }
         cx.notify();
     }
 
     pub(crate) fn toggle_git_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.git_drawer_open {
-            self.git_drawer_open = false;
-            cx.notify();
+            self.close_git_workspace(cx);
         } else {
             self.open_git_workspace(window, cx);
         }
+    }
+
+    fn close_git_workspace(&mut self, cx: &mut Context<Self>) {
+        self.git_drawer_open = false;
+        if let Some(state) = &self.git_workspace {
+            state.update(cx, |ws, cx| {
+                if !ws.preview_mock && (ws.diff.is_some() || ws.diff_loading || ws.diff_error.is_some()) {
+                    ws.reload_diff_on_open = true;
+                    ws.clear_file_diff(cx);
+                }
+            });
+        }
+        cx.notify();
     }
 
     pub(crate) fn open_git_workspace_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -830,20 +852,15 @@ impl GitWorkspace {
         self.commit_include_outside = false;
         self.commit_patch_visible = false;
         self.status_generation += 1;
-        self.diff_generation += 1;
+        self.reload_diff_on_open = false;
         let generation = self.status_generation;
         let offset = self.offset;
         let selected_path = self.selected_change().map(|change| change.path.clone());
         self.status = None;
         self.status_error = None;
         self.status_loading = true;
-        self.diff = None;
-        self.diff_has_structured = false;
-        self.diff_state.update(cx, |s, cx| s.set_files([], cx));
-        self.diff_error = None;
-        self.diff_loading = false;
+        self.clear_file_diff(cx);
         self.files_scroll = ScrollHandle::new();
-        self.diff_scroll = ScrollHandle::new();
         cx.notify();
         let workspace = self.workspace.clone();
         let session = self.session.clone();
@@ -929,18 +946,25 @@ impl GitWorkspace {
         self.commit_include_outside = false;
         self.index_error = None;
         self.index_notice = None;
-        self.diff_generation += 1;
-        self.diff = None;
-        self.diff_has_structured = false;
-        self.diff_state.update(cx, |s, cx| s.set_files([], cx));
-        self.diff_error = None;
-        self.diff_loading = false;
+        self.reload_diff_on_open = false;
+        self.clear_file_diff(cx);
         self.files_scroll.scroll_to_item(index);
         cx.notify();
         if load {
             self.load_diff(cx);
         }
     }
+    fn clear_file_diff(&mut self, cx: &mut Context<Self>) {
+        self.diff_generation += 1;
+        self.diff = None;
+        if std::mem::take(&mut self.diff_has_structured) {
+            self.diff_state.update(cx, |state, cx| state.set_files([], cx));
+        }
+        self.diff_error = None;
+        self.diff_loading = false;
+        self.diff_scroll = ScrollHandle::new();
+    }
+
     fn load_diff(&mut self, cx: &mut Context<Self>) {
         if self.preview_mock || !self.current(cx) || self.status_loading {
             return;
@@ -951,14 +975,10 @@ impl GitWorkspace {
         let Some(path) = self.selected_change().map(|change| change.path.clone()) else {
             return;
         };
-        self.diff_generation += 1;
+        self.reload_diff_on_open = false;
+        self.clear_file_diff(cx);
         let generation = self.diff_generation;
-        self.diff = None;
-        self.diff_has_structured = false;
-        self.diff_state.update(cx, |s, cx| s.set_files([], cx));
-        self.diff_error = None;
         self.diff_loading = true;
-        self.diff_scroll = ScrollHandle::new();
         cx.notify();
         let workspace = self.workspace.clone();
         let comparison = self.comparison.wire();
@@ -969,9 +989,7 @@ impl GitWorkspace {
                     "git.diff",
                     git_params(json!({"workspaceId":workspace,"path":path,"comparison":comparison}), &session),
                 )
-                .await
-                .map_err(Fault::transport)
-                .and_then(|value| decode::<FileDiff>(value, "diff"));
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.diff_generation != generation {
                     return;
@@ -981,7 +999,7 @@ impl GitWorkspace {
                     cx.notify();
                     return;
                 }
-                match result {
+                match result.map_err(Fault::transport).and_then(|value| decode::<FileDiff>(value, "diff")) {
                     Ok(diff) => {
                         this.diff = Some(diff);
                         let collapse =
@@ -1007,9 +1025,9 @@ impl GitWorkspace {
             return;
         }
         let effective = if self.ignore_whitespace {
-            crate::diffs_settings::filter_patch_whitespace(patch)
+            Cow::Owned(crate::diffs_settings::filter_patch_whitespace(patch))
         } else {
-            patch.to_owned()
+            Cow::Borrowed(patch)
         };
         if effective.trim().is_empty() {
             self.diff_has_structured = false;
@@ -1380,6 +1398,8 @@ impl Render for GitWorkspace {
                                             return;
                                         }
                                         this.show_remotes = true;
+                                        this.reload_diff_on_open = false;
+                                        this.clear_file_diff(cx);
                                         if let Some(remotes) = &this.remotes {
                                             remotes.update(cx, |remote, cx| remote.activate(cx));
                                         }
@@ -1434,8 +1454,7 @@ impl Render for GitWorkspace {
                                 .accessibility_label(tr("关闭 Git 面板"))
                                 .on_click(move |_, _, cx| {
                                     let _ = app_close.update(cx, |this, cx| {
-                                        this.git_drawer_open = false;
-                                        cx.notify();
+                                        this.close_git_workspace(cx);
                                     });
                                 }),
                         )
@@ -1943,6 +1962,7 @@ impl Render for GitWorkspace {
                         v_flex()
                             .id("git-commit-result")
                             .role(Role::Status)
+                            .aria_label(state)
                             .gap_1()
                             .p_2p5()
                             .rounded_lg()
@@ -2233,18 +2253,6 @@ impl Render for GitWorkspace {
                                     let diff_mode = self.diff_state.read(cx).mode();
                                     let has_patch = !patch.trim().is_empty();
                                     let show_structured = !self.diff_raw && self.diff_has_structured;
-                                    let raw_display = if patch.is_empty() {
-                                        tr("此比较没有文本内容差异").to_owned()
-                                    } else if self.ignore_whitespace && !self.diff_raw {
-                                        let filtered = crate::diffs_settings::filter_patch_whitespace(patch);
-                                        if filtered.trim().is_empty() {
-                                            tr("忽略空白后没有代码内容差异").to_owned()
-                                        } else {
-                                            filtered
-                                        }
-                                    } else {
-                                        patch.clone()
-                                    };
                                     view.when(has_patch, |inner| {
                                         inner.child(
                                             h_flex()
@@ -2347,6 +2355,18 @@ impl Render for GitWorkspace {
                                             )
                                             .into_any_element()
                                     } else {
+                                        let raw_display = if patch.is_empty() {
+                                            tr("此比较没有文本内容差异").into()
+                                        } else if self.ignore_whitespace && !self.diff_raw {
+                                            let filtered = crate::diffs_settings::filter_patch_whitespace(patch);
+                                            if filtered.trim().is_empty() {
+                                                tr("忽略空白后没有代码内容差异").into()
+                                            } else {
+                                                SharedString::from(filtered)
+                                            }
+                                        } else {
+                                            patch.clone()
+                                        };
                                         crate::text_reading::region(
                                             "git-raw-patch-region".into(),
                                             tr("Git 原始字节补丁").to_owned(),

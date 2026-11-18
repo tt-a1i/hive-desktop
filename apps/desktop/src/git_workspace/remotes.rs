@@ -610,7 +610,16 @@ impl Render for RemotePanel {
                         .when(!preview.allowed(),|view|view.child(div().text_xs().text_color(Color::Error.get(cx)).child(tr("此预览不允许推送。分叉或缺少远端历史时，请先用原生 Git fetch 并自行处理，再重新预览；不会提供强制推送。"))))
                         .when(!push_fresh,|view|view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("预览已失效；请重新联网预览后再确认。"))))
                         .child(Button::new("confirm-git-push").primary().h(px(30.)).rounded_lg().label(tr("确认推送预览中的固定提交")).disabled(!enabled||!push_fresh||!preview.allowed()).on_click(cx.listener(|this,_,_,cx|this.push(cx))))})
-                    .when_some(self.push_result.as_ref(),|view,outcome|view.child(div().id("git-push-outcome").role(Role::Status).p_2p5().rounded_lg().bg(Color::Inset.get(cx)).text_xs().child(format!("{}\nHEAD: {}\nremote OID: {}{}",if outcome.result.pushed==false{tr("推送未执行，请核对错误并重新预览。")}else if outcome.context_valid&&outcome.result.confirmed(&outcome.expected_oid){tr("推送已确认")}else{tr("推送结果未确认，请检查远端。")},outcome.result.head_oid,oid(&outcome.result.remote_oid),outcome.result.error.as_ref().map(|error|format!("\n{}",fault(error))).unwrap_or_default())))),
+                    .when_some(self.push_result.as_ref(), |view, outcome| {
+                        let status = if outcome.result.pushed == false {
+                            tr("推送未执行，请核对错误并重新预览。")
+                        } else if outcome.context_valid && outcome.result.confirmed(&outcome.expected_oid) {
+                            tr("推送已确认")
+                        } else {
+                            tr("推送结果未确认，请检查远端。")
+                        };
+                        view.child(div().id("git-push-outcome").role(Role::Status).aria_label(status).p_2p5().rounded_lg().bg(Color::Inset.get(cx)).text_xs().child(format!("{status}\nHEAD: {}\nremote OID: {}{}", outcome.result.head_oid, oid(&outcome.result.remote_oid), outcome.result.error.as_ref().map(|error|format!("\n{}",fault(error))).unwrap_or_default())))
+                    }),
             )
             .child(
                 panel_card(cx)
