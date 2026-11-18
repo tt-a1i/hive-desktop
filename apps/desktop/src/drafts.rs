@@ -416,6 +416,7 @@ mod tests {
             project_file: Some(crate::protocol::ProjectFileReference {
                 relative_path: "docs/需求.md".into(),
                 sha256: "ab".repeat(32),
+                source_session_id: Some("worktree-source".into()),
             }),
         };
         DraftStore::open(root.path())

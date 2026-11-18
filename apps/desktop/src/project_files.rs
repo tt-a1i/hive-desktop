@@ -45,12 +45,15 @@ struct Target {
     session: Option<String>,
     draft: String,
     connection: u64,
+    open_request: u64,
 }
 impl Target {
     fn current(&self, app: &HiveApp) -> bool {
         app.connected
             && !app.closing
+            && !app.loading
             && app.connection_generation == self.connection
+            && app.open_request == self.open_request
             && app.workspace.as_ref() == Some(&self.workspace)
             && app.session.as_ref().map(|session| &session.id) == self.session.as_ref()
             && app.draft_target.as_ref() == Some(&self.draft)
@@ -60,6 +63,7 @@ struct FilePicker {
     app: WeakEntity<HiveApp>,
     runtime: Arc<Runtime>,
     target: Target,
+    source_directory: Option<String>,
     query: Entity<InputState>,
     generation: u64,
     page: Page,
@@ -101,7 +105,14 @@ impl HiveApp {
             draft,
             session: self.session.as_ref().map(|session| session.id.clone()),
             connection: self.connection_generation,
+            open_request: self.open_request,
         };
+        let source_directory = self.session.as_ref()
+            .and_then(|session| session.execution.as_ref())
+            .filter(|execution| execution.kind == "worktree")
+            .map(|execution| format!("{}: {}", tr("独立工作树执行目录"), execution.path))
+            .or_else(|| self.workspaces.iter().find(|project| project.id == target.workspace)
+                .map(|project| format!("{}: {}", tr("项目路径"), project.path)));
         let app = cx.weak_entity();
         let picker = cx.new(|cx| {
             let query =
@@ -123,6 +134,7 @@ impl HiveApp {
                 app,
                 runtime,
                 target,
+                source_directory,
                 query,
                 generation: 0,
                 page: Page::default(),
@@ -168,6 +180,7 @@ impl FilePicker {
         cx.notify();
         let runtime = self.runtime.clone();
         let workspace = self.target.workspace.clone();
+        let session = self.target.session.clone();
         let query = self.query.read(cx).value().to_string();
         let offset = self.offset;
         cx.spawn(async move |this, cx| {
@@ -183,10 +196,14 @@ impl FilePicker {
             {
                 return;
             }
+            let mut params = json!({"workspaceId":workspace,"query":query,"offset":offset});
+            if let Some(session) = session {
+                params["sessionId"] = json!(session);
+            }
             let result = runtime
                 .request(
                     "project.files.search",
-                    json!({"workspaceId":workspace,"query":query,"offset":offset}),
+                    params,
                 )
                 .await
                 .and_then(|value| {
@@ -229,6 +246,7 @@ impl FilePicker {
                 app.import_image_sources(
                     vec![ImageSource::ProjectFile {
                         relative_path: path,
+                        session_id: self.target.session.clone(),
                     }],
                     cx,
                 );
@@ -283,6 +301,9 @@ impl Render for FilePicker {
         v_flex()
             .min_w_0()
             .gap_2()
+            .when_some(self.source_directory.as_ref(), |view, source| {
+                view.child(crate::text_reading::selectable_text("project-file-source-directory", source.clone()).text_xs())
+            })
             .child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr(
                 "引用保存文件当前内容的副本。以后修改或删除源文件，不会改变已保存的快照。",
             )))
@@ -538,9 +559,22 @@ impl Render for ReferenceDetails {
             Some(SourceState::Missing) => tr("源文件已删除，保存的快照仍可使用"),
             None => tr("尚未检查源文件"),
         };
+        let source = reference.source_session_id.as_deref().map(|id| {
+            let title = self.app.upgrade().and_then(|app| {
+                let app = app.read(cx);
+                app.session.iter().chain(app.sessions.iter())
+                    .find(|session| session.id == id && session.workspace_id == self.item.workspace_id)
+                    .map(|session| session.title.clone())
+            });
+            format!("{}: {}", tr("来源会话"), title.as_deref().unwrap_or(id))
+        });
+        let state = if current { state } else { tr("项目或后台连接已变化，请重新打开快照详情。") };
         v_flex()
             .min_w_0()
             .gap_3()
+            .when_some(source, |view, source| {
+                view.child(crate::text_reading::selectable_text("project-reference-source", source))
+            })
             .child(crate::text_reading::selectable_text(
                 "project-reference-path",
                 reference.relative_path.clone(),
@@ -556,12 +590,9 @@ impl Render for ReferenceDetails {
                 div()
                     .id("project-reference-status")
                     .role(Role::Status)
+                    .aria_label(state)
                     .text_sm()
-                    .child(if current {
-                        state
-                    } else {
-                        tr("项目或后台连接已变化，请重新打开快照详情。")
-                    }),
+                    .child(state),
             )
             .when_some(self.error.as_ref(), |view, error| {
                 view.child(

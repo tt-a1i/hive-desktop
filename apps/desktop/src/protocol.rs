@@ -23,6 +23,8 @@ pub(crate) struct AttachmentRef {
 pub(crate) struct ProjectFileReference {
     pub relative_path: String,
     pub sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_session_id: Option<String>,
 }
 #[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

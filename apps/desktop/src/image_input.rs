@@ -6,7 +6,7 @@ use std::{io::Cursor, path::PathBuf};
 
 pub(crate) enum ImageSource {
     File(PathBuf),
-    ProjectFile { relative_path: String },
+    ProjectFile { relative_path: String, session_id: Option<String> },
     Clipboard(Image),
 }
 
@@ -20,7 +20,13 @@ impl ImageSource {
     pub fn prepare(self) -> Result<(&'static str, Value), PrepareError> {
         match self {
             Self::File(path) => Ok(("chat.attachments.add", json!({"path":path}))),
-            Self::ProjectFile { relative_path } => Ok(("project.files.attach", json!({"relativePath":relative_path}))),
+            Self::ProjectFile { relative_path, session_id } => {
+                let mut params = json!({"relativePath":relative_path});
+                if let Some(session_id) = session_id {
+                    params["sessionId"] = json!(session_id);
+                }
+                Ok(("project.files.attach", params))
+            }
             Self::Clipboard(image) => {
                 // Windows DIB arrives as BMP; some macOS apps offer TIFF.
                 // Only these clipboard-only formats need conversion.
@@ -94,6 +100,18 @@ mod tests {
     use base64::Engine;
     use gpui_kit::{Image, ImageFormat};
     use std::io::Cursor;
+    #[test]
+    fn project_file_attachment_pins_the_picker_session_and_omits_an_absent_session() {
+        let path = "docs/shared.txt";
+        for (session_id, expected) in [
+            (Some("worktree-a".into()), serde_json::json!({"relativePath":path,"sessionId":"worktree-a"})),
+            (None, serde_json::json!({"relativePath":path})),
+        ] {
+            let source = ImageSource::ProjectFile { relative_path: path.into(), session_id };
+            assert_eq!(source.prepare().unwrap(), ("project.files.attach", expected));
+        }
+    }
+
     #[test]
     fn clipboard_preserves_supported_bytes_and_normalizes_native_bitmap_formats() {
         let pixels = image::RgbImage::from_fn(8, 4, |x, _| {
