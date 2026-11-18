@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { encodeImageInput, decodeImageInput } from '../src/image-attachments.js';
-import { deferDesktopHistoryImages } from '../src/desktop-history-images.js';
+import { desktopHistoryMessage } from '../src/desktop-history.js';
 const dir = await mkdtemp(join(tmpdir(), 'hive-attachment-input-'));
 const agentDir = join(dir, 'pi');
 await mkdir(agentDir);
@@ -146,7 +146,7 @@ try {
   assert.deepEqual(restoredInput.content, message.content);
   assert.deepEqual(restoredInput.presentation, message.presentation);
   const messageId = reopened.historyMessageIds[reopened.history.indexOf(restoredInput)]!;
-  const compact = deferDesktopHistoryImages(restoredInput, messageId);
+  const compact = desktopHistoryMessage(restoredInput, messageId);
   assert.deepEqual((compact as {desktopHistoryImages: unknown}).desktopHistoryImages, {messageId, count: 1});
   assert.equal(JSON.stringify(compact).includes(data), false, 'the native item must not duplicate deferred image bytes');
   assert.ok(JSON.stringify(restoredInput).includes(data), 'history storage and legacy callers preserve original bytes');

@@ -4,7 +4,7 @@ import { HandoffError } from './handoff-operation-journal.js';
 import { HandoffDeliveries, assertHandoffFirstInput } from './handoff-delivery.js';
 import { handoffNativeCompletedIds } from './handoff-native-receipts.js';
 import { handoffMessage } from './handoff-message.js';
-import { desktopHistoryImage } from './desktop-history-images.js';
+import { desktopHistoryImage } from './desktop-history.js';
 import type { SessionHandoffs } from './session-handoffs.js';
 import type { AcpSessionHandle } from './agents/acp.js';
 import { acpCapabilities, agentCapabilities } from './agent-capabilities.js';

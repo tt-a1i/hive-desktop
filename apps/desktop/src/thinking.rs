@@ -69,10 +69,10 @@ impl HiveApp {
                 })
             })
             .collect::<Vec<_>>();
-        if !blocks.is_empty() && !self.messages.iter().any(|message| message.id == id) {
+        if !blocks.is_empty() && self.message_index(id).is_none() {
             self.push_message(id.into(), "assistant".into(), String::new(), cx);
         }
-        if let Some(message) = self.messages.iter_mut().find(|message| message.id == id) {
+        if let Some(message) = self.message_mut(id) {
             let previous = std::mem::take(&mut message.thinking);
             message.thinking = reconcile_blocks(blocks, &previous, default_expanded);
             message.layout_revision += 1;
@@ -90,7 +90,7 @@ impl HiveApp {
         if delta.is_empty() {
             return;
         }
-        if !self.messages.iter().any(|message| message.id == id) {
+        if self.message_index(&id).is_none() {
             self.push_message(id.clone(), "assistant".into(), String::new(), cx);
         }
         self.finish_thinking_before(&id, index);
@@ -98,11 +98,7 @@ impl HiveApp {
             .global::<crate::composer::ComposerPreferences>()
             .settings
             .expand_thinking;
-        let message = self
-            .messages
-            .iter_mut()
-            .find(|message| message.id == id)
-            .unwrap();
+        let message = self.message_mut(&id).unwrap();
         if let Some(block) = message
             .thinking
             .iter_mut()
@@ -127,7 +123,7 @@ impl HiveApp {
     }
 
     pub(crate) fn finish_thinking_before(&mut self, id: &str, index: usize) {
-        if let Some(message) = self.messages.iter_mut().find(|message| message.id == id) {
+        if let Some(message) = self.message_mut(id) {
             for block in &mut message.thinking {
                 if block.index < index {
                     block.running = false;

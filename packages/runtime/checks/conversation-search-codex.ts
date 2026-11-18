@@ -5,9 +5,23 @@ import { join } from 'node:path';
 import { CodexProjection } from '../src/agents/codex-projection.js';
 import { codexMetadataFile } from '../src/agents/codex-metadata.js';
 import { searchConversation } from '../src/conversation-search.js';
+import { desktopHistoryMessage } from '../src/desktop-history.js';
 import type { ChatRecord } from '../src/chat-index.js';
 const dir = await mkdtemp(join(tmpdir(), 'hive-search-codex-'));
 try {
+  const text = 'History body keeps one display copy and complete search text';
+  const native = {type: 'userMessage', id: 'native-user-id', hiveInterrupted: true, content: text};
+  const message = {
+    role: 'user', content: [{type: 'text', text}],
+    rawBackendItem: native, handoffItemId: native.id, sourceSessionId: 'source-thread',
+    details: {patch: 'native patch'}, toolInput: {command: 'git status'},
+  };
+  assert.deepEqual(desktopHistoryMessage(message, 'desktop-user-id'), {
+    ...message, rawBackendItem: {type: native.type, id: native.id, hiveInterrupted: true},
+  });
+  assert.equal(message.rawBackendItem.content, text);
+  const legacy = {role:'notice', rawBackendItem: native};
+  assert.deepEqual(desktopHistoryMessage(legacy, 'legacy'), legacy, 'JSON-rendered legacy notices retain their source fields');
   const record: ChatRecord = { id: 's', workspaceId: 'w', title: '', backend: 'codex', codexThreadId: 'native', sessionFile: null, updatedAt: 1 };
   const options = {codexDirectory: dir, claudeDirectory: dir};
   const projection = new CodexProjection(dir, 'native');

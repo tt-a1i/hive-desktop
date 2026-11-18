@@ -4,8 +4,10 @@ use crate::{
 };
 use gpui_kit::*;
 use serde_json::{Value, json};
+use std::borrow::Cow;
 impl HiveApp {
     pub(crate) fn clear_conversation_messages(&mut self, cx: &mut Context<Self>) {
+        self.message_indices = Default::default();
         let images = std::mem::take(&mut self.messages)
             .into_iter()
             .flat_map(|message| message.images)
@@ -348,16 +350,26 @@ impl HiveApp {
         !self.conversation_list.state.is_following_tail()
     }
 
+    pub(crate) fn message_index(&self, id: &str) -> Option<usize> {
+        self.message_indices.get(id).copied()
+    }
+
+    pub(crate) fn message_mut(&mut self, id: &str) -> Option<&mut Message> {
+        let index = self.message_index(id)?;
+        self.messages.get_mut(index)
+    }
+
     pub fn push_message(&mut self, id: String, role: String, text: String, cx: &mut Context<Self>) {
         if !matches!(
             role.as_str(),
             "user" | "assistant" | "tool" | "toolResult" | "notice"
-        ) {
+        ) || self.message_indices.contains_key(&id) {
             return;
         }
         // The row's focus region is stable. GPUI can keep a focused message
         // alive during scrolling even when the parsed body is viewport-owned.
         let markdown_focus = (role == "assistant").then(|| cx.focus_handle());
+        self.message_indices.insert(id.clone(), self.messages.len());
         self.messages.push(Message {
             layout_revision: 0,
             id,
@@ -403,10 +415,14 @@ impl HiveApp {
             self.sync_thinking(&id, message, false, cx);
         }
         let text = message_text(message);
+        let presentation = if matches!(role, "custom" | "user") {
+            delivery_presentation(message)
+        } else {
+            None
+        };
         if (role == "custom" && message["customType"] == "hive-delivery")
-            || (role == "user" && delivery_presentation(message).is_some())
+            || (role == "user" && presentation.is_some())
         {
-            let presentation = delivery_presentation(message);
             id = presentation
                 .as_ref()
                 .map(|p| p.delivery_id.clone())
@@ -431,9 +447,8 @@ impl HiveApp {
             let heading = presentation.as_ref().map(|p| p.origin.heading()).unwrap_or("来源未记录");
             let worker_name = presentation.as_ref().and_then(|p| p.worker_name.clone());
             let expanded = self
-                .messages
-                .iter()
-                .find(|m| m.id == id)
+                .message_index(&id)
+                .and_then(|index| self.messages.get(index))
                 .and_then(|m| m.delivery.as_ref())
                 .is_some_and(|d| d.expanded);
             // Notice is a rendered role, never an engine role.
@@ -445,7 +460,7 @@ impl HiveApp {
                 cx,
             );
             self.load_message_images(id.clone(), message, cx);
-            if let Some(rendered) = self.messages.iter_mut().find(|m| m.id == id) {
+            if let Some(rendered) = self.message_mut(&id) {
                 rendered.explicit_user = explicit_user;
                 let files = presentation
                     .as_ref()
@@ -510,10 +525,10 @@ impl HiveApp {
                         .unwrap_or_default()
                         .to_owned()
                 });
-                if failure.is_some() && !self.messages.iter().any(|m| m.id == id) {
+                if failure.is_some() && self.message_index(&id).is_none() {
                     self.push_message(id.clone(), role.into(), String::new(), cx);
                 }
-                if let Some(rendered) = self.messages.iter_mut().find(|m| m.id == id) {
+                if let Some(rendered) = self.message_mut(&id) {
                     if rendered.failure.as_ref().map(|f| &f.message) != failure.as_ref() {
                         rendered.failure = failure.map(|message| crate::failures::Diagnostic {
                             message,
@@ -527,7 +542,7 @@ impl HiveApp {
             self.load_message_images(id.clone(), message, cx);
         }
         let rendered_id = if role == "toolResult" { message["toolCallId"].as_str().unwrap_or(&id) } else { &id };
-        if let Some(rendered) = self.messages.iter_mut().find(|m| m.id == rendered_id) {
+        if let Some(rendered) = self.message_mut(rendered_id) {
             rendered.native_user_item_id = (message["rawBackendItem"]["type"] == "userMessage")
                 .then(|| message["rawBackendItem"]["id"].as_str().map(str::to_owned)).flatten();
             rendered.source_session_id = message["sourceSessionId"].as_str().map(str::to_owned);
@@ -543,7 +558,7 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) {
         self.upsert(id.clone(), "toolResult", output, false, cx);
-        if let Some(message) = self.messages.iter_mut().find(|m| m.id == id) {
+        if let Some(message) = self.message_mut(&id) {
             if let Some(tool) = &mut message.tool {
                 tool.name = name;
                 tool.status = status;
@@ -567,16 +582,18 @@ impl HiveApp {
         append: bool,
         cx: &mut Context<Self>,
     ) {
+        let index = self.message_index(&id);
         if !append
             && role == "assistant"
             && text.trim().is_empty()
-            && !self
-                .messages
-                .iter()
-                .any(|message| message.id == id && !message.thinking.is_empty())
+            && index.is_none_or(|index| self.messages[index].thinking.is_empty())
         {
-            if let Some(index) = self.messages.iter().position(|message| message.id == id) {
+            if let Some(index) = index {
                 let message = self.messages.remove(index);
+                self.message_indices.remove(&id);
+                for (offset, shifted) in self.messages[index..].iter().enumerate() {
+                    *self.message_indices.get_mut(&shifted.id).unwrap() = index + offset;
+                }
                 self.conversation_list.markdown.remove(&id);
                 if !message.images.is_empty() {
                     cx.defer(move |cx| {
@@ -589,7 +606,8 @@ impl HiveApp {
             self.refresh_conversation_find(&id, cx);
             return;
         }
-        if let Some(message) = self.messages.iter_mut().find(|m| m.id == id) {
+        if let Some(index) = index {
+            let message = &mut self.messages[index];
             message.layout_revision += 1;
             if append {
                 message.text.push_str(&text);
@@ -778,29 +796,43 @@ impl HiveApp {
     }
 }
 pub(crate) fn message_text(message: &Value) -> String {
-    let text = if let Some(text) = message["content"].as_str() {
-        text.to_owned()
-    } else {
-        message["content"]
-            .as_array()
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .filter_map(|block| match block["type"].as_str() {
-                        Some("text") => block["text"].as_str().map(String::from),
-                        Some("toolCall") if message["role"] != "assistant" => Some(format!(
-                            "{}\n{}",
-                            block["name"].as_str().unwrap_or("工具"),
-                            block["arguments"]
-                        )),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
-            })
-            .unwrap_or_else(|| message.to_string())
+    let content = &message["content"];
+    if let Some(text) = content.as_str() {
+        return text.to_owned();
+    }
+    let Some(blocks) = content.as_array() else {
+        return message.to_string();
     };
-    text
+    // Join borrowed text so a small trailing block does not double the
+    // retained buffer of a long first block.
+    let parts: Vec<Cow<'_, str>> = blocks.iter().filter_map(|block| match block["type"].as_str() {
+        Some("text") => block["text"].as_str().map(Cow::Borrowed),
+        Some("toolCall") if message["role"] != "assistant" => Some(Cow::Owned(format!(
+            "{}\n{}", block["name"].as_str().unwrap_or("工具"), block["arguments"]
+        ))),
+        _ => None,
+    }).collect();
+    parts.join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::message_text;
+    use serde_json::json;
+
+    #[test]
+    fn text_blocks_keep_separators_without_doubling_a_large_buffer() {
+        let long = "x".repeat(16 * 1024);
+        let message = json!({"role":"assistant","content":[
+            {"type":"text","text":long},
+            {"type":"thinking","thinking":"skip"},
+            {"type":"text","text":""},
+            {"type":"text","text":"last"},
+        ]});
+        let body = message_text(&message);
+        assert_eq!(body, format!("{long}\n\n\n\nlast"));
+        assert!(body.capacity() < body.len() + 1024);
+    }
 }
 
 #[derive(serde::Deserialize, PartialEq)]
@@ -843,7 +875,6 @@ struct DeliveryPresentation {
     attachments: Vec<crate::attachments::AttachmentRef>,
 }
 fn delivery_presentation(message: &Value) -> Option<DeliveryPresentation> {
-    let presentation: DeliveryPresentation =
-        serde_json::from_value(message["presentation"].clone()).ok()?;
+    let presentation = <DeliveryPresentation as serde::Deserialize>::deserialize(message.get("presentation")?).ok()?;
     (presentation.version == 1 && !presentation.delivery_id.is_empty()).then_some(presentation)
 }

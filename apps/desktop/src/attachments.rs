@@ -639,7 +639,8 @@ impl HiveApp {
         source: &serde_json::Value,
         cx: &mut Context<Self>,
     ) {
-        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+        let request = self.open_request;
+        let Some(message) = self.message_mut(&id) else {
             return;
         };
         if let Some(metadata) = source.get("desktopHistoryImages")
@@ -666,7 +667,6 @@ impl HiveApp {
         }
         message.images_loading = true;
         message.layout_revision += 1;
-        let request = self.open_request;
         message.image_task = Some(cx.spawn(async move |this, cx| {
             let mut results = Vec::with_capacity(data.len());
             for data in data {
@@ -676,7 +676,7 @@ impl HiveApp {
                 if this.open_request != request {
                     return;
                 }
-                if let Some(message) = this.messages.iter_mut().find(|message| message.id == id) {
+                if let Some(message) = this.message_mut(&id) {
                     message.images_loading = false;
                     for result in results {
                         match result {
@@ -701,9 +701,10 @@ impl HiveApp {
     ) {
         let previously = std::mem::replace(&mut self.conversation_list.visible_history_images, visible);
         for id in previously.difference(&self.conversation_list.visible_history_images) {
-            let Some(message) = self.messages.iter_mut().find(|message| &message.id == id) else {
+            let Some(index) = self.message_indices.get(id).copied() else {
                 continue;
             };
+            let message = &mut self.messages[index];
             message.image_task = None;
             message.images_loading = false;
             message.images_error = None;
@@ -732,9 +733,10 @@ impl HiveApp {
         let (Some(runtime), Some(session)) = (&self.runtime, &self.session) else {
             return;
         };
-        let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
+        let Some(index) = self.message_index(&id) else {
             return;
         };
+        let message = &mut self.messages[index];
         let Some(images) = message.history_images.clone() else {
             return;
         };
@@ -774,7 +776,7 @@ impl HiveApp {
                 if this.open_request != request || !this.conversation_list.visible_history_images.contains(&id) {
                     return;
                 }
-                if let Some(message) = this.messages.iter_mut().find(|message| message.id == id) {
+                if let Some(message) = this.message_mut(&id) {
                     message.images_loading = false;
                     message.images_error = error;
                     for preview in previews {

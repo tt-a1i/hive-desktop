@@ -63,9 +63,7 @@ impl HiveApp {
     pub(crate) fn retain_tool_patch(&mut self, id: &str, result: &Value, cx: &App) {
         if let Some(patch) = result["details"]["patch"].as_str() {
             if let Some(tool) = self
-                .messages
-                .iter_mut()
-                .find(|m| m.id == id)
+                .message_mut(id)
                 .and_then(|m| m.tool.as_mut())
             {
                 tool.patch = Some(patch.into());

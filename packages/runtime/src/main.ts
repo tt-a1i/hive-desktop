@@ -22,7 +22,7 @@ import { desktopDataDir } from './paths.js';
 import { remoteCommands } from './remote-commands.js';
 import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
-import { deferDesktopHistoryImages } from './desktop-history-images.js';
+import { desktopHistoryMessage } from './desktop-history.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
 let outputClosed = false;
@@ -339,7 +339,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
       }
       const snapshot = await chats.open(text(params, 'sessionId'), params.includeLiveHistory);
       return params.deferHistoryImages ? {...snapshot, history: snapshot.history.map(
-        (message, index) => deferDesktopHistoryImages(message, snapshot.historyMessageIds[index])
+        (message, index) => desktopHistoryMessage(message, snapshot.historyMessageIds[index])
       )} : snapshot;
     }
     case 'chat.historyImage': {

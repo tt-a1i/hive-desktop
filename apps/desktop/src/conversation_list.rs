@@ -189,7 +189,7 @@ impl HiveApp {
                         RowKey::Message(id) | RowKey::Group(id) => id,
                         _ => return None,
                     };
-                    let message_index = self.messages.iter().position(|m| &m.id == id)?;
+                    let message_index = *self.message_indices.get(id)?;
                     list.rows.iter().position(|row| match row.kind {
                         Kind::Group { start, end, .. } => (start..end).contains(&message_index),
                         Kind::Message { index, .. } => index == message_index,

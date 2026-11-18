@@ -156,7 +156,8 @@ impl HiveApp {
         let Some(id) = &find.selected else {
             return;
         };
-        if let Some(message) = self.messages.iter_mut().find(|m| &m.id == id) {
+        if let Some(index) = self.message_indices.get(id).copied() {
+            let message = &mut self.messages[index];
             for block in &mut message.thinking {
                 if block.text.to_lowercase().contains(&find.query) && !block.expanded {
                     block.expanded = true;
@@ -188,15 +189,15 @@ impl HiveApp {
         };
         let previous_selection = find.selected.clone();
         let matched = self
-            .messages
-            .iter()
-            .find(|m| m.id == id)
+            .message_indices
+            .get(id)
+            .and_then(|index| self.messages.get(*index))
             .is_some_and(|m| matches(m, self.tool_inputs.get(id), &find.query));
         let present = find.hits.iter().any(|hit| hit == id);
         if matched && !present {
             find.hits.push(id.to_owned());
             find.hits
-                .sort_by_key(|hit| self.messages.iter().position(|m| &m.id == hit));
+                .sort_by_key(|hit| self.message_indices.get(hit).copied());
         } else if !matched && present {
             find.hits.retain(|hit| hit != id);
         }
