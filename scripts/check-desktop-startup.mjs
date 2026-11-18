@@ -140,6 +140,9 @@ try {
     await mkdir(draftDir, { recursive: true });
     await writeFile(workerDraft, JSON.stringify({ key: `session:${workerChat}`, input: existingDraft, failed: [] }));
     await writeFile(join(draftDir, `session-${testerSessionId}.json`), JSON.stringify({ key: `session:${testerSessionId}`, input: testerDraft, failed: [] }));
+    await writeFile(join(state, 'desktop-appearance.json'), JSON.stringify({
+      mode: 'system', font_size: 16, code_font_size: 13, code_word_wrap: true,
+    }));
   }
   const env = { ...process.env, HIVE_DESKTOP_DATA_DIR: state, HIVE_DESKTOP_TRACE_RPC: '1' };
   if (language) await writeFile(join(state, 'desktop-language.json'), JSON.stringify(language));
@@ -173,8 +176,11 @@ try {
     const renamedLead = JSON.parse(await readFile(join(state, 'chats/index.json'), 'utf8')).find(session => session.id === leadChat);
     assert.equal(renamedLead.title, '启动方式核验');
     assert.equal(renamedLead.customTitle, true);
-    assert.deepEqual(JSON.parse(await readFile(join(state, 'desktop-appearance.json'), 'utf8')),
-      { mode: 'system', font_size: 16 });
+    const appearance = JSON.parse(await readFile(join(state, 'desktop-appearance.json'), 'utf8'));
+    assert.equal(appearance.mode, 'system');
+    assert.equal(appearance.font_size, 16);
+    assert.equal(appearance.code_font_size, 13, 'Changing the theme must preserve the code font size');
+    assert.equal(appearance.code_word_wrap, true, 'Changing the theme must preserve code wrapping');
     const leadDraft = join(draftDir, `session-${leadChat}.json`);
     // The native restart flushes the unsubmitted input before replacing its sidecar.
     assert.equal(JSON.parse(await readFile(leadDraft, 'utf8')).input, '后台恢复核验草稿');
