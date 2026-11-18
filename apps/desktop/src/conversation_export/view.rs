@@ -15,7 +15,7 @@ impl Render for ConversationExport {
         let height = (window.viewport_size().height - px(360.))
             .max(px(120.))
             .min(px(480.));
-        let preview: String = self.text.chars().take(10000).collect();
+        let preview = &self.preview.text;
         let description = if english() {
             format!(
                 "Fixed snapshot of {} loaded records in Markdown. Includes attachment names and metadata and available image counts. Unsent drafts are excluded.",
@@ -167,7 +167,7 @@ impl Render for ConversationExport {
                         .font_family(Theme::global(cx).mono_font_family.clone())
                         .text_xs()
                         .line_height(px(19.))
-                        .child(crate::text_reading::selectable_text("export-preview-text", preview)),
+                        .child(crate::text_reading::selectable_text("export-preview-text", preview.clone())),
                     ),
             )
     }
@@ -175,7 +175,8 @@ impl Render for ConversationExport {
 impl Render for ExportFooter {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let saving = self.export.read(cx).saving;
-        let truncated = self.export.read(cx).text.chars().nth(10000).is_some();
+        let copying = self.export.read(cx).copying;
+        let truncated = self.export.read(cx).preview.truncated;
         let notice = self.export.read(cx).notice.as_ref().map(ExportNotice::text);
         let error = self
             .export
@@ -248,14 +249,9 @@ impl Render for ExportFooter {
                             .icon(Glyph::Copy)
                             .label(tr("复制 Markdown"))
                             .accessibility_label(tr("复制完整对话快照"))
+                            .disabled(copying)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.export.update(cx, |export, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(
-                                        export.text.clone(),
-                                    ));
-                                    export.notice = Some(ExportNotice::Copied);
-                                    cx.notify();
-                                });
+                                this.export.update(cx, |export, cx| export.copy(cx));
                             })),
                     )
                     .child(

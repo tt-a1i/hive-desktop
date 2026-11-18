@@ -6,16 +6,21 @@ use crate::{
 };
 use gpui_kit::{component::*, *};
 use snapshot::Snapshot;
-use std::path::PathBuf;
+use std::{
+    io::{BufWriter, Write},
+    path::PathBuf,
+    sync::Arc,
+};
 
 struct ConversationExport {
-    snapshot: Snapshot,
+    snapshot: Arc<Snapshot>,
     directory: PathBuf,
     thinking: bool,
     tools: bool,
-    text: String,
+    preview: snapshot::Preview,
     scroll: ScrollHandle,
     saving: bool,
+    copying: bool,
     notice: Option<ExportNotice>,
     error: Option<(&'static str, String)>,
 }
@@ -53,19 +58,20 @@ impl HiveApp {
             .workspaces
             .iter()
             .find(|item| item.id == session.workspace_id);
-        let snapshot = Snapshot::capture(self, session, workspace);
+        let snapshot = Arc::new(Snapshot::capture(self, session, workspace));
         let directory = workspace
             .map(|item| PathBuf::from(&item.path))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        let text = snapshot.markdown(false, false);
+        let preview = snapshot.preview(false, false);
         let export = cx.new(|_| ConversationExport {
             snapshot,
             directory,
-            text,
+            preview,
             thinking: false,
             tools: false,
             scroll: ScrollHandle::new(),
             saving: false,
+            copying: false,
             notice: None,
             error: None,
         });
@@ -87,12 +93,32 @@ impl HiveApp {
 }
 impl ConversationExport {
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.text = self.snapshot.markdown(self.thinking, self.tools);
+        self.preview = self.snapshot.preview(self.thinking, self.tools);
         self.scroll.set_offset(point(px(0.), px(0.)));
         self.notice = None;
         self.error = None;
         cx.notify();
     }
+    fn copy(&mut self, cx: &mut Context<Self>) {
+        if self.copying {
+            return;
+        }
+        self.copying = true;
+        let snapshot = self.snapshot.clone();
+        let (thinking, tools) = (self.thinking, self.tools);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let text = smol::unblock(move || snapshot.markdown(thinking, tools)).await;
+            let _ = this.update(cx, |this, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                this.copying = false;
+                this.notice = Some(ExportNotice::Copied);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn save(&mut self, cx: &mut Context<Self>) {
         if self.saving {
             return;
@@ -101,12 +127,18 @@ impl ConversationExport {
         self.notice = None;
         self.error = None;
         let receiver = cx.prompt_for_new_path(&self.directory, Some(&self.snapshot.filename()));
-        let text = self.text.clone();
+        let snapshot = self.snapshot.clone();
+        let (thinking, tools) = (self.thinking, self.tools);
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = match receiver.await {
                 Ok(Ok(Some(path))) => smol::unblock(move || {
-                    crate::file_save::save_file(&path, text.as_bytes()).map(|_| path)
+                    crate::file_save::save_file_with(&path, |file| {
+                        let mut output = BufWriter::new(file);
+                        snapshot.write_markdown(&mut output, thinking, tools)?;
+                        output.flush()
+                    })
+                    .map(|_| path)
                 })
                 .await
                 .map(Some)
