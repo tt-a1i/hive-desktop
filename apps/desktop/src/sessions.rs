@@ -134,7 +134,7 @@ impl HiveApp {
                     }) {
                         this.capture_editor(cx);
                         this.workspace = None;
-                        this.reset_workspace_view();
+                        this.reset_workspace_view(cx);
                     }
                     if this.workspace.is_none() {
                         let saved = this
@@ -204,7 +204,7 @@ impl HiveApp {
         self.nav_forward.clear();
     }
 
-    fn clear_active_session_only(&mut self) {
+    fn clear_active_session_only(&mut self, cx: &mut Context<Self>) {
         self.collaboration.task_expanded = false;
         self.focus_project_input = false;
         self.conversation_sources.clear();
@@ -214,7 +214,7 @@ impl HiveApp {
         self.conversation_find = None;
         self.search_target = None;
         self.conversation_list.reset(None);
-        self.messages.clear();
+        self.clear_conversation_messages(cx);
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();
         self.pending_reports.clear();
@@ -244,10 +244,10 @@ impl HiveApp {
                 if self.sessions.iter().any(|s| s.id == sess) {
                     self.open_session(sess, cx);
                 } else {
-                    self.clear_active_session_only();
+                    self.clear_active_session_only(cx);
                 }
             } else if self.session.is_some() {
-                self.clear_active_session_only();
+                self.clear_active_session_only(cx);
                 self.switch_draft(Some(format!("workspace:{ws}")), cx);
                 self.sync_git_workspace(cx);
             }
@@ -317,7 +317,7 @@ impl HiveApp {
             self.navigation.workspace = self.workspace.clone();
             self.save_navigation(cx);
         }
-        self.reset_workspace_view();
+        self.reset_workspace_view(cx);
         self.sync_git_workspace(cx);
         self.sessions = self.project_sessions.remove(&id).unwrap_or_default();
         self.loading = true;
@@ -388,7 +388,7 @@ impl HiveApp {
         })
         .detach();
     }
-    pub(crate) fn reset_workspace_view(&mut self) {
+    pub(crate) fn reset_workspace_view(&mut self, cx: &mut Context<Self>) {
         self.collaboration.task_expanded = false;
         self.focus_project_input = false;
         self.reset_workflows_workspace();
@@ -399,7 +399,7 @@ impl HiveApp {
         self.conversation_find = None;
         self.search_target = None;
         self.conversation_list.reset(None);
-        self.messages.clear();
+        self.clear_conversation_messages(cx);
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();
         self.pending_reports.clear();
@@ -833,7 +833,7 @@ impl HiveApp {
         self.conversation_find = None;
         self.search_target = None;
         self.conversation_list.reset(None);
-        self.messages.clear();
+        self.clear_conversation_messages(cx);
         self.tool_inputs.clear();
         self.expanded_tool_groups.clear();
         self.pending_reports.clear();

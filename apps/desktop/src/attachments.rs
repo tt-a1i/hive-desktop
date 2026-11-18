@@ -62,25 +62,21 @@ pub(crate) struct Attachments {
     preparing: HashSet<String>,
     verified: HashSet<String>,
 }
-async fn prepare_preview(data: String, renderer: SvgRenderer) -> Result<ImagePreview, String> {
+async fn prepare_preview(data: String) -> Result<ImagePreview, String> {
     static DECODERS: smol::lock::Semaphore = smol::lock::Semaphore::new(2);
     let permit = DECODERS.acquire().await;
     smol::unblock(move || {
         // The blocking work owns the permit even if its caller leaves the chat.
         let _permit = permit;
-        preview(data, renderer)
+        preview(data)
     }).await
 }
 
-fn preview(data: String, renderer: SvgRenderer) -> Result<ImagePreview, String> {
+fn preview(data: String) -> Result<ImagePreview, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|_| "图片内容无法解码".to_owned())?;
     let decoded = decode_image(&bytes)?.thumbnail(144, 112);
-    let mut png = Cursor::new(Vec::new());
-    decoded
-        .write_to(&mut png, image::ImageFormat::Png)
-        .map_err(|error| error.to_string())?;
     let format = match image::guess_format(&bytes).map_err(|error| error.to_string())? {
         image::ImageFormat::Png => ImageFormat::Png,
         image::ImageFormat::Jpeg => ImageFormat::Jpeg,
@@ -88,13 +84,17 @@ fn preview(data: String, renderer: SvgRenderer) -> Result<ImagePreview, String> 
         image::ImageFormat::WebP => ImageFormat::Webp,
         _ => return Err("不支持的图片格式。".into()),
     };
-    let render = Image::from_bytes(ImageFormat::Png, png.into_inner())
-        .to_image_data(renderer)
-        .map_err(|error| error.to_string())?;
     Ok(ImagePreview {
-        render,
+        render: render_image(decoded),
         original: Arc::new(Image::from_bytes(format, bytes)),
     })
+}
+pub(crate) fn render_image(image: image::DynamicImage) -> Arc<RenderImage> {
+    let mut pixels = image.into_rgba8();
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+    Arc::new(RenderImage::new([image::Frame::new(pixels)]))
 }
 pub(crate) fn decode_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let mut reader = image::ImageReader::new(Cursor::new(bytes))
@@ -228,7 +228,6 @@ impl HiveApp {
         }
         self.attachments.loading.insert(key.clone());
         let connection = self.connection_generation;
-        let renderer = cx.svg_renderer();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let mut ready = Vec::new();
@@ -247,12 +246,7 @@ impl HiveApp {
                 }) {
                     Ok(item) => {
                         let image = match item.image {
-                            Some(image) => {
-                                let render = renderer.clone();
-                                prepare_preview(image.data, render)
-                                    .await
-                                    .map(Some)
-                            }
+                            Some(image) => prepare_preview(image.data).await.map(Some),
                             None => Ok(None),
                         };
                         match image {
@@ -310,7 +304,6 @@ impl HiveApp {
         };
         let refs = self.attachments.refs(self.draft_target.as_ref());
         let connection = self.connection_generation;
-        let renderer = cx.svg_renderer();
         for item in refs {
             if self.attachments.previews.contains_key(&item.id)
                 || self.attachments.verified.contains(&item.id)
@@ -320,7 +313,6 @@ impl HiveApp {
                 continue;
             }
             let runtime = runtime.clone();
-            let renderer = renderer.clone();
             cx.spawn(async move |this, cx| {
                 let result = match runtime
                     .request(
@@ -334,9 +326,7 @@ impl HiveApp {
                     }) {
                     Ok(mut images) => match images.pop() {
                         Some(item) => match item.image {
-                            Some(image) => prepare_preview(image.data, renderer)
-                                .await
-                                .map(Some),
+                            Some(image) => prepare_preview(image.data).await.map(Some),
                             None => Ok(None),
                         },
                         None => Err("附件没有返回内容。".into()),
@@ -605,11 +595,10 @@ impl HiveApp {
         message.images_loading = true;
         message.layout_revision += 1;
         let request = self.open_request;
-        let renderer = cx.svg_renderer();
-        cx.spawn(async move |this, cx| {
+        message.image_task = Some(cx.spawn(async move |this, cx| {
             let mut results = Vec::with_capacity(data.len());
             for data in data {
-                results.push(prepare_preview(data, renderer.clone()).await);
+                results.push(prepare_preview(data).await);
             }
             let _ = this.update(cx, |this, cx| {
                 if this.open_request != request {
@@ -630,7 +619,6 @@ impl HiveApp {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 }

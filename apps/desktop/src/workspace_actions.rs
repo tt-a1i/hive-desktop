@@ -316,7 +316,7 @@ impl HiveApp {
             self.close_collaboration();
             self.member_panel = false;
             self.workspace = None;
-            self.reset_workspace_view();
+            self.reset_workspace_view(cx);
             self.loading = false;
             if let Some(first) = self.workspaces.first() {
                 self.select_workspace(first.id.clone(), cx);

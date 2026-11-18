@@ -9,7 +9,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
-use std::{io::Cursor, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 struct ImageViewer {
     original: Arc<Image>,
@@ -21,6 +21,7 @@ struct ImageViewer {
     saving: bool,
     notice: Option<&'static str>,
     error: Option<(&'static str,String)>,
+    _decode: Task<()>,
 }
 
 impl HiveApp {
@@ -37,22 +38,21 @@ impl HiveApp {
             .find(|item| Some(&item.id) == self.workspace.as_ref())
             .map(|item| PathBuf::from(&item.path))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        let renderer = cx.svg_renderer();
         let viewer = cx.new(|cx| {
+            cx.on_release(|viewer: &mut ImageViewer, cx| {
+                if let Some(image) = viewer.rendered.take() {
+                    cx.defer(move |cx| cx.drop_image(image, None));
+                }
+            })
+            .detach();
             let bytes = original.clone();
-            cx.spawn(async move |this, cx| {
+            let decode = cx.spawn(async move |this, cx| {
                 let result = smol::unblock(move || {
                     // Render only the decoded first frame, with the same allocation
                     // limits as thumbnails. Do not let GPUI decode all GIF frames.
                     let decoded = crate::attachments::decode_image(&bytes.bytes)?;
                     let dimensions = (decoded.width(), decoded.height());
-                    let mut png = Cursor::new(Vec::new());
-                    decoded
-                        .write_to(&mut png, image::ImageFormat::Png)
-                        .map_err(|error| error.to_string())?;
-                    let image = Image::from_bytes(ImageFormat::Png, png.into_inner())
-                        .to_image_data(renderer)
-                        .map_err(|error| error.to_string())?;
+                    let image = crate::attachments::render_image(decoded);
                     Ok::<_, String>((image, dimensions))
                 })
                 .await;
@@ -66,8 +66,7 @@ impl HiveApp {
                     }
                     cx.notify();
                 });
-            })
-            .detach();
+            });
             ImageViewer {
                 original,
                 name: name.clone(),
@@ -78,6 +77,7 @@ impl HiveApp {
                 saving: false,
                 notice: None,
                 error: None,
+                _decode: decode,
             }
         });
         let width = (window.viewport_size().width - px(48.)).min(px(960.));

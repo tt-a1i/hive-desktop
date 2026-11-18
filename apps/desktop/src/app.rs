@@ -82,6 +82,7 @@ pub struct Message {
     pub image_sources: Vec<Arc<Image>>,
     pub images_loading: bool,
     pub images_error: Option<String>,
+    pub(crate) image_task: Option<Task<()>>,
 }
 impl Message {
     pub(crate) fn display_body(&self) -> &str {

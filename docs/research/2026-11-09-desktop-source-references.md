@@ -23,3 +23,16 @@ Useful boundaries: footer controls and overflow menu share the same actions; eve
 Project-context and lead-selection UI reuse Hive handlers; see [native entry/repair](../validation/2026-11-09-project-entry.md). These are initial source-informed improvements, not claims of complete design/functional parity. Future source reuse should pin its exact file/revision and include notices for actual copied material.
 
 2026-11-10: reread Beluga's same pinned `agent-setup.ts`. Added separate native welcome setup entries and existing version-probe summaries, retaining unknown/unsaved/changed states and explicit repair destinations; see [native setup verification](../validation/2026-11-10-welcome-agent-setup.md). No upstream code/assets, readiness policy or preferred-Agent fallback were copied. Full login/model readiness remains unimplemented.
+
+## Apache Maka Rust preview
+
+2026-11-18, reviewed `rust-preview` at `82b2628261463b04730df92097dccf37ca80ab84`. The desktop shell shuts down the old window engine before detaching and reconnecting. The host separately checks for accepted work before idle shutdown. Hive can apply those ownership boundaries to release dialog, image and conversation resources without changing the existing close-and-save behavior or the Hive collaboration ledger. [AppKit shell](https://github.com/apache/maka/blob/82b2628261463b04730df92097dccf37ca80ab84/products/maka/desktop-shell/src/appkit.rs) · [Host lifecycle](https://github.com/apache/maka/blob/82b2628261463b04730df92097dccf37ca80ab84/platform/host-runtime/src/application/host/lifecycle.rs)
+
+## Desktop update workflows
+
+- T3 Code `24e77473ecf41bc1f7142529c7911c1c1aae1d76` tracks availability, download and installation failures independently. Hive's About page needs those facts so a failed download or install retains a meaningful retry action. [Updater state](https://github.com/pingdotgg/t3code/blob/24e77473ecf41bc1f7142529c7911c1c1aae1d76/apps/desktop/src/updates/updateMachine.ts)
+- Cindy waits for the old process to exit before replacing application files and distinguishes an ordinary install failure from a failed rollback. Hive needs to finish its own backend shutdown before the installer takes over and keep the old installation available until the new instance starts. [Installer](https://github.com/makecindy/cindy/blob/4fd670b72af9d060785e29c553a14b6794dfe8eb/apps/desktop/cindy-updater/src-tauri/src/installer.rs)
+- Beluga checks compatibility and active work before installing. Hive's installation guard should consult its owned Agent turns, scripts and terminals. [Update rules](https://github.com/kayraucklnc/beluga/blob/cab72cb7a85efef601651c516d4ddae46fde516f/packages/mac/src-tauri/src/update_rules.rs)
+- Maka records pending deployment state and can reconcile it after interruption. Hive's replacement and restart flow needs a durable receipt that can distinguish a staged update from a verified installation. [Deployment update](https://github.com/apache/maka/blob/82b2628261463b04730df92097dccf37ca80ab84/products/maka/cli/src/deployment/update.rs)
+
+Hive will exercise the update workflow with an isolated development channel and disposable installations of two versions on each platform. No upstream source was copied for these changes.

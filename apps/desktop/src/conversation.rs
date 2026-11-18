@@ -5,6 +5,20 @@ use crate::{
 use gpui_kit::{component::text::TextViewState, *};
 use serde_json::{Value, json};
 impl HiveApp {
+    pub(crate) fn clear_conversation_messages(&mut self, cx: &mut Context<Self>) {
+        let images = std::mem::take(&mut self.messages)
+            .into_iter()
+            .flat_map(|message| message.images)
+            .collect::<Vec<_>>();
+        if !images.is_empty() {
+            cx.defer(move |cx| {
+                for image in images {
+                    cx.drop_image(image, None);
+                }
+            });
+        }
+    }
+
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.conversation_is_read_only() || !self.conversation_ready || !self.workspace_writes_allowed() {
             return;
@@ -379,6 +393,7 @@ impl HiveApp {
             image_sources: vec![],
             images_loading: false,
             images_error: None,
+            image_task: None,
         });
     }
     // Both snapshots and live events use the same provenance contract. Never infer
@@ -575,7 +590,16 @@ impl HiveApp {
                 .iter()
                 .any(|message| message.id == id && !message.thinking.is_empty())
         {
-            self.messages.retain(|message| message.id != id);
+            if let Some(index) = self.messages.iter().position(|message| message.id == id) {
+                let message = self.messages.remove(index);
+                if !message.images.is_empty() {
+                    cx.defer(move |cx| {
+                        for image in message.images {
+                            cx.drop_image(image, None);
+                        }
+                    });
+                }
+            }
             self.refresh_conversation_find(&id, cx);
             return;
         }
