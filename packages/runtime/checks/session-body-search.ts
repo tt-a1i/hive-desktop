@@ -40,7 +40,7 @@ try {
   }
   for (let i = 0; i < 101; i++) await seed(0, `Ordinary ${i}`, 'Needle marker 世界 café');
   await seed(1, 'Other project', 'Needle marker 世界 café');
-  const metadata = await seed(1, 'Metadata-only label', 'unrelated body');
+  const metadata = await seed(1, 'Re\u0301sume\u0301-only label', 'unrelated body');
   const archived = await seed(0, 'Archived ordinary', 'Needle marker 世界 café', true);
   const broken = await seed(0, 'Broken history', 'old');
   await writeFile(broken.sessionFile!, '{broken\n');
@@ -72,7 +72,7 @@ try {
   assert.equal(new Set([...page.matches, ...second.matches].map(hit => hit.session.id)).size, 101);
   assert.equal((await runtime.chats.search('needle 世界')).total, 102);
   assert.equal((await runtime.chats.search('cafe\u0301', false, 0, workspaces[0])).total, 101);
-  assert.equal((await runtime.chats.search('Metadata-only')).matches[0]?.session.id, metadata.id);
+  assert.equal((await runtime.chats.search('Résumé-only')).matches[0]?.session.id, metadata.id);
   const archives = await runtime.chats.search('needle 世界', true, 0, workspaces[0]);
   assert.deepEqual(archives.matches.map(hit => hit.session.id), [archived.id]);
   assert.equal(archives.incompleteHistoryCount, 0);

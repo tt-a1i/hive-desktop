@@ -449,6 +449,15 @@ impl Render for SessionSearch {
                                     format!("{} · {}", hit.workspace_name, hit.workspace_path)
                                 };
                                 let role_suffix = role.map(|role| format!(" · {role}")).unwrap_or_default();
+                                let mut label = format!(
+                                    "{title} · {identity}{role_suffix} · {}",
+                                    tr(hit.session.backend.label())
+                                );
+                                if let Some(body) = &hit.body_match {
+                                    label.push('\n');
+                                    label.push_str(&body.snippet);
+                                }
+                                let open = if english() { "Open" } else { "打开" };
                                 let time = crate::palette::compact_relative_time(
                                     hit.session.updated_at,
                                     english(),
@@ -466,27 +475,8 @@ impl Render for SessionSearch {
                                         .rounded_lg()
                                         .justify_start()
                                         .selected(active)
-                                        .accessibility_label(if english() {
-                                            format!(
-                                                "Open {} · {}{} · {}",
-                                                title,
-                                                identity,
-                                                role_suffix,
-                                                tr(hit.session.backend.label())
-                                            )
-                                        } else {
-                                            format!(
-                                                "打开 {} · {}{} · {}",
-                                                title,
-                                                identity,
-                                                role_suffix,
-                                                tr(hit.session.backend.label())
-                                            )
-                                        })
-                                        .tooltip(format!(
-                                            "{title} · {identity}{role_suffix} · {}",
-                                            tr(hit.session.backend.label())
-                                        ))
+                                        .accessibility_label(format!("{open} {label}"))
+                                        .tooltip(label)
                                         .child(
                                             h_flex()
                                                 .w_full()

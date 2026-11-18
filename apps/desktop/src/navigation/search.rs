@@ -317,6 +317,11 @@ impl Render for SidebarSearch {
                             role.map(|role| format!(" · {role}")).unwrap_or_default(),
                             tr(hit.session.backend.label())
                         );
+                        let mut label = format!("{title} · {identity}");
+                        if let Some(body) = &hit.body_match {
+                            label.push('\n');
+                            label.push_str(&body.snippet);
+                        }
                         Reveal::new(
                             ("sidebar-search-reveal", index),
                             &self.scroll,
@@ -331,8 +336,8 @@ impl Render for SidebarSearch {
                                 .rounded_md()
                                 .justify_start()
                                 .selected(index == self.selected)
-                                .accessibility_label(format!("{} · {identity}", title))
-                                .tooltip(format!("{title} · {identity}"))
+                                .accessibility_label(label.clone())
+                                .tooltip(label)
                                 .child(
                                     v_flex()
                                         .min_w_0()

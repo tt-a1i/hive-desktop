@@ -24,6 +24,8 @@ export type ConversationSearchOptions = {
   readClaudeHistory?: () => Promise<SessionMessage[]>;
   /** A live snapshot supplies native message IDs; delivery IDs are normalized here. */
   liveHistory?: { history: readonly unknown[]; historyMessageIds: readonly string[]; activeMessage?: { messageId: string; message: unknown } };
+  /** Conversation lists only show one excerpt per conversation. */
+  firstMatchOnly?: boolean;
 };
 type Row = { id: string; message: unknown };
 async function fingerprint(paths: string[]): Promise<string> {
@@ -48,7 +50,7 @@ async function freshRows(paths: string[], load: () => Promise<{ rows: Row[]; com
   return { rows: compact, complete: loaded.complete, truncated: projected.truncated, unresolved: projected.unresolved };
 }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
-function fold(value: string): string { return value.normalize('NFC').toLocaleLowerCase(); }
+export function foldSearchText(value: string): string { return value.normalize('NFC').toLocaleLowerCase(); }
 // Match conversation.rs's serde presentation contract before replacing the ID.
 function desktopPresentation(value: unknown): Record<string, unknown> | undefined {
   if (!object(value) || value.version !== 1 || typeof value.deliveryId !== 'string' || !value.deliveryId ||
@@ -177,18 +179,47 @@ function searchableRows(rows: readonly Row[]): { rows: { id: string; text: strin
   }
   return { rows: projected, truncated: state.truncated, unresolved };
 }
-function find(rows: readonly { id: string; text: string }[], terms: string[]): ConversationSearchMatch[] {
+const maxSnippetLength = 220;
+
+function splitsSurrogatePair(text: string, index: number): boolean {
+  const high = text.charCodeAt(index - 1);
+  const low = text.charCodeAt(index);
+  return high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff;
+}
+
+function snippetWindow(text: string, position: number, context: number) {
+  let start = Math.min(position, text.length);
+  if (splitsSurrogatePair(text, start)) start--;
+  for (let i = 0; i < context && start > 0; i++) {
+    start--;
+    if (splitsSurrogatePair(text, start)) start--;
+  }
+  let end = start;
+  for (let i = 0; i < maxSnippetLength && end < text.length; i++) {
+    end++;
+    if (splitsSurrogatePair(text, end)) end++;
+  }
+  return { excerpt: text.slice(start, end), hasBefore: start > 0, hasAfter: end < text.length };
+}
+
+function find(rows: readonly { id: string; text: string }[], first: string, rest: string[], firstMatchOnly = false): ConversationSearchMatch[] {
   const matches: ConversationSearchMatch[] = [];
+  // Keep the hit near the left edge for narrow sidebar rows. Leave enough room
+  // for a full-length query.
+  const context = Math.max(0, Math.min(12, maxSnippetLength - [...first].length));
   for (const row of rows) {
-    const text = row.text;
-    const folded = fold(text);
-    if (!terms.every(term => folded.includes(term))) continue;
-    // Locate using code points; normalization can change offsets, so the snippet is
-    // informative rather than an offset into the original message.
-    const position = Array.from(folded.slice(0, Math.max(0, folded.indexOf(terms[0]!)))).length;
-    const start = Math.max(0, position - 70);
-    const slice = Array.from(text).slice(start, start + 220).join('').replace(/\s+/gu, ' ').trim();
-    matches.push({ messageId: row.id, snippet: `${start ? '…' : ''}${slice}${Array.from(text).length > start + 220 ? '…' : ''}` });
+    const normalized = row.text.normalize('NFC');
+    const folded = normalized.toLocaleLowerCase();
+    const position = folded.indexOf(first);
+    if (position < 0 || !rest.every(term => folded.includes(term))) continue;
+    const display = snippetWindow(normalized, position, context);
+    // Locale-dependent lowercasing can change the length before the hit. If
+    // the display window lost the hit, use the window in the matched string.
+    const {excerpt, hasBefore, hasAfter} = display.excerpt.toLocaleLowerCase().includes(first)
+      ? display : snippetWindow(folded, position, context);
+    const slice = excerpt.replace(/\s+/gu, ' ').trim();
+    matches.push({ messageId: row.id, snippet: `${hasBefore ? '…' : ''}${slice}${hasAfter ? '…' : ''}` });
+    if (firstMatchOnly) break;
   }
   return matches;
 }
@@ -251,8 +282,8 @@ async function codexRows(record: ChatRecord, directory: string): Promise<{ rows:
 
 /** Reads fresh persisted history each call: appended or replaced files cannot leave a stale cache. */
 export async function searchConversation(record: ChatRecord, query: string, options: ConversationSearchOptions): Promise<ConversationSearchResult> {
-  const terms = fold(query.trim()).split(/\s+/u).filter(Boolean);
-  if (!terms.length) return { matches: [], complete: true };
+  const [first, ...rest] = foldSearchText(query.trim()).split(/\s+/u);
+  if (!first) return { matches: [], complete: true };
   let rows: Row[] = [];
   let warning: string | undefined;
   let codexSynced = false;
@@ -321,5 +352,5 @@ export async function searchConversation(record: ChatRecord, query: string, opti
   const projected = searchableRows(rows);
   if ((truncated || projected.truncated) && !warning) warning = 'Some tool inputs exceed the search limit';
   if ((unresolved || projected.unresolved || (options.liveBusy && record.backend !== 'codex')) && !warning) warning = 'Live or unfinished tool output may be missing from search';
-  return { matches: find(projected.rows, terms), complete: !warning, ...(warning ? { warning } : {}) };
+  return { matches: find(projected.rows, first, rest, options.firstMatchOnly), complete: !warning, ...(warning ? { warning } : {}) };
 }

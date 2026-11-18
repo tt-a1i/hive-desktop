@@ -42,7 +42,7 @@ import { readClaudeMetadata } from './agents/claude-metadata.js';
 import { CodexProjection } from './agents/codex-projection.js';
 import { codexMetadataFile, readCodexMetadata } from './agents/codex-metadata.js';
 import { normalizeCodexItem } from './agents/codex-history.js';
-import { searchConversation, type ConversationSearchMatch } from './conversation-search.js';
+import { foldSearchText, searchConversation, type ConversationSearchMatch } from './conversation-search.js';
 import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
 import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
@@ -684,7 +684,7 @@ export class Chats implements StructuredSessionPort {
     if (typeof query !== 'string' || Array.from(query).length > 200) {
       throw new TypeError('搜索内容需为 200 个字符以内的文本。');
     }
-    const terms = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
+    const terms = foldSearchText(query.trim()).split(/\s+/u).filter(Boolean);
     const groups = await this.navigationEntries(false, archived, workspaceId as string | undefined);
     const candidates = groups.flat();
     const bodyMatches = new Map<string, ConversationSearchMatch>();
@@ -706,6 +706,7 @@ export class Chats implements StructuredSessionPort {
             result = await searchConversation(hit.session, query, {
               codexDirectory: join(this.sessionDir, '..', 'codex'),
               claudeDirectory: join(this.sessionDir, '..', 'claude'),
+              firstMatchOnly: true,
               ...(hit.session.backend === 'claude' && {readClaudeHistory: () => this.readProfileClaudeHistory(hit.session, hit.session.execution?.path ?? hit.workspacePath)}),
               ...(live && !live.failure && !live.cleanup && {liveHistory: live.handle.snapshot(), liveBusy: live.queue.busy}),
             });
@@ -726,7 +727,7 @@ export class Chats implements StructuredSessionPort {
         : hit.session.agentId.endsWith(':orchestrator') ? '主控 Orchestrator'
         : hit.session.agentId.endsWith(':__workflow__') ? '工作流 Workflow'
         : '成员 Worker';
-      const searchable = [hit.title, hit.session.title, defaultTitleAlias, roleAlias, hit.workspaceName, hit.workspacePath, hit.session.backend, backendName].join(' ').toLocaleLowerCase();
+      const searchable = foldSearchText([hit.title, hit.session.title, defaultTitleAlias, roleAlias, hit.workspaceName, hit.workspacePath, hit.session.backend, backendName].join(' '));
       return terms.every(term => searchable.includes(term)) || bodyMatches.has(hit.session.id);
     }).sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
     const warnings = incompleteHistory.filter(hit => this.index.peek(hit.sessionId))

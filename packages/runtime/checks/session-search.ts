@@ -1,15 +1,25 @@
 /** Real Hive metadata and durable records. Search must not load any Agent session. */
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
 import type { ChatBackend } from '../src/chat-index.js';
 
 const directory = await realpath(await mkdtemp(join(tmpdir(), 'hive-session-search-')));
+const agentDir = join(directory, 'pi');
+const environment = {PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PI_OFFLINE: process.env.PI_OFFLINE};
+const provider = 'search-fixture';
+const model = 'idle-worker';
 let runtime: Awaited<ReturnType<typeof createDesktopRuntime>> | undefined;
 let events = 0;
 try {
+  await mkdir(agentDir);
+  await writeFile(join(agentDir, 'models.json'), JSON.stringify({providers: {[provider]: {
+    api: 'openai-responses', baseUrl: 'http://127.0.0.1:9/v1', apiKey: 'fixture-only', models: [{id: model, name: 'Idle worker fixture'}],
+  }}}));
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  process.env.PI_OFFLINE = '1';
   runtime = await createDesktopRuntime(join(directory, 'state'), () => { events++; });
   await mkdir(join(directory, 'alpha'));
   const projects = [];
@@ -47,7 +57,7 @@ try {
   assert.equal(events, 0);
   const member = await runtime.hive.request('POST', `/api/workspaces/${projects[0].id}/workers`, { name: 'Original name', role: 'reviewer', autostart: false }) as { id: string };
   await runtime.hive.request('POST', `/api/workspaces/${projects[0].id}/agents/${member.id}/config`,
-    { command: 'hive:pi', args: ['--provider', 'openai', '--model', 'gpt-6.1-terra'] });
+    { command: 'hive:pi', args: ['--provider', provider, '--model', model] });
   await runtime.hive.request('POST', `/api/workspaces/${projects[0].id}/agents/${member.id}/start`);
   await runtime.hive.request('PATCH', `/api/workspaces/${projects[0].id}/workers/${member.id}`, { name: '中文审查员' });
   const eventsBeforeSearch = events;
@@ -119,5 +129,8 @@ try {
   console.log('SESSION_SEARCH_OK: cross-project metadata, all backends, restart, result limit and no Agent initialization.');
 } finally {
   await runtime?.close();
+  for (const [key, value] of Object.entries(environment)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
   await rm(directory, { recursive: true, force: true });
 }

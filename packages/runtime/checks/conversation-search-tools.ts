@@ -96,6 +96,13 @@ try {
   limited = await searchConversation(pi,'tail-marker',{...opts,liveHistory:{history:[huge],historyMessageIds:['large']}});
   assert.equal(limited.complete,false);
   assert.equal(limited.matches.length,0);
+  const firstOnly = await searchConversation(pi, 'done', {
+    ...opts, firstMatchOnly: true, liveHistory: {
+      history: [{role:'assistant',content:'first match done'}, huge], historyMessageIds: ['first', 'large'],
+    },
+  });
+  assert.deepEqual(firstOnly.matches.map(match => match.messageId), ['first']);
+  assert.match(firstOnly.warning!, /search limit/, 'the result list still warns about later incomplete history');
   const deep:any={}; let node=deep; for(let i=0;i<12;i++) node=node.child={}; node.hidden='too deep';
   assert.equal((await searchConversation(pi,'done',{...opts,liveHistory:{history:[{...huge,toolInput:deep}],historyMessageIds:['large']}})).complete,false);
   console.log('conversation search tool checks passed');

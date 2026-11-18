@@ -65,6 +65,22 @@ try {
   assert.ok(Array.from(result.matches[0]!.snippet).length <= 222);
   assert.ok(result.matches[0]!.snippet.includes('marker'));
 
+  const snippetCases = [
+    {body: 'a\u0301'.repeat(400) + ' Café Marker', query: 'CAFE\u0301', contains: 'Café Marker'},
+    {body: 'İ'.repeat(400) + ' Case Marker', query: 'Case', contains: 'case'},
+    {body: '👩'.repeat(80) + ' ' + '𐀀'.repeat(200) + ' end', query: '𐀀'.repeat(200), contains: '𐀀'.repeat(200)},
+  ];
+  for (const {body, query, contains} of snippetCases) {
+    await writeFile(file, [header, entry('snippet', null, body)].map(value => JSON.stringify(value)).join('\n'));
+    const found = await search(query);
+    assert.equal(found.complete, true);
+    assert.deepEqual(found.matches.map(match => match.messageId), ['snippet']);
+    const snippet = found.matches[0]!.snippet;
+    assert.ok(snippet.includes(contains) || snippet.toLocaleLowerCase().includes(contains),
+      'the excerpt must contain the actual hit');
+    assert.ok(snippet.isWellFormed() && [...snippet].length <= 222);
+  }
+
   const codex: ChatRecord = { ...record, backend: 'codex', sessionFile: null, codexThreadId: 'thread' };
   await mkdir(dir, { recursive: true });
   await writeFile(`${codexMetadataFile(dir, 'thread')}.display.json`, JSON.stringify({version: 1, entries: [{turnId: 't', item: {id: 'item', type: 'agentMessage', text: 'Journal content'}}], completedTurns: []}));
