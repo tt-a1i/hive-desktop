@@ -4,6 +4,10 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
+2026-11-19 本地开发与验收继续。默认内置 Pi 已接入 [1Password 引用](docs/validation/2026-11-19-pi-vault.md)，macOS 验证了原生操作及包内回环请求。同一已有账号的两套固定 Codex Terra 配置已通过真实派单、汇报和冷恢复。此前 Native Codex 与官方 ACP 也已在后台通过单账号真实协作。原生窗口和 Windows 的真实模型链路仍需分别验收。[配置与 ACP 验收](docs/validation/2026-11-15-agent-profiles-acp.md)
+
+早期 PR #46 已合并到 `main`。目前的功能完成分支继续在本地推进，本轮没有发布。[PR #46](https://github.com/tt-a1i/hive-desktop/pull/46)
+
 2026-11-15 本轮已收尾并按用户要求暂停，见[收尾记录](docs/validation/2026-11-15-round-close.md)。[多实例配置及 ACP](docs/validation/2026-11-15-agent-profiles-acp.md)、[跨后端文本接续](docs/validation/2026-11-15-session-handoffs.md)已接生产运行时：Mac 50 项包内检查、106 项 Rust 检查及限定实际窗口/冷恢复通过；Windows 同一冻结 ZIP 的 47 项包内检查和原生 UIA 操作通过。真实 ACP 完整协作仍未通过，不与已通过的[原生 Codex / Terra 历史分叉](docs/validation/2026-11-15-native-history-live.md)混算。PR #46 保持 Draft，完整目标保持开放，尚未推广或替换用户安装实例。以下日期记录保留当时进展。
 
 2026-11-15 恢复进展：问题回复附件已合入并通过专项回归，初始化脚本、会话模式和成员工作树继续做真实流程验收；独立核实了测试夹具中“当前选择”与“最后启动会话”的区别。历史分叉、检查点和其余完整目标仍在实施，见[恢复核验](docs/validation/2026-11-15-functional-resume.md)。当前安装包状态保持下文所述。

@@ -20,13 +20,17 @@
 
 证据：`.artifacts/functional-parity/ui-qa/profile-checks/`，包含独立持久化读取和 `cold-{draft,profile,script}.txt`。
 
-## 真实 Codex 配置协作：部分通过
+## 真实 Codex 配置协作
+
+2026-11-19 在 `121c93e` 复验了两个固定配置。原生 Codex `0.169.0` 的主控和 Worker 均使用已有账号的 `openai/gpt-6.1-terra`，各自固定启动程序、配置版本和私有工作树。修改隔离 Hive 的默认启动程序后，原有会话仍通过各自的固定程序启动。真实派单经 `messages`、`seen` 和显式 `report` 交付，只有一条派单及一条已交付的汇报 outbox。原主控在正式汇报后读取 61 字节产物并独立核对 SHA-256。冷重开核对原生会话、消息 ID、队列、派单账本和固定配置，未重复推理或交付。总计 3 次 `turn/start`、1 次 `turn/steer`、0 次账号接口调用，所观测的自有进程均退出。
+
+本次通过的范围是生产 JSONL、实际 Git/Hive SQLite 和单账号两套固定配置，原生窗口及 Windows 上的同一真实模型链路仍待验证。完整收据位于 `.artifacts/native-profile-current-UDpRRt/run-Uh7LWN/`，其中 `receipt.json`、`before-cold.json`、`after-cold.json` 和 `owned-pid-exits.json` 记录关键事实。以下段落保留早期未通过运行。
 
 冻结 `0fbb650e41df15dba8f4d2370440430ff2de47a1`，原生 Codex GPT-6.1 Terra。两个配置固定在 `r1`，修改应用默认后实际重开仍使用原程序和引用；Worker 真实读取 messages、写入 61 字节产物并带 seen 汇报，冷读没有重放。这些细项通过。
 
 整体自动协作尚未通过：启动 ready 状态额外触发了主控回合，内部三次 start 预算在报告续跑前耗尽。第四次请求被拦在原生发送之前；清理脚本随后错误地取消了该待处理投递，没有原始 spool 字节备份，因此未人为重建队列、改写 SQL、重跑模型或用新普通消息伪装自动完成。实际三次 start、零 steer、一次被阻止；所有观察到的自有进程均退出。
 
-必须继续验收原主控自动消费报告并独立核验产物，不能据本例关闭 #52。原始失败和细项证据：`.artifacts/functional-parity/native-profile-collaboration-prep/run-VY56qr/final-partial-receipt.json`。历史分叉的另一组完整原生实证见[原生历史验证](2026-11-15-native-history-live.md)，不与本例混算。
+这次运行止于汇报自动续跑前。原始失败和细项证据：`.artifacts/functional-parity/native-profile-collaboration-prep/run-VY56qr/final-partial-receipt.json`。另见[原生历史分叉验收](2026-11-15-native-history-live.md)。
 
 ## ACP
 
