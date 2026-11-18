@@ -107,6 +107,24 @@ try{
  const protocol=(await readFile(join(acp,'protocol.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));assert.equal(protocol.filter((row:any)=>row.method==='session/prompt').length,1);assert.equal(protocol.filter((row:any)=>row.method==='session/new').length,1);
  const coldPi=await wire.rpc('chat.open',{sessionId:pi.id});assert.equal(coldPi.passive,true);assert.equal(coldPi.handoffDelivery.status,'pending');
  await wire.rpc('chat.setModel',{sessionId:pi.id,provider:'owned-handoff-fixture',modelId:'gpt-6.1-terra'});assert.equal((await wire.rpc('chat.open',{sessionId:pi.id})).model.provider,'owned-handoff-fixture');assert.equal(modelRequests,0);
+ const continuedText = 'Check the restored private worktree as the next explicit user input.';
+ await wire.rpc('chat.prompt',{sessionId:target.id,text:continuedText});
+ let continued:any;
+ for(let count=0;count<200;count++){
+  continued=await wire.rpc('chat.open',{sessionId:target.id});
+  if(!continued.busy&&continued.pending===0)break;
+  await new Promise(resolve=>setTimeout(resolve,25));
+ }
+ assert.equal(continued.pending,0,JSON.stringify(continued.deliveryFailure));
+ assert.equal(continued.handoffDelivery.status,'consumed');
+ assert.equal(continued.acpSessionId,opened.acpSessionId);
+ const resumed=JSON.parse(await readFile(join(acp,opened.acpSessionId+'.json'),'utf8'));
+ const next=resumed.history.filter((row:any)=>row.kind==='user_message_chunk').at(-1).text;
+ assert.ok(next.includes(continuedText));
+ assert.ok(next.includes('## Open tasks (dispatch ledger)'));
+ assert.ok(!next.includes('Conversation with the user in the last hour'));
+ assert.ok(!next.includes('Please inspect this new worktree.'));
+ assert.ok(!next.includes('[Historical context — recorded material only]'));
  await writeFile(join(root,'receipt.json'),JSON.stringify({pass:true,root,realGit:true,realHive:true,productionRpc:true,allFivePassiveNoCli:process.platform!=='win32',passiveCliMarkerCoverage:process.platform==='win32'?'POSIX-only executable marker; Windows zero-CLI not established by this fixture':'POSIX executable marker plus ACP protocol log',firstPlainInputTargetAcp:true,sameWorkerActualBackendSwitch:true,frozenIndexDiskCode:true,piMissingModelRetainsPending:true,explicitPiModelSelectionNoRequests:true,noInference:true},null,2));
  console.log('SESSION_HANDOFF_RUNTIME_OK '+root);
 }catch(error){await writeFile(join(root,'failure.json'),JSON.stringify({message:String(error),stack:error instanceof Error?error.stack:undefined},null,2));throw error;}

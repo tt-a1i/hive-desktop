@@ -11,6 +11,8 @@ export interface StructuredSessionHandle {
 	sessionFile?: string;
 	/** Whether the selected backend session actually retained Hive context. */
 	resumed?: boolean;
+	/** A handoff keeps workspace-wide chat excerpts out of automatic recovery. */
+	includeRecentUserInputs?: false;
 	/** Acceptance into the backend queue, not completion of the model turn. */
 	deliver(text: string, options?: { triggerTurn?: boolean; presentation?: DeliveryPresentation; images?: readonly PromptImage[] }): Promise<void>;
 	/** Resume durable queued work after Hive startup/recovery becomes ready. */

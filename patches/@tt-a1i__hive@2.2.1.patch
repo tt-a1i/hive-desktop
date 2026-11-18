@@ -473,8 +473,29 @@ index c640530edbd34375bceb3389a8604f153cedf7a7..e61da69bfa363421513fc01a9234de4b
              }
          }
          finally {
+diff --git a/dist/src/server/recovery-summary.d.ts b/dist/src/server/recovery-summary.d.ts
+index dde0bcf..8588f11 100644
+--- a/dist/src/server/recovery-summary.d.ts
++++ b/dist/src/server/recovery-summary.d.ts
+@@ -3,7 +3,7 @@ import type { AgentSummary, WorkspaceSummary } from '../shared/types.js';
+ import type { DispatchRecord } from './dispatch-ledger-store.js';
+ import { type FeatureFlags } from './feature-flags.js';
+ import type { RecoveryMessage } from './message-log-store.js';
+-export declare const buildRecoverySummary: ({ agent, openDispatches, dispatchMessages, actionableDispatchMessages, resumedSession, memoryDigest, messages, tasksContent, workers, workspace, flags, }: {
++export declare const buildRecoverySummary: ({ agent, openDispatches, dispatchMessages, actionableDispatchMessages, resumedSession, memoryDigest, messages, includeRecentUserInputs, tasksContent, workers, workspace, flags, }: {
+     agent: AgentSummary;
+     allTaskMessages?: RecoveryMessage[];
+     openDispatches?: DispatchRecord[];
+@@ -12,6 +12,7 @@ export declare const buildRecoverySummary: ({ agent, openDispatches, dispatchMes
+     resumedSession?: boolean;
+     memoryDigest?: string | null | undefined;
+     messages: RecoveryMessage[];
++    includeRecentUserInputs?: boolean;
+     tasksContent: string;
+     workers: AgentSummary[];
+     workspace: WorkspaceSummary;
 diff --git a/dist/src/server/recovery-summary.js b/dist/src/server/recovery-summary.js
-index 018b3549ed6a693b59fe7a55927290c4f3e21da8..639181956485c778b636b6ccea0d0141fd031012 100644
+index 018b354..8e791d7 100644
 --- a/dist/src/server/recovery-summary.js
 +++ b/dist/src/server/recovery-summary.js
 @@ -61,7 +61,7 @@ const formatDispatchMessages = (dispatches, messages, agent) => {
@@ -495,7 +516,26 @@ index 018b3549ed6a693b59fe7a55927290c4f3e21da8..639181956485c778b636b6ccea0d0141
                  `  Read: team messages --dispatch ${message.dispatchId}`,
                  ...(replyCommand ? [`  Reply with your answer on stdin: ${replyCommand}`] : []),
              ];
-@@ -108,7 +108,7 @@ export const buildRecoverySummary = ({ agent, openDispatches, dispatchMessages =
+@@ -89,16 +89,14 @@ const formatWorkers = (workers) => {
+     return workers.map((worker) => `- ${escapeHiveEnvelopeText(worker.name)} (${worker.role}, ${worker.status}, pending_task_count: ${worker.pendingTaskCount})`);
+ };
+ const getTaskSectionTitle = (agent) => agent.role === 'orchestrator' ? '## Tasks you dispatched' : '## Tasks recently sent to you';
+-export const buildRecoverySummary = ({ agent, openDispatches, dispatchMessages = [], actionableDispatchMessages = [], resumedSession = false, memoryDigest, messages, tasksContent, workers, workspace, flags = FEATURE_FLAGS_ALL_OFF, }) => wrapRawSystemMessage([
++export const buildRecoverySummary = ({ agent, openDispatches, dispatchMessages = [], actionableDispatchMessages = [], resumedSession = false, memoryDigest, messages, includeRecentUserInputs = true, tasksContent, workers, workspace, flags = FEATURE_FLAGS_ALL_OFF, }) => wrapRawSystemMessage([
+     `You are ${escapeHiveEnvelopeText(agent.name)} (${agent.role}) in workspace ${escapeHiveEnvelopeText(workspace.name)}.`,
+     `Current member profile: ${escapeHiveEnvelopeText(agent.description)}`,
+     resumedSession
+         ? 'Your native session resumed. These are current protocol facts; PTY delivery is not proof that inputs were considered.'
+         : 'Hive restarted you. These are current responsibility facts; verify artifacts before continuing work.',
+     '',
+-    '## Conversation with the user in the last hour',
+-    ...formatUserInputs(messages),
+-    '',
++    ...(includeRecentUserInputs ? ['## Conversation with the user in the last hour', ...formatUserInputs(messages), ''] : []),
+     getTaskSectionTitle(agent),
+     ...formatTaskEvents(messages, agent),
+     '',
+@@ -108,7 +106,7 @@ export const buildRecoverySummary = ({ agent, openDispatches, dispatchMessages =
      ...formatPendingQuestions(actionableDispatchMessages, agent),
      '',
      `## Current ${TASKS_RELATIVE_PATH}`,
@@ -504,6 +544,39 @@ index 018b3549ed6a693b59fe7a55927290c4f3e21da8..639181956485c778b636b6ccea0d0141
      '',
      '## Active members',
      ...formatWorkers(workers),
+diff --git a/dist/src/server/restart-policy.d.ts b/dist/src/server/restart-policy.d.ts
+index 08697fa..9f2fd45 100644
+--- a/dist/src/server/restart-policy.d.ts
++++ b/dist/src/server/restart-policy.d.ts
+@@ -7,6 +7,7 @@ export interface RestartPolicy {
+         runId: string;
+         startConfig: AgentLaunchConfigInput;
+         workspace: WorkspaceSummary;
++        includeRecentUserInputs?: boolean;
+         writeToRun: (runId: string, text: string) => Promise<void>;
+     }) => boolean;
+     /** Record that `runId` was killed at the user's request (Stop button), so a
+diff --git a/dist/src/server/restart-policy.js b/dist/src/server/restart-policy.js
+index d4f5173..98b7ef6 100644
+--- a/dist/src/server/restart-policy.js
++++ b/dist/src/server/restart-policy.js
+@@ -21,7 +21,7 @@ export const createRestartPolicy = ({ deleteMessage, getWorkspaceSnapshot, inser
+         markUserStopped(runId) {
+             userStoppedRuns.add(runId);
+         },
+-        injectPostStartMessage({ agentId, runId, startConfig, workspace, writeToRun }) {
++        injectPostStartMessage({ agentId, runId, startConfig, workspace, includeRecentUserInputs, writeToRun }) {
+             const previousRun = findPreviousRun(listAgentRuns(agentId), runId);
+             if (!previousRun)
+                 return false;
+@@ -61,6 +61,7 @@ export const createRestartPolicy = ({ deleteMessage, getWorkspaceSnapshot, inser
+                 actionableDispatchMessages,
+                 ...(openDispatches ? { openDispatches } : {}),
+                 memoryDigest: auditedMemoryDigest?.text,
++                includeRecentUserInputs,
+                 messages: listMessagesForRecovery(workspace.id, Date.now() - RECOVERY_WINDOW_MS),
+                 tasksContent,
+                 workers,
 diff --git a/dist/src/server/remote-config-keys.js b/dist/src/server/remote-config-keys.js
 index cf80f23b9ed3a2d34cf5c27de755dbc036b3490c..2b144e1aeab4dfc8f71255c3f9534d8c6db92f07 100644
 --- a/dist/src/server/remote-config-keys.js

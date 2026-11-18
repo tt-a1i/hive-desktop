@@ -182,6 +182,7 @@ export interface RestartPolicy {
 		runId: string;
 		startConfig: AgentLaunchConfigInput;
 		workspace: WorkspaceSummary;
+		includeRecentUserInputs?: boolean;
 		writeToRun: (runId: string, text: string) => Promise<void>;
 	}) => boolean;
 	/** Record that `runId` was killed at the user's request (Stop button), so a

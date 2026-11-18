@@ -178,6 +178,9 @@ export function createStructuredLifecycle(
 					runId,
 					startConfig,
 					workspace,
+					...(run.handle.includeRecentUserInputs === false && {
+						includeRecentUserInputs: false,
+					}),
 					writeToRun: (target, text) => {
 						if (target !== runId)
 							return Promise.reject(new Error("Recovery target run mismatch"));

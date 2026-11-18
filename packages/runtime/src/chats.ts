@@ -921,7 +921,9 @@ export class Chats implements StructuredSessionPort {
           }
         }
       }
-      if (!handle.hasContext('hive-context') && record.startupContext) await handle.addContext(record.startupContext);
+      // Old handoff records can contain a workspace-wide recovery excerpt.
+      // Rebuild their coordination context through the current startup policy.
+      if (!record.handoff && !handle.hasContext('hive-context') && record.startupContext) await handle.addContext(record.startupContext);
       if (!handle.hasContext('hive-desktop')) {
         await handle.addContext(toolGuidance, 'hive-desktop');
       }
@@ -1327,6 +1329,7 @@ export class Chats implements StructuredSessionPort {
     return {
       sessionId: chat.handle.sessionId,
       resumed: chat.handle.hasContext('hive-context'),
+      ...(record.handoff && {includeRecentUserInputs: false as const}),
       ...(chat.handle.sessionFile ? { sessionFile: chat.handle.sessionFile } : {}),
       deliver: async (text, options) => {
         let images = promptImages(options?.images);
