@@ -414,6 +414,9 @@ impl HiveApp {
                         }
                     })))
                     .child(div().text_xs().child(tr("新会话使用上方已保存的版本，不使用表单中未保存的修改。")))
+                    .when(profile.driver == "codex", |view| {
+                        view.child(self.render_selected_codex_limits(cx))
+                    })
             })
             .child(div().child(if self.profiles.selected.is_some() {
                 tr("编辑配置")

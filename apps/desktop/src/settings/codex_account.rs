@@ -23,8 +23,14 @@ struct LimitsResult {
     checked_at: String,
     ordinary_usage_allowed: Option<bool>,
     windows: Vec<LimitWindow>,
+    profile: Option<crate::protocol::ProfileRef>,
     #[serde(rename = "source")]
     _source: String,
+}
+#[derive(Clone, Copy)]
+enum LimitsView {
+    ExternalProgram,
+    AgentProfile,
 }
 #[derive(Default)]
 struct LimitsState {
@@ -50,6 +56,54 @@ pub struct CodexAccountCheck {
     loading: bool,
     result: Option<Result<AccountResult, String>>,
     limits: LimitsState,
+    profile_limits: LimitsState,
+}
+impl LimitsView {
+    fn scope(self, app: &HiveApp, cx: &App) -> Result<super::CheckScope, String> {
+        if matches!(self, Self::ExternalProgram) {
+            return app.program_check_scope("codex", cx);
+        }
+        let unavailable = || tr("Agent 配置不可用，请刷新配置后重试。").to_owned();
+        if app.profiles.loading || app.profiles.error.is_some() {
+            return Err(unavailable());
+        }
+        let snapshot = app.profiles.snapshot.as_ref().ok_or_else(unavailable)?;
+        let selected = app.profiles.selected.as_ref().ok_or_else(unavailable)?;
+        let profile = snapshot.profiles.iter().find(|profile| {
+            profile.id == *selected && profile.driver == "codex" && profile.enabled
+                && profile.revisions.iter().any(|revision| revision.revision == profile.current_revision)
+        }).ok_or_else(unavailable)?;
+        Ok(super::CheckScope::Profile {
+            reference: crate::protocol::ProfileRef {
+                id: profile.id.clone(),
+                revision: profile.current_revision,
+            },
+            label: profile.label.clone(),
+            store_version: snapshot.store_version,
+        })
+    }
+
+    fn state(self, check: &CodexAccountCheck) -> &LimitsState {
+        match self {
+            Self::ExternalProgram => &check.limits,
+            Self::AgentProfile => &check.profile_limits,
+        }
+    }
+
+    fn state_mut(self, check: &mut CodexAccountCheck) -> &mut LimitsState {
+        match self {
+            Self::ExternalProgram => &mut check.limits,
+            Self::AgentProfile => &mut check.profile_limits,
+        }
+    }
+}
+impl LimitsResult {
+    fn matches_scope(&self, scope: &super::CheckScope) -> bool {
+        match scope {
+            super::CheckScope::Profile { reference, .. } => self.profile.as_ref() == Some(reference),
+            super::CheckScope::Draft { .. } => self.profile.is_none(),
+        }
+    }
 }
 impl LimitsState {
     fn accepts(&self, id: u64, connection: u64, current_connection: u64, connected: bool) -> bool {
@@ -103,13 +157,10 @@ impl HiveApp {
         let scope = match self.program_check_scope("codex", cx) { Ok(scope) => scope, Err(error) => { self.settings_message = Some(super::SettingsNotice::Error("读取配置失败", error)); cx.notify(); return; } };
         let params = scope.params();
         let id = LIMIT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
-        self.codex_account = CodexAccountCheck {
-            scope: Some(scope.clone()),
-            request_id: id,
-            loading: true,
-            result: None,
-            limits: LimitsState::default(),
-        };
+        self.codex_account.scope = Some(scope.clone());
+        self.codex_account.request_id = id;
+        self.codex_account.loading = true;
+        self.codex_account.result = None;
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -130,17 +181,23 @@ impl HiveApp {
         .detach();
         cx.notify();
     }
-    fn check_codex_limits(&mut self, cx: &mut Context<Self>) {
-        if !self.connected || self.codex_account.limits.loading {
+    fn check_codex_limits(&mut self, view: LimitsView, cx: &mut Context<Self>) {
+        if !self.connected || self.closing {
             return;
         }
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
-        let scope = match self.program_check_scope("codex", cx) { Ok(scope) => scope, Err(error) => { self.settings_message = Some(super::SettingsNotice::Error("读取配置失败", error)); cx.notify(); return; } };
+        let Ok(scope) = view.scope(self, cx) else {
+            return;
+        };
+        let state = view.state_mut(&mut self.codex_account);
+        if state.loading {
+            return;
+        }
         let params = scope.params();
         let id = LIMIT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
-        self.codex_account.limits = LimitsState {
+        *state = LimitsState {
             scope: Some(scope.clone()),
             request_id: id,
             loading: true,
@@ -154,9 +211,16 @@ impl HiveApp {
                     params,
                 )
                 .await
-                .and_then(|value| serde_json::from_value(value).map_err(|error| error.to_string()));
+                .and_then(|value| serde_json::from_value::<LimitsResult>(value).map_err(|error| error.to_string()))
+                .and_then(|result| {
+                    if result.matches_scope(&scope) {
+                        Ok(result)
+                    } else {
+                        Err("Codex quota response did not match the requested executable or profile revision".into())
+                    }
+                });
             let _ = this.update(cx, |this, cx| {
-                if !this.codex_account.limits.accepts(
+                if !view.state(&this.codex_account).accepts(
                     id,
                     connection,
                     this.connection_generation,
@@ -164,18 +228,28 @@ impl HiveApp {
                 ) {
                     return;
                 }
-                let current = this.program_check_scope("codex", cx);
-                this.codex_account.limits.loading = false;
-                if current.as_ref().ok() == Some(&scope) { this.codex_account.limits.result = Some(result); }
+                let current = view.scope(this, cx);
+                let state = view.state_mut(&mut this.codex_account);
+                state.loading = false;
+                if current.as_ref().ok() == Some(&scope) {
+                    state.result = Some(result);
+                }
                 cx.notify();
             });
         })
         .detach();
         cx.notify();
     }
-    fn render_codex_limits(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
-        let state = &self.codex_account.limits;
-        let stale = state.input_changed(&self.program_check_scope("codex", cx));
+    pub(crate) fn render_selected_codex_limits(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        self.render_codex_limits(LimitsView::AgentProfile, cx)
+    }
+
+    fn render_codex_limits(&self, view: LimitsView, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let state = view.state(&self.codex_account);
+        let scope = view.scope(self, cx);
+        let stale = state.input_changed(&scope);
+        let loading = state.loading;
+        let profile_view = matches!(view, LimitsView::AgentProfile);
         v_flex()
             .gap_2()
             .pt_2()
@@ -190,22 +264,29 @@ impl HiveApp {
             .child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr(
                 "账号额度与当前会话的 token 用量不同。此检查不会启动模型；切换账号后请重新读取。",
             )))
+            .when(profile_view, |v| {
+                v.child(crate::text_reading::selectable_text(
+                    "codex-profile-limits-saved-revision",
+                    scope.as_ref().map(super::CheckScope::label).unwrap_or_else(|_| tr("额度读取需要启用的已保存 Codex 配置。").to_owned()),
+                ).text_xs())
+                .child(div().text_xs().child(tr("额度读取使用已保存的版本。")))
+            })
             .child(
                 Button::new("check-codex-limits")
                     .outline()
                     .small()
-                    .label(if state.loading {
+                    .label(if loading {
                         tr("正在读取额度…")
                     } else {
                         tr("读取 Codex 账号额度")
                     })
                     .disabled(
-                        !self.connected
-                            || self.settings_loading
-                            || self.executable_settings.is_none()
-                            || state.loading,
+                        !self.connected || self.closing
+                            || (!profile_view && self.settings_loading)
+                            || scope.is_err()
+                            || loading,
                     )
-                    .on_click(cx.listener(|this, _, _, cx| this.check_codex_limits(cx))),
+                    .on_click(cx.listener(move |this, _, _, cx| this.check_codex_limits(view, cx))),
             )
             .when(!self.connected && state.result.is_some(), |v| {
                 v.child(
@@ -227,7 +308,7 @@ impl HiveApp {
                         .child(tr("配置或输入已更改，请重新读取额度。")),
                 )
             })
-            .when(self.connected && !stale && state.result.is_some(), |v| v.child(div().text_xs().child(state.scope.as_ref().map(|scope| scope.label()).unwrap_or_default())))
+            .when(!profile_view && self.connected && !stale && state.result.is_some(), |v| v.child(div().text_xs().child(state.scope.as_ref().map(|scope| scope.label()).unwrap_or_default())))
             .when(self.connected && !stale, |v| {
                 v.when_some(state.result.as_ref(), |v, result| match result {
                     Err(_) => v.child(
@@ -411,7 +492,7 @@ impl HiveApp {
                 .text_xs()
                 .text_color(Color::Muted.get(cx)),
             )
-            .child(self.render_codex_limits(cx))
+            .child(self.render_codex_limits(LimitsView::ExternalProgram, cx))
             .when_some(state.result.as_ref(), |view, result| {
                 if changed {
                     return view.child(
@@ -552,5 +633,29 @@ mod limits_tests {
         assert!(!state.accepts(9, 2, 2, false));
         assert!(state.input_changed(&Ok(super::super::CheckScope::Draft { command: "codex-b".into(), reference: crate::protocol::ProfileRef { id: "default-codex".into(), revision: 1 }, store_version: 1 })));
         assert!(!state.input_changed(&Ok(super::super::CheckScope::Draft { command: "codex-a".into(), reference: crate::protocol::ProfileRef { id: "default-codex".into(), revision: 1 }, store_version: 1 })));
+    }
+
+    #[test]
+    fn quota_response_matches_only_the_requested_saved_profile_revision() {
+        use super::super::CheckScope;
+        use crate::protocol::ProfileRef;
+
+        let requested = ProfileRef { id: "custom-codex".into(), revision: 2 };
+        let scope = CheckScope::Profile {
+            reference: requested.clone(),
+            label: "Custom Codex".into(),
+            store_version: 4,
+        };
+        let mut result: LimitsResult = serde_json::from_value(serde_json::json!({
+            "status": "ok", "checkedAt": "2026-11-19T00:00:00.000Z",
+            "ordinaryUsageAllowed": null, "windows": [], "source": "profile"
+        })).unwrap();
+        assert!(!result.matches_scope(&scope));
+        result.profile = Some(ProfileRef { id: requested.id.clone(), revision: 1 });
+        assert!(!result.matches_scope(&scope));
+        result.profile = Some(ProfileRef { id: "other-codex".into(), revision: 2 });
+        assert!(!result.matches_scope(&scope));
+        result.profile = Some(requested);
+        assert!(result.matches_scope(&scope));
     }
 }

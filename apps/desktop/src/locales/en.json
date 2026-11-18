@@ -1,4 +1,6 @@
 {
+  "额度读取使用已保存的版本。": "The quota check uses the saved revision.",
+  "额度读取需要启用的已保存 Codex 配置。": "Enable a saved Codex profile to check its quota.",
   "0 个会话": "No conversations",
   "12 小时制": "12-hour",
   "24 小时制": "24-hour",
