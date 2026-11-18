@@ -91,6 +91,7 @@ impl HiveApp {
         self.capture_editor(cx);
         self.schedule_draft_save(cx);
         if self.draft_target != next {
+            let _ = self.voice.cancel();
             self.attachments.scroll.set_offset(point(px(0.), px(0.)));
         }
         self.draft_target = next;

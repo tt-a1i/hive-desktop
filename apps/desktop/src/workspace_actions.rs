@@ -281,6 +281,9 @@ impl HiveApp {
         let removed_key = |key: &str| {
             key == workspace_key || sessions.iter().any(|id| key == format!("session:{id}"))
         };
+        if self.draft_target.as_deref().is_some_and(removed_key) {
+            let _ = self.voice.cancel();
+        }
         self.drafts.retain(|key, _| !removed_key(key));
         self.attachments.drafts.retain(|key, _| !removed_key(key));
         self.attachments.prune();

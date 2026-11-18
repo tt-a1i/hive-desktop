@@ -63,6 +63,7 @@ mod transport;
 mod ui_preview;
 mod usage;
 mod view;
+mod voice_input;
 mod workspace_actions;
 mod welcome;
 
@@ -118,6 +119,7 @@ fn main() {
     }
     #[cfg(target_os = "macos")]
     shell_owner::run_if_requested();
+    voice_input::run_helper_if_requested();
     if let Err(error) = desktop_update::authorize_candidate_startup() {
         eprintln!("{error}");
         std::process::exit(1);

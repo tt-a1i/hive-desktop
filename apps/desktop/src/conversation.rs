@@ -59,6 +59,7 @@ impl HiveApp {
             _ => "queue",
         };
         let was_busy = self.busy.contains(&id);
+        let _ = self.voice.cancel();
         self.busy.insert(id.clone());
         self.inflight_inputs.insert(id.clone(), text.clone());
         self.drafts.remove(&format!("session:{id}"));

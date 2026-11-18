@@ -135,6 +135,7 @@ impl HiveApp {
                         match event {
                             RuntimeEvent::Failed(error) => {
                                 this.connected = false;
+                                let _ = this.voice.cancel();
                                 this.profiles.generation += 1;
                                 this.profiles.loading = false;
                                 this.profiles.snapshot = None;
@@ -183,6 +184,7 @@ impl HiveApp {
             return;
         }
         self.inflight_inputs.clear();
+        let _ = self.voice.cancel();
         window.close_all_dialogs(cx);
         self.connection_generation += 1;
         self.desktop_updates = Default::default();
