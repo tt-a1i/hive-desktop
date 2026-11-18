@@ -1,5 +1,7 @@
 # Codex 原生问题的附件回复
 
+2026-11-19 已补充 [macOS 原生操作、真实 Terra 副本读取和冷恢复验证](2026-11-19-codex-question-attachments-desktop.md)。下文保留 2026-11-15 当时的验证状态。
+
 范围：Codex `item/tool/requestUserInput` 中非 `isSecret` 的问题。普通输入框附件草稿独立保留。其他后端的问题及保密问题不开放附件入口。
 
 Codex 的原生回复仍是 `answers: { questionId: { answers: string[] } }`。当前协议没有图片或文件字段。桌面把用户选择的文件或图片上传为 Hive 私有副本，并把 JSON 编码的副本名称、类型与绝对路径加入对应问题的答案字符串。这些引用明确标为用户数据，图片路径不表示原生图片输入，也不代表模型已经读取附件。没有额外发送普通聊天消息。

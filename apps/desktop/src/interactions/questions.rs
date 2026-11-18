@@ -57,6 +57,9 @@ impl HiveApp {
             )
             .child(
                 div()
+                    .id(("question-text", field))
+                    .role(Role::Label)
+                    .aria_value(question.question.clone())
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(Color::Text.get(cx))
@@ -96,6 +99,7 @@ impl HiveApp {
                             .overflow_hidden()
                             .child(
                                 Button::new(("question-option", field * 1000 + k))
+                                    .accessibility_label(option.label.clone())
                                     .custom(crate::palette::quiet_icon_variant(cx))
                                     .w_full()
                                     .h(px(34.))
@@ -258,6 +262,7 @@ impl HiveApp {
                             .overflow_hidden()
                             .child(
                                 Button::new(("question-other", field))
+                                    .accessibility_label(tr("其他回答"))
                                     .custom(crate::palette::quiet_icon_variant(cx))
                                     .w_full()
                                     .h(px(34.))
@@ -430,7 +435,8 @@ impl HiveApp {
                                 item.id
                             )))
                             .compact()
-                            .label(if english() { "Remove" } else { "移除" })
+                            .label(tr("移除"))
+                            .accessibility_label(format!("{} {}", tr("移除"), item.name))
                             .disabled(disabled || draft.importing)
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {

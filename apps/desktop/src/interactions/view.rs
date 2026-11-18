@@ -32,6 +32,91 @@ fn meta_row(label: &'static str, value: &str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+fn render_attachment_receipt(index: usize, receipt: &serde_json::Value, cx: &App) -> Stateful<Div> {
+    let field = |key| receipt[key].as_str().unwrap_or_default();
+    let label = match (english(), field("status")) {
+        (true, "draft") => "Saved draft",
+        (true, "prepared") => "Prepared; callback outcome unknown",
+        (true, "callback-handed") => "Callback handed off (model read not confirmed)",
+        (false, "draft") => "已保存草稿",
+        (false, "prepared") => "已准备，回调结果未知",
+        (false, "callback-handed") => "已交付回调（尚未确认模型读取）",
+        (true, _) => "Unknown status",
+        _ => "状态未知",
+    };
+    let title = SharedString::from(if english() {
+        format!("Question attachments · {label} · read only")
+    } else {
+        format!("问题附件 · {label} · 只读")
+    });
+    let source = format!(
+        "Session: {} · Interaction: {} · Thread: {} · Turn: {} · Item: {} · Request: {}",
+        field("sessionId"),
+        field("interactionId"),
+        field("threadId"),
+        field("turnId"),
+        field("itemId"),
+        receipt["nativeRequestId"],
+    );
+    v_flex()
+        .id(("question-attachment-receipt", index))
+        .w_full()
+        .p_3()
+        .gap_1()
+        .rounded_lg()
+        .border_1()
+        .border_color(Color::Divider.get(cx))
+        .child(
+            div()
+                .id("receipt-status")
+                .role(Role::Label)
+                .aria_value(title.clone())
+                .text_xs()
+                .text_color(Color::Secondary.get(cx))
+                .child(title),
+        )
+        .child(div().text_xs().text_color(Color::Muted.get(cx)).child(source))
+        .children(receipt["attachments"].as_array().into_iter().flatten().enumerate().map(
+            |(index, entry)| {
+                let name = SharedString::from(format!(
+                    "{}: {}",
+                    entry["questionId"].as_str().unwrap_or_default(),
+                    entry["attachment"]["name"].as_str().unwrap_or_default(),
+                ));
+                div()
+                    .id(("receipt-attachment", index))
+                    .role(Role::Label)
+                    .aria_value(name.clone())
+                    .text_xs()
+                    .text_color(Color::Text.get(cx))
+                    .child(name)
+            },
+        ))
+}
+
+fn draft_visible_on_card(receipt: &serde_json::Value, card: &InteractionCard) -> bool {
+    let raw = &card.raw;
+    let Some(entries) = receipt["attachments"].as_array() else {
+        return false;
+    };
+    raw.backend == "codex"
+        && raw.method == "item/tool/requestUserInput"
+        && raw.state == "pending"
+        && receipt["interactionId"].as_str() == Some(raw.id.as_str())
+        && receipt["threadId"].as_str() == raw.thread_id.as_deref()
+        && receipt["turnId"].as_str() == raw.turn_id.as_deref()
+        && receipt["itemId"].as_str() == raw.item_id.as_deref()
+        && receipt["nativeRequestId"] == raw.native_request_id
+        && entries.iter().all(|entry| {
+            card.questions.iter().any(|draft| {
+                entry["questionId"].as_str() == Some(draft.question.id.as_str())
+                    && draft.attachments.iter().any(|attachment| {
+                        entry["attachment"]["id"].as_str() == Some(attachment.id.as_str())
+                    })
+            })
+        })
+}
+
 impl HiveApp {
     pub fn render_interactions(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let session = self
@@ -45,21 +130,37 @@ impl HiveApp {
             self.workspace.as_deref().unwrap_or_default(),
             session
         );
-        v_flex().w_full().min_w_0().gap_3().when(self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)), |v| v.child(self.render_uncertain_acp(cx))).children(
-            self.interactions.receipts.get(&receipt_key).into_iter().flatten().map(|receipt| {
-                let status = receipt["status"].as_str().unwrap_or("unknown");
-                let label = match (english(), status) { (true, "draft") => "Saved draft", (true, "prepared") => "Prepared; callback outcome unknown", (true, "callback-handed") => "Callback handed off (model read not confirmed)", (false, "draft") => "已保存草稿", (false, "prepared") => "已准备，回调结果未知", (false, "callback-handed") => "已交付回调（尚未确认模型读取）", (true, _) => "Unknown status", _ => "状态未知" };
-                v_flex().w_full().p_3().gap_1().rounded_lg().border_1().border_color(Color::Divider.get(cx)).child(div().text_xs().text_color(Color::Secondary.get(cx)).child(if english() { format!("Question attachments · {label} · read only") } else { format!("问题附件 · {label} · 只读") })).child(div().text_xs().text_color(Color::Muted.get(cx)).child(format!("Session: {} · Interaction: {} · Thread: {} · Turn: {} · Item: {} · Request: {}", receipt["sessionId"].as_str().unwrap_or(""), receipt["interactionId"].as_str().unwrap_or(""), receipt["threadId"].as_str().unwrap_or(""), receipt["turnId"].as_str().unwrap_or(""), receipt["itemId"].as_str().unwrap_or(""), receipt["nativeRequestId"]))).children(receipt["attachments"].as_array().into_iter().flatten().map(|entry| div().text_xs().text_color(Color::Text.get(cx)).child(format!("{}: {}", entry["questionId"].as_str().unwrap_or(""), entry["attachment"]["name"].as_str().unwrap_or("")))))
-            }).map(|element| element.into_any_element())
-        ).children(
-            self.interactions
-                .sessions
-                .get(&session)
-                .into_iter()
-                .flatten()
-                .enumerate()
-                .map(|(i, card)| self.render_interaction_card(i, &session, card, cx)),
-        )
+        let cards = self.interactions.sessions.get(&session);
+        let receipts = self
+            .interactions
+            .receipts
+            .get(&receipt_key)
+            .into_iter()
+            .flatten()
+            .filter(|receipt| {
+                receipt["status"] != "draft"
+                    || (receipt["attachments"].as_array().is_some_and(|files| !files.is_empty())
+                        && !cards
+                            .into_iter()
+                            .flatten()
+                            .any(|card| draft_visible_on_card(receipt, card)))
+            });
+        v_flex()
+            .w_full()
+            .min_w_0()
+            .gap_3()
+            .when(
+                self.session
+                    .as_ref()
+                    .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)),
+                |v| v.child(self.render_uncertain_acp(cx)),
+            )
+            .children(receipts.enumerate().map(|(index, receipt)| {
+                render_attachment_receipt(index, receipt, cx)
+            }))
+            .children(cards.into_iter().flatten().enumerate().map(|(i, card)| {
+                self.render_interaction_card(i, &session, card, cx)
+            }))
     }
     fn render_interaction_card(
         &self,
