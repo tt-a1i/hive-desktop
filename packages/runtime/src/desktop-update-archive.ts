@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { openPromise } from 'yauzl';
-import { desktopPackagePaths, hashDesktopFile } from './desktop-update-installer.js';
+import { desktopPackagePaths, hashDesktopFile, verifyMacDesktopSignature } from './desktop-update-installer.js';
 export { desktopPackagePaths, hashDesktopFile } from './desktop-update-installer.js';
 
 const maxEntries = 100_000;
@@ -111,17 +111,26 @@ export async function verifyDesktopPackage(root: string, expectedVersion: string
   }
   if ((await lstat(identityPath)).size > 4096) throw new Error('Invalid desktop update identity');
   const identity = JSON.parse(await readFile(identityPath, 'utf8'));
-  if (identity?.schemaVersion !== 1 || identity.app !== 'com.hive.desktop.dev' || identity.version !== expectedVersion
-    || identity.platform !== process.platform || identity.arch !== process.arch
-    || identity.executableSha256 !== await hashDesktopFile(paths.executable, signal)) {
+  const macSignature = identity?.schemaVersion === 2 && process.platform === 'darwin';
+  if (identity?.app !== 'com.hive.desktop.dev' || identity.version !== expectedVersion
+    || identity.platform !== process.platform || identity.arch !== process.arch || (!macSignature && identity.schemaVersion !== 1)) {
+    throw new Error('Desktop update package identity does not match the selected release');
+  }
+  if (macSignature) await verifyMacDesktopSignature(root, signal);
+  const executableSha256 = await hashDesktopFile(paths.executable, signal);
+  if (!macSignature && identity.executableSha256 !== executableSha256) {
     throw new Error('Desktop update package identity does not match the selected release');
   }
   let files = 0;
+  const signatureDirectory = join(root, 'Contents/_CodeSignature');
   async function count(path: string): Promise<void> {
     signal.throwIfAborted();
     for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (entry.isDirectory()) await count(join(path, entry.name));
-      else files++;
+      const child = join(path, entry.name);
+      // The signature is added after the file count is sealed into the app.
+      if (entry.isDirectory()) {
+        if (!macSignature || child !== signatureDirectory) await count(child);
+      } else files++;
     }
   }
   await count(root);
@@ -139,5 +148,5 @@ export async function verifyDesktopPackage(root: string, expectedVersion: string
       throw new Error('macOS application metadata does not match the selected release');
     }
   }
-  return { executableSha256: identity.executableSha256 as string, installerProtocol: identity.installerProtocol as unknown };
+  return { executableSha256, installerProtocol: identity.installerProtocol as unknown, macSignature };
 }

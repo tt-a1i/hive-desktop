@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { createReadStream } from 'node:fs';
@@ -7,6 +7,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 export type DesktopInstallPlan = {
   installation: string;
@@ -15,6 +16,8 @@ export type DesktopInstallPlan = {
   toVersion: string;
   oldExecutableSha256: string;
   newExecutableSha256: string;
+  oldMacSignature?: true;
+  newMacSignature?: true;
 };
 
 type Journal = {
@@ -46,6 +49,17 @@ export async function hashDesktopFile(path: string, signal?: AbortSignal): Promi
   return hash.digest('hex');
 }
 
+export async function verifyMacDesktopSignature(root: string, signal?: AbortSignal) {
+  try {
+    await promisify(execFile)('/usr/bin/codesign', [
+      '--verify', '--deep', '--strict', '-R=identifier "com.hive.desktop.dev"', root,
+    ], { timeout: 30_000, signal });
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw new Error('macOS desktop update code signature verification failed', { cause: error });
+  }
+}
+
 function isLive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch (error) {
@@ -73,11 +87,12 @@ async function atomicJson(path: string, value: unknown) {
   } finally { await rm(temporary, { force: true }); }
 }
 
-async function checkExecutable(root: string, expected: string) {
+async function checkExecutable(root: string, expected: string, macSignature?: true) {
   const { executable } = desktopPackagePaths(root);
   if (!(await lstat(executable)).isFile() || await realpath(executable) !== executable || await hashDesktopFile(executable) !== expected) {
     throw new Error('Desktop executable changed before installation');
   }
+  if (macSignature) await verifyMacDesktopSignature(root);
 }
 
 async function exists(path: string) {
@@ -166,6 +181,10 @@ async function transactionPaths(plan: DesktopInstallPlan, transaction: string) {
     || !/^[a-f0-9]{64}$/.test(plan.oldExecutableSha256) || !/^[a-f0-9]{64}$/.test(plan.newExecutableSha256)) {
     throw new Error('Desktop update transaction must be beside the installation');
   }
+  if ([plan.oldMacSignature, plan.newMacSignature].some(value => value !== undefined && (value !== true || process.platform !== 'darwin'))
+    || (plan.oldMacSignature && !plan.newMacSignature)) {
+    throw new Error('Invalid desktop update signature policy');
+  }
   return {
     next: join(transaction, 'next'),
     previous: join(transaction, 'previous'),
@@ -210,8 +229,8 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
   const record = (state: Journal['state'], error?: string) =>
     atomicJson(journal, { state, fromVersion, toVersion, candidatePid: candidate?.pid, error } satisfies Journal);
   try {
-    await checkExecutable(installation, plan.oldExecutableSha256);
-    await checkExecutable(next, plan.newExecutableSha256);
+    await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
+    await checkExecutable(next, plan.newExecutableSha256, plan.newMacSignature);
     await record('replacing');
     await move(installation, previous);
     movedOld = true;
@@ -239,7 +258,7 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
       if (movedNew) await move(installation, next);
       if (movedOld) await move(previous, installation);
       // Before replacement, launch only the verified original and never an unexpected occupant.
-      await checkExecutable(installation, plan.oldExecutableSha256);
+      await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
       await atomicJson(receipt, { state: movedOld ? 'rolledBack' : 'failed', version: fromVersion, requestedVersion: toVersion, error: message });
       await record(movedOld ? 'rolledBack' : 'failed', message);
       const original = launch(installation, dataDirectory);
@@ -272,7 +291,7 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
       throw new Error('Invalid desktop update journal');
     }
     if (state.state === 'rolledBack' || state.state === 'failed') {
-      await checkExecutable(installation, plan.oldExecutableSha256);
+      await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
       return 'The original installation is already available.';
     }
 
@@ -283,7 +302,7 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
       },
     );
     if (state.state === 'installed' || (candidateReady && await exists(previous) && !await exists(next))) {
-      await checkExecutable(installation, plan.newExecutableSha256);
+      await checkExecutable(installation, plan.newExecutableSha256, plan.newMacSignature);
       await atomicJson(journal, { ...state, state: 'installed', error: undefined });
       await atomicJson(receipt, { state: 'installed', version: toVersion, requestedVersion: toVersion });
       await rm(previous, { recursive: true, force: true }).catch(() => {});
@@ -294,7 +313,7 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
     }
 
     if (await exists(previous)) {
-      await checkExecutable(previous, plan.oldExecutableSha256);
+      await checkExecutable(previous, plan.oldExecutableSha256, plan.oldMacSignature);
       if (await exists(installation)) {
         if (await exists(next)) throw new Error('Unexpected package layout. Recovery kept both installations untouched.');
         await checkExecutable(installation, plan.newExecutableSha256);
@@ -302,7 +321,7 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
       }
       await move(previous, installation);
     }
-    await checkExecutable(installation, plan.oldExecutableSha256);
+    await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
     const message = 'Desktop installation was interrupted.';
     await atomicJson(receipt, { state: 'rolledBack', version: fromVersion, requestedVersion: toVersion, error: message });
     await atomicJson(journal, { ...state, state: 'rolledBack', error: message });

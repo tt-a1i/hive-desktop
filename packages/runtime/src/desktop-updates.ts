@@ -278,12 +278,17 @@ export class DesktopUpdates {
       const prepared = await this.preparePackage(expectedVersion, sha256, dirname(installation));
       try {
         if (prepared.identity.installerProtocol !== 2) throw new Error('This update does not support recoverable installation');
+        if (currentIdentity.macSignature && !prepared.identity.macSignature) {
+          throw new Error('A signed macOS desktop requires a code-signed update');
+        }
         const next = join(prepared.directory, 'next');
         await rename(prepared.packageRoot, next);
         const plan: DesktopInstallPlan = {
           installation, dataDirectory, fromVersion: policy.installedVersion, toVersion: expectedVersion,
           oldExecutableSha256: currentIdentity.executableSha256,
           newExecutableSha256: prepared.identity.executableSha256,
+          ...(currentIdentity.macSignature && {oldMacSignature: true}),
+          ...(prepared.identity.macSignature && {newMacSignature: true}),
         };
         const executable = join(prepared.directory, process.platform === 'win32' ? 'node.exe' : 'node');
         const program = join(prepared.directory, 'installer.mjs');

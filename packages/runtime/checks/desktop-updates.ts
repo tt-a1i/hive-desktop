@@ -3,14 +3,15 @@ import { execFile, execFileSync } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { once } from 'node:events';
 import { constants } from 'node:fs';
-import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { DesktopUpdates } from '../src/desktop-updates.js';
-import { desktopPackagePaths } from '../src/desktop-update-archive.js';
+import { desktopPackagePaths, hashDesktopFile } from '../src/desktop-update-archive.js';
+import { installDesktopUpdate } from '../src/desktop-update-installer.js';
 
 if (!['darwin', 'win32'].includes(process.platform)) {
   console.log('Desktop staging requires a supported package target');
@@ -188,6 +189,89 @@ try {
   `);
   await promisify(execFile)(installed.node, [runOwnershipCheck], { timeout: 25000, windowsHide: true });
 
+  if (mac) {
+    const sealed = join(root, 'signed-fixture', 'Hive Desktop.app');
+    await mkdir(dirname(sealed));
+    await cp(packageRoot, sealed, { recursive: true });
+    const seal = async (bundle: string, version: string, files: number) => {
+      const paths = desktopPackagePaths(bundle);
+      await copyFile('/usr/bin/true', paths.executable);
+      await writeFile(join(paths.resources, 'desktop-update-identity.json'), JSON.stringify({
+        schemaVersion: 2, app: 'com.hive.desktop.dev', version, platform: process.platform,
+        arch: process.arch, files, installerProtocol: 2,
+      }));
+      execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', bundle]);
+    };
+    const stageSealed = async (name: string) => {
+      const archive = join(root, name);
+      execFileSync('/usr/bin/zip', ['-q', '-y', '-r', archive, 'Hive Desktop.app'], { cwd: dirname(sealed) });
+      const bytes = await readFile(archive);
+      const hash = createHash('sha256').update(bytes).digest('hex');
+      manifest = envelope('0.1.3', [{ ...signedAsset, bytes: bytes.length, sha256: hash }]);
+      serve = response => response.end(bytes);
+      await updates.stage('0.1.3', hash);
+      return hash;
+    };
+    await seal(sealed, '0.1.3', 5);
+    const sealedHash = await stageSealed('signed.zip');
+    const sealedPackage = await updates.prepare('0.1.3', sealedHash);
+    const verifiedExecutable = await hashDesktopFile(desktopPackagePaths(sealed).executable);
+    assert.equal(await hashDesktopFile(desktopPackagePaths(sealedPackage.packageRoot).executable), verifiedExecutable);
+    await rm(sealedPackage.directory, { recursive: true, force: true });
+
+    // Even a valid channel attestation cannot substitute for a valid macOS
+    // seal when the package uses the signed identity format.
+    const sealedRuntime = desktopPackagePaths(sealed).runtime;
+    const changed = await readFile(sealedRuntime);
+    changed[0] = changed[0]! ^ 1;
+    await writeFile(sealedRuntime, changed);
+    const alteredHash = await stageSealed('signed-altered.zip');
+    await assert.rejects(updates.prepare('0.1.3', alteredHash), /code signature verification failed/);
+
+    const preflight = join(root, 'signed-installer-preflight.mjs');
+    await writeFile(preflight, `
+      import assert from 'node:assert/strict';
+      import {readFile} from 'node:fs/promises';
+      import {dirname,join} from 'node:path';
+      import {DesktopUpdates} from ${JSON.stringify(updateModule.href)};
+      const updates = new DesktopUpdates(${JSON.stringify(root)}, new URL(${JSON.stringify(pathToFileURL(installedPolicy).href)}));
+      const signedSource = process.argv.includes('--signed-source');
+      if (signedSource) {
+        await assert.rejects(updates.prepareInstaller('0.1.3', ${JSON.stringify(zippedHash)}), /requires a code-signed update/);
+      }
+      const installer = await updates.prepareInstaller('0.1.3', ${JSON.stringify(sealedHash)});
+      const directory = dirname(installer.program);
+      const plan = JSON.parse(await readFile(join(directory, 'install-plan.json'), 'utf8'));
+      assert.equal(plan.oldMacSignature, signedSource ? true : undefined);
+      assert.equal(plan.newMacSignature, true);
+      if (signedSource) {
+        await updates.close(installer.id);
+        console.log(directory);
+      } else {
+        await updates.close();
+      }
+    `);
+    await promisify(execFile)(installed.node, [preflight], { timeout: 25000 });
+    await seal(installation, '0.1.0', 6);
+    const { stdout } = await promisify(execFile)(installed.node, [preflight, '--signed-source'], { timeout: 25000 });
+    const transaction = stdout.trim();
+    const plan = JSON.parse(await readFile(join(transaction, 'install-plan.json'), 'utf8'));
+    assert.equal(plan.oldMacSignature, true);
+    assert.equal(plan.newMacSignature, true);
+    assert.equal(plan.newExecutableSha256, verifiedExecutable);
+    const postPreparation = desktopPackagePaths(join(transaction, 'next'));
+    await writeFile(postPreparation.runtime, changed);
+    assert.equal(await hashDesktopFile(postPreparation.executable), verifiedExecutable);
+    await installDesktopUpdate(plan, transaction);
+    const result = JSON.parse(await readFile(join(staging, 'install-result.json'), 'utf8'));
+    assert.equal(result.state, 'failed');
+    assert.match(result.error, /code signature verification failed/);
+    assert.equal(await hashDesktopFile(installed.executable), plan.oldExecutableSha256);
+    assert.deepEqual(await readFile(installed.runtime), await readFile(paths.runtime));
+    console.log('MAC_SIGNED_UPDATE_OK: signed archive, sealed resources, legacy transition, signed-only continuation, installer recheck.');
+  }
+
+  serve = response => response.end(zippedBytes);
   const original = await readFile(join(staging, `${zippedHash}.zip`));
   try {
     const tampered = Buffer.from(original);

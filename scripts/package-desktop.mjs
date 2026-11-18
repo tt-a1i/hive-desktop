@@ -13,10 +13,12 @@ const executable = arg('--executable');
 const runtime = arg('--runtime');
 const updateChannel = arg('--update-channel');
 const updateArchive = arg('--update-archive');
+const macSign = arg('--mac-sign');
 if (!runtime || runtime.startsWith('--')) throw new Error('Pass --runtime PATH to a production-deployed runtime');
 if (!executable || executable.startsWith('--')) throw new Error('Pass --executable PATH to a native build for this host');
 if (process.argv.includes('--update-channel') && (!updateChannel || updateChannel.startsWith('--'))) throw new Error('Pass --update-channel PATH to an update channel file');
 if (process.argv.includes('--update-archive') && (!updateChannel || !updateArchive || !/\.zip$/i.test(updateArchive))) throw new Error('Pass --update-channel and --update-archive PATH.zip together');
+if (process.argv.includes('--mac-sign') && (process.platform !== 'darwin' || !macSign || macSign.startsWith('--'))) throw new Error('On macOS, pass --mac-sign IDENTITY (use - for ad hoc signing)');
 if (!['darwin', 'win32'].includes(process.platform) || !['arm64', 'x64'].includes(process.arch)) throw new Error('Packaging supports native macOS or Windows arm64/x64 hosts only');
 const output = resolve(arg('--output') ?? join(root, '.artifacts', `portable-${process.platform}-${process.arch}`));
 if (output === root || root.startsWith(output + '/') || output === resolve('/')) throw new Error('Refusing unsafe output path');
@@ -69,9 +71,15 @@ try {
     const identity = JSON.parse(probe.stdout);
     if (identity.schemaVersion !== 1 || identity.app !== 'com.hive.desktop.dev' || identity.version !== metadata.version
       || identity.platform !== process.platform || identity.arch !== process.arch) throw new Error('Native update identity does not match package version or target');
-    const executableHash = createHash('sha256');
-    for await (const chunk of createReadStream(bin)) executableHash.update(chunk);
-    updateIdentity = {...identity, executableSha256: executableHash.digest('hex')};
+    if (macSign) {
+      // The outer signature covers this manifest and changes the executable
+      // bytes. The updater records the executable digest after verification.
+      updateIdentity = {...identity, schemaVersion: 2};
+    } else {
+      const executableHash = createHash('sha256');
+      for await (const chunk of createReadStream(bin)) executableHash.update(chunk);
+      updateIdentity = {...identity, executableSha256: executableHash.digest('hex')};
+    }
     await writeFile(join(resources, 'desktop-update-channel.json'), JSON.stringify({schemaVersion: 1, feedUrl, publicKey, installedVersion: metadata.version}));
   }
   if (process.platform === 'darwin') {
@@ -112,6 +120,11 @@ try {
   await checkLinks(output);
   if (updateIdentity) {
     await writeFile(join(resources, 'desktop-update-identity.json'), JSON.stringify({...updateIdentity, files: files + 1}));
+  }
+  if (macSign) {
+    const bundle = dirname(app);
+    run('/usr/bin/codesign', ['--force', '--sign', macSign, bundle]);
+    run('/usr/bin/codesign', ['--verify', '--deep', '--strict', '-R=identifier "com.hive.desktop.dev"', bundle]);
   }
   if (updateArchive) {
     const destination = resolve(updateArchive);
