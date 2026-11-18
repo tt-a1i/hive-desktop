@@ -6,6 +6,8 @@
 | --- | --- |
 | 历史页属于固定的序号和摘要，按游标读取，每次最多 256 条。单独的大字段可以按字节窗口请求，有界传输支持取消。 [历史游标](https://github.com/apache/maka/blob/158d79f514dbd5bb6be89b668a5cfb81e5b3a2a2/plugins/agent/state/src/session_history/sql.rs#L247) · [有界读取](https://github.com/apache/maka/blob/158d79f514dbd5bb6be89b668a5cfb81e5b3a2a2/plugins/agent/native/src/service/history/stream.rs#L239) | 先让运行中的跨 Agent 接续刷新跳过历史投影和传输，并在切换会话时释放旧界面容器。后续为长历史做分页时，复用 Hive 的原生消息 ID，保留跨会话搜索定位、已读位置及恢复正确性。 |
 | 临时后台以所有者和客户端活动约束生命周期。系统测试覆盖所有者退出、主动释放后空闲、桌面退出和后台接替。 [后台生命周期](https://github.com/apache/maka/blob/158d79f514dbd5bb6be89b668a5cfb81e5b3a2a2/products/maka/cli/src/candidate.rs#L77) · [进程级验收](https://github.com/apache/maka/blob/158d79f514dbd5bb6be89b668a5cfb81e5b3a2a2/products/maka/cli/tests/integration/candidate.rs#L37) | 后续测试区分界面离开、仍有排队或协作工作以及应用退出。是否释放后台会话必须由 Hive 的运行、队列和交付状态决定。 |
+| 正文查找先读取一批记录的位置和大小，再逐条读取正文。游标记录已经查过的位置，停止信号在相邻记录之间检查。[搜索实现](https://github.com/apache/maka/blob/158d79f514dbd5bb6be89b668a5cfb81e5b3a2a2/plugins/agent/state/src/recall/find.rs#L153) | Hive 已限制一次搜索并行读取的会话数量。下一步可以在单会话内逐条处理正文，避免图片和原生字段随匹配文本一起留在内存中。仍需检查全部可用记录并明确报告不完整的来源。 |
+| 后台空闲退出先暂停接受新连接，再请运行所有者检查初始化、执行任务和原生调用。若仍有工作则恢复接入。[进程驻留](https://github.com/apache/maka/blob/158d79f514dbd5bb6be89b668a5cfb81e5b3a2a2/platform/host-runtime/src/application/host/lifecycle.rs#L108) · [运行所有者的空闲判断](https://github.com/apache/maka/blob/158d79f514dbd5bb6be89b668a5cfb81e5b3a2a2/platform/host-runtime/src/application/owner.rs#L562) | Hive 已验证冷启动时被动查看 ACP 汇报可以只读取历史，不启动适配器。若为已启动的成员增加自动休眠，须先覆盖派单入队与休眠并发、自动唤醒和未送达汇报。[ACP 窗口验收](../validation/2026-11-19-native-acp-collaboration.md) |
 
 `chat.open` 的桌面状态刷新可跳过活动会话的历史正文、消息 ID 和流式消息快照。正常打开仍接收完整历史。被动或只读会话保留原有磁盘读取及历史完整性检查。Rust 切换会话时释放聊天列表、待处理事件、工具输入和交付状态的旧容量，草稿及持久化会话照常恢复。
 

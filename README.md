@@ -4,7 +4,9 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
-2026-11-19 本地开发与验收继续。默认内置 Pi 已接入 [1Password 引用](docs/validation/2026-11-19-pi-vault.md)，macOS 验证了原生操作及包内回环请求。同一已有账号的两套固定 Codex Terra 配置已通过真实派单、汇报和冷恢复。此前 Native Codex 与官方 ACP 也已在后台通过单账号真实协作。原生窗口和 Windows 的真实模型链路仍需分别验收。[配置与 ACP 验收](docs/validation/2026-11-15-agent-profiles-acp.md)
+2026-11-19 本地开发与验收继续。macOS 优化包已从原生窗口跑通 Codex 主控与官方 Codex ACP 成员的真实派单、文件汇报和冷恢复。两端用同一个已有账号和各自固定的 GPT-6.1 Terra 配置。Windows 当前版本完成 MSVC 交叉检查，原生窗口的真实模型流程仍待验收。[原生协作验收](docs/validation/2026-11-19-native-acp-collaboration.md)
+
+默认内置 Pi 已接入 1Password 引用，macOS 已验证原生操作及包内回环请求。同一已有账号的两套固定原生 Codex Terra 配置也已通过真实派单、汇报和冷恢复。[1Password 验收](docs/validation/2026-11-19-pi-vault.md) · [配置与 ACP 验收](docs/validation/2026-11-15-agent-profiles-acp.md)
 
 早期 PR #46 已合并到 `main`。目前的功能完成分支继续在本地推进，本轮没有发布。[PR #46](https://github.com/tt-a1i/hive-desktop/pull/46)
 
