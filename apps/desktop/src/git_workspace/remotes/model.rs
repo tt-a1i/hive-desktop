@@ -156,6 +156,7 @@ pub(super) struct PullRequest {
     pub head_ref_name: String,
     pub base_ref_name: String,
     pub head_ref_oid: String,
+    pub is_draft: bool,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

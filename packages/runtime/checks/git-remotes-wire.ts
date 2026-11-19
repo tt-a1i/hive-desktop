@@ -90,8 +90,9 @@ try {
  peerState.remoteOid = sessionHead; await savePeer(); prPreview = await rpc('git.pr.preview', prTarget); assert.equal(prPreview.ok, true); assert.equal(prPreview.preview.pushed, true);
  const created = await rpc('git.pr.create', {...prTarget, expectedVersion: prPreview.preview.version, title, body, draft: true}); assert.equal(created.ok, true); assert.equal(created.applied, true); assert.equal(created.operation, 'create'); assert.equal(created.url, 'https://github.com/fixture-owner/fixture-repo/pull/17');
  await readPeer(); assert.equal(peerState.body, body); assert.equal(peerState.title, title); assert.equal(await exists(peerState.bodyFile), false);
- prPreview = await rpc('git.pr.preview', prTarget); assert.equal(prPreview.preview.existing[0].number, 17);
+ prPreview = await rpc('git.pr.preview', prTarget); assert.equal(prPreview.preview.existing[0].number, 17); assert.equal(prPreview.preview.existing[0].isDraft, true);
  const updated = await rpc('git.pr.update', {...prTarget, expectedVersion: prPreview.preview.version, number: 17, title: 'Updated wire title', body: 'Updated\nmultiline body\n'}); assert.equal(updated.ok, true); assert.equal(updated.applied, true); assert.equal(updated.operation, 'update');
+ await readPeer(); assert.equal(peerState.isDraft, true);
  const badUpdate = await rpc('git.pr.update', {...prTarget, expectedVersion: 'invalid', number: 17, title, body}); assert.equal(badUpdate.ok, false); assert.equal(badUpdate.applied, false); assert.equal(badUpdate.operation, 'update');
  await readPeer(); peerState.mode = 'auth-failure'; await savePeer(); const denied = await rpc('git.pr.preview', prTarget); assert.equal(denied.ok, false); assert.ok(denied.error.message.includes('HTTP 401')); for (const secret of ['wire-private-token', 'wire-private-query', 'wire-private', 'tail-secret']) assert.ok(!JSON.stringify(denied).includes(secret));
  peerState.mode = 'partial'; peerState.exists = false; await savePeer(); prPreview = await rpc('git.pr.preview', prTarget);

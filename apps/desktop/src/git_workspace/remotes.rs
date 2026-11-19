@@ -567,6 +567,14 @@ impl Render for RemotePanel {
                 .border_1()
                 .border_color(Color::Divider.get(cx))
         };
+        let status = |id: &'static str, message: String| {
+            div()
+                .id(id)
+                .role(Role::Status)
+                .aria_label(message.clone())
+                .text_xs()
+                .child(message)
+        };
         v_flex().flex_shrink_0().min_w_0().gap_3()
             .child(
                 div()
@@ -574,10 +582,10 @@ impl Render for RemotePanel {
                     .text_color(Color::Secondary.get(cx))
                     .child(tr("远端列表只读取本地配置。只有点击联网预览、确认推送或确认 PR 写入才会访问网络。")),
             )
-            .when(!current,|view|view.child(div().id("remote-context-changed").role(Role::Status).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_xs().text_color(Color::Error.get(cx)).child(tr("项目、会话或后台连接已变化；旧预览不能再使用，请关闭后重新打开。"))))
-            .when(self.busy,|view|view.child(div().id("remote-busy").role(Role::Status).p_2().rounded_lg().bg(Color::Inset.get(cx)).text_xs().text_color(Color::Secondary.get(cx)).child(if self.writing{tr("正在执行远端写操作，请等待结果，勿重复提交。")}else{tr("正在读取预览，请等待…")})))
-            .when(self.uncertain,|view|view.child(div().id("remote-outcome-uncertain").role(Role::Status).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_xs().text_color(Color::Error.get(cx)).child(tr("操作结果需要核对。请检查远端或 GitHub；保留的预览仅供检查，重新预览后才可再次提交。"))))
-            .when_some(self.error.as_ref(),|view,error|view.child(div().id("remote-error").role(Role::Status).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_xs().text_color(Color::Error.get(cx)).child(fault(error))))
+            .when(!current,|view|view.child(status("remote-context-changed", tr("项目、会话或后台连接已变化；旧预览不能再使用，请关闭后重新打开。").into()).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_color(Color::Error.get(cx))))
+            .when(self.busy,|view|view.child(status("remote-busy", if self.writing {tr("正在执行远端写操作，请等待结果，勿重复提交。")} else {tr("正在读取预览，请等待…")}.into()).p_2().rounded_lg().bg(Color::Inset.get(cx)).text_color(Color::Secondary.get(cx))))
+            .when(self.uncertain,|view|view.child(status("remote-outcome-uncertain", tr("操作结果需要核对。请检查远端或 GitHub；保留的预览仅供检查，重新预览后才可再次提交。").into()).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_color(Color::Error.get(cx))))
+            .when_some(self.error.as_ref(),|view,error|view.child(status("remote-error", fault(error)).p_2p5().rounded_lg().bg(Color::ErrorSurface.get(cx)).text_color(Color::Error.get(cx))))
             .child(
                 panel_card(cx)
                     .child(
@@ -605,20 +613,20 @@ impl Render for RemotePanel {
                         .child(crate::text_reading::selectable_text("git-push-review",format!("{}\nremote: {}\nURL: {}\nbranch: {}\nHEAD: {}\nremote OID: {}\n{}: {}",preview.workspace.description(),preview.remote,preview.remote_url,preview.branch,preview.head_oid,oid(&preview.remote_oid),tr("推送关系"),preview.relation.label())).text_xs().text_color(Color::Secondary.get(cx)))
                         .child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("原生 Git hooks 可能执行；原生 tracking refs 可能更新。不会自动 fetch、提交或设置 upstream。")))
                         .child(div().text_xs().text_color(Color::Muted.get(cx)).child(format!("{}: {} · {}",tr("已列出提交数"),preview.commits.len(),if preview.commits_complete{tr("提交列表完整")}else{tr("提交列表不完整")})))
-                        .when(!preview.commits_complete||!preview.warnings.is_empty(),|view|view.child(div().id("push-incomplete").role(Role::Status).text_xs().text_color(Color::Error.get(cx)).child(format!("{}\n{}",tr("提交列表不完整；请核对预览限制。"),preview.warnings.join("\n")))))
+                        .when(!preview.commits_complete||!preview.warnings.is_empty(),|view|view.child(status("push-incomplete", format!("{}\n{}",tr("提交列表不完整；请核对预览限制。"),preview.warnings.join("\n"))).text_color(Color::Error.get(cx))))
                         .when(!commits.is_empty(),|view|view.child(crate::text_reading::region("push-commits".into(),tr("预计推送提交").to_owned(),&self.commits_scroll,px(160.),cx).child(crate::text_reading::selectable_text("push-commits-text",commits))))
                         .when(!preview.allowed(),|view|view.child(div().text_xs().text_color(Color::Error.get(cx)).child(tr("此预览不允许推送。分叉或缺少远端历史时，请先用原生 Git fetch 并自行处理，再重新预览；不会提供强制推送。"))))
                         .when(!push_fresh,|view|view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("预览已失效；请重新联网预览后再确认。"))))
                         .child(Button::new("confirm-git-push").primary().h(px(30.)).rounded_lg().label(tr("确认推送预览中的固定提交")).disabled(!enabled||!push_fresh||!preview.allowed()).on_click(cx.listener(|this,_,_,cx|this.push(cx))))})
                     .when_some(self.push_result.as_ref(), |view, outcome| {
-                        let status = if outcome.result.pushed == false {
+                        let summary = if outcome.result.pushed == false {
                             tr("推送未执行，请核对错误并重新预览。")
                         } else if outcome.context_valid && outcome.result.confirmed(&outcome.expected_oid) {
                             tr("推送已确认")
                         } else {
                             tr("推送结果未确认，请检查远端。")
                         };
-                        view.child(div().id("git-push-outcome").role(Role::Status).aria_label(status).p_2p5().rounded_lg().bg(Color::Inset.get(cx)).text_xs().child(format!("{status}\nHEAD: {}\nremote OID: {}{}", outcome.result.head_oid, oid(&outcome.result.remote_oid), outcome.result.error.as_ref().map(|error|format!("\n{}",fault(error))).unwrap_or_default())))
+                        view.child(status("git-push-outcome", format!("{summary}\nHEAD: {}\nremote OID: {}{}", outcome.result.head_oid, oid(&outcome.result.remote_oid), outcome.result.error.as_ref().map(|error|format!("\n{}",fault(error))).unwrap_or_default())).p_2p5().rounded_lg().bg(Color::Inset.get(cx)))
                     }),
             )
             .child(
@@ -640,14 +648,14 @@ impl Render for RemotePanel {
                         .when(!preview.pushed,|view|view.child(div().text_xs().text_color(Color::Error.get(cx)).child(tr("当前固定提交尚未推送到所选 head 分支，不能创建或更新 PR。"))))
                         .when(!preview.allowed(),|view|view.child(div().text_xs().text_color(Color::Error.get(cx)).child(tr("PR 预览不满足同仓库、唯一 PR 或 head 提交验证要求；请先核对 GitHub。"))))
                         .children(preview.existing.iter().map(|pr|{let url=verified_pr_url(&pr.url,&preview.repository,pr.number);let title=pr.title.clone();let body=pr.body.clone();v_flex().gap_1().p_2().rounded_lg().bg(Color::Inset.get(cx))
-                            .child(crate::text_reading::selectable_text("existing-pr",format!("PR #{} · {}\n{}\n{}",pr.number,pr.url,pr.title,pr.body)).text_xs())
+                            .child(crate::text_reading::selectable_text("existing-pr",format!("PR #{} · {} · {}\n{}\n{}",pr.number,if pr.is_draft {tr("草稿 PR")} else {tr("可审阅 PR")},pr.url,pr.title,pr.body)).text_xs())
                             .child(Button::new("open-existing-pr").outline().xsmall().label(tr("打开已验证的 PR 地址")).disabled(url.is_none()).on_click(move|_,_,cx|{if let Some(url)=&url{cx.open_url(url);}}))
                             .child(Button::new("load-existing-pr-text").outline().xsmall().label(tr("用此 PR 内容填写表单（需重新预览）")).disabled(!enabled).on_click(cx.listener(move|this,_,window,cx|{this.title.update(cx,|input,cx|input.set_value(title.clone(),window,cx));this.body.update(cx,|input,cx|input.set_value(body.clone(),window,cx));this.invalidate(cx);}))) }))
                         .child(crate::text_reading::region("pr-write-review".into(),tr("将提交的 PR 完整内容").to_owned(),&self.review_scroll,px(220.),cx).child(crate::text_reading::selectable_text("pr-write-review-text",format!("{}\n{}: {}\n\n{}",if preview.existing.is_empty(){if review.draft{tr("创建草稿 PR")}else{tr("创建可审阅 PR")}.to_owned()}else{tr("更新保留现有 PR 的草稿状态，不提交 draft 字段。").to_owned()},tr("PR 标题"),review.title,review.body))))
                         .when(!pr_fresh,|view|view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("预览已失效；请重新联网预览后再确认。"))))
                         .child(Button::new("confirm-github-pr").primary().h(px(30.)).rounded_lg().label(if preview.existing.is_empty(){tr("确认创建预览中的 PR")}else{tr("确认更新此编号的 PR")}).disabled(!enabled||!pr_fresh||!preview.allowed()||!valid_pr_text(&review.title,&review.body)).on_click(cx.listener(|this,_,_,cx|this.write_pr(cx))))})
                     .when_some(self.pr_result.as_ref(),|view,outcome|{let url=outcome.result.url.as_ref().zip(outcome.result.number).filter(|(_,number)|outcome.expected_number.is_none_or(|expected|expected==*number)).and_then(|(url,number)|verified_pr_url(url,&outcome.repository,number));let confirmed=outcome.context_valid&&outcome.result.confirmed(&outcome.repository,outcome.operation,outcome.expected_number);view
-                        .child(div().id("github-pr-outcome").role(Role::Status).p_2p5().rounded_lg().bg(Color::Inset.get(cx)).text_xs().child(format!("{} · {} · #{}{}",if outcome.result.applied==false{tr("PR 写入未执行，请核对错误并重新预览。")}else if confirmed{tr("PR 写入已确认")}else{tr("PR 写入结果未确认，请核对 GitHub。")},outcome.result.operation,outcome.result.number.map(|number|number.to_string()).unwrap_or_else(||"—".into()),outcome.result.error.as_ref().map(|error|format!("\n{}",fault(error))).unwrap_or_default())))
+                        .child(status("github-pr-outcome",format!("{} · {} · #{}{}",if outcome.result.applied==false{tr("PR 写入未执行，请核对错误并重新预览。")}else if confirmed{tr("PR 写入已确认")}else{tr("PR 写入结果未确认，请核对 GitHub。")},outcome.result.operation,outcome.result.number.map(|number|number.to_string()).unwrap_or_else(||"—".into()),outcome.result.error.as_ref().map(|error|format!("\n{}",fault(error))).unwrap_or_default())).p_2p5().rounded_lg().bg(Color::Inset.get(cx)))
                         .child(Button::new("open-pr-outcome").outline().small().label(tr("在 GitHub 核对此 PR")).disabled(url.is_none()).on_click(move|_,_,cx|{if let Some(url)=&url{cx.open_url(url);}}))}),
             )
     }

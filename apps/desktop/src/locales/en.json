@@ -75,6 +75,8 @@
   "PR base 分支（显式输入，不推断上游）": "PR base branch (explicit, independent of upstream)",
   "PR head 分支": "PR head branch",
   "PR 写入已确认": "PR change confirmed",
+  "草稿 PR": "Draft PR",
+  "可审阅 PR": "Ready for review",
   "PR 写入未执行，请核对错误并重新预览。": "No PR change was attempted. Check the error and refresh the preview.",
   "PR 写入结果未确认，请核对 GitHub。": "The PR result is unconfirmed. Check GitHub.",
   "PR 标题": "PR title",

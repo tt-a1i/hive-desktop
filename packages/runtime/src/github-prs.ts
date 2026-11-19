@@ -7,7 +7,7 @@ export interface GithubPrOptions extends GitRemoteOptions {ghExecutable?: string
 /** Same-repository GitHub.com PRs only. Forks and Enterprise are explicit unsupported results. */
 export interface GithubPrTarget {remote: string; base: string; headBranch?: string}
 export interface GithubRepository {host: 'github.com'; owner: string; name: string; fullName: string; url: string}
-export interface GithubPullRequest {number: number; url: string; title: string; body: string; headRefName: string; baseRefName: string; headRefOid: string}
+export interface GithubPullRequest {number: number; url: string; title: string; body: string; headRefName: string; baseRefName: string; headRefOid: string; isDraft: boolean}
 export interface GithubPrPreview {version: string; workspace: import('./git-workspace.js').GitWorkspaceVersion; repository: GithubRepository; remote: string; remoteUrl: string; headBranch: string; base: string; headOid: string; remoteOid: string | null; baseOid: string; pushed: boolean; existing: GithubPullRequest[]; sameRepositoryOnly: true}
 export function githubRepositoryFromRemote(value: string): GithubRepository {
  let host: string, path: string;
@@ -34,9 +34,10 @@ function parseJson(text: string): any {try {return JSON.parse(text);} catch {thr
 function validatePr(value: any, repository: GithubRepository, head: string, base: string): GithubPullRequest {
  const identity = prUrl(value?.url, repository);
  if (identity.number !== value.number || value.headRefName !== head || value.baseRefName !== base || value.isCrossRepository !== false || value.headRepositoryOwner?.login?.toLowerCase() !== repository.owner.toLowerCase() || value.headRepository?.name?.toLowerCase() !== repository.name.toLowerCase() || typeof value.title !== 'string' || typeof value.body !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.headRefOid ?? '')) throw remoteError('WRONG_GITHUB_REPOSITORY', 'Pull request repository or branch identity does not match this preview');
- return {number: identity.number, url: identity.url, title: value.title, body: value.body, headRefName: head, baseRefName: base, headRefOid: value.headRefOid};
+ if (typeof value.isDraft !== 'boolean') throw remoteError('INVALID_GITHUB_RESPONSE', 'GitHub did not report the pull request draft status');
+ return {number: identity.number, url: identity.url, title: value.title, body: value.body, headRefName: head, baseRefName: base, headRefOid: value.headRefOid, isDraft: value.isDraft};
 }
-const fields = 'number,url,title,body,headRefName,baseRefName,headRefOid,headRepositoryOwner,headRepository,isCrossRepository';
+const fields = 'number,url,title,body,headRefName,baseRefName,headRefOid,headRepositoryOwner,headRepository,isCrossRepository,isDraft';
 async function withGh<T>(projectRoot: string, options: GithubPrOptions, operation: (gh: string, cwd: string) => Promise<T>): Promise<T> {
  const gh = await resolveRemoteExecutable('gh', projectRoot, options.ghExecutable);
  // No repository discovery or relative attachment lookup can route gh through the project.
@@ -80,6 +81,7 @@ async function writePr(operation: 'create'|'update', projectRoot: string, reques
  if (operation === 'create' && preview.existing.length) throw remoteError('PR_ALREADY_EXISTS', `An open pull request already exists: ${preview.existing[0]!.url}`);
  if (operation === 'update' && (!Number.isSafeInteger(request.number) || preview.existing[0]?.number !== request.number)) throw remoteError('PR_NOT_IN_PREVIEW', 'Select the existing open pull request from this preview');
  if (request.draft !== undefined && typeof request.draft !== 'boolean') throw remoteError('INVALID_ARGUMENT', 'draft must be boolean');
+ const expectedDraft = operation === 'create' ? request.draft === true : preview.existing[0]!.isDraft;
  return withGh(projectRoot, options, async (gh, directory) => {
   const bodyFile = join(directory, 'body.md'); await writeFile(bodyFile, request.body, {mode: 0o600, flag: 'wx'});
   const repo = `${preview.repository.host}/${preview.repository.fullName}`;
@@ -94,6 +96,7 @@ async function writePr(operation: 'create'|'update', projectRoot: string, reques
    const value = parseJson((await remoteCommand(gh, ['pr', 'view', String(identity.number), '--repo', repo, '--json', fields], directory, options.timeoutMs, true)).stdout);
    const observed = validatePr(value, preview.repository, preview.headBranch, preview.base);
    if (observed.number !== identity.number || observed.headRefOid !== preview.headOid || observed.title !== request.title || observed.body !== request.body) throw remoteError('PR_STATE_UNCERTAIN', 'The pull request was written but its exact content or head could not be confirmed; inspect GitHub before another action');
+   if (observed.isDraft !== expectedDraft) throw remoteError('PR_STATE_UNCERTAIN', 'The pull request was written but its draft status differs from the preview; inspect GitHub before another action');
    return {ok: true, applied: true, operation, url: observed.url, number: observed.number};
   } catch (error) {
    return {ok: false, applied: 'unknown', operation, ...(identity && identity), error: {code: 'PR_STATE_UNCERTAIN', message: redactRemoteText(error instanceof Error ? error.message : String(error))}};

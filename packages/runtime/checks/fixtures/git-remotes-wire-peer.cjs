@@ -23,7 +23,7 @@ if (state.mode === 'auth-failure') fail('HTTP 401 Unauthorized\nAuthorization: B
 const flag = name => args[args.indexOf(name) + 1];
 const repo = 'github.com/fixture-owner/fixture-repo';
 const pr = () => ({number: 17, url: 'https://github.com/fixture-owner/fixture-repo/pull/17', title: state.title, body: state.body,
- headRefName: 'session-pr', baseRefName: 'main', headRefOid: state.remoteOid, headRepositoryOwner: {login: 'fixture-owner'}, headRepository: {name: 'fixture-repo'}, isCrossRepository: false});
+ headRefName: 'session-pr', baseRefName: 'main', headRefOid: state.remoteOid, headRepositoryOwner: {login: 'fixture-owner'}, headRepository: {name: 'fixture-repo'}, isCrossRepository: false, isDraft: state.isDraft ?? false});
 if (args[0] === 'repo' && args[1] === 'view') {
  if (args[2] !== 'https://github.com/fixture-owner/fixture-repo') fail('wrong repo view route');
  console.log(JSON.stringify({nameWithOwner: 'fixture-owner/fixture-repo', url: args[2]}));
@@ -38,6 +38,9 @@ if (args[0] === 'repo' && args[1] === 'view') {
  } else if (args[1] === 'create' || args[1] === 'edit') {
   if (args[1] === 'create' && (flag('--head') !== 'session-pr' || flag('--base') !== 'main')) fail('explicit create branches required');
   if (args[1] === 'edit' && args[2] !== '17') fail('wrong edit number');
+  if (args[1] === 'edit' && args.includes('--draft')) fail('edit must preserve draft status');
+  if (args[1] === 'create') state.isDraft = args.includes('--draft');
+  if (state.mode === 'unexpected-draft-state') state.isDraft = !state.isDraft;
   const bodyFile = flag('--body-file');
   if (!bodyFile || (fs.statSync(bodyFile).mode & 0o777) !== 0o600 || args.includes('--body')) fail('private multiline body file required');
   state.title = flag('--title'); state.body = fs.readFileSync(bodyFile, 'utf8'); state.bodyFile = bodyFile; state.exists = true;
