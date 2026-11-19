@@ -9,6 +9,7 @@
     [Parameter(Mandatory)][string]$OutputPath,
     [Parameter(Mandatory)][string]$EvidenceDirectory,
     [switch]$StopRejection,
+    [switch]$DefiniteRejection,
     [string]$SpoolPath,
     [string]$RejectionPath,
     [string]$SnapshotPath
@@ -17,15 +18,22 @@
 $result = [ordered]@{status='failed'; phase=$Phase; stages=[ordered]@{}; error=$null; controls=@()}
 $app=$null; $root=$null
 function Row-Action([string]$Text,[string]$Action) {
-    $row = Wait-Control {
-        param($c)
-        $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Group -and
-            ([string]$c.Current.Name).StartsWith($Text + ' ·', [StringComparison]::Ordinal)
-    } ('queued row ' + $Text)
-    $buttons = @($row.FindAll([System.Windows.Automation.TreeScope]::Descendants,
-        [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -ceq $Action })
-    if ($buttons.Count -ne 1) { throw "Queued row action ambiguous/unavailable: $Text / $Action" }
-    return $buttons[0]
+    $end=[DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $rows=@(All-Controls | Where-Object {
+            $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Group -and
+            ([string]$_.Current.Name).StartsWith($Text + ' ·',[StringComparison]::Ordinal)
+        })
+        if ($rows.Count -gt 1) { throw "Ambiguous queued row: $Text" }
+        if ($rows.Count -eq 1) {
+            $buttons=@($rows[0].FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -ceq $Action -and $_.Current.IsEnabled })
+            if ($buttons.Count -gt 1) { throw "Ambiguous queued row action: $Text / $Action" }
+            if ($buttons.Count -eq 1) { return $buttons[0] }
+        }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $end)
+    throw "Queued row action unavailable: $Text / $Action"
 }
 function Assert-Draft {
     [void](Wait-Control {
@@ -72,7 +80,8 @@ try {
             if (@($snapshot).Count -ne 2) { throw 'Both original deliveries must exist before Stop' }
             [IO.File]::WriteAllText($SnapshotPath,($snapshot | ConvertTo-Json -Depth 24),[Text.UTF8Encoding]::new($false))
             $composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Draft)
-            Save-NativeWindow (Join-Path $EvidenceDirectory 'windows-queued-stop-rejection-before-stop.png')
+            $prefix=if($DefiniteRejection){'windows-queued-stop-declined'}else{'windows-queued-stop-rejection'}
+            Save-NativeWindow (Join-Path $EvidenceDirectory "$prefix-before-stop.png")
             Invoke-Control (Wait-Name 'Stop')
             [void](Wait-Name 'Resume processing')
             Assert-Draft
@@ -107,7 +116,7 @@ try {
         $result.stages.explicitResume=$true
     }
     Assert-Draft
-    $prefix=if($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
+    $prefix=if($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
     Save-NativeWindow (Join-Path $EvidenceDirectory ("$prefix-$Phase.png"))
     if (-not $app.CloseMainWindow()) { throw 'Could not request normal exit' }
     if (-not $app.WaitForExit(30000)) { throw 'Desktop did not exit' }
@@ -116,7 +125,7 @@ try {
     $result.error=$_.Exception.ToString()
     if ($root) {
         try { $result.controls=@(All-Controls | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 180) } catch {}
-        $prefix=if($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
+        $prefix=if($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
         try { Save-NativeWindow (Join-Path $EvidenceDirectory ("$prefix-$Phase-failure.png")) } catch { $result.captureError=$_.Exception.Message }
     }
 } finally {

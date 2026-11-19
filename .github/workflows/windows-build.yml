@@ -24,6 +24,7 @@ on:
           - handoff-range
           - queued-inputs
           - queued-stop-rejection
+          - queued-stop-declined
           - checkpoint-comparison
       replay_update:
         description: Replay only native update and rollback from the retained portable artifact
@@ -408,7 +409,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'worktree-dirty', 'worktree-remove', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'checkpoint-comparison')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'worktree-dirty', 'worktree-remove', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'queued-stop-declined', 'checkpoint-comparison')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -575,7 +576,7 @@ jobs:
           node scripts/check-windows-codex-quota.mjs --bundle target/replay-extracted --receipt target/windows-codex-quota.json 2>&1 | Tee-Object -FilePath target/windows-codex-quota.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay native queued input edit and cancellation
-        if: ${{ inputs.replay_scenario == 'queued-inputs' || inputs.replay_scenario == 'queued-stop-rejection' }}
+        if: ${{ inputs.replay_scenario == 'queued-inputs' || inputs.replay_scenario == 'queued-stop-rejection' || inputs.replay_scenario == 'queued-stop-declined' }}
         timeout-minutes: 8
         shell: pwsh
         env:
@@ -583,6 +584,7 @@ jobs:
         run: |
           $scenarioArgs = @()
           if ($env:QUEUE_REPLAY_SCENARIO -eq 'queued-stop-rejection') { $scenarioArgs += '--stop-rejection' }
+          if ($env:QUEUE_REPLAY_SCENARIO -eq 'queued-stop-declined') { $scenarioArgs += '--definite-rejection' }
           node scripts/check-windows-queued-inputs.mjs @scenarioArgs --bundle target/replay-extracted --receipt "target/windows-$($env:QUEUE_REPLAY_SCENARIO).json" 2>&1 | Tee-Object -FilePath "target/windows-$($env:QUEUE_REPLAY_SCENARIO).log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload replay evidence
@@ -628,6 +630,8 @@ jobs:
             target/windows-queued-inputs*.log
             target/windows-queued-stop-rejection*.json
             target/windows-queued-stop-rejection*.log
+            target/windows-queued-stop-declined*.json
+            target/windows-queued-stop-declined*.log
           if-no-files-found: warn
 
   replay-update:

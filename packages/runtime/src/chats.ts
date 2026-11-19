@@ -1,4 +1,5 @@
 import { AcpHistory } from './agents/acp-history.js';
+import {SteerDispositions,type SteerIdentity,type SteerDisposition} from './steer-dispositions.js';
 import { unavailableAcpMode } from './agents/acp-modes.js';
 import { HandoffRuntime } from './handoff-runtime.js';
 import { HandoffError } from './handoff-operation-journal.js';
@@ -27,7 +28,8 @@ import { promptImages } from './prompt-images.js';
 import { isDeliveryPresentation, restoreHistoricalReport } from './delivery-presentation.js';
 import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
-import { randomUUID } from 'node:crypto';
+import { createHash,randomUUID } from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { readSessionMessages as readClaudeSessionMessages, type ClaudeSessionHandle } from './agents/claude.js';
@@ -90,6 +92,7 @@ export class Chats implements StructuredSessionPort {
   handoffs?: SessionHandoffs;
   private handoffRuntime?: HandoffRuntime;
   private readonly handoffDeliveries: HandoffDeliveries;
+  private readonly steerDispositions: SteerDispositions;
   private readonly handoffStarting = new Set<string>();
   configureHandoffs(mutations:ExecutionMutations,hasAnyShell:()=>Promise<boolean>){
     this.handoffRuntime=new HandoffRuntime({dataDir:this.dataDir,hive:this.hive,runtime:this.runtime,profiles:this.profiles,index:this.index,
@@ -258,6 +261,7 @@ export class Chats implements StructuredSessionPort {
     mkdirSync(this.sessionDir, { recursive: true });
     this.index = new ChatIndex(directory);
     this.handoffDeliveries=new HandoffDeliveries(dataDir);
+    this.steerDispositions=new SteerDispositions(dataDir);
   }
   private profilesReady: Promise<void> | undefined;
   initializeProfiles(): Promise<void> {
@@ -1104,6 +1108,7 @@ export class Chats implements StructuredSessionPort {
         onError: error => { if (!chat?.aborted) this.recordDeliveryFailure(record.id, queue, chat?.failure ?? error); },
         onState: (busy, completedReportId) => {
           if (this.mutatingQueues.has(record.id)) return;
+          if (chat && this.live.get(record.id) !== chat) return;
           this.publishQueueState(record.id, queue, completedReportId);
           if (wasBusy && !busy) this.event(record.id, { type: 'settled', sessionId: record.id, aborted: chat?.aborted ?? false });
           wasBusy = busy;
@@ -1113,6 +1118,7 @@ export class Chats implements StructuredSessionPort {
       if(record.handoff)this.reconcileHandoffQueue(record,queue);
       this.pruneSettledDispatches(record, queue);
       if (earlyFailure) throw earlyFailure;
+      if(record.backend==='codex')this.reconcileSteerDispositions(this.index.get(record.id),queue);
       chat = { handle, queue, executionPath, aborted: false, browseOnly: record.backend === 'codex',
         ...(reasoningFailure && {reasoningFailure}) };
       this.live.set(record.id, chat);
@@ -1998,16 +2004,17 @@ export class Chats implements StructuredSessionPort {
   async uncertainAcpDeliveries(id:string){
     return this.withWorkspace(this.index.get(id).workspaceId,async()=>{
       const {record,transcript,queue}=await this.uncertainAcpState(id);
-      if(!queue.isPaused||queue.busy)return {sessionId:id,profile:record.profile,deliveries:[],blockedReason:'Pause and finish the ACP turn before resolving delivery uncertainty'};
-      return {sessionId:id,profile:record.profile,deliveries:queue.pending.flatMap(item=>transcript.state.deliveries[item.id]==='sent'&&item.presentation?[{
+      if(!queue.isPaused||queue.busy)return {sessionId:id,profile:record.profile,nativeSessionId:record.acpSessionId,deliveries:[],blockedReason:'Pause and finish the ACP turn before resolving delivery uncertainty'};
+      return {sessionId:id,profile:record.profile,nativeSessionId:record.acpSessionId,deliveries:queue.pending.flatMap(item=>transcript.state.deliveries[item.id]==='sent'&&item.presentation?[{
         deliveryId:item.id,text:item.presentation.displayText,origin:item.presentation.origin,...(item.presentation.dispatchId&&{dispatchId:item.presentation.dispatchId}),
         notice:'The native agent may already have handled this input. Discarding removes only this queued wait; it cannot undo native work or settle a Hive task.'
       }]:[])};
     });
   }
-  async discardUncertainAcpDelivery(id:string,deliveryId:string,expectedText:string){
+  async discardUncertainAcpDelivery(id:string,deliveryId:string,expectedText:string,expected?:{profile:unknown;nativeSessionId:string}){
     return this.withWorkspace(this.index.get(id).workspaceId,async()=>{
-      const {transcript,queue,live}=await this.uncertainAcpState(id);
+      const {record,transcript,queue,live}=await this.uncertainAcpState(id);
+      if(expected&&(!isDeepStrictEqual(record.profile,expected.profile)||record.acpSessionId!==expected.nativeSessionId))throw Error('The reviewed session identity changed; refresh before discarding');
       if(transcript.state.deliveries[deliveryId]!=='sent')throw new Error('This delivery has no persisted uncertain ACP outcome');
       const inputs=transcript.state.inputs?.filter(input=>input.id===deliveryId)??[],input=inputs[0];
       if(inputs.length!==1||!input||!isDeliveryPresentation(input.presentation)||input.presentation.displayText!==expectedText)throw new Error('The uncertain delivery summary changed; refresh it before discarding');
@@ -2018,6 +2025,91 @@ export class Chats implements StructuredSessionPort {
       if(pending)queue.discardPending(new Set([deliveryId]));
       if(!live)this.publishQueueState(id,queue);
       return {sessionId:id,deliveryId,discarded:true,alreadyDiscarded:!pending,nativeOutcome:'unknown' as const};
+    });
+  }
+  private steerIdentity(record:ChatRecord):SteerIdentity{
+    const current=this.originIdentity(record);
+    if(current.backend!=='codex'||!current.profile||!current.codexThreadId||current.identityState!=='known'||!current.originAgentId)
+      throw new SessionIdentityError('CODEX_SESSION_IDENTITY_CONFLICT','A known original Codex session is required to review appended input');
+    return {sessionId:current.id,workspaceId:current.workspaceId,nativeSessionId:current.codexThreadId,originAgentId:current.originAgentId,profile:current.profile};
+  }
+  private reconcileSteerDispositions(record:ChatRecord,queue:DeliveryQueue):void{
+    const receipts=this.steerDispositions.list(record.id);
+    const uncertain=queue.uncertainSteers;
+    if(!receipts.length||!uncertain.length)return;
+    const identity=this.steerIdentity(record),remove=new Set<string>();
+    for(const receipt of receipts){
+      const item=uncertain.find(item=>item.id===receipt.deliveryId);
+      if(!item)continue;
+      if(!this.steerDispositions.matches(receipt,identity)||!isDeepStrictEqual(item.presentation,receipt.presentation)||this.steerReviewVersion(identity,item)!==receipt.queueVersion)
+        throw Error('The saved local-wait disposition does not match the original queued input');
+      remove.add(item.id);
+    }
+    if(remove.size)queue.discardPending(remove);
+  }
+  private async uncertainCodexState<T>(id:string,operation:(state:{record:ChatRecord;identity:SteerIdentity;queue:DeliveryQueue;live:LiveChat|undefined})=>T){
+    const record=this.originIdentity(this.index.get(id)),identity=this.steerIdentity(record);
+    this.assertWorkspaceAvailable(record.workspaceId);
+    const version=this.index.snapshotVersion(id),live=this.live.get(id);
+    if(live?.cleanup||this.opening.has(id))throw Error('Wait for this session to finish opening or closing');
+    await this.profiles.getRef(identity.profile,'codex');
+    if(this.live.get(id)!==live||this.opening.has(id)||live?.cleanup||this.index.snapshotVersion(id)!==version)
+      throw Error('Session ownership changed; refresh the uncertain input');
+    if(live&&(live.handle as CodexSessionHandle).threadId!==identity.nativeSessionId)throw Error('Native session identity changed');
+    const completed=live?live.handle.completedDeliveryIds():readCodexMetadata(join(this.sessionDir,'..','codex'),identity.nativeSessionId).completed;
+    const before=live?.queue.pendingCount??DeliveryQueue.persistedCount(this.queueDir,id);
+    const queue=live?.queue??new DeliveryQueue({directory:this.queueDir,sessionId:id,startPaused:true,completedIds:()=>completed,
+      onError:()=>{},execute:async()=>{throw Error('Review cannot start native work');}});
+    if(queue.isPaused&&!queue.busy&&!queue.hasLiveSteering){queue.reconcileCompletedSteers();this.reconcileSteerDispositions(record,queue);}
+    if(!live&&queue.pendingCount!==before)this.publishQueueState(id,queue);
+    // Do not return an offline queue across an await boundary. Ownership check,
+    // fresh spool read, receipt commit and queue mutation run in one synchronous
+    // turn, so concurrent reviews/discards or native opens cannot use stale owners.
+    return operation({record,identity,queue,live});
+  }
+  private steerDispositionView(receipt:SteerDisposition){
+    return {deliveryId:receipt.deliveryId,text:receipt.presentation.displayText,origin:'user',attachments:receipt.presentation.attachments??[],version:receipt.queueVersion,
+      notice:`Local wait discarded at ${receipt.decidedAt}; native outcome was unknown. Receipt: ${receipt.deliveryId}`};
+  }
+  private steerReviewVersion(identity:SteerIdentity,item:import('./delivery-queue.js').DeliveryItem):string{
+    return createHash('sha256').update(JSON.stringify({identity,item})).digest('hex');
+  }
+  async uncertainDeliveries(id:string){
+    if(this.index.get(id).backend==='acp')return this.uncertainAcpDeliveries(id);
+    return this.withWorkspace(this.index.get(id).workspaceId,async()=>{
+      return this.uncertainCodexState(id,({record,identity,queue})=>{
+      const resolved=this.steerDispositions.list(id).filter(receipt=>this.steerDispositions.matches(receipt,identity)).map(receipt=>this.steerDispositionView(receipt));
+      if(!queue.isPaused||queue.busy||queue.hasLiveSteering)return {sessionId:id,profile:record.profile,nativeSessionId:identity.nativeSessionId,deliveries:[],resolved,
+        blockedReason:'Stop and finish the current turn before reviewing uncertain input'};
+      return {sessionId:id,profile:record.profile,nativeSessionId:identity.nativeSessionId,resolved,deliveries:queue.uncertainSteers.map(item=>({
+        deliveryId:item.id,text:item.presentation!.displayText,origin:'user',attachments:item.presentation!.attachments??[],version:this.steerReviewVersion(identity,item),
+        notice:'This new appended input may already have been accepted. Discard only its local wait; native history and the original audit remain unchanged.'}))};
+      });
+    });
+  }
+  async discardUncertainDelivery(id:string,deliveryId:string,expectedText:string,expectedProfile:unknown,expectedNativeSessionId:string,expectedVersion:unknown){
+    if(this.index.get(id).backend==='acp')return this.discardUncertainAcpDelivery(id,deliveryId,expectedText,{profile:expectedProfile,nativeSessionId:expectedNativeSessionId});
+    return this.withWorkspace(this.index.get(id).workspaceId,async()=>{
+      return this.uncertainCodexState(id,({identity,queue,live})=>{
+      if(!isDeepStrictEqual(identity.profile,expectedProfile)||identity.nativeSessionId!==expectedNativeSessionId)throw Error('The reviewed session identity changed; refresh before discarding');
+      if(!queue.isPaused||queue.busy||queue.hasLiveSteering)throw Error('Stop and finish the current turn before discarding a local wait');
+      const existing=this.steerDispositions.list(id).find(receipt=>receipt.deliveryId===deliveryId);
+      if(existing){
+        if(!this.steerDispositions.matches(existing,identity)||existing.presentation.displayText!==expectedText||existing.queueVersion!==expectedVersion)throw Error('The reviewed disposition changed');
+        return {sessionId:id,deliveryId,discarded:true,alreadyDiscarded:true,nativeOutcome:'unknown',receipt:this.steerDispositionView(existing)};
+      }
+      const item=queue.uncertainSteers.find(item=>item.id===deliveryId);
+      if(!item?.presentation||item.presentation.origin!=='user'||item.presentation.displayText!==expectedText)
+        throw Error('No matching newly attempted input remains; refresh its original text and native status');
+      const version=this.steerReviewVersion(identity,item);
+      if(version!==expectedVersion)throw Error('The reviewed input or attachment identity changed; refresh before discarding');
+      // Commit the decision first. A crash/failed spool removal is reconciled
+      // before any later execution; this never records native completion.
+      const receipt=this.steerDispositions.record(identity,deliveryId,item.presentation,version);
+      queue.discardPending(new Set([deliveryId]));
+      if(!live)this.publishQueueState(id,queue);
+      return {sessionId:id,deliveryId,discarded:true,alreadyDiscarded:false,nativeOutcome:'unknown',receipt:this.steerDispositionView(receipt)};
+      });
     });
   }
   listInteractionAttachments(id: string) {

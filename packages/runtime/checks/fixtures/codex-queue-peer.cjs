@@ -22,8 +22,10 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   fs.appendFileSync('queue-peer-steers.jsonl',JSON.stringify(q.params)+'\n');
   let control={};try{control=JSON.parse(fs.readFileSync('queue-peer-control.json','utf8').replace(/^\uFEFF/,''));}catch(e){if(e.code!=='ENOENT')throw e;}
   if(control.rejectSteerWhileActive){
-   send({id:q.id,error:{code:-32603,message:'Controlled active turn rejects appended input'}});
-   fs.writeFileSync('queue-peer-rejected-steer.json',JSON.stringify({turnId:turn.id,input:q.params.input,errorCode:-32603}));
+   const code=control.rejectSteerCode??-32603;
+   if(![-32600,-32603].includes(code))throw Error('Invalid controlled rejection code');
+   send({id:q.id,error:{code,message:'Controlled active turn rejects appended input'}});
+   fs.writeFileSync('queue-peer-rejected-steer.json',JSON.stringify({turnId:turn.id,input:q.params.input,errorCode:code}));
    return;
   }
   if(turn?.status==='inProgress')complete(turn);

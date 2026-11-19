@@ -95,6 +95,8 @@ try{
  await wire.close();wire=start();await api('initialize');await reject('chat.resume',{sessionId:uncertain.id});const retained=await snapshot(uncertain.id);assert.equal(retained.pending,1);assert.ok(retained.uncertainDeliveryIds.includes(failedId));
  const uncertainProtocol=(await readFile(join(uncertainRoot,'protocol.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));assert.equal(uncertainProtocol.filter(p=>p.method==='session/prompt').length,1,'A sent delivery must never be replayed automatically after EOF/cold resume');
  const preview=await api('chat.acp.uncertainDeliveries',{sessionId:uncertain.id});assert.equal(preview.deliveries.length,1);assert.equal(preview.deliveries[0].text,'ACP_TEST_COMMAND:null');assert.ok(preview.deliveries[0].notice.includes('native agent'));
+ assert.deepEqual(await api('chat.queue.uncertainDeliveries',{sessionId:uncertain.id}),preview,'The reused native review must preserve ACP data');
+ await reject('chat.queue.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:preview.deliveries[0].text,expectedProfile:preview.profile,expectedNativeSessionId:'wrong-native',expectedVersion:null});
  await reject('chat.acp.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:'changed summary'});
  await reject('chat.acp.discardUncertainDelivery',{sessionId:lead.id,deliveryId:failedId,expectedText:preview.deliveries[0].text});
  const spool=join(dataDir,'chats','deliveries'),held=spool+'-owned-failure';await rename(spool,held);await writeFile(spool,'owned blocking file');
@@ -110,6 +112,7 @@ try{
  assert.equal((await snapshot(uncertain.id)).pending,0);
  assert.equal(await readFile(join(uncertainRoot,'protocol.jsonl'),'utf8'),protocolBeforeDiscard,'Cold discard must not start the agent');
  const repeated=await api('chat.acp.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:preview.deliveries[0].text});assert.equal(repeated.alreadyDiscarded,true);assert.equal(repeated.nativeOutcome,'unknown');assert.deepEqual(inputRows(),auditBefore);db.close();
+ assert.equal((await api('chat.queue.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:preview.deliveries[0].text,expectedProfile:preview.profile,expectedNativeSessionId:preview.nativeSessionId,expectedVersion:null})).alreadyDiscarded,true);
  const transcriptBefore=JSON.parse(await readFile(retained.sessionFile,'utf8'));assert.equal(transcriptBefore.deliveries[failedId],'sent');
  await writeFile(join(uncertainRoot,'allow'),'controlled fixture permits a new input');await call(uncertain.id,null);
  const retriedOld=await api('chat.acp.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:preview.deliveries[0].text});assert.equal(retriedOld.alreadyDiscarded,true);

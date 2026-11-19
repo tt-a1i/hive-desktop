@@ -19,8 +19,9 @@ const queries = async () => (await readFile(join(project, 'queue-peer-queries.js
   .trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
 let runtime;
 try {
-  if (mode === 'seed' || mode === 'stop-seed') {
-    const stopRejection = mode === 'stop-seed';
+  if (mode === 'seed' || mode === 'stop-seed' || mode === 'declined-seed') {
+    const stopRejection = mode !== 'seed';
+    const rejectionCode = mode === 'declined-seed' ? -32600 : -32603;
     await Promise.all([project, data, pi].map(path => mkdir(path, {recursive: true})));
     const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
     await writeFile(command, process.platform === 'win32'
@@ -54,7 +55,7 @@ try {
       await runtime.chats.prompt(chat.id,'Controlled primary before rejected steer 40F2',[primaryAttachment.id]);
       const [primaryCopy]=await runtime.chats.attachments.get(workspace.id,[primaryAttachment.id]);
       primary={attachment:primaryAttachment, sha256:digest(await readFile(primaryCopy.filePath))};
-      await writeFile(join(project,'queue-peer-control.json'),JSON.stringify({rejectSteerWhileActive:true}));
+      await writeFile(join(project,'queue-peer-control.json'),JSON.stringify({rejectSteerWhileActive:true,rejectSteerCode:rejectionCode}));
       await writeFile(join(data,'desktop-general.json'),JSON.stringify({busy_send_mode:'steer_when_supported'}));
     } else {
       await runtime.chats.prompt(chat.id, originalText, [attachment.id]);
@@ -71,7 +72,7 @@ try {
       canceledText, draft, deliveryId: first.deliveryId, canceledId: second?.deliveryId,
       attachmentId: attachment.id, attachmentSha256: digest(await readFile(copy.filePath)),
       queriesBefore: await queries(), environment: {HIVE_CODEX_COMMAND: command, CODEX_HOME:join(root, 'codex-home')}};
-    if(stopRejection)Object.assign(fixture,{stopRejection:true,primaryId:first.deliveryId,primaryText:first.text,
+    if(stopRejection)Object.assign(fixture,{stopRejection:true,rejectionCode,primaryId:first.deliveryId,primaryText:first.text,
       primaryAttachmentId:primary.attachment.id,primaryAttachmentSha256:primary.sha256,
       spoolPath:join(runtime.chats.queueDir,digest(chat.id)+'.json'),
       rejectionPath:join(project,'queue-peer-rejected-steer.json'),snapshotPath:join(root,'queue-before-stop.json')});
@@ -98,7 +99,7 @@ try {
       assert(original && original.presentation.attachments[0].id===fixture.attachmentId);
       assert(snapshot.some(item=>item.id===fixture.primaryId && item.presentation.attachments[0].id===fixture.primaryAttachmentId));
       const rejection=JSON.parse(await readFile(fixture.rejectionPath,'utf8'));
-      assert.equal(rejection.errorCode,-32603);
+      assert.equal(rejection.errorCode,fixture.rejectionCode??-32603);
       assert(JSON.stringify(rejection.input).includes(fixture.originalText));
       const interrupts=(await readFile(join(project,'queue-peer-interrupts.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
       assert.equal(interrupts.length,1);assert.equal(interrupts[0].turnId,rejection.turnId);assert(interrupts[0].rejectionAlreadySent);

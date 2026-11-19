@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, writeFile, chmod, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,6 +76,22 @@ try {
   const remaining = (await rpc('chat.open', {sessionId})).pendingUserInputs;
   assert.ok(!remaining.some((item: any) => item.deliveryId === attached.deliveryId || item.deliveryId === plain.deliveryId));
   await rpc('chat.abort', {sessionId});
+  await writeFile(join(project,'queue-peer-control.json'),JSON.stringify({rejectSteerWhileActive:true,rejectSteerCode:-32603}));
+  await rpc('chat.prompt',{sessionId,text:'Primary for uncertain wire review'});
+  await rpc('chat.prompt',{sessionId,text:'Wire uncertain original',attachmentIds:[upload.attachment.id],busyMode:'steer'});
+  const deadline=Date.now()+10000;
+  while(!await readFile(join(project,'queue-peer-rejected-steer.json'),'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error;})){
+    assert.ok(Date.now()<deadline);await new Promise(resolve=>setTimeout(resolve,15));
+  }
+  await rpc('chat.abort',{sessionId});
+  const review=await rpc('chat.queue.uncertainDeliveries',{sessionId});
+  assert.equal(review.deliveries.length,1);const unknown=review.deliveries[0];
+  const decision={sessionId,deliveryId:unknown.deliveryId,expectedText:unknown.text,expectedProfile:review.profile,expectedNativeSessionId:review.nativeSessionId,expectedVersion:unknown.version};
+  await assert.rejects(rpc('chat.queue.discardUncertainDelivery',{...decision,expectedVersion:'stale'}),/identity changed/);
+  assert.equal((await rpc('chat.queue.discardUncertainDelivery',decision)).nativeOutcome,'unknown');
+  assert.equal((await rpc('chat.queue.discardUncertainDelivery',decision)).alreadyDiscarded,true);
+  assert.equal((await rpc('chat.queue.uncertainDeliveries',{sessionId})).resolved[0].deliveryId,unknown.deliveryId);
+  assert.equal((await rpc('chat.open',{sessionId})).pending,0);
   await rpc('shutdown');
   assert.equal((await exited)[0], 0, diagnostics);
   console.log('QUEUED_INPUT_WIRE_OK: empty text keeps original attachments, empty plain input rejected, missing edit text cannot cancel; real JSONL/Hive/SQLite, controlled peer only.');

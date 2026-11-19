@@ -15,7 +15,8 @@ export interface DeliveryItem {
  readonly steerUser?: boolean;
 }
 
-type StoredItem = DeliveryItem & { readonly queueState?: "pending" | "started" | "canceled" };
+type StoredItem = DeliveryItem & { readonly queueState?: "pending" | "started" | "canceled";
+ readonly steerAttemptVersion?: 1 };
 
 interface DeliveryQueueOptions {
  directory: string;
@@ -46,7 +47,8 @@ function readSpool(path: string): StoredItem[] {
  const stored: unknown = JSON.parse(contents);
  if (!Array.isArray(stored) || !stored.every(item => item && typeof item.id === "string" && typeof item.text === "string" && typeof item.triggerTurn === "boolean"
   && (item.presentation === undefined || isDeliveryPresentation(item.presentation))
-  && (item.queueState === undefined || item.queueState === "pending" || item.queueState === "started" || item.queueState === "canceled"))) {
+  && (item.queueState === undefined || item.queueState === "pending" || item.queueState === "started" || item.queueState === "canceled")
+  && (item.steerAttemptVersion === undefined || item.steerAttemptVersion === 1))) {
   throw new Error(`Invalid delivery spool: ${path}`);
  }
  for (const item of stored) { if (item.images !== undefined && promptImages(item.images).length && !item.triggerTurn) throw new TypeError("Invalid context-only image delivery"); }
@@ -59,6 +61,8 @@ function readSpool(path: string): StoredItem[] {
 export class DeliveryQueue {
  private readonly path: string;
  private readonly steering = new Map<string, Promise<void>>();
+ private readonly pendingSteering = new Set<string>();
+ private readonly declinedSteering = new Set<string>();
  private items: StoredItem[];
  private running: Promise<void> | undefined;
  private paused = false;
@@ -70,6 +74,11 @@ export class DeliveryQueue {
   mkdirSync(options.directory, { recursive: true });
   this.path = spoolPath(options.directory, options.sessionId);
   this.items = readSpool(this.path);
+  // Only new, explicitly attempted appends have this marker. A trusted native
+  // completion receipt resolves them without invoking the backend again.
+  const completed = this.options.completedIds();
+  const retained = this.items.filter(item => item.steerAttemptVersion !== 1 || !completed.includes(item.id));
+  if (retained.length !== this.items.length) this.replace(retained);
   queueMicrotask(() => this.kick());
  }
 
@@ -81,6 +90,15 @@ export class DeliveryQueue {
  get pending(): readonly DeliveryItem[] { return structuredClone(this.items); }
  get headId():string|undefined {return this.items[0]?.id;}
  get pendingCount(): number { return this.items.length; }
+ get uncertainSteers(): readonly DeliveryItem[] {
+  return this.items.filter(item=>item.steerAttemptVersion===1&&!this.options.completedIds().includes(item.id)).map(item=>structuredClone(item));
+ }
+ reconcileCompletedSteers(): void {
+  if (!this.paused || this.busy) return;
+  const completed=this.options.completedIds();
+  const retained=this.items.filter(item=>item.steerAttemptVersion!==1||!completed.includes(item.id));
+  if(retained.length!==this.items.length){this.replace(retained);this.emitState(undefined,true);}
+ }
  /** Reconcile trusted context metadata on the earliest unattempted user item while paused. */
  prepareNextUserContext():void {
   if(this.busy||!this.paused)return;
@@ -112,6 +130,7 @@ export class DeliveryQueue {
  }
  get isPaused(): boolean { return this.paused; }
  get busy(): boolean { return this.running !== undefined; }
+ get hasLiveSteering(): boolean { return this.pendingSteering.size !== 0; }
 
  /** Resolves after atomic persistence, without waiting for model execution. */
  async enqueue(text: string, triggerTurn = true, presentation?: DeliveryPresentation, imageInput?: readonly PromptImage[], options?: { steerUser?: boolean }): Promise<void> {
@@ -121,17 +140,37 @@ export class DeliveryQueue {
   const original:DeliveryItem={id:randomUUID(),text,triggerTurn,...(images.length&&{images}),...(presentation&&{presentation:structuredClone(presentation)}),...(options?.steerUser&&{steerUser:true})};
   const prepared=this.options.prepare?.(original)??original;
   if(prepared.id!==original.id||prepared.text!==original.text||prepared.triggerTurn!==original.triggerTurn||prepared.steerUser!==original.steerUser||!isDeepStrictEqual(prepared.presentation,original.presentation)||!isDeepStrictEqual(prepared.images,original.images))throw new Error('Prepared delivery changed its input identity');
-  this.replace([...this.items, { ...prepared, queueState: "pending" }]);
+  const canSteer = !this.paused && this.busy && this.attemptedId === this.items[0]?.id
+    && prepared.triggerTurn && !prepared.images?.length && (prepared.presentation?.origin === 'system' || prepared.presentation?.origin === 'report' || (prepared.steerUser === true && prepared.presentation?.origin === 'user'))
+    && this.items.slice(1).every(entry => this.steering.has(entry.id)) && !!this.options.steer;
+  // New explicit-user attempts must remain protected across process death. Old
+  // pending/steerUser records are deliberately not reinterpreted or migrated.
+  const userAttempt = canSteer && prepared.presentation?.origin === 'user';
+  this.replace([...this.items, { ...prepared, queueState: userAttempt ? "started" : "pending",
+    ...(userAttempt && {steerAttemptVersion: 1 as const}) }]);
   const item = this.items.at(-1)!;
   // Asynchronous system input and worker reports may join the current turn. Never overtake a
   // queued user/task input; persist first and retain until native completion.
-  if (!this.paused && this.busy && this.attemptedId === this.items[0]?.id
-    && item.triggerTurn && !item.images?.length && (item.presentation?.origin === 'system' || item.presentation?.origin === 'report' || (item.steerUser === true && item.presentation?.origin === 'user'))
-    && this.items.slice(1, -1).every(entry => this.steering.has(entry.id)) && this.options.steer) {
-   const attempt = this.options.steer(item).then(handled => {
+  if (canSteer) {
+   this.pendingSteering.add(item.id);
+   const attempt = this.options.steer!(item).then(handled => {
     if (handled && !this.options.completedIds().includes(item.id)) throw new Error('Native steering completed without a durable delivery receipt');
+    if (!handled) {
+     // For explicit user attempts, false means definite non-delivery. Persist
+     // that fact before granting mutation capabilities.
+     if (this.items.some(entry => entry.id === item.id && entry.steerAttemptVersion === 1)) this.replace(this.items.map(entry => {
+      if (entry.id !== item.id || entry.steerAttemptVersion !== 1) return entry;
+      const {steerAttemptVersion: _, ...rest} = entry;
+      return {...rest, queueState: 'pending' as const};
+     }));
+     if (this.steering.get(item.id) === attempt) {
+      this.declinedSteering.add(item.id);
+      this.clearDeclinedSteering();
+     }
+    }
    });
    this.steering.set(item.id, attempt);
+   void attempt.then(()=>this.pendingSteering.delete(item.id),()=>this.pendingSteering.delete(item.id));
    void attempt.catch(() => {});
   }
   this.kick();
@@ -141,6 +180,7 @@ export class DeliveryQueue {
  private mutationReason(item: StoredItem, index: number): string | undefined {
   if (item.presentation?.origin !== "user") return "not-user";
   if (this.options.completedIds().includes(item.id)) return "completed";
+  if (item.steerAttemptVersion === 1 && this.paused) return "attempted";
   if (this.steering.has(item.id) || (index === 0 && this.busy)) return "processing";
   if (item.queueState === "canceled") return "canceled";
   if (item.queueState !== "pending" || this.attemptedId === item.id) return "attempted";
@@ -224,7 +264,17 @@ export class DeliveryQueue {
  }
 
  /** Prevents the next delivery; the caller must abort any running SDK call. */
- async pause(): Promise<void> { this.paused = true; await this.idle(); }
+ async pause(): Promise<void> { this.paused = true; await this.idle(); this.clearDeclinedSteering(); }
+
+ private clearDeclinedSteering(): void {
+  if (!this.paused) return;
+  let changed = false;
+  for (const id of this.declinedSteering) {
+   changed = this.steering.delete(id) || changed;
+   this.declinedSteering.delete(id);
+  }
+  if (changed) this.emitState(undefined, true);
+ }
 
  /** Reconcile transport entries against an authoritative settled-task ledger.
   * Never remove a running delivery or infer task completion from an SDK turn. */
@@ -276,15 +326,21 @@ export class DeliveryQueue {
 
  private async drain(): Promise<void> {
   while (!this.paused && this.items.length) {
-   const item = this.items[0]!;
+   let item = this.items[0]!;
    if (item.queueState === "canceled") return;
    const steering = this.steering.get(item.id);
    this.steering.delete(item.id);
+   this.declinedSteering.delete(item.id);
    if (steering) await steering;
+   const settled = this.items[0];
+   if (!settled || settled.id !== item.id) throw new Error('Queued delivery changed while native append settled');
+   item = settled;
    if (!this.options.completedIds().includes(item.id)) {
     // Stop can pause while a native steer settles. Keep an unconsumed item
     // queued so explicit resume can start its fallback turn.
     if (this.paused) return;
+    if (this.items[0]?.steerAttemptVersion === 1)
+     throw new Error('Native appended input outcome is uncertain; its original message is preserved. Inspect native history before resolving it; continuation cannot resend it automatically.');
     // Persist before the SDK can consume the delivery, including across crashes.
     this.replace([{ ...item, queueState: "started" }, ...this.items.slice(1)]);
     this.attemptedId = item.id;

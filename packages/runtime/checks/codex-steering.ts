@@ -31,6 +31,11 @@ const finish=status=>{turn.status=status;if(status==='completed'){const item={id
   fs.appendFileSync('steers.log',q.params.input[0].text+'\n');
   if(mode==='no-ack'){continue;}
   if(mode==='late'){finish('completed');error(-32600);}
+  else if(mode==='user-declined'){error(-32600);}
+  else if(mode==='user-declined-empty-started'||mode==='user-declined-partial-started'){notify('item/started',{turnId:turn.id,item:{id:turn.id+'-incomplete-user',type:'userMessage',content:mode==='user-declined-empty-started'?[]:[{type:'text',text:'partial'}]}});error(-32600);}
+  else if(mode==='user-declined-started'){notify('item/started',{turnId:turn.id,item:{id:turn.id+'-started-user',type:'userMessage',content:q.params.input}});error(-32600);}
+  else if(mode==='user-declined-observed'){user(q.params.input[0].text,turn.id+'-ambiguous-user');error(-32600);}
+  else if(mode==='user-internal-error'){error(-32603);}
   else if(mode==='reject'){error(-32603);}
   else if(mode==='disconnect'){process.exit(0);}
   else {if(mode==='before-ack')user(q.params.input[0].text,turn.id+'-notice-'+turn.items.length);answer({turnId:turn.id});if(mode==='unpersisted')notify('item/completed',{turnId:turn.id,item:{id:'unpersisted-notice',type:'userMessage',content:[{type:'text',text:q.params.input[0].text}]}});else if(mode!=='missing'&&mode!=='interrupted'&&mode!=='before-ack')user(q.params.input[0].text,turn.id+'-notice-'+turn.items.length);}
@@ -39,15 +44,17 @@ const finish=status=>{turn.status=status;if(status==='completed'){const item={id
 `;
 const barrier=()=>{let release!:()=>void;return {promise:new Promise<void>(resolve=>{release=resolve;}),release:()=>release()};};
 try{
- for(const origin of ['system','report'] as const) for(const mode of ['normal','before-ack','interrupted','consumed-interrupted','no-ack','missing','unpersisted','reject','late','disconnect','write-failure','user-order']){
+ for(const origin of ['system','report','user'] as const) for(const mode of origin==='user'
+  ? ['user-declined','user-declined-empty-started','user-declined-partial-started','user-declined-started','user-declined-observed','user-internal-error','interrupted','no-ack']
+  : ['normal','before-ack','interrupted','consumed-interrupted','no-ack','missing','unpersisted','reject','late','disconnect','write-failure','user-order']){
   const cwd=join(root,`${origin}-${mode}`);await mkdir(cwd);await writeFile(join(cwd,'package.json'),'{"type":"commonjs"}');await writeFile(join(cwd,'app-server'),peer);
   const atTool=barrier(),releaseTool=barrier();const observed:any[]=[];let signal:AbortSignal|undefined;
   const options={cwd,sessionDir:join(cwd,'metadata'),command:process.execPath,model:{provider:'openai',id:'gpt-6.1-terra'},onEvent(event:any){observed.push(event);},customTools:[{name:'hold',description:'held host tool',parameters:Type.Object({}),execute:async(_id:string,_args:unknown,input?:AbortSignal)=>{signal=input;atTool.release();await releaseTool.promise;return {content:[{type:'text' as const,text:'verified'}]};}}]};
-  let session=await createCodexSession(options);const errors:Error[]=[];const completedReports:string[]=[];const acceptedIds:string[]=[];
+  let session=await createCodexSession(options);const errors:Error[]=[];const completedReports:string[]=[];const acceptedIds:string[]=[];const queueStates:any[]=[];
   const metadataDirectory=join(cwd,'metadata');let metadataSaved=false;
   const restoreMetadata=()=>{if(metadataSaved){rmSync(metadataDirectory,{force:true});renameSync(join(cwd,'metadata.saved'),metadataDirectory);metadataSaved=false;}};
   const notice=(index:number)=>({version:1 as const,origin,displayText:index===1?'first notice':'second notice',...(origin==='report'&&{dispatchId:`dispatch-${index}`,workerId:`worker-${index}`,workerName:`proof-${index}`,artifacts:[`proof-${index}.txt`]})});
-  const queue=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',completedIds:()=>session.completedDeliveryIds(),onError:error=>errors.push(error),onState:(_busy,id)=>{if(id){assert.ok(session.completedDeliveryIds().includes(id));completedReports.push(id);}},
+  const queue=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',completedIds:()=>session.completedDeliveryIds(),onError:error=>errors.push(error),onState:(_busy,id)=>{queueStates.push(queue.pendingUserInputs);if(id){assert.ok(session.completedDeliveryIds().includes(id));completedReports.push(id);}},
    execute:item=>session.prompt(item.text,{deliveryId:item.id,presentation:item.presentation}),steer:item=>session.steer!(item.text,{deliveryId:item.id,presentation:item.presentation!})});
   try{
    await queue.enqueue(mode,true,{version:1,origin:'user',displayText:mode});await atTool.promise;
@@ -58,17 +65,41 @@ try{
     renameSync(metadataDirectory,join(cwd,'metadata.saved'));metadataSaved=true;
     writeFileSync(metadataDirectory,'Owned metadata write obstruction');
    }
-   await queue.enqueue('notice one',true,notice(1));
+   await queue.enqueue('notice one',true,notice(1),undefined,origin==='user'?{steerUser:true}:undefined);
    if(mode==='normal'||mode==='before-ack')await queue.enqueue('notice two',true,notice(2));
    const accepted=queue.pending;acceptedIds.push(...accepted.map(item=>item.id));assert.equal(DeliveryQueue.persistedCount(join(cwd,'spool'),'chat'),accepted.length);
    if(origin==='report'&&(mode==='normal'||mode==='before-ack')){assert.deepEqual(queue.pendingReports.map(r=>r.processing),[true,true],'Reports appended to an active turn must show processing');assert.deepEqual(completedReports,[],'Processing is not durable completion');}
    if(origin==='report'&&mode==='user-order')assert.deepEqual(queue.pendingReports.map(r=>r.processing),[false]);
-   if(mode==='interrupted'||mode==='consumed-interrupted'||mode==='no-ack'){
+   if(mode==='interrupted'||mode==='consumed-interrupted'||mode==='no-ack'||mode==='user-declined'||mode==='user-declined-empty-started'||mode==='user-declined-partial-started'||mode==='user-declined-started'||mode==='user-declined-observed'||mode==='user-internal-error'){
     // Wait for actual native acceptance, without consuming the held tool.
     while(!(await readFile(join(cwd,'steers.log'),'utf8').catch(error=>{if(error.code==='ENOENT')return '';throw error;})))await new Promise(resolve=>setImmediate(resolve));
     const before=Date.now();const pausing=queue.pause();const aborting=session.abort();releaseTool.release();await aborting;await pausing;queue.discardCurrent();
     assert.ok(Date.now()-before<5000,'Stop must not wait for the 30-second steer RPC timeout');
     assert.equal(signal?.aborted,true);if(origin==='report')assert.deepEqual(queue.pendingReports.map(r=>r.processing),[false]);assert.equal(queue.pendingCount,1);assert.equal(queue.pending[0]?.text,'notice one');assert.deepEqual(session.completedDeliveryIds(),[]);
+    if(origin==='user'){
+     // The UI's final event must agree with the same original's cold snapshot.
+     await new Promise(resolve=>setImmediate(resolve));
+     const declined=mode==='user-declined';
+     assert.equal(queue.pendingUserInputs[0]!.editable,declined);
+     assert.equal(queueStates.at(-1)![0]!.editable,declined);
+     const cold=new DeliveryQueue({directory:join(cwd,'spool'),sessionId:'chat',startPaused:true,
+      completedIds:()=>session.completedDeliveryIds(),onError:error=>errors.push(error),execute:async()=>{throw Error('Uncertain input must not execute');}});
+     assert.equal(cold.pendingUserInputs[0]!.editable,declined);
+     const warmEditable=queue.pendingUserInputs[0]!.editable,coldEditable=cold.pendingUserInputs[0]!.editable;
+     if(declined){
+      const original=queue.pending[0]!;
+      queue.editPendingUserInput(original.id,{...original,text:'notice edited',presentation:{...original.presentation!,displayText:'notice edited'}});
+      queue.resume();await queue.idle();assert.equal(queue.pendingCount,0);
+      assert.equal(JSON.parse(await readFile(join(cwd,'native.json'),'utf8')).turns.length,2);
+      assert.equal(session.completedDeliveryIds().filter(id=>id===original.id).length,1);
+     }else{
+      cold.resume();await cold.idle();assert.equal(cold.pendingCount,1);
+      assert.match(errors.at(-1)!.message,/outcome is uncertain/);
+      assert.equal(JSON.parse(await readFile(join(cwd,'native.json'),'utf8')).turns.length,1);
+     }
+     console.log('CODEX_USER_STEER_RECEIPT_OK',JSON.stringify({mode,warmEditable,coldEditable,
+      nativeTurns:JSON.parse(await readFile(join(cwd,'native.json'),'utf8')).turns.length,definiteDecline:declined}));
+    }
     if(mode==='consumed-interrupted'){
      queue.resume();await queue.idle();assert.equal(queue.pendingCount,0);
      const rows=session.snapshot().history.filter((x:any)=>x.customType==='hive-delivery') as any[];

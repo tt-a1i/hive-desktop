@@ -68,7 +68,8 @@ export interface PiSessionHandle {
   snapshot(): { history: readonly unknown[]; historyMessageIds: string[]; activeMessage?: { messageId: string; message: unknown } };
   prompt(text: string, options?: { images?: readonly PromptImage[]; automated?: boolean; deliveryId?: string; presentation?: DeliveryPresentation }): Promise<void>;
   /** Native same-turn delivery. True only after native consumption and successful completion;
-   * false leaves the durable item for normal queued execution. */
+   * For explicit user input, false confirms non-delivery; pending/acknowledged/
+   * uncertain attempts must not return false. System/report retry semantics remain separate. */
   steer?(text: string, options: { deliveryId: string; presentation: DeliveryPresentation }): Promise<boolean>;
   addContext(text: string, customType?: string): Promise<void>;
   completedDeliveryIds(): readonly string[];

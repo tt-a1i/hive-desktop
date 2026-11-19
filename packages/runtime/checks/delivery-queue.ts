@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, renameSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DeliveryQueue, type DeliveryItem } from "../src/delivery-queue.js";
@@ -102,6 +103,86 @@ try {
  await coldPaused.idle();
  assert.deepEqual(stopExecutions, ["primary", "append or queue"]);
  assert.equal(coldPaused.pendingCount, 0);
+
+ // A definite negative receipt must refresh the paused UI even when neither
+ // busy nor the pending count changes. Unknown new attempts stay protected.
+ for (const outcome of ['declined', 'declined-cancel', 'pending', 'ack-without-completion', 'completed'] as const) {
+  const entered = deferred(), finish = deferred(), decline = deferred();
+  const sent: string[] = [], complete: string[] = [], faults: Error[] = [];
+  const capabilities: {editable:boolean}[][] = [];
+  const options = {directory, sessionId: `receipt-${outcome}`, completedIds: () => complete,
+   onError: (error: Error) => faults.push(error), execute: async (item: DeliveryItem) => {
+    sent.push(item.text); if (item.text === 'primary') { entered.resolve(); await finish.promise; }
+   }};
+  const q = new DeliveryQueue({...options, steer: async item => {
+   if (outcome === 'pending') return new Promise<boolean>(() => {});
+   if (outcome === 'declined' || outcome === 'declined-cancel') { await decline.promise; return false; }
+   if (outcome === 'completed') complete.push(item.id);
+   return true;
+  }, onState: () => capabilities.push(q.pendingUserInputs)});
+  await q.enqueue('primary'); await entered.promise;
+  await q.enqueue('original', true, {version:1, origin:'user', displayText:'original'}, undefined, {steerUser:true});
+  const target = q.pending[1]!;
+  const pause = q.pause(); finish.resolve(); await pause; q.discardCurrent();
+  assert.equal(q.pendingUserInputs[0]!.editable, false);
+  const before = capabilities.length;
+  if (outcome === 'declined' || outcome === 'declined-cancel') {
+   decline.resolve(); await new Promise(resolve => setImmediate(resolve));
+   assert.equal(q.pendingUserInputs[0]!.editable, true);
+   assert.ok(capabilities.length > before, 'A capability-only change needs an event');
+   assert.equal(capabilities.at(-1)![0]!.editable, true);
+   if(outcome==='declined-cancel')q.cancelPendingUserInput(target.id);
+   else q.editPendingUserInput(target.id, {...target, text:'edited', presentation:{...target.presentation!,displayText:'edited'}});
+  }
+  const cold = new DeliveryQueue({...options, startPaused:true});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(q.hasLiveSteering,outcome==='pending','Only an actually unsettled native request blocks local review');
+  if(outcome==='declined-cancel'){
+   assert.equal(cold.pendingCount,0);cold.resume();await cold.idle();assert.deepEqual(sent,['primary']);continue;
+  }
+  if(outcome==='completed')assert.equal(cold.pendingCount,0,'A trusted completion resolves a new attempted append before resume');
+  else assert.equal(cold.pendingUserInputs[0]!.editable, outcome === 'declined');
+  cold.resume(); await cold.idle();
+  if (outcome === 'declined') assert.deepEqual(sent, ['primary','edited']);
+  else {
+   assert.deepEqual(sent, ['primary'], 'An uncertain/consumed original cannot be resent');
+   assert.equal(cold.pendingCount, outcome === 'completed' ? 0 : 1);
+   if (outcome !== 'completed') assert.match(faults.at(-1)!.message, /outcome is uncertain/);
+  }
+ }
+
+ // A negative native response cannot grant editing if its durable update fails.
+ const failureStart=deferred(),failureFinish=deferred(),failureDecline=deferred();
+ const failureSession='decline-disk-failure';
+ const retained=new DeliveryQueue({directory,sessionId:failureSession,completedIds:()=>[],onError:unexpected,
+  execute:async()=>{failureStart.resolve();await failureFinish.promise;},steer:async()=>{await failureDecline.promise;return false;}});
+ await retained.enqueue('primary');await failureStart.promise;
+ await retained.enqueue('original',true,{version:1,origin:'user',displayText:'original'},undefined,{steerUser:true});
+ const retainingPause=retained.pause();failureFinish.resolve();await retainingPause;retained.discardCurrent();
+ const retainedPath=join(directory,createHash('sha256').update(failureSession).digest('hex')+'.json');
+ renameSync(retainedPath,retainedPath+'.held');mkdirSync(retainedPath);
+ failureDecline.resolve();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(retained.pendingUserInputs[0]!.editable,false);
+ rmSync(retainedPath,{recursive:true});renameSync(retainedPath+'.held',retainedPath);
+ const retainedCold=new DeliveryQueue({directory,sessionId:failureSession,startPaused:true,completedIds:()=>[],onError:unexpected,execute:async()=>{throw Error('No replay');}});
+ assert.equal(retainedCold.pendingUserInputs[0]!.editable,false);
+
+ // Legacy pending/steerUser is not proof of a native attempt: an earlier
+ // ordinary input can prevent steering. Do not migrate or freeze that input.
+ const legacyStart = deferred(), legacyFinish = deferred(); let legacySteers = 0;
+ const legacySent: string[] = [];
+ const legacyOptions = {directory,sessionId:'legacy-unattempted',completedIds:()=>[],onError:unexpected,
+  execute:async(item:DeliveryItem)=>{legacySent.push(item.text);if(item.text==='primary'){legacyStart.resolve();await legacyFinish.promise;}},
+  steer:async()=>{legacySteers++;return false;}};
+ const legacy = new DeliveryQueue(legacyOptions);
+ await legacy.enqueue('primary');await legacyStart.promise;
+ await legacy.enqueue('earlier ordinary',true,{version:1,origin:'user',displayText:'earlier ordinary'});
+ await legacy.enqueue('never steered',true,{version:1,origin:'user',displayText:'never steered'},undefined,{steerUser:true});
+ const legacyPause=legacy.pause();legacyFinish.resolve();await legacyPause;legacy.discardCurrent();
+ assert.equal(legacySteers,0);
+ const legacyCold=new DeliveryQueue({...legacyOptions,startPaused:true});
+ assert.ok(legacyCold.pendingUserInputs.every(item=>item.editable));
+ legacyCold.resume();await legacyCold.idle();assert.deepEqual(legacySent,['primary','earlier ordinary','never steered']);
 
  const states: { busy: boolean; pending: number }[] = [];
  const observed = new DeliveryQueue({ directory, sessionId: "observed", startPaused: true,

@@ -53,7 +53,7 @@ export interface CodexSessionHandle extends PiSessionHandle {
 type Model = { id: string; model: string; displayName: string; hidden: boolean; supportedReasoningEfforts?: {reasoningEffort:string;description:string}[] };
 type ThreadLaunchReceipt = CodexThreadResponse & CodexThreadModeReceipt;
 type InFlightDelivery = { id: string; text: string; presentation: DeliveryPresentation; itemId?: string; accepted?: boolean };
-type Run = { appended: InFlightDelivery[]; requests: Set<Promise<unknown>>; tools: Set<Promise<unknown>>; nativeTools: Map<string, { done: Promise<void>; complete(): void }>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: InFlightDelivery;
+type Run = { nativeUserItems: Map<string,string|undefined>; appended: InFlightDelivery[]; requests: Set<Promise<unknown>>; tools: Set<Promise<unknown>>; nativeTools: Map<string, { done: Promise<void>; complete(): void }>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: InFlightDelivery;
   terminal: Promise<CodexTurn>; resolve: (turn: CodexTurn) => void; reject: (error: Error) => void; done: Promise<void>; error?: Error };
 
 /** Codex 0.166 app-server public JSON-RPC; no terminal scraping or Pi model intermediary. */
@@ -180,7 +180,9 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
         if (notification.method === 'item/started' || notification.method === 'item/completed') {
           const turnId = String(params.turnId);
           if (active?.turnId === turnId && !active.terminalComplete) interactions.item(turnId, params.item);
-          rememberDelivery(turnId, params.item as CodexItem);
+          const observedItem=params.item as CodexItem;
+          if(active?.turnId===turnId&&observedItem.type==='userMessage')active.nativeUserItems.set(observedItem.id,codexInputText(observedItem));
+          rememberDelivery(turnId, observedItem);
           if (notification.method === 'item/completed' || isCodexToolItem(params.item as CodexItem)) projection?.put(params.item as CodexItem, turnId);
           const item = params.item as CodexItem;
           const awaitingSource = item.type === 'userMessage' && active?.appended.some(entry =>
@@ -376,7 +378,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       const terminal = new Promise<CodexTurn>((yes, no) => { resolve = yes; reject = no; });
       // Requests can fail before the turn is created; keep terminal rejection observed.
       void terminal.catch(() => {});
-      const run: Run = { appended: [], requests: new Set(), tools: new Set(), nativeTools: new Map(), terminalComplete: false, cancelled: false, controller: new AbortController(), terminal, resolve, reject, done: Promise.resolve(),
+      const run: Run = { nativeUserItems:new Map(), appended: [], requests: new Set(), tools: new Set(), nativeTools: new Map(), terminalComplete: false, cancelled: false, controller: new AbortController(), terminal, resolve, reject, done: Promise.resolve(),
         ...(promptOptions?.deliveryId && { delivery: { id: promptOptions.deliveryId, text,
           presentation: isDeliveryPresentation(promptOptions.presentation) ? promptOptions.presentation : { version: 1, origin: 'unknown', displayText: text } } }) };
       active = run;
@@ -436,6 +438,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       if (disposed || !run?.turnId || run.terminalComplete || run.cancelled || run.error
         || run.appended.some(entry => entry.text === text)) return false;
       const delivery: InFlightDelivery = { id: input.deliveryId, text, presentation: input.presentation };
+      const nativeItemsBefore = new Set([...run.nativeUserItems.keys(),...projection!.current().filter(entry => entry.turnId === run.turnId).map(entry => entry.item.id)]);
       run.appended.push(delivery);
       const request = transport.sendRequest<{turnId: string}>('turn/steer', {
         threadId, expectedTurnId: run.turnId, input: [{type: 'text', text, text_elements: []}],
@@ -459,11 +462,20 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
       try { await request; }
       catch (error) { failure = error; endedBeforeRejection = run.terminalComplete && !run.error; }
       finally { run.requests.delete(request); }
-      // The primary delivery reports failed/aborted turns. Appended inputs remain
-      // in their spool and must be eligible for a later explicit resume.
-      try { await run.done; } catch { return false; }
+      let turnFailure: unknown;
+      try { await run.done; } catch (error) { turnFailure = error; }
+      // Only an invalid/unsupported request with no ACK or observed native user
+      // item (including an incomplete started item) proves non-delivery. An interrupted turn alone proves neither.
+      const observed = [...run.nativeUserItems.keys()].some(id=>!nativeItemsBefore.has(id)) || projection!.current().some(entry => entry.turnId === run.turnId
+        && !nativeItemsBefore.has(entry.item.id) && entry.item.type === 'userMessage' && codexInputText(entry.item) === text);
+      const explicitUser = input.presentation.origin === 'user';
+      const declined = explicitUser && failure instanceof CodexRpcError && [-32600, -32601].includes(failure.code)
+        && !delivery.accepted && !observed;
+      if (declined) return false;
+      if (turnFailure && !explicitUser) return false;
+      if (turnFailure) throw new Error('Codex appended input outcome is uncertain after interruption; preserve the original input for verification', {cause: failure ?? turnFailure});
       if (failure) {
-        if (endedBeforeRejection && failure instanceof CodexRpcError && failure.code === -32600) return false;
+        if (!explicitUser && endedBeforeRejection && failure instanceof CodexRpcError && failure.code === -32600) return false;
         throw failure;
       }
       if (!metadata.completed.includes(delivery.id)) throw new Error('Codex did not confirm consumption of the appended delivery');
