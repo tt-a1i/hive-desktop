@@ -16,6 +16,13 @@ export interface HtmlArtifactSnapshot {
   warning?: string;
 }
 
+function snapshotStorageError(cause: unknown): ArtifactSourceError {
+  if (cause instanceof ArtifactSourceError) return cause;
+  return new ArtifactSourceError('HTML_ARTIFACT_STORAGE_UNAVAILABLE',
+    "Saved HTML preview storage is unavailable. Check Hive's local data directory and available disk space, then try again.",
+    { cause });
+}
+
 async function readBounded(path: string, maxBytes: number, source?: ResolvedArtifact): Promise<string> {
   const flags = constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK);
   const file = await open(path, flags);
@@ -53,7 +60,7 @@ async function readSnapshot(path: string, sourceToolCallId?: string): Promise<Ht
   try { data = await readBounded(path, maxSnapshotBytes); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
+    throw snapshotStorageError(error);
   }
   let record;
   try { record = JSON.parse(data); }
@@ -89,7 +96,7 @@ export async function savedHtmlPathPreview(dataDir: string, workspaceId: string,
     try { return {available: (await lstat(path)).isFile()}; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {available: false};
-      throw error;
+      throw snapshotStorageError(error);
     }
   }
   const saved = await readSnapshot(path);
@@ -111,19 +118,23 @@ export async function snapshotHtmlArtifact(dataDir: string, workspaceId: string,
     ...(source.sourceSessionId && { sourceSessionId: source.sourceSessionId }),
     ...(request.sourceToolCallId && {sourceToolCallId: request.sourceToolCallId}),
     ...(source.warning && { warning: source.warning }) };
-  await mkdir(directory, { recursive: true, mode: 0o700 });
   const temporary = join(directory, `${randomUUID()}.part`);
   try {
-    await writeFile(temporary, JSON.stringify({ version: 1, ...result }), { flag: 'wx', mode: 0o600, flush: true });
-    try { await link(temporary, path); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const concurrent = await readSnapshot(path, request.sourceToolCallId);
-      if (concurrent) return concurrent;
-      throw error;
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    try {
+      await writeFile(temporary, JSON.stringify({ version: 1, ...result }), { flag: 'wx', mode: 0o600, flush: true });
+      try { await link(temporary, path); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const concurrent = await readSnapshot(path, request.sourceToolCallId);
+        if (concurrent) return concurrent;
+        throw error;
+      }
+    } finally {
+      await rm(temporary, { force: true });
     }
     return result;
-  } finally {
-    await rm(temporary, { force: true });
+  } catch (error) {
+    throw snapshotStorageError(error);
   }
 }

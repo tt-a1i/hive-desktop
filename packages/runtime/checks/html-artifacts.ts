@@ -42,6 +42,12 @@ try {
   await writeFile(worktreeFile, worktreeHtml);
   const request = { path: artifact, sourceSessionId: isolated.id };
   const open = () => runtime.chats.artifactHtmlSnapshot(workspace.id, request);
+  const snapshotStore = join(data, 'html-artifacts');
+  await writeFile(snapshotStore, 'Unexpected file where the snapshot directory should be');
+  assert.equal((await runtime.chats.resolveArtifact(workspace.id, request)).path, worktreeFile);
+  await assert.rejects(open(), {code: 'HTML_ARTIFACT_STORAGE_UNAVAILABLE'});
+  await rm(snapshotStore);
+
   const [first, second] = await Promise.all([open(), open()]);
   assert.deepEqual(second, first);
   assert.equal(first.html, worktreeHtml);
@@ -111,7 +117,7 @@ try {
   const finalKey = createHash('sha256').update(JSON.stringify([artifact, undefined, undefined, isolated.id, callB.sourceToolCallId])).digest('hex');
   await writeFile(join(directory,`${finalKey}.json`),JSON.stringify({version:1,...draft}));
   await assert.rejects(runtime.chats.artifactHtmlSnapshot(workspace.id,callB), /HTML_ARTIFACT_SNAPSHOT_INVALID/);
-  console.log('HTML_ARTIFACTS_OK: real worktree provenance, separate tool versions, explicit legacy preview, cold recovery, limits and integrity; no model requests.');
+  console.log('HTML_ARTIFACTS_OK: real worktree provenance, separate tool versions, explicit legacy preview, storage retry, cold recovery, limits and integrity; no model requests.');
 } finally {
   await runtime.close();
   await rm(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 200 });

@@ -1,6 +1,7 @@
 use crate::artifacts::{ArtifactSource, ArtifactTarget, ResolvedArtifact};
 use crate::html_preview::{self, HtmlPreview};
 use crate::language::tr;
+use crate::text_reading::TextPages;
 use crate::{app::HiveApp, palette::Color};
 use gpui_kit::{
     assets::IconName as Glyph,
@@ -188,7 +189,7 @@ struct FileViewer {
     reveal_generation: u64,
     warning: Option<String>,
     resolved_path: Option<String>,
-    text: Option<String>,
+    text: Option<TextPages>,
     error: Option<PreviewError>,
     loading: bool,
     html_loading: bool,
@@ -407,7 +408,15 @@ impl FileViewer {
                     }
                     HtmlPreview::open(cx, source, snapshot.html, saved_path)
                 }) {
-                    this.html_error = Some(error);
+                    const STORAGE: &str = "[HTML_ARTIFACT_STORAGE_UNAVAILABLE]";
+                    this.html_error = Some(if error.starts_with(STORAGE) {
+                        format!(
+                            "{STORAGE} {}",
+                            tr("无法访问 HTML 预览的本地存储。请检查 Hive 数据目录和可用磁盘空间，然后重试。")
+                        )
+                    } else {
+                        error
+                    });
                 }
                 cx.notify();
             });
@@ -464,7 +473,14 @@ impl FileViewer {
                 return;
             }
             let result = match resolved {
-                Ok(resolved) => smol::unblock(move || read_resolved_text(resolved)).await,
+                Ok(resolved) => {
+                    smol::unblock(move || {
+                        read_resolved_text(resolved).map(|(text, path, warning)| {
+                            (TextPages::new(text.into()), path, warning)
+                        })
+                    })
+                    .await
+                }
                 Err(error) => Err(error),
             };
             let _ = this.update(cx, |this, cx| {
@@ -491,6 +507,17 @@ impl FileViewer {
             });
         })
         .detach();
+    }
+    fn step_source_page(&mut self, direction: isize, cx: &mut Context<Self>) {
+        let Some(text) = self.text.as_mut() else {
+            return;
+        };
+        if let Some(page) = text.page.checked_add_signed(direction) {
+            if text.show(page) {
+                self.scroll = ScrollHandle::new();
+                cx.notify();
+            }
+        }
     }
     fn reveal(&mut self, cx: &mut Context<Self>) {
         if !self.current(cx) {
@@ -684,7 +711,7 @@ impl Render for FileViewer {
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 if let Some(text) = &this.text {
                                                     cx.write_to_clipboard(
-                                                        ClipboardItem::new_string(text.clone()),
+                                                        ClipboardItem::new_string(text.full.to_string()),
                                                     );
                                                 }
                                             })),
@@ -781,14 +808,25 @@ impl Render for FileViewer {
                 },
             )
             .when_some(self.text.as_ref(), |view, text| {
-                let line_count = text.lines().count().max(1);
-                let digits = line_count.to_string().len().max(2);
-                let gutter = (1..=line_count)
-                    .map(|n| format!("{n:>digits$}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let gutter_width = px((digits as f32 * 8.0 + 18.0).max(38.0));
-                view.child(
+                let count = text.count();
+                let page = text.page;
+                let visible = &text.visible;
+                view.when(count > 1, |view| {
+                    let label = format!("{} {} / {count}", tr("文件内容页"), page + 1);
+                    view.child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Button::new("previous-file-page").ghost().xsmall()
+                                .label(tr("上一页")).disabled(page == 0)
+                                .on_click(cx.listener(|this, _, _, cx| this.step_source_page(-1, cx))))
+                            .child(div().id("file-page-position").role(Role::Status)
+                                .aria_label(label.clone()).text_xs().child(label))
+                            .child(Button::new("next-file-page").ghost().xsmall()
+                                .label(tr("下一页")).disabled(page + 1 == count)
+                                .on_click(cx.listener(|this, _, _, cx| this.step_source_page(1, cx)))),
+                    )
+                }).child(
                     div()
                         .min_w_0()
                         .rounded_xl()
@@ -807,7 +845,7 @@ impl Render for FileViewer {
                             .border_0()
                             .rounded_none()
                             .p_0()
-                            .when(text.is_empty(), |view| {
+                            .when(visible.is_empty(), |view| {
                                 view.child(
                                     div()
                                         .id("file-preview-empty")
@@ -819,7 +857,7 @@ impl Render for FileViewer {
                                         .child(tr("文件为空")),
                                 )
                             })
-                            .when(!text.is_empty(), |view| {
+                            .when(!visible.is_empty(), |view| {
                                 let appearance = cx.global::<crate::appearance::Appearance>();
                                 let code_font = appearance
                                     .code_font_family()
@@ -835,6 +873,13 @@ impl Render for FileViewer {
                                         .min_w_0()
                                         .items_start()
                                         .when(!word_wrap, |row| {
+                                            let last = text.first_line + visible.lines().count().max(1) - 1;
+                                            let digits = last.to_string().len().max(2);
+                                            let gutter = (text.first_line..=last)
+                                                .map(|line| format!("{line:>digits$}"))
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
+                                            let gutter_width = px((digits as f32 * 8.0 + 18.0).max(38.0));
                                             row.child(
                                                 div()
                                                     .w(gutter_width)
@@ -867,8 +912,8 @@ impl Render for FileViewer {
                                                 .line_height(px(code_line_height))
                                                 .text_color(Color::Text.get(cx))
                                                 .child(crate::text_reading::selectable_text(
-                                                    "file-preview-source",
-                                                    text.clone(),
+                                                    format!("file-preview-source-{page}"),
+                                                    visible.clone(),
                                                 )),
                                         ),
                                 )

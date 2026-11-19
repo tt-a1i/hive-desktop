@@ -113,6 +113,8 @@
   "上一页": "Previous page",
   "上一页补丁": "Previous patch page",
   "下一页补丁": "Next patch page",
+  "文件内容页": "File content page",
+  "无法访问 HTML 预览的本地存储。请检查 Hive 数据目录和可用磁盘空间，然后重试。": "Saved HTML preview storage is unavailable. Check Hive's local data directory and available disk space, then try again.",
   "复制完整补丁": "Copy full patch",
   "补丁页": "Patch page",
   "上下文 Token 数（可留空）": "Context tokens (optional)",
