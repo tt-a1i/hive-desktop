@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
@@ -64,6 +64,10 @@ if (mode === 'verify') {
   await writeFile(join(state, 'desktop-drafts', `session-${source.id}.json`), JSON.stringify({ key: `session:${source.id}`, input: draft, failed: [] }));
   await writeFile(join(state, 'desktop-language.json'), JSON.stringify('en'));
   const sessionIds = JSON.parse(await readFile(join(state, 'chats', 'index.json'), 'utf8')).map(x => x.id);
-  await writeFile(info, JSON.stringify({ sessionId: source.id, originAgentId: `${workspace.id}:orchestrator`, messageId: 'last', worktree: project, sessionFile,
+  const canonicalProject = await realpath(project);
+  const [originalDirectory, canonicalDirectory] = await Promise.all([stat(project), stat(canonicalProject)]);
+  assert.equal(originalDirectory.dev, canonicalDirectory.dev);
+  assert.equal(originalDirectory.ino, canonicalDirectory.ino);
+  await writeFile(info, JSON.stringify({ sessionId: source.id, originAgentId: `${workspace.id}:orchestrator`, messageId: 'last', worktree: canonicalProject, sessionFile,
     historySha256: hash(await readFile(sessionFile)), sessionIds, draft, agentRunsBefore: runs(), profile: profile.ref }));
 }
