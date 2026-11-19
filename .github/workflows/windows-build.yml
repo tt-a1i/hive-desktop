@@ -17,6 +17,7 @@ on:
           - project-reference
           - git-preview
           - worktree-dirty
+          - worktree-remove
           - archived-search
           - reading-position
           - codex-quota
@@ -407,7 +408,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'worktree-dirty', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'checkpoint-comparison')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'worktree-dirty', 'worktree-remove', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'checkpoint-comparison')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -531,6 +532,13 @@ jobs:
         run: |
           node scripts/check-windows-worktree-dirty.mjs --bundle target/replay-extracted --receipt target/windows-worktree-dirty.json 2>&1 | Tee-Object -FilePath target/windows-worktree-dirty.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Confirm removal of a clean Windows worktree
+        if: ${{ inputs.replay_scenario == 'worktree-remove' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-worktree-remove.mjs --bundle target/replay-extracted --receipt target/windows-worktree-remove.json 2>&1 | Tee-Object -FilePath target/windows-worktree-remove.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay native worktree project reference
         if: ${{ inputs.replay_scenario == 'project-reference' }}
         timeout-minutes: 8
@@ -598,6 +606,8 @@ jobs:
             target/windows-shortcut-layout.json
             target/windows-shortcut-layout-ui.json
             target/windows-shortcut-layout.log
+            target/windows-worktree-remove*.json
+            target/windows-worktree-remove*.log
             target/windows-worktree-dirty*.json
             target/windows-worktree-dirty*.log
             target/windows-git-preview*.json
