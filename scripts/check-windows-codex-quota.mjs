@@ -66,41 +66,91 @@ async function exists(path) {
     throw error;
   }
 }
+async function observerCommand(command, env) {
+  try {
+    return await execFileAsync(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], {
+      env,
+      windowsHide: true,
+      timeout: 15000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  } catch (error) {
+    const stderr = String(error.stderr ?? '')
+      .slice(0, 3000)
+      .replace(/PRIVATE_FIXTURE_[A-Z_]+/g, '[redacted]');
+    const failure = new Error(`Process observer failed: ${stderr || error.message}`);
+    Object.assign(failure, {
+      code: error.code ?? null,
+      killed: error.killed ?? null,
+      signal: error.signal ?? null,
+    });
+    throw failure;
+  }
+}
 async function processes(env) {
   const command =
-    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CreationDate | ConvertTo-Json -Compress';
-  const { stdout } = await execFileAsync(
-    powershell,
-    ['-NoProfile', '-NonInteractive', '-Command', command],
-    { env, windowsHide: true, timeout: 15000, maxBuffer: 4 * 1024 * 1024 },
-  );
+    'Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate | Select-Object ProcessId,ParentProcessId,Name,CreationDate | ConvertTo-Json -Compress';
+  const { stdout } = await observerCommand(command, env);
   const list = JSON.parse(stdout);
   return Array.isArray(list) ? list : [list];
+}
+async function prepareObserver(env) {
+  result.checks.observerWarmup = [];
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const started = Date.now();
+    try {
+      const snapshot = await processes(env);
+      assert(
+        snapshot.some((item) => item.ProcessId === process.pid),
+        'Process observer must see the fixture before launching the CLI',
+      );
+      result.checks.observerWarmup.push({
+        attempt,
+        elapsedMs: Date.now() - started,
+        status: 'ready',
+      });
+      return;
+    } catch (error) {
+      const timeout = error.code === null && error.killed === true && error.signal === 'SIGTERM';
+      result.checks.observerWarmup.push({
+        attempt,
+        elapsedMs: Date.now() - started,
+        status: timeout ? 'timeout' : 'error',
+        error: String(error),
+        failure: {
+          code: error.code ?? null,
+          killed: error.killed ?? null,
+          signal: error.signal ?? null,
+        },
+      });
+      if (!(timeout && attempt === 1)) throw error;
+    }
+  }
 }
 async function processSnapshot(peerPid, helperPid, unrelatedPid, desktopPid, env) {
   for (const pid of [peerPid, helperPid, unrelatedPid, desktopPid]) {
     assert(Number.isSafeInteger(pid) && pid > 0);
   }
-  // Inspect command lines only along the fixture peer's own ancestor chain.
-  // Return lifecycle identifiers only, never command lines or environments.
+  // Collect lifecycle fields once. Inspect a command line only for a Node
+  // process already established to be on this fixture's ancestor chain.
   const command = `
+    $all = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate)
     $chain = @(); $current = ${peerPid}; $hostFound = $false
     for ($i = 0; $i -lt 10 -and $current -gt 0 -and $current -ne ${desktopPid}; $i++) {
-      $process = Get-CimInstance Win32_Process -Filter "ProcessId = $current"
+      $process = $all | Where-Object { $_.ProcessId -eq $current } | Select-Object -First 1
       if (-not $process) { break }
       $chain += $process | Select-Object ProcessId,ParentProcessId,Name,CreationDate
-      if ($process.CommandLine -like '*owned-windows-cli-host.js*') { $hostFound = $true; break }
+      if ($i -gt 0 -and $process.Name -ieq 'node.exe') {
+        $details = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $current" -Property ProcessId,CommandLine
+        if ($details.CommandLine -like '*owned-windows-cli-host.js*') { $hostFound = $true; break }
+      }
       $current = $process.ParentProcessId
     }
-    $helper = Get-CimInstance Win32_Process -Filter 'ProcessId = ${helperPid}' | Select-Object ProcessId,ParentProcessId,Name,CreationDate
-    $other = Get-CimInstance Win32_Process -Filter 'ProcessId = ${unrelatedPid}' | Select-Object ProcessId,ParentProcessId,Name,CreationDate
+    $helper = $all | Where-Object { $_.ProcessId -eq ${helperPid} } | Select-Object ProcessId,ParentProcessId,Name,CreationDate
+    $other = $all | Where-Object { $_.ProcessId -eq ${unrelatedPid} } | Select-Object ProcessId,ParentProcessId,Name,CreationDate
     @{ chain = $chain; helper = $helper; other = $other; hostFound = $hostFound } | ConvertTo-Json -Depth 5 -Compress
   `;
-  const { stdout } = await execFileAsync(
-    powershell,
-    ['-NoProfile', '-NonInteractive', '-Command', command],
-    { env, windowsHide: true, timeout: 15000, maxBuffer: 65536 },
-  );
+  const { stdout } = await observerCommand(command, env);
   return JSON.parse(stdout);
 }
 function sameProcess(a, b) {
@@ -124,6 +174,7 @@ try {
     SystemRoot: process.env.SystemRoot,
     WINDIR: process.env.SystemRoot,
     ComSpec: join(process.env.SystemRoot, 'System32', 'cmd.exe'),
+    PSModulePath: join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'),
     PATHEXT: '.COM;.EXE;.BAT;.CMD',
     PATH: [dirs.bin, join(process.env.SystemRoot, 'System32')].join(delimiter),
     TEMP: dirs.tmp,
@@ -141,6 +192,7 @@ try {
     HIVE_DESKTOP_TRACE_RPC: '1',
   };
   fixtureEnv = env;
+  await prepareObserver(env);
   const unrelated = start(node, ['-e', 'setInterval(()=>{},1000)'], {
     env,
     stdio: 'ignore',
@@ -173,7 +225,11 @@ try {
     { env, stdio: 'inherit', windowsHide: true },
   );
 
-  await untilOrDriverExit(() => exists(join(root, 'quota-ready')), 'controlled quota request', driver);
+  await untilOrDriverExit(
+    () => exists(join(root, 'quota-ready')),
+    'controlled quota request',
+    driver,
+  );
   const pids = JSON.parse(await readFile(join(root, 'peer-pids.json'), 'utf8'));
   const snapshot = await processSnapshot(
     pids.peer,
@@ -236,7 +292,7 @@ try {
   result.error = String(error?.stack ?? error).replace(/PRIVATE_FIXTURE_[A-Z_]+/g, '[redacted]');
   process.exitCode = 1;
 } finally {
-  result.cleanupErrors.push(...await stopAll());
+  result.cleanupErrors.push(...(await stopAll()));
   if (observedOwned.length && fixtureEnv) {
     try {
       await until(
@@ -255,7 +311,11 @@ try {
   if (root) {
     try {
       const log = await readFile(join(root, 'requests.jsonl'), 'utf8');
-      result.checks.fixtureMethods = log.trim().split('\n').filter(Boolean).map(line => JSON.parse(line).method);
+      result.checks.fixtureMethods = log
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line).method);
     } catch (error) {
       if (error.code !== 'ENOENT') result.checks.fixtureLogError = String(error);
     }
