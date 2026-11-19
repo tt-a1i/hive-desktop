@@ -23,3 +23,19 @@ GPT-6.2 Sol 复现了合法旧配置在新版冷读时整份失效的问题。�
 从 macOS ZIP 启动后，设置页按组合键筛选，确认旧配置的 Command-分号仍分配给全局搜索，Command-Shift-G 仍分配给会话查找。冲突的新增动作和原先显式停用的设置入口均保持未分配。在原生设置中再停用一条快捷键并保存，重开后修改保留，两个旧绑定也保持原值。此轮原生证据覆盖设置读回和保存。注入的旧组合键和作为对照的默认 Command-B 都没有触发动作，按键触发还需实测。
 
 Rust 124 项通过，1 项辅助入口按设计忽略。Windows MSVC 交叉检查通过。macOS ZIP 的原生程序来自 `ed68a8a`，复用已验收的 `e20b882` 后台和同一份 Node。签名、解包清单及包内冒烟通过。ZIP SHA-256 为 `1a503b2e3af5402c4063d100e2b32d56c6af7a810a8bf858a4c0df495f586053`。证据位于 `.artifacts/html-cold-reopen-nJbNHQ/` 的 `shortcut-save-receipt.json`、`native-worktree-proof/` 和 `archive-manifest.json`。
+
+## 等效键位与录制退出
+
+GPT-6.2 Sol 核对了 GPUI 的平台键位映射。Windows 美式布局上，`Ctrl-Shift-;` 和 `Ctrl-:` 可以写成两个不同字符串，但分发时映射到同一个键位。快捷键注册与校验现在使用同一映射，启动时的默认键也使用该映射。保存拒绝等效键位重复。冷读旧配置时按原分发优先级保留可触发的动作，另一个映射到同一键位的绑定在内存停用。已有自定义绑定可以占用后来新增动作的默认键。冷读保留原文件字节。
+
+上一个 macOS 包中，普通 Tab 和 Esc 能停止录制，Shift-Tab 会进入组合键校验并报错。录制器现在让两个方向的 Tab 都结束录制，并把按键交给原有焦点导航。
+
+本轮从原生窗口按键验证。等待已选会话加载后，使用当前输入环境的会话级键盘事件，发送完整的修饰键按下和释放。旧包的默认 Command‑K、Command‑F 和 Command‑B 可触发。加载旧自定义配置后，Command‑分号和 Command‑Shift‑G 分别打开全局搜索与当前会话查找，默认的 Command‑K 和 Command‑F 在该配置中不再触发。退出重开所用数据和快捷键文件属于隔离验收目录。
+
+新版从 ZIP 解包后复验了这两套配置。Command‑B 可以关闭和恢复侧栏，Esc 可以关闭搜索与查找。录制时，Command‑Shift‑J 的对照试验能生成待保存的改绑。重新录制后分别按下 Shift‑Tab、Tab、Esc，或切换到另一原生窗口，返回后输入同一个组合键均未被录制。配置文件字节保持一致，应用和后台正常退出。
+
+127 项 Rust 测试通过，1 项辅助入口按设计忽略。等效键位回归使用 Windows 美式映射样例和一个模拟的替代布局，另核对保存冲突和旧文件字节。Windows MSVC 交叉检查通过。当前版本的 Windows 原生键盘和输入法组字仍待实测。
+
+本地 ZIP 的桌面源版本为 `eabf979`，运行时复用 `666e39d`。应用在压缩前和解包后通过严格签名验证。归档与打包目录逐项核对了 28,956 个文件、29 个链接和 2,710 个目录。包内 Node、PTY、Hive HTTP/SQLite 与正常退出冒烟通过。ZIP SHA-256 为 `7e10283e65d606d988b94ca1b109b4ab150cf3b74fe206b52773521df284b03d`。
+
+本地证据位于 `.artifacts/native-shortcut-keys-HAQBOj/`。默认和旧配置的键盘结果分别见 `packaged-default/keys-evidence.json` 和 `packaged-legacy/keys-evidence.json`。录制器修复前后的结果见 `recorder-before/receipt.json` 和 `recorder-after/receipt.json`。包内冒烟结果见 `package-smoke.log`。
