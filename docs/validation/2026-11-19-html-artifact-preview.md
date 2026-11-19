@@ -39,3 +39,15 @@ GPT-6.2 Sol 用生产运行时代码复现了一个问题。同一会话的两�
 - 包内 Node 与冻结依赖通过 HTML 快照和 Codex 分叉来源两项回归。便携包冒烟通过，包括真实 PTY、Hive HTTP/SQLite 和退出。Rust 测试通过 127 项，1 项忽略。Windows MSVC 目标通过交叉编译检查，当前改动仍待 Windows 原生窗口验证。
 
 证据位于 `.artifacts/html-tool-versions-PONINH/`，包括 `native-window-iHhWwZ/receipt.json`、各版本的原生辅助功能树、`packaged-functional-receipt.json`、`package-smoke.log`、签名和归档清单。ZIP 的 SHA-256 为 `216405ffbc7a95d34c82825ba6428df393b2fc4ae2deea1351852a4101f32dd9`。
+
+## 大文件源码分页与快照存储恢复
+
+`655ec80` 将文件详情改为每页最多排版 256 行或 32 KiB。页码、原文件行号和双向翻页帮助定位。超长行按 UTF-8 边界拆分，CRLF 保持完整，复制全文仍读取同一份已读源文本。Git 补丁沿用同一个分页实现及原有操作。文件详情关闭后释放所持页数据。
+
+旧版会在每次排版时为整个文件生成行号。用接近 1 MiB 的大量短行夹具，各起三个独立优化 Rust 进程测量这一步。旧做法的峰值 RSS 中位数为 50.69 MiB，分页后为 2.72 MiB。此处测量的是源码分段和行号生成。实际桌面进程 RSS 仍待复验。
+
+GPT-6.2 Sol 在真实 Hive 和 Git 工作树中复现了本地快照存储故障。原 HTML 仍能读取，旧后台却要求恢复源文件。新版明确提示检查 Hive 数据目录和磁盘空间。修复存储后，从同一来源重新捕获成功，冷启动仍能读回快照。真实工作树、同名工具版本、旧版路径快照以及校验失败的回归继续通过。
+
+131 项 Rust 测试通过，1 项辅助进程入口按设计忽略。Windows MSVC 交叉检查通过。macOS 本地签名 ZIP 解包后通过严格验签、包内 Node、真实 PTY 和 Hive SQLite 冒烟，以及三项 HTML、产物来源和 Git 专项。macOS 测试机锁屏，当前包的原生翻页、重试和窗口内存仍待复验。当前 Windows 原生流程也待验。本轮未发布。
+
+证据位于 `.artifacts/artifact-source-pages-1JIexN/`，包括分配测量 `gutter-allocation-rollup.json`、解包专项 `extracted-functional-receipt.json`、`rust-tests.log` 和签名记录。ZIP SHA-256 为 `119a79ecc2df68db39665b674a6a88813be4ccfb14cbc7b7f0342992861a5a93`。
