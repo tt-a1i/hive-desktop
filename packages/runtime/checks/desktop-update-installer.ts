@@ -162,6 +162,7 @@ async function checkTransaction(healthy: boolean, receiptFault = false, lockedCa
     await assert.rejects(readFile(releaseCache), {code:'ENOENT'});
     await assert.rejects(lstat(attestation), {code:'ENOENT'});
   } else assert.equal(await readFile(releaseCache, 'utf8'), 'Verified fixture ZIP');
+  await rm(root, { recursive: true, maxRetries: 10, retryDelay: 100 });
 }
 
 async function checkInterruptedReplacement() {

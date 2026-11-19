@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { once } from 'node:events';
 import { constants } from 'node:fs';
@@ -7,6 +7,7 @@ import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink,
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { DesktopUpdates } from '../src/desktop-updates.js';
@@ -47,6 +48,10 @@ await once(server, 'listening');
 const socket = server.address();
 assert.ok(socket && typeof socket !== 'string');
 const updates = new DesktopUpdates(root, policyPath);
+const compiledRuntime = process.env.HIVE_DESKTOP_TEST_RUNTIME;
+const updateModule = compiledRuntime
+  ? pathToFileURL(join(dirname(compiledRuntime), 'desktop-updates.js'))
+  : new URL('../dist/desktop-updates.js', import.meta.url);
 try {
   assert.deepEqual(await updates.check(), { state: 'disabled' });
   await writeFile(policyPath, JSON.stringify({ schemaVersion: 1, installedVersion: '0.1.0',
@@ -73,8 +78,40 @@ try {
   serve = response => response.end(Buffer.alloc(archive.length + 1));
   await assert.rejects(updates.stage('0.1.2', sha256), /exceeded its expected size/);
   assert.deepEqual(await readdir(staging), []);
+  const stalled = join(root, 'stalled-download.mjs');
+  await writeFile(stalled, `
+    import {DesktopUpdates} from ${JSON.stringify(updateModule.href)};
+    const updates = new DesktopUpdates(${JSON.stringify(root)}, new URL(${JSON.stringify(policyPath.href)}));
+    await updates.stage('0.1.2', ${JSON.stringify(sha256)});
+  `);
+  const partialBytes = archive.subarray(0, 8);
+  serve = response => { response.write(partialBytes); return response; };
+  const downloader = spawn(process.execPath, [stalled], { stdio: 'inherit', windowsHide: true });
+  const downloadExit = once(downloader, 'exit');
+  let part: string | undefined;
+  try {
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      assert.equal(downloader.exitCode, null);
+      assert.ok(Date.now() < deadline, 'Partial update did not reach the download directory');
+      part = (await readdir(staging)).find(name => name.endsWith('.part'));
+      if (part && (await readFile(join(staging, part))).equals(partialBytes)) break;
+      await delay(30);
+    }
+    serve = response => response.end(archive);
+    await updates.stage('0.1.2', sha256);
+    assert.deepEqual(await readFile(join(staging, part)), partialBytes, 'An active download must keep its partial file');
+  } finally {
+    if (downloader.exitCode === null && downloader.signalCode === null) downloader.kill('SIGKILL');
+    await downloadExit;
+  }
+  assert.ok(part);
+  const partialManifest = join(staging, `${part}.manifest`);
+  await writeFile(partialManifest, JSON.stringify(manifest));
   serve = response => response.end(archive);
   assert.deepEqual(await updates.stage('0.1.2', sha256), { version: '0.1.2', sha256 });
+  await assert.rejects(readFile(join(staging, part)), { code: 'ENOENT' }, 'A retry must reclaim the terminated download');
+  await assert.rejects(readFile(partialManifest), { code: 'ENOENT' });
   assert.deepEqual(await readFile(join(staging, `${sha256}.zip`)), archive);
   unavailable = true;
   const cold = new DesktopUpdates(root, policyPath);
@@ -140,10 +177,6 @@ try {
     schemaVersion: 1, app: 'com.hive.desktop.dev', version: '0.1.0', platform: process.platform, arch: process.arch,
     executableSha256, files: mac ? 6 : 5, installerProtocol: 2,
   }));
-  const compiledRuntime = process.env.HIVE_DESKTOP_TEST_RUNTIME;
-  const updateModule = compiledRuntime
-    ? pathToFileURL(join(dirname(compiledRuntime), 'desktop-updates.js'))
-    : new URL('../dist/desktop-updates.js', import.meta.url);
   const runOwnershipCheck = join(root, 'installer-ownership.mjs');
   const obsolete = Buffer.from('obsolete, signed archive');
   const obsoleteSha = createHash('sha256').update(obsolete).digest('hex');
@@ -154,6 +187,7 @@ try {
     JSON.stringify(envelope('0.1.0', [{...asset, sha256:obsoleteSha,bytes:obsolete.length}])));
   await writeFile(join(staging, unsignedSha + '.zip'), unsigned);
   await writeFile(join(staging, unsignedSha + '.manifest.json'), '{}');
+  await writeFile(join(staging, part), partialBytes);
   await writeFile(runOwnershipCheck, `
     import assert from 'node:assert/strict';
     import {readFile,readdir} from 'node:fs/promises';
@@ -180,6 +214,7 @@ try {
     assert.equal((await readFile(unsigned, 'utf8')), 'not a signed archive');
     assert.equal((await readFile(join(cache, ${JSON.stringify(zippedHash + '.zip')}))).length, ${zippedBytes.length});
     await assert.rejects(readFile(obsolete), {code:'ENOENT'});
+    await assert.rejects(readFile(join(cache, ${JSON.stringify(part)})), {code:'ENOENT'});
     await assert.rejects(readFile(obsolete.replace(/\\.zip$/, '.manifest.json')), {code:'ENOENT'});
     await updates.close();
 

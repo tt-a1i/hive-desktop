@@ -3,10 +3,21 @@ import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpa
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractDesktopUpdate, verifyDesktopPackage } from './desktop-update-archive.js';
-import { desktopPackagePaths, hashDesktopFile, prepareDesktopRecoveryEntry, reclaimDesktopUpdateTransactions, removeDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
+import { desktopPackagePaths, hashDesktopFile, isLive, prepareDesktopRecoveryEntry, reclaimDesktopUpdateTransactions, removeDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
 
 const manifestLimit = 64 * 1024;
 const archiveLimit = 2 * 1024 * 1024 * 1024;
+const downloadPart = /^download-([1-9]\d{0,9})-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.part(?:\.manifest)?$/;
+
+async function reclaimPartialDownloads(directory: string, names: string[]) {
+  for (const name of names) {
+    const owner = Number(downloadPart.exec(name)?.[1]);
+    if (!Number.isInteger(owner) || owner < 2 || owner > 0x7fff_ffff || owner === process.pid) continue;
+    try {
+      if (!isLive(owner)) await rm(join(directory, name), { force: true });
+    } catch { /* Inaccessible or locked parts stay available for a later check. */ }
+  }
+}
 
 type Policy = { feed: URL; key: KeyObject; installedVersion: string };
 type Asset = { platform: string; arch: string; file: string; bytes: number; sha256: string };
@@ -207,7 +218,9 @@ export class DesktopUpdates {
         || receipt.transactionId !== basename(dirname(ready))) return;
     }
     await reclaimDesktopUpdateTransactions(installation, dataDirectory);
-    for (const name of await readdir(directory)) {
+    const names = await readdir(directory);
+    await reclaimPartialDownloads(directory, names);
+    for (const name of names) {
       this.closing.signal.throwIfAborted();
       if (!/^[a-f0-9]{64}\.manifest\.json$/.test(name)) continue;
       try {
@@ -274,7 +287,9 @@ export class DesktopUpdates {
     const { asset } = checked;
     const directory = join(this.dataDirectory, 'desktop-updates');
     await mkdir(directory, { recursive: true, mode: 0o700 });
-    const pending = join(directory, `${randomUUID()}.part`);
+    if (await realpath(directory) === directory) await reclaimPartialDownloads(directory, await readdir(directory));
+    this.closing.signal.throwIfAborted();
+    const pending = join(directory, `download-${process.pid}-${randomUUID()}.part`);
     const attestation = `${pending}.manifest`;
     const file = await open(pending, 'wx', 0o600);
     try {

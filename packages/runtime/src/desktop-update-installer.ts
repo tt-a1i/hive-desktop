@@ -62,7 +62,7 @@ export async function verifyMacDesktopSignature(root: string, signal?: AbortSign
   }
 }
 
-function isLive(pid: number): boolean {
+export function isLive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
