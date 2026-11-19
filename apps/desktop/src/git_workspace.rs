@@ -210,12 +210,22 @@ struct Status {
     offset: usize,
     limit: usize,
     has_more: bool,
+    #[serde(default)]
+    repository_staged_total: Option<usize>,
     complete: bool,
     warnings: Vec<String>,
     scope: String,
     submodule_details: String,
     global_configuration: String,
 }
+impl Status {
+    fn can_preview_commit(&self) -> bool {
+        // Legacy status snapshots have no repository-wide count. Let the
+        // read-only backend preflight decide instead of guessing from one page.
+        !self.complete || self.repository_staged_total != Some(0)
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Snapshot {
@@ -780,6 +790,7 @@ impl HiveApp {
                     },
                 ],
                 total: 3,
+                repository_staged_total: Some(1),
                 offset: 0,
                 limit: 100,
                 has_more: false,
@@ -1599,7 +1610,7 @@ impl Render for GitWorkspace {
                     let can_index = current && !self.status_loading && !self.index_busy && !self.index_refresh_required && !self.preview_mock;
                     let selected_can_stage = selected_change.as_ref().is_some_and(|c| c.has_unstaged());
                     let selected_can_unstage = selected_change.as_ref().is_some_and(|c| c.has_staged());
-                    let has_any_staged = status.entries.iter().any(|c| c.has_staged());
+                    let has_any_staged = status.can_preview_commit();
 
                     view.when(!status.complete || !status.warnings.is_empty(), |view| {
                         view.child(
@@ -2583,6 +2594,27 @@ mod tests {
         assert!(success.ok && !success.applied);
         assert_eq!(success.operation, Some(IndexOperation::Unstage));
         assert_eq!(success.paths.unwrap(), ["a"]);
+    }
+    #[test]
+    fn commit_preview_uses_repository_count_and_keeps_legacy_status_usable() {
+        let mut wire = identity();
+        wire.as_object_mut().unwrap().extend(json!({
+            "entries":[],"total":102,"offset":0,"limit":100,"hasMore":true,
+            "complete":true,"warnings":[],"scope":"project",
+            "submoduleDetails":"not-scanned","globalConfiguration":"read-only"
+        }).as_object().unwrap().clone());
+        let legacy: Status = decode(json!({"ok":true,"status":wire.clone()}), "status").unwrap();
+        assert_eq!(legacy.repository_staged_total, None);
+        assert!(legacy.can_preview_commit(), "legacy pages defer to authoritative preflight");
+        wire["repositoryStagedTotal"] = json!(1);
+        let off_page: Status = decode(json!({"ok":true,"status":wire.clone()}), "status").unwrap();
+        assert!(off_page.can_preview_commit());
+        wire["repositoryStagedTotal"] = json!(0);
+        let empty: Status = decode(json!({"ok":true,"status":wire}), "status").unwrap();
+        assert!(!empty.can_preview_commit());
+        let mut incomplete = empty;
+        incomplete.complete = false;
+        assert!(incomplete.can_preview_commit(), "incomplete scans defer to preflight");
     }
     #[test]
     fn git_wire_retains_scope_warning_rename_and_conflict_identity() {

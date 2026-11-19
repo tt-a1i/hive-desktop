@@ -33,6 +33,8 @@ export interface GitChange {
 export interface GitWorkspaceStatus extends GitWorkspaceIdentity {
   entries: GitChange[]; total: number; offset: number; limit: number; hasMore: boolean;
   complete: boolean; warnings: string[];
+  /** Repository-wide index changes from the same status scan, including unresolved conflicts. */
+  repositoryStagedTotal: number;
   /** Submodule commit pointers are included; nested file changes and ahead/behind are not scanned. */
   scope: 'project'; submoduleDetails: 'not-scanned'; globalConfiguration: 'read-only';
 }
@@ -178,8 +180,8 @@ function pathText(data: Buffer): string {
   try { return new TextDecoder('utf-8', {fatal:true,ignoreBOM:true}).decode(data); }
   catch { throw new GitWorkspaceError('UNSUPPORTED_PATH_ENCODING','Git filenames are not valid UTF-8; these paths cannot be displayed without ambiguity'); }
 }
-function parseStatus(data: Buffer, prefix: string): GitChange[] {
-  const records=pathText(data).split('\0'); const entries: GitChange[]=[];
+function parseStatus(data: Buffer, prefix: string): {entries: GitChange[]; repositoryStagedTotal: number} {
+  const records=pathText(data).split('\0'); const entries: GitChange[]=[];let repositoryStagedTotal=0;
   if(records.pop()!=='')throw new GitWorkspaceError('INVALID_GIT_OUTPUT','Git status did not end with a NUL separator');
   for(let i=0;i<records.length;i++){
     const record=records[i]!;const kind=record[0];
@@ -191,6 +193,7 @@ function parseStatus(data: Buffer, prefix: string): GitChange[] {
     const originalRepositoryPath=kind==='2'?records[++i]:undefined;
     if(kind==='2'&&originalRepositoryPath===undefined)throw new GitWorkspaceError('INVALID_GIT_OUTPUT','Missing Git rename source');
     const originalPath=originalRepositoryPath===undefined?undefined:projectPath(originalRepositoryPath,prefix);
+    if(!['',' ','.','?'].includes(f[1]![0]!))repositoryStagedTotal++;
     if(path===undefined&&originalPath===undefined)continue;
     const entry: GitChange={kind:kind==='1'?'ordinary':kind==='2'?'rename':'unmerged',path:path??originalPath!,repositoryPath,...(kind==='2'&&{pathRole:path===undefined?'rename-source' as const:'target' as const}),indexStatus:f[1]![0]!,worktreeStatus:f[1]![1]!,submodule:f[2]!,...(kind!=='u'&&{headMode:f[3]!,indexMode:f[4]!}),worktreeMode:f[kind==='u'?6:5]!};
     if(kind==='u')entry.conflictStages=[1,2,3].map(stage=>({stage,mode:f[stage+2]!,oid:f[stage+6]!}));
@@ -198,7 +201,7 @@ function parseStatus(data: Buffer, prefix: string): GitChange[] {
     if(originalRepositoryPath!==undefined){entry.originalRepositoryPath=originalRepositoryPath;if(originalPath!==undefined)entry.originalPath=originalPath;entry.renameScore=f[8]!;}
     entries.push(entry);
   }
-  return entries;
+  return {entries,repositoryStagedTotal};
 }
 /** Isolate executable configuration while retaining the actual read-only index.
  * Attributes can change at any time. With no filter definitions in this private
@@ -244,9 +247,9 @@ export async function getGitWorkspaceStatus(projectRoot: string, options: GitSta
   // Reclassify the real attributes after the isolated scan. A newly active
   // driver is an explicit unsupported result, never a raw-content status claim.
   await requireSafeStatus(c);
-  const entries=parseStatus(output.stdout,c.projectPrefix);await unchanged(c);
+  const {entries,repositoryStagedTotal}=parseStatus(output.stdout,c.projectPrefix);await unchanged(c);
   const warnings=output.stderr?[output.stderr]:[];
-  return {...identity(c),entries:entries.slice(offset,offset+limit),total:entries.length,offset,limit,hasMore:offset+limit<entries.length,complete:warnings.length===0,warnings,scope:'project',submoduleDetails:'not-scanned',globalConfiguration:'read-only'};
+  return {...identity(c),entries:entries.slice(offset,offset+limit),total:entries.length,offset,limit,hasMore:offset+limit<entries.length,complete:warnings.length===0,warnings,repositoryStagedTotal,scope:'project',submoduleDetails:'not-scanned',globalConfiguration:'read-only'};
 }
 
 type Snapshot = { meta: GitFileSnapshot; data: Buffer };

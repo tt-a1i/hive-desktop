@@ -38,6 +38,7 @@ try {
   assert.equal(status.status.projectRoot, await realpath(repo));
   assert.equal(status.status.branch, 'main');
   assert.equal(status.status.entries.length, 1);
+  assert.equal(status.status.repositoryStagedTotal, 1);
   assert.equal(status.status.entries[0]?.path, path);
   assert.equal(status.status.entries[0]?.indexStatus, 'M');
   assert.equal(status.status.entries[0]?.worktreeStatus, 'M');

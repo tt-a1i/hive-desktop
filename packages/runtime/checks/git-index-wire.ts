@@ -78,6 +78,13 @@ try {
   const fresh = await rpc('git.index.preview', params);
   const staged = await rpc('git.index.apply', {...params, expectedVersion: fresh.preview.version});
   assert.equal(staged.ok, true);
+  const offPage = await rpc('git.status', {workspaceId: workspace.id, offset: 100, limit: 1});
+  assert.equal(offPage.ok, true);
+  assert.deepEqual(offPage.status.entries, []);
+  const stagedPaths = git(repo, 'diff', '--cached', '--name-only', '-z').split('\0').filter(Boolean);
+  assert.ok(stagedPaths.includes(path));
+  assert.equal(offPage.status.repositoryStagedTotal, stagedPaths.length);
+
   assert.equal(git(repo, 'show', `:${path}`), 'changed after preview\n');
   assert.equal(git(repo, 'show', ':keep.txt'), 'baseline keep\n');
   const repeated = await rpc('git.index.apply', {...params, expectedVersion: fresh.preview.version});

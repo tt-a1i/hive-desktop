@@ -40,14 +40,14 @@ try{
  await put(repo,'edit.txt','staged edit\n');await git(repo,'add','--','edit.txt');await put(repo,'edit.txt','working edit\n');
  await rm(join(repo,'delete.txt'));await put(repo,'binary.dat',Buffer.from([0,9,8,7]));
  await put(repo,'空 格\nnotes.txt','untracked Unicode newline\n');await put(repo,'-leading','leading name\n');await put(repo,'ignored','ignore this');await put(repo,'large.txt','x'.repeat(2048));
- const status=await getGitWorkspaceStatus(repo,{limit:500});assert.equal(status.complete,true);
+ const status=await getGitWorkspaceStatus(repo,{limit:500});assert.equal(status.complete,true);assert.equal(status.repositoryStagedTotal,3);
  const rename=status.entries.find(entry=>entry.path===renamed)!;assert.equal(rename.kind,'rename');assert.equal(rename.originalPath,'old name.txt');assert.equal(rename.indexStatus,'R');assert.equal(rename.worktreeStatus,'M');
  const edit=status.entries.find(entry=>entry.path==='edit.txt')!;assert.equal(edit.indexStatus,'M');assert.equal(edit.worktreeStatus,'M');
  assert.ok(status.entries.some(entry=>entry.path==='空 格\nnotes.txt'&&entry.kind==='untracked'));assert.ok(status.entries.some(entry=>entry.path==='-leading'));
  assert.ok(status.entries.some(entry=>entry.path==='delete.txt'&&entry.worktreeStatus==='D'));assert.ok(!status.entries.some(entry=>entry.path==='ignored'));
  await git(repo,'update-index','--split-index');
  const indexBefore=await readFile(join(repo,'.git','index'));await getGitWorkspaceStatus(repo);assert.deepEqual(await readFile(join(repo,'.git','index')),indexBefore,'Read-only refresh must not rewrite the real split index');
- const page=await getGitWorkspaceStatus(repo,{offset:1,limit:2});assert.equal(page.total,status.total);assert.equal(page.entries.length,2);assert.equal(page.hasMore,true);
+ const page=await getGitWorkspaceStatus(repo,{offset:1,limit:2});assert.equal(page.total,status.total);assert.equal(page.entries.length,2);assert.equal(page.hasMore,true);assert.equal(page.repositoryStagedTotal,status.repositoryStagedTotal);
  assert.deepEqual((await getGitWorkspaceStatus(repo,{offset:999,limit:2})).entries,[]);
  const staged=await getGitFileDiff(repo,'edit.txt',{comparison:'staged'});assert.equal(staged.before.text,'before\n');assert.equal(staged.after.text,'staged edit\n');assert.ok(staged.patch?.includes('+staged edit'));
  const unstaged=await getGitFileDiff(repo,'edit.txt');assert.equal(unstaged.before.text,'staged edit\n');assert.equal(unstaged.after.text,'working edit\n');
@@ -83,12 +83,30 @@ try{
  await assert.rejects(getGitFileDiff(join(parent,'project'),'entered.txt',{comparison:'head-worktree'}),isCode('OUTSIDE_PROJECT_RENAME'));
  await assert.rejects(getGitFileDiff(join(parent,'project'),'leaving.txt',{comparison:'head-worktree'}),isCode('OUTSIDE_PROJECT_RENAME'));
  assert.equal((await getGitFileDiff(parent,'project/entered.txt',{comparison:'staged'})).before.text,'entering content\n');
+ // Repository-wide staged counts must not disappear outside the current page or project.
+ const paged=join(directory,'paged');await init(paged);
+ const pagedFiles=Array.from({length:102},(_,i)=>`file-${String(i).padStart(3,'0')}.txt`);
+ for(const name of pagedFiles)await put(paged,name,'before\n');
+ await put(paged,'subproject/keep.txt','keep\n');await commit(paged);
+ for(const name of pagedFiles)await put(paged,name,'after\n');
+ await git(paged,'add','--',pagedFiles[100]!);
+ const pagedIndex=await readFile(join(paged,'.git/index'));
+ const firstPage=await getGitWorkspaceStatus(paged,{limit:100}),lastPage=await getGitWorkspaceStatus(paged,{offset:100,limit:100});
+ assert.equal(firstPage.total,102);assert.equal(firstPage.entries.length,100);assert.equal(firstPage.hasMore,true);
+ assert.ok(firstPage.entries.every(entry=>entry.indexStatus==='.'&&entry.worktreeStatus==='M'));
+ assert.equal(lastPage.entries.length,2);assert.equal(lastPage.hasMore,false);
+ assert.equal(firstPage.repositoryStagedTotal,1);assert.equal(lastPage.repositoryStagedTotal,1);
+ const subproject=await getGitWorkspaceStatus(join(paged,'subproject'));
+ assert.deepEqual(subproject.entries,[]);assert.equal(subproject.total,0);assert.equal(subproject.scope,'project');assert.equal(subproject.repositoryStagedTotal,1);
+ assert.deepEqual(await readFile(join(paged,'.git/index')),pagedIndex);
+ await git(paged,'reset','--quiet','HEAD','--',pagedFiles[100]!);
+ assert.equal((await getGitWorkspaceStatus(paged,{offset:100})).repositoryStagedTotal,0);
  // Unborn repositories and linked worktrees preserve actual Git identity.
  const unborn=join(directory,'unborn');await init(unborn);await put(unborn,'added.txt','first staged\n');await git(unborn,'add','--','added.txt');
- const initial=await getGitWorkspaceStatus(unborn);assert.equal(initial.unborn,true);assert.equal(initial.headOid,null);assert.equal(initial.branch,'main');assert.equal(initial.entries[0]!.indexStatus,'A');
+ const initial=await getGitWorkspaceStatus(unborn);assert.equal(initial.repositoryStagedTotal,1);assert.equal(initial.unborn,true);assert.equal(initial.headOid,null);assert.equal(initial.branch,'main');assert.equal(initial.entries[0]!.indexStatus,'A');
  assert.equal((await getGitFileDiff(unborn,'added.txt',{comparison:'staged'})).before.kind,'missing');
  const worktree=join(directory,'linked tree');await git(repo,'worktree','add','--detach',worktree,'HEAD');await put(worktree,'edit.txt','linked worktree edit\n');
- const linked=await getGitWorkspaceStatus(worktree);assert.equal(linked.linkedWorktree,true);assert.equal(linked.detached,true);assert.equal(linked.branch,null);assert.equal(linked.repositoryRoot,worktree);assert.notEqual(linked.gitDir,linked.commonDir);assert.equal(linked.entries[0]!.path,'edit.txt');
+ const linked=await getGitWorkspaceStatus(worktree);assert.equal(linked.repositoryStagedTotal,0);assert.equal(linked.linkedWorktree,true);assert.equal(linked.detached,true);assert.equal(linked.branch,null);assert.equal(linked.repositoryRoot,worktree);assert.notEqual(linked.gitDir,linked.commonDir);assert.equal(linked.entries[0]!.path,'edit.txt');
  await git(repo,'checkout','--detach','HEAD');assert.equal((await getGitWorkspaceStatus(repo)).detached,true);await git(repo,'checkout','main');
  // Private status metadata preserves sparse-index and SHA-256 repository semantics.
  const sparse=join(directory,'sparse');await init(sparse);await put(sparse,'kept/file.txt','kept before\n');await put(sparse,'hidden/file.txt','hidden before\n');await commit(sparse);
@@ -107,6 +125,7 @@ try{
  const conflict=join(directory,'conflict');await init(conflict);await put(conflict,'conflict.txt','base\n');await commit(conflict);await git(conflict,'checkout','-b','other');await put(conflict,'conflict.txt','other\n');await commit(conflict);await git(conflict,'checkout','main');await put(conflict,'conflict.txt','main\n');await commit(conflict);
  await assert.rejects(git(conflict,'merge','other'));
  const conflicted=await getGitWorkspaceStatus(conflict);assert.equal(conflicted.entries[0]!.kind,'unmerged');assert.equal(conflicted.entries[0]!.indexStatus,'U');assert.equal(conflicted.entries[0]!.worktreeStatus,'U');assert.equal(conflicted.entries[0]!.conflictStages!.length,3);
+ assert.equal((await getGitWorkspaceStatus(conflict,{offset:999})).repositoryStagedTotal,1);
  const conflictDiff=await getGitFileDiff(conflict,'conflict.txt');assert.equal(conflictDiff.complete,false);assert.equal(conflictDiff.patch,undefined);assert.deepEqual(conflictDiff.conflictStages!.map(stage=>stage.snapshot.text),['base\n','main\n','other\n']);assert.ok(conflictDiff.after.text?.includes('<<<<<<<'));
  // Every configured helper writes a sentinel if invoked. Only read APIs run now.
  const sentinel=join(directory,'HELPER_RAN'),helper=join(directory,'helper');
