@@ -9,7 +9,7 @@ import {join} from 'node:path';
 import {createDesktopRuntime} from '../src/desktop-runtime.js';
 import {createTeamTool} from '../src/team-tool.js';
 import {DispatchExecutionOrigins} from '../src/dispatch-execution-origins.js';
-import {codexMetadataFile} from '../src/agents/codex-metadata.js';
+import {codexMetadataFile,writeCodexMetadata} from '../src/agents/codex-metadata.js';
 import type {Chats} from '../src/chats.js';
 import type {ChatIndex} from '../src/chat-index.js';
 import type {DeliveryQueue} from '../src/delivery-queue.js';
@@ -95,7 +95,8 @@ try {
  assert.equal(complete.historyIncomplete,undefined);
  assert.deepEqual(complete.historyMessageIds,['user1']);
  assert.match(JSON.stringify(complete.history),/Stored cold input/);
- for (const searchEntries of [undefined,[null],[...entries,...entries]]) {
+ const disputedEntry={...entries[0]!,item:{id:'different-user',type:'userMessage',content:[{type:'text',text:'Unopenable optional index text'}]}};
+ for (const searchEntries of [undefined,[null],[...entries,...entries],[disputedEntry]]) {
    const invalidJournal=JSON.stringify({...journal,searchEntries});
    await writeFile(journalFile,invalidJournal);
    const partial=await runtime.chats.open(coldCodexId);
@@ -104,8 +105,23 @@ try {
    assert.match(partial.historyWarning!,/may omit native items/);
    assert.deepEqual(partial.history,complete.history);
    assert.deepEqual(partial.historyMessageIds,complete.historyMessageIds);
+   const found=await runtime.chats.search('Stored cold input',false,0,ws.id);
+   assert.equal(found.matches.find(hit=>hit.session.id===coldCodexId)?.bodyMatch?.messageId,partial.historyMessageIds[0]);
+   assert.match(found.incompleteHistory.find(hit=>hit.sessionId===coldCodexId)?.message??'',/may omit native history/);
+   assert.equal((await runtime.chats.search('Unopenable optional index text',false,0,ws.id)).total,0);
    assert.equal(await readFile(journalFile,'utf8'),invalidJournal);
  }
+ const receipt=(deliveryId:string,displayText:string)=>({turnId:'turn1',itemId:'user1',deliveryId,presentation:{version:1 as const,origin:'user' as const,displayText}});
+ writeCodexMetadata(codexDirectory,threadId,{version:1,context:[],completed:[],
+   inheritedDeliveries:[receipt('inherited-delivery','Original fork delivery')],
+   deliveries:[receipt('local-duplicate','Conflicting local delivery')]});
+ await writeFile(journalFile,JSON.stringify(journal));
+ const inherited=await runtime.chats.search('Original fork delivery',false,0,ws.id);
+ const openedInherited=await runtime.chats.open(coldCodexId);
+ assert.match(JSON.stringify(openedInherited.history),/"displayText":"Original fork delivery"/);
+ assert.equal((openedInherited.history[0] as {presentation?:{deliveryId:string}})?.presentation?.deliveryId,'inherited-delivery');
+ assert.equal(inherited.matches.find(hit=>hit.session.id===coldCodexId)?.bodyMatch?.messageId,'inherited-delivery');
+ assert.equal((await runtime.chats.search('Conflicting local delivery',false,0,ws.id)).total,0);
  await rm(journalFile);
  const missing=await runtime.chats.open(coldCodexId);
  assert.equal(missing.readOnly,true);

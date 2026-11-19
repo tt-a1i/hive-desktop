@@ -43,7 +43,7 @@ import { ClaudeProjection } from './agents/claude-projection.js';
 import { readClaudeMetadata } from './agents/claude-metadata.js';
 import { CodexProjection } from './agents/codex-projection.js';
 import { readCodexMetadata } from './agents/codex-metadata.js';
-import { normalizeCodexItem } from './agents/codex-history.js';
+import { codexDeliveryLookup, normalizeCodexItem } from './agents/codex-history.js';
 import { foldSearchText, searchConversation, type ConversationSearchMatch } from './conversation-search.js';
 import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
@@ -1204,10 +1204,11 @@ export class Chats implements StructuredSessionPort {
       } else if (record.backend === 'codex' && record.codexThreadId) {
         const directory = join(this.sessionDir, '..', 'codex'), metadata = readCodexMetadata(directory, record.codexThreadId);
         const projection = new CodexProjection(directory, record.codexThreadId, { requireSaved: true });
+        const deliveryFor = codexDeliveryLookup(metadata);
         for (const {item, turnId} of projection.current()) {
-          const delivery = metadata.deliveries.find(entry => entry.turnId === turnId && entry.itemId === item.id)
-            ?? metadata.deliveries.find(entry => entry.turnId === turnId && entry.itemId === undefined && item.type === 'userMessage');
-          history.push(normalizeCodexItem(item, delivery ?? metadata.inheritedDeliveries?.find(entry=>entry.turnId===turnId&&(entry.itemId===item.id||entry.itemId===undefined)), metadata.inheritedSources?.find(source=>source.itemId===item.id)?.sourceSessionId ?? record.id)); historyMessageIds.push(item.id);
+          const source = metadata.inheritedSources?.find(entry => entry.itemId === item.id)?.sourceSessionId ?? record.id;
+          history.push(normalizeCodexItem(item, deliveryFor(turnId, item.id), source));
+          historyMessageIds.push(item.id);
         }
         if (!projection.hasCompleteHistory())
           historyWarning = 'Saved Codex display history may omit native items; no native process was opened to fill the gap';

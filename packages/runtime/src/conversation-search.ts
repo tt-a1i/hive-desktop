@@ -8,7 +8,8 @@ import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
 import { readClaudeMetadata } from './agents/claude-metadata.js';
 import { ClaudeProjection } from './agents/claude-projection.js';
 import { codexMetadataFile, readCodexMetadata } from './agents/codex-metadata.js';
-import { normalizeCodexItem, type CodexDelivery, type CodexItem } from './agents/codex-history.js';
+import { codexDeliveryLookup, normalizeCodexItem } from './agents/codex-history.js';
+import { parseCodexProjection } from './agents/codex-projection.js';
 
 export type ConversationSearchMatch = { messageId: string; snippet: string };
 export type ConversationSearchResult = { matches: ConversationSearchMatch[]; complete: boolean; warning?: string };
@@ -245,48 +246,23 @@ async function codexRows(record: ChatRecord, directory: string, signal?: AbortSi
   if (!record.codexThreadId) return { rows: [], complete: true };
   const source = await readFile(`${codexMetadataFile(directory, record.codexThreadId)}.display.json`, {encoding: 'utf8', ...(signal && {signal})});
   signal?.throwIfAborted();
-  const data: unknown = JSON.parse(source);
-  if (!object(data) || data.version !== 1 || !Array.isArray(data.entries)) throw new Error('Invalid Codex display journal');
+  const projection = parseCodexProjection(source);
   const metadata = readCodexMetadata(directory, record.codexThreadId);
-  const complete = data.completeHistory === true && data.searchVersion === 2 && Array.isArray(data.searchEntries);
-  const entries: unknown[] = complete ? data.searchEntries as unknown[] : data.entries;
-  // Preserve the journal's first-match order, including inherited exact
-  // bindings and the separate fallback for older local user deliveries.
-  const exact = new Map<string, Map<string, CodexDelivery>>();
-  for (const deliveries of [metadata.inheritedDeliveries ?? [], metadata.deliveries]) {
-    for (const delivery of deliveries) {
-      if (delivery.itemId === undefined) continue;
-      let turn = exact.get(delivery.turnId);
-      if (!turn) {
-        turn = new Map();
-        exact.set(delivery.turnId, turn);
-      }
-      if (!turn.has(delivery.itemId)) turn.set(delivery.itemId, delivery);
-    }
-  }
-  const legacy = new Map<string, CodexDelivery>();
-  for (const delivery of metadata.deliveries)
-    if (delivery.itemId === undefined && !legacy.has(delivery.turnId)) legacy.set(delivery.turnId, delivery);
+  const {entries, completeHistory} = projection;
+  const deliveryFor = codexDeliveryLookup(metadata);
   const sources = new Map<string, string>();
   for (const source of metadata.inheritedSources ?? [])
     if (!sources.has(source.itemId)) sources.set(source.itemId, source.sourceSessionId);
 
-  const seenIds = new Set<string>();
   const rows: Row[] = [];
   for (let index = 0; index < entries.length; index++) {
     // Large journals can otherwise keep the sidecar from reading a cancel
     // request until the entire native history has been normalized.
     if (index > 0 && index % 2048 === 0) await setImmediate(undefined, {signal});
-    const entry = entries[index];
-    if (!object(entry) || typeof entry.turnId !== 'string' || !object(entry.item) || typeof entry.item.id !== 'string' || typeof entry.item.type !== 'string') throw new Error('Invalid Codex display journal entry');
-    const item = entry.item as CodexItem;
-    if (complete && (!item.id || !entry.turnId || seenIds.has(item.id) || item.status === 'inProgress' || item.type === 'hiveProjectionNotice')) throw new Error('Invalid complete Codex history snapshot');
-    if (complete) seenIds.add(item.id);
-    const delivery = exact.get(entry.turnId)?.get(item.id)
-      ?? (item.type === 'userMessage' ? legacy.get(entry.turnId) : undefined);
-    rows.push({ id: item.id, message: normalizeCodexItem(item, delivery, sources.get(item.id)) });
+    const {item, turnId} = entries[index]!;
+    rows.push({ id: item.id, message: normalizeCodexItem(item, deliveryFor(turnId, item.id), sources.get(item.id)) });
   }
-  return { rows, complete };
+  return { rows, complete: completeHistory };
 }
 
 /** Reads fresh persisted history each call: appended or replaced files cannot leave a stale cache. */

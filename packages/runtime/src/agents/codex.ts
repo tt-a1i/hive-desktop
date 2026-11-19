@@ -12,8 +12,7 @@ import { CodexInteractions } from './codex-interactions.js';
 import { CodexProjection } from './codex-projection.js';
 import { CodexEvents } from './codex-events.js';
 import { readCodexMetadata, writeCodexMetadata } from './codex-metadata.js';
-import type { CodexDelivery, CodexItem, CodexMetadata, CodexThreadResponse, CodexTurn } from './codex-history.js';
-import { isCodexToolItem } from './codex-history.js';
+import { codexDeliveryLookup, isCodexToolItem, type CodexItem, type CodexMetadata, type CodexThreadResponse, type CodexTurn } from './codex-history.js';
 import type { PiEvent, PiSessionHandle } from './types.js';
 
 export interface CodexTool {
@@ -69,7 +68,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   let threadId = options.threadId ?? '';
   let metadata: CodexMetadata = options.threadId ? readCodexMetadata(options.sessionDir, options.threadId)
     : { version: 1, context: [], deliveries: [], completed: [] };
-  let deliveryIndex: Map<string, Map<string | undefined, CodexDelivery>> | undefined;
+  let deliveryFor: ReturnType<typeof codexDeliveryLookup> | undefined;
   let response: ThreadLaunchReceipt;
   let events: CodexEvents | undefined;
   let projection: CodexProjection | undefined;
@@ -77,7 +76,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   const persist = (next: CodexMetadata) => {
     writeCodexMetadata(options.sessionDir, threadId, next);
     metadata = next;
-    deliveryIndex = undefined;
+    deliveryFor = undefined;
   };
   const rememberDelivery = (turnId: string, item?: CodexItem) => {
     const run = active;
@@ -318,17 +317,8 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     persist(metadata);
     projection ??= new CodexProjection(options.sessionDir, threadId);
     events = new CodexEvents(threadId, emit, (id, itemId) => {
-      if (!deliveryIndex) {
-        deliveryIndex = new Map();
-        for (const entry of [...(metadata.inheritedDeliveries ?? []), ...metadata.deliveries]) {
-          let turn = deliveryIndex.get(entry.turnId);
-          if (!turn) { turn = new Map(); deliveryIndex.set(entry.turnId, turn); }
-          // Preserve the original first exact match, then turn-level fallback.
-          if (!turn.has(entry.itemId)) turn.set(entry.itemId, entry);
-        }
-      }
-      const turn = deliveryIndex.get(id);
-      return turn?.get(itemId) ?? turn?.get(undefined);
+      deliveryFor ??= codexDeliveryLookup(metadata);
+      return deliveryFor(id, itemId);
     }, itemId => metadata.inheritedSources?.find(source => source.itemId === itemId)?.sourceSessionId);
     if (materialized) await recoverHistory(response!.thread);
     else if (!['legacy', 'paginated'].includes(response!.thread.historyMode)) throw new Error('Unsupported Codex history contract');

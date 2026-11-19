@@ -7,6 +7,25 @@ export type CodexTurn = { id: string; status: string; error?: { message: string 
 export type CodexThread = { reasoningEffort?: string | null; model?: string; id: string; path: string | null; historyMode: 'legacy' | 'paginated'; turns: CodexTurn[] };
 export type CodexThreadResponse = { thread: CodexThread; model: string; modelProvider: string };
 
+export function codexDeliveryLookup(metadata: CodexMetadata): (turnId: string, itemId: string) => CodexDelivery | undefined {
+  const byTurn = new Map<string, Map<string | undefined, CodexDelivery>>();
+  for (const deliveries of [metadata.inheritedDeliveries ?? [], metadata.deliveries]) {
+    for (const entry of deliveries) {
+      let turn = byTurn.get(entry.turnId);
+      if (!turn) {
+        turn = new Map();
+        byTurn.set(entry.turnId, turn);
+      }
+      // Inherited bindings are immutable. Within each source, preserve the first match.
+      if (!turn.has(entry.itemId)) turn.set(entry.itemId, entry);
+    }
+  }
+  return (turnId, itemId) => {
+    const turn = byTurn.get(turnId);
+    return turn?.get(itemId) ?? turn?.get(undefined);
+  };
+}
+
 export function isCodexToolItem(item: CodexItem): boolean {
   return !['userMessage', 'agentMessage', 'reasoning', 'plan', 'hiveProjectionNotice'].includes(item.type);
 }

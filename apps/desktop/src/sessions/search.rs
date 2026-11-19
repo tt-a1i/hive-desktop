@@ -15,7 +15,7 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::{sync::Arc, time::Duration};
+use std::{sync::Weak, time::Duration};
 
 use crate::protocol::SessionHit as Hit;
 #[derive(Default, Deserialize)]
@@ -79,7 +79,9 @@ struct SessionSearch {
     archived: bool,
     offset: usize,
     app: WeakEntity<HiveApp>,
-    runtime: Arc<Runtime>,
+    runtime: Weak<Runtime>,
+    connection: u64,
+    online: bool,
     query: Entity<InputState>,
     page: Page,
     loading: bool,
@@ -92,12 +94,14 @@ struct SessionSearch {
 }
 
 enum SearchError {
+    Offline,
     Request(String),
     WorkspaceMissing,
 }
 impl SearchError {
     fn text(&self) -> String {
         match self {
+            Self::Offline => tr("后台尚未连接").to_owned(),
             Self::Request(error) => {
                 format!(
                     "{}: {}",
@@ -129,8 +133,19 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
-        let parent = cx.weak_entity();
+        let parent = cx.entity();
+        let connection = self.connection_generation;
         let search = cx.new(|cx| {
+            cx.observe(&parent, |this: &mut SessionSearch, app, cx| {
+                let app = app.read(cx);
+                if this.online
+                    && (!app.connected || app.closing || app.connection_generation != this.connection)
+                {
+                    this.online = false;
+                    this.load(false, cx);
+                }
+            })
+            .detach();
             let query = cx.new(|cx| {
                 InputState::new(window, cx).placeholder(search_placeholder(archived))
             });
@@ -150,8 +165,10 @@ impl HiveApp {
             let mut search = SessionSearch {
                 archived,
                 offset: 0,
-                app: parent,
-                runtime,
+                app: parent.downgrade(),
+                runtime: std::sync::Arc::downgrade(&runtime),
+                connection,
+                online: true,
                 query,
                 page: Page::default(),
                 loading: false,
@@ -201,7 +218,6 @@ impl SessionSearch {
         self.generation += 1;
         let generation = self.generation;
         let query = self.query.read(cx).value().to_string();
-        let runtime = self.runtime.clone();
         let archived = self.archived;
         let offset = self.offset;
         self.loading = true;
@@ -209,13 +225,19 @@ impl SessionSearch {
         self.page = Page::default();
         self.selected = 0;
         self.scroll = ScrollHandle::new();
+        let Some(runtime) = self.runtime.upgrade().filter(|_| self.online) else {
+            self.loading = false;
+            self.error = Some(SearchError::Offline);
+            cx.notify();
+            return;
+        };
         cx.notify();
         self.task = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 smol::Timer::after(Duration::from_millis(150)).await;
             }
             if this
-                .update(cx, |this, _| this.generation == generation)
+                .update(cx, |this, cx| this.current(generation, cx))
                 .ok()
                 != Some(true)
             {
@@ -223,7 +245,7 @@ impl SessionSearch {
             }
             let result = search_page(&runtime, query, archived, offset, None).await;
             let _ = this.update(cx, |this, cx| {
-                if this.generation != generation {
+                if !this.current(generation, cx) {
                     return;
                 }
                 this.loading = false;
@@ -246,6 +268,13 @@ impl SessionSearch {
         }));
     }
 
+    fn current(&self, generation: u64, cx: &App) -> bool {
+        self.generation == generation && self.online && self.app.upgrade().is_some_and(|app| {
+            let app = app.read(cx);
+            app.connected && !app.closing && app.connection_generation == self.connection
+        })
+    }
+
     fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
         if self.page.matches.is_empty() {
             return;
@@ -259,6 +288,11 @@ impl SessionSearch {
     }
 
     fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.current(self.generation, cx) {
+            self.online = false;
+            self.load(false, cx);
+            return;
+        }
         let Some(hit) = self.page.matches.get(self.selected).cloned() else {
             return;
         };

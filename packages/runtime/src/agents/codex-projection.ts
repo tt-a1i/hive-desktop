@@ -10,14 +10,30 @@ function isDisplayEntry(entry: CodexDisplayEntry | null): boolean {
   return typeof entry?.turnId === 'string' && typeof entry.item?.id === 'string' && typeof entry.item.type === 'string';
 }
 
-function isCompleteHistory(entries: CodexDisplayEntry[]): boolean {
+function hasCompleteHistory(entries: CodexDisplayEntry[], searchEntries: CodexDisplayEntry[]): boolean {
+  if (entries.length !== searchEntries.length) return false;
   const itemIds = new Set<string>();
-  return entries.every(entry => {
+  return searchEntries.every((entry, index) => {
     if (!isDisplayEntry(entry) || !entry.turnId || !entry.item.id || itemIds.has(entry.item.id)
       || entry.item.status === 'inProgress' || entry.item.type === 'hiveProjectionNotice') return false;
+    // Version 2 writers copy the display entries. Verify that the copy covers
+    // the same ordered identities before claiming the visible history is complete.
+    const visible = entries[index]!;
+    if (visible.turnId !== entry.turnId || visible.item.id !== entry.item.id || visible.item.type !== entry.item.type
+      || visible.item.status === 'inProgress') return false;
     itemIds.add(entry.item.id);
     return true;
   });
+}
+
+export function parseCodexProjection(raw: string): { entries: CodexDisplayEntry[]; completedTurns: string[]; completeHistory: boolean } {
+  const saved = JSON.parse(raw) as Projection | null;
+  if (saved?.version !== 1 || !Array.isArray(saved.entries) || !saved.entries.every(isDisplayEntry)) {
+    throw new Error('Invalid Codex UI projection');
+  }
+  const completeHistory = saved.completeHistory === true && saved.searchVersion === 2 && Array.isArray(saved.searchEntries)
+    && hasCompleteHistory(saved.entries, saved.searchEntries);
+  return { entries: saved.entries, completedTurns: saved.completedTurns ?? [], completeHistory };
 }
 
 /** A UI event journal only. Never supplied to thread/resume, turn/start, or a model. */
@@ -26,35 +42,27 @@ export class CodexProjection {
   private completedTurns: string[];
   private entries: CodexDisplayEntry[];
   private completeHistory = false;
-  private searchEntries: CodexDisplayEntry[] | undefined;
   constructor(directory: string, threadId: string, options?: { requireSaved: boolean }) {
     this.file = `${codexMetadataFile(directory, threadId)}.display.json`;
-    let saved: Projection;
-    try { saved = JSON.parse(readFileSync(this.file, 'utf8')); }
+    let saved: ReturnType<typeof parseCodexProjection>;
+    try { saved = parseCodexProjection(readFileSync(this.file, 'utf8')); }
     catch (error) {
       if (options?.requireSaved || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      saved = { version: 1, entries: [], completedTurns: [] };
-    }
-    if (saved.version !== 1 || !Array.isArray(saved.entries) || !saved.entries.every(isDisplayEntry)) {
-      throw new Error('Invalid Codex UI projection');
+      saved = { entries: [], completedTurns: [], completeHistory: false };
     }
     this.entries = saved.entries;
-    this.completeHistory = saved.completeHistory === true && saved.searchVersion === 2 && Array.isArray(saved.searchEntries)
-      && isCompleteHistory(saved.searchEntries);
-    this.searchEntries = this.completeHistory ? saved.searchEntries : undefined;
-    this.completedTurns = saved.completedTurns ?? [];
+    this.completeHistory = saved.completeHistory;
+    this.completedTurns = saved.completedTurns;
   }
   current(): CodexDisplayEntry[] { return [...this.entries]; }
   hasCompleteHistory(): boolean { return this.completeHistory; }
   invalidateHistory(): void {
     if (!this.completeHistory) return;
     this.completeHistory = false;
-    this.searchEntries = undefined;
     this.save(this.entries);
   }
   put(item: CodexItem, turnId: string): void {
     this.completeHistory = false;
-    this.searchEntries = undefined;
     const next = [...this.entries];
     const index = next.findIndex(entry => entry.item.id === item.id && entry.turnId === turnId);
     if (index < 0) next.push({ item, turnId }); else next[index] = { item, turnId };
@@ -77,7 +85,6 @@ export class CodexProjection {
       });
     });
     this.completeHistory = nativeValid;
-    this.searchEntries = nativeValid ? turns.flatMap(turn => turn.items.map(item => ({turnId: turn.id, item}))) : undefined;
     const completed = new Set(this.completedTurns);
     // Cached-only reads preserve the existing marker list, including duplicates.
     let mergedCompletions = false;
@@ -128,11 +135,7 @@ export class CodexProjection {
     }
     // A display gap or legacy import is evidence of an incomplete journal,
     // even when this fetch returned native items for the same turn.
-    if (next.some(entry => entry.item.type === 'hiveProjectionNotice')) {
-      this.completeHistory = false;
-      this.searchEntries = undefined;
-    }
-    if (this.completeHistory) this.searchEntries = next;
+    if (next.some(entry => entry.item.type === 'hiveProjectionNotice')) this.completeHistory = false;
     const terminal = new Set(turns.filter(turn => turn.status === 'interrupted' || turn.status === 'failed').map(turn => turn.id));
     this.save(next.map(entry => terminal.has(entry.turnId) && entry.item.status === 'inProgress'
       ? { ...entry, item: { ...entry.item, hiveInterrupted: true } } : entry), mergedCompletions ? [...completed] : this.completedTurns);
@@ -140,7 +143,7 @@ export class CodexProjection {
   private save(entries: CodexDisplayEntry[], completedTurns = this.completedTurns): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, JSON.stringify({ version: 1, entries, completedTurns, ...(this.completeHistory && this.searchEntries ? { completeHistory: true, searchVersion: 2, searchEntries: this.searchEntries } : {}) }), { mode: 0o600, flush: true });
+      writeFileSync(temporary, JSON.stringify({ version: 1, entries, completedTurns, ...(this.completeHistory ? { completeHistory: true, searchVersion: 2, searchEntries: entries } : {}) }), { mode: 0o600, flush: true });
       renameSync(temporary, this.file);
       this.entries = entries;
       this.completedTurns = completedTurns;
