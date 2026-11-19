@@ -12,6 +12,8 @@ macOS 本地优化包已验证原生 Codex 和官方 ACP 的真实协作及被�
 
 macOS 本地包确认同一 HTML 产物跨文件详情复用预览窗口，保留交互状态。主窗口正常退出时会结束仍打开的预览和 Node 后台。只读 Codex 冷历史同次读取校验完整性，隔离大日志探测的 Node 峰值 RSS 中位数下降 124.0 MiB。[窗口与冷历史验收](validation/2026-11-19-preview-windows-cold-codex.md)
 
+冷态历史原图读取已与待投递文件解耦，内置 Pi 可以在后台重启后按先前接收的投递 ID 找回原图。已另测得浏览八个普通 Codex 会话后，八个受控原生对端均驻留至后台退出。按浏览用途回收原生进程及当前版本的 Windows 原生验收仍待继续。[冷浏览与历史原图验收](validation/2026-11-19-cold-browse-and-history-images.md)
+
 ## 2026-11-14 历史计划
 
 2026-11-14。用户已在当前会话确认并授权持续推进。本文整理执行顺序；需求和工作项继续使用 GitHub Issues，父任务为 #1，首批工作为 [#29](https://github.com/tt-a1i/hive-desktop/issues/29)。完整目标仍未完成。
