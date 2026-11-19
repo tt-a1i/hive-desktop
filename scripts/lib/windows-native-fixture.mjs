@@ -90,7 +90,7 @@ export async function runWindowsNativeFixture(config) {
         if (key.endsWith('_API_KEY') || key.startsWith('GH_') || key.startsWith('GITHUB_')) delete env[key];
       }
     }
-    await run(node, [seed, root, resources], { env, stdio: 'inherit' }, 'seed');
+    await run(node, [seed, root, resources, config.seedMode ?? 'seed'], { env, stdio: 'inherit' }, 'seed');
     const fixture = JSON.parse(await readFile(join(root, config.fixtureFile + '-seed.json'), 'utf8'));
     result.fixture = config.summary(fixture);
     Object.assign(env, fixture.environment ?? {});

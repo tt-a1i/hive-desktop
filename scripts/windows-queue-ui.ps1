@@ -7,7 +7,11 @@
     [Parameter(Mandatory)][string]$CanceledText,
     [Parameter(Mandatory)][string]$Draft,
     [Parameter(Mandatory)][string]$OutputPath,
-    [Parameter(Mandatory)][string]$EvidenceDirectory
+    [Parameter(Mandatory)][string]$EvidenceDirectory,
+    [switch]$StopRejection,
+    [string]$SpoolPath,
+    [string]$RejectionPath,
+    [string]$SnapshotPath
 )
 . (Join-Path $PSScriptRoot 'windows-native-ui-common.ps1')
 $result = [ordered]@{status='failed'; phase=$Phase; stages=[ordered]@{}; error=$null; controls=@()}
@@ -48,12 +52,40 @@ try {
     $root=[System.Windows.Automation.AutomationElement]::FromHandle($window)
     Assert-Draft
     if ($Phase -eq 'select') {
+        if ($StopRejection) {
+            Invoke-Control (Wait-Name 'Resume processing')
+            [void](Wait-Name 'Stop')
+            $composer=Wait-Control {
+                param($c)
+                $p=$null
+                $c.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern,[ref]$p) -and $p.Current.Value -ceq $Draft
+            } 'composer before steering'
+            $composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($OriginalText)
+            Invoke-Control (Wait-Name 'Steer')
+            $end=[DateTime]::UtcNow.AddSeconds(20)
+            while (-not (Test-Path -LiteralPath $RejectionPath)) {
+                if ([DateTime]::UtcNow -ge $end) { throw 'Controlled peer did not reject the actual native Steer' }
+                Start-Sleep -Milliseconds 100
+            }
+            # Read-only snapshot before Stop anchors both original message IDs/attachments.
+            $snapshot=Get-Content -Raw -LiteralPath $SpoolPath | ConvertFrom-Json
+            if (@($snapshot).Count -ne 2) { throw 'Both original deliveries must exist before Stop' }
+            [IO.File]::WriteAllText($SnapshotPath,($snapshot | ConvertTo-Json -Depth 24),[Text.UTF8Encoding]::new($false))
+            $composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Draft)
+            Save-NativeWindow (Join-Path $EvidenceDirectory 'windows-queued-stop-rejection-before-stop.png')
+            Invoke-Control (Wait-Name 'Stop')
+            [void](Wait-Name 'Resume processing')
+            Assert-Draft
+            $result.stages.nativeSteerRejectedBeforeStop=$true
+            $result.stages.stopInvoked=$true
+        }
         Invoke-Control (Row-Action $OriginalText 'Edit queued message')
         $input=Wait-Name 'Queued message text'
         $input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($EditedText)
         Invoke-Control (Wait-Name 'Save changes')
         [void](Row-Action $EditedText 'Edit queued message')
         Assert-Draft
+        if (-not $StopRejection) {
         Invoke-Control (Row-Action $CanceledText 'Cancel queued message')
         Invoke-Control (Wait-Name 'Confirm cancellation')
         $end=[DateTime]::UtcNow.AddSeconds(15)
@@ -64,6 +96,7 @@ try {
         } while ([DateTime]::UtcNow -lt $end)
         if ($remaining.Count) { throw 'Canceled input remained in the executable queue' }
         $result.stages.edited=$true; $result.stages.canceled=$true
+        } else { $result.stages.edited=$true }
     } else {
         [void](Row-Action $EditedText 'Edit queued message')
         if (@(All-Controls | Where-Object { ([string]$_.Current.Name).StartsWith($CanceledText + ' ·',[StringComparison]::Ordinal) }).Count) {
@@ -74,7 +107,8 @@ try {
         $result.stages.explicitResume=$true
     }
     Assert-Draft
-    Save-NativeWindow (Join-Path $EvidenceDirectory ("windows-queued-inputs-$Phase.png"))
+    $prefix=if($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
+    Save-NativeWindow (Join-Path $EvidenceDirectory ("$prefix-$Phase.png"))
     if (-not $app.CloseMainWindow()) { throw 'Could not request normal exit' }
     if (-not $app.WaitForExit(30000)) { throw 'Desktop did not exit' }
     $result.stages.exitObserved=$true; $result.status='passed'
@@ -82,7 +116,8 @@ try {
     $result.error=$_.Exception.ToString()
     if ($root) {
         try { $result.controls=@(All-Controls | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 180) } catch {}
-        try { Save-NativeWindow (Join-Path $EvidenceDirectory ("windows-queued-inputs-$Phase-failure.png")) } catch { $result.captureError=$_.Exception.Message }
+        $prefix=if($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
+        try { Save-NativeWindow (Join-Path $EvidenceDirectory ("$prefix-$Phase-failure.png")) } catch { $result.captureError=$_.Exception.Message }
     }
 } finally {
     [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($OutputPath))) | Out-Null

@@ -20,8 +20,14 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  }else if(q.method==='turn/steer'){
   const turn=thread.turns.find(t=>t.id===q.params.expectedTurnId);
   fs.appendFileSync('queue-peer-steers.jsonl',JSON.stringify(q.params)+'\n');
+  let control={};try{control=JSON.parse(fs.readFileSync('queue-peer-control.json','utf8').replace(/^\uFEFF/,''));}catch(e){if(e.code!=='ENOENT')throw e;}
+  if(control.rejectSteerWhileActive){
+   send({id:q.id,error:{code:-32603,message:'Controlled active turn rejects appended input'}});
+   fs.writeFileSync('queue-peer-rejected-steer.json',JSON.stringify({turnId:turn.id,input:q.params.input,errorCode:-32603}));
+   return;
+  }
   if(turn?.status==='inProgress')complete(turn);
   send({id:q.id,error:{code:-32600,message:'Synthetic turn ended before steer'}});
- }else if(q.method==='turn/interrupt'){const turn=thread.turns.find(t=>t.id===q.params.turnId);if(turn){turn.status='interrupted';save();}answer({});if(turn)notify('turn/completed',{turn});}
+ }else if(q.method==='turn/interrupt'){const turn=thread.turns.find(t=>t.id===q.params.turnId);if(fs.existsSync('queue-peer-rejected-steer.json'))fs.appendFileSync('queue-peer-interrupts.jsonl',JSON.stringify({turnId:q.params.turnId,rejectionAlreadySent:true})+'\n');if(turn){turn.status='interrupted';save();}answer({});if(turn)notify('turn/completed',{turn});}
  else if(q.id!==undefined)send({id:q.id,error:{code:-32601,message:'Unsupported controlled queue method: '+q.method}});
 });
