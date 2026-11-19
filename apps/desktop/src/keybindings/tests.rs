@@ -200,6 +200,48 @@ fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
 }
 
 #[test]
+fn legacy_custom_shortcuts_take_priority_over_new_defaults() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    for os in [OperatingSystem::Mac, OperatingSystem::Windows] {
+        let search = Target::PreviousSession.default(os);
+        let find = Target::OpenGitWorkspace.default(os);
+        let legacy = serde_json::json!({
+            "version": 1,
+            "bindings": {"search": search, "find": find, "preferences": null}
+        });
+        let legacy_bytes = serde_json::to_vec(&legacy).unwrap();
+        fs::write(&path, &legacy_bytes).unwrap();
+
+        let mut migrated = load(root.path(), os).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), legacy_bytes);
+        assert_eq!(migrated.get(Target::Search).as_deref(), Some(search));
+        assert_eq!(migrated.get(Target::Find).as_deref(), Some(find));
+        assert_eq!(migrated.get(Target::Preferences), &None);
+        assert_eq!(migrated.get(Target::PreviousSession), &None);
+        assert_eq!(migrated.get(Target::OpenGitWorkspace), &None);
+        assert_eq!(
+            migrated.get(Target::NextSession).as_deref(),
+            Some(Target::NextSession.default(os))
+        );
+
+        migrated.set(Target::Search, Some(Target::Search.default(os).to_owned()));
+        save(root.path(), &migrated, os).unwrap();
+        assert_eq!(load(root.path(), os).unwrap(), migrated);
+    }
+}
+
+#[test]
+fn migration_rejects_duplicate_explicit_shortcuts() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    let config = br#"{"version":1,"bindings":{"search":"cmd-;","find":"cmd-f","preferences":null,"previous_session":"cmd-;"}}"#;
+    fs::write(&path, config).unwrap();
+    assert!(load(root.path(), OperatingSystem::Mac).is_err());
+    assert_eq!(fs::read(&path).unwrap(), config);
+}
+
+#[test]
 fn repeated_live_rebinds_keep_the_keymap_bounded_and_preserve_other_bindings() {
     use super::{replace_bindings, startup_bindings};
     use gpui_kit::{Action, KeyContext, Unbind, base::input::Copy};

@@ -272,25 +272,41 @@ struct StoredBindings {
 }
 
 impl StoredBindings {
-    fn into_bindings(self, os: OperatingSystem) -> Bindings {
-        let pick = |raw: Option<Option<String>>, target: Target| match raw {
-            Some(explicit) => explicit,
-            None => Some(target.default(os).to_owned()),
-        };
-        Bindings {
-            search: self.search,
-            find: self.find,
-            preferences: self.preferences,
-            new_session: pick(self.new_session, Target::NewSession),
-            toggle_sidebar: pick(self.toggle_sidebar, Target::ToggleSidebar),
-            toggle_terminal: pick(self.toggle_terminal, Target::ToggleTerminal),
-            open_git_workspace: pick(self.open_git_workspace, Target::OpenGitWorkspace),
-            search_project_files: pick(self.search_project_files, Target::SearchProjectFiles),
-            choose_model: pick(self.choose_model, Target::ChooseModel),
-            toggle_mode: pick(self.toggle_mode, Target::ToggleMode),
-            previous_session: pick(self.previous_session, Target::PreviousSession),
-            next_session: pick(self.next_session, Target::NextSession),
+    fn into_bindings(self, os: OperatingSystem) -> Result<Bindings, &'static str> {
+        let mut bindings = Bindings::defaults(os);
+        let mut missing = Vec::new();
+        for (target, value) in [
+            (Target::Search, Some(self.search)),
+            (Target::Find, Some(self.find)),
+            (Target::Preferences, Some(self.preferences)),
+            (Target::NewSession, self.new_session),
+            (Target::ToggleSidebar, self.toggle_sidebar),
+            (Target::ToggleTerminal, self.toggle_terminal),
+            (Target::OpenGitWorkspace, self.open_git_workspace),
+            (Target::SearchProjectFiles, self.search_project_files),
+            (Target::ChooseModel, self.choose_model),
+            (Target::ToggleMode, self.toggle_mode),
+            (Target::PreviousSession, self.previous_session),
+            (Target::NextSession, self.next_session),
+        ] {
+            if value.is_none() {
+                missing.push(target);
+            }
+            bindings.set(target, value.flatten());
         }
+
+        // A new action's default must not take over a saved custom shortcut.
+        let mut bindings = bindings.normalized(os)?;
+        for target in missing {
+            let chord = validate_chord(target.default(os), os)?.unparse(os);
+            if !TARGETS
+                .iter()
+                .any(|target| bindings.get(*target).as_ref() == Some(&chord))
+            {
+                bindings.set(target, Some(chord));
+            }
+        }
+        Ok(bindings)
     }
 }
 
@@ -455,7 +471,7 @@ fn load(root: &Path, os: OperatingSystem) -> io::Result<Bindings> {
         return Err(invalid("快捷键文件缺少操作字段，原文件未修改。"));
     }
     let stored: StoredRead = serde_json::from_value(value)?;
-    stored.bindings.into_bindings(os).normalized(os).map_err(invalid)
+    stored.bindings.into_bindings(os).map_err(invalid)
 }
 
 fn save(root: &Path, bindings: &Bindings, os: OperatingSystem) -> io::Result<()> {
