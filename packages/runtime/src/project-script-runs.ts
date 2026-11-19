@@ -1,6 +1,6 @@
 import type { ExecutionMutations } from './execution-mutations.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { HiveHost } from './hive-host.js';
@@ -40,7 +40,10 @@ export class ProjectScriptRuns {
     this.directory = join(directory, 'project-script-runs'); mkdirSync(this.directory, {recursive: true, mode: 0o700});
     for (const name of readdirSync(this.directory)) if (/^[0-9a-f]{64}\.json$/.test(name)) {
       const file = join(this.directory, name), run = this.read(file);
-      if (active(run)) this.persist(file, {...run, status: 'interrupted', finishedAt: Date.now(), logBytes: Math.min(LIMIT, statSync(this.logFile(run.runId)).size), errorCode: 'SCRIPT_RUNTIME_INTERRUPTED'});
+      if (!active(run)) continue;
+      const log = statSync(this.logFile(run.runId), {throwIfNoEntry: false});
+      this.persist(file, {...run, status: 'interrupted', finishedAt: Date.now(), logBytes: Math.min(LIMIT, log?.size ?? 0),
+        errorCode: log ? 'SCRIPT_RUNTIME_INTERRUPTED' : 'SCRIPT_LOG_MISSING'});
     }
   }
   private requestFile(workspace: string, requestId: string) { return join(this.directory, `${createHash('sha256').update(JSON.stringify([workspace, requestId])).digest('hex')}.json`); }
@@ -194,9 +197,14 @@ export class ProjectScriptRuns {
   get(workspace: string, runId: string, offset = 0, limit = 65536) {
     const run = this.owned(workspace, runId);
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 65536) fail('SCRIPT_INPUT_INVALID', 'Invalid script log page');
-    const fd = openSync(this.logFile(run.runId), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    let fd: number;
+    try {fd = openSync(this.logFile(run.runId), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));}
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return fail('SCRIPT_LOG_MISSING', 'The saved log file for this script run is missing.');
+      throw error;
+    }
     try {
-      const bytes = Buffer.alloc(Math.min(limit, Math.max(0, statSync(this.logFile(run.runId)).size - offset)));
+      const bytes = Buffer.alloc(Math.min(limit, Math.max(0, fstatSync(fd).size - offset)));
       const length = readSync(fd, bytes, 0, bytes.length, offset);
       return {run, output: {offset, nextOffset: offset + length, bytes: [...bytes.subarray(0, length)], truncated: run.logTruncated}};
     } finally {closeSync(fd);}

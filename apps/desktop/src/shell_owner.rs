@@ -1,19 +1,21 @@
-//! Pi starts each shell in its own process group for cancellation. On macOS that
-//! group needs its own parent-exit watcher; it is outside the Node owner's group.
+//! Detached Pi shells and saved-script PTYs have their own process groups.
+//! On macOS those groups need to observe the Node owner's exit independently.
 use std::ffi::OsString;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 
-const MODE: &str = "--hive-owned-shell";
+extern "C" fn keep_watching(_: libc::c_int) {}
 
 pub fn run_if_requested() {
     let mut args = std::env::args_os().skip(1);
-    if args.next().as_deref() != Some(std::ffi::OsStr::new(MODE)) {
-        return;
-    }
-    let result = run(args.collect());
+    let pty = match args.next().as_deref().and_then(|arg| arg.to_str()) {
+        Some("--hive-owned-shell") => false,
+        Some("--hive-owned-script") => true,
+        _ => return,
+    };
+    let result = run(args.collect(), pty);
     let code = match result {
         Ok(code) => code,
         Err(error) => {
@@ -24,7 +26,7 @@ pub fn run_if_requested() {
     std::process::exit(code);
 }
 
-fn run(args: Vec<OsString>) -> io::Result<i32> {
+fn run(args: Vec<OsString>, pty: bool) -> io::Result<i32> {
     let parent: libc::pid_t = args
         .first()
         .and_then(|s| s.to_str())
@@ -34,12 +36,26 @@ fn run(args: Vec<OsString>) -> io::Result<i32> {
     let shell = args
         .get(1)
         .ok_or_else(|| io::Error::other("missing shell executable"))?;
-    // Only kill a group created specifically for this helper by Pi's detached
-    // spawn. Never signal a group inherited from a terminal or desktop window.
+    // Require a private group created by the detached spawn or PTY.
     if unsafe { libc::getpgrp() != libc::getpid() || libc::getppid() != parent } {
         return Err(io::Error::other(
             "shell has no matching detached Node owner",
         ));
+    }
+    if pty {
+        // A closed PTY sends SIGHUP. Stop also signals the whole group with
+        // SIGTERM. Keep supervising until the shell exits or Node is gone.
+        // These caught handlers reset on exec, preserving shell defaults.
+        for signal in [libc::SIGHUP, libc::SIGTERM] {
+            let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+            action.sa_sigaction = keep_watching as *const () as libc::sighandler_t;
+            action.sa_flags = libc::SA_RESTART;
+            if unsafe { libc::sigemptyset(&mut action.sa_mask) } != 0
+                || unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } != 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+        }
     }
     let fd = unsafe { libc::kqueue() };
     if fd < 0 {
@@ -114,7 +130,15 @@ fn run(args: Vec<OsString>) -> io::Result<i32> {
             std::process::exit(1);
         }
     };
-    Ok(status
-        .code()
-        .unwrap_or_else(|| 128 + status.signal().unwrap_or(0)))
+    if let Some(signal) = status.signal() {
+        if pty {
+            // Report the same native signal through node-pty as a direct shell.
+            unsafe {
+                libc::signal(signal, libc::SIG_DFL);
+                libc::raise(signal);
+            }
+        }
+        return Ok(128 + signal);
+    }
+    Ok(status.code().unwrap_or(1))
 }

@@ -9,7 +9,7 @@
     "check:hive": "tsx checks/hive-host.ts",
     "check:tasks-watcher": "tsx checks/tasks-watcher-lifecycle.ts",
     "check:runtime-info": "pnpm build && tsx checks/runtime-info.ts",
-    "check:worktree-setup": "pnpm build && tsx checks/project-worktree-initialization.ts && tsx checks/project-worktree-initialization-wire.ts && tsx checks/project-worktree-initialization-recovery.ts && tsx checks/project-worktree-initialization-crash.ts",
+    "check:worktree-setup": "pnpm build && tsx checks/project-worktree-initialization.ts && tsx checks/project-worktree-initialization-wire.ts && tsx checks/project-worktree-initialization-recovery.ts && tsx checks/project-worktree-initialization-crash.ts && tsx checks/project-worktree-initialization-crash.ts --missing-log",
     "check:runtime": "pnpm build && tsx checks/runtime.ts",
     "check:desktop-view": "pnpm build && tsx checks/codex-desktop-view.ts",
     "check:attachments": "pnpm build && tsx checks/image-attachments.ts && tsx checks/image-attachments-wire.ts",
