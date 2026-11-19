@@ -38,6 +38,7 @@ function validatePr(value: any, repository: GithubRepository, head: string, base
  return {number: identity.number, url: identity.url, title: value.title, body: value.body, headRefName: head, baseRefName: base, headRefOid: value.headRefOid, isDraft: value.isDraft};
 }
 const fields = 'number,url,title,body,headRefName,baseRefName,headRefOid,headRepositoryOwner,headRepository,isCrossRepository,isDraft';
+const prListLimit = 100;
 async function withGh<T>(projectRoot: string, options: GithubPrOptions, operation: (gh: string, cwd: string) => Promise<T>): Promise<T> {
  const gh = await resolveRemoteExecutable('gh', projectRoot, options.ghExecutable);
  // No repository discovery or relative attachment lookup can route gh through the project.
@@ -59,9 +60,15 @@ export async function previewGithubPr(projectRoot: string, target: GithubPrTarge
   await remoteCommand(context.git, ['check-ref-format', `refs/heads/${target.base}`], workspace.repositoryRoot, options.timeoutMs);
   const base = parseJson((await run(['api', '--hostname', repository.host, `repos/${repository.fullName}/git/ref/heads/${encodeURIComponent(target.base)}`])).stdout);
   if (base.ref !== `refs/heads/${target.base}` || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(base.object?.sha ?? '')) throw remoteError('INVALID_GITHUB_RESPONSE', 'GitHub did not confirm the selected base branch');
-  const listed = parseJson((await run(['pr', 'list', '--repo', `${repository.host}/${repository.fullName}`, '--state', 'open', '--head', headBranch, '--base', target.base, '--limit', '100', '--json', fields])).stdout);
-  if (!Array.isArray(listed) || listed.length > 1) throw remoteError('AMBIGUOUS_PULL_REQUEST', 'More than one open pull request matches this head and base; inspect GitHub');
-  const existing = listed.map(value => validatePr(value, repository, headBranch, target.base));
+  const listed = parseJson((await run(['pr', 'list', '--repo', `${repository.host}/${repository.fullName}`, '--state', 'open', '--head', headBranch, '--base', target.base, '--limit', String(prListLimit), '--json', fields])).stdout);
+  if (!Array.isArray(listed)) throw remoteError('INVALID_GITHUB_RESPONSE', 'GitHub CLI returned invalid JSON');
+  // gh filters by branch name, which may match branches in multiple forks.
+  // A full page cannot establish that we saw every same-repository match.
+  const candidates = listed.filter(value => value?.isCrossRepository !== true);
+  if (listed.length >= prListLimit) throw remoteError('AMBIGUOUS_PULL_REQUEST', 'GitHub returned the pull request list limit for this head and base; verify the matching request on GitHub');
+  if (candidates.length > 1) throw remoteError('AMBIGUOUS_PULL_REQUEST', 'More than one open pull request matches this head and base; inspect GitHub');
+  if (listed.length && !candidates.length) throw remoteError('WRONG_GITHUB_REPOSITORY', 'Pull request repository or branch identity does not match this preview');
+  const existing = candidates.map(value => validatePr(value, repository, headBranch, target.base));
   return {baseOid: base.object.sha as string, existing, gh};
  });
  const after = await remoteWorkspaceVersion(projectRoot, context.git, options.timeoutMs);

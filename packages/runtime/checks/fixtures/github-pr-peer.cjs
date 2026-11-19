@@ -11,6 +11,8 @@ if (state.mode === 'auth-failure') fail('HTTP 401 Unauthorized\nAuthorization: B
 const flag = name => args[args.indexOf(name) + 1];
 const repo = 'github.com/owner/repo';
 const pr = () => ({number: 7, url: 'https://github.com/owner/repo/pull/7', title: state.title ?? 'existing', body: state.body ?? 'body', headRefName: state.head ?? 'published', baseRefName: 'main', headRefOid: state.remoteOid, headRepositoryOwner: {login: 'owner'}, headRepository: {name: 'repo'}, isCrossRepository: state.mode === 'fork', isDraft: state.isDraft ?? false});
+const fork = number => ({...pr(), number, url: `https://github.com/owner/repo/pull/${number}`,
+ headRepositoryOwner: {login: 'other-owner'}, isCrossRepository: true});
 if (args[0] === 'repo' && args[1] === 'view') {
  if (args[2] !== 'https://github.com/owner/repo' || args.includes('--repo')) fail('repository view must use supported explicit positional URL');
  console.log(JSON.stringify({nameWithOwner: state.mode === 'wrong-repo' ? 'wrong/repo' : 'owner/repo', url: 'https://github.com/owner/repo'}));
@@ -22,7 +24,12 @@ if (args[0] === 'repo' && args[1] === 'view') {
  if (['list', 'view'].includes(args[1]) && !flag('--json')?.split(',').includes('isDraft')) fail('draft status must be requested');
  if (args[1] === 'list') {
   if (flag('--head') !== (state.head ?? 'published') || flag('--base') !== 'main' || flag('--state') !== 'open') fail('wrong PR list branch filter');
-  console.log(JSON.stringify(state.exists ? [pr()] : []));
+  const listed = state.exists ? [pr()] : [];
+  if (state.mode === 'mixed') listed.unshift(fork(8));
+  if (state.mode === 'two-same-repo') listed.push({...pr(), number: 9, url: 'https://github.com/owner/repo/pull/9'});
+  if (state.mode === 'truncated') listed.push(...Array.from({length: 99}, (_, index) => fork(100 + index)));
+  if (state.mode === 'unknown-repository') listed.push({...fork(8), isCrossRepository: undefined});
+  console.log(JSON.stringify(listed));
  } else if (args[1] === 'create' || args[1] === 'edit') {
   if (args[1] === 'create' && (flag('--head') !== (state.head ?? 'published') || flag('--base') !== 'main')) fail('explicit head/base must disable gh push/fork prompts');
   if (args[1] === 'edit' && args[2] !== '7') fail('wrong PR number');

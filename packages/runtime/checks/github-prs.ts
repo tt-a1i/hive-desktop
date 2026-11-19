@@ -32,6 +32,23 @@ try {
  state.isDraft = true; await save();
  const updated = await updateGithubPr(repo, {...target, expectedVersion: existing.version, number: 7, title: 'updated', body: 'multi\nline\n'}, options); assert.equal(updated.ok, true);
  await load(); assert.equal(state.isDraft, true);
+ state.mode = 'mixed'; await save();
+ const mixed = await previewGithubPr(repo, target, options);
+ assert.deepEqual(mixed.existing.map(pr => pr.number), [7]);
+ await assert.rejects(createGithubPr(repo, {...target, expectedVersion: mixed.version, title, body}, options), (e: any) => e.code === 'PR_ALREADY_EXISTS');
+ await assert.rejects(updateGithubPr(repo, {...target, expectedVersion: mixed.version, number: 8, title, body}, options), (e: any) => e.code === 'PR_NOT_IN_PREVIEW');
+ await load(); state.mode = 'normal'; await save();
+ assert.equal((await previewGithubPr(repo, target, options)).version, mixed.version, 'an unrelated fork does not change the approved PR');
+ await load(); state.mode = 'mixed'; state.body = 'edited on GitHub'; await save();
+ await assert.rejects(updateGithubPr(repo, {...target, expectedVersion: mixed.version, number: 7, title, body}, options), (e: any) => e.code === 'STALE_PREVIEW');
+ const fresh = await previewGithubPr(repo, target, options);
+ const mixedUpdate = await updateGithubPr(repo, {...target, expectedVersion: fresh.version, number: 7, title, body}, options);
+ assert.equal(mixedUpdate.ok, true); assert.equal(mixedUpdate.number, 7);
+ for (const mode of ['two-same-repo', 'truncated', 'unknown-repository']) {
+  await load(); state.mode = mode; await save();
+  await assert.rejects(previewGithubPr(repo, target, options), (error: any) => error.code === 'AMBIGUOUS_PULL_REQUEST');
+ }
+ await load();
  state.exists = false; state.mode = 'unexpected-draft-state'; await save();
  const draftPreview = await previewGithubPr(repo, target, options);
  const mismatchedDraft = await createGithubPr(repo, {...target, expectedVersion: draftPreview.version, title, body, draft: true}, options);
@@ -49,6 +66,6 @@ try {
  await load(); await assert.rejects(access(state.bodyFile));
  assert.throws(() => githubRepositoryFromRemote('https://enterprise.example/owner/repo'), (e: any) => e.code === 'NOT_GITHUB_REMOTE'); assert.throws(() => githubRepositoryFromRemote('https://github.com/owner/repo?token=hidden')); assert.equal(githubRepositoryFromRemote('git@github.com:owner/repo.git').fullName, 'owner/repo');
  const missing = join(directory, 'no-gh'); await assert.rejects(previewGithubPr(repo, target, {...options, ghExecutable: missing}), (e: any) => e.code === 'GH_NOT_FOUND');
- await writeFile(join(directory, 'receipt.json'), JSON.stringify({pass: true, realGitMetadata: true, controlledGhOnly: true, noNetworkOrAccount: true, explicitRepoHostHeadBase: true, inheritedRoutingCleared: true, privateMultilineBodyFile: true, createAndUpdate: true, existingPr: true, pushRequired: true, wrongRepoAndUrlRejected: true, uncertainAfterWriteFailure: true, timeoutUnknown: true, secretsRedacted: true, fullAuthorizationAndUserinfoRedacted: true}, null, 2));
+ await writeFile(join(directory, 'receipt.json'), JSON.stringify({pass: true, realGitMetadata: true, controlledGhOnly: true, noNetworkOrAccount: true, explicitRepoHostHeadBase: true, inheritedRoutingCleared: true, privateMultilineBodyFile: true, createAndUpdate: true, existingPr: true, mixedForksFilterForSameRepoOnly: true, ambiguousAndTruncatedListsRejected: true, sameRepoEditInvalidatesPreview: true, pushRequired: true, wrongRepoAndUrlRejected: true, uncertainAfterWriteFailure: true, timeoutUnknown: true, secretsRedacted: true, fullAuthorizationAndUserinfoRedacted: true}, null, 2));
  console.log('GITHUB_PRS_OK', directory);
 } finally {for (const [key, value] of Object.entries(old)) {if (value === undefined) delete process.env[key]; else process.env[key] = value;}}
