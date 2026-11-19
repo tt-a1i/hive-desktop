@@ -253,11 +253,23 @@ public static class ArchivedFixtureWindow {
             $priorAnchor = Wait-ReadingAnchor
             Move-ReadingViewport
             $anchor = Wait-ChangedReadingAnchor $priorAnchor
-            $baselineRows = @(Wait-ReadingViewport)
-            $anchorIndex = [int]($anchor.row.Message -replace '^row-', '')
-            $firstIndex = [int]($baselineRows[0].name -replace '^READING_ROW_', '')
-            $lastIndex = [int]($baselineRows[-1].name -replace '^READING_ROW_', '')
-            if ($anchorIndex -lt ($firstIndex - 1) -or $anchorIndex -gt $lastIndex) { throw 'Saved anchor does not belong to the visible middle rows' }
+            # The position file is saved asynchronously. Wait for it to catch
+            # up with the settled viewport, and retain both values on failure.
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            do {
+                $baselineRows = @(Wait-ReadingViewport)
+                $anchor = Wait-ReadingAnchor
+                $result.initialViewport = $baselineRows
+                $result.anchor = $anchor
+                $anchorIndex = [int]($anchor.row.Message -replace '^row-', '')
+                $firstIndex = [int]($baselineRows[0].name -replace '^READING_ROW_', '')
+                $lastIndex = [int]($baselineRows[-1].name -replace '^READING_ROW_', '')
+                if ($anchorIndex -ge ($firstIndex - 1) -and $anchorIndex -le $lastIndex) { break }
+                Start-Sleep -Milliseconds 150
+            } while ([DateTime]::UtcNow -lt $deadline)
+            if ($anchorIndex -lt ($firstIndex - 1) -or $anchorIndex -gt $lastIndex) {
+                throw "Saved anchor $anchorIndex does not belong to visible rows $firstIndex through $lastIndex"
+            }
             [System.IO.File]::WriteAllText($baselinePath, (@{ anchor=$anchor; rows=$baselineRows } | ConvertTo-Json -Depth 10), [System.Text.UTF8Encoding]::new($false))
             $result.initialViewport = $baselineRows
             $result.anchor = $anchor

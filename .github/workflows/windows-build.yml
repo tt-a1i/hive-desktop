@@ -576,6 +576,8 @@ jobs:
             target/windows-project-reference.json
             target/windows-project-reference.log
             target/windows-project-reference-desktop.log
+            target/windows-reading-*.json
+            target/windows-reading-*.log
             target/windows-archived-search*.json
             target/windows-archived-search*.log
             target/windows-codex-quota.json

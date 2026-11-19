@@ -10,7 +10,7 @@
 
 ## Windows 密码库管道进程（2026-11-20）
 
-新增真实桌面启动路径的进程核对：Windows Desktop Job 启动打包运行时，隔离的假 op.exe 读取测试字段，让子孙持有管道，只终止后台，随后核对宿主、CLI 和子孙进程的实际句柄，以及无关进程仍存活。使用私有 HOME 和假引用，没有连接个人密码库。Windows 交叉编译检查通过；原生执行和回收结果仍待实测。
+新增真实桌面启动路径的进程核对：Windows Desktop Job 启动打包运行时，隔离的假 op.exe 读取测试字段，让子孙持有管道，只终止后台，随后核对宿主、CLI 和子孙进程的实际句柄，以及无关进程仍存活。使用私有 HOME 和假引用，没有连接个人密码库。Windows 原生进程监督作业已通过。只终止桌面后台后，生产监视器收回同一桌面 Job 中的宿主、假 op.exe 和持有 stdout 管道的辅助进程，均以原始进程句柄核对，无关进程存活。未连接真实 1Password。[原生收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44621023302)
 
 ## Windows 拒绝追加与停止后的队列（2026-11-20）
 
@@ -22,7 +22,7 @@
 
 ## Windows 会话阅读位置冷开（2026-11-20）
 
-新增专用窗口回放，使用 81 条独立的离线历史消息，从中段滚动并记录阅读位置。切出再返回、退出再冷开后，分别核对保存的消息 ID、偏移、至少两条可视消息的相对位置及草稿。种子和后验校验已在本地验证；Windows 实际窗口滚动与冷恢复仍待验。
+新增专用窗口回放，使用 81 条独立的离线历史消息，从中段滚动并记录阅读位置。切出再返回、退出再冷开后，分别核对保存的消息 ID、偏移、至少两条可视消息的相对位置及草稿。种子和后验校验已在本地验证；Windows 实际窗口滚动与冷恢复仍待验。首次 Windows 回放已滚至中段，截图显示第 41 至 44 行，但测试读取的持久化锚点未与可见行对应，冷启动尚未执行。首次证据上传遗漏了窗口 JSON，无法还原实际锚点。现在记录准确行范围和保存值，等待持久化状态在时限内稳定，并独立保存失败原因、历史及草稿核对结果。[首次窗口回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44618072132)
 
 ## Windows 原生归档搜索及更新回退通过（2026-11-20）
 
@@ -96,7 +96,7 @@ Windows 的首次 CIM 进程查询曾超过 15 秒。该轮还在合成进程树
 | 12. 固定配置、多实例与 ACP 团队（[#52](https://github.com/tt-a1i/hive-desktop/issues/52)） | macOS 用同一已有账号的两套固定配置，完成真实 Codex 主控→官方 ACP 成员派单、显式汇报、文件核验和冷恢复。[真实协作](validation/2026-11-19-native-acp-collaboration.md) | Windows 真实模型团队流程、双账号与其他厂商组合和长期稳定性仍待验；这不是双账号隔离证据。 |
 | 13. 只读账号配额（[#48](https://github.com/tt-a1i/hive-desktop/issues/48)） | macOS 受控 CLI 和窗口核对额度、读取时间及辅助进程回收；另有早期真实账号只读查询。[配额验收](validation/2026-11-19-codex-profile-quota.md) | Windows 当前原生查询与回收、真实账号切换和额度变化仍待验；额度不等同于模型可用性。 |
 | 14. 桌面更新与回退（[#39](https://github.com/tt-a1i/hive-desktop/issues/39)） | macOS 已验证隔离更新、回退与多种中断恢复。Windows 私有渠道安装 0.1.1 和失败回退至原 0.1.0 均通过，标题可访问，同一会话草稿恢复并确认所属进程退出。[macOS 更新](validation/2026-11-19-macos-signed-update.md) · [Windows 两场景收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44610051238) | Windows 已有小型签名夹具的解包后中断收据。完整包在各中断点的窗口体验、长期跨版本升级和其他文件系统仍待验。 |
-| 15. 隔离 HTML 与 1Password（[#39](https://github.com/tt-a1i/hive-desktop/issues/39)） | macOS 窗口验证 HTML 预览与冷恢复；私有 `op` 夹具及 Pi SDK 回环验证引用和进程回收。[HTML](validation/2026-11-19-html-artifact-preview.md) · [1Password](validation/2026-11-19-pi-vault.md) | Windows **WebView2 子框架导航仍出现白页，隔离验收未通过**；真实 1Password 授权/解锁及 Windows 路径仍待验。 |
+| 15. 隔离 HTML 与 1Password（[#39](https://github.com/tt-a1i/hive-desktop/issues/39)） | macOS 窗口验证 HTML 预览与冷恢复；私有 `op` 夹具及 Pi SDK 回环验证引用和进程回收。[HTML](validation/2026-11-19-html-artifact-preview.md) · [1Password](validation/2026-11-19-pi-vault.md)  Windows 假 op 与管道后代已核对实际 Job 归属及后台强杀后的回收。[Windows 进程收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44621023302) | Windows **WebView2 子框架导航仍出现白页，隔离验收未通过**；真实 1Password 授权及解锁仍待验。 |
 
 另有 Windows 固定 ZIP 的 **48 图**原生回放：首尾图、滚动、切换空会话、原图字节与退出后的进程检查通过；内存数值仅代表该夹具和托管环境，不代表完整长时稳定性。[48 图作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44587198224)
 

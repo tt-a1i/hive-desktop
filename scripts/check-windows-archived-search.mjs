@@ -119,7 +119,7 @@ try {
   }
   if (root && env && output.fixture && !output.disk) {
     try {
-      await run(node, [seedScript, root, resources, 'verify'], { env, stdio: 'inherit' }, 'failure disk verification');
+      await run(node, [seedScript, root, resources, reading ? 'verify-partial' : 'verify'], { env, stdio: 'inherit' }, 'failure disk verification');
       output.disk = JSON.parse(await readFile(join(root, 'archived-disk.json'), 'utf8'));
     } catch (error) {
       output.diskVerificationError = String(error?.stack ?? error);

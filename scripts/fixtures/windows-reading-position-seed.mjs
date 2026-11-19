@@ -15,7 +15,7 @@ function runs() {
   try { return db.prepare('SELECT COUNT(*) AS count FROM agent_runs').get().count; }
   finally { db.close(); }
 }
-if (mode === 'verify') {
+if (mode === 'verify' || mode === 'verify-partial') {
   const seed = JSON.parse(await readFile(info, 'utf8'));
   const original = await readFile(join(root, 'reading-original.jsonl'));
   const current = await readFile(seed.sessionFile);
@@ -28,17 +28,23 @@ if (mode === 'verify') {
   }
   const draft = JSON.parse(await readFile(join(state, 'desktop-drafts', `session-${seed.sessionId}.json`), 'utf8'));
   assert.equal(draft.input, seed.draft);
-  const entries = JSON.parse(await readFile(join(state, 'desktop-reading-positions.json'), 'utf8'));
-  const anchors = entries.filter(entry => entry.workspace === seed.workspaceId && entry.session === seed.sessionId);
-  assert.equal(anchors.length, 1);
-  const saved = JSON.parse(await readFile(join(root, 'reading-baseline.json'), 'utf8'));
-  assert.deepEqual(anchors[0].row, saved.anchor.row);
-  assert.ok(Math.abs(anchors[0].offset - saved.anchor.offset) <= 2, 'Saved intra-row offset changed');
+  let anchorBefore = null;
+  let anchorAfter = null;
+  if (mode === 'verify') {
+    const entries = JSON.parse(await readFile(join(state, 'desktop-reading-positions.json'), 'utf8'));
+    const anchors = entries.filter(entry => entry.workspace === seed.workspaceId && entry.session === seed.sessionId);
+    assert.equal(anchors.length, 1);
+    const saved = JSON.parse(await readFile(join(root, 'reading-baseline.json'), 'utf8'));
+    assert.deepEqual(anchors[0].row, saved.anchor.row);
+    assert.ok(Math.abs(anchors[0].offset - saved.anchor.offset) <= 2, 'Saved intra-row offset changed');
+    anchorBefore = saved.anchor;
+    anchorAfter = anchors[0];
+  }
   assert.equal(runs(), seed.agentRunsBefore);
   await writeFile(join(root, 'archived-disk.json'), JSON.stringify({
     sessionId: seed.sessionId, originalBytes: original.length, originalSha256: digest(original),
     retainedPrefixSha256: digest(current.subarray(0, original.length)), messagesRetained: 81,
-    anchorBefore: saved.anchor, anchorAfter: anchors[0], draftUnchanged: true,
+    anchorBefore, anchorAfter, anchorCompared: mode === 'verify', draftUnchanged: true,
     agentRunsBefore: seed.agentRunsBefore, agentRunsAfter: runs(),
   }, null, 2) + '\n');
 } else {
