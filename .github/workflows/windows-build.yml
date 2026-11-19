@@ -7,6 +7,11 @@ on:
         description: Existing Windows run ID whose portable artifact will be replayed
         required: false
         type: string
+      replay_image_memory:
+        description: Run the isolated 48-image Windows window and memory acceptance
+        required: false
+        type: boolean
+        default: false
       replay_functional:
         description: Check the exact retained package before replaying its native window
         required: false
@@ -43,7 +48,7 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.replay_run }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory) }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -185,6 +190,7 @@ jobs:
       - name: Extract final zip
         run: Expand-Archive -Path target/hive-desktop-windows-portable.zip -DestinationPath target/portable-windows-extracted
       - name: Smoke extracted runtime and PTY
+        id: extracted_runtime
         timeout-minutes: 5
         run: node scripts/check-package.mjs --bundle target/portable-windows-extracted
       - name: Check extracted Codex lifecycle without vendor requests
@@ -229,6 +235,7 @@ jobs:
             target/windows-html-preview-receipt.json
           if-no-files-found: warn
       - name: Verify update and rollback from the extracted Windows desktop
+        if: ${{ !cancelled() && steps.extracted_runtime.outcome == 'success' }}
         timeout-minutes: 18
         run: node scripts/check-windows-native-update.mjs --bundle target/portable-windows-extracted --build-candidate --receipt target/windows-native-update.json
       - name: Preserve native update evidence
@@ -239,7 +246,7 @@ jobs:
           path: target/windows-native-update.json
           if-no-files-found: warn
   native-supervision:
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.replay_run }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -259,7 +266,7 @@ jobs:
       - name: Test native process supervision
         run: cargo test --locked --manifest-path apps/desktop/Cargo.toml --no-default-features --features process-supervisor-check --bin process-supervisor-check -- --nocapture
   native-clis:
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.replay_run }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -305,7 +312,7 @@ jobs:
             .artifacts/file-attachments/wire-receipt.json
           if-no-files-found: warn
   replay:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.replay_run != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.replay_run != '' || inputs.replay_image_memory) }}
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -316,11 +323,11 @@ jobs:
         with:
           node-version: 22.23.3
       - uses: pnpm/action-setup@v6
-        if: ${{ inputs.replay_functional }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory }}
         with:
           version: 10.30.3
       - name: Install package-check compiler only without lifecycle scripts
-        if: ${{ inputs.replay_functional }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory }}
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Validate original run ID
         shell: pwsh
@@ -347,22 +354,31 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath target/replay-extracted
           if (-not (Test-Path -LiteralPath 'target/replay-extracted/hive-desktop.exe' -PathType Leaf)) { throw 'Extracted artifact is not a portable desktop bundle.' }
       - name: Check original extracted functional runtime
-        if: ${{ inputs.replay_functional }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory }}
         timeout-minutes: 25
         run: node scripts/check-packaged-functional.mjs --bundle target/replay-extracted --receipt target/replay-functional-receipt.json
       - name: Smoke extracted Windows terminal bridge
+        if: ${{ !inputs.replay_image_memory }}
         timeout-minutes: 5
         shell: pwsh
         run: |
           node scripts/check-windows-terminal.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-terminal-smoke.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay native window fixture
+        if: ${{ !inputs.replay_image_memory }}
         timeout-minutes: 4
         shell: pwsh
         env:
           HIVE_WINDOWS_PREVIEW_PATH: target/windows-replay-workspace.png
         run: |
           node scripts/check-desktop-startup.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-replay.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Measure native history-image memory
+        if: ${{ inputs.replay_image_memory }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-history-image-memory.mjs --bundle target/replay-extracted --receipt target/windows-image-memory.json 2>&1 | Tee-Object -FilePath target/windows-image-memory.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload replay evidence
         if: always()
@@ -375,4 +391,7 @@ jobs:
             target/windows-terminal-smoke.log
             target/replay-provenance.json
             target/replay-functional-receipt.json
+            target/windows-image-memory.json
+            target/windows-image-memory.log
+            target/windows-image-desktop.log
           if-no-files-found: warn
