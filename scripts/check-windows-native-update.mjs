@@ -157,6 +157,16 @@ async function until(description, operation, timeout = 120_000) {
   throw new Error(`Timed out waiting for ${description}`);
 }
 
+function verifyUpdateTrace(trace) {
+  const requests = [...trace.matchAll(/^\[hive rpc\] send ([1-9]\d*) "([^"]+)"$/gm)];
+  const replies = new Set([...trace.matchAll(/^\[hive rpc\] reply ([1-9]\d*) ok$/gm)].map(([, id]) => id));
+  // Ordinary shutdown uses ID 0. Installer handoff requires a matched request and reply.
+  for (const method of ['desktop.updates.check', 'desktop.updates.stage', 'desktop.updates.prepareInstaller', 'shutdown']) {
+    assert.ok(requests.some(([, id, name]) => name === method && replies.has(id)), `Missing successful RPC for ${method}`);
+  }
+  assert.doesNotMatch(trace, /"chat\.prompt"/);
+}
+
 async function runCase(name, expectedState, current, candidate, candidateSha, baseUrl) {
   const directory = join(work, name), installation = join(directory, 'Hive Desktop');
   const data = join(directory, 'state'), project = join(directory, 'project'), pi = join(directory, 'pi');
@@ -213,12 +223,8 @@ async function runCase(name, expectedState, current, candidate, candidateSha, ba
     await ui('VerifyAndClose', ['-AppProcessId', String(replacement.pid), '-Executable', executable,
       '-Draft', draft, '-ReceiptLabel', `${expectedState === 'installed' ? '已安装桌面更新' : '安装失败，已恢复旧版本'} · ${version}`]);
     await until('owned desktop and installer processes to exit', async () => !(await processes(directory)).length, 20_000);
-    const trace = Buffer.concat(log).toString();
-    assert.match(trace, /send .*"desktop\.updates\.check"/);
-    assert.match(trace, /send .*"desktop\.updates\.stage"/);
-    assert.match(trace, /send .*"desktop\.updates\.prepareInstaller"/);
-    assert.match(trace, /reply 0 ok/);
-    assert.doesNotMatch(trace, /"chat\.prompt"/);
+    details.phase = 'installer handoff confirmation';
+    verifyUpdateTrace(Buffer.concat(log).toString());
     const release = releases.get(name);
     Object.assign(details, { phase: 'verified', result, oldSha, installedSha, archiveSha: release.sha256,
       archiveBytes: release.bytes, draftRetained: true, sameSession: session, allOwnedProcessesExited: true });
