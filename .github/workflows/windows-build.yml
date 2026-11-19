@@ -7,6 +7,11 @@ on:
         description: Existing Windows run ID whose portable artifact will be replayed
         required: false
         type: string
+      replay_update:
+        description: Replay only native update and rollback from the retained portable artifact
+        required: false
+        type: boolean
+        default: false
       replay_image_memory:
         description: Run the isolated 48-image Windows window and memory acceptance
         required: false
@@ -53,13 +58,22 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update) }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
       CARGO_TARGET_DIR: target/windows-desktop
     steps:
       - uses: actions/checkout@v4
+      - name: Record checked-out source before building
+        id: package_source
+        shell: pwsh
+        run: |
+          $head = (git rev-parse --verify HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cnotmatch '^[0-9a-f]{40}$') { throw 'Could not identify checked-out source.' }
+          $dirty = git status --porcelain --untracked-files=no
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw 'Tracked source is not clean before building.' }
+          "head=$head" >> $env:GITHUB_OUTPUT
       - uses: pnpm/action-setup@v6
         with:
           version: 10.30.3
@@ -184,13 +198,25 @@ jobs:
         run: node scripts/package-desktop.mjs --executable target/windows-desktop/release/hive-desktop.exe --runtime target/deployed-runtime --output target/portable-windows
       - name: Zip portable folder
         run: Compress-Archive -Path target/portable-windows/* -DestinationPath target/hive-desktop-windows-portable.zip
+      - name: Record portable artifact source
+        shell: pwsh
+        env:
+          PACKAGE_SOURCE: ${{ steps.package_source.outputs.head }}
+        run: |
+          $head = (git rev-parse --verify HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:PACKAGE_SOURCE) { throw 'Source checkout changed during packaging.' }
+          $dirty = git status --porcelain --untracked-files=no
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw 'Tracked source changed during packaging.' }
+          [ordered]@{ schemaVersion = 1; repository = $env:GITHUB_REPOSITORY; runId = $env:GITHUB_RUN_ID; runAttempt = $env:GITHUB_RUN_ATTEMPT; event = $env:GITHUB_EVENT_NAME; checkoutHead = $head; archiveSha256 = (Get-FileHash -Algorithm SHA256 target/hive-desktop-windows-portable.zip).Hash } | ConvertTo-Json | Set-Content -Encoding utf8 target/hive-desktop-windows-source.json
       # Keep the exact generated binary available if a later acceptance check fails.
       # Artifact availability is not a passing validation result or release promotion.
       - name: Preserve generated portable desktop
         uses: actions/upload-artifact@v4
         with:
           name: hive-desktop-windows-portable
-          path: target/hive-desktop-windows-portable.zip
+          path: |
+            target/hive-desktop-windows-portable.zip
+            target/hive-desktop-windows-source.json
           if-no-files-found: error
       - name: Extract final zip
         run: Expand-Archive -Path target/hive-desktop-windows-portable.zip -DestinationPath target/portable-windows-extracted
@@ -252,7 +278,7 @@ jobs:
           path: target/windows-native-update.json
           if-no-files-found: warn
   native-supervision:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -272,7 +298,7 @@ jobs:
       - name: Test native process supervision
         run: cargo test --locked --manifest-path apps/desktop/Cargo.toml --no-default-features --features process-supervisor-check --bin process-supervisor-check -- --nocapture
   native-clis:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -318,7 +344,7 @@ jobs:
             .artifacts/file-attachments/wire-receipt.json
           if-no-files-found: warn
   replay:
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.replay_run != '' || inputs.replay_image_memory || inputs.replay_shortcut_layout) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.replay_update && (inputs.replay_run != '' || inputs.replay_image_memory || inputs.replay_shortcut_layout) }}
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -420,4 +446,101 @@ jobs:
             target/windows-shortcut-layout.json
             target/windows-shortcut-layout-ui.json
             target/windows-shortcut-layout.log
+          if-no-files-found: warn
+
+  replay-update:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.replay_update }}
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      REPLAY_RUN: ${{ inputs.replay_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.3
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - name: Validate isolated update replay selection
+        shell: pwsh
+        env:
+          IMAGE_REPLAY: ${{ inputs.replay_image_memory }}
+          FUNCTIONAL_REPLAY: ${{ inputs.replay_functional }}
+          SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
+        run: |
+          if ($env:REPLAY_RUN -cnotmatch '^[1-9][0-9]*$') { throw 'replay_run must be a positive integer.' }
+          if ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true') { throw 'Update replay cannot be combined with other replay selections.' }
+      - name: Download original portable artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hive-desktop-windows-portable
+          path: target/replay-download
+          run-id: ${{ env.REPLAY_RUN }}
+          github-token: ${{ github.token }}
+      - name: Extract and record provenance
+        id: provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $archive = 'target/replay-download/hive-desktop-windows-portable.zip'
+          if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'Original portable zip is missing from artifact.' }
+          $origin = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:REPLAY_RUN" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $origin.head_sha -cnotmatch '^[0-9a-f]{40}$') { throw 'Could not read original run provenance.' }
+          $workflow = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/$($origin.workflow_id)" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $workflow.path -cne '.github/workflows/windows-build.yml') { throw 'The run is not from the Windows build workflow.' }
+          $archiveSha = (Get-FileHash -Algorithm SHA256 $archive).Hash
+          $sourceReceipt = 'target/replay-download/hive-desktop-windows-source.json'
+          if (Test-Path -LiteralPath $sourceReceipt -PathType Leaf) {
+            $source = Get-Content -Raw -LiteralPath $sourceReceipt | ConvertFrom-Json
+            if ($source.schemaVersion -ne 1 -or $source.repository -cne $env:GITHUB_REPOSITORY -or "$($source.runId)" -cne $env:REPLAY_RUN -or "$($source.runAttempt)" -cne "$($origin.run_attempt)" -or $source.event -cne $origin.event -or $source.checkoutHead -cnotmatch '^[0-9a-f]{40}$' -or $source.archiveSha256 -cne $archiveSha) { throw 'Portable source receipt does not match the downloaded artifact and run.' }
+            $checkoutHead = $source.checkoutHead
+            $sourceMethod = 'artifact-checkout-receipt'
+          } elseif ($origin.event -ceq 'push') {
+            # This workflow uses the default checkout for push runs: its ref is the push SHA.
+            $checkoutHead = $origin.head_sha
+            $sourceMethod = 'legacy-push-head-sha'
+          } else {
+            throw 'This older non-push artifact has no checkout receipt; its source revision cannot be established safely.'
+          }
+          New-Item -ItemType Directory -Force -Path target | Out-Null
+          [ordered]@{ originalRun = $env:REPLAY_RUN; originalEvent = $origin.event; originalHead = $origin.head_sha; checkoutHead = $checkoutHead; sourceMethod = $sourceMethod; fixtureHead = $env:GITHUB_SHA; archiveSha256 = $archiveSha } | ConvertTo-Json | Set-Content -Encoding utf8 target/replay-provenance.json
+          "head=$checkoutHead" >> $env:GITHUB_OUTPUT
+          Expand-Archive -LiteralPath $archive -DestinationPath target/replay-extracted
+          if (-not (Test-Path -LiteralPath 'target/replay-extracted/hive-desktop.exe' -PathType Leaf)) { throw 'Extracted artifact is not a portable desktop bundle.' }
+      - name: Check out the original package source for the candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.provenance.outputs.head }}
+          path: target/update-source
+      - name: Verify candidate source checkout
+        shell: pwsh
+        env:
+          EXPECTED_SOURCE: ${{ steps.provenance.outputs.head }}
+        run: |
+          $actual = (git -C target/update-source rev-parse --verify HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:EXPECTED_SOURCE) { throw 'Candidate source checkout does not match package provenance.' }
+      - name: Replay native update and rollback
+        timeout-minutes: 60
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/hive-update-replay-target
+        run: |
+          node scripts/check-windows-native-update.mjs --bundle target/replay-extracted --build-candidate --candidate-source target/update-source --receipt target/windows-native-update.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve failure receipt when replay did not reach the native check
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path target | Out-Null
+          if (-not (Test-Path -LiteralPath target/windows-native-update.json -PathType Leaf)) {
+            [ordered]@{ ok = $false; error = 'Replay stopped before the native update check wrote a receipt.'; originalRun = $env:REPLAY_RUN } | ConvertTo-Json | Set-Content -Encoding utf8 target/windows-native-update.json
+          }
+      - name: Upload native update replay evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-update-replay-evidence
+          path: |
+            target/replay-provenance.json
+            target/windows-native-update.json
           if-no-files-found: warn

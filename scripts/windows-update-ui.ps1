@@ -57,6 +57,23 @@ function Wait-Control([string] $Name, [int] $Timeout = 10, [switch] $Last) {
         }
         Start-Sleep -Milliseconds 150
     } while ([DateTime]::UtcNow -lt $end)
+    # Keep the original assertion and deadline. The modal's accessible state is
+    # useful only on failure; successful runs stay quiet.
+    try {
+        $nodes = @($root.FindAll($scope, [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.Name } | Select-Object -Last 60 | ForEach-Object {
+                [pscustomobject]@{
+                    name = $_.Current.Name.Substring(0, [Math]::Min(160, $_.Current.Name.Length))
+                    type = $_.Current.ControlType.ProgrammaticName
+                    enabled = $_.Current.IsEnabled
+                    offscreen = $_.Current.IsOffscreen
+                }
+            })
+        $evidence = [pscustomobject]@{ phase = 'waiting for control'; expected = $Name; processId = $AppProcessId; nodes = $nodes }
+        [Console]::Error.WriteLine('[windows-update-uia] ' + (ConvertTo-Json -InputObject $evidence -Depth 4 -Compress))
+    } catch {
+        [Console]::Error.WriteLine('[windows-update-uia] could not capture controls: ' + $_.Exception.Message)
+    }
     throw "The expected control '$Name' did not become available."
 }
 function Test-InWindow($Control) {

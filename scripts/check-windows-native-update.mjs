@@ -15,13 +15,16 @@ const { values: args } = parseArgs({ options: {
   bundle: { type: 'string' },
   'candidate-executable': { type: 'string' },
   'build-candidate': { type: 'boolean' },
+  'candidate-source': { type: 'string' },
   receipt: { type: 'string' },
 } });
 assert.equal(process.platform, 'win32', 'This check requires an interactive Windows desktop');
 assert.ok(args.bundle && args.receipt && (Boolean(args['candidate-executable']) !== Boolean(args['build-candidate'])),
   'Pass --bundle, --receipt, and either --candidate-executable or --build-candidate');
+assert.ok(!args['candidate-source'] || args['build-candidate'], '--candidate-source requires --build-candidate');
 const exec = promisify(execFile);
 const repo = fileURLToPath(new URL('../', import.meta.url));
+const candidateSource = args['candidate-source'] ? await realpath(args['candidate-source']) : repo;
 const controls = fileURLToPath(new URL('./windows-update-ui.ps1', import.meta.url));
 const bundle = await realpath(args.bundle);
 const baseExe = join(bundle, 'hive-desktop.exe');
@@ -31,6 +34,7 @@ const { hashDesktopFile, verifyDesktopPackage } = await fromBundle('desktop-upda
 const work = await realpath(await mkdtemp(join(tmpdir(), 'Hive native update ')));
 const receipt = resolve(args.receipt);
 const outcomes = [];
+const failures = [];
 const save = (path, value) => writeFile(path, JSON.stringify(value, null, 2) + '\n');
 
 async function nativeIdentity(executable) {
@@ -48,8 +52,8 @@ async function buildCandidate(fromVersion) {
   assert.match(fromVersion, /^\d+\.\d+\.\d+$/);
   const parts = fromVersion.split('.');
   const nextVersion = [...parts.slice(0, 2), Number(parts[2]) + 1].join('.');
-  const manifest = join(repo, 'apps', 'desktop', 'Cargo.toml');
-  const lockfile = join(repo, 'apps', 'desktop', 'Cargo.lock');
+  const manifest = join(candidateSource, 'apps', 'desktop', 'Cargo.toml');
+  const lockfile = join(candidateSource, 'apps', 'desktop', 'Cargo.lock');
   const manifestBytes = await readFile(manifest);
   const lockBytes = await readFile(lockfile);
   const versionLine = `version = "${fromVersion}"`;
@@ -73,7 +77,7 @@ async function buildCandidate(fromVersion) {
     // Reuse CI's existing release dependency build and compile only one job at a time.
     console.log(`Building private update fixture ${nextVersion}`);
     const build = spawn('cargo', ['build', '--release', '--locked', '--jobs', '1', '--manifest-path', manifest, '--bin', 'hive-desktop'],
-      { cwd: repo, env: { ...process.env, CARGO_TARGET_DIR: target }, stdio: 'inherit' });
+      { cwd: candidateSource, env: { ...process.env, CARGO_TARGET_DIR: target }, stdio: 'inherit' });
     const [code, signal] = await once(build, 'exit');
     assert.deepEqual([code, signal], [0, null]);
     const executable = join(work, 'candidate.exe');
@@ -250,16 +254,29 @@ try {
   const candidateSha = await preparePackage(candidateRoot, executable, candidate, `${endpoint}/healthy/manifest.json`);
   assert.notEqual(candidateSha, await hashDesktopFile(baseExe), 'The candidate must be a different native build');
   await archiveRelease('healthy', candidateRoot, candidate);
-  await runCase('healthy', 'installed', current, candidate, candidateSha, endpoint);
+  try {
+    await runCase('healthy', 'installed', current, candidate, candidateSha, endpoint);
+  } catch (error) {
+    failures.push({ name: 'healthy', error: error.stack ?? String(error) });
+  }
   await rm(join(work, 'healthy'), { recursive: true, force: true });
   await rm(releases.get('healthy').archive);
   await writeFile(join(candidateRoot, 'resources', 'runtime', 'dist', 'main.js'), 'process.exit(79);\n');
   await archiveRelease('broken', candidateRoot, candidate);
   await rm(candidateRoot, { recursive: true, force: true });
-  await runCase('broken', 'rolledBack', current, candidate, candidateSha, endpoint);
-  await save(receipt, { ok: true, outcomes });
+  try {
+    await runCase('broken', 'rolledBack', current, candidate, candidateSha, endpoint);
+  } catch (error) {
+    failures.push({ name: 'broken', error: error.stack ?? String(error) });
+  }
+  if (failures.length) {
+    await save(receipt, { ok: false, outcomes, failures });
+    process.exitCode = 1;
+  } else {
+    await save(receipt, { ok: true, outcomes });
+  }
 } catch (error) {
-  await save(receipt, { ok: false, outcomes, error: error.stack ?? String(error) });
+  await save(receipt, { ok: false, outcomes, failures, error: error.stack ?? String(error) });
   throw error;
 } finally {
   if (server.listening) {
