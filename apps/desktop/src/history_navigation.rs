@@ -11,6 +11,7 @@ use std::sync::Arc;
 pub(crate) struct HistoryNavigation {
     generation: u64,
     initialization_request: u64,
+    handoff_state_request: u64,
     pub(crate) loading: bool,
     pub(crate) access: HistoryAccess,
     pub(crate) initialization: Option<Initialization>,
@@ -21,6 +22,37 @@ impl HistoryNavigation {
         self.loading = false;
         self.access = Default::default();
         self.initialization = None;
+    }
+
+    pub(crate) fn next_handoff_state_request(&mut self) -> u64 {
+        self.handoff_state_request += 1;
+        self.handoff_state_request
+    }
+
+    pub(crate) fn apply_handoff_state(
+        &mut self,
+        state: &crate::protocol::OpenSession,
+        request: u64,
+        latest_event: u64,
+    ) -> bool {
+        let access = &mut self.access;
+        if request != self.handoff_state_request
+            || state.event_sequence < latest_event
+            || access.handoff_snapshot.is_none()
+            || !access.matches(Some(&state.session.workspace_id), Some(&state.session.id))
+        {
+            return false;
+        }
+        access.read_only = state.read_only;
+        access.identity_error.clone_from(&state.identity_error);
+        access.handoff_delivery.clone_from(&state.handoff_delivery);
+        access.passive = state.passive;
+        // The window still displays the history and frozen context from its
+        // full open. A delivery state reply has no replacement for either.
+        if let Some(initialization) = state.initialization.as_ref() {
+            self.initialization = Some(initialization.clone());
+        }
+        true
     }
 }
 #[derive(Default)]
@@ -398,7 +430,7 @@ mod tests {
 
 #[cfg(test)]
 mod access_tests {
-    use super::{HistoryAccess, NavigationContext, open_session_identity_matches};
+    use super::{HistoryAccess, HistoryNavigation, NavigationContext, open_session_identity_matches};
     use crate::protocol::OpenSession;
     use serde_json::json;
     #[test]
@@ -430,6 +462,38 @@ mod access_tests {
                 && !ordinary.history_incomplete
                 && ordinary.identity_error.is_none()
         );
+    }
+    #[test]
+    fn handoff_state_preserves_displayed_history_and_respects_request_and_event_order() {
+        let full: OpenSession = serde_json::from_value(json!({
+            "id":"A", "workspaceId":"w", "title":"handoff",
+            "historyMessageIds":[], "eventSequence":4,
+            "handoffSnapshot":{"snapshotId":"original"},
+            "handoffDelivery":{"status":"reserved"},
+            "historyIncomplete":true, "historyWarning":"Earlier items are unavailable",
+        })).unwrap();
+        let state: OpenSession = serde_json::from_value(json!({
+            "id":"A", "workspaceId":"w", "title":"handoff",
+            "historyMessageIds":[], "eventSequence":7,
+            "handoffDelivery":{"status":"consumed"}, "passive":false, "readOnly":true,
+            "identityError":{"code":"SOURCE_IDENTITY_CONFLICT","message":"Review the original identity"},
+        })).unwrap();
+        let mut navigation = HistoryNavigation {
+            access: HistoryAccess::snapshot(&full),
+            ..Default::default()
+        };
+        let superseded = navigation.next_handoff_state_request();
+        let latest = navigation.next_handoff_state_request();
+        assert!(!navigation.apply_handoff_state(&state, superseded, 6));
+        assert!(!navigation.apply_handoff_state(&state, latest, 8));
+        assert!(navigation.access.handoff_unconsumed());
+        assert!(navigation.apply_handoff_state(&state, latest, 7));
+        assert!(navigation.access.read_only && navigation.access.history_incomplete);
+        assert_eq!(navigation.access.identity_error.as_ref().unwrap().code, "SOURCE_IDENTITY_CONFLICT");
+        assert_eq!(navigation.access.passive, Some(false));
+        assert_eq!(navigation.access.handoff_snapshot, full.handoff_snapshot);
+        assert_eq!(navigation.access.history_warning, full.history_warning);
+        assert!(!navigation.access.handoff_unconsumed());
     }
     #[test]
     fn navigation_context_detects_session_reopen_even_when_ids_match() {

@@ -1002,7 +1002,10 @@ impl HiveApp {
         done: impl FnOnce(&mut Self, Value, &mut Context<Self>) + 'static,
     ) {
         let workspace_write = method.starts_with("chat.")
-            && !matches!(method, "chat.open" | "chat.list" | "chat.clearView")
+            && !matches!(
+                method,
+                "chat.open" | "chat.list" | "chat.clearView" | "chat.handoffTargetState"
+            )
             || method == "hive.request"
                 && params["method"]
                     .as_str()

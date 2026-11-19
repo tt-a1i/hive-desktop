@@ -67,6 +67,11 @@ interface LiveChat {
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string; handoffDelivery?: HandoffDelivery };
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
 export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & { sequence: number };
+type SessionSnapshotError = SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError;
+function isSessionSnapshotError(error: unknown): error is SessionSnapshotError {
+  return error instanceof SessionIdentityError || error instanceof DispatchOriginError ||
+    error instanceof WorktreeInitializationError || error instanceof HandoffError || error instanceof GitWorktreeError;
+}
 const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
 
 function gitText(value: unknown, field: string, allowEmpty = false): string {
@@ -1195,11 +1200,13 @@ export class Chats implements StructuredSessionPort {
   }
 
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
-  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError, allowOfflineQueueEdits = false) {
+  private async readOnlySnapshot(record: ChatRecord, identityError: SessionSnapshotError,
+      {allowOfflineQueueEdits = false, includeHistory = true} = {}) {
     const acpVersion = allowOfflineQueueEdits && this.canEditOfflineAcp(record) ? this.index.snapshotVersion(record.id) : undefined;
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = record.execution?.path ?? workspace.path;
-    const {history, historyMessageIds, historyWarning, acpTranscript} = await this.readSavedHistory(record, workspace);
+    const saved = includeHistory ? await this.readSavedHistory(record, workspace) : undefined;
+    const {history = [], historyMessageIds = [], historyWarning, acpTranscript} = saved ?? {};
     const sourceAgent = record.originAgentId ?? record.agentId;
     const restoredHistory = sourceAgent ? history.map(message => restoreHistoricalReport(message,
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, sourceAgent, dispatchId, payload))) : history;
@@ -1493,14 +1500,14 @@ export class Chats implements StructuredSessionPort {
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.reconcileHandoffOffline(record);
       const handoffSnapshot=await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId);
-      const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'),true);
+      const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'),{allowOfflineQueueEdits:true});
       return {...snapshot,readOnly:false,passive:true,handoffSnapshot,handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}};
     }
     if(record.backend==='acp'&&!this.live.has(id)){
       await this.runnableIdentity(record);
       await this.executionDirectory(record.workspaceId,id);
       const current = this.index.get(id);
-      const {identityError,readOnly,...snapshot}=await this.readOnlySnapshot(current,new SessionIdentityError('ACP_PASSIVE_SESSION','Activate explicitly to negotiate native restore and the Hive team bridge'),true);
+      const {identityError,readOnly,...snapshot}=await this.readOnlySnapshot(current,new SessionIdentityError('ACP_PASSIVE_SESSION','Activate explicitly to negotiate native restore and the Hive team bridge'),{allowOfflineQueueEdits:true});
       const nativeReadOnly=!!current.sessionFile&&current.capabilities?.features?.nativeResume?.state==='unsupported';
       return {...snapshot,readOnly:nativeReadOnly,passive:true,...(nativeReadOnly&&{identityError:{code:'ACP_NATIVE_RESUME_UNAVAILABLE',message:'The last agent handshake did not support native restore; only the local transcript is available. Explicit activation can recheck this capability.'}})};
     }
@@ -1513,7 +1520,7 @@ export class Chats implements StructuredSessionPort {
     const snapshot=this.snapshot(id,await this.require(id,browse),includeLiveHistory);
     return record.handoff?{...snapshot,passive:false,handoffSnapshot:await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}:snapshot; }
     catch (error) {
-      if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError || error instanceof WorktreeInitializationError || error instanceof HandoffError || error instanceof GitWorktreeError)) throw error;
+      if (!isSessionSnapshotError(error)) throw error;
       const live = this.live.get(id);
       if (live) await this.stopLive(id, live);
       const current=this.index.get(id);
@@ -1521,6 +1528,44 @@ export class Chats implements StructuredSessionPort {
         ...(current.handoff&&{handoffSnapshot:await this.handoffs!.getSnapshot(current.workspaceId,current.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}),
         ...(error instanceof WorktreeInitializationError && {initialization: await this.initialization?.get(this.index.get(id).workspaceId, id)})};
     }
+  }
+
+  /** Refresh delivery and capabilities for an already opened handoff, without activating its Agent. */
+  async handoffTargetState(id: string) {
+    const {workspaceId} = this.index.get(id);
+    this.assertWorkspaceAvailable(workspaceId);
+    return this.withWorkspace(workspaceId, async () => {
+      const record = this.index.get(id);
+      if (!record.handoff) throw new Error('This conversation is not a handoff target');
+      this.assertWorkspaceAvailable(workspaceId);
+      const delivery = () => this.handoffDeliveries.get(id) ?? {status: 'pending'};
+      try {
+        await this.runnableIdentity(record);
+        await this.executionDirectory(workspaceId, id);
+        if (!this.live.has(id)) await this.reconcileHandoffOffline(this.index.get(id));
+        const live = this.live.get(id);
+        if (live && !live.failure && !live.cleanup) {
+          return {...this.snapshot(id, live, false), passive: false, handoffDelivery: delivery()};
+        }
+        const {identityError, ...snapshot} = await this.readOnlySnapshot(this.index.get(id),
+          new SessionIdentityError('PASSIVE_HANDOFF', 'Handoff opened without starting an Agent'),
+          {allowOfflineQueueEdits: true, includeHistory: false});
+        // A Hive activation can finish while the cold state is being read.
+        const active = this.live.get(id);
+        if (active && !active.failure && !active.cleanup) {
+          return {...this.snapshot(id, active, false), passive: false, handoffDelivery: delivery()};
+        }
+        return {...snapshot, readOnly: false, passive: true, handoffDelivery: delivery()};
+      } catch (error) {
+        if (!isSessionSnapshotError(error)) throw error;
+        const live = this.live.get(id);
+        const snapshot = live && !live.failure && !live.cleanup ? {...this.snapshot(id, live, false), passive: false}
+          : await this.readOnlySnapshot(this.index.get(id), error, {includeHistory: false});
+        return {...snapshot, readOnly: true, identityError: {code: error.code, message: error.message},
+          handoffDelivery: delivery(),
+          ...(error instanceof WorktreeInitializationError && {initialization: await this.initialization?.get(workspaceId, id)})};
+      }
+    });
   }
 
   async historyImage(workspaceId: string, id: string, messageId: string, imageIndex: number) {

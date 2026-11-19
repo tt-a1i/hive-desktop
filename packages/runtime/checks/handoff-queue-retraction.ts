@@ -92,6 +92,9 @@ try{
   const openedCold=await runtime.chats.open(test.id);
   assert.equal(openedCold.passive,true);
   assert.deepEqual(openedCold.pendingUserInputs.map(input=>[input.deliveryId,input.editable]),pending.map(item=>[item.id,true]));
+  const beforeEdit=await runtime.chats.handoffTargetState(test.id);
+  assert.deepEqual(beforeEdit.pendingUserInputs,openedCold.pendingUserInputs);
+  assert.deepEqual(beforeEdit.handoffDelivery,openedCold.handoffDelivery);
   await runtime.chats.mutateQueuedInput(test.id,pending[1]!.id,'Second queued input should inherit context',editedText);
   await assert.rejects(runtime.chats.mutateQueuedInput(test.id,pending[1]!.id,'Second queued input should inherit context'),/changed; reopen/);
   assert.equal(spool(test.data,test.id)[1]!.presentation!.displayText,editedText);
@@ -112,6 +115,9 @@ try{
   pending=spool(test.data,test.id);assert.equal(pending.length,1);assert.ok(pending[0]!.contextRef);
   const afterCancel=await runtime!.chats.open(test.id) as any;assert.equal(afterCancel.handoffDelivery.status,'reserved');
   assert.equal(afterCancel.handoffDelivery.deliveryId,pending[0]!.id);
+  const afterWithdrawal=await runtime.chats.handoffTargetState(test.id);
+  assert.deepEqual(afterWithdrawal.pendingUserInputs,passive.pendingUserInputs);
+  assert.deepEqual(afterWithdrawal.handoffDelivery,afterCancel.handoffDelivery);
  }finally{DeliveryQueue.prototype.enqueue=enqueue;}
  await runtime!.chats.resume(test.id);await settled(test.id);
  await runtime!.chats.prompt(test.id,'Third normal input must not repeat historical context');await settled(test.id);
@@ -124,7 +130,7 @@ try{
  assert.ok(inputs[1].includes('Third normal input must not repeat historical context'));
  assert.ok(!inputs[1].includes('[Historical context — recorded material only]'));
  assert.equal(modelRequests,0);
- await writeFile(join(root,'review-repro.json'),JSON.stringify({fixed:true,firstRemainingGotHistoricalContext:true,contextOnlyOnce:true,slashEditRejected:true,rebindSpoolWriteFailureColdRepaired:true,coldPassiveEditAndWithdrawNoCli:true,staleTextRejected:true,attachmentPreserved:true,inputs},null,2));
+ await writeFile(join(root,'review-repro.json'),JSON.stringify({fixed:true,firstRemainingGotHistoricalContext:true,contextOnlyOnce:true,slashEditRejected:true,rebindSpoolWriteFailureColdRepaired:true,coldPassiveEditAndWithdrawNoCli:true,coldHandoffStatePreservedQueue:true,staleTextRejected:true,attachmentPreserved:true,inputs},null,2));
  console.log('FIXED_HANDOFF_CONTEXT_TRANSFER_SPOOL_COLD '+root);
  await stopRun(test.ws.id,test.worker.id);await closeRuntime();
 }catch(error){await writeFile(join(root,'failure.json'),JSON.stringify({message:String(error),stack:error instanceof Error?error.stack:undefined,results},null,2));throw error;}

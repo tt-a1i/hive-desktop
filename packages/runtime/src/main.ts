@@ -143,6 +143,12 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'chat.handoff.get':exact(params,['workspaceId','operationId']);return chats.handoffs!.get(text(params,'workspaceId'),text(params,'operationId'));
     case 'chat.handoff.list':exact(params,['workspaceId']);return chats.handoffs!.list(text(params,'workspaceId'));
     case 'chat.handoff.recover':exact(params,['workspaceId','operationId']);return chats.handoffs!.recover(text(params,'workspaceId'),text(params,'operationId'));
+    case 'chat.handoffTargetState': {
+      exact(params, ['sessionId', 'viewRevision']);
+      const id = text(params, 'sessionId');
+      return params.viewRevision === undefined ? chats.handoffTargetState(id)
+        : chats.readDesktopView(id, viewRevision(params.viewRevision), () => chats.handoffTargetState(id));
+    }
     case 'history.capabilities': return chats.history!.capabilities(text(params,'workspaceId'),text(params,'sessionId'));
     case 'checkpoint.preview': return chats.history!.checkpointPreview(text(params,'workspaceId'),text(params,'sessionId'));
     case 'checkpoint.capture': return chats.history!.checkpointCapture(text(params,'workspaceId'),text(params,'sessionId'),text(params,'expectedVersion'),text(params,'requestId'));

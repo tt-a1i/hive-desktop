@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
-import {mkdtemp,mkdir,writeFile,readFile,realpath,stat} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,realpath,rm,stat} from 'node:fs/promises';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {tmpdir} from 'node:os';
@@ -26,6 +26,13 @@ let wire:ReturnType<typeof startWire>|undefined;
 let modelRequests=0;
 const rejectModel=createServer((_req,res)=>{modelRequests++;res.writeHead(500);res.end('This fixture forbids model requests');});
 await new Promise<void>(resolve=>rejectModel.listen(0,'127.0.0.1',resolve));
+function assertStateOnly(state:any) {
+ assert.deepEqual(state.history,[]);
+ assert.deepEqual(state.historyMessageIds,[]);
+ for(const field of ['activeMessage','handoffSnapshot','historyWarning','historyIncomplete']) {
+  assert.equal(field in state,false,field);
+ }
+}
 function startWire(){
  const safeEnv=Object.fromEntries(['HOME','PATH','USER','LOGNAME','SHELL','TMPDIR','LANG','LC_ALL','__CF_USER_TEXT_ENCODING','GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM','PI_CODING_AGENT_DIR','PI_OFFLINE'].flatMap(key=>process.env[key]===undefined?[]:[[key,process.env[key]]]));
  const child=spawn(process.execPath,[process.env.HIVE_DESKTOP_TEST_RUNTIME??fileURLToPath(new URL('../dist/main.js',import.meta.url))],{env:{...safeEnv,HIVE_DESKTOP_DATA_DIR:data},stdio:['pipe','pipe','pipe']});
@@ -54,7 +61,7 @@ try{
  const sourceBefore=index.get(source.id),launchBefore=runtime.agents.peekAgentLaunchConfig(ws.id,worker.id),ledgerBefore=runtime.hive.executionLedgerRevision(),sourceIndex=git(sourcePath,'show',':result.txt'),sourceHead=git(sourcePath,'show','HEAD:result.txt');
  const targets=[];
  for(const driver of ['pi','codex','pi-rpc','claude','acp'] as const){
-  const launch=driver==='pi'?{args:[],configDir:join(root,'target-pi')}:driver==='acp'?{command:process.execPath,args:[fileURLToPath(new URL('./fixtures/acp-runtime-peer.cjs',import.meta.url)),acp]}:{command:guarded,args:[],configDir:join(root,'target-'+driver)};
+  const launch=driver==='pi'?{args:[],configDir:join(root,'target-pi')}:driver==='acp'?{command:process.execPath,args:[fileURLToPath(new URL('./fixtures/acp-runtime-peer.cjs',import.meta.url)),acp,'prompt-gate']}:{command:guarded,args:[],configDir:join(root,'target-'+driver)};
   const profile=await createProfile(driver,'Target '+driver,launch);
   const input:HandoffInput={workspaceId:ws.id,sourceSessionId:source.id,target:{driver,profile:profile.ref},selection:{throughItemId:'tool1'},code:{kind:'current'},imagePolicy:'references-only'};
   const reviewed=await runtime.chats.handoffs!.preview(input);assert.equal(reviewed.eligible,true,JSON.stringify(reviewed.blockers));
@@ -71,7 +78,19 @@ try{
  await assert.rejects(stat(join(root,'unexpected-cli')));await assert.rejects(stat(join(acp,'protocol.jsonl')));
  await runtime.close();runtime=undefined;
  wire=startWire();await wire.rpc('initialize');
- for(const target of targets){const opened=await wire.rpc('chat.open',{sessionId:target.id});assert.ok(opened.handoffSnapshot);assert.equal(opened.handoffDelivery.status,'pending');}
+ for(const target of targets){
+  const opened=await wire.rpc('chat.open',{sessionId:target.id});assert.ok(opened.handoffSnapshot);assert.equal(opened.handoffDelivery.status,'pending');
+  const status=await wire.rpc('chat.handoffTargetState',{sessionId:target.id});
+  assertStateOnly(status);
+  assert.equal(status.id,target.id);
+  assert.equal(status.workspaceId,ws.id);
+  assert.equal(status.passive,true);
+  assert.equal(status.readOnly,false);
+  assert.deepEqual(status.handoffDelivery,opened.handoffDelivery);
+  assert.deepEqual(status.pendingUserInputs,opened.pendingUserInputs);
+ }
+ await assert.rejects(wire.rpc('chat.handoffTargetState',{sessionId:source.id}),/handoff/i);
+ await assert.rejects(wire.rpc('chat.handoffTargetState',{sessionId:targets[0]!.id,includeLiveHistory:false}),/Unexpected request field/);
  await assert.rejects(stat(join(root,'unexpected-cli')));await assert.rejects(stat(join(acp,'protocol.jsonl')));
  const pi=targets.find(item=>item.driver==='pi')!;
  await assert.rejects(wire.rpc('chat.prompt',{sessionId:pi.id,text:'Keep this explicit draft until a model is selected'}),(error:any)=>error.code==='HANDOFF_MODEL_REQUIRED');
@@ -95,6 +114,12 @@ try{
  assert.ok(opened.history.length>0);
  const metadata=await wire.rpc('chat.open',{sessionId:target.id,includeLiveHistory:false});
  assert.deepEqual(metadata, {...opened,history:[],historyMessageIds:[]});
+ const targetMetadata=await wire.rpc('chat.handoffTargetState',{sessionId:target.id});
+ assertStateOnly(targetMetadata);
+ assert.equal(targetMetadata.passive,false);
+ assert.equal(targetMetadata.eventSequence,metadata.eventSequence);
+ assert.deepEqual(targetMetadata.handoffDelivery,metadata.handoffDelivery);
+ assert.deepEqual(targetMetadata.completedDeliveryIds,metadata.completedDeliveryIds);
  const full=await wire.rpc('chat.open',{sessionId:target.id});
  assert.deepEqual(full.history,opened.history);
  assert.deepEqual(full.historyMessageIds,opened.historyMessageIds);
@@ -102,13 +127,105 @@ try{
  assert.ok(user.text.includes('Please inspect this new worktree.'));assert.equal(user.text.split('[Historical context — recorded material only]').length-1,1);assert.ok(user.text.includes(sourcePath));assert.ok(user.text.includes('Recorded assistant statement'));
  const members=await wire.rpc('team.members',{workspaceId:ws.id});const actual=members.find((item:any)=>item.id===worker.id);assert.equal(actual.configured_command,'hive:acp');assert.deepEqual(actual.desktop_profile,target.profile);
  const old=await wire.rpc('chat.list',{workspaceId:ws.id});assert.equal(old.find((item:any)=>item.id===source.id).originAgentId,worker.id);assert.equal(old.find((item:any)=>item.id===source.id).codexThreadId,'source-synthetic-native');
- await wire.close();wire=undefined;wire=startWire();await wire.rpc('initialize');const cold=await wire.rpc('chat.open',{sessionId:target.id});assert.equal(cold.handoffDelivery.status,'consumed');assert.equal(cold.acpSessionId,opened.acpSessionId);
+ await wire.close();wire=undefined;wire=startWire();await wire.rpc('initialize');
+ const cold=await wire.rpc('chat.open',{sessionId:target.id,viewRevision:1});
+ assert.equal(cold.handoffDelivery.status,'consumed');
+ assert.equal(cold.acpSessionId,opened.acpSessionId);
  assert.deepEqual(await wire.rpc('chat.open',{sessionId:target.id,includeLiveHistory:false}),cold);
- const protocol=(await readFile(join(acp,'protocol.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));assert.equal(protocol.filter((row:any)=>row.method==='session/prompt').length,1);assert.equal(protocol.filter((row:any)=>row.method==='session/new').length,1);
+ const coldState=await wire.rpc('chat.handoffTargetState',{sessionId:target.id,viewRevision:1});
+ assertStateOnly(coldState);
+ assert.equal(coldState.passive,true);
+ assert.equal(coldState.readOnly,false);
+ assert.equal(coldState.acpSessionId,cold.acpSessionId);
+ assert.deepEqual(coldState.handoffDelivery,cold.handoffDelivery);
+ assert.deepEqual(coldState.pendingUserInputs,cold.pendingUserInputs);
+ await wire.rpc('chat.clearView',{viewRevision:2});
+ await assert.rejects(wire.rpc('chat.handoffTargetState',{sessionId:target.id,viewRevision:1}),/Stale desktop conversation view/);
+ assert.deepEqual(await wire.rpc('chat.handoffTargetState',{sessionId:target.id}),coldState);
+
+ const protocolPath=join(acp,'protocol.jsonl');
+ const protocolBefore=await readFile(protocolPath,'utf8');
+ const savedTranscript=await readFile(cold.sessionFile);
+ try {
+  await writeFile(cold.sessionFile,'{');
+  assert.deepEqual(await wire.rpc('chat.handoffTargetState',{sessionId:target.id}),coldState);
+  const damaged=await wire.rpc('chat.open',{sessionId:target.id,includeLiveHistory:false});
+  assert.equal(damaged.historyIncomplete,true);
+  assert.match(damaged.historyWarning,/Saved history could not be fully read/);
+  assert.deepEqual(damaged.history,[]);
+ } finally {
+  await writeFile(cold.sessionFile,savedTranscript);
+ }
+ const snapshotPath=join(data,'session-handoffs',`snapshot-${cold.handoffSnapshot.snapshotId}.json`);
+ const savedSnapshot=await readFile(snapshotPath,'utf8');
+ try {
+  await writeFile(snapshotPath,JSON.stringify({...cold.handoffSnapshot,createdAt:cold.handoffSnapshot.createdAt+1}));
+  const damaged=await wire.rpc('chat.handoffTargetState',{sessionId:target.id});
+  assertStateOnly(damaged);
+  assert.equal(damaged.readOnly,true);
+  assert.equal(damaged.identityError.code,'SNAPSHOT_CORRUPT');
+ } finally {
+  await writeFile(snapshotPath,savedSnapshot);
+ }
+ const setProfileEnabled=async (enabled:boolean)=>{
+  const {storeVersion}=await wire!.rpc('agent.profiles.list');
+  await wire!.rpc(enabled?'agent.profiles.enable':'agent.profiles.disable',{id:target.profile.id,expectedStoreVersion:storeVersion});
+ };
+ try {
+  await setProfileEnabled(false);
+  const disabled=await wire.rpc('chat.handoffTargetState',{sessionId:target.id});
+  assertStateOnly(disabled);
+  assert.equal(disabled.readOnly,true);
+  assert.equal(disabled.identityError.code,'SESSION_PROFILE_UNAVAILABLE');
+  assert.equal(disabled.originAgentId,worker.id);
+  assert.deepEqual(disabled.handoffDelivery,cold.handoffDelivery);
+ } finally {
+  await setProfileEnabled(true);
+ }
+ assert.deepEqual(await wire.rpc('chat.handoffTargetState',{sessionId:target.id}),coldState);
+ assert.deepEqual(await wire.rpc('chat.open',{sessionId:target.id}),cold);
+ assert.equal(await readFile(protocolPath,'utf8'),protocolBefore);
+ const protocol=protocolBefore.trim().split('\n').map(line=>JSON.parse(line));assert.equal(protocol.filter((row:any)=>row.method==='session/prompt').length,1);assert.equal(protocol.filter((row:any)=>row.method==='session/new').length,1);
  const coldPi=await wire.rpc('chat.open',{sessionId:pi.id});assert.equal(coldPi.passive,true);assert.equal(coldPi.handoffDelivery.status,'pending');
  await wire.rpc('chat.setModel',{sessionId:pi.id,provider:'owned-handoff-fixture',modelId:'gpt-6.1-terra'});assert.equal((await wire.rpc('chat.open',{sessionId:pi.id})).model.provider,'owned-handoff-fixture');assert.equal(modelRequests,0);
  const continuedText = 'Check the restored private worktree as the next explicit user input.';
- await wire.rpc('chat.prompt',{sessionId:target.id,text:continuedText});
+ const queuedText = 'Keep this follow-up in the same target queue while the previous turn is running.';
+ const promptGate=join(acp,'hold-prompt');
+ await writeFile(promptGate,'');
+ try {
+  await wire.rpc('chat.prompt',{sessionId:target.id,text:continuedText});
+  await wire.rpc('chat.prompt',{sessionId:target.id,text:queuedText,busyMode:'queue'});
+  const running=await wire.rpc('chat.handoffTargetState',{sessionId:target.id});
+  assertStateOnly(running);
+  assert.equal(running.busy,true);
+  assert.equal(running.passive,false);
+  assert.equal(running.handoffDelivery.status,'consumed');
+  assert.ok(running.eventSequence>coldState.eventSequence);
+  assert.equal(running.pending,2);
+  const processing=running.pendingUserInputs.find((item:any)=>item.text===continuedText);
+  const queued=running.pendingUserInputs.find((item:any)=>item.text===queuedText);
+  assert.equal(processing?.processing,true);
+  assert.equal(queued?.processing,false);
+  assert.equal(queued?.editable,true);
+  try {
+   await setProfileEnabled(false);
+   const blocked=await wire.rpc('chat.handoffTargetState',{sessionId:target.id});
+   assertStateOnly(blocked);
+   assert.equal(blocked.readOnly,true);
+   assert.equal(blocked.identityError.code,'SESSION_PROFILE_UNAVAILABLE');
+   assert.equal(blocked.busy,true);
+   assert.equal(blocked.passive,false);
+   assert.deepEqual(blocked.pendingUserInputs,running.pendingUserInputs);
+  } finally {
+   await setProfileEnabled(true);
+  }
+  const restored=await wire.rpc('chat.handoffTargetState',{sessionId:target.id});
+  assert.equal(restored.busy,true);
+  assert.equal(restored.acpSessionId,running.acpSessionId);
+  assert.deepEqual(restored.pendingUserInputs,running.pendingUserInputs);
+ } finally {
+  await rm(promptGate,{force:true});
+ }
  let continued:any;
  for(let count=0;count<200;count++){
   continued=await wire.rpc('chat.open',{sessionId:target.id});
@@ -119,13 +236,15 @@ try{
  assert.equal(continued.handoffDelivery.status,'consumed');
  assert.equal(continued.acpSessionId,opened.acpSessionId);
  const resumed=JSON.parse(await readFile(join(acp,opened.acpSessionId+'.json'),'utf8'));
- const next=resumed.history.filter((row:any)=>row.kind==='user_message_chunk').at(-1).text;
+ const resumedInputs=resumed.history.filter((row:any)=>row.kind==='user_message_chunk');
+ assert.ok(resumedInputs.at(-1).text.includes(queuedText));
+ const next=resumedInputs.at(-2).text;
  assert.ok(next.includes(continuedText));
  assert.ok(next.includes('## Open tasks (dispatch ledger)'));
  assert.ok(!next.includes('Conversation with the user in the last hour'));
  assert.ok(!next.includes('Please inspect this new worktree.'));
  assert.ok(!next.includes('[Historical context — recorded material only]'));
- await writeFile(join(root,'receipt.json'),JSON.stringify({pass:true,root,realGit:true,realHive:true,productionRpc:true,allFivePassiveNoCli:process.platform!=='win32',passiveCliMarkerCoverage:process.platform==='win32'?'POSIX-only executable marker; Windows zero-CLI not established by this fixture':'POSIX executable marker plus ACP protocol log',firstPlainInputTargetAcp:true,sameWorkerActualBackendSwitch:true,frozenIndexDiskCode:true,piMissingModelRetainsPending:true,explicitPiModelSelectionNoRequests:true,noInference:true},null,2));
+ await writeFile(join(root,'receipt.json'),JSON.stringify({pass:true,root,realGit:true,realHive:true,productionRpc:true,allFivePassiveNoCli:process.platform!=='win32',passiveCliMarkerCoverage:process.platform==='win32'?'POSIX-only executable marker; Windows zero-CLI not established by this fixture':'POSIX executable marker plus ACP protocol log',firstPlainInputTargetAcp:true,sameWorkerActualBackendSwitch:true,frozenIndexDiskCode:true,piMissingModelRetainsPending:true,explicitPiModelSelectionNoRequests:true,handoffStateRpc:{coldBytes:Buffer.byteLength(JSON.stringify(coldState)),fullColdBytes:Buffer.byteLength(JSON.stringify(cold)),rejectsStaleView:true,skipsCorruptDisplayTranscript:true,detectsCorruptFrozenContext:true,honorsDisabledProfile:true,liveQueueWhileRunning:true,disabledLiveProfilePreservesQueue:true},noInference:true},null,2));
  console.log('SESSION_HANDOFF_RUNTIME_OK '+root);
 }catch(error){await writeFile(join(root,'failure.json'),JSON.stringify({message:String(error),stack:error instanceof Error?error.stack:undefined},null,2));throw error;}
 finally{await wire?.close();await runtime?.close();await new Promise<void>(resolve=>rejectModel.close(()=>resolve()));for(const [key,value]of Object.entries(prior)){if(value===undefined)delete process.env[key];else process.env[key]=value;}console.log('Evidence retained '+root);}

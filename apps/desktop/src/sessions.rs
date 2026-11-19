@@ -944,6 +944,8 @@ impl HiveApp {
     pub(crate) fn refresh_handoff_target_state(&mut self, id: String, cx: &mut Context<Self>) {
         if !self.connected
             || self.closing
+            || self.loading
+            || !self.conversation_ready
             || self.removed_sessions.contains(&id)
             || self.session.as_ref().map(|s| &s.id) != Some(&id)
         {
@@ -953,9 +955,10 @@ impl HiveApp {
             return;
         };
         let request = self.open_request;
+        let state_request = self.history_navigation.next_handoff_state_request();
         self.request(
-            "chat.open",
-            json!({"sessionId": id, "includeLiveHistory": false, "deferHistoryImages": true}),
+            "chat.handoffTargetState",
+            json!({"sessionId": id, "viewRevision": request}),
             cx,
             move |this, value, cx| {
                 if this.open_request != request
@@ -972,9 +975,13 @@ impl HiveApp {
                     ) {
                         return;
                     }
-                    this.history_navigation.access =
-                        crate::history_navigation::HistoryAccess::snapshot(&open);
-                    this.history_navigation.initialization = open.initialization.clone();
+                    let latest_event = this.event_sequence.max(
+                        this.background_sequences.get(&id).copied().unwrap_or(0),
+                    );
+                    if !this.history_navigation.apply_handoff_state(&open, state_request, latest_event)
+                    {
+                        return;
+                    }
                     if open.busy {
                         this.busy.insert(id.clone());
                     } else {
