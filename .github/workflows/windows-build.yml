@@ -225,6 +225,7 @@ jobs:
           path: target/windows-terminal-smoke.log
           if-no-files-found: ignore
       - name: Open the saved workspace in the extracted native application
+        if: ${{ !cancelled() && steps.extracted_runtime.outcome == 'success' }}
         timeout-minutes: 5
         env:
           HIVE_WINDOWS_PREVIEW_PATH: target/windows-native-workspace.png

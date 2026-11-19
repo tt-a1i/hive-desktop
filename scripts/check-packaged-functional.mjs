@@ -81,6 +81,17 @@ try {
         execFileSync(node, [file, '--group', group], options);
         receipt.checks.push({name: `${name}/${group}`, exitCode: 0});
       }
+    } else if (name === 'handoff-queue-retraction') {
+      // Each group performs its own cold restore and delivery checks; keep
+      // the same 60s budget for each independent scenario.
+      for (const group of ['current', 'legacy']) {
+        const start = Date.now();
+        console.log(`[packaged-functional] ${name}/${group}`);
+        execFileSync(node, [file, '--group', group], options);
+        const elapsedMs = Date.now() - start;
+        console.log(`[packaged-functional] ${name}/${group} passed in ${elapsedMs} ms`);
+        receipt.checks.push({name: `${name}/${group}`, exitCode: 0, elapsedMs});
+      }
     } else {
       execFileSync(node, [file], options);
       receipt.checks.push({name, exitCode: 0});

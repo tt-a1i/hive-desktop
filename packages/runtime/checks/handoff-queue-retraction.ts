@@ -16,6 +16,9 @@ import {handoffHistoryHash} from '../src/handoff-snapshot.js';
 import {handoffOmissionsHash,renderHistoricalContext} from '../src/handoff-render.js';
 import type {ChatIndex} from '../src/chat-index.js';
 
+const groupArg=process.argv.indexOf('--group');
+const group=groupArg<0?'all':process.argv[groupArg+1];
+if(!['all','current','legacy'].includes(group??''))throw new Error('Use --group current or --group legacy');
 const root=await realpath(await mkdtemp(join(tmpdir(),'hive-handoff-delivery-runtime-')));
 const prior=Object.fromEntries(['PI_CODING_AGENT_DIR','PI_OFFLINE','GIT_CONFIG_GLOBAL','GIT_CONFIG_NOSYSTEM'].map(key=>[key,process.env[key]]));
 await mkdir(join(root,'pi'));await writeFile(join(root,'gitconfig'),'');
@@ -100,6 +103,7 @@ async function stopRun(ws:string,worker:string){
 async function protocol(peer:string){return (await readFile(join(peer,'protocol.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));}
 async function closeRuntime(){await runtime?.close();runtime=undefined;}
 try{
+ if(group!=='legacy'){
  const test=await setup('queue-retract-transfer','acp');
  const editedText = 'Second queued input edited after reopening';
  const attachmentPath = join(test.folder, 'queued-notes.txt');
@@ -165,6 +169,8 @@ try{
  await writeFile(join(root,'review-repro.json'),JSON.stringify({fixed:true,firstRemainingGotHistoricalContext:true,contextOnlyOnce:true,slashEditRejected:true,rebindSpoolWriteFailureColdRepaired:true,coldPassiveEditAndWithdrawNoCli:true,coldHandoffStatePreservedQueue:true,staleTextRejected:true,attachmentPreserved:true,inputs},null,2));
  console.log('FIXED_HANDOFF_CONTEXT_TRANSFER_SPOOL_COLD '+root);
  await stopRun(test.ws.id,test.worker.id);await closeRuntime();
+ }
+ if(group!=='current'){
  // Old version-1 frozen snapshots keep their exact hash and original text.
  const legacy=await setup('legacy-range-snapshot','acp','normal',true);
  await closeRuntime();runtime=await createDesktopRuntime(legacy.data,()=>{},{executableEnvironment:{}});
@@ -183,5 +189,6 @@ try{
  assert.equal(modelRequests,0);
  console.log('LEGACY_HANDOFF_SNAPSHOT_COLD_DELIVERED_ONCE '+root);
  await stopRun(legacy.ws.id,legacy.worker.id);await closeRuntime();
+ }
 }catch(error){await writeFile(join(root,'failure.json'),JSON.stringify({message:String(error),stack:error instanceof Error?error.stack:undefined,results},null,2));throw error;}
 finally{await closeRuntime();await new Promise<void>(done=>server.close(()=>done()));for(const[key,value]of Object.entries(prior)){if(value===undefined)delete process.env[key];else process.env[key]=value;}console.log('Evidence retained '+root);}
