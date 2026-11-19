@@ -156,6 +156,34 @@ function installLockPath(installation: string): string {
   return join(dirname(installation), `.hive-desktop-update-${key}.sqlite`);
 }
 
+const preparationDirectory = /^\.hive-desktop-install-Prep([1-9]\d{0,9})Q([a-f0-9]{24})Q[a-zA-Z0-9]{6}$/;
+const handoffFile = 'installer-handoff';
+
+function preparationScope(installation: string, dataDirectory: string): string {
+  return createHash('sha256').update(JSON.stringify([installation, dataDirectory])).digest('hex').slice(0, 24);
+}
+
+export function desktopPreparationPrefix(installation: string, dataDirectory: string): string {
+  // Allocate the directory with its owner already in the name. The first
+  // large write can then be reclaimed even if preparation is killed at once.
+  return join(dirname(installation), `.hive-desktop-install-Prep${process.pid}Q${preparationScope(installation, dataDirectory)}Q`);
+}
+
+export async function publishDesktopInstallerHandoff(transaction: string): Promise<void> {
+  await atomicJson(join(transaction, handoffFile), true);
+}
+
+async function requireDesktopInstallerHandoff(transaction: string): Promise<void> {
+  if (!preparationDirectory.test(basename(transaction))) return;
+  const path = join(transaction, handoffFile);
+  const marker = await lstat(path).catch(error => {
+    if (!missing(error)) throw error;
+  });
+  if (!marker?.isFile() || marker.size !== 4 || await readFile(path, 'utf8') !== 'true') {
+    throw new Error('This desktop update has not been handed to its installer.');
+  }
+}
+
 function recoveryEntry(transaction: string) {
   const suffix = /^\.hive-desktop-install-([a-zA-Z0-9]+)$/.exec(basename(transaction))?.[1];
   if (!suffix) return undefined;
@@ -217,7 +245,10 @@ async function withInstallLock<T>(installation: string, action: () => Promise<T>
 /** Run only after the original desktop and its sidecar have exited. */
 export async function installDesktopUpdate(plan: DesktopInstallPlan, transaction: string) {
   const paths = await transactionPaths(plan, transaction);
-  await withInstallLock(plan.installation, () => installLocked(plan, transaction, paths));
+  await withInstallLock(plan.installation, async () => {
+    await requireDesktopInstallerHandoff(transaction);
+    await installLocked(plan, transaction, paths);
+  });
 }
 
 type TransactionPaths = Awaited<ReturnType<typeof transactionPaths>>;
@@ -274,14 +305,29 @@ async function reclaimSettledTransaction(plan: DesktopInstallPlan, transaction: 
   });
 }
 
-/** Retry cleanup of settled transactions if a previous installer could not start its cleaner. */
+async function reclaimAbandonedPreparation(installation: string, transaction: string, owner: number): Promise<boolean> {
+  if (!validPid(owner) || owner > 0x7fff_ffff || isLive(owner)) return false;
+  return withInstallLock(installation, async () => {
+    if (isLive(owner) || await exists(join(transaction, handoffFile))
+      || await exists(join(transaction, 'install-status.json')) || await exists(join(transaction, 'previous'))
+      || await exists(join(transaction, 'ready.json'))) return false;
+    await removeDesktopRecoveryEntry(transaction);
+    await rm(transaction, { recursive: true, force: true });
+    return true;
+  });
+}
+
+/** Reclaim abandoned preparations and retry cleanup of settled installers. */
 export async function reclaimDesktopUpdateTransactions(installation: string, dataDirectory: string) {
+  const scope = preparationScope(installation, dataDirectory);
   for (const entry of await readdir(dirname(installation), { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const transaction = join(dirname(installation), entry.name);
     if (!recoveryEntry(transaction)) continue;
     try {
       if (await realpath(transaction) !== transaction) continue;
+      const owner = preparationDirectory.exec(entry.name);
+      if (owner && (owner[2] !== scope || await reclaimAbandonedPreparation(installation, transaction, Number(owner[1])))) continue;
       const plan = JSON.parse(await readFile(join(transaction, 'install-plan.json'), 'utf8')) as DesktopInstallPlan;
       if (plan.installation === installation && plan.dataDirectory === dataDirectory)
         await reclaimSettledTransaction(plan, transaction);
@@ -402,6 +448,7 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
   const { installation, dataDirectory, fromVersion, toVersion } = plan;
   const { next, previous, readiness, journal } = paths;
   return withInstallLock(installation, async () => {
+    await requireDesktopInstallerHandoff(transaction);
     let state: Journal;
     const cancelled = 'The pending update was cancelled. The original installation is still available.';
     try { state = await readJournal(plan, journal); }

@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { extractDesktopUpdate, verifyDesktopPackage } from './desktop-update-archive.js';
-import { desktopPackagePaths, hashDesktopFile, isLive, prepareDesktopRecoveryEntry, reclaimDesktopUpdateTransactions, removeDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
+import { desktopPackagePaths, desktopPreparationPrefix, hashDesktopFile, isLive, prepareDesktopRecoveryEntry, publishDesktopInstallerHandoff, reclaimDesktopUpdateTransactions, removeDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
 
 const manifestLimit = 64 * 1024;
 const archiveLimit = 2 * 1024 * 1024 * 1024;
@@ -164,6 +164,7 @@ export class DesktopUpdates {
     await Promise.allSettled([this.staging, this.preparing]);
     if (installerId !== undefined && this.pendingInstaller?.id === installerId) {
       // The closing desktop owns this transaction from here on.
+      await publishDesktopInstallerHandoff(dirname(this.pendingInstaller.program));
       this.pendingInstaller = undefined;
       return;
     }
@@ -360,8 +361,9 @@ export class DesktopUpdates {
       if (!policy) throw new Error('This desktop package has no update channel');
       const signal = this.closing.signal;
       const { installation, current, dataDirectory } = await this.installedLocation();
+      await reclaimDesktopUpdateTransactions(installation, dataDirectory).catch(() => {});
       const currentIdentity = await verifyDesktopPackage(installation, policy.installedVersion, signal);
-      const prepared = await this.preparePackage(expectedVersion, sha256, dirname(installation));
+      const prepared = await this.preparePackage(expectedVersion, sha256, desktopPreparationPrefix(installation, dataDirectory));
       try {
         if (prepared.identity.installerProtocol !== 2) throw new Error('This update does not support recoverable installation');
         if (currentIdentity.macSignature && !prepared.identity.macSignature) {
@@ -404,7 +406,7 @@ export class DesktopUpdates {
     return task;
   }
 
-  private async preparePackage(expectedVersion: string, sha256: string, besideInstallation?: string): Promise<Prepared> {
+  private async preparePackage(expectedVersion: string, sha256: string, transactionPrefix?: string): Promise<Prepared> {
     if (!/^[a-f0-9]{64}$/.test(sha256)) throw new Error('Invalid desktop update digest');
     version(expectedVersion);
     const signal = this.closing.signal;
@@ -423,7 +425,7 @@ export class DesktopUpdates {
     const archiveInfo = await lstat(archive);
     if (!archiveInfo.isFile() || archiveInfo.size !== checked.asset.bytes) throw new Error('Staged desktop update archive verification failed');
 
-    const directory = await mkdtemp(besideInstallation ? join(besideInstallation, '.hive-desktop-install-') : join(staging, 'prepare-'));
+    const directory = await mkdtemp(transactionPrefix ?? join(staging, 'prepare-'));
     try {
       const snapshot = join(directory, 'bundle.zip');
       await copyUpdateFile(archive, snapshot);

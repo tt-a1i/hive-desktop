@@ -188,11 +188,41 @@ try {
   await writeFile(join(staging, unsignedSha + '.zip'), unsigned);
   await writeFile(join(staging, unsignedSha + '.manifest.json'), '{}');
   await writeFile(join(staging, part), partialBytes);
+  const preparationChild = join(root, 'installer-preparation-child.mjs');
+  await writeFile(preparationChild, `
+    import files from 'node:fs/promises';
+    import {syncBuiltinESMExports} from 'node:module';
+    import {basename,dirname} from 'node:path';
+    process.on('disconnect', () => process.exit(1));
+    const phase = process.argv[2];
+    if (phase === 'extracting') {
+      const mkdir = files.mkdir;
+      files.mkdir = async (path, ...args) => {
+        const result = await mkdir(path, ...args);
+        if (basename(path) === 'package' && basename(dirname(path)).startsWith('.hive-desktop-install-')) {
+          process.send({transaction:dirname(path)});
+          await new Promise(() => {});
+        }
+        return result;
+      };
+      syncBuiltinESMExports();
+    }
+    const {DesktopUpdates} = await import(${JSON.stringify(updateModule.href)});
+    const updater = new DesktopUpdates(${JSON.stringify(root)}, new URL(${JSON.stringify(pathToFileURL(installedPolicy).href)}));
+    const installer = await updater.prepareInstaller('0.1.3', ${JSON.stringify(zippedHash)});
+    if (phase === 'handed-off') await updater.close(installer.id);
+    process.send({transaction:dirname(installer.program),installer});
+  `);
   await writeFile(runOwnershipCheck, `
     import assert from 'node:assert/strict';
-    import {readFile,readdir} from 'node:fs/promises';
-    import {dirname,join} from 'node:path';
+    import {execFile,fork} from 'node:child_process';
+    import {once} from 'node:events';
+    import {mkdir,readFile,readdir,stat} from 'node:fs/promises';
+    import {basename,dirname,join} from 'node:path';
+    import {setTimeout as delay} from 'node:timers/promises';
+    import {promisify} from 'node:util';
     import {DesktopUpdates} from ${JSON.stringify(updateModule.href)};
+    import {reclaimDesktopUpdateTransactions} from ${JSON.stringify(new URL('./desktop-update-installer.js', updateModule).href)};
     const directory = ${JSON.stringify(root)};
     const parent = ${JSON.stringify(parent)};
     const candidates = async () => (await readdir(parent)).filter(name =>
@@ -246,9 +276,57 @@ try {
     const stranger = make();
     await assert.rejects(stranger.close(handedOff.id), /installer is no longer available/);
     assert.equal((await candidates()).length, 2);
-    assert.equal((await readFile(join(directory, 'desktop-updates', ${JSON.stringify(zippedHash + '.zip')}))).length, ${zippedBytes.length});
+
+    const legacy = join(parent,'.hive-desktop-install-UnknownLegacy');
+    await mkdir(legacy);
+    const cachedZip = join(cache, ${JSON.stringify(zippedHash + '.zip')});
+    const original = await readFile(cachedZip);
+    for (const phase of ['extracting','prepared','handed-off']) {
+      const child = fork(${JSON.stringify(preparationChild)}, [phase], {windowsHide:true,stdio:['ignore','ignore','inherit','ipc']});
+      const ended = once(child,'exit');
+      const observer = make();
+      let transaction;
+      let installer;
+      try {
+        const [message] = await Promise.race([once(child,'message'),ended.then(() => {throw new Error('Preparation exited early');})]);
+        ({transaction,installer} = message);
+        assert.match(basename(transaction),new RegExp('^\\\\.hive-desktop-install-Prep'+child.pid+'Q'));
+        if (phase === 'extracting') assert.ok((await stat(join(transaction,'bundle.zip'))).isFile());
+        else {
+          assert.ok((await stat(join(transaction,'install-plan.json'))).isFile());
+          if (phase === 'prepared') {
+            await assert.rejects(promisify(execFile)(installer.executable,[installer.program,'--recover'],
+              {timeout:7000,windowsHide:true}), /has not been handed to its installer/);
+          }
+        }
+        await observer.check();
+        assert.ok((await stat(transaction)).isDirectory(), 'another live preparer owns this directory');
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        await ended;
+        await observer.close();
+      }
+      await reclaimDesktopUpdateTransactions(${JSON.stringify(installation)}, join(directory,'different-profile'));
+      assert.ok((await stat(transaction)).isDirectory(), 'an unrelated data directory cannot reclaim it');
+      const restarted = make();
+      assert.equal((await restarted.check()).staged,true);
+      await restarted.close();
+      if (phase === 'handed-off') {
+        assert.equal(await readFile(join(transaction,'installer-handoff'),'utf8'),'true');
+        const {stdout} = await promisify(execFile)(installer.executable,[installer.program,'--recover'],{timeout:7000,windowsHide:true});
+        assert.match(stdout,/The pending update was cancelled/);
+        const remains = async () => (await candidates()).some(name => name.includes(basename(transaction).slice('.hive-desktop-install-'.length)));
+        for(let i=0;i<100 && await remains();i++) await delay(50);
+        assert.equal(await remains(),false);
+      } else {
+        await assert.rejects(stat(transaction),{code:'ENOENT'});
+        assert.ok(!(await candidates()).some(name => name.includes(basename(transaction).slice('.hive-desktop-install-'.length))));
+      }
+      assert.ok((await stat(legacy)).isDirectory());
+      assert.deepEqual(await readFile(cachedZip),original);
+    }
   `);
-  await promisify(execFile)(installed.node, [runOwnershipCheck], { timeout: 25000, windowsHide: true });
+  await promisify(execFile)(installed.node, [runOwnershipCheck], { timeout: 45000, windowsHide: true });
 
   if (mac) {
     const sealed = join(root, 'signed-fixture', 'Hive Desktop.app');
