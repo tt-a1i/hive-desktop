@@ -27,3 +27,15 @@ GPT-6.2 Sol 独立对照总目标，复现了普通 ACP 会话必须激活才能
 本地证据位于 `.artifacts/codex-cold-search-p9895e/`。包括 `before.json`、`after.json`、`before-rpc.json`、`after-rpc.json`、`final-hits.ax.jsonl`、`final-message.ax.jsonl`、`acp-replay/` 及 `archive-manifest.json`。ZIP SHA-256 为 `5cb89b1cabb93f6f9545736fb62a70c4b24c93565b264565317ebecf8a473571`。
 
 独立审查确认，当前版的 Windows 原生整包升级和失败回退及真实 Terra 协作、托管 GitHub PR 写入和真实 1Password 账户流程仍缺实际验收。
+
+## ACP 接续完成后的冷队列
+
+GPT-6.2 Sol 复现了旧版在冷打开 ACP 接续目标时锁住后续待发消息的问题，也复现了冷态放弃不确定投递后缺失队列更新。`312f5d0` 允许离线编辑和撤回已确认尚未开始投递的消息。会话需保留原成员和固定后端配置，接续回执须与保存的 ACP 原生会话对应，原生记录也须确认首条接续消息已经完成。其他后端尚未验证相同的冷态编辑条件。
+
+在 macOS 解包应用的原生窗口编辑带附件的待发消息并撤回另一条。退出重开后，修改、原投递 ID 和原附件上传 ID 均保留。打开、修改、撤回和重开期间，受控 ACP 对端日志的字节完全一致。点击「继续处理」后，原会话收到一次编辑后的正文和附件引用。撤回的消息没有送出，历史接续上下文也没有重复投递。源码探针另外验证了 SQLite 事务回滚后的文本恢复和已提交撤回记录的调和。
+
+在另一个冷 ACP 会话的原生窗口审查并放弃不确定投递。当前窗口立即撤下原消息重试入口。队列清空，ACP 记录仍保留 `sent`，窗口无需重新打开会话，对端协议日志保持原样。专项回归验证相同请求可安全重试，以及持久化失败时保留待发项。
+
+本轮 macOS ZIP 经本地签名和解包校验，三个原生窗口均正常退出，记录的所有子进程均已退出。便携包冒烟、包内接续和 ACP 的三项专项、129 个 Rust 测试及 Windows 目标编译检查通过。本轮原生流程使用受控 ACP 对端。Windows 原生窗口与实际模型另行验收。
+
+本地证据位于 `.artifacts/acp-cold-handoff-queue-d8slbB/`，包括 `handoff-spool-mutation.json`、`handoff-resumed.json`、`uncertain-discard-result.json`、三次 `*-shutdown.json` 及 `packaged-functional-receipt.json`。ZIP SHA-256 为 `956775e4272e9b2c27592447825bb194d0f55d43bc6a459882151b86378a3843`。
