@@ -83,7 +83,7 @@ if ($previousLayout -ne $us[0]) { throw 'SKIP: start with the already-loaded US 
 $dir=Join-Path ([IO.Path]::GetTempPath()) ('hive-layout-fixture-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($dir)
 $data=Join-Path $dir 'data'; $agent=Join-Path $dir 'pi'; [void][IO.Directory]::CreateDirectory($data); [void][IO.Directory]::CreateDirectory($agent)
-$config='{"version":1,"bindings":{"search":"ctrl-shift-;","find":null,"preferences":null,"new_session":null,"toggle_sidebar":null,"toggle_terminal":null,"open_git_workspace":null,"search_project_files":null,"choose_model":null,"toggle_mode":null,"previous_session":null,"next_session":null}}'
+$config='{"version":1,"bindings":{"search":"ctrl-shift-;","find":null,"preferences":"ctrl-shift-j","new_session":null,"toggle_sidebar":null,"toggle_terminal":null,"open_git_workspace":null,"search_project_files":null,"choose_model":null,"toggle_mode":null,"previous_session":null,"next_session":null}}'
 $configPath=Join-Path $data 'desktop-keybindings.json'; [IO.File]::WriteAllText($configPath,$config,[Text.UTF8Encoding]::new($false))
 $before=[IO.File]::ReadAllBytes($configPath)
 $app=$null; $window=[IntPtr]::Zero; $failure=$null; $restoreFailure=$null; $result=@{us=$charUs; german=$charDe; usVk=$vkUs; germanVk=$vkDe; stage='launch'}
@@ -112,6 +112,12 @@ try {
             if ($root.FindAll($scope,$condition).Count -gt 0) { return $true }
         }; return $false
     }
+    function Settings-Open {
+        foreach ($name in @('关于与维护','About & Maintenance')) {
+            $condition=[System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty,$name)
+            if ($root.FindAll($scope,$condition).Count -gt 0) { return $true }
+        }; return $false
+    }
     if (Search-Open) { throw 'Search dialog marker was already present; cannot distinguish result.' }
     # Backend startup must have applied the isolated configuration. Retry only the
     # positive US control, never a failed post-switch test.
@@ -119,15 +125,24 @@ try {
     do { Press-Key $window $vkUs $true; Start-Sleep -Milliseconds 400; if (Search-Open) { $opened=$true; break } } while ([DateTime]::UtcNow -lt $end)
     if (-not $opened) { throw 'US positive control failed; configuration/fixture not ready.' }
     $result.usControl=$true; $result.stage='switch-to-german'; Press-Key $window 0x1b $false; Wait-Until { -not (Search-Open) } 'close search'
-    Request-Layout $window $de[0]; Start-Sleep -Milliseconds 800
+    Request-Layout $window $de[0]
+    if (Settings-Open) { throw 'Settings marker was already present before the German control.' }
+    $result.stage='german-independent-control'; Press-Key $window 0x4a $true
+    Wait-Until { Settings-Open } 'settings shortcut via German layout' 4
+    $result.germanIndependentControl=$true
+    Press-Key $window 0x1b $false; Wait-Until { -not (Settings-Open) } 'close settings'
     $result.stage='german-control'; Press-Key $window $vkDe $true
-    Wait-Until { Search-Open } 'search via German layout' 4
-    $result.germanControl=$true; Press-Key $window 0x1b $false; Wait-Until { -not (Search-Open) } 'close search'
-    $result.stage='switch-back-to-us'; Request-Layout $window $us[0]; Start-Sleep -Milliseconds 800
+    $germanFailure=$null
+    try { Wait-Until { Search-Open } 'search via German layout' 4; $result.germanControl=$true }
+    catch { $result.germanControl=$false; $germanFailure=$_.Exception.Message }
+    if ($result.germanControl) { Press-Key $window 0x1b $false; Wait-Until { -not (Search-Open) } 'close search' }
+    $result.stage='switch-back-to-us'; Request-Layout $window $us[0]
     $result.stage='restored-us-control'; Press-Key $window $vkUs $true; Wait-Until { Search-Open } 'search after US restoration' 4
     $result.usRestoredControl=$true
     if ([Convert]::ToBase64String($before) -cne [Convert]::ToBase64String([IO.File]::ReadAllBytes($configPath))) { throw 'Fixture shortcut file changed unexpectedly.' }
-    $result.configUnchanged=$true; $result.stage='completed'; $result.status='PASS'
+    $result.configUnchanged=$true
+    if ($germanFailure) { $result.stage='german-control'; throw $germanFailure }
+    $result.stage='completed'; $result.status='PASS'
 } catch {
     $failure=$_.Exception.Message; $result.status='FAIL'; $result.error=$failure
     if ($window -ne [IntPtr]::Zero -and [LayoutFixture]::IsWindow($window)) {

@@ -358,6 +358,14 @@ impl Render for Editor {
                         cx,
                     ))
                 })
+                .when_some(state.layout_error.as_ref(), |view, error| {
+                    view.child(crate::settings::settings_notice_box(
+                        "keybindings-layout-error",
+                        format!("{}\n{}", tr("键盘布局变化后无法更新快捷键。现有绑定和配置未修改；请检查快捷键后重试。"), explain_error(error)),
+                        true,
+                        cx,
+                    ))
+                })
                 .when_some(validation, |view, error| {
                     view.child(crate::settings::settings_notice_box(
                         "keybindings-config-error",

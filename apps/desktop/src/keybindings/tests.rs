@@ -359,3 +359,40 @@ fn repeated_live_rebinds_keep_the_keymap_bounded_and_preserve_other_bindings() {
     }
     assert!(map.version() != initial_version);
 }
+
+#[test]
+fn layout_change_replaces_old_mapped_key_in_the_real_keymap() {
+    use super::replace_bindings;
+    use gpui_kit::Action;
+    // Model a layout switch after the platform mapper registered ctrl-shift-;
+    // as ctrl-: on layout A. Layout B emits ctrl-; for that saved chord.
+    let mut map = Keymap::new(vec![KeyBinding::new("ctrl-:", crate::OpenSessionSearch, None)]);
+    let typed = Keystroke::parse("ctrl-;").unwrap();
+    assert_eq!(map.bindings_for_input(&[typed.clone()], &[]).0.len(), 0);
+    replace_bindings(&mut map, vec![(crate::OpenSessionSearch.name(), Some(KeyBinding::new("ctrl-;", crate::OpenSessionSearch, None)))]);
+    assert_eq!(map.bindings_for_input(&[typed], &[]).0.len(), 1);
+}
+
+#[test]
+fn layout_failure_is_separate_from_unresolved_read_and_save_errors() {
+    use super::Notice;
+    let os = OperatingSystem::Windows;
+    for read_error in [true, false] {
+        let mut state = Preferences::new(os);
+        let before = state.active.clone();
+        state.notice = Some(if read_error { Notice::Read("read failure".into()) } else { Notice::Save("save failure".into()) });
+        state.record_layout_result(Err("binding creation failed".into()));
+        assert!(state.layout_blocked);
+        assert_eq!(state.layout_error.as_deref(), Some("binding creation failed"));
+        assert_eq!(state.active, before);
+        match &state.notice {
+            Some(Notice::Read(message)) if read_error => assert_eq!(message, "read failure"),
+            Some(Notice::Save(message)) if !read_error => assert_eq!(message, "save failure"),
+            _ => panic!("layout failure replaced an existing persistence error"),
+        }
+        state.record_layout_result(Ok(()));
+        assert!(!state.layout_blocked);
+        assert!(state.layout_error.is_none());
+        assert!(matches!(&state.notice, Some(Notice::Read(_)) | Some(Notice::Save(_))));
+    }
+}

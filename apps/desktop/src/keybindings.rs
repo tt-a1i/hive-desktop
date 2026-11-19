@@ -590,6 +590,29 @@ fn replace_bindings(keymap: &mut Keymap, changes: BindingChanges) {
     keymap.add_bindings(changes.into_iter().filter_map(|(_, binding)| binding));
 }
 
+fn full_delta(bindings: &Bindings, cx: &App) -> Result<BindingChanges, String> {
+    TARGETS.into_iter().map(|target| {
+        let binding = bindings.get(target).as_ref()
+            .map(|chord| KeyBinding::load(chord, target.action(), None, false, None, cx))
+            .transpose().map_err(|error| error.to_string())?;
+        Ok((target.action().name(), binding))
+    }).collect()
+}
+
+fn remap_layout(cx: &mut App) {
+    let active = cx.global::<Preferences>().active.clone();
+    let result = check_registered(&active, cx).map_err(str::to_owned)
+        .and_then(|()| full_delta(&active, cx));
+    match result {
+        Ok(changes) => {
+            replace_bindings(&mut cx.key_bindings().borrow_mut(), changes);
+            cx.global_mut::<Preferences>().record_layout_result(Ok(()));
+        }
+        Err(error) => cx.global_mut::<Preferences>().record_layout_result(Err(error)),
+    }
+    cx.refresh_windows();
+}
+
 enum Notice {
     Read(String),
     Save(String),
@@ -602,6 +625,8 @@ pub(crate) struct Preferences {
     draft: Bindings,
     root: Option<PathBuf>,
     load_failed: bool,
+    layout_blocked: bool,
+    layout_error: Option<String>,
     applied: bool,
     notice: Option<Notice>,
     preview: bool,
@@ -610,6 +635,11 @@ pub(crate) struct Preferences {
 impl Global for Preferences {}
 
 impl Preferences {
+    fn record_layout_result(&mut self, result: Result<(), String>) {
+        self.layout_blocked = result.is_err();
+        self.layout_error = result.err();
+    }
+
     fn persist_pending(&mut self, os: OperatingSystem) {
         if self.load_failed || self.preview {
             return;
@@ -634,6 +664,8 @@ impl Preferences {
             draft: defaults,
             root: None,
             load_failed: false,
+            layout_blocked: false,
+            layout_error: None,
             applied: false,
             notice: None,
             preview: cfg!(feature = "ui-preview")
@@ -645,6 +677,7 @@ impl Preferences {
 
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(Preferences::new(cx.platform_info().os));
+    cx.on_keyboard_layout_change(remap_layout).detach();
 }
 
 pub(crate) fn restore(root: &Path, cx: &mut App) {
@@ -653,8 +686,13 @@ pub(crate) fn restore(root: &Path, cx: &mut App) {
     }
     // Replace only changed Hive bindings. Component and input bindings stay registered.
     let active_before = cx.global::<Preferences>().active.clone();
+    let layout_blocked = cx.global::<Preferences>().layout_blocked;
     let loaded = load(root, cx.platform_info().os, |key| dispatch_key(key, cx))
-        .and_then(|bindings| live_delta(&active_before, &bindings, cx).map_err(io::Error::other));
+        .and_then(|bindings| live_delta(&active_before, &bindings, cx).map_err(io::Error::other))
+        .and_then(|(bindings, delta)| {
+            if layout_blocked { Ok((bindings.clone(), full_delta(&bindings, cx).map_err(io::Error::other)?)) }
+            else { Ok((bindings, delta)) }
+        });
     let state = cx.global_mut::<Preferences>();
     state.root = Some(root.to_owned());
     if state.applied {
@@ -665,6 +703,7 @@ pub(crate) fn restore(root: &Path, cx: &mut App) {
         Ok((bindings, delta)) => {
             let draft = bindings.preserve_pending(&state.saved, &state.draft);
             state.active = bindings.clone();
+            state.record_layout_result(Ok(()));
             state.saved = bindings;
             state.draft = draft;
             replace_bindings(&mut cx.key_bindings().borrow_mut(), delta);
@@ -682,8 +721,13 @@ fn reload(cx: &mut App) {
         return;
     };
     let active_before = cx.global::<Preferences>().active.clone();
+    let layout_blocked = cx.global::<Preferences>().layout_blocked;
     let loaded = load(&root, cx.platform_info().os, |key| dispatch_key(key, cx))
-        .and_then(|bindings| live_delta(&active_before, &bindings, cx).map_err(io::Error::other));
+        .and_then(|bindings| live_delta(&active_before, &bindings, cx).map_err(io::Error::other))
+        .and_then(|(bindings, delta)| {
+            if layout_blocked { Ok((bindings.clone(), full_delta(&bindings, cx).map_err(io::Error::other)?)) }
+            else { Ok((bindings, delta)) }
+        });
     match loaded {
         Ok((bindings, delta)) => {
             let state = cx.global_mut::<Preferences>();
@@ -691,6 +735,7 @@ fn reload(cx: &mut App) {
             state.saved = bindings.clone();
             state.draft = bindings;
             state.load_failed = false;
+            state.record_layout_result(Ok(()));
             state.notice = None;
             replace_bindings(&mut cx.key_bindings().borrow_mut(), delta);
         }
@@ -704,7 +749,7 @@ fn reload(cx: &mut App) {
 }
 
 fn save_pending(cx: &mut App) {
-    let (draft, active_before, load_failed, preview, has_root) = {
+    let (draft, active_before, load_failed, preview, has_root, layout_blocked) = {
         let state = cx.global::<Preferences>();
         (
             state.draft.clone(),
@@ -712,12 +757,16 @@ fn save_pending(cx: &mut App) {
             state.load_failed,
             state.preview,
             state.root.is_some(),
+            state.layout_blocked,
         )
     };
     if load_failed {
         return;
     }
-    let result = live_delta(&active_before, &draft, cx);
+    let result = live_delta(&active_before, &draft, cx).and_then(|(normalized, delta)| {
+        if layout_blocked { Ok((normalized.clone(), full_delta(&normalized, cx)?)) }
+        else { Ok((normalized, delta)) }
+    });
     let os = cx.platform_info().os;
     match result {
         Ok((normalized, delta)) => {
@@ -727,6 +776,7 @@ fn save_pending(cx: &mut App) {
                 state.saved = normalized.clone();
                 state.draft = normalized;
                 state.notice = Some(Notice::Saved);
+                state.record_layout_result(Ok(()));
                 replace_bindings(&mut cx.key_bindings().borrow_mut(), delta);
             } else if has_root {
                 let saved_ok = {
@@ -738,6 +788,7 @@ fn save_pending(cx: &mut App) {
                 if saved_ok {
                     let state = cx.global_mut::<Preferences>();
                     state.active = state.saved.clone();
+                    state.record_layout_result(Ok(()));
                     replace_bindings(&mut cx.key_bindings().borrow_mut(), delta);
                 }
             }

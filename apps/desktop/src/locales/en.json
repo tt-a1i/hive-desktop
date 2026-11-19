@@ -925,6 +925,7 @@
   "快捷键 · 查找会话内容": "Keybindings · Find in conversation",
   "快捷键 · 选择模型": "Keybindings · Choose model",
   "快捷键与另一个操作冲突，请选择不同的组合键。": "This shortcut conflicts with another action. Choose a different combination.",
+  "键盘布局变化后无法更新快捷键。现有绑定和配置未修改；请检查快捷键后重试。": "Could not update shortcuts after the keyboard layout changed. Existing bindings and saved configuration are unchanged; check the shortcuts and try again.",
   "快捷键已保存并立即生效。": "Keybinding saved and applied immediately.",
   "快捷键已保存，请退出并重新启动 Hive Desktop 后使用。重新启动后台不会应用这些更改。": "Shortcuts saved. Quit and reopen Hive Desktop to use them. Restarting the backend will not apply these changes.",
   "快捷键已停用": "Shortcut disabled",
