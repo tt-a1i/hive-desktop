@@ -18,3 +18,13 @@ macOS arm64 本地优化包 `9f5ec10` 使用原生窗口、独立 Hive 工作区
 实际 macOS 窗口关闭收到后台退出确认，三次运行中观察到的桌面和后台进程均退出。标准脚本重新打包并签名，ZIP 解包验签，28,956 个文件、29 个链接和 2,709 个目录逐项一致。解包后 Node、PTY、Hive HTTP/SQLite 与关闭冒烟通过。Rust 测试 121 项通过、1 项辅助进程入口按设计忽略，Windows MSVC 交叉检查通过。没有开始模型回合、尝试登录或重新安装产品。
 
 证据位于 `.artifacts/desktop-without-dictation-8f5f5N/`，包括 `native-receipt.json`、原生辅助功能树、Git 及受控进程记录、应用清单和 ZIP 校验摘要。
+
+## 草稿状态与结果可访问性复验
+
+本地优化包 `87c898e` 增加 GitHub PR 草稿状态的写前与写后验证。预览包含 GitHub 返回的 `isDraft`。若它在确认前变化，旧预览失效。创建与编辑都在读回同一 PR 后校验草稿状态。编辑只提交标题和正文。读回不符时，窗口提示核对结果，保留已验证的 PR 编号与链接，并要求重新预览后才可再次确认。源码专项覆盖草稿创建、编辑时保留草稿、过期拒绝和读回不符时只发起一次写入。[GitHub CLI 列表字段](https://cli.github.com/manual/gh_pr_list#json-fields) · [GitHub CLI 详情字段](https://cli.github.com/manual/gh_pr_view#json-fields)
+
+macOS 原生窗口将会话工作树推到真实的本地 bare 仓库，辅助功能树含推送结果及提交 OID。同一窗口通过受控 GitHub 对端创建草稿 PR #17，原生辅助功能树含确认结果及编号。随后编辑该 PR，对端在写入时模拟草稿状态变化。界面显示结果未确认和具体原因，确认按钮禁用，核对链接可用。独立检查发现创建和更新各执行一次，正文临时文件均已删除。再触发受控 HTTP 401，辅助功能树能读到错误并且不含测试凭据。关闭窗口后后台确认退出，桌面与后台进程均已结束。
+
+最终 ZIP 解包严格验签，应用树逐项一致。解包后 Node、真实 PTY、Hive HTTP／SQLite 及退出冒烟通过。解包后的运行时也通过远端 JSONL 回归，覆盖真实本地推送、受控 PR 读写和退出等待推送完成。Rust 测试 121 项通过，1 项辅助入口按设计忽略。改动的 Rust 文件格式检查通过，仓库级格式检查仍报告其他文件的既有差异。Windows x86_64 MSVC 交叉检查通过。实际托管 GitHub 写入与当前 Windows 原生窗口待验，未发布或替换本机安装。
+
+证据位于 `.artifacts/pr-draft-verify-DI8gDR/`。主要收据为 `native-receipt.json`、`native-check.log`、`packaged-wire-receipt.json`、`archive-manifest.json`、`package.log` 与 `archive-sha256.txt`。

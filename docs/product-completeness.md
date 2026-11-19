@@ -8,7 +8,7 @@ macOS 本地优化包已验证原生 Codex 和官方 ACP 的真实协作及被�
 
 #45 的独立会话工作树清理已补齐。macOS 原生窗口验证本地文件保护、确认清理、保留分支及冷启动只读搜索。真实 bare 仓库和包内 JSONL 验证已推送证明与在用保护。[工作树清理验收](validation/2026-11-19-worktree-removal.md)
 
-#43 的 macOS 原生窗口验证了过期推送拒绝、工作树提交推送到本地 bare 仓库，以及受控 GitHub 对端的 PR 创建和更新。实际托管账号写入和当前 Windows 原生操作分别保留验收状态。[Git 远端验收](validation/2026-11-19-native-git-remotes.md)
+#43 的 macOS 原生窗口验证了过期推送拒绝、工作树提交推送到本地 bare 仓库，以及受控 GitHub 对端的 PR 创建、更新和草稿状态读回。辅助功能树可读取推送和 PR 结果，以及需核对的原因。实际托管账号写入和当前 Windows 原生操作仍待验收。[Git 远端验收](validation/2026-11-19-native-git-remotes.md)
 
 ## 2026-11-14 历史计划
 
