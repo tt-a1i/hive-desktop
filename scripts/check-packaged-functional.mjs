@@ -69,8 +69,18 @@ try {
       env: {...process.env, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_OFFLINE: '1',
         HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js'),
         ...(['codex-probe-owner', 'pi-vault-owner'].includes(name) && {HIVE_DESKTOP_SHELL_OWNER: join(bundle, 'Hive Desktop.app/Contents/MacOS/hive-desktop')})}};
-    execFileSync(node, [file], options);
-    receipt.checks.push({name, exitCode: 0});
+    // Each installer group contains independent transactions. Retain the same
+    // 60s gate per group instead of combining all seven into one wall budget.
+    if (name === 'desktop-update-installer') {
+      for (const group of ['normal', 'receipts', 'interrupted']) {
+        console.log(`[packaged-functional] ${name}/${group}`);
+        execFileSync(node, [file, '--group', group], options);
+        receipt.checks.push({name: `${name}/${group}`, exitCode: 0});
+      }
+    } else {
+      execFileSync(node, [file], options);
+      receipt.checks.push({name, exitCode: 0});
+    }
     if (name === 'pi-vault' && process.platform === 'darwin') {
       const owner = join(bundle, 'Hive Desktop.app/Contents/MacOS/hive-desktop');
       console.log('[packaged-functional] pi-vault-native-owner');
