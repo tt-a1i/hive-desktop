@@ -1,3 +1,4 @@
+import { ProjectCopyChangedError } from './image-attachments.js';
 import { parseStructuredLaunch } from './structured-launch.js';
 import { isAgentDriver, validateAgentProfileLaunch, validateAgentProfileRef, type UpdateAgentProfile } from './agent-profiles.js';
 import type { HandoffInput,HandoffApplyInput } from './session-handoffs.js';
@@ -492,7 +493,7 @@ input.on('line', line => {
     } catch (error) {
       await writeFrame({ id, error: {
         code: method === 'chat.search' && error instanceof Error && error.name === 'AbortError' ? 'SEARCH_CANCELLED'
-          : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+          : error instanceof ProjectCopyChangedError ? 'PROJECT_COPY_CHANGED' : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

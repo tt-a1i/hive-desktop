@@ -74,6 +74,13 @@ pub(crate) fn localize_owned_error(error: &str) -> String {
     if !english() {
         return error.to_owned();
     }
+    if let Some(name) = error
+        .strip_prefix("项目文件附件 ")
+        .and_then(|rest| rest.strip_suffix(" 的副本不可用或已更改，请移除附件后重新选择文件。"))
+        .filter(|name| serde_json::from_str::<String>(name).is_ok())
+    {
+        return format!("The saved copy of project file {name} is unavailable or changed. Remove the attachment and select the file again.");
+    }
     const OWNED_ERRORS: &[&str] = &[
         "界面字号须在 12–20 之间",
         "文件路径无效",
@@ -383,6 +390,8 @@ mod tests {
             "Reload or save again to verify the team document."
         );
         assert_eq!(localize_owned_error("登录失败"), "Login failed");
+        assert_eq!(localize_owned_error("项目文件附件 \"hello.txt\" 的副本不可用或已更改，请移除附件后重新选择文件。"),
+            "The saved copy of project file \"hello.txt\" is unavailable or changed. Remove the attachment and select the file again.");
         assert_eq!(
             localize_owned_error(
                 "Codex 初始化失败（/opt/bin/codex）。请在「设置 → 外部程序」核对可执行文件。\nspawn /opt/bin/codex ENOENT\nstderr: 原始诊断"

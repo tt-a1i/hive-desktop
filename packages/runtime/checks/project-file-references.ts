@@ -45,8 +45,8 @@ try {
   assert.deepEqual(await readFile(recovered.filePath!), bytes);
   const replacement = Buffer.alloc(bytes.length, 0x78);
   await writeFile(staged.filePath!, replacement);
-  await assert.rejects(runtime.chats.attachments.get(ws.id, [staged.attachment.id]), /copy is unavailable or changed/);
-  await assert.rejects(runtime.chats.attachments.questionReferences(ws.id, [staged.attachment.id]), /copy is unavailable or changed/);
+  await assert.rejects(runtime.chats.attachments.get(ws.id, [staged.attachment.id]), {message: `项目文件附件 ${JSON.stringify(name)} 的副本不可用或已更改，请移除附件后重新选择文件。`});
+  await assert.rejects(runtime.chats.attachments.questionReferences(ws.id, [staged.attachment.id]), /项目文件附件 .* 的副本不可用或已更改/);
   await writeFile(staged.filePath!, bytes);
   await unlink(source);
   assert.deepEqual(await runtime.chats.projectFileStatus(ws.id, staged.attachment.id), { state: 'missing' });

@@ -93,7 +93,7 @@ export class InteractionAttachments {
    * Paths can still disappear after this check or after native delivery. */
   async validateCopies(receipt: InteractionAttachmentReceipt): Promise<void> {
     for (const {attachment, filePath} of receipt.attachments) {
-      if (attachment.projectFile) await verifyProjectCopy(filePath, attachment.size, attachment.projectFile);
+      if (attachment.projectFile) await verifyProjectCopy(filePath, attachment.size, attachment.projectFile, attachment.name);
     }
     // Do not yield while checking all paths after asynchronous hashing.
     for (const {attachment, filePath} of receipt.attachments) {

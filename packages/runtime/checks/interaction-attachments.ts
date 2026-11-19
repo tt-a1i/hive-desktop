@@ -167,8 +167,8 @@ async function checkProjectSnapshotReplacement() {
   const mapping = {public: [project.attachment.id]};
   const draft = (await runtime.chats.saveInteractionAttachments(record.id, card.id, mapping)).receipt;
   await writeFile(project.filePath!, 'replaced');
-  await assert.rejects(runtime.chats.prompt(record.id, 'send corrupted snapshot', [project.attachment.id]), /copy is unavailable or changed/);
-  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), /copy is unavailable or changed/);
+  await assert.rejects(runtime.chats.prompt(record.id, 'send corrupted snapshot', [project.attachment.id]), /项目文件附件 .* 的副本不可用或已更改/);
+  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), /项目文件附件 .* 的副本不可用或已更改/);
   assert.deepEqual(await rows(cwd), []);
   assert.deepEqual(runtime.chats.interactionAttachmentStatus(record.id, card.id), {safeToRetry: true});
   assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
@@ -181,7 +181,7 @@ async function checkProjectSnapshotReplacement() {
     return refs;
   };
   try {
-    await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), /copy is unavailable or changed/);
+    await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), /项目文件附件 .* 的副本不可用或已更改/);
     assert.deepEqual(await rows(cwd), []);
     assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
   } finally { uploads.questionReferences = resolve; }
