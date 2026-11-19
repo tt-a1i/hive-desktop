@@ -1292,6 +1292,7 @@
   "有新设备等待配对，请核对两端安全短码后确认。": "A new device is waiting to pair. Compare the security codes on both devices before confirming.",
   "有未保存的修改": "Unsaved changes",
   "有未保存的编辑。运行按钮只使用下方已保存的命令快照。": "There are unsaved edits. Run uses only the saved command snapshot shown below.",
+  "有脚本运行记录无法读取，无法确认其所属项目。仍可查看下方可读取的记录和日志。": "Some script run records could not be read and their projects could not be identified. You can still view the available runs and logs below.",
   "未保存本机凭据": "No credentials saved locally",
   "未保存的程序路径": "Unsaved executable path",
   "未关联设备": "No associated device",

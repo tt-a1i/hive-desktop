@@ -25,6 +25,7 @@ const id = (value: unknown): value is string => typeof value === 'string' && /^[
 const workspaceId = (value: unknown): value is string => typeof value === 'string' && !!value && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
 const active = (run: ProjectScriptRun) => run.status === 'starting' || run.status === 'running';
 const LIMIT = 16 * 1024 * 1024;
+const RECEIPT_FILE = /^[0-9a-f]{64}\.json$/;
 interface Live {run: ProjectScriptRun; file: string; fd: number; exited: Promise<void>; resolve: () => void; checkpointBytes: number; checkpointAt: number; persistenceError?: boolean; releaseMutation?: () => void}
 /** Captured run manifests are independent of editable settings. A request is durably claimed before spawning. */
 export class ProjectScriptRuns {
@@ -38,7 +39,7 @@ export class ProjectScriptRuns {
     private readonly executionDirectory: (workspaceId: string, sessionId?: string) => Promise<string>,
     private readonly emit: (event: ScriptEvent) => void = () => {}, private readonly mutations?: ExecutionMutations) {
     this.directory = join(directory, 'project-script-runs'); mkdirSync(this.directory, {recursive: true, mode: 0o700});
-    for (const name of readdirSync(this.directory)) if (/^[0-9a-f]{64}\.json$/.test(name)) {
+    for (const name of readdirSync(this.directory)) if (RECEIPT_FILE.test(name)) {
       const file = join(this.directory, name);
       let run: ProjectScriptRun;
       try { run = this.read(file); }
@@ -194,10 +195,23 @@ export class ProjectScriptRuns {
     const file = this.requestFile(workspace, requestId);
     return lstatSync(file, {throwIfNoEntry: false}) ? this.read(file) : undefined;
   }
-  list(workspace: string): {runs: ProjectScriptRun[]} {
+  list(workspace: string): {runs: ProjectScriptRun[]; unreadableRunCount: number} {
     if (!workspaceId(workspace)) fail('SCRIPT_INPUT_INVALID', 'Invalid workspace identity');
-    return {runs: readdirSync(this.directory).filter(name => /^[0-9a-f]{64}\.json$/.test(name)).map(name => this.read(join(this.directory, name)))
-      .filter(run => run.workspaceId === workspace).sort((a,b) => b.startedAt - a.startedAt).map(run => structuredClone(this.live.get(run.runId)?.run ?? this.undurable.get(run.runId) ?? run))};
+    const runs: ProjectScriptRun[] = [];
+    let unreadableRunCount = 0;
+    for (const name of readdirSync(this.directory)) {
+      if (!RECEIPT_FILE.test(name)) continue;
+      let run: ProjectScriptRun;
+      try {run = this.read(join(this.directory, name));}
+      catch (error) {
+        if (!(error instanceof ProjectScriptRunError) || error.code !== 'SCRIPT_RUN_CORRUPT') throw error;
+        // The receipt cannot establish a workspace, so report it without attributing it to one.
+        unreadableRunCount++;
+        continue;
+      }
+      if (run.workspaceId === workspace) runs.push(structuredClone(this.live.get(run.runId)?.run ?? this.undurable.get(run.runId) ?? run));
+    }
+    return {runs: runs.sort((a,b) => b.startedAt - a.startedAt), unreadableRunCount};
   }
   private owned(workspace: string, runId: string) {
     if (!workspaceId(workspace) || !id(runId)) fail('SCRIPT_INPUT_INVALID', 'Invalid script run identity');

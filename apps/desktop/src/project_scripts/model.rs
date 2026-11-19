@@ -171,8 +171,11 @@ impl Status {
     }
 }
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Runs {
     pub runs: Vec<Run>,
+    #[serde(default)]
+    pub unreadable_run_count: usize,
 }
 #[derive(Deserialize)]
 pub struct RunPage {

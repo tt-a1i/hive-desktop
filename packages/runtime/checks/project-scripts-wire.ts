@@ -1,8 +1,8 @@
 /** Actual runtime JSONL + Hive + native saved script, no models. */
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {randomUUID} from 'node:crypto';
-import {mkdtemp,mkdir,rename,rm} from 'node:fs/promises';
+import {createHash,randomUUID} from 'node:crypto';
+import {mkdtemp,mkdir,readFile,rename,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {createInterface} from 'node:readline';
@@ -27,7 +27,8 @@ try{
  assert.equal(stale.error.code,'SCRIPT_SETTINGS_CONFLICT');assert.ok(stale.error.message.startsWith('[SCRIPT_SETTINGS_CONFLICT] '));
  const invalid=await rpc('script.settings.save',{workspaceId:ws.id,expectedRevision:saved.revision,script:{name:'',command:'true'}});
  assert.equal(invalid.error.code,'SCRIPT_SETTINGS_INVALID');assert.ok(invalid.error.message.startsWith('[SCRIPT_SETTINGS_INVALID] '));
- assert.equal((await rpc('script.runs',{workspaceId:ws.id})).result.runs.length,0,'preflight errors did not claim a run');
+ const emptyHistory=(await rpc('script.runs',{workspaceId:ws.id})).result;
+ assert.equal(emptyHistory.runs.length,0,'preflight errors did not claim a run');
  const request={workspaceId:ws.id,scriptId:script.id,expectedVersion:script.version,requestId:randomUUID()};
  const started=await rpc('script.run',request);assert.ok(started.result.runId);const runId=started.result.runId;
  const done=await until(()=>rpc('script.get',{workspaceId:ws.id,runId,offset:0,limit:128}),value=>value.result&&!['starting','running'].includes(value.result.run.status));
@@ -36,6 +37,33 @@ try{
  assert.equal((await rpc('script.run',request)).result.runId,runId);assert.equal((await rpc('script.runs',{workspaceId:ws.id})).result.runs.length,1);
  const badInput=await rpc('script.run',{...request,command:'echo forbidden'});assert.equal(badInput.error.code,'SCRIPT_RUN_INPUT_INVALID');assert.ok(badInput.error.message.startsWith('[SCRIPT_RUN_INPUT_INVALID] '));
  assert.equal((await rpc('script.stop',{workspaceId:ws.id,runId})).result.status,'failed');
+
+ const otherProject=join(directory,'other-project');await mkdir(otherProject);
+ const other=(await rpc('hive.request',{method:'POST',path:'/api/workspaces',body:{path:otherProject,name:'Corrupt script history',autostart_orchestrator:false}})).result;
+ const otherScript=(await rpc('script.settings.save',{workspaceId:other.id,expectedRevision:'0',script:{name:'Run once',command:'printf once >> executions'}})).result.scripts[0];
+ const otherRequest={workspaceId:other.id,scriptId:otherScript.id,expectedVersion:otherScript.version,requestId:randomUUID()};
+ const otherRun=(await rpc('script.run',otherRequest)).result;
+ await until(()=>rpc('script.get',{workspaceId:other.id,runId:otherRun.runId}),value=>value.result?.run.status==='succeeded');
+ const receiptName=createHash('sha256').update(JSON.stringify([other.id,otherRequest.requestId])).digest('hex')+'.json';
+ const receipt=join(directory,'state','project-script-runs',receiptName);
+ const corrupt='{ incomplete';await writeFile(receipt,corrupt);
+ const history=await rpc('script.runs',{workspaceId:ws.id});
+ const healthyLog=await rpc('script.get',{workspaceId:ws.id,runId,offset:0,limit:128});
+ const historicalStop=await rpc('script.stop',{workspaceId:ws.id,runId});
+ assert.ok(history.result&&healthyLog.result&&historicalStop.result,
+  JSON.stringify({history:history.error,log:healthyLog.error,stop:historicalStop.error}));
+ assert.deepEqual(history.result,{runs:[done.result.run],unreadableRunCount:1});
+ assert.equal(emptyHistory.unreadableRunCount,0);
+ assert.deepEqual((await rpc('script.runs',{workspaceId:other.id})).result,{runs:[],unreadableRunCount:1});
+ assert.deepEqual(healthyLog.result,done.result);
+ assert.equal(historicalStop.result.status,'failed');
+ assert.equal((await rpc('script.get',{workspaceId:other.id,runId})).error.code,'SCRIPT_RUN_NOT_FOUND');
+ assert.equal((await rpc('script.stop',{workspaceId:other.id,runId})).error.code,'SCRIPT_RUN_NOT_FOUND');
+ assert.equal((await rpc('script.get',{workspaceId:other.id,runId:otherRun.runId})).error.code,'SCRIPT_RUN_NOT_FOUND');
+ assert.equal((await rpc('script.run',otherRequest)).error.code,'SCRIPT_RUN_CORRUPT');
+ assert.equal(await readFile(receipt,'utf8'),corrupt);
+ assert.equal(await readFile(join(otherProject,'executions'),'utf8'),'once');
+
  assert.equal((await rpc('script.settings.remove',{workspaceId:ws.id,expectedRevision:saved.revision,scriptId:script.id})).result.scripts.length,0);
  await rename(project,project+'-missing');
  try {
@@ -45,5 +73,5 @@ try{
  await rpc('shutdown');
  await new Promise<void>(done=>{if(child.exitCode!==null)done();else child.once('exit',()=>done());});
  assert.equal(child.exitCode,0);
- console.log('PROJECT_SCRIPTS_WIRE_OK: actual JSONL settings/run/log/events/exit/duplicate/validation/stop/remove/shutdown.');
+ console.log('PROJECT_SCRIPTS_WIRE_OK: actual JSONL settings/run/log/events/exit/duplicate/validation/stop/remove/shutdown; unreadable receipt isolated, exact request blocked, no cross-project access or replay.');
 }finally{if(child.exitCode===null)child.kill('SIGKILL');await rm(directory,{recursive:true,force:true});}

@@ -219,6 +219,7 @@ pub(crate) struct Page {
     states: HashMap<String, WorkspaceState>,
     settings_busy: bool,
     runs_busy: bool,
+    runs_incomplete: bool,
     log_busy: bool,
     run_busy: bool,
     settings_valid: bool,
@@ -256,6 +257,7 @@ impl Page {
             states: HashMap::new(),
             settings_busy: false,
             runs_busy: false,
+            runs_incomplete: false,
             log_busy: false,
             run_busy: false,
             settings_valid: false,
@@ -305,6 +307,7 @@ impl Page {
             self.epoch += 1;
             self.settings_busy = false;
             self.runs_busy = false;
+            self.runs_incomplete = false;
             self.log_busy = false;
             self.run_busy = false;
             self.target_busy = false;
@@ -607,7 +610,7 @@ impl Page {
                     for run in &value.runs {
                         run.validate(&scope.workspace)?;
                     }
-                    Ok(value.runs)
+                    Ok(value)
                 });
             let _ = this.update(cx, |this, cx| {
                 if !this.accepts(epoch, cx) {
@@ -615,15 +618,23 @@ impl Page {
                 }
                 this.runs_busy = false;
                 match result {
-                    Ok(runs) => {
+                    Ok(Runs {
+                        runs,
+                        unreadable_run_count,
+                    }) => {
+                        this.runs_incomplete = unreadable_run_count != 0;
+                        let complete = !this.runs_incomplete;
                         let selection = this.selection_generation;
                         let mut confirmed = None;
                         let mut directory_conflict = None;
                         {
                             let state = this.state_mut().unwrap();
                             if let Some(pending) = state.pending.as_mut() {
+                                if !complete {
+                                    pending.recovery.invalidate_refresh();
+                                }
                                 pending.recovery.refreshed(
-                                    qualify_absence,
+                                    qualify_absence && complete,
                                     runs.iter().any(|run| run.request_id == pending.request),
                                 );
                             }
@@ -1056,6 +1067,10 @@ impl Render for Page {
                 .children(state.abandoned.iter().enumerate().map(|(index,pending)|crate::text_reading::selectable_text(format!("unconfirmed-script-request-{index}"),format!("{}\nrequestId: {}\n{}: {}\n{}: {}\n{}\n{}\n{}",tr("上次未确认请求"),pending.request,tr("来源会话"),pending.session.as_deref().unwrap_or("—"),tr("目标执行目录"),pending.cwd,pending.script.name,pending.script.command,tr("这不会取消原请求；其他并发调用仍可能稍后启动。请检查运行记录后再决定是否另行运行。")))))
                 .when(!state.resolved_requests.is_empty(),|view|view.child(crate::text_reading::selectable_text("resolved-script-requests",format!("{}\n{}",tr("以下原请求已在运行记录中确认，可按请求编号查看实际运行"),state.resolved_requests.join("\n")))))
                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(tr("项目运行记录")))
+                .when(self.runs_incomplete,|view|{
+                    let warning=tr("有脚本运行记录无法读取，无法确认其所属项目。仍可查看下方可读取的记录和日志。");
+                    view.child(div().id("script-runs-incomplete").role(Role::Status).aria_label(warning).text_sm().text_color(Color::Error.get(cx)).child(warning))
+                })
                 .when(state.runs.is_empty(),|view|view.child(div().text_sm().child(tr("此项目没有已读取的运行记录。"))))
                 .children(state.runs.iter().enumerate().map(|(index,run)|{let id=run.run_id.clone();crate::focus_scroll::Reveal::new(("script-run-reveal",index),&scroll,Button::new(("select-script-run",index)).outline().small().h_auto().label(format!("{} · {} · {}",run.script.name,run.status.label(),run.run_id)).selected(state.selected_run.as_ref()==Some(&run.run_id)).on_click(cx.listener(move|this,_,_,cx|{this.selection_generation+=1;this.log_generation+=1;this.log_busy=false;let state=this.state_mut().unwrap();state.selected_run=Some(id.clone());state.output=Output::default();cx.notify();})))}))
                 .when_some(run,|view,run|view
