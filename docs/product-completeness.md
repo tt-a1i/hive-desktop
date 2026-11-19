@@ -8,6 +8,8 @@ macOS 本地优化包已验证原生 Codex 和官方 ACP 的真实协作及被�
 
 桌面更新在安装或回退完成后回收解包文件和安装事务。回退后保留经过签名校验的归档供离线重试，收据写入失败时保留恢复入口。[更新清理验收](validation/2026-11-19-update-installer-ownership.md#安装和回退完成后的清理)
 
+桌面更新下载被强制中断时，下次检查和下载会回收已退出进程遗留的半包。macOS 原生设置页通过中断、重开、重试及签名归档校验。[下载重试验收](validation/2026-11-19-update-installer-ownership.md#更新下载被强制中断后的重试)
+
 #45 的独立会话工作树清理已补齐。macOS 原生窗口验证本地文件保护、确认清理、保留分支及冷启动只读搜索。真实 bare 仓库和包内 JSONL 验证已推送证明与在用保护。[工作树清理验收](validation/2026-11-19-worktree-removal.md)
 
 工作树移除后若收据尚未写完，冷打开会确认原仓库和分支，再补写收据。原派单继续打开同一份只读历史。真实 Git 和 macOS 解包窗口已验证收据写入失败及冷恢复。[工作树收据验收](validation/2026-11-19-worktree-removal.md#清理完成后收据中断)
@@ -23,6 +25,8 @@ Pi 文件的原生会话 ID 与记录不符时，正文搜索和冷打开都会�
 归档切换查询、离开页面或后端断开时会释放旧搜索结果。macOS 解包实测无效查询不能恢复之前的会话，新查询可恢复准确目标。长分叉夹具中，打开归档第一页时 Rust 进程的峰值物理内存增量中位数由 21.3 MiB 降至 9.3 MiB。[归档与搜索内存验收](validation/2026-11-19-unicode-history-search.md#归档结果与桌面搜索内存)
 
 会话内查找支持 Unicode 的预组合与分解形式。macOS 解包实测 Markdown、思考、工具补丁和助手失败的定位，以及只有已保存调用的工具恢复到原卡片。[会话内查找验收](validation/2026-11-19-unicode-history-search.md#会话内-unicode-查找与工具消息定位)
+
+团队等页面或窄窗侧栏隐藏对话列表时，Rust 桌面释放 Markdown 渲染对象和按需历史图片。Mac 760 像素宽窗口打开侧栏时，夹具中的桌面 RSS 中位数下降 6.6 MiB，返回后原会话和草稿保留。[隐藏会话内存验收](validation/2026-11-19-long-history-markdown-memory.md#隐藏当前会话时释放渲染资源)
 
 冷态历史原图读取已与待投递文件解耦，内置 Pi 可以在后台重启后按先前接收的投递 ID 找回原图。桌面已回收仅用于浏览的空闲 Codex 0.169.0 进程。macOS 解包窗口实测浏览八个会话后，常驻测试进程从八个降为一个，返回工作区后降为零。已由 Hive 接管的会话和待发任务通过独立检查。当前 Windows 原生验收继续跟踪。[历史原图](validation/2026-11-19-cold-browse-and-history-images.md) · [浏览进程回收](validation/2026-11-19-codex-desktop-view-release.md)
 
