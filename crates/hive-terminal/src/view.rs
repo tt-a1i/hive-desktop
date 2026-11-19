@@ -88,10 +88,20 @@ pub struct TerminalView {
 
 impl TerminalView {
     pub fn new(config: TerminalConfig, cx: &mut Context<Self>) -> Self {
-        cx.bind_keys([
-            KeyBinding::new("tab", SendTab, Some(CONTEXT)),
-            KeyBinding::new("shift-tab", SendBacktab, Some(CONTEXT)),
-        ]);
+        // Every attachment gets a fresh view. The two terminal bindings are
+        // installed together in the app-wide keymap, not once per view.
+        let needs_bindings = cx
+            .key_bindings()
+            .borrow()
+            .bindings_for_action(&SendTab)
+            .next()
+            .is_none();
+        if needs_bindings {
+            cx.bind_keys([
+                KeyBinding::new("tab", SendTab, Some(CONTEXT)),
+                KeyBinding::new("shift-tab", SendBacktab, Some(CONTEXT)),
+            ]);
+        }
 
         let (event_tx, event_rx) = mpsc::channel();
 

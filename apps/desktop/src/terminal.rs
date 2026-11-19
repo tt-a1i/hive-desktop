@@ -268,8 +268,14 @@ impl HiveApp {
         cx.notify();
     }
     pub fn hide_terminal(&mut self, cx: &mut Context<Self>) {
+        let was_visible = self.terminal.visible;
         self.terminal.visible = false;
         self.detach_terminal(cx);
+        if was_visible {
+            // Reopening restores the running Shell from the backend. Release the
+            // hidden emulator's scrollback even if its attachment already ended.
+            self.terminal.view.update(cx, |view, cx| view.reset(cx));
+        }
         cx.notify();
     }
     pub fn prepare_terminal_view(&mut self, cx: &mut Context<Self>) {

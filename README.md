@@ -8,7 +8,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 默认内置 Pi 已接入 1Password 引用，macOS 已验证原生操作及包内回环请求。同一已有账号的两套固定原生 Codex Terra 配置也已通过真实派单、汇报和冷恢复。[1Password 验收](docs/validation/2026-11-19-pi-vault.md) · [配置与 ACP 验收](docs/validation/2026-11-15-agent-profiles-acp.md)
 
-早期 PR #46 已合并到 `main`。目前的功能完成分支继续在本地推进，本轮没有发布。[PR #46](https://github.com/tt-a1i/hive-desktop/pull/46)
+早期 PR #46 已合并到 `main`。后续功能和桌面验收的进展见[当前验收状态](docs/acceptance-status.md)。本轮没有发布安装包。[PR #46](https://github.com/tt-a1i/hive-desktop/pull/46)
 
 2026-11-15 本轮已收尾并按用户要求暂停，见[收尾记录](docs/validation/2026-11-15-round-close.md)。[多实例配置及 ACP](docs/validation/2026-11-15-agent-profiles-acp.md)、[跨后端文本接续](docs/validation/2026-11-15-session-handoffs.md)已接生产运行时：Mac 50 项包内检查、106 项 Rust 检查及限定实际窗口/冷恢复通过；Windows 同一冻结 ZIP 的 47 项包内检查和原生 UIA 操作通过。真实 ACP 完整协作仍未通过，不与已通过的[原生 Codex / Terra 历史分叉](docs/validation/2026-11-15-native-history-live.md)混算。PR #46 保持 Draft，完整目标保持开放，尚未推广或替换用户安装实例。以下日期记录保留当时进展。
 
