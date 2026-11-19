@@ -340,6 +340,9 @@ struct CommitResult {
     warnings: Vec<String>,
     error: Option<Fault>,
 }
+fn commit_result_label(state: &str, extra_lines: &[String]) -> String {
+    std::iter::once(state).chain(extra_lines.iter().map(String::as_str)).collect::<Vec<_>>().join("\n")
+}
 fn valid_write_state(value: &Value) -> bool {
     value == &json!(true) || value == &json!(false) || value == &json!("unknown")
 }
@@ -2039,11 +2042,12 @@ impl Render for GitWorkspace {
                     extra_lines.extend(result.warnings.iter().cloned());
 
                     let tech_tip = tech.clone();
+                    let accessible_result = commit_result_label(state, &extra_lines);
                     view.child(
                         v_flex()
                             .id("git-commit-result")
                             .role(Role::Status)
-                            .aria_label(state)
+                            .aria_label(accessible_result)
                             .gap_1()
                             .p_2p5()
                             .rounded_lg()
@@ -2538,7 +2542,15 @@ impl Render for GitWorkspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, CommitPatchResponse, CommitPreview, CommitResult, FileDiff, IndexApplyResponse, IndexOperation, IndexPreview, Status, decode, git_params, valid_write_state};
+    use super::{commit_result_label, Change, CommitPatchResponse, CommitPreview, CommitResult, FileDiff, IndexApplyResponse, IndexOperation, IndexPreview, Status, decode, git_params, valid_write_state};
+    #[test]
+    fn commit_result_accessible_label_includes_reason_and_warnings() {
+        assert_eq!(
+            commit_result_label("No commit was created.", &["[INDEX_BUSY] Git index.lock exists".into(), "Inspect the lock".into()]),
+            "No commit was created.\n[INDEX_BUSY] Git index.lock exists\nInspect the lock"
+        );
+        assert_eq!(commit_result_label("Commit created.", &[]), "Commit created.");
+    }
     use serde_json::json;
     fn identity() -> serde_json::Value {
         json!({"projectRoot":"/repo/project","repositoryRoot":"/repo","projectPrefix":"project/","linkedWorktree":true,"branch":null,"headOid":"abc","detached":true,"unborn":false})

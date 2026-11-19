@@ -55,7 +55,7 @@ export interface RemoteCommandResult {stdout: string; stderr: string; code: numb
 export async function remoteCommand(executable: string, args: string[], cwd: string, timeoutMs = 15000, github = false, accepted = [0]): Promise<RemoteCommandResult> {
  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120000) throw remoteError('INVALID_ARGUMENT', 'timeoutMs must be from 100 to 120000');
  const env = remoteEnvironment(github), owned = process.platform === 'win32' ? new OwnedCliProcess(executable, args, {cwd, env}) : undefined;
- const owner = !github && process.platform === 'darwin' ? process.env.HIVE_DESKTOP_SHELL_OWNER : undefined;
+ const owner = process.platform === 'darwin' ? process.env.HIVE_DESKTOP_SHELL_OWNER : undefined;
  const child = owned?.child ?? spawn(owner ?? executable, owner ? ['--hive-owned-cli', String(process.pid), executable, ...args] : args, {cwd, env, detached: true, windowsHide: true, stdio: 'pipe'});
  let timedOut = false, exceeded = false, fault: NodeJS.ErrnoException | undefined, bytes = 0; const out: Buffer[] = [], err: Buffer[] = [];
  let escalation: ReturnType<typeof setTimeout> | undefined;

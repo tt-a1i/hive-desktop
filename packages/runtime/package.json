@@ -59,6 +59,7 @@
     "check:conversation-search": "tsx checks/conversation-search.ts && tsx checks/conversation-search-codex.ts && tsx checks/session-body-search.ts && tsx checks/conversation-search-tools.ts && tsx checks/codex-metadata-recovery.ts && tsx checks/codex-metadata-marker.ts",
     "check:project-files": "tsx checks/project-files.ts && tsx checks/project-file-references.ts",
     "check:git-workspace": "tsx checks/git-workspace.ts && tsx checks/workspace-git.ts",
+    "check:git-gh-owner": "tsx checks/git-gh-owner.ts",
     "check:git-write-owner": "tsx checks/git-write-owner.ts",
     "check:git-index": "pnpm build && tsx checks/git-mutations.ts && tsx checks/git-index-wire.ts && tsx checks/git-write-lifecycle.ts",
     "check:worktrees": "tsx checks/worktree-intent-concurrency.ts && tsx checks/git-worktrees.ts && tsx checks/chat-worktrees.ts && tsx checks/project-file-worktree-references.ts && tsx checks/dispatch-execution-origins.ts && tsx checks/artifact-execution-origins.ts && tsx checks/worktree-backend-cwd.ts",
