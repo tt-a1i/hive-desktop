@@ -8,6 +8,8 @@ macOS 本地优化包已验证原生 Codex 和官方 ACP 的真实协作及被�
 
 #45 的独立会话工作树清理已补齐。macOS 原生窗口验证本地文件保护、确认清理、保留分支及冷启动只读搜索。真实 bare 仓库和包内 JSONL 验证已推送证明与在用保护。[工作树清理验收](validation/2026-11-19-worktree-removal.md)
 
+工作树移除后若收据尚未写完，冷打开会确认原仓库和分支，再补写收据。原派单继续打开同一份只读历史。真实 Git 和 macOS 解包窗口已验证收据写入失败及冷恢复。[工作树收据验收](validation/2026-11-19-worktree-removal.md#清理完成后收据中断)
+
 #43 的 macOS 原生窗口验证了过期推送拒绝、工作树提交推送到本地 bare 仓库，以及受控 GitHub 对端的 PR 创建、更新和草稿状态读回。辅助功能树可读取推送和 PR 结果，以及需核对的原因。实际托管账号写入和当前 Windows 原生操作仍待验收。[Git 远端验收](validation/2026-11-19-native-git-remotes.md)
 
 macOS 本地包确认同一 HTML 产物跨文件详情复用预览窗口，保留交互状态。主窗口正常退出时会结束仍打开的预览和 Node 后台。只读 Codex 冷历史同次读取校验完整性，隔离大日志探测的 Node 峰值 RSS 中位数下降 124.0 MiB。[窗口与冷历史验收](validation/2026-11-19-preview-windows-cold-codex.md)
