@@ -503,6 +503,13 @@ jobs:
         run: |
           node scripts/check-windows-history-image-memory.mjs --bundle target/replay-extracted --receipt target/windows-image-memory.json 2>&1 | Tee-Object -FilePath target/windows-image-memory.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Inventory Windows Chinese input methods
+        if: ${{ inputs.replay_shortcut_layout }}
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File scripts/windows-ime-inventory.ps1 -ReceiptPath (Join-Path $PWD 'target/windows-ime-inventory.json') 2>&1 | Tee-Object -FilePath target/windows-ime-inventory.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay Windows shortcut layout changes
         if: ${{ inputs.replay_shortcut_layout }}
         timeout-minutes: 6
@@ -586,6 +593,8 @@ jobs:
             target/windows-image-memory.json
             target/windows-image-memory.log
             target/windows-image-desktop.log
+            target/windows-ime-inventory.json
+            target/windows-ime-inventory.log
             target/windows-shortcut-layout.json
             target/windows-shortcut-layout-ui.json
             target/windows-shortcut-layout.log
