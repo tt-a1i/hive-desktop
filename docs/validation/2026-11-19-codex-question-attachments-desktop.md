@@ -30,3 +30,13 @@ macOS 从新版 ZIP 解包后，用系统选择器为第一题选入六份文件
 源码为 `ec0624c`。127 项 Rust 测试、Windows x86_64 MSVC 交叉检查、附件与 Codex 交互专项以及包内 Node、PTY、Hive HTTP/SQLite 和退出冒烟均通过。macOS ZIP 签名和归档内容核对通过。ZIP SHA-256 为 `c907ed1e5152cc1ef188efde3ea341f75fb105813bbfea3eb65a925179d1baef`。本轮使用受控 Codex 子进程，未调用模型或发布。Windows 原生选择器和真实回合仍待验收。
 
 本地证据位于 `.artifacts/question-delivery-9Pm8No/`，含 `runtime-receipt.json`、旧窗口 `baseline-LpMgCW/receipt.json`、新版 `candidate-FvFHyt/receipt.json`、原生辅助功能记录及归档核对清单。
+
+## 收据损坏时保留已验证历史和可重试回复
+
+GPT-6.2 Sol 核对了提交前失败和冷恢复。旧版只要遇到一份损坏收据，整份附件历史便会读取失败，桌面也无法判断本次提交能否重试。新的查询只查看当前 Codex 提问和对应的持久收据。正在提交、该收据损坏或原生交付未确认时，仍然阻止重试。历史继续返回当前会话的可读收据并报告无法读取的数量，桌面显示相应提醒及提交错误。
+
+后端用两个工作区、真实 Hive HTTP、SQLite 和受控 Codex 子进程验证。另一份收据损坏时，第一轮因上传副本暂不可用而交付零次。恢复副本后交付一次，冷开能读出完整收据，原生回调未重放。另验证当前问题收据损坏、已进入交付准备状态和提交尚在运行的分支。普通问答与审批继续通过原有契约。独立收据位于 `packages/runtime/.artifacts/question-attachments-CBK65S/receipt.json`。
+
+macOS 原生窗口对照用系统文件选择器添加附件。保存草稿后，暂移 Hive 私有副本并在测试目录保留一份无法读取的收据。旧版首次提交未到达 Codex 对端，却禁用重试并重复请求附件历史。新版核对当前问题后保留所选回答和附件，辅助功能可读到失败及重试提示。恢复同一副本后再次提交，原生答案只收到一次目标问题的正确文件引用。源文件已移走，读取的字节来自私有副本。冷开仍显示该收据和损坏提示，交付数保持一次。记录的桌面、后台和 Codex 子进程均已退出。
+
+新版兼容既有真实 Codex 回复收据、空草稿和多问题收据。验证目录为 `.artifacts/question-receipt-availability-C0ylDO/`，含原生 `baseline-PpuAlp/receipt.json`、`candidate-vf5pFO/receipt.json`、`legacy-receipts.json`、包内三个专项和 ZIP 清单。签名应用目录与 ZIP 逐文件校验一致，ZIP SHA-256 为 `78285e16add0b2cddd26b185cf0a3627dc63141d4c01453e64c9d4bbf185ad7a`。129 项 Rust 测试和 Windows MSVC 目标检查通过。这次故障复验采用受控 Codex 对端和真实文件操作，Windows 原生流程仍待运行。

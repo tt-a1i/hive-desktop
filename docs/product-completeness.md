@@ -46,6 +46,8 @@ macOS 的 Node 后台被强制终止后，正在运行的项目脚本和同组�
 
 Codex 问题附件按整次回复限制数量。草稿保存跟随原问题，切换会话仍可读回。一个项目的损坏收据不会阻断其他项目的普通问答或审批。[问题附件验收](validation/2026-11-19-codex-question-attachments-desktop.md)
 
+Codex 问题附件的重试只核对当前提问。其他损坏收据不影响提交前失败后的重试，可读收据仍能冷启动查看。macOS 原生窗口验证恢复副本后只交付一次。[重试和冷恢复验收](validation/2026-11-19-codex-question-attachments-desktop.md#收据损坏时保留已验证历史和可重试回复)
+
 Codex 核对线程及回合的原生回执后更新模式。ACP v1 可读取并选择后端提供的会话模式，官方 Codex ACP 可分别选择协作与访问权限。[原生模式验收](validation/2026-11-19-codex-session-modes-desktop.md)
 
 Codex 保存的模式失效时，会话仍可只读打开。用户可以检查并明确保存可用的替代项。修复不会触发推理或清空历史、草稿与待发消息。历史分叉也可在独立工作树中检查模式，无需先激活 Agent。macOS 解包窗口已通过冷重开和进程退出验证。[保存模式恢复验收](validation/2026-11-19-codex-session-modes-desktop.md#保存模式失效后的恢复)
