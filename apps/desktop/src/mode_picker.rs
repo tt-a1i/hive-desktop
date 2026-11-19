@@ -18,6 +18,8 @@ struct ModeState {
     selected: Option<String>,
     applied: Option<String>,
     pending_next_turn: bool,
+    #[serde(default)]
+    connect_available: bool,
     options: Vec<ModeOption>,
     description: Option<String>,
 }
@@ -58,6 +60,7 @@ pub struct ModePicker {
 #[derive(Default)]
 struct ModeSlot {
     loading: bool,
+    refresh_queued: bool,
     state: Option<ModeState>,
     error: Option<String>,
 }
@@ -79,6 +82,19 @@ fn mode_label(backend: &str, option: &ModeOption) -> String {
 impl HiveApp {
     pub(crate) fn load_mode(&mut self, mode: Option<String>, cx: &mut Context<Self>) {
         self.load_mode_axis(false, mode, cx);
+    }
+
+    pub(crate) fn refresh_advertised_modes(&mut self, cx: &mut Context<Self>) {
+        if self.mode_picker.mode.loading {
+            self.mode_picker.mode.refresh_queued = true;
+        } else {
+            self.load_mode(None, cx);
+        }
+        if self.mode_picker.permission.loading {
+            self.mode_picker.permission.refresh_queued = true;
+        } else {
+            self.load_permission_mode(None, cx);
+        }
     }
 
     /// Read native state after a turn settles, including when turn/start was
@@ -128,7 +144,7 @@ impl HiveApp {
         if !self
             .session
             .as_ref()
-            .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Codex))
+            .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Codex | crate::protocol::Backend::Acp))
         {
             return;
         }
@@ -218,13 +234,48 @@ impl HiveApp {
                         picker.error = Some(error);
                     }
                 }
+                let failed = failure.is_some();
                 if let Some(error) = failure {
                     picker.error = Some(error);
+                }
+                if std::mem::take(&mut picker.refresh_queued) && !failed {
+                    this.load_mode_axis(permission, None, cx);
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    fn connect_acp_modes(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.session.as_ref() else { return };
+        if !self.connected || self.loading || self.closing || !self.conversation_ready
+            || self.conversation_is_read_only() || !self.workspace_writes_allowed()
+            || self.mode_picker.mode.loading || !self.mode_picker.mode.state.as_ref().is_some_and(|mode| mode.connect_available)
+        { return; }
+        let Some(runtime) = self.runtime.clone() else { return; };
+        let id = session.id.clone();
+        let connection = self.connection_generation;
+        let open = self.open_request;
+        self.mode_picker.mode.loading = true;
+        self.mode_picker.mode.error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = runtime.request("chat.acp.prepareModes", json!({"sessionId":id})).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection || this.open_request != open
+                    || !this.session.as_ref().is_some_and(|session| session.id == id) { return; }
+                this.mode_picker.mode.loading = false;
+                match result {
+                    Ok(_) => this.show_session(id, cx),
+                    Err(error) => {
+                        this.mode_picker.mode.error = Some(error.clone());
+                        this.error = Some(crate::app::ErrorNotice::Detail("连接 ACP 会话失败", error));
+                        cx.notify();
+                    }
+                }
+            });
+        }).detach();
     }
 
     fn render_composer_mode_pill(
@@ -246,7 +297,9 @@ impl HiveApp {
         let label = current_id
             .map(|id| state.label(id))
             .unwrap_or_else(|| tr(if permission { "权限" } else { "模式" }).into());
-        let heading = if permission {
+        let heading = if permission && state.backend == "acp" {
+            tr("ACP 访问权限")
+        } else if permission {
             tr("Codex 访问权限")
         } else {
             tr("会话模式")
@@ -351,8 +404,15 @@ impl HiveApp {
             || self.closing
             || self.conversation_is_read_only()
             || blocked;
-        let mode_pill = self.render_composer_mode_pill(false, disabled, cx);
-        let permission_pill = matches!(session.backend, crate::protocol::Backend::Codex)
+        let mode_pill = self.render_composer_mode_pill(false, disabled, cx).or_else(|| {
+            self.mode_picker.mode.state.as_ref().is_some_and(|mode| mode.connect_available).then(|| {
+                Button::new("composer-connect-acp-modes").compact().xsmall()
+                    .label(tr("连接 ACP 以设置模式"))
+                    .disabled(disabled || self.mode_picker.mode.loading)
+                    .on_click(cx.listener(|this, _, _, cx| this.connect_acp_modes(cx))).into_any_element()
+            })
+        });
+        let permission_pill = matches!(session.backend, crate::protocol::Backend::Codex | crate::protocol::Backend::Acp)
             .then(|| self.render_composer_mode_pill(true, disabled, cx))
             .flatten();
         if mode_pill.is_none() && permission_pill.is_none() {
@@ -374,9 +434,10 @@ impl HiveApp {
             .session
             .as_ref()
             .is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Codex));
+        let acp_permission = self.mode_picker.permission.state.as_ref().is_some_and(|mode| mode.backend == "acp" && !mode.options.is_empty());
         v_flex()
             .child(self.render_mode_axis(false, running, cx))
-            .when(codex, |view| {
+            .when(codex || acp_permission, |view| {
                 view.child(self.render_mode_axis(true, running, cx))
             })
             .into_any_element()
@@ -384,7 +445,9 @@ impl HiveApp {
 
     fn render_mode_axis(&self, permission: bool, running: bool, cx: &Context<Self>) -> AnyElement {
         let heading = if permission {
-            tr("Codex 访问权限")
+            if self.session.as_ref().is_some_and(|s| matches!(s.backend, crate::protocol::Backend::Acp)) {
+                tr("ACP 访问权限")
+            } else { tr("Codex 访问权限") }
         } else {
             tr("会话模式")
         };
@@ -432,7 +495,7 @@ impl HiveApp {
                             .on_click(cx.listener(move |this, _, _, cx| this.load_mode_axis(permission, None, cx))),
                     ),
             )
-            .when(permission, |view| {
+            .when(permission && heading == tr("Codex 访问权限"), |view| {
                 view.child(crate::text_reading::selectable_text(
                     "codex-permission-scope",
                     tr("仅适用于当前 Codex 原生会话，不限制其他 Agent。完全访问会关闭 Codex 沙箱和审批。"),
@@ -472,6 +535,8 @@ impl HiveApp {
                         crate::text_reading::selectable_text(format!("mode-description-{permission}"), match text.as_str() {
                             "Native Claude permission mode applies to this session. It does not constrain other agents." => tr("Claude 原生权限模式仅适用于当前会话，不限制其他 Agent。").to_owned(),
                             "This backend does not support native session modes." => tr("此后端不支持会话模式。").to_owned(),
+                            "This ACP session does not advertise a native mode." => tr("此 ACP 会话未提供原生模式。").to_owned(),
+                            "Connect this ACP session to read its native modes." => tr("连接此 ACP 会话以读取原生模式。").to_owned(),
                             "Codex 未提供权限策略要求。" => tr("Codex 未提供权限策略要求。").to_owned(),
                             "无法确定 Codex 权限策略要求。" => tr("无法确定 Codex 权限策略要求。").to_owned(),
                             "此 Codex 程序不支持原生协作模式。" => tr("此 Codex 程序不支持原生协作模式。").to_owned(),

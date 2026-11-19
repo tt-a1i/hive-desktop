@@ -680,6 +680,9 @@ impl HiveApp {
                 return;
             }
             *previous = event.sequence();
+            if matches!(&event, PiEvent::SessionModeChanged { .. }) {
+                return;
+            }
             self.local_notification_event(&event, cx);
             self.apply_activity(&event);
             self.apply_interaction_event(&event);
@@ -706,6 +709,7 @@ impl HiveApp {
         // GPUI stores a positive max_offset and a negative current offset.
         let follow = self.conversation_find.is_none() && !self.reading_above_latest();
         match event {
+            PiEvent::SessionModeChanged { .. } => self.refresh_advertised_modes(cx),
             PiEvent::SessionNavigation { .. }
             | PiEvent::State { .. }
             | PiEvent::Interaction { .. }

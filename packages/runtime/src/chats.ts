@@ -1,4 +1,5 @@
 import { AcpHistory } from './agents/acp-history.js';
+import { unavailableAcpMode } from './agents/acp-modes.js';
 import { HandoffRuntime } from './handoff-runtime.js';
 import { HandoffError } from './handoff-operation-journal.js';
 import { HandoffDeliveries, assertHandoffFirstInput, type HandoffDelivery } from './handoff-delivery.js';
@@ -937,7 +938,7 @@ export class Chats implements StructuredSessionPort {
     record = await this.runnableIdentity(record);
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = await this.executionPath(record, workspace);
-    if (record.backend === 'acp' && (record.model || record.reasoning || record.nativeMode)) throw new SessionIdentityError('ACP_SETTING_UNSUPPORTED','ACP model, reasoning and native mode selection are not implemented');
+    if (record.backend === 'acp' && (record.model || record.reasoning || record.nativeMode)) throw new SessionIdentityError('ACP_SETTING_UNSUPPORTED','ACP does not accept locally stored model, reasoning or mode overrides');
     const sessionFile = record.sessionFile;
     if (record.backend === 'acp' && sessionFile) {
       const source=await AcpHistory.load(sessionFile);
@@ -1676,6 +1677,7 @@ export class Chats implements StructuredSessionPort {
         }
       },
       ready: () => {
+        if (record.backend === 'acp' && this.keepingPaused.has(id)) return;
         if(record.backend==='acp'&&chat.queue.pending.some(item=>(chat.handle as AcpSessionHandle).uncertainDeliveryIds().includes(item.id)))return;
         void this.initializationReady(this.index.get(id)).then(() => {if (!this.keepingPaused.has(id) && !chat.modeChanging) chat.queue.resume();})
           .catch(error => this.recordDeliveryFailure(id, chat.queue, error instanceof Error ? error : new Error(String(error))));
@@ -1718,15 +1720,18 @@ export class Chats implements StructuredSessionPort {
     }
     return {record, agentId, previous};
   }
-  private async activateOnce(id: string, forUserInput = false) {
+  private async activateOnce(id: string, forUserInput = false, forSettings = false) {
     const {record, agentId, previous} = await this.activationAvailable(id);
     const active = this.runtime.getActiveRunByAgentId(record.workspaceId, agentId);
     if (previous?.id !== id && active) {
+      if (forSettings) throw new Error('Stop the member’s current conversation before connecting another for ACP settings');
       this.runtime.stopAgentRun(active.runId);
       if (!await this.runtime.waitForRunExit(active.runId, 30_000)) throw new Error('Previous team session is still stopping');
     }
     await this.activationAvailable(id);
     this.assertWorkspaceAvailable(record.workspaceId);
+    if (forSettings && !this.hive.desktopConversationSwitchState(record.workspaceId, agentId).eligible)
+      throw new Error('Finish unsettled Hive work for this member before connecting for ACP settings');
     this.index.bind(id, agentId);
     this.hive.configureAgentLaunch(record.workspaceId, agentId, this.launchConfig(this.index.get(id)));
     // A forthcoming explicit input wakes the model itself. Keep startup facts
@@ -2096,13 +2101,44 @@ export class Chats implements StructuredSessionPort {
     const chat=await this.require(id);
     return chat.handle.usage ? chat.handle.usage() : {source:record.backend,reports:[],notice:'该原生后端未提供用量读取接口。'};
   }
+  async prepareAcpModes(id: string) {
+    const record = this.index.get(id);
+    if (record.backend !== 'acp' || record.handoff) throw new Error('This session cannot be connected for ACP settings');
+    return this.withWorkspace(record.workspaceId, async () => {
+      this.assertWorkspaceAvailable(record.workspaceId);
+      const live = this.live.get(id);
+      if (live && !live.failure && !live.cleanup) return {ok: true};
+      if (DeliveryQueue.persistedCount(this.queueDir, id) > 0) throw new Error('Resolve queued messages before connecting for ACP settings');
+      let ready: LiveChat | undefined;
+      this.keepingPaused.add(id);
+      try {
+        // Connect through the existing identity and team bridge. Suppress both
+        // the recovery prompt and the queue wake-up for this explicit settings action.
+        await this.activateOnce(id, true, true);
+        ready = await this.require(id);
+        if (ready.failure || ready.cleanup) throw ready.failure ?? new Error('The ACP session is closing');
+        return {ok: true};
+      } finally {
+        this.keepingPaused.delete(id);
+        if (ready && !ready.cleanup && !ready.failure) {
+          const uncertain = (ready.handle as AcpSessionHandle).uncertainDeliveryIds();
+          if (!ready.queue.pending.some(item => uncertain.includes(item.id))) ready.queue.resume();
+        }
+      }
+    });
+  }
   async mode(id: string, selected?: unknown, permission = false, browse = false) {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);
-    if(record.backend==='acp'){if(selected!==undefined)throw new Error('ACP native mode selection is not implemented');return {backend:'acp',selected:null,applied:null,pendingNextTurn:false,options:[],description:'ACP native modes are not implemented'};}
     if (selected !== undefined && typeof selected !== 'string') throw new TypeError('Session mode must be text');
     return this.withWorkspace(record.workspaceId, async () => {
-      const chat = await this.require(id, browse);
+      const acp = record.backend === 'acp';
+      const chat = acp ? this.live.get(id) : await this.require(id, browse);
+      if (acp && (!chat || chat.failure || chat.cleanup)) {
+        if (selected !== undefined) throw new Error('Connect this ACP session before choosing a mode');
+        return {...unavailableAcpMode('Connect this ACP session to read its native modes.'), connectAvailable: !permission && !record.handoff};
+      }
+      if (!chat) throw new Error('Conversation is not connected');
       const read = permission ? chat.handle.permissionMode?.bind(chat.handle) : chat.handle.mode?.bind(chat.handle);
       const write = permission ? chat.handle.setPermissionMode?.bind(chat.handle) : chat.handle.setMode?.bind(chat.handle);
       if (!read || !write) {
@@ -2124,6 +2160,9 @@ export class Chats implements StructuredSessionPort {
         await chat.queue.pause();
         return await this.changeNativeSettings(id, chat, async () => {
           const state = await write(selected as string);
+          // The ACP adapter validates the acknowledgement in wire order. A
+          // later native update can already have superseded that selection.
+          if (acp) return state;
           if (state.selected !== selected || (state.applied !== selected && !state.pendingNextTurn))
             throw new Error('Native session did not confirm the requested mode');
           if (record.backend !== 'codex' && record.backend !== 'claude') throw new Error('Unsupported native mode backend');

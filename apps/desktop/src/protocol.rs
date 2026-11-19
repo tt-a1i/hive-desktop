@@ -328,6 +328,8 @@ impl AgentInteraction {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PiEvent {
     #[serde(rename_all = "camelCase")]
+    SessionModeChanged { session_id: String, sequence: u64 },
+    #[serde(rename_all = "camelCase")]
     SessionNavigation {
         session_id: String,
         sequence: u64,
@@ -421,7 +423,8 @@ pub enum PiEvent {
 impl PiEvent {
     pub fn sequence(&self) -> u64 {
         match self {
-            Self::SessionNavigation { sequence, .. }
+            Self::SessionModeChanged { sequence, .. }
+            | Self::SessionNavigation { sequence, .. }
             | Self::Interaction { sequence, .. }
             | Self::InteractionResolved { sequence, .. }
             | Self::State { sequence, .. }
@@ -437,7 +440,8 @@ impl PiEvent {
 
     pub fn session_id(&self) -> &str {
         match self {
-            Self::SessionNavigation { session_id, .. }
+            Self::SessionModeChanged { session_id, .. }
+            | Self::SessionNavigation { session_id, .. }
             | Self::Interaction { session_id, .. }
             | Self::InteractionResolved { session_id, .. }
             | Self::State { session_id, .. }

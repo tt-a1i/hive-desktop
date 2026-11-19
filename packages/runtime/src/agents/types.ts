@@ -24,6 +24,7 @@ export type AgentInteraction = AcpInteraction | CodexInteraction | ExternalPiInt
 export type InteractionResolutionReason = 'resolved' | 'turn-ended' | 'aborted' | 'disconnected' | 'disposed' | 'expired';
 
 export type PiEvent =
+  | { type: 'session_mode_changed'; sessionId: string }
   | { type: 'interaction'; sessionId: string; interaction: AgentInteraction }
   | { type: 'interaction_resolved'; sessionId: string; interactionId: string; reason: InteractionResolutionReason }
   | { type: 'assistant_delta'; sessionId: string; messageId: string; kind: 'text' | 'thinking'; contentIndex: number; delta: string }
@@ -52,7 +53,7 @@ export interface ReasoningState { level: string; levels: string[]; description?:
 
 export interface SessionModeState {
   backend: string; selected: string | null; applied: string | null; pendingNextTurn: boolean;
-  options: {id: string; label: string; description?: string}[]; description?: string;
+  options: {id: string; label: string; description?: string}[]; description?: string; connectAvailable?: boolean;
 }
 
 export interface PiSessionHandle {

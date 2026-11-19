@@ -116,6 +116,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'desktop.updates.prepareInstaller': exact(params, ['version', 'sha256']); return updates.prepareInstaller(text(params, 'version'), text(params, 'sha256'));
     case 'desktop.updates.discardInstaller': exact(params, ['id']); await updates.discardInstaller(text(params, 'id')); return { ok: true };
     case 'chat.acp.uncertainDeliveries': exact(params,['sessionId']);return chats.uncertainAcpDeliveries(text(params,'sessionId'));
+    case 'chat.acp.prepareModes': exact(params,['sessionId']);return chats.prepareAcpModes(text(params,'sessionId'));
     case 'chat.acp.discardUncertainDelivery': {exact(params,['sessionId','deliveryId','expectedText']);if(typeof params.expectedText!=='string')throw new Error('expectedText is required');return chats.discardUncertainAcpDelivery(text(params,'sessionId'),text(params,'deliveryId'),params.expectedText);}
     case 'agent.capabilities': exact(params,['sessionId']);return chats.capabilities(text(params,'sessionId'));
     case 'agent.profiles.list': exact(params, []); return profiles.list();

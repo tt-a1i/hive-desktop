@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { AcpTransport, AcpRpcError } from './acp-transport.js';
 import { AcpHistory } from './acp-history.js';
+import { AcpModes } from './acp-modes.js';
 import { acpInitialize, acpPermission, acpSession, acpUpdate, object } from './acp-protocol.js';
 import { acpAgentEnvironment, createAcpTeamServer } from './acp-team-stdio.js';
 import type { AgentInteraction, PiEvent, PiSessionHandle } from './types.js';
@@ -29,6 +30,7 @@ export interface AcpSessionOptions {
 export interface AcpSessionHandle extends PiSessionHandle {
     readonly nativeResume: boolean;
     readonly readOnly: boolean;
+    nativeModesAvailable(): boolean;
     teamConnected(): boolean;
     waitForTeamReady(options?:{signal?:AbortSignal;timeoutMs?:number}):Promise<boolean>;
     uncertainDeliveryIds(): readonly string[];
@@ -52,6 +54,8 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
     let ready = false;
     let loading = false;
     let readOnly = false;
+    let editingMode = false;
+    const modes = new AcpModes();
     let active: {
         cancelled: boolean;
         done: Promise<void>;
@@ -182,7 +186,14 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
     try {
         transport = await AcpTransport.start({ command: options.command, ...(options.args && { args: options.args }), env: acpAgentEnvironment(options.env), cwd: options.cwd, ...(options.signal && { signal: options.signal }), ...(options.requestTimeoutMs && { requestTimeoutMs: options.requestTimeoutMs }), onClose: info => { if (!disposed && !readOnly)
                 fail(info.error); }, onNotification: n => { if (n.method === 'session/update') {
-                if (!sessionId) {
+            const modeUpdate = object(n.params) && object(n.params.update) && modes.isUpdate(n.params.update.sessionUpdate);
+            if (modeUpdate && sessionId) {
+                const parsed = acpUpdate.safeParse(n.params);
+                if (!parsed.success || parsed.data.sessionId !== sessionId) { fail(new Error('ACP mode update belongs to another session')); return; }
+                if (modes.update(parsed.data.update) && ready) emit({type:'session_mode_changed',sessionId});
+                return;
+            }
+            if (!sessionId) {
                     earlyUpdates.push(n.params);
                     return;
                 }
@@ -208,7 +219,8 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
         }
         else if (restoring) {
             loading = true;
-            await transport.sendRequest('session/load', { sessionId, cwd: options.cwd, mcpServers: team ? [team.server] : [] });
+            await transport.sendRequest('session/load', { sessionId, cwd: options.cwd, mcpServers: team ? [team.server] : [] }, undefined,
+                result => { modes.setup(result); });
             await work;
             if (failure)
                 throw failure;
@@ -235,8 +247,10 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
             loading = false;
         }
         else {
-            const result = acpSession.parse(await transport.sendRequest('session/new', { cwd: options.cwd, mcpServers: team ? [team.server] : [] }));
-            sessionId = result.sessionId;
+            await transport.sendRequest('session/new', { cwd: options.cwd, mcpServers: team ? [team.server] : [] }, undefined, result => {
+                sessionId = acpSession.parse(result).sessionId;
+                modes.setup(result);
+            });
             store = new AcpHistory(file, { version: 1, sessionId, history: [], historyIds: [], contexts: [], deliveries: {} });
             await persist(() => { });
             for (const params of earlyUpdates)
@@ -249,10 +263,25 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
         const check = () => { if (disposed || failure)
             throw failure ?? new Error('ACP session is disposed'); if (readOnly)
             throw new Error('ACP agent does not support native session restore; transcript is read-only'); };
+        const readMode = (permission = false) => { check(); return redact(modes.state(permission)) as ReturnType<AcpModes['state']>; };
+        const setMode = async (id: string, permission: boolean) => {
+            check();
+            if (active || editingMode) throw new Error('Finish the ACP turn before changing session mode');
+            editingMode = true;
+            try {
+                if (await modes.set(transport!, sessionId, permission, id)) emit({type:'session_mode_changed',sessionId});
+                return readMode(permission);
+            }
+            catch (error) { throw new Error(redactString(error instanceof Error ? error.message : String(error))); }
+            finally { editingMode = false; }
+        };
         const validate = (id: string, response: unknown) => { const p = permissions.get(id); if (!p)
             throw new Error('Permission request is no longer pending'); if (!object(response) || typeof response.optionId !== 'string' || !p.options.includes(response.optionId))
             throw new Error('Choose a native ACP permission optionId'); return { p, optionId: response.optionId }; };
         return { sessionId, sessionFile: file, nativeResume, readOnly, teamConnected: () => team?.connected() ?? false, waitForTeamReady: options => team?.waitForConnection(options) ?? Promise.resolve(false), uncertainDeliveryIds: () => Object.keys(store!.state.deliveries).filter(id => store!.state.deliveries[id] === 'sent'),
+            nativeModesAvailable: () => !readOnly && !failure && modes.state().options.length > 0,
+            mode: () => readMode(), permissionMode: () => readMode(true),
+            setMode: id => setMode(id, false), setPermissionMode: id => setMode(id, true),
             history: () => structuredClone(store!.state.history), snapshot: () => ({ history: structuredClone(store!.state.history), historyMessageIds: [...store!.state.historyIds] }), hasContext: type => store!.state.contextTypes?.includes(type) === true || store!.state.contexts.some(c => c.customType === type) || store!.state.history.some(m => object(m) && m.customType === type),
             completedDeliveryIds: () => Object.keys(store!.state.deliveries).filter(id => store!.state.deliveries[id] === 'completed'), supportsImages: () => false, currentModel: () => undefined, listModels: () => [], async setModel() { throw new Error('ACP model selection is not implemented'); },
             interactions: () => [...permissions.values()].map(p => p.interaction), validateInteractionResponse: (id, response) => { validate(id, response); }, respondInteraction(id, response) { check(); const { p, optionId } = validate(id, response); permissions.delete(id); p.resolve({ outcome: { outcome: 'selected', optionId } }); emit({ type: 'interaction_resolved', sessionId, interactionId: id, reason: 'resolved' }); },
@@ -263,6 +292,8 @@ export async function createAcpSession(options: AcpSessionOptions): Promise<AcpS
                     check();
                     if (active)
                         throw new Error('ACP turn is active');
+                    if (editingMode)
+                        throw new Error('Wait for the ACP session mode change to finish');
                     if (promptOptions?.images?.length)
                         throw new Error('ACP image input is not implemented');
                     if (binding && !team?.connected())

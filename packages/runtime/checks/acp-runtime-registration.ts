@@ -52,7 +52,12 @@ try{
  const catalog=await api('agent.models',{workspaceId,backend:'acp',profile:ref});assert.equal(catalog.supported,false);assert.ok(catalog.reason);assert.deepEqual(catalog.models,[]);
  const lead=await api('chat.createRecord',{workspaceId,backend:'acp',profile:ref}),passive=await snapshot(lead.id);assert.equal(passive.passive,true);assert.equal(passive.readOnly,false);assert.equal(passive.history.length,0);await assert.rejects(readFile(join(nativeRoot,'protocol.jsonl')),{code:'ENOENT'});
  await reject('chat.setModel',{sessionId:lead.id,provider:'fixture',modelId:'discarded'});await reject('chat.setMode',{sessionId:lead.id,mode:'discarded'});
- await api('chat.resume',{sessionId:lead.id});const capabilities=await api('agent.capabilities',{sessionId:lead.id});assert.equal(capabilities.driver,'acp');assert.equal(capabilities.features.teamTool.state,'supported');assert.equal(capabilities.features.nativeResume.state,'supported');assert.equal(capabilities.features.images.state,'unsupported');assert.equal(capabilities.features.modelSelection.state,'unsupported');
+ await api('chat.acp.prepareModes',{sessionId:lead.id});const capabilities=await api('agent.capabilities',{sessionId:lead.id});assert.equal(capabilities.driver,'acp');assert.equal(capabilities.features.teamTool.state,'supported');assert.equal(capabilities.features.nativeResume.state,'supported');assert.equal(capabilities.features.nativeModes.state,'unsupported');assert.equal(capabilities.features.images.state,'unsupported');assert.equal(capabilities.features.modelSelection.state,'unsupported');
+ const competing=await api('chat.createRecord',{workspaceId,backend:'acp',profile:ref});
+ await reject('chat.acp.prepareModes',{sessionId:competing.id});
+ assert.equal((await snapshot(competing.id)).passive,true);
+ await api('hive.request',{method:'POST',path:`/api/workspaces/${workspaceId}/user-input`,body:{text:'ACP_TEST_COMMAND:null'}});
+ await wait(()=>snapshot(lead.id),(s:any)=>!s.busy&&s.pending===0&&s.history.some((m:any)=>m.role==='assistant'));
  await call(lead.id,['spawn','coder','--name','acp-production-worker']);
  const members=await api('team.members',{workspaceId}),worker=members.find((m:any)=>m.name==='acp-production-worker');assert.ok(worker);assert.equal(worker.configured_command,'hive:acp');assert.deepEqual(worker.desktop_profile,ref);
  await api('hive.request',{method:'POST',path:`/api/workspaces/${workspaceId}/agents/${encodeURIComponent(worker.id)}/start`});

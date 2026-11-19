@@ -152,7 +152,7 @@ export class AcpTransport {
     return () => { this.notifications.delete(listener); };
   }
 
-  sendRequest<T = unknown>(method: string, params: unknown, timeoutMs = this.options.requestTimeoutMs ?? 30_000): Promise<T> {
+  sendRequest<T = unknown>(method: string, params: unknown, timeoutMs = this.options.requestTimeoutMs ?? 30_000, observeResult?: (value: T) => void): Promise<T> {
     if (this.closing || this.ended) return Promise.reject(new Error('Acp transport is closed'));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
@@ -160,7 +160,11 @@ export class AcpTransport {
         this.pending.delete(id);
         reject(new Error(`Acp request timed out: ${method}`));
       }, timeoutMs);
-      this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
+      // Observe a response before processing the next frame in the same chunk.
+      this.pending.set(id, { resolve: (value) => {
+        try { observeResult?.(value as T); resolve(value as T); }
+        catch (error) { reject(asError(error)); }
+      }, reject, timer });
       void this.write({ method, params, id }).catch((error: unknown) => this.fail(asError(error)));
     });
   }
