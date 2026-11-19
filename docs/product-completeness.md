@@ -4,6 +4,8 @@
 
 macOS 本地优化包已验证原生 Codex 和官方 ACP 的真实协作及被动冷恢复，并实测长会话 Markdown 导出的内存。当前版本的 Windows 原生包与实际窗口仍待复验。更新使用隔离渠道，本轮交付本地证据。[协作验收](validation/2026-11-19-native-acp-collaboration.md) · [导出内存实测](validation/2026-11-19-streaming-markdown-export.md)
 
+#45 的独立会话工作树清理已补齐。macOS 原生窗口验证本地文件保护、确认清理、保留分支及冷启动只读搜索。真实 bare 仓库和包内 JSONL 验证已推送证明与在用保护。[工作树清理验收](validation/2026-11-19-worktree-removal.md)
+
 ## 2026-11-14 历史计划
 
 2026-11-14。用户已在当前会话确认并授权持续推进。本文整理执行顺序；需求和工作项继续使用 GitHub Issues，父任务为 #1，首批工作为 [#29](https://github.com/tt-a1i/hive-desktop/issues/29)。完整目标仍未完成。
