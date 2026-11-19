@@ -236,7 +236,7 @@ function Open-CurrentConversationMenu {
         $buttons = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
             [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
                 $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
-                $_.Current.Name.StartsWith('当前会话操作：')
+                ([string]$_.Current.Name).StartsWith('当前会话操作：')
             })
         if ($buttons.Count -eq 1) {
             Invoke-Action $buttons[0].Current.Name

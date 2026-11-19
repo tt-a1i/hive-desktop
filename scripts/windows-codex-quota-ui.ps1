@@ -28,7 +28,7 @@ try {
     [void](Wait-Name 'Account limits loaded')
     [void](Wait-Name 'Account allows ordinary usage')
     $windowLabel = Wait-Control { param($c) $c.Current.Name -match '^Primary window: 78% remaining.*300 minutes' } 'quota window'
-    $checked = Wait-Control { param($c) $c.Current.Name.StartsWith('Checked at:', [StringComparison]::Ordinal) } 'read time'
+    $checked = Wait-Control { param($c) ([string]$c.Current.Name).StartsWith('Checked at:', [StringComparison]::Ordinal) } 'read time'
     $names = @(All-Controls | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
     if (@($names | Where-Object { $_ -match 'PRIVATE_FIXTURE_' }).Count -ne 0) { throw 'Private fixture account data reached the UI.' }
     $result.checks += @{ status = 'ok'; window = $windowLabel.Current.Name; checkedAt = $checked.Current.Name; privateDataHidden = $true }

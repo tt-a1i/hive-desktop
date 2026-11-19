@@ -140,7 +140,7 @@ if ($Action -eq 'Install') {
     $end = [DateTime]::UtcNow.AddSeconds(10)
     do {
         $visible = @($root.FindAll($scope, [System.Windows.Automation.Condition]::TrueCondition) |
-            Where-Object { $_.Current.Name.StartsWith($ReceiptLabel, [System.StringComparison]::Ordinal) })
+            Where-Object { $_.Current.Name -and $_.Current.Name.StartsWith($ReceiptLabel, [System.StringComparison]::Ordinal) })
         if ($visible.Count -gt 0) { break }
         Start-Sleep -Milliseconds 150
     } while ([DateTime]::UtcNow -lt $end)

@@ -16,7 +16,7 @@ function Row-Action([string]$Text,[string]$Action) {
     $row = Wait-Control {
         param($c)
         $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Group -and
-            $c.Current.Name.StartsWith($Text + ' ·', [StringComparison]::Ordinal)
+            ([string]$c.Current.Name).StartsWith($Text + ' ·', [StringComparison]::Ordinal)
     } ('queued row ' + $Text)
     $buttons = @($row.FindAll([System.Windows.Automation.TreeScope]::Descendants,
         [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -ceq $Action })
@@ -58,7 +58,7 @@ try {
         Invoke-Control (Wait-Name 'Confirm cancellation')
         $end=[DateTime]::UtcNow.AddSeconds(15)
         do {
-            $remaining=@(All-Controls | Where-Object { $_.Current.Name.StartsWith($CanceledText + ' ·',[StringComparison]::Ordinal) })
+            $remaining=@(All-Controls | Where-Object { ([string]$_.Current.Name).StartsWith($CanceledText + ' ·',[StringComparison]::Ordinal) })
             if ($remaining.Count -eq 0) { break }
             Start-Sleep -Milliseconds 150
         } while ([DateTime]::UtcNow -lt $end)
@@ -66,7 +66,7 @@ try {
         $result.stages.edited=$true; $result.stages.canceled=$true
     } else {
         [void](Row-Action $EditedText 'Edit queued message')
-        if (@(All-Controls | Where-Object { $_.Current.Name.StartsWith($CanceledText + ' ·',[StringComparison]::Ordinal) }).Count) {
+        if (@(All-Controls | Where-Object { ([string]$_.Current.Name).StartsWith($CanceledText + ' ·',[StringComparison]::Ordinal) }).Count) {
             throw 'Canceled input returned after cold reopen'
         }
         Invoke-Control (Wait-Name 'Resume processing')

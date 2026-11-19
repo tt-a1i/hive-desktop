@@ -52,7 +52,7 @@ try {
     $attachment = Wait-Control {
         param($c)
         $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
-            $c.Current.Name.StartsWith('Project file snapshot: shared-reference.txt', [StringComparison]::Ordinal)
+            ([string]$c.Current.Name).StartsWith('Project file snapshot: shared-reference.txt', [StringComparison]::Ordinal)
     } 'snapshot attachment'
     if (-not $attachment.Current.Name.Contains($Sha256)) {
         throw 'Snapshot attachment SHA-256 differs from the worktree bytes.'
