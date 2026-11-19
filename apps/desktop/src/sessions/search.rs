@@ -101,7 +101,7 @@ enum SearchError {
 impl SearchError {
     fn text(&self) -> String {
         match self {
-            Self::Offline => tr("后台尚未连接").to_owned(),
+            Self::Offline => tr("后台尚未连接。请关闭搜索并在窗口顶部重新启动后台。").to_owned(),
             Self::Request(error) => {
                 format!(
                     "{}: {}",
@@ -226,6 +226,7 @@ impl SessionSearch {
         self.selected = 0;
         self.scroll = ScrollHandle::new();
         let Some(runtime) = self.runtime.upgrade().filter(|_| self.online) else {
+            self.offset = 0;
             self.loading = false;
             self.error = Some(SearchError::Offline);
             cx.notify();
@@ -409,24 +410,29 @@ impl Render for SessionSearch {
                                         .bg(Color::ErrorSurface.get(cx))
                                         .child(
                                             div()
+                                                .id("session-search-error")
+                                                .role(Role::Alert)
+                                                .aria_label(error.clone())
                                                 .text_xs()
                                                 .text_color(Color::Error.get(cx))
                                                 .child(error),
                                         )
-                                        .child(Reveal::new(
-                                            "retry-session-search-reveal",
-                                            &self.scroll,
-                                            Button::new("retry-session-search")
-                                                .outline()
-                                                .compact()
-                                                .h(px(28.))
-                                                .px_2p5()
-                                                .rounded_lg()
-                                                .label(tr("重新搜索"))
-                                                .on_click(
-                                                    cx.listener(|this, _, _, cx| this.load(false, cx)),
-                                                ),
-                                        )),
+                                        .when(self.online, |error| {
+                                            error.child(Reveal::new(
+                                                "retry-session-search-reveal",
+                                                &self.scroll,
+                                                Button::new("retry-session-search")
+                                                    .outline()
+                                                    .compact()
+                                                    .h(px(28.))
+                                                    .px_2p5()
+                                                    .rounded_lg()
+                                                    .label(tr("重新搜索"))
+                                                    .on_click(
+                                                        cx.listener(|this, _, _, cx| this.load(false, cx)),
+                                                    ),
+                                            ))
+                                        }),
                                 )
                             })
                             .when_some(self.page.warning(), |list, warning| {
@@ -671,7 +677,7 @@ impl Render for SessionSearch {
                                     .rounded_lg()
                                     .icon(Glyph::RefreshCw)
                                     .label(tr("刷新"))
-                                    .disabled(self.loading)
+                                    .disabled(self.loading || !self.online)
                                     .on_click(cx.listener(|this, _, _, cx| this.load(false, cx))),
                             ),
                     )

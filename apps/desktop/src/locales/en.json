@@ -505,6 +505,7 @@
   "后台协议错误": "Runtime protocol error",
   "后台响应通道已关闭": "Runtime response channel is closed",
   "后台尚未连接": "Backend not connected",
+  "后台尚未连接。请关闭搜索并在窗口顶部重新启动后台。": "Backend not connected. Close search and restart the backend from the top of the window.",
   "后台尚未连接，无法定位本地数据目录。": "Backend is not connected yet; local data directory is unavailable.",
   "后台尚未连接，连接后将显示已归档会话。": "Backend is not connected yet. Archived threads will appear once connected.",
   "后台已关闭，登录已取消": "The runtime closed; login was cancelled",
