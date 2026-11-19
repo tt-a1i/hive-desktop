@@ -1226,7 +1226,12 @@ export class Chats implements StructuredSessionPort {
     const workspace = await this.workspace(record.workspaceId);
     const executionPath = record.execution?.path ?? workspace.path;
     const saved = includeHistory ? await this.readSavedHistory(record, workspace) : undefined;
-    const {history = [], historyMessageIds = [], historyWarning, acpTranscript} = saved ?? {};
+    const {history = [], historyMessageIds = [], historyWarning} = saved ?? {};
+    // A state-only handoff refresh needs native receipt data only while it
+    // has a queue to display. Do not read the transcript for idle refreshes.
+    const acpTranscript = saved?.acpTranscript ?? (!includeHistory && acpVersion !== undefined
+      && DeliveryQueue.persistedCount(this.queueDir, record.id)
+      ? await AcpHistory.load(record.sessionFile!).catch(() => undefined) : undefined);
     const sourceAgent = record.originAgentId ?? record.agentId;
     const restoredHistory = sourceAgent ? history.map(message => restoreHistoricalReport(message,
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, sourceAgent, dispatchId, payload))) : history;
@@ -1238,6 +1243,13 @@ export class Chats implements StructuredSessionPort {
         throw error;
       });
       if (ready) acpQueue = this.offlineAcpQueue(record, acpVersion, acpTranscript);
+      if (acpQueue && record.handoff) {
+        try { this.reconcileUserInputs(record, acpQueue, acpTranscript.state.deliveries); }
+        catch (error) {
+          throw new SessionIdentityError('ACP_QUEUE_SOURCE_UNAVAILABLE',
+            error instanceof Error ? error.message : String(error));
+        }
+      }
     }
     const queue = acpQueue ?? (allowOfflineQueueEdits && this.offlineHandoffEditable(record) ? this.offlineHandoffQueue(record)
       : new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
@@ -1345,7 +1357,10 @@ export class Chats implements StructuredSessionPort {
   private async reconcileHandoffOffline(record:ChatRecord){
     if(!record.handoff)return;
     await this.handoffRuntime!.assertReady(record);
-    this.handoffDeliveries.initialize(record.id,record.handoff.operationId,record.handoff.snapshotHash);
+    const initial = this.handoffDeliveries.initialize(record.id,record.handoff.operationId,record.handoff.snapshotHash);
+    // Ordinary inputs after the first handoff use their own native receipts.
+    // The first-input queue has no such evidence and must not reconcile them.
+    if (initial.status === 'consumed' && record.backend === 'acp') return;
     const queue=this.live.get(record.id)?.queue??this.offlineHandoffQueue(record);
     if(!queue.busy){this.reconcileUserInputs(record,queue);this.reconcileHandoffQueue(record,queue);}
     const state=this.handoffDeliveries.get(record.id)!;
@@ -1391,13 +1406,17 @@ export class Chats implements StructuredSessionPort {
       userInputMutationReason:item=>(record.originAgentId===`${record.workspaceId}:orchestrator`&&item.presentation?.messageSequence===undefined?'legacy':undefined),onError:()=>{},execute:async()=>{throw new Error('An offline handoff queue cannot execute');}});
   }
   private canEditOfflineAcp(record: ChatRecord): boolean {
-    return record.backend === 'acp' && !record.handoff && !record.archived && !!record.profile
+    const eligible = record.backend === 'acp' && !record.archived && !!record.profile
       && record.identityState === 'known' && !!record.originAgentId && record.agentId === record.originAgentId
       && !!record.sessionFile && !!record.acpSessionId
       && record.capabilities?.features?.nativeResume?.state === 'supported'
       && record.capabilities?.features?.teamTool?.state === 'supported'
       && !this.closing && !this.removing.has(record.workspaceId)
       && !this.live.has(record.id) && !this.opening.has(record.id);
+    if (!eligible || !record.handoff) return eligible;
+    const handoff = this.handoffDeliveries.get(record.id);
+    return handoff?.status === 'consumed' && handoff.nativeSessionId === record.acpSessionId
+      && handoff.operationId === record.handoff.operationId && handoff.snapshotHash === record.handoff.snapshotHash;
   }
   private offlineAcpQueue(record: ChatRecord, version: number, transcript: AcpHistory): DeliveryQueue | undefined {
     // The transcript read yields to native startup. Re-check ownership before a
@@ -1407,6 +1426,8 @@ export class Chats implements StructuredSessionPort {
     try { this.profiles.resolveForExecutionSnapshot(record.profile!, 'acp'); }
     catch { return; }
     const deliveries = transcript.state.deliveries;
+    const first = record.handoff && this.handoffDeliveries.get(record.id)?.deliveryId;
+    if (first && (!Object.hasOwn(deliveries, first) || deliveries[first] !== 'completed')) return;
     const completed: string[] = [];
     for (const id in deliveries) {
       if (Object.hasOwn(deliveries, id) && deliveries[id] === 'completed') completed.push(id);
@@ -1864,17 +1885,18 @@ export class Chats implements StructuredSessionPort {
     return this.withWorkspace(record.workspaceId, async () => {
       let record = this.index.get(id);
       let chat: LiveChat | undefined;
-      let queue: DeliveryQueue;
+      let queue: DeliveryQueue | undefined;
       let acpTranscript: AcpHistory | undefined;
-      if (record.handoff && !this.live.has(id) && this.handoffDeliveries.get(id)?.status !== 'consumed') {
+      if (record.handoff && !this.live.has(id)) {
         record = await this.runnableIdentity(record);
         await this.initializationReady(record);
         await this.executionDirectory(record.workspaceId, id);
         await this.reconcileHandoffOffline(record);
         record = this.index.get(id);
-        if (!this.offlineHandoffEditable(record)) throw new Error('Handoff queue state changed; reopen the conversation');
-        queue = this.offlineHandoffQueue(record);
-      } else if (record.backend === 'acp' && !record.handoff) {
+        if (this.offlineHandoffEditable(record)) queue = this.offlineHandoffQueue(record);
+        else if (!this.canEditOfflineAcp(record)) throw new Error('Handoff queue state changed; reopen the conversation');
+      }
+      if (!queue && record.backend === 'acp') {
         const existing = this.live.get(id);
         record = await this.runnableIdentity(record);
         const version = this.index.snapshotVersion(id);
@@ -1891,7 +1913,7 @@ export class Chats implements StructuredSessionPort {
           if (!offline) throw new Error('The saved ACP session cannot edit queued input; reopen the conversation');
           queue = offline;
         }
-      } else {
+      } else if (!queue) {
         chat = await this.require(id);
         queue = chat.queue;
         record = this.index.get(id);
@@ -1955,14 +1977,18 @@ export class Chats implements StructuredSessionPort {
     this.assertWorkspaceAvailable(record.workspaceId);
     if(record.backend!=='acp'||!record.profile||!record.sessionFile||!record.acpSessionId||record.identityState!=='known'||!record.originAgentId)
       throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT','A known original ACP session is required to resolve an uncertain queued delivery');
+    const version=this.index.snapshotVersion(id);
     await this.profiles.getRef(record.profile,'acp');
     const live=this.live.get(id);
     if(live?.cleanup||this.opening.has(id))throw new Error('Wait for the ACP session to finish opening or closing');
     const transcript=await AcpHistory.load(record.sessionFile);
     if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT','The native session and transcript identities disagree');
-    if(this.live.get(id)!==live||this.opening.has(id)||live?.cleanup)throw new Error('ACP session ownership changed; refresh the uncertain delivery');
-    const queue=live?.queue??new DeliveryQueue({directory:this.queueDir,sessionId:id,startPaused:true,completedIds:()=>[],onError:()=>{},onState:()=>{},execute:async()=>{throw new Error('Offline ACP queue cannot execute');}});
-    return {record,transcript,queue};
+    if(this.live.get(id)!==live||this.opening.has(id)||live?.cleanup||this.index.snapshotVersion(id)!==version)
+      throw new Error('ACP session ownership changed; refresh the uncertain delivery');
+    const queue=live?.queue??this.offlineAcpQueue(record,version,transcript)??new DeliveryQueue({
+      directory:this.queueDir,sessionId:id,startPaused:true,completedIds:()=>[],userInputMutationReason:()=> 'read-only',
+      onError:()=>{},execute:async()=>{throw new Error('Offline ACP queue cannot execute');}});
+    return {record,transcript,queue,live};
   }
   async uncertainAcpDeliveries(id:string){
     return this.withWorkspace(this.index.get(id).workspaceId,async()=>{
@@ -1976,7 +2002,7 @@ export class Chats implements StructuredSessionPort {
   }
   async discardUncertainAcpDelivery(id:string,deliveryId:string,expectedText:string){
     return this.withWorkspace(this.index.get(id).workspaceId,async()=>{
-      const {transcript,queue}=await this.uncertainAcpState(id);
+      const {transcript,queue,live}=await this.uncertainAcpState(id);
       if(transcript.state.deliveries[deliveryId]!=='sent')throw new Error('This delivery has no persisted uncertain ACP outcome');
       const inputs=transcript.state.inputs?.filter(input=>input.id===deliveryId)??[],input=inputs[0];
       if(inputs.length!==1||!input||!isDeliveryPresentation(input.presentation)||input.presentation.displayText!==expectedText)throw new Error('The uncertain delivery summary changed; refresh it before discarding');
@@ -1985,6 +2011,7 @@ export class Chats implements StructuredSessionPort {
       if(pending&&(!pending.presentation||pending.presentation.displayText!==expectedText))throw new Error('The queued delivery changed; refresh it before discarding');
       // Exact ID only. A retry after a lost response cannot remove a later delivery.
       if(pending)queue.discardPending(new Set([deliveryId]));
+      if(!live)this.publishQueueState(id,queue);
       return {sessionId:id,deliveryId,discarded:true,alreadyDiscarded:!pending,nativeOutcome:'unknown' as const};
     });
   }

@@ -244,6 +244,43 @@ try{
  assert.ok(!next.includes('Conversation with the user in the last hour'));
  assert.ok(!next.includes('Please inspect this new worktree.'));
  assert.ok(!next.includes('[Historical context — recorded material only]'));
+ const pendingText='Original queued input with a file';
+ const cancelText='Withdraw this queued request offline';
+ const editedText='Use the same file with this edited request';
+ const attachmentPath=join(root,'queued-notes.txt');
+ await writeFile(attachmentPath,'Preserve the uploaded file during cold editing');
+ const {attachment}=await wire.rpc('chat.attachments.add',{workspaceId:ws.id,path:attachmentPath});
+ await writeFile(promptGate,'');
+ try {
+  await wire.rpc('chat.prompt',{sessionId:target.id,text:'This in-flight request will be stopped'});
+  await wire.rpc('chat.prompt',{sessionId:target.id,text:pendingText,attachmentIds:[attachment.id],busyMode:'queue'});
+  await wire.rpc('chat.prompt',{sessionId:target.id,text:cancelText,busyMode:'queue'});
+  const stopping=wire.rpc('chat.abort',{sessionId:target.id});
+  await new Promise(resolve=>setTimeout(resolve,100));
+  await rm(promptGate,{force:true});
+  await stopping;
+ } finally { await rm(promptGate,{force:true}); }
+ const beforeRestart=await wire.rpc('chat.open',{sessionId:target.id});
+ assert.equal(beforeRestart.pending,2);
+ const [edit,cancel]=beforeRestart.pendingUserInputs;
+ assert.deepEqual([edit.text,cancel.text],[pendingText,cancelText]);
+ await wire.close();wire=startWire();await wire.rpc('initialize');
+ const withoutAgent=await readFile(protocolPath,'utf8');
+ const coldQueue=await wire.rpc('chat.open',{sessionId:target.id});
+ assert.equal(coldQueue.passive,true);
+ assert.equal(coldQueue.handoffDelivery.status,'consumed');
+ assert.deepEqual(coldQueue.pendingUserInputs,beforeRestart.pendingUserInputs);
+ assert.ok(coldQueue.pendingUserInputs.every((item:any)=>item.editable));
+ assert.deepEqual((await wire.rpc('chat.handoffTargetState',{sessionId:target.id})).pendingUserInputs,coldQueue.pendingUserInputs);
+ await wire.rpc('chat.queue.edit',{sessionId:target.id,deliveryId:edit.deliveryId,expectedText:pendingText,text:editedText});
+ await wire.rpc('chat.queue.cancel',{sessionId:target.id,deliveryId:cancel.deliveryId,expectedText:cancelText});
+ assert.equal(await readFile(protocolPath,'utf8'),withoutAgent);
+ await wire.close();wire=startWire();await wire.rpc('initialize');
+ const replay=await wire.rpc('chat.open',{sessionId:target.id});
+ assert.equal(replay.acpSessionId,opened.acpSessionId);
+ assert.deepEqual(replay.pendingUserInputs,[{...edit,text:editedText}]);
+ assert.deepEqual(replay.pendingUserInputs[0].attachments.map((item:any)=>item.id),[attachment.id]);
+ assert.equal(await readFile(protocolPath,'utf8'),withoutAgent);
  await writeFile(join(root,'receipt.json'),JSON.stringify({pass:true,root,realGit:true,realHive:true,productionRpc:true,allFivePassiveNoCli:process.platform!=='win32',passiveCliMarkerCoverage:process.platform==='win32'?'POSIX-only executable marker; Windows zero-CLI not established by this fixture':'POSIX executable marker plus ACP protocol log',firstPlainInputTargetAcp:true,sameWorkerActualBackendSwitch:true,frozenIndexDiskCode:true,piMissingModelRetainsPending:true,explicitPiModelSelectionNoRequests:true,handoffStateRpc:{coldBytes:Buffer.byteLength(JSON.stringify(coldState)),fullColdBytes:Buffer.byteLength(JSON.stringify(cold)),rejectsStaleView:true,skipsCorruptDisplayTranscript:true,detectsCorruptFrozenContext:true,honorsDisabledProfile:true,liveQueueWhileRunning:true,disabledLiveProfilePreservesQueue:true},noInference:true},null,2));
  console.log('SESSION_HANDOFF_RUNTIME_OK '+root);
 }catch(error){await writeFile(join(root,'failure.json'),JSON.stringify({message:String(error),stack:error instanceof Error?error.stack:undefined},null,2));throw error;}

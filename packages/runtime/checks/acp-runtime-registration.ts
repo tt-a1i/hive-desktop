@@ -16,8 +16,9 @@ function start() {
  const exited=once(child,'exit');let sequence=0,stderr='';
  child.stderr.on('data',chunk=>{stderr+=String(chunk);});
  const pending=new Map<number,{resolve(value:any):void;reject(error:Error):void}>();
+ const queueStates=new Map<string, any>();
  const lines=createInterface({input:child.stdout});
- lines.on('line',line=>{const frame=JSON.parse(line);const request=pending.get(frame.id);if(request){pending.delete(frame.id);request.resolve(frame);}});
+ lines.on('line',line=>{const frame=JSON.parse(line);if(frame.event==='agent'&&frame.data.type==='state')queueStates.set(frame.data.sessionId,frame.data);const request=pending.get(frame.id);if(request){pending.delete(frame.id);request.resolve(frame);}});
  child.on('exit',()=>{for(const request of pending.values())request.reject(new Error('Runtime exited: '+stderr));pending.clear();});
  const rpc=(method:string,params:Record<string,unknown>={})=>new Promise<any>((resolve,reject)=>{
   const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(new Error('Member request timed out: '+method));},40000);
@@ -25,7 +26,7 @@ function start() {
   child.stdin.write(JSON.stringify({id,method,params})+'\n');
  });
  const dropReply=(method:string,params:Record<string,unknown>)=>{child.stdin.write(JSON.stringify({id:++sequence,method,params})+'\n');};
- return {child,rpc,dropReply,exited,close:async()=>{if(child.exitCode===null){await rpc('shutdown');await exited;}lines.close();assert.equal(child.exitCode,0);}};
+ return {child,rpc,dropReply,queueStates,exited,close:async()=>{if(child.exitCode===null){await rpc('shutdown');await exited;}lines.close();assert.equal(child.exitCode,0);}};
 }
 await writeFile(join(directory,'gitconfig'),'');await writeFile(join(directory,'base.txt'),'controlled ACP worktree fixture');
 const git=(...args:string[])=>execFileSync('git',['-C',directory,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgSign=false','-c','core.hooksPath='+join(directory,'no-hooks'),...args],{env:{...process.env,GIT_CONFIG_GLOBAL:join(directory,'gitconfig'),GIT_CONFIG_NOSYSTEM:'1'},stdio:'pipe'});
@@ -100,7 +101,14 @@ try{
  try{await reject('chat.acp.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:preview.deliveries[0].text});}finally{await rm(spool);await rename(held,spool);}
  assert.equal((await snapshot(uncertain.id)).pending,1,'Failed spool write must retain the delivery');
  const db=new DatabaseSync(join(dataDir,'hive','runtime.sqlite'),{readOnly:true});const inputRows=()=>db.prepare('SELECT sequence,worker_id,type,text FROM messages WHERE workspace_id = ? ORDER BY sequence').all(uncertainWorkspace.id);const auditBefore=inputRows();
- wire.dropReply('chat.acp.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:preview.deliveries[0].text});await wait(()=>snapshot(uncertain.id),(s:any)=>s.pending===0);
+ await wire.close();wire=start();await api('initialize');
+ const beforeDiscard=await snapshot(uncertain.id);assert.equal(beforeDiscard.passive,true);assert.equal(beforeDiscard.pending,1);
+ const protocolBeforeDiscard=await readFile(join(uncertainRoot,'protocol.jsonl'),'utf8');
+ wire.dropReply('chat.acp.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:preview.deliveries[0].text});
+ const changed=await wait(async()=>wire.queueStates.get(uncertain.id),state=>state?.pending===0);
+ assert.deepEqual(changed.pendingUserInputs,[]);
+ assert.equal((await snapshot(uncertain.id)).pending,0);
+ assert.equal(await readFile(join(uncertainRoot,'protocol.jsonl'),'utf8'),protocolBeforeDiscard,'Cold discard must not start the agent');
  const repeated=await api('chat.acp.discardUncertainDelivery',{sessionId:uncertain.id,deliveryId:failedId,expectedText:preview.deliveries[0].text});assert.equal(repeated.alreadyDiscarded,true);assert.equal(repeated.nativeOutcome,'unknown');assert.deepEqual(inputRows(),auditBefore);db.close();
  const transcriptBefore=JSON.parse(await readFile(retained.sessionFile,'utf8'));assert.equal(transcriptBefore.deliveries[failedId],'sent');
  await writeFile(join(uncertainRoot,'allow'),'controlled fixture permits a new input');await call(uncertain.id,null);
