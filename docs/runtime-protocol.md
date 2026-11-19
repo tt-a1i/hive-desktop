@@ -19,7 +19,7 @@ Hive 2.2.1 通过可重现 pnpm 补丁开放执行器 factory 与派生成员后
 | initialize | 空对象 | version、dataDir、hivePort |
 | hive.request | method、path、body? | Hive 原始响应；只接受本地 `/api/` 路径 |
 | chat.list | workspaceId | 当前工作区全部桌面会话列表（含归档，供身份/成员绑定复用） |
-| chat.search | query、archived?（默认 false）、offset?（默认 0） | 当前筛选的 matches（最多 100）及 total |
+| chat.search | query、archived?（默认 false）、offset?（默认 0）、workspaceId?、navigationOnly?（默认 false） | 当前筛选的 matches（最多 100）、total、incompleteHistory 与 incompleteHistoryCount。正文命中附带 bodyMatch。navigationOnly 为 true 时，session 仅返回导航所需字段。 |
 | chat.archive | sessionId、archived（布尔值） | 保存后的 session 与本工作区完整 sessions |
 | chat.create | workspaceId | 新会话及完整快照 |
 | chat.open | sessionId | 会话及完整快照 |

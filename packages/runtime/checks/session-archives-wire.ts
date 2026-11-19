@@ -93,6 +93,17 @@ try {
   assert.equal((await rpc('chat.search', { query: '' })).result.total, 0);
   const archive = await rpc('chat.search', { query: '', archived: true });
   assert.equal(archive.result.total, 4);
+  const navigation = await rpc('chat.search', { query: '', archived: true, navigationOnly: true });
+  assert.equal(navigation.error, undefined);
+  assert.deepEqual(navigation.result, {
+    ...archive.result,
+    matches: archive.result.matches.map((hit: any) => {
+      const {sessionFile, ...session} = hit.session;
+      assert.equal(sessionFile, null);
+      return {...hit, session};
+    }),
+  });
+  assert.ok((await rpc('chat.search', {query: '', navigationOnly: 'true'})).error);
   assert.equal((await rpc('chat.search', { query: '', archived: true, workspaceId })).result.total, 4);
   assert.equal((await rpc('chat.search', { query: '', archived: true, workspaceId: 'unknown-workspace' })).result.total, 0);
   assert.ok((await rpc('chat.search', { query: '', workspaceId: null })).error);

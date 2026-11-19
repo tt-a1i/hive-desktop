@@ -56,7 +56,7 @@ pub(crate) async fn search_page(
     offset: usize,
     workspace: Option<String>,
 ) -> Result<Page, String> {
-    let mut params = json!({"query":query,"archived":archived,"offset":offset});
+    let mut params = json!({"query":query,"archived":archived,"offset":offset,"navigationOnly":true});
     if let Some(workspace) = workspace {
         params["workspaceId"] = json!(workspace);
     }

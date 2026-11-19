@@ -22,7 +22,7 @@ pub struct ArchiveState {
     pub workspace_filter: Option<String>,
     pub items: Vec<SessionHit>,
     pub total: usize,
-    pub has_more: bool,
+    next_offset: Option<usize>,
     pub loading: bool,
     pub error: Option<String>,
     pub warning: Option<String>,
@@ -50,7 +50,7 @@ impl ArchiveState {
             workspace_filter: None,
             items: Vec::new(),
             total: 0,
-            has_more: false,
+            next_offset: None,
             loading: false,
             error: None,
             warning: None,
@@ -60,10 +60,20 @@ impl ArchiveState {
         }
     }
 
-    pub(super) fn cancel_search(&mut self) {
+    fn cancel_search(&mut self) {
         self.task = None;
         self.generation += 1;
         self.loading = false;
+    }
+
+    pub(crate) fn release_search(&mut self) {
+        self.cancel_search();
+        self.items = Vec::new();
+        self.total = 0;
+        self.next_offset = None;
+        self.error = None;
+        self.warning = None;
+        self.loaded = false;
     }
 }
 
@@ -73,8 +83,19 @@ impl HiveApp {
     }
 
     fn start_archive_search(&mut self, append: bool, debounce: bool, cx: &mut Context<Self>) {
-        self.archive_settings.cancel_search();
-        if !self.connected {
+        if !self.settings_panel || self.settings_section != crate::app::SettingsSection::Archive {
+            return;
+        }
+        let offset = if append {
+            let Some(offset) = self.archive_settings.next_offset else { return };
+            self.archive_settings.cancel_search();
+            offset
+        } else {
+            self.archive_settings.release_search();
+            self.archive_scroll.set_offset(point(px(0.), px(0.)));
+            0
+        };
+        if !self.connected || self.closing {
             cx.notify();
             return;
         }
@@ -86,11 +107,6 @@ impl HiveApp {
         let generation = self.archive_settings.generation;
         self.archive_settings.loading = true;
         self.archive_settings.error = None;
-        let offset = if append {
-            self.archive_settings.items.len()
-        } else {
-            0
-        };
         let query = self.archive_settings.search.read(cx).value().to_string();
         let workspace = self.archive_settings.workspace_filter.clone();
         cx.notify();
@@ -114,6 +130,9 @@ impl HiveApp {
                     Ok(page) => {
                         this.archive_settings.warning = page.warning();
                         this.archive_settings.total = page.total;
+                        let next = offset.saturating_add(page.matches.len());
+                        this.archive_settings.next_offset =
+                            (!page.matches.is_empty() && next < page.total).then_some(next);
                         if append {
                             for hit in page.matches {
                                 if !this
@@ -128,8 +147,6 @@ impl HiveApp {
                         } else {
                             this.archive_settings.items = page.matches;
                         }
-                        this.archive_settings.has_more =
-                            this.archive_settings.items.len() < this.archive_settings.total;
                         this.archive_settings.loaded = true;
                         this.archive_settings.error = None;
                     }
@@ -161,7 +178,7 @@ impl HiveApp {
         let weak = cx.weak_entity();
         let loaded_count = state.items.len();
         let total = state.total;
-        let has_more = state.has_more;
+        let has_more = state.next_offset.is_some();
         let loading = state.loading;
 
         v_flex()
@@ -280,7 +297,7 @@ impl HiveApp {
                     div().text_sm().text_color(Color::Muted.get(cx)).child(tr("后台尚未连接，连接后将显示已归档会话。")),
                 )))
             })
-            .when(self.connected && state.items.is_empty(), |panel| {
+            .when(self.connected && state.items.is_empty() && state.error.is_none(), |panel| {
                 let empty_text = if loading {
                     tr("正在加载已归档会话…")
                 } else if has_query || state.workspace_filter.is_some() {

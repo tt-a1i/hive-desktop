@@ -382,7 +382,7 @@ impl HiveApp {
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.settings_search_selected = 0;
         if section != SettingsSection::Archive {
-            self.archive_settings.cancel_search();
+            self.archive_settings.release_search();
         }
         self.settings_section = section;
         if section == SettingsSection::Profiles {
@@ -397,7 +397,7 @@ impl HiveApp {
         if section == SettingsSection::PiAccounts {
             self.load_pi_accounts(window.window_handle(), cx);
         }
-        if section == SettingsSection::Archive {
+        if section == SettingsSection::Archive && self.settings_panel {
             self.load_archived_settings(false, cx);
         }
         if section == SettingsSection::About {

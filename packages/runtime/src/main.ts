@@ -2,7 +2,7 @@ import { parseStructuredLaunch } from './structured-launch.js';
 import { isAgentDriver, validateAgentProfileLaunch, validateAgentProfileRef, type UpdateAgentProfile } from './agent-profiles.js';
 import type { HandoffInput,HandoffApplyInput } from './session-handoffs.js';
 import { HandoffError } from './handoff-operation-journal.js';
-import { SessionIdentityError } from './chat-index.js';
+import { SessionIdentityError, type ChatRecord } from './chat-index.js';
 import { HistoryOperationError } from './history-operation-journal.js';
 import { CodeCheckpointError } from './code-checkpoints.js';
 import { WorktreeInitializationError } from './project-worktree-initialization.js';
@@ -89,6 +89,12 @@ function text(params: Record<string, unknown>, name: string): string {
 
 function exact(params: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(params).some(key => !allowed.includes(key))) throw new Error('Unexpected request field');
+}
+function navigationSearchSession(session: ChatRecord) {
+  const {id, title, customTitle, pinned, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
+    backend, execution, profile} = session;
+  return {id, title, customTitle, pinned, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
+    backend, execution, profile};
 }
 function viewRevision(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)
@@ -325,11 +331,15 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));
     case 'chat.search': {
+      if (params.navigationOnly !== undefined && typeof params.navigationOnly !== 'boolean')
+        throw new TypeError('navigationOnly must be boolean');
       if (historySearches.has(requestId)) throw new Error('Search request id is already in use');
       const search = new AbortController();
       historySearches.set(requestId, search);
       try {
-        return await chats.search(params.query, params.archived, params.offset, params.workspaceId, search.signal);
+        const page = await chats.search(params.query, params.archived, params.offset, params.workspaceId, search.signal);
+        if (!params.navigationOnly) return page;
+        return {...page, matches: page.matches.map(hit => ({...hit, session: navigationSearchSession(hit.session)}))};
       } finally {
         historySearches.delete(requestId);
       }

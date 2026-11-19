@@ -138,6 +138,7 @@ impl HiveApp {
                         match event {
                             RuntimeEvent::Failed(error) => {
                                 this.connected = false;
+                                this.archive_settings.release_search();
                                 this.profiles.generation += 1;
                                 this.profiles.loading = false;
                                 this.profiles.snapshot = None;
@@ -192,6 +193,7 @@ impl HiveApp {
         self.flush_reading_positions();
         window.close_all_dialogs(cx);
         self.connection_generation += 1;
+        self.archive_settings.release_search();
         self.desktop_updates = Default::default();
         self.remote = Default::default();
         self.restarting = true;

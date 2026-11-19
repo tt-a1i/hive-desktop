@@ -184,7 +184,7 @@ impl HiveApp {
     pub fn close_settings(&mut self) {
         if self.settings_panel {
             self.settings_panel = false;
-            self.archive_settings.cancel_search();
+            self.archive_settings.release_search();
             self.pi_models.vault.close();
             self.program_setup_focus = None;
             self.executable_picker_generation += 1;
@@ -217,6 +217,8 @@ impl HiveApp {
         }
         if self.settings_section == SettingsSection::Archive {
             self.load_archived_settings(false, cx);
+        } else {
+            self.archive_settings.release_search();
         }
         if self.settings_section == SettingsSection::Remote { self.refresh_remote(cx); }
         self.team_autostaff_request(None, cx);
