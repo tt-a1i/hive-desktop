@@ -17,3 +17,7 @@ macOS 原生窗口用真实 Git 把会话工作树推送到本地 bare 仓库。
 本地验证 ZIP 复用了 `b4dfbc0` 的 Rust 可执行文件和同一份 Node，后台来自 `f6875ce`。ZIP 解包严格验签和逐项清单核对通过。包内 Node、PTY、Hive HTTP/SQLite、退出及 Git JSONL 检查通过。此次 macOS 验收使用受控 GitHub 对端。实际托管 GitHub 写入及当前 Windows 原生操作仍待验收。
 
 本地证据位于 `.artifacts/windows-native-update-plan-INkbVx/`，包含 `mac-replay/mixed-preview.ax.jsonl`、`mac-replay/mixed-confirmed.ax.jsonl`、`mac/packaged-wire.log`、`mac/archive-manifest.json` 和更新专项日志。ZIP SHA-256 为 `4429378d2ce2285110a048c13e81ba40902e4690306158b8cbd2e2b6a9d7a3c7`。
+
+## 安装退出确认复核
+
+GPT-6.2 Sol 发现验收脚本原先要求收到普通退出的 ID 0。批准安装时，桌面会发送一个带正整数请求 ID 的关闭请求。脚本现在逐项匹配检查、下载、准备安装和关闭请求的成功回复。两份真实 macOS 原窗口日志通过，健康更新的安装关闭 ID 为 34，失败回退为 39。普通退出、错配、失败或缺失响应均不能通过。证据在 `.artifacts/vault-revocation-tjXeb8/windows-handoff-trace.json`，Windows 原生窗口运行仍待补齐。
