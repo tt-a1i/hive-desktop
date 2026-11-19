@@ -47,7 +47,7 @@ impl HiveApp {
                     .await
             } else {
                 runtime
-                    .request("chat.reasoning", json!({"sessionId":id}))
+                    .request("chat.reasoning", json!({"sessionId":id,"viewRevision":open}))
                     .await
             };
             let failure = result.as_ref().err().cloned();
@@ -55,7 +55,7 @@ impl HiveApp {
             // native state instead of leaving an optimistic selection visible.
             let result = if failure.is_some() && mutation {
                 runtime
-                    .request("chat.reasoning", json!({"sessionId":id}))
+                    .request("chat.reasoning", json!({"sessionId":id,"viewRevision":open}))
                     .await
             } else {
                 result

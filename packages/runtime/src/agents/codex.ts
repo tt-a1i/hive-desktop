@@ -47,6 +47,7 @@ export interface CodexSessionOptions {
 export interface CodexSessionHandle extends PiSessionHandle {
   readonly threadId: string;
   readonly materialized: boolean;
+  canReleaseAfterBrowse(): boolean;
   hasContext(customType: string): boolean;
   dispose(): Promise<void>;
 }
@@ -356,6 +357,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   return {
     sessionId: threadId, threadId,
     get materialized() { return materialized; },
+    canReleaseAfterBrowse: () => defersNativeGoals && !active && !disposed,
     get sessionFile() { return response.thread.path ?? undefined; },
     history: () => events!.snapshot().history,
     snapshot: () => events!.snapshot(),

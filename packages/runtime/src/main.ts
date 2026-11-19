@@ -90,6 +90,11 @@ function text(params: Record<string, unknown>, name: string): string {
 function exact(params: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(params).some(key => !allowed.includes(key))) throw new Error('Unexpected request field');
 }
+function viewRevision(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)
+    throw new TypeError('viewRevision must be a positive safe integer');
+  return value;
+}
 function storeVersion(params: Record<string, unknown>): number {
   if (!Number.isSafeInteger(params.expectedStoreVersion) || (params.expectedStoreVersion as number) < 1) throw new Error('expectedStoreVersion is required');
   return params.expectedStoreVersion as number;
@@ -370,10 +375,17 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       if (params.deferHistoryImages !== undefined && typeof params.deferHistoryImages !== 'boolean') {
         throw new TypeError('deferHistoryImages must be a boolean');
       }
-      const snapshot = await chats.open(text(params, 'sessionId'), params.includeLiveHistory);
+      const id = text(params, 'sessionId');
+      const snapshot = await (params.viewRevision === undefined
+        ? chats.open(id, params.includeLiveHistory)
+        : chats.openDesktopView(id, viewRevision(params.viewRevision), params.includeLiveHistory));
       return params.deferHistoryImages ? {...snapshot, history: snapshot.history.map(
         (message, index) => desktopHistoryMessage(message, snapshot.historyMessageIds[index])
       )} : snapshot;
+    }
+    case 'chat.clearView': {
+      exact(params, ['viewRevision']);
+      return chats.clearDesktopView(viewRevision(params.viewRevision));
     }
     case 'chat.historyImage': {
       exact(params, ['workspaceId', 'sessionId', 'messageId', 'imageIndex']);
@@ -399,11 +411,19 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'chat.refreshPiModels': return chats.refreshPiModels(text(params, 'sessionId'));
     case 'chat.commands': return chats.commands(text(params, 'sessionId'));
     case 'chat.usage': return chats.usage(text(params, 'sessionId'));
-    case 'chat.permissionMode': return chats.mode(text(params, 'sessionId'), undefined, true);
+    case 'chat.permissionMode':
+    case 'chat.mode': {
+      const id = text(params, 'sessionId'), permission = method === 'chat.permissionMode';
+      return params.viewRevision === undefined ? chats.mode(id, undefined, permission)
+        : chats.readDesktopView(id, viewRevision(params.viewRevision), () => chats.mode(id, undefined, permission, true));
+    }
     case 'chat.setPermissionMode': return chats.mode(text(params, 'sessionId'), text(params, 'mode'), true);
-    case 'chat.mode': return chats.mode(text(params, 'sessionId'));
     case 'chat.setMode': return chats.mode(text(params, 'sessionId'), text(params, 'mode'));
-    case 'chat.reasoning': return chats.reasoning(text(params, 'sessionId'));
+    case 'chat.reasoning': {
+      const id = text(params, 'sessionId');
+      return params.viewRevision === undefined ? chats.reasoning(id)
+        : chats.readDesktopView(id, viewRevision(params.viewRevision), () => chats.reasoning(id, undefined, true));
+    }
     case 'chat.setReasoning': return chats.reasoning(text(params, 'sessionId'), text(params, 'level'));
     case 'chat.setModel': return chats.setModel(text(params, 'sessionId'), text(params, 'provider'), text(params, 'modelId'));
     case 'shutdown': {

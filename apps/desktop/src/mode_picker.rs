@@ -187,11 +187,11 @@ impl HiveApp {
                     .request(write_rpc, json!({"sessionId":id,"mode":mode}))
                     .await
             } else {
-                runtime.request(read_rpc, json!({"sessionId":id})).await
+                runtime.request(read_rpc, json!({"sessionId":id,"viewRevision":open})).await
             };
             let failure = result.as_ref().err().cloned();
             let result = if mutation && failure.is_some() {
-                runtime.request(read_rpc, json!({"sessionId":id})).await
+                runtime.request(read_rpc, json!({"sessionId":id,"viewRevision":open})).await
             } else {
                 result
             };

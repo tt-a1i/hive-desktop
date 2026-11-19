@@ -18,6 +18,7 @@ const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-functional-'));
 const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queued-input-mutation', 'queued-input-wire',
   'conversation-search', 'conversation-search-codex', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity', 'html-artifacts',
+  'codex-desktop-view',
   'member-worktrees-wire', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments',
   'codex-history-control', 'codex-fork-provenance', 'session-history-wire', 'session-history-rewind', 'checkpoint-restore',
   'agent-profiles', 'structured-launch', 'profile-runtime-binding', 'profile-runtime-wire',
@@ -39,7 +40,7 @@ try {
   await mkdir(join(directory, 'fixtures'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/codex-queue-peer.cjs'), join(directory, 'fixtures/codex-queue-peer.cjs'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/session-history-peer.cjs'), join(directory, 'fixtures/session-history-peer.cjs'));
-  for (const fixture of ['worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs', 'acp-runtime-peer.cjs', 'pi-vault-op.cs']) {
+  for (const fixture of ['worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs', 'acp-runtime-peer.cjs', 'pi-vault-op.cs', 'codex-desktop-view-peer.cjs']) {
     await copyFile(join(root, 'packages/runtime/checks/fixtures', fixture), join(directory, 'fixtures', fixture));
   }
   await copyFile(join(root, 'packages/runtime/checks/fixtures/git-remotes-wire-peer.cjs'), join(directory, 'fixtures/git-remotes-wire-peer.cjs'));

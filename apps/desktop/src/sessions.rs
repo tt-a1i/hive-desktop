@@ -238,6 +238,15 @@ impl HiveApp {
     }
 
     fn clear_active_session_only(&mut self, cx: &mut Context<Self>) {
+        self.open_request += 1;
+        if self.connected && !self.closing {
+            self.request(
+                "chat.clearView",
+                json!({"viewRevision": self.open_request}),
+                cx,
+                |_, _, _| {},
+            );
+        }
         self.collaboration.task_expanded = false;
         self.focus_project_input = false;
         self.conversation_sources.clear();
@@ -428,7 +437,6 @@ impl HiveApp {
         self.mode_picker = Default::default();
         self.command_picker = Default::default();
         self.reset_usage();
-        self.open_request += 1;
     }
     // Coalesce event bursts and serialize requests so older lists cannot replace newer ones.
     pub fn refresh_sessions(&mut self, cx: &mut Context<Self>) {
@@ -832,7 +840,7 @@ impl HiveApp {
         }
         self.request(
             "chat.open",
-            json!({"sessionId":id,"deferHistoryImages":true}),
+            json!({"sessionId":id,"deferHistoryImages":true,"viewRevision":request}),
             cx,
             move |this, value, cx| {
                 if this.open_request != request || this.workspace.as_ref() != Some(&request_workspace) || this.session.as_ref().map(|s| &s.id) != Some(&id)

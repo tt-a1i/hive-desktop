@@ -61,6 +61,7 @@ import { createTeamTool, createTeamCommand } from './team-tool.js';
 interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
   executionPath: string;
+  browseOnly: boolean;
   failure?: Error; lastErrorMessage?: string; reasoningFailure?: Error; modeChanging?: boolean; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string; handoffDelivery?: HandoffDelivery };
@@ -215,6 +216,9 @@ export class Chats implements StructuredSessionPort {
   private async initializationReady(record: ChatRecord) {await this.initialization?.assertReady(record.workspaceId, record.id);}
   private readonly live = new Map<string, LiveChat>();
   private readonly opening = new Map<string, Promise<LiveChat>>();
+  private desktopViewRevision = 0;
+  private desktopSession: string | undefined;
+  private readonly desktopReads = new Map<string, number>();
   private readonly sequences = new Map<string, number>();
   private readonly activating = new Map<string, Promise<void>>();
   private readonly startingForInput = new Set<string>();
@@ -1076,7 +1080,8 @@ export class Chats implements StructuredSessionPort {
       if(record.handoff)this.reconcileHandoffQueue(record,queue);
       this.pruneSettledDispatches(record, queue);
       if (earlyFailure) throw earlyFailure;
-      chat = { handle, queue, executionPath, aborted: false, ...(reasoningFailure && {reasoningFailure}) };
+      chat = { handle, queue, executionPath, aborted: false, browseOnly: record.backend === 'codex',
+        ...(reasoningFailure && {reasoningFailure}) };
       this.live.set(record.id, chat);
       return chat;
     } catch (error) { await handle.dispose(); throw error; }
@@ -1218,7 +1223,7 @@ export class Chats implements StructuredSessionPort {
       deliveryFailure: this.deliveryFailure(record.id, queue), completedDeliveryIds: [], runId: null,
       eventSequence: this.sequences.get(record.id) ?? 0};
   }
-  private async require(id: string): Promise<LiveChat> {
+  private async require(id: string, browse = false): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const requested=this.index.get(id);
     if(requested.rewindOperationId) await this.assertHistoryReady(requested);
@@ -1227,18 +1232,79 @@ export class Chats implements StructuredSessionPort {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     await this.initializationReady(this.index.get(id));
     await this.runnableIdentity(this.index.get(id));
-    const existing = this.live.get(id);
-    if (existing?.cleanup) {
-      await existing.cleanup;
-      return this.require(id);
+    const chat = this.live.get(id) ?? await this.requireOpening(id);
+    if (chat.cleanup) {
+      await chat.cleanup;
+      return this.require(id, browse);
     }
-    if (existing) return existing;
+    // Any operation outside the window's read requests owns the handle it gets
+    // back, including Hive start before its exit callback has been installed.
+    if (!browse) chat.browseOnly = false;
+    return chat;
+  }
+  private requireOpening(id: string): Promise<LiveChat> {
     const pending = this.opening.get(id);
     if (pending) return pending;
     const release=this.executionMutations?.begin(this.index.get(id).workspaceId);
     const opening = this.load(this.index.get(id)).finally(() => {this.opening.delete(id);release?.();});
     this.opening.set(id, opening);
     return opening;
+  }
+
+  private releaseDesktopBrowse(id: string): void {
+    if (this.closing || this.desktopSession === id || this.desktopReads.has(id)) return;
+    const chat = this.live.get(id);
+    if (!chat?.browseOnly || chat.cleanup || chat.failure || chat.onExit || chat.modeChanging ||
+      !chat.queue.isPaused || chat.queue.busy || chat.queue.pendingCount || chat.handle.interactions?.().length ||
+      !(chat.handle as CodexSessionHandle).canReleaseAfterBrowse()) return;
+    // Claim cleanup before doing anything asynchronous. New readers and Hive
+    // activation both go through require(), which waits for the old owner.
+    chat.cleanup = Promise.resolve().then(async () => {
+      try { await chat.handle.dispose(); }
+      catch (cause) {
+        throw new Error('Could not confirm the Codex process stopped. Restart the desktop background service to recover this conversation.', {cause});
+      }
+      if (this.live.get(id) === chat) this.live.delete(id);
+    });
+    void chat.cleanup.catch(error => console.error('[hive-desktop] browse process cleanup failed', error));
+  }
+
+  private setDesktopView(revision: number, id?: string) {
+    if (this.closing) throw new Error('Chat runtime is closing');
+    if (revision <= this.desktopViewRevision) throw new Error('Stale desktop conversation view');
+    const previous = this.desktopSession;
+    this.desktopViewRevision = revision;
+    this.desktopSession = id;
+    if (previous && previous !== id) this.releaseDesktopBrowse(previous);
+  }
+
+  clearDesktopView(revision: number) {
+    this.setDesktopView(revision);
+    return {ok: true};
+  }
+
+  async readDesktopView<T>(id: string, revision: number, read: () => Promise<T>): Promise<T> {
+    if (this.desktopSession !== id || this.desktopViewRevision !== revision)
+      throw new Error('Stale desktop conversation view');
+    this.desktopReads.set(id, (this.desktopReads.get(id) ?? 0) + 1);
+    try {
+      const result = await read();
+      if (this.desktopSession !== id || this.desktopViewRevision !== revision)
+        throw new Error('Stale desktop conversation view');
+      return result;
+    }
+    finally {
+      const remaining = this.desktopReads.get(id)! - 1;
+      if (remaining) this.desktopReads.set(id, remaining);
+      else this.desktopReads.delete(id);
+      this.releaseDesktopBrowse(id);
+    }
+  }
+
+  openDesktopView(id: string, revision: number, includeLiveHistory = true) {
+    this.index.get(id);
+    this.setDesktopView(revision, id);
+    return this.readDesktopView(id, revision, () => this.open(id, includeLiveHistory, true));
   }
   /** Recover only from this target's private durable receipt; never opens a vendor session. */
   private async reconcileHandoffOffline(record:ChatRecord){
@@ -1416,7 +1482,7 @@ export class Chats implements StructuredSessionPort {
     const record = await this.createRecord(workspaceId, backend, options);
     return this.open(record.id);
   }
-  async open(id: string, includeLiveHistory = true) {
+  async open(id: string, includeLiveHistory = true, browse = false) {
     try {
     const cleanup=this.live.get(id)?.cleanup;
     if(cleanup)await cleanup;
@@ -1444,7 +1510,7 @@ export class Chats implements StructuredSessionPort {
       const {readOnly,identityError,...snapshot}=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_FORK','Fork opened without activating an Agent'));
       return {...snapshot,readOnly:false,initialization:await this.initialization?.get(record.workspaceId,id)};
     }
-    const snapshot=this.snapshot(id,await this.require(id),includeLiveHistory);
+    const snapshot=this.snapshot(id,await this.require(id,browse),includeLiveHistory);
     return record.handoff?{...snapshot,passive:false,handoffSnapshot:await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}:snapshot; }
     catch (error) {
       if (!(error instanceof SessionIdentityError || error instanceof DispatchOriginError || error instanceof WorktreeInitializationError || error instanceof HandoffError || error instanceof GitWorktreeError)) throw error;
@@ -1910,6 +1976,8 @@ export class Chats implements StructuredSessionPort {
   async abort(id: string) {
     const chat = this.live.get(id) ?? (this.removing.has(this.index.get(id).workspaceId) ? undefined : await this.require(id));
     if (!chat) throw workspaceRemovalBlocked(this.index.get(id).workspaceId);
+    if (chat.cleanup) { await chat.cleanup; return {ok: true}; }
+    chat.browseOnly = false;
     const paused = chat.queue.pause();
     await chat.handle.abort();
     await paused;
@@ -1978,13 +2046,13 @@ export class Chats implements StructuredSessionPort {
     const chat=await this.require(id);
     return chat.handle.usage ? chat.handle.usage() : {source:record.backend,reports:[],notice:'该原生后端未提供用量读取接口。'};
   }
-  async mode(id: string, selected?: unknown, permission = false) {
+  async mode(id: string, selected?: unknown, permission = false, browse = false) {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);
     if(record.backend==='acp'){if(selected!==undefined)throw new Error('ACP native mode selection is not implemented');return {backend:'acp',selected:null,applied:null,pendingNextTurn:false,options:[],description:'ACP native modes are not implemented'};}
     if (selected !== undefined && typeof selected !== 'string') throw new TypeError('Session mode must be text');
     return this.withWorkspace(record.workspaceId, async () => {
-      const chat = await this.require(id);
+      const chat = await this.require(id, browse);
       const read = permission ? chat.handle.permissionMode?.bind(chat.handle) : chat.handle.mode?.bind(chat.handle);
       const write = permission ? chat.handle.setPermissionMode?.bind(chat.handle) : chat.handle.setMode?.bind(chat.handle);
       if (!read || !write) {
@@ -2019,14 +2087,14 @@ export class Chats implements StructuredSessionPort {
       }
     });
   }
-  async reasoning(id: string, level?: unknown) {
+  async reasoning(id: string, level?: unknown, browse = false) {
     const record = this.index.get(id);
     const workspaceId = record.workspaceId;
     this.assertWorkspaceAvailable(workspaceId);
     if(record.backend==='acp')throw new Error('ACP reasoning selection is not implemented');
     if (level !== undefined && typeof level !== 'string') throw new TypeError('推理强度必须是文本。');
     return this.withWorkspace(workspaceId, async () => {
-      const chat = await this.require(id);
+      const chat = await this.require(id, browse);
       if (!chat.handle.reasoning || !chat.handle.setReasoning) throw new Error('此后端尚未接入推理强度设置。');
       const decorate = (state: Awaited<ReturnType<NonNullable<PiSessionHandle['reasoning']>>>) => ({...state,
         ...(chat.handle.currentModel() && {model:chat.handle.currentModel()}),
