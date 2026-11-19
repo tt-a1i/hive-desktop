@@ -51,3 +51,9 @@ GPT-6.2 Sol 在真实 Hive 和 Git 工作树中复现了本地快照存储故障
 131 项 Rust 测试通过，1 项辅助进程入口按设计忽略。Windows MSVC 交叉检查通过。macOS 本地签名 ZIP 解包后通过严格验签、包内 Node、真实 PTY 和 Hive SQLite 冒烟，以及三项 HTML、产物来源和 Git 专项。macOS 测试机锁屏，当前包的原生翻页、重试和窗口内存仍待复验。当前 Windows 原生流程也待验。本轮未发布。
 
 证据位于 `.artifacts/artifact-source-pages-1JIexN/`，包括分配测量 `gutter-allocation-rollup.json`、解包专项 `extracted-functional-receipt.json`、`rust-tests.log` 和签名记录。ZIP SHA-256 为 `119a79ecc2df68db39665b674a6a88813be4ccfb14cbc7b7f0342992861a5a93`。
+
+Mac 解锁后用 `3bd07e3` 签名 ZIP 的实际解包应用复验。打开 8,200 行 HTML 文件，第一屏未显示末尾的原文。切到第二页能读到原第 500 行，返回后重新显示第一页。当本地快照目录不可用时，文件详情保留原文并显示可采取的恢复步骤。恢复目录后在同一窗口重试，WebKit 预览可以执行页面内计数。删掉原 HTML 并冷启动后，文件来源明确显示不可用，原工具卡仍能打开已保存的隔离预览并操作计数。先关闭预览再从主窗口退出，两轮均收到后台退出确认，记录的桌面和 Node 进程均结束。
+
+预览窗口聚焦时，从系统测试入口发送 ⌘Q 未触发正常退出，需要继续查明键盘事件归属。常规的先关闭预览再退出路径已通过。本轮使用隔离 Pi 历史夹具和实际窗口，未调用模型。通过的窗口收据、辅助功能树、原生日志和 RSS 原始样本位于 `.artifacts/artifact-source-pages-1JIexN/candidate-MDMzfM/`，失败的退出路径留在同级 `candidate-8XdvDo/`。
+
+另起应用只执行源码打开、翻页和关闭，全程没有打开 WebKit 预览。同一 8,200 行夹具的桌面 RSS 样本为打开前 122.1 MiB、阅读峰值 129.2 MiB、关闭后最高 130.1 MiB。这个单次样本未观察到关闭后 RSS 回落。源文件页对象的释放和整个进程的常驻页需分别验证。原始样本在同级 `candidate-e1iN5M/`。

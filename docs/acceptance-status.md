@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 停止时保留待发消息与原生搜索重连（2026-11-19）
+
+macOS 签名 ZIP `3bd07e3` 的原生窗口通过跨项目查找、分叉消息定位、断线清理和两次重连。真实 Hive HTTP、SQLite、队列文件和受控 Codex 协议对端验证了停止时保留原待发消息，显式继续后只投递一次。解包通过 12 项相关回归、严格验签和退出冒烟。Windows x86_64 MSVC 交叉检查通过，原生安装与真实 1Password 授权仍待验收。[队列对照](validation/2026-11-14-functional-input-search-references.md#追加被拒绝时停止并继续) · [原生搜索](validation/2026-11-19-unicode-history-search.md#搜索断线与重连的原生窗口对照)
+
 ## Codex 搜索与冷打开（2026-11-19）
 
 macOS 签名 ZIP `794e9f4` 在解包后通过实际 JSONL 对照。全局和项目搜索命中可冷打开的正文，分叉消息使用相同的投递 ID。五项相关包内回归、Hive HTTP/SQLite 和退出冒烟通过。Windows 通过 MSVC 交叉检查。当前 macOS 窗口的断线清理待解锁后复验。[搜索与冷恢复证据](validation/2026-11-19-unicode-history-search.md#codex-冷历史索引与全局搜索断线)
