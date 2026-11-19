@@ -97,6 +97,13 @@ try {
   const commit = await rpc('git.commit.preview', {workspaceId: workspace.id});
   assert.equal(commit.ok, true); assert.ok(commit.preview.changes.some((item: any) => item.repositoryPath === path));
   assert.deepEqual(commit.preview.outsideProjectPaths, []);
+  const summary = await rpc('git.commit.preview', {workspaceId: workspace.id, includePatch: false});
+  assert.equal(summary.ok, true);
+  assert.deepEqual(summary.preview, {...commit.preview, patch: ''});
+  const patch = await rpc('git.commit.preview', {workspaceId: workspace.id, includePatch: true, expectedVersion: summary.preview.version});
+  assert.equal(patch.ok, true);
+  assert.equal(patch.preview.version, summary.preview.version);
+  assert.equal(patch.preview.patch, git(repo, 'diff', '--cached', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD', '--'));
   const oldHead = git(repo, 'rev-parse', 'HEAD').trim();
   const malformed = await rpc('git.commit.apply', {workspaceId: workspace.id, expectedVersion: commit.preview.version,
     message: 'must not commit', includeOutsideProject: 'yes'});
@@ -105,6 +112,10 @@ try {
   await writeFile(join(repo, path), 'new selected stage\n');
   const newStage = await rpc('git.index.preview', params);
   assert.equal((await rpc('git.index.apply', {...params, expectedVersion: newStage.preview.version})).ok, true);
+  const obsoletePatch = await rpc('git.commit.preview', {workspaceId: workspace.id, includePatch: true, expectedVersion: summary.preview.version});
+  assert.equal(obsoletePatch.ok, false);
+  assert.equal(obsoletePatch.error.code, 'STALE_PREVIEW');
+  assert.equal(obsoletePatch.preview, undefined);
   const obsolete = await rpc('git.commit.apply', {workspaceId: workspace.id, expectedVersion: commit.preview.version, message: 'stale commit'});
   assert.equal(obsolete.ok, false); assert.equal(obsolete.committed, false); assert.equal(obsolete.error.code, 'STALE_PREVIEW');
   assert.equal(git(repo, 'rev-parse', 'HEAD').trim(), oldHead);

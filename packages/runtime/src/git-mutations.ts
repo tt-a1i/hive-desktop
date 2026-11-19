@@ -187,17 +187,19 @@ async function stagedChanges(workspace:GitWorkspaceVersion,options:GitReadOption
     if(!target)throw error('INVALID_GIT_OUTPUT','Missing staged path');result.push({repositoryPath:target,projectPath:target.startsWith(workspace.projectPrefix)?target.slice(workspace.projectPrefix.length):null,status,beforeMode:fields[0]!.slice(1),afterMode:fields[1]!,beforeOid:fields[2]!,afterOid:fields[3]!,...(target!==first&&{originalRepositoryPath:first})});}
   return result;
 }
-export async function previewGitCommit(projectRoot:string,options:GitReadOptions={}):Promise<GitCommitPreview>{
+export async function previewGitCommit(projectRoot:string,options:GitReadOptions={},request:{includePatch?:boolean;expectedVersion?:string}={}):Promise<GitCommitPreview>{
   const workspace=await getGitWorkspaceVersion(projectRoot,options);await noActiveOperation(workspace,options);
   const index=text(await git(workspace,['ls-files','--stage','-z'],options)).split('\0').filter(Boolean);
   if(index.some(entry=>entry.slice(0,entry.indexOf('\t')).split(' ')[2]!=='0'))throw error('UNMERGED_INDEX','Resolve and stage all conflicts before committing');
   const changes=await stagedChanges(workspace,options);if(!changes.length)throw error('NOTHING_STAGED','There are no staged changes to commit');
-  const patch=text(await git(workspace,['diff','--cached','--no-ext-diff','--no-textconv','--no-color','--ignore-submodules=dirty',...(workspace.headOid?[workspace.headOid]:[]),'--'],options));
   const outsideProjectPaths=[...new Set(changes.flatMap(change=>[change.repositoryPath,...(change.originalRepositoryPath?[change.originalRepositoryPath]:[])].filter(path=>!path.startsWith(workspace.projectPrefix))))].sort();
   const signingRequired=text(await git(workspace,['config','--bool','--get','commit.gpgSign'],options,undefined,undefined,true,[0,1])).trim()==='true';
   const hooks:string[]=[];for(const name of ['pre-commit','prepare-commit-msg','commit-msg','post-commit']){const path=resolve(workspace.repositoryRoot,text(await git(workspace,['rev-parse','--git-path',`hooks/${name}`],options,undefined,undefined,true)).replace(/\n$/,''));try{const hook=await lstat(path);if(hook.isFile()||hook.isSymbolicLink()){await access(path,constants.X_OK);hooks.push(name);}}catch(fault){if(!['ENOENT','EACCES'].includes((fault as NodeJS.ErrnoException).code??''))throw fault;}}
+  const version=hash(JSON.stringify({workspace,changes,signingRequired,hooks}));
+  if(request.expectedVersion!==undefined&&request.expectedVersion!==version)throw error('STALE_PREVIEW','HEAD, index or commit configuration changed; refresh the complete staged preview');
+  const patch=request.includePatch===false?'':text(await git(workspace,['diff','--cached','--no-ext-diff','--no-textconv','--no-color','--ignore-submodules=dirty',...(workspace.headOid?[workspace.headOid]:[]),'--'],options));
   if(JSON.stringify(await getGitWorkspaceVersion(projectRoot,options))!==JSON.stringify(workspace))throw error('CONCURRENT_CHANGE','Repository changed while preparing the complete staged preview');
-  const version=hash(JSON.stringify({workspace,changes,signingRequired,hooks}));return{version,workspace,changes,patch,outsideProjectPaths,signingRequired,hooks,hooksMayModifyIndex:true};
+  return{version,workspace,changes,patch,outsideProjectPaths,signingRequired,hooks,hooksMayModifyIndex:true};
 }
 function nativeFailure(fault:unknown,hooks:readonly string[]):GitMutationError{
   const detail=fault instanceof Error?fault.message:String(fault);const kind=/cannot lock ref|but expected|reference already exists/i.test(detail)?'CONCURRENT_CHANGE':fault instanceof GitMutationError&&['GIT_TIMEOUT','OUTPUT_LIMIT'].includes(fault.code)?fault.code:/Author identity unknown|unable to auto-detect|no email was given|empty ident name/i.test(detail)?'IDENTITY_REQUIRED':/gpg|failed to sign|signing failed|ssh-keygen|public key/i.test(detail)?'SIGNING_FAILED':hooks.length?'HOOK_REJECTED':'COMMIT_FAILED';
@@ -214,7 +216,7 @@ export async function commitGitIndex(projectRoot:string,request:GitCommitRequest
   let directory:string|undefined,installed=false,commitOid:string|null=null,committed=false,outcome:GitCommitResult|undefined;
   const partial=(code:string,message:string,indexUpdated=false):GitCommitResult=>(outcome={ok:false,committed:true,applied:true,commitOid,indexUpdated,warnings:['The commit exists. Do not automatically retry or reset HEAD. Refresh and inspect the repository.'],error:{code,message}});
   try{
-    const approved=await previewGitCommit(projectRoot,options);if(approved.version!==request.expectedVersion)throw error('STALE_PREVIEW','HEAD, index or commit configuration changed; refresh the complete staged preview');
+    const approved=await previewGitCommit(projectRoot,options,{includePatch:false,expectedVersion:request.expectedVersion});
     if(approved.outsideProjectPaths.length&&request.includeOutsideProject!==true)throw error('OUTSIDE_PROJECT_CONFIRMATION','This commit includes staged paths outside the selected project; explicitly review and confirm the whole repository');
     directory=await mkdtemp(join(dirname(workspace.indexPath),'hive-desktop-commit-'));const prepared=join(directory,'index');const original=await indexBytes(workspace.indexPath);if(!original)throw error('INDEX_MISSING','The staged index is missing');await preparedIndex(prepared,original,workspace.indexPath);
     // Native Git owns the prepared index's own lock. The real index remains

@@ -614,10 +614,15 @@ export class Chats implements StructuredSessionPort {
       }
     });
   }
-  async gitCommitPreview(workspaceId: string, sessionId?: unknown) {
+  async gitCommitPreview(workspaceId: string, sessionId?: unknown, includePatch?: unknown, expectedVersion?: unknown) {
     const directory = await this.executionDirectory(workspaceId, sessionId);
     try {
-      const preview = await previewGitCommit(directory);
+      if (includePatch !== undefined && typeof includePatch !== 'boolean') throw new GitMutationError('INVALID_ARGUMENT', 'includePatch must be a boolean');
+      if (expectedVersion !== undefined && (typeof expectedVersion !== 'string' || !/^[a-f0-9]{64}$/.test(expectedVersion))) throw new GitMutationError('INVALID_VERSION', 'Refresh the complete staged preview before loading its patch');
+      const preview = await previewGitCommit(directory, {}, {
+        ...(includePatch !== undefined && {includePatch}),
+        ...(expectedVersion !== undefined && {expectedVersion}),
+      });
       this.assertWorkspaceAvailable(workspaceId);
       return {ok: true as const, preview};
     } catch (error) {

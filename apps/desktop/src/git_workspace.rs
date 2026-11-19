@@ -300,11 +300,19 @@ struct CommitPreview {
     version: String,
     workspace: Identity,
     changes: Vec<StagedChange>,
-    patch: SharedString,
     outside_project_paths: Vec<String>,
     signing_required: bool,
     hooks: Vec<String>,
     hooks_may_modify_index: bool,
+}
+#[derive(Deserialize)]
+struct CommitPatchResponse {
+    version: String,
+    patch: SharedString,
+}
+enum CommitPatch {
+    Loading { _task: Task<()> },
+    Ready(Result<SharedString, Fault>),
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -359,6 +367,7 @@ impl Fault {
             "FILE_LIMIT" => tr("文件超过读取大小限制"),
             "DIFF_LIMIT" | "OUTPUT_LIMIT" => tr("Git 输出超过大小限制"),
             "CONCURRENT_CHANGE" => tr("读取期间仓库发生变化，请刷新后重试"),
+            "STALE_PREVIEW" => tr("暂存内容已变化，请重新预览提交。"),
             "GIT_TIMEOUT" => tr("Git 读取超时，请刷新后重试"),
             "OUTSIDE_PROJECT_RENAME" => tr("重命名源文件位于项目范围外，请从仓库根项目查看"),
             _ => tr("读取 Git 信息失败"),
@@ -449,7 +458,8 @@ pub(crate) struct GitWorkspace {
     commit_scroll: ScrollHandle,
     outside_scroll: ScrollHandle,
     commit_patch_scroll: ScrollHandle,
-    commit_patch_visible: bool,
+    commit_patch: Option<CommitPatch>,
+    reload_commit_patch_on_open: bool,
     remotes: Option<Entity<remotes::RemotePanel>>,
     show_remotes: bool,
 }
@@ -490,7 +500,7 @@ impl HiveApp {
                     if !this.current(cx) {
                         this.index_generation += 1;
                         this.index_preview = None;
-                        this.commit_preview = None;
+                        this.clear_commit_preview();
                         if this.index_busy {
                             this.index_refresh_required = true;
                         }
@@ -567,7 +577,8 @@ impl HiveApp {
                 commit_scroll: ScrollHandle::new(),
                 outside_scroll: ScrollHandle::new(),
                 commit_patch_scroll: ScrollHandle::new(),
-                commit_patch_visible: false,
+                commit_patch: None,
+                reload_commit_patch_on_open: false,
                 remotes,
                 show_remotes: false,
             };
@@ -623,6 +634,9 @@ impl HiveApp {
                     } else if ws.reload_diff_on_open {
                         ws.load_diff(cx);
                     }
+                    if std::mem::take(&mut ws.reload_commit_patch_on_open) {
+                        ws.load_commit_patch(cx);
+                    }
                 });
             });
         }
@@ -644,6 +658,10 @@ impl HiveApp {
                 if !ws.preview_mock && (ws.diff.is_some() || ws.diff_loading || ws.diff_error.is_some()) {
                     ws.reload_diff_on_open = true;
                     ws.clear_file_diff(cx);
+                }
+                if ws.commit_patch.is_some() {
+                    ws.hide_commit_patch();
+                    ws.reload_commit_patch_on_open = true;
                 }
             });
         }
@@ -848,9 +866,7 @@ impl GitWorkspace {
         }
         self.index_generation += 1;
         self.index_preview = None;
-        self.commit_preview = None;
-        self.commit_include_outside = false;
-        self.commit_patch_visible = false;
+        self.clear_commit_preview();
         self.status_generation += 1;
         self.reload_diff_on_open = false;
         let generation = self.status_generation;
@@ -942,8 +958,7 @@ impl GitWorkspace {
         self.selected = index;
         self.index_generation += 1;
         self.index_preview = None;
-        self.commit_preview = None;
-        self.commit_include_outside = false;
+        self.clear_commit_preview();
         self.index_error = None;
         self.index_notice = None;
         self.reload_diff_on_open = false;
@@ -1061,8 +1076,7 @@ impl GitWorkspace {
         let generation = self.index_generation;
         self.index_busy = true;
         self.index_preview = None;
-        self.commit_preview = None;
-        self.commit_include_outside = false;
+        self.clear_commit_preview();
         self.index_error = None;
         self.index_notice = None;
         let workspace = self.workspace.clone();
@@ -1150,9 +1164,7 @@ impl GitWorkspace {
         let generation = self.index_generation;
         self.index_busy = true;
         self.index_preview = None;
-        self.commit_preview = None;
-        self.commit_include_outside = false;
-        self.commit_patch_visible = false;
+        self.clear_commit_preview();
         self.commit_result = None;
         self.index_error = None;
         self.index_notice = None;
@@ -1165,7 +1177,7 @@ impl GitWorkspace {
                 if !valid { this.index_busy = false; cx.notify(); }
                 valid
             }).ok() != Some(true) { return; }
-            let result = runtime.request("git.commit.preview", git_params(json!({"workspaceId":workspace}), &session)).await
+            let result = runtime.request("git.commit.preview", git_params(json!({"workspaceId":workspace,"includePatch":false}), &session)).await
                 .map_err(Fault::transport).and_then(|value| decode::<CommitPreview>(value, "preview"));
             let _ = this.update(cx, |this, cx| {
                 this.index_busy = false;
@@ -1180,8 +1192,59 @@ impl GitWorkspace {
             });
         }).detach();
     }
+    fn hide_commit_patch(&mut self) {
+        self.commit_patch = None;
+        self.commit_patch_scroll = ScrollHandle::new();
+        self.reload_commit_patch_on_open = false;
+    }
+    fn clear_commit_preview(&mut self) {
+        self.commit_preview = None;
+        self.commit_include_outside = false;
+        self.hide_commit_patch();
+    }
+    fn load_commit_patch(&mut self, cx: &mut Context<Self>) {
+        if self.commit_patch.is_some() || !self.current(cx) {
+            return;
+        }
+        let (Some(preview), Some(runtime)) = (&self.commit_preview, self.runtime.clone()) else {
+            return;
+        };
+        let version = preview.version.clone();
+        let params = git_params(
+            json!({"workspaceId": self.workspace, "includePatch":true, "expectedVersion":version}),
+            &self.session,
+        );
+        let task = cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request("git.commit.preview", params)
+                .await
+                .map_err(Fault::transport)
+                .and_then(|value| decode::<CommitPatchResponse>(value, "preview"))
+                .and_then(|response| {
+                    if response.version != version {
+                        Err(Fault {
+                            code: "STALE_PREVIEW".into(),
+                            message: "Patch response did not match the reviewed commit version".into(),
+                        })
+                    } else {
+                        Ok(response.patch)
+                    }
+                });
+            let _ = this.update(cx, |this, cx| {
+                if this.current(cx) {
+                    this.commit_patch = Some(CommitPatch::Ready(result));
+                } else {
+                    this.hide_commit_patch();
+                }
+                cx.notify();
+            });
+        });
+        self.commit_patch = Some(CommitPatch::Loading { _task: task });
+        cx.notify();
+    }
     fn apply_commit(&mut self, cx: &mut Context<Self>) {
-        if !self.current(cx) || self.busy(cx) || self.status_loading || self.index_refresh_required { return; }
+        if !self.current(cx) || self.busy(cx) || self.status_loading || self.index_refresh_required
+            || matches!(self.commit_patch, Some(CommitPatch::Loading { .. } | CommitPatch::Ready(Err(_)))) { return; }
         let Some(runtime) = self.runtime.clone() else { return; };
         let message = self.commit_message.read(cx).value().to_string();
         if message.trim().is_empty() {
@@ -1193,7 +1256,7 @@ impl GitWorkspace {
         if !preview.outside_project_paths.is_empty() && !self.commit_include_outside { return; }
         let version = preview.version.clone();
         let include_outside = self.commit_include_outside;
-        self.commit_preview = None;
+        self.clear_commit_preview();
         self.index_generation += 1;
         let generation = self.index_generation;
         self.index_busy = true;
@@ -1400,6 +1463,7 @@ impl Render for GitWorkspace {
                                         this.show_remotes = true;
                                         this.reload_diff_on_open = false;
                                         this.clear_file_diff(cx);
+                                        this.hide_commit_patch();
                                         if let Some(remotes) = &this.remotes {
                                             remotes.update(cx, |remote, cx| remote.activate(cx));
                                         }
@@ -2048,23 +2112,38 @@ impl Render for GitWorkspace {
                                 Button::new("git-commit-toggle-patch")
                                     .ghost()
                                     .xsmall()
-                                    .label(if self.commit_patch_visible { tr("隐藏已暂存补丁") } else { tr("查看已暂存补丁") })
+                                    .label(if self.commit_patch.is_some() { tr("隐藏已暂存补丁") } else { tr("查看已暂存补丁") })
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        this.commit_patch_visible = !this.commit_patch_visible;
-                                        cx.notify();
+                                        if this.commit_patch.is_some() {
+                                            this.hide_commit_patch();
+                                            cx.notify();
+                                        } else {
+                                            this.load_commit_patch(cx);
+                                        }
                                     })),
                             )
-                            .when(self.commit_patch_visible, |view| {
-                                view.child(
-                                    crate::text_reading::region(
+                            .when_some(self.commit_patch.as_ref(), |view, patch| {
+                                view.child(match patch {
+                                    CommitPatch::Loading { .. } => {
+                                        let message = tr("正在读取已暂存补丁…");
+                                        div().id("git-commit-patch-loading").role(Role::Status)
+                                            .aria_label(message).text_xs().child(message).into_any_element()
+                                    }
+                                    CommitPatch::Ready(Err(error)) => {
+                                        let message = error.text();
+                                        div().id("git-commit-patch-error").role(Role::Status)
+                                            .aria_label(message.clone()).text_xs().text_color(Color::Error.get(cx))
+                                            .child(message).into_any_element()
+                                    }
+                                    CommitPatch::Ready(Ok(patch)) => crate::text_reading::region(
                                         "git-commit-patch-region".into(),
                                         tr("已暂存补丁").to_owned(),
                                         &self.commit_patch_scroll,
                                         px(110.),
                                         cx,
                                     )
-                                    .child(crate::text_reading::selectable_text("git-commit-patch", preview.patch.clone())),
-                                )
+                                    .child(crate::text_reading::selectable_text("git-commit-patch", patch.clone())).into_any_element(),
+                                })
                             })
                             .when(preview.hooks_may_modify_index, |view| {
                                 view.child(div().text_xs().text_color(Color::Secondary.get(cx)).child(tr("原生 Git hooks 可能修改文件、索引和提交说明；签名使用仓库配置。")))
@@ -2100,7 +2179,9 @@ impl Render for GitWorkspace {
                                             .primary()
                                             .xsmall()
                                             .label(tr("确认提交"))
-                                            .disabled(self.index_busy || (!preview.outside_project_paths.is_empty() && !self.commit_include_outside))
+                                            .disabled(self.index_busy
+                                                || matches!(self.commit_patch, Some(CommitPatch::Loading { .. } | CommitPatch::Ready(Err(_))))
+                                                || (!preview.outside_project_paths.is_empty() && !self.commit_include_outside))
                                             .on_click(cx.listener(|this, _, _, cx| this.apply_commit(cx))),
                                     )
                                     .child(
@@ -2111,8 +2192,7 @@ impl Render for GitWorkspace {
                                             .disabled(self.index_busy)
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.index_generation += 1;
-                                                this.commit_preview = None;
-                                                this.commit_include_outside = false;
+                                                this.clear_commit_preview();
                                                 cx.notify();
                                             })),
                                     ),
@@ -2432,7 +2512,7 @@ impl Render for GitWorkspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, CommitPreview, CommitResult, FileDiff, IndexApplyResponse, IndexOperation, IndexPreview, Status, decode, git_params, valid_write_state};
+    use super::{Change, CommitPatchResponse, CommitPreview, CommitResult, FileDiff, IndexApplyResponse, IndexOperation, IndexPreview, Status, decode, git_params, valid_write_state};
     use serde_json::json;
     fn identity() -> serde_json::Value {
         json!({"projectRoot":"/repo/project","repositoryRoot":"/repo","projectPrefix":"project/","linkedWorktree":true,"branch":null,"headOid":"abc","detached":true,"unborn":false})
@@ -2442,13 +2522,17 @@ mod tests {
         let preview: CommitPreview = decode(json!({"ok":true,"preview":{
             "version":"v", "workspace":identity(), "changes":[
                 {"repositoryPath":"outside/new", "originalRepositoryPath":"outside/old", "projectPath":null,"status":"R100"}],
-            "patch":"diff content", "outsideProjectPaths":["outside/new", "outside/old"],
+            "outsideProjectPaths":["outside/new", "outside/old"],
             "signingRequired":true, "hooks":["pre-commit"], "hooksMayModifyIndex":true
         }}), "preview").unwrap();
         assert_eq!(preview.outside_project_paths, ["outside/new", "outside/old"]);
         assert_eq!(preview.changes[0].original_repository_path.as_deref(), Some("outside/old"));
         assert!(preview.signing_required && preview.hooks_may_modify_index);
-        assert_eq!(preview.patch, "diff content");
+        let patch: CommitPatchResponse = decode(json!({"ok":true,"preview":{
+            "version":"v", "patch":"diff content"
+        }}), "preview").unwrap();
+        assert_eq!(patch.version, preview.version);
+        assert_eq!(patch.patch, "diff content");
         let result: CommitResult = serde_json::from_value(json!({"ok":false,"committed":"unknown","applied":"unknown",
             "commitOid":null,"observedHeadOid":"abc","indexUpdated":false,"warnings":["inspect"],
             "error":{"code":"COMMIT_STATE_UNCERTAIN","message":"check HEAD"}})).unwrap();

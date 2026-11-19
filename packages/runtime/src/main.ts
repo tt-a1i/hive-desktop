@@ -294,7 +294,7 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'git.diff': return chats.gitDiff(text(params, 'workspaceId'), text(params, 'path'), params.comparison, params.sessionId);
     case 'git.index.preview': return chats.gitIndexPreview(text(params, 'workspaceId'), params.operation, params.paths, params.sessionId);
     case 'git.index.apply': return chats.gitIndexApply(text(params, 'workspaceId'), params.operation, params.paths, params.expectedVersion, params.sessionId);
-    case 'git.commit.preview': return chats.gitCommitPreview(text(params, 'workspaceId'), params.sessionId);
+    case 'git.commit.preview': return chats.gitCommitPreview(text(params, 'workspaceId'), params.sessionId, params.includePatch, params.expectedVersion);
     case 'git.commit.apply': return chats.gitCommitApply(text(params, 'workspaceId'), params.expectedVersion, params.message, params.includeOutsideProject, params.sessionId);
     case 'git.remotes': return chats.gitRemotes(text(params, 'workspaceId'), params.sessionId);
     case 'git.push.preview': return chats.gitPushPreview(text(params, 'workspaceId'), params.remote, params.branch, params.sessionId);
