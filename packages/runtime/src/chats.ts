@@ -20,7 +20,7 @@ import { ProjectWorktreeInitialization, WorktreeInitializationError, type Initia
 import { ProjectFileReferences } from './project-file-references.js';
 import { DispatchExecutionOrigins, DispatchOriginError } from './dispatch-execution-origins.js';
 import { artifactSourceRequest, ArtifactSourceError, resolveArtifactFile, type ArtifactSourceRequest, type ResolvedArtifact } from './artifact-files.js';
-import { snapshotHtmlArtifact } from './html-artifacts.js';
+import { savedHtmlPathPreview, snapshotHtmlArtifact } from './html-artifacts.js';
 import { searchProjectFiles, readProjectFile } from './project-files.js';
 import { ChatAttachments, attachmentIds, encodeImageInput, decodeImageInput } from './image-attachments.js';
 import { promptImages } from './prompt-images.js';
@@ -455,6 +455,12 @@ export class Chats implements StructuredSessionPort {
       // workspace and the same saved source address can retrieve it.
       await this.workspace(workspaceId);
       return snapshotHtmlArtifact(this.dataDir, workspaceId, request, () => this.readArtifactSource(workspaceId, request));
+    });
+  }
+  async artifactHtmlSavedPath(workspaceId: string, input: unknown, check: boolean) {
+    return this.withArtifactSource(workspaceId, input, async request => {
+      await this.workspace(workspaceId);
+      return savedHtmlPathPreview(this.dataDir, workspaceId, request, check);
     });
   }
   private async withArtifactSource<T>(workspaceId: string, input: unknown,

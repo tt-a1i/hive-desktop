@@ -38,6 +38,7 @@ impl HtmlPreview {
         cx: &mut App,
         source: ArtifactSource,
         html: String,
+        saved_path: bool,
     ) -> Result<(), String> {
         // The original viewer may have closed while its snapshot request was in flight.
         if Self::focus_existing(cx, &source) {
@@ -49,7 +50,11 @@ impl HtmlPreview {
             .unwrap_or(&source.path);
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some(format!("{} — {name}", tr("隔离 HTML 预览")).into()),
+                title: Some(format!("{} — {name}", tr(if saved_path {
+                    "旧版路径预览"
+                } else {
+                    "隔离 HTML 预览"
+                })).into()),
                 ..Default::default()
             }),
             window_bounds: Some(WindowBounds::centered(size(px(880.), px(660.)), cx)),

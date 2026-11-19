@@ -47,6 +47,16 @@ try {
   assert.equal(first.html, worktreeHtml);
   assert.equal(first.sha256, createHash('sha256').update(worktreeHtml).digest('hex'));
   assert.equal(first.sourceSessionId, isolated.id);
+  const callA = { ...request, sourceToolCallId: 'tool-draft' };
+  const callB = { ...request, sourceToolCallId: 'tool-final' };
+  const draft = await runtime.chats.artifactHtmlSnapshot(workspace.id, callA);
+  assert.equal(draft.html, worktreeHtml);
+  assert.equal(draft.sourceToolCallId, callA.sourceToolCallId);
+  const savedPath = () => runtime.chats.artifactHtmlSavedPath(workspace.id, request, false);
+  assert.deepEqual(await runtime.chats.artifactHtmlSavedPath(workspace.id, request, true), {available:true});
+  assert.deepEqual(await savedPath(), first);
+  await assert.rejects(runtime.chats.artifactHtmlSavedPath(workspace.id, callA, false), /ARTIFACT_INVALID_REQUEST/);
+  await assert.rejects(runtime.chats.artifactHtmlSnapshot(workspace.id, {path:artifact,sourceToolCallId:'tool-draft'}), /ARTIFACT_INVALID_REQUEST/);
   assert.equal((await runtime.chats.artifactHtmlSnapshot(workspace.id, { ...request, sourceSessionId: shared.id })).html, projectHtml);
   await assert.rejects(runtime.chats.artifactHtmlSnapshot(otherWorkspace.id, request), /ARTIFACT_SOURCE_MISMATCH/);
   await assert.rejects(runtime.chats.artifactHtmlSnapshot(workspace.id, { ...request, path: join(other, 'outside.html') }), /ARTIFACT_OUTSIDE_SOURCE/);
@@ -57,6 +67,11 @@ try {
   await assert.rejects(runtime.chats.artifactHtmlSnapshot(workspace.id, { ...request, path: 'invalid.html' }), /HTML_ARTIFACT_ENCODING/);
   await writeFile(worktreeFile, '<p>Changed live artifact</p>');
   assert.deepEqual(await open(), first);
+  assert.deepEqual(await runtime.chats.artifactHtmlSnapshot(workspace.id, callA), draft);
+  const final = await runtime.chats.artifactHtmlSnapshot(workspace.id, callB);
+  assert.equal(final.html, '<p>Changed live artifact</p>');
+  assert.equal(final.sourceToolCallId,callB.sourceToolCallId);
+  assert.notEqual(final.sha256,draft.sha256);
 
   await rm(join(execution.path, 'large.html'));
   await rm(join(execution.path, 'invalid.html'));
@@ -76,17 +91,27 @@ try {
   await runtime.close();
   runtime = await createDesktopRuntime(data, () => {});
   assert.deepEqual(await open(), first);
+  assert.deepEqual(await savedPath(), first);
+  assert.deepEqual(await runtime.chats.artifactHtmlSnapshot(workspace.id, callA), draft);
+  assert.deepEqual(await runtime.chats.artifactHtmlSnapshot(workspace.id, callB), final);
+  await assert.rejects(runtime.chats.artifactHtmlSnapshot(workspace.id,{...callA,sourceToolCallId:'unsaved-tool'}), /ARTIFACT_SOURCE_UNAVAILABLE/);
   await assert.rejects(runtime.chats.resolveArtifact(workspace.id, request), /ARTIFACT_SOURCE_UNAVAILABLE/);
+  assert.deepEqual(await runtime.chats.artifactHtmlSavedPath(otherWorkspace.id, request, true), {available:false});
+  await assert.rejects(runtime.chats.artifactHtmlSavedPath(otherWorkspace.id, request, false), /HTML_ARTIFACT_SNAPSHOT_MISSING/);
 
   const workspaceDigest = createHash('sha256').update(workspace.id).digest('hex');
   const directory = join(data, 'html-artifacts', workspaceDigest);
   const entries = await readdir(directory);
-  assert.equal(entries.length, 2);
+  assert.equal(entries.length, 4);
   assert.ok(entries.every(name => /^[a-f\d]{64}\.json$/.test(name)));
   const snapshotKey = createHash('sha256').update(JSON.stringify([artifact, undefined, undefined, isolated.id])).digest('hex');
   await writeFile(join(directory, `${snapshotKey}.json`), JSON.stringify({ version: 1, ...first, html: '<p>Corrupted</p>' }));
   await assert.rejects(open(), /HTML_ARTIFACT_SNAPSHOT_INVALID/);
-  console.log('HTML_ARTIFACTS_OK: real worktree provenance, workspace isolation, immutable snapshots, cold recovery, limits and integrity; no model requests.');
+  await assert.rejects(savedPath(), /HTML_ARTIFACT_SNAPSHOT_INVALID/);
+  const finalKey = createHash('sha256').update(JSON.stringify([artifact, undefined, undefined, isolated.id, callB.sourceToolCallId])).digest('hex');
+  await writeFile(join(directory,`${finalKey}.json`),JSON.stringify({version:1,...draft}));
+  await assert.rejects(runtime.chats.artifactHtmlSnapshot(workspace.id,callB), /HTML_ARTIFACT_SNAPSHOT_INVALID/);
+  console.log('HTML_ARTIFACTS_OK: real worktree provenance, separate tool versions, explicit legacy preview, cold recovery, limits and integrity; no model requests.');
 } finally {
   await runtime.close();
   await rm(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 200 });

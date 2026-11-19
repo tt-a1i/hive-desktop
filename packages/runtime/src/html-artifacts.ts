@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, mkdir, open, rm, stat, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, open, rm, stat, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { ArtifactSourceError, resolveArtifactFile, type ArtifactSourceRequest, type ResolvedArtifact } from './artifact-files.js';
 
@@ -12,6 +12,7 @@ export interface HtmlArtifactSnapshot {
   html: string;
   sha256: string;
   sourceSessionId?: string;
+  sourceToolCallId?: string;
   warning?: string;
 }
 
@@ -47,7 +48,7 @@ async function readBounded(path: string, maxBytes: number, source?: ResolvedArti
   }
 }
 
-async function readSnapshot(path: string): Promise<HtmlArtifactSnapshot | undefined> {
+async function readSnapshot(path: string, sourceToolCallId?: string): Promise<HtmlArtifactSnapshot | undefined> {
   let data: string;
   try { data = await readBounded(path, maxSnapshotBytes); }
   catch (error) {
@@ -58,31 +59,58 @@ async function readSnapshot(path: string): Promise<HtmlArtifactSnapshot | undefi
   try { record = JSON.parse(data); }
   catch (error) { throw new ArtifactSourceError('HTML_ARTIFACT_SNAPSHOT_INVALID', 'Saved HTML preview could not be read', { cause: error }); }
   if (record?.version !== 1 || typeof record.html !== 'string' || Buffer.byteLength(record.html) > maxHtmlBytes
-    || record.sha256 !== digest(record.html) || (record.sourceSessionId !== undefined && typeof record.sourceSessionId !== 'string')
+    || record.sha256 !== digest(record.html) || record.sourceToolCallId !== sourceToolCallId
+    || (record.sourceSessionId !== undefined && typeof record.sourceSessionId !== 'string')
     || (record.warning !== undefined && typeof record.warning !== 'string')) {
     throw new ArtifactSourceError('HTML_ARTIFACT_SNAPSHOT_INVALID', 'Saved HTML preview failed its integrity check');
   }
   return { html: record.html, sha256: record.sha256,
-    ...(record.sourceSessionId && { sourceSessionId: record.sourceSessionId }), ...(record.warning && { warning: record.warning }) };
+    ...(record.sourceSessionId && { sourceSessionId: record.sourceSessionId }),
+    ...(sourceToolCallId && { sourceToolCallId }), ...(record.warning && { warning: record.warning }) };
 }
 
-/** The first successful capture is immutable. The exact saved source identifies its snapshot. */
-export async function snapshotHtmlArtifact(dataDir: string, workspaceId: string, request: ArtifactSourceRequest,
-  resolveSource: () => Promise<ResolvedArtifact>): Promise<HtmlArtifactSnapshot> {
+function snapshotLocation(dataDir: string, workspaceId: string, request: ArtifactSourceRequest) {
   if (!['.html', '.htm'].includes(extname(request.path).toLowerCase())) {
     throw new ArtifactSourceError('HTML_ARTIFACT_INVALID_TYPE', 'Interactive preview requires an HTML artifact');
   }
   const directory = join(dataDir, 'html-artifacts', digest(workspaceId));
-  const key = digest(JSON.stringify([request.path, request.dispatchId, request.sourceAgentId, request.sourceSessionId]));
-  const path = join(directory, `${key}.json`);
+  // Keep the exact keys used by reports and by older path-only previews.
+  const source = [request.path, request.dispatchId, request.sourceAgentId, request.sourceSessionId];
+  if (request.sourceToolCallId) source.push(request.sourceToolCallId);
+  return {directory, path: join(directory, `${digest(JSON.stringify(source))}.json`)};
+}
+
+/** An older path preview has no known tool call. Open it only on explicit request. */
+export async function savedHtmlPathPreview(dataDir: string, workspaceId: string, request: ArtifactSourceRequest, check: boolean) {
+  if (!request.sourceSessionId || request.sourceToolCallId || request.dispatchId || request.sourceAgentId)
+    throw new ArtifactSourceError('ARTIFACT_INVALID_REQUEST', 'An older path preview requires only its original session and path');
+  const {path} = snapshotLocation(dataDir, workspaceId, request);
+  if (check) {
+    try { return {available: (await lstat(path)).isFile()}; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {available: false};
+      throw error;
+    }
+  }
   const saved = await readSnapshot(path);
+  if (!saved) throw new ArtifactSourceError('HTML_ARTIFACT_SNAPSHOT_MISSING', 'No older preview was saved for this path');
+  return saved;
+}
+
+/** The first successful capture for a tool call or report remains immutable. */
+export async function snapshotHtmlArtifact(dataDir: string, workspaceId: string, request: ArtifactSourceRequest,
+  resolveSource: () => Promise<ResolvedArtifact>): Promise<HtmlArtifactSnapshot> {
+  const {directory, path} = snapshotLocation(dataDir, workspaceId, request);
+  const saved = await readSnapshot(path, request.sourceToolCallId);
   if (saved) return saved;
 
   const source = await resolveSource();
   const html = await readBounded(source.path, maxHtmlBytes, source);
   if (html.includes('\0')) throw new ArtifactSourceError('HTML_ARTIFACT_ENCODING', 'HTML preview requires UTF-8 text');
   const result: HtmlArtifactSnapshot = { html, sha256: digest(html),
-    ...(source.sourceSessionId && { sourceSessionId: source.sourceSessionId }), ...(source.warning && { warning: source.warning }) };
+    ...(source.sourceSessionId && { sourceSessionId: source.sourceSessionId }),
+    ...(request.sourceToolCallId && {sourceToolCallId: request.sourceToolCallId}),
+    ...(source.warning && { warning: source.warning }) };
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const temporary = join(directory, `${randomUUID()}.part`);
   try {
@@ -90,7 +118,7 @@ export async function snapshotHtmlArtifact(dataDir: string, workspaceId: string,
     try { await link(temporary, path); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      const concurrent = await readSnapshot(path);
+      const concurrent = await readSnapshot(path, request.sourceToolCallId);
       if (concurrent) return concurrent;
       throw error;
     }

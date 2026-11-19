@@ -106,6 +106,25 @@ enum FileSource {
     },
 }
 impl FileSource {
+    async fn has_saved_path_preview(&self) -> bool {
+        let Self::Session { runtime, source } = self else {
+            return false;
+        };
+        if source.source_tool_call_id.is_none() || !html_preview::supported_path(&source.path) {
+            return false;
+        }
+        let mut source = source.clone();
+        source.source_tool_call_id = None;
+        let Ok(mut params) = serde_json::to_value(source) else {
+            return false;
+        };
+        params["check"] = serde_json::Value::Bool(true);
+        runtime
+            .request("artifact.htmlSavedPath", params)
+            .await
+            .is_ok_and(|value| value["available"] == true)
+    }
+
     async fn path(self) -> Result<ResolvedArtifact, PreviewError> {
         match self {
             Self::Artifact { runtime, source } | Self::Session { runtime, source } => {
@@ -173,6 +192,8 @@ struct FileViewer {
     error: Option<PreviewError>,
     loading: bool,
     html_loading: bool,
+    html_saved_path: bool,
+    html_error: Option<String>,
     scroll: ScrollHandle,
 }
 impl HiveApp {
@@ -297,6 +318,8 @@ fn open_viewer(
             error: None,
             loading: false,
             html_loading: false,
+            html_saved_path: false,
+            html_error: None,
             scroll: ScrollHandle::new(),
         };
         // HiveApp is still borrowed by the click handler. Read its target only
@@ -324,19 +347,27 @@ impl FileViewer {
         }
     }
 
-    fn preview_html(&mut self, cx: &mut Context<Self>) {
-        if self.html_loading || !self.current(cx) {
+    fn preview_html(&mut self, saved_path: bool, cx: &mut Context<Self>) {
+        if self.html_loading || !self.current(cx) || (saved_path && !self.html_saved_path) {
             return;
         }
         let Some((runtime, source)) = self.html_source() else {
             return;
         };
-        if HtmlPreview::focus_existing(cx, source) {
+        let (runtime, mut source) = (runtime.clone(), source.clone());
+        if saved_path {
+            source.source_tool_call_id = None;
+        }
+        if HtmlPreview::focus_existing(cx, &source) {
             return;
         }
-        let (runtime, source) = (runtime.clone(), source.clone());
+        let method = if saved_path {
+            "artifact.htmlSavedPath"
+        } else {
+            "artifact.htmlSnapshot"
+        };
         self.html_loading = true;
-        self.error = None;
+        self.html_error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
             #[derive(serde::Deserialize)]
@@ -344,16 +375,18 @@ impl FileViewer {
             struct Snapshot {
                 html: String,
                 source_session_id: Option<String>,
+                source_tool_call_id: Option<String>,
                 warning: Option<String>,
             }
             let result = match serde_json::to_value(&source) {
                 Ok(params) => runtime
-                    .request("artifact.htmlSnapshot", params)
+                    .request(method, params)
                     .await
                     .and_then(|value| {
                         let snapshot = serde_json::from_value::<Snapshot>(value)
                             .map_err(|error| error.to_string())?;
                         if snapshot.html.len() > 2 * 1024 * 1024
+                            || snapshot.source_tool_call_id != source.source_tool_call_id
                             || source.source_session_id.as_ref().is_some_and(|expected| {
                                 snapshot.source_session_id.as_ref() != Some(expected)
                             })
@@ -369,10 +402,12 @@ impl FileViewer {
                 if !this.current(cx) {
                     this.stale();
                 } else if let Err(error) = result.and_then(|snapshot| {
-                    this.warning = snapshot.warning;
-                    HtmlPreview::open(cx, source, snapshot.html)
+                    if let Some(warning) = snapshot.warning {
+                        this.warning = Some(warning);
+                    }
+                    HtmlPreview::open(cx, source, snapshot.html, saved_path)
                 }) {
-                    this.error = Some(PreviewError::Source(error));
+                    this.html_error = Some(error);
                 }
                 cx.notify();
             });
@@ -404,11 +439,13 @@ impl FileViewer {
         self.generation += 1;
         let generation = self.generation;
         self.loading = true;
+        self.html_saved_path = false;
         self.error = None;
         self.warning = None;
         let source = self.source.clone();
         cx.notify();
         cx.spawn(async move |this, cx| {
+            let saved_path = source.has_saved_path_preview().await;
             let resolved = source.path().await;
             let current = this
                 .update(cx, |this, cx| {
@@ -440,6 +477,7 @@ impl FileViewer {
                     return;
                 }
                 this.loading = false;
+                this.html_saved_path = saved_path;
                 match result {
                     Ok((text, path, warning)) => {
                         this.text = Some(text);
@@ -601,7 +639,20 @@ impl Render for FileViewer {
                                                 .label(if self.html_loading { tr("正在打开交互预览…") } else { tr("交互预览") })
                                                 .tooltip(tr("打开隔离预览。首次打开时保存副本，重开读取该副本。"))
                                                 .disabled(self.html_loading)
-                                                .on_click(cx.listener(|this, _, _, cx| this.preview_html(cx))),
+                                                .on_click(cx.listener(|this, _, _, cx| this.preview_html(false, cx))),
+                                        )
+                                    })
+                                    .when(self.html_saved_path, |row| {
+                                        row.child(
+                                            Button::new("saved-path-html-preview")
+                                                .custom(crate::palette::quiet_icon_variant(cx))
+                                                .compact()
+                                                .h(px(28.))
+                                                .px_2()
+                                                .label(tr("旧版路径预览"))
+                                                .tooltip(tr("打开旧版按路径保存的副本。旧副本没有记录对应工具。"))
+                                                .disabled(self.html_loading)
+                                                .on_click(cx.listener(|this, _, _, cx| this.preview_html(true, cx))),
                                         )
                                     })
                                     .child(
@@ -678,6 +729,13 @@ impl Render for FileViewer {
                         )),
                 )
             })
+            .when_some(
+                self.html_error.as_ref().map(|error| crate::language::localize_owned_error(error)),
+                |view, error| view.child(
+                    div().id("interactive-html-preview-error").role(Role::Alert).aria_label(error.clone())
+                        .text_xs().text_color(Color::Error.get(cx)).child(error),
+                ),
+            )
             .when_some(
                 self.error.as_ref().map(|error| error.text()),
                 |view, error| {

@@ -2164,6 +2164,8 @@
   "交互预览返回的内容或会话来源无效。": "The interactive preview returned invalid content or session provenance.",
   "正在打开交互预览…": "Opening interactive preview…",
   "交互预览": "Interactive preview",
+  "旧版路径预览": "Older path preview",
+  "打开旧版按路径保存的副本。旧副本没有记录对应工具。": "Open an older copy saved for this path. The original tool call was not recorded.",
   "打开隔离预览。首次打开时保存副本，重开读取该副本。": "Open an isolated preview. The first opening saves a copy that can be reopened.",
   "配置 1Password": "Set up 1Password",
   "关闭 1Password 设置": "Close 1Password settings",

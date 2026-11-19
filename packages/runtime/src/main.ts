@@ -298,6 +298,11 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       const {workspaceId: _workspaceId, ...source} = params;
       return chats.artifactHtmlSnapshot(text(params, 'workspaceId'), source);
     }
+    case 'artifact.htmlSavedPath': {
+      const {workspaceId: _workspaceId, check, ...source} = params;
+      if (check !== undefined && typeof check !== 'boolean') throw new TypeError('check must be boolean');
+      return chats.artifactHtmlSavedPath(text(params, 'workspaceId'), source, check === true);
+    }
     case 'dispatch.session': return chats.dispatchSession(text(params, 'workspaceId'), params.dispatchId, params.sourceAgentId);
     case 'chat.attachments.clipboard': {
       const workspace = text(params, 'workspaceId');

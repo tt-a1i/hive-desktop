@@ -24,6 +24,8 @@ pub(crate) struct ArtifactSource {
     pub source_agent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_tool_call_id: Option<String>,
 }
 impl ArtifactSource {
     pub(crate) fn report(
@@ -38,15 +40,17 @@ impl ArtifactSource {
             dispatch_id: dispatch.filter(|v| !v.is_empty()).map(str::to_owned),
             source_agent_id: agent.filter(|v| !v.is_empty()).map(str::to_owned),
             source_session_id: None,
+            source_tool_call_id: None,
         }
     }
-    pub(crate) fn session(workspace: &str, session: &str, path: &str) -> Self {
+    pub(crate) fn session(workspace: &str, session: &str, tool_call: &str, path: &str) -> Self {
         Self {
             workspace_id: workspace.into(),
             path: path.into(),
             dispatch_id: None,
             source_agent_id: None,
             source_session_id: Some(session.into()),
+            source_tool_call_id: Some(tool_call.into()),
         }
     }
 }
@@ -345,10 +349,12 @@ mod tests {
         let session = serde_json::to_value(ArtifactSource::session(
             "workspace",
             "original-session",
+            "call-1",
             "same.txt",
         ))
         .unwrap();
         assert_eq!(session["sourceSessionId"], "original-session");
+        assert_eq!(session["sourceToolCallId"], "call-1");
         assert!(session.get("dispatchId").is_none());
         assert!(session.get("sourceAgentId").is_none());
         let legacy =

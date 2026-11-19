@@ -384,7 +384,7 @@ impl HiveApp {
                                                     .gap_1()
                                                     .children(paths.into_iter().enumerate().map(
                                                         |(i, path)| {
-                                                            let source = self.session.as_ref().map(|session| crate::artifacts::ArtifactSource::session(&session.workspace_id, message.source_session_id.as_deref().unwrap_or(&session.id), &path));
+                                                            let source = self.session.as_ref().map(|session| crate::artifacts::ArtifactSource::session(&session.workspace_id, message.source_session_id.as_deref().unwrap_or(&session.id), &id, &path));
                                                             let target = source.as_ref().and_then(|source| self.artifact_target(&source.workspace_id, cx));
                                                             let unavailable = target.is_none();
                                                             Button::new(SharedString::from(
