@@ -15,3 +15,11 @@
 包内 Node、PTY、Hive HTTP/SQLite 和退出冒烟通过。Rust 测试 116 项通过，1 项子进程入口按设计忽略。Windows x86_64 MSVC 交叉检查通过。Windows 原生按键、物理输入法组字和窗口失活仍待走查。本轮未调用模型或发布。
 
 本地证据位于 `.artifacts/keybindings-native-8vXDP1/`，含签名包、原生退出日志、写盘故障前后的配置和 `receipt.json`。
+
+## 新增默认键时保留旧配置
+
+GPT-6.2 Sol 复现了合法旧配置在新版冷读时整份失效的问题。新版会先验证并保留显式绑定和停用设置，再为文件里原本缺失的操作填充默认键。若默认键已被用户的绑定占用，新增操作保持未分配。用户显式提交的重复绑定仍会被拒绝。读取旧文件不会改写磁盘。
+
+从 macOS ZIP 启动后，设置页按组合键筛选，确认旧配置的 Command-分号仍分配给全局搜索，Command-Shift-G 仍分配给会话查找。冲突的新增动作和原先显式停用的设置入口均保持未分配。在原生设置中再停用一条快捷键并保存，重开后修改保留，两个旧绑定也保持原值。此轮原生证据覆盖设置读回和保存。注入的旧组合键和作为对照的默认 Command-B 都没有触发动作，按键触发还需实测。
+
+Rust 124 项通过，1 项辅助入口按设计忽略。Windows MSVC 交叉检查通过。macOS ZIP 的原生程序来自 `ed68a8a`，复用已验收的 `e20b882` 后台和同一份 Node。签名、解包清单及包内冒烟通过。ZIP SHA-256 为 `1a503b2e3af5402c4063d100e2b32d56c6af7a810a8bf858a4c0df495f586053`。证据位于 `.artifacts/html-cold-reopen-nJbNHQ/` 的 `shortcut-save-receipt.json`、`native-worktree-proof/` 和 `archive-manifest.json`。

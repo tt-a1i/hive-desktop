@@ -37,6 +37,9 @@ let exited;
 let reader;
 try {
   if (canary) {
+    process.env.PI_CODING_AGENT_DIR = join(directory, 'offline-pi');
+    process.env.PI_OFFLINE = '1';
+    await mkdir(process.env.PI_CODING_AGENT_DIR);
     canary.listen(0, '127.0.0.1');
     await once(canary, 'listening');
   }
