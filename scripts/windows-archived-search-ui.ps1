@@ -115,7 +115,7 @@ function Reading-Viewport {
             $bounds.Bottom -gt $bottom -or -not (In-Window $control)) { continue }
         $rows += [ordered]@{ name = $name; y = [math]::Round($bounds.Top - $windowBounds.Top, 1) }
     }
-    return @($rows | Sort-Object y)
+    return @($rows | Sort-Object { $_.y })
 }
 function Wait-ReadingViewport([int]$Timeout = 25) {
     $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)

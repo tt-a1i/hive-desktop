@@ -4,86 +4,16 @@
 
 用户已取消语音输入，交付清单以本次更新为准。普通聊天输入与草稿照常使用。
 
-## 旧 Windows 包的检查点对照（2026-11-20）
-
-为验证原先达到 60 秒上限的确切程序包，专项回放从该包所属的同仓库 push 取回原版全套检查，仅换入新的检查点分组和运行器，并记录 ZIP 摘要、两份源码版本及实际替换文件哈希。当前版本的常规门禁仍执行全部新断言。旧包不具备后来新增的项目附件摘要检查能力，两者不能混作一次验收。版本匹配的 Windows 回放待执行。
-
-## Windows 密码库管道进程（2026-11-20）
-
-新增真实桌面启动路径的进程核对：Windows Desktop Job 启动打包运行时，隔离的假 op.exe 读取测试字段，让子孙持有管道，只终止后台，随后核对宿主、CLI 和子孙进程的实际句柄，以及无关进程仍存活。使用私有 HOME 和假引用，没有连接个人密码库。Windows 原生进程监督作业已通过。只终止桌面后台后，生产监视器收回同一桌面 Job 中的宿主、假 op.exe 和持有 stdout 管道的辅助进程，均以原始进程句柄核对，无关进程存活。未连接真实 1Password。[原生收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44621023302)
-
-## Windows 拒绝追加与停止后的队列（2026-11-20）
-
-新增窗口回放，使用同一个离线 Codex 对端，在主消息仍处理时明确拒绝追加，随后由用户点停止、编辑保留项、冷开并显式继续。窗口和磁盘分别核对拒绝与停止记录、原投递 ID、附件摘要和实际回合次数。受控本地运行时已通过；Windows 实际原生操作仍待回放。原有“回合先完成、追加随后被拒绝”的夹具默认行为保留。
-
-## Windows 交接预览来源与选区通过（2026-11-20）
-
-同一 Windows ZIP 在规范化测试路径后完成全部预览操作。UIA 读出来源会话、Agent、所选首尾正文和消息 ID、前后各一条遗漏，排除的正文没有出现在预览。取消后原历史哈希、草稿和会话数不变，Agent 运行数为零。后台确认关闭，三个记录进程均退出。验证范围为受控 ACP 来源、Pi 目标的离线预览和取消，未执行真实跨厂商投递。[Windows 实窗回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44616388325)
-
-## Windows 会话阅读位置冷开（2026-11-20）
-
-新增专用窗口回放，使用 81 条独立的离线历史消息，从中段滚动并记录阅读位置。切出再返回、退出再冷开后，分别核对保存的消息 ID、偏移、至少两条可视消息的相对位置及草稿。种子和后验校验已在本地验证；Windows 实际窗口滚动与冷恢复仍待验。首次 Windows 回放已滚至中段，截图显示第 41 至 44 行，但测试读取的持久化锚点未与可见行对应，冷启动尚未执行。首次证据上传遗漏了窗口 JSON，无法还原实际锚点。现在记录准确行范围和保存值，等待持久化状态在时限内稳定，并独立保存失败原因、历史及草稿核对结果。[首次窗口回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44618072132)
-
-## Windows 原生归档搜索及更新回退通过（2026-11-20）
-
-归档搜索已在工作树缺失、应用冷开的 Windows 窗口通过。UIA 读出唯一结果的标题、项目路径和正文命中摘要，打开后定位到原消息，显示原草稿和只读提示，发送禁用。原历史哈希、归档身份和哨兵未变，目录未重建，Agent 运行数保持为零。后台确认关闭，三个记录进程均退出。产品包 d5476eb，夹具 d00f324。[Windows 归档回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44613571276)
-
-相同 d5476eb 产品包与 51423de 夹具通过两个隔离更新场景。两次均从 UIA 读取确认标题。健康候选安装为 0.1.1；损坏候选自动回退至 0.1.0，旧程序 SHA-256 一致并保留重试缓存。两次均恢复原会话及草稿，所属进程全部退出、安装事务回收。另有 Windows 包内专项在已解包并写入安装计划后强杀准备进程，复核活跃归属保护及孤儿事务清理，并保留签名缓存。此项使用小型签名夹具；真实窗口结果见下方回放。仅使用私有渠道。[Windows 安装及回退](https://github.com/tt-a1i/hive-desktop/actions/runs/44610051238)
-
-## 同会话并发读取 Codex 模式（2026-11-20）
-
-同一窗口并发读取能力时，原实现会向同一个 Codex 进程重复发两组权限和协作模式查询。现在并发读取共享本次查询，每类只发一次，临时失败后仍可重试，不同会话独立。受控 JSONL 对端证实了实际请求数、断线后进程退出和队列内容不变。恢复探针两个请求连续不答复时约 10 秒返回，普通活动会话的两个查询连续不答复时仍可能等待约 60 秒。未改变超时或只读身份规则，没有调用模型。
-
-## Windows 检查点恢复门禁（2026-11-20）
-
-同一检查曾在 Windows 的 57.554 秒及 57.693 秒通过，另一次在 60.068 秒触及专项时限，日志只记录了启动。现在将范围和索引锁拒绝、部分恢复和外部写入冲突分开，各组保留 60 秒限制，记录每阶段及分组用时。比较并交换失败后的冲突、恢复与重试仍使用同一操作 ID。另两个 Windows 包（8b0b89e、d5476eb）均已通过当时全部 62 项包内功能检查，各自的窗口与更新结果另行记录。[超时作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44601384385) · [d5476eb 包内收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44605554518)
-
-## Windows 队列编辑与额度首次窗口结果（2026-11-20）
-
-队列回放已在 Windows 窗口打开编辑框并写入正文，普通草稿保持原样。保存时离线 Codex 对端未答复两项能力查询，编辑请求也一直等待。原队列 ID 和附件摘要仍在，没有自动投递。夹具现在回答这两项只读查询，对未知请求明确返回不支持，本地按窗口的请求顺序已完成编辑与撤回。修复夹具后，原 Windows ZIP 已通过真实编辑、撤回及重启后显式继续。普通草稿、原投递 ID、附件 ID 及 57 字节私有副本摘要均保留，编辑后的正文只发送一次，撤回项从未发送，最终待发为空。两次退出码为 0，后台均确认关闭。[完整 Windows 队列回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44614866570) [队列窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44611218114)
-
-额度首次回放未到达受控 CLI 协议。外层等待与 UIA 单控件等待同设为 30 秒，先结束的外层未留下窗口阶段收据。现在保留 UI 提前退出的原因、最后一个窗口操作和假对端收到的方法名；额度显示及进程退出仍待 Windows 实证。第二次已通过设置页驱动受控 CLI 收到 initialize、initialized、account/read 和 account/rateLimits/read。捕获进程归属时 CIM 命令失败，原收据不足以确定原因。回放现在预先验证 Windows 进程观察器可用，保留耗时及脱敏错误，检查真实 Job、CLI、管道后代和最终退出的要求不变。独立观察器在桌面使用的精简环境中两次预检均超时，尚未启动应用；同平台通过的原生 CLI 检查使用 runner 环境。现仅让测试观察器使用 runner 环境，受测应用及假 CLI 继续使用隔离配置。[诊断回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44618583460) [第二次原生回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44614978856) [额度窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44611211870)
-
-## Windows 无名称控件与读取更新收据（2026-11-20）
-
-更新回退后的窗口含有无名称的辅助功能节点。旧检查逐个读取控件名前缀时在该节点报错，尚未来得及核对实际更新收据。现在扫描文本时跳过无名节点，继续要求目标名称、当前窗口、会话与草稿准确匹配。队列、额度、快照和会话操作的同类前缀检查也采用相同处理。
-
-## Windows 隔离更新与回退分项实测（2026-11-20）
-
-Windows 私有渠道已完成一次健康更新至 0.1.1：同一会话和草稿恢复，所属进程退出，安装事务已回收。损坏候选也已核对回退状态、版本、旧程序哈希、重试缓存和磁盘草稿，但重开后的 UI 检查因无名称控件导致夹具异常，界面及最终进程退出仍待确认。该旧包两种确认标题均不可读，整项作业失败。[健康更新与回退分项收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44605555539)
-
-## Windows 归档搜索窗口的异步输入（2026-11-20）
-
-在修复了归档结果可访问名称的 Windows 包上，测试写入搜索词后立即读取，拿到旧值并退出。随后截屏显示完整搜索词和加载状态。原历史、草稿、归档状态和缺失的工作树均与测试前一致，Agent 运行数为零。这次还没有读到命中列表。回放现在分别等待准确的输入值、唯一正确结果、可视原文、原草稿以及禁用的发送按钮，各自有明确超时。[该次 Windows 作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44610191967)
-
-## 项目快照损坏后的恢复提示（2026-11-20）
-
-项目快照核验失败现在带有独立错误码，提示包含文件名和移除后重新选择的步骤，支持中英文。已在 macOS 原生窗口验证恢复操作：移除损坏附件并从会话工作树重新选择后，得到新的附件 ID，内容摘要与预期一致，草稿全文未变，Agent 运行数仍为零。在英文和中文两个独立的 macOS 原生窗口里，都读到了受损文件的准确名称和移除、重新选择的操作。两次请求均返回 PROJECT_COPY_CHANGED，草稿及原附件仍在，Agent 运行数均为零。
-
-## Windows 进程观察器超时（2026-11-20）
-
-Windows 的首次 CIM 进程查询曾超过 15 秒。该轮还在合成进程树夹具阶段，所属 Job 收到 EOF 后正常关闭。另四轮相同检查通过。现在先要求 CIM 能识别检查器自身的 PID，仅在预检出现同样的查询超时后重试一次。后续核对真实 CLI 归属、退出和残留的每次查询仍限时 15 秒，失败即报告。受控子进程验证了超时分类。新 Windows 作业首次预检用时 3,105 毫秒，native-clis 完整通过，无模型推理。[Windows 原生 CLI 回执](https://github.com/tt-a1i/hive-desktop/actions/runs/44611413606) [超时作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44597605905)
-
-## Windows 冷队列与只读额度实窗回放（2026-11-20）
-
-队列场景使用离线 Codex 对端，从原生窗口编辑和撤回冷态待发消息，显式继续后核对原消息 ID、附件摘要、独立草稿及实际发送次数。受控运行时种子已核对，Windows 窗口结果待回放。额度场景使用私有测试目录和临时假 CLI，要求原生设置页读出窗口时长与剩余额度，并核对所属 CLI、继承管道的后代退出且无关进程存活。离线协议自检通过，Windows 原生窗口与 Job 结果仍待回放。
-
-## 同长度损坏的项目附件（2026-11-20）
-
-在隔离工作区内，把项目快照的私有副本改成等长的不同内容，旧实现仍返回原摘要和已变更的文件。现在恢复项目引用及发送前均按创建时的 SHA-256 流式核验。结构化问题临交付时先核对项目快照，再同步核对全部文件是否存在及长度，最后确认原问题仍在等待。受控回放分别验证了副本被替换和另一普通附件在核验期间被移走：草稿可恢复，无原生回调；复原后只交付一次。macOS 原生窗口实测中，损坏快照的预览和发送均被拦截，草稿正文与附件仍在。恢复原字节并点重新加载后，预览恢复原内容，Agent 运行数为零。该候选包的错误提示只有英文，未指出具体文件。普通附件没有原始摘要时沿用现有核对方式。路径交付后到对端读取前仍有时间间隔。
-
-## 跨后端交接的原文与遗漏说明（2026-11-20）
-
-选区首尾的正文、消息来源以及前后遗漏现在同时提供给 macOS 和 Windows 的辅助功能接口。受控节点检查已核对原消息标识、Unicode 正文和尾部空白。Windows 专用回放要求从实际交接窗口读出选区和遗漏，取消后核对原历史、草稿、会话数及后台调用次数。macOS 签名包的真实窗口已通过：从四条原消息中选中间两条，辅助功能树能读到来源、选区首尾与前后各一条遗漏。取消后四条原文、草稿、会话列表和历史哈希保持一致，Agent 运行数为 0。Windows 旧包对照已进入确认窗口，但辅助功能树无法读到来源及遗漏；原历史、草稿和会话数保持一致，Agent 运行数为 0。新包的 Windows 窗口已能读出来源、首尾正文与 ID、两侧遗漏。测试预期使用 8.3 短路径，窗口显示同一目录的长路径，因此尚未验证取消和正常退出。夹具现在解析物理目录，并核对设备号与文件标识，仍要求 UIA 中的整个来源路径完全一致。[新包实窗](https://github.com/tt-a1i/hive-desktop/actions/runs/44612969560) [旧包受控对照](https://github.com/tt-a1i/hive-desktop/actions/runs/44608468552)
-
 ## 15 类功能的当前验收范围
 
-截至 2026-11-20。下表区分真实模型、受控对端和原生窗口，不将不同版本的分项实证合并为整包验收。Windows 固定 ZIP 已通过全部 **62 项包内功能检查**及终端桥接；其中工作树并发用时 60.919 秒，现行和旧版交接冷恢复分别用时 39.317 和 32.144 秒。该次作业后续窗口步骤失败，不能据此称整次作业通过。[包内收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44595481053)
+各次原生操作、故障复现和对应包版本见[验收记录](acceptance-status.md)。
+
+截至 2026-11-20。Windows 包 2299875 通过全部 **63 项包内功能检查**，未请求模型推理。检查点锁与范围保护用了 37.696 秒，部分恢复与冲突重试用了 38.884 秒，每组限时 60 秒。各行分别列出窗口、受控对端及真实模型证据。[Windows 63 项收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44615629118)
 
 | 功能 | 已验证的平台与对端 | 当前剩余范围 |
 | --- | --- | --- |
 | 1. 待发编辑、撤回与停止继续（[#40](https://github.com/tt-a1i/hive-desktop/issues/40)） | macOS 窗口及真实 Codex/Terra 验过编辑、撤回和冷恢复；真实 Hive/SQLite 与受控 Codex 覆盖拒绝追加后的停止、编辑和单次继续。[队列记录](validation/2026-11-14-functional-input-search-references.md)  Windows 受控 Codex 已验证冷态编辑、撤回、附件保留及显式单次继续。[原生窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44614866570) | Windows 窗口的拒绝追加、停止竞态及其他真实后端仍待验。 |
-| 2. 全文搜索、归档与阅读位置（[#38](https://github.com/tt-a1i/hive-desktop/issues/38)、[#41](https://github.com/tt-a1i/hive-desktop/issues/41)） | macOS 窗口覆盖归档搜索、元数据缺失提示及位置恢复；Windows 固定包通过 Unicode 等价查询、原消息定位和草稿返回。[Windows 作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44597607498)  Windows 缺失工作树的归档搜索、打开原消息及只读冷启动已通过。[窗口收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44613571276) | 其他历史组合和 Windows 阅读位置的长期恢复仍待验；旧 Codex 记录缺少标记时，无法可靠判断元数据丢失。 |
+| 2. 全文搜索、归档与阅读位置（[#38](https://github.com/tt-a1i/hive-desktop/issues/38)、[#41](https://github.com/tt-a1i/hive-desktop/issues/41)） | macOS 窗口覆盖归档搜索、元数据缺失提示及位置恢复；Windows 固定包通过 Unicode 等价查询、原消息定位和草稿返回。[Windows 作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44597607498)  Windows 缺失工作树的归档搜索、打开原消息及只读冷启动已通过。[窗口收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44613571276) | Windows 已保存中段锚点，本轮已修正测试可视行排序，冷开后的实际位置仍待验证；其他历史组合仍待验；旧 Codex 记录缺少标记时，无法可靠判断元数据丢失。 |
 | 3. 项目文件引用与快照（[#42](https://github.com/tt-a1i/hive-desktop/issues/42)） | macOS 和 Windows 原生窗口均已验证移走工作树源文件后，重启仍能读取私有快照。Windows 同名仓库文件保留不同内容，两次应用退出码均为 0，后台均确认关闭。另有真实 Codex/Terra 读取副本。[文件引用记录](validation/2026-11-19-project-reference-worktrees.md) · [Windows 冷开收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44604549909) | 其他真实后端消费引用仍待验。 |
 | 4. Git、Diff 与 PR（[#43](https://github.com/tt-a1i/hive-desktop/issues/43)） | macOS 窗口验证大补丁分页、跨页暂存预览、本地推送及受控 PR；macOS 提交/推送钩子与 Windows 提交钩子在后台强杀后均完成进程回收核对。[Windows 原生作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44597605905) · [Git 远端](validation/2026-11-19-native-git-remotes.md) | Windows 当前 Git/PR 窗口、实际托管 GitHub 写入及其他中断时点仍待验；远端是否已接受操作需重新核对。 |
 | 5. 独立工作树生命周期（[#45](https://github.com/tt-a1i/hive-desktop/issues/45)） | macOS 窗口验证清理、保留分支和只读恢复；真实 Git 多进程检查覆盖并发恢复与删除收据，Windows 固定包对应并发检查通过。[工作树清理](validation/2026-11-19-worktree-removal.md) · [Windows 包内结果](https://github.com/tt-a1i/hive-desktop/actions/runs/44595481053) | Windows 创建、初始化、清理和只读冷开整条窗口流程仍待验；外部 Git 操作不受 Hive 的内部锁保护。 |
@@ -94,7 +24,7 @@ Windows 的首次 CIM 进程查询曾超过 15 秒。该轮还在合成进程树
 | 10. 快捷键与输入法（[#44](https://github.com/tt-a1i/hive-desktop/issues/44)） | Windows 原生窗口通过美式→德式→美式布局切换及两项绑定；macOS Apple 拼音候选的 Return 与布局切换后的 Cmd+, 已验证。[Windows 作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44596595507) · [输入法范围](acceptance-status.md#windows-布局改变后的已保存快捷键2026-11-20) | Windows 输入法组合态、其他输入源及完整快捷键动作矩阵仍待验；现有结果只覆盖所列布局和按键。 |
 | 11. 原生会话模式与权限（[#49](https://github.com/tt-a1i/hive-desktop/issues/49)） | macOS 真实 Codex/Terra 验证 Plan/只读与 Default/工作区写入；受控对端和窗口覆盖失效模式、草稿与历史恢复。[模式验收](validation/2026-11-19-codex-session-modes-desktop.md) | Windows 当前模式窗口及其他真实厂商能力仍待验；内置 Pi 不提供等同的原生 plan/execute 与审批轴。 |
 | 12. 固定配置、多实例与 ACP 团队（[#52](https://github.com/tt-a1i/hive-desktop/issues/52)） | macOS 用同一已有账号的两套固定配置，完成真实 Codex 主控→官方 ACP 成员派单、显式汇报、文件核验和冷恢复。[真实协作](validation/2026-11-19-native-acp-collaboration.md) | Windows 真实模型团队流程、双账号与其他厂商组合和长期稳定性仍待验；这不是双账号隔离证据。 |
-| 13. 只读账号配额（[#48](https://github.com/tt-a1i/hive-desktop/issues/48)） | macOS 受控 CLI 和窗口核对额度、读取时间及辅助进程回收；另有早期真实账号只读查询。[配额验收](validation/2026-11-19-codex-profile-quota.md) | Windows 当前原生查询与回收、真实账号切换和额度变化仍待验；额度不等同于模型可用性。 |
+| 13. 只读账号配额（[#48](https://github.com/tt-a1i/hive-desktop/issues/48)） | macOS 受控 CLI 和窗口核对额度、读取时间及辅助进程回收；另有早期真实账号只读查询。[配额验收](validation/2026-11-19-codex-profile-quota.md)  Windows 原生页面从隔离 CLI 读取 78% / 300 分钟，核对进程树回收及无关进程存活。[窗口及进程回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44622613933) | 真实账号切换、额度随时间变化及厂商未提供的限制仍待验证。 |
 | 14. 桌面更新与回退（[#39](https://github.com/tt-a1i/hive-desktop/issues/39)） | macOS 已验证隔离更新、回退与多种中断恢复。Windows 私有渠道安装 0.1.1 和失败回退至原 0.1.0 均通过，标题可访问，同一会话草稿恢复并确认所属进程退出。[macOS 更新](validation/2026-11-19-macos-signed-update.md) · [Windows 两场景收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44610051238) | Windows 已有小型签名夹具的解包后中断收据。完整包在各中断点的窗口体验、长期跨版本升级和其他文件系统仍待验。 |
 | 15. 隔离 HTML 与 1Password（[#39](https://github.com/tt-a1i/hive-desktop/issues/39)） | macOS 窗口验证 HTML 预览与冷恢复；私有 `op` 夹具及 Pi SDK 回环验证引用和进程回收。[HTML](validation/2026-11-19-html-artifact-preview.md) · [1Password](validation/2026-11-19-pi-vault.md)  Windows 假 op 与管道后代已核对实际 Job 归属及后台强杀后的回收。[Windows 进程收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44621023302) | Windows **WebView2 子框架导航仍出现白页，隔离验收未通过**；真实 1Password 授权及解锁仍待验。 |
 
