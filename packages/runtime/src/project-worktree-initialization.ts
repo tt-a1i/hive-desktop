@@ -149,7 +149,7 @@ export class ProjectWorktreeInitialization {
       if (!['failed','cancelled','interrupted','unknown','pending'].includes(current.state.status)) fail('Setup cannot be retried while running or after completion.');
       if (this.launching.has(sessionId)) fail('Setup is still starting; refresh before retrying.');
       // Refuse a new attempt if the prior native run might still be owned/live.
-      if (current.state.runId) {const run = await this.runs.stop(workspaceId, current.state.runId); if (run.status === 'unknown' || run.status === 'interrupted') fail('Previous process exit is uncertain; setup cannot be retried.');}
+      if (current.state.runId) {const run = await this.runs.stop(workspaceId, current.state.runId, current.state.requestId); if (run.status === 'unknown' || run.status === 'interrupted') fail('Previous process exit is uncertain; setup cannot be retried.');}
       const state = this.save(current.state, {status: 'pending', requestId: randomUUID(), runId: undefined, errorCode: undefined});
       await this.launch(current.plan, state); return this.get(workspaceId, sessionId);
     });
@@ -160,7 +160,7 @@ export class ProjectWorktreeInitialization {
       if (!current || !current.plan.enabled || current.state.version !== expectedVersion) fail('Setup state changed; reload before skipping.');
       if (['succeeded','skipped'].includes(current.state.status)) fail('Setup already completed.');
       if (this.launching.has(sessionId)) fail('Setup is still starting; refresh before skipping.');
-      if (current.state.runId) {const stopped = await this.runs.stop(workspaceId, current.state.runId); if (stopped.status === 'unknown' || stopped.status === 'interrupted') fail('Native process exit is uncertain; setup remains blocked.');}
+      if (current.state.runId) {const stopped = await this.runs.stop(workspaceId, current.state.runId, current.state.requestId); if (stopped.status === 'unknown' || stopped.status === 'interrupted') fail('Native process exit is uncertain; setup remains blocked.');}
       this.check(workspaceId); await this.source(workspaceId, sessionId); // Revalidate ownership after awaiting exit.
       this.save(current.state, {status: 'skipped'}); return this.get(workspaceId, sessionId);
     });

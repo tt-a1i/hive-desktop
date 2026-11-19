@@ -1,6 +1,6 @@
 import type { ExecutionMutations } from './execution-mutations.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { HiveHost } from './hive-host.js';
@@ -39,7 +39,14 @@ export class ProjectScriptRuns {
     private readonly emit: (event: ScriptEvent) => void = () => {}, private readonly mutations?: ExecutionMutations) {
     this.directory = join(directory, 'project-script-runs'); mkdirSync(this.directory, {recursive: true, mode: 0o700});
     for (const name of readdirSync(this.directory)) if (/^[0-9a-f]{64}\.json$/.test(name)) {
-      const file = join(this.directory, name), run = this.read(file);
+      const file = join(this.directory, name);
+      let run: ProjectScriptRun;
+      try { run = this.read(file); }
+      catch (error) {
+        // Leave the unreadable receipt in place to block replay of its request.
+        if (error instanceof ProjectScriptRunError && error.code === 'SCRIPT_RUN_CORRUPT') continue;
+        throw error;
+      }
       if (!active(run)) continue;
       const log = statSync(this.logFile(run.runId), {throwIfNoEntry: false});
       this.persist(file, {...run, status: 'interrupted', finishedAt: Date.now(), logBytes: Math.min(LIMIT, log?.size ?? 0),
@@ -52,7 +59,7 @@ export class ProjectScriptRuns {
     try {
       const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       let run: ProjectScriptRun;
-      try { if (statSync(file).size > 128 * 1024) throw 0; run = JSON.parse(readFileSync(fd, 'utf8')) as ProjectScriptRun; }
+      try { if (fstatSync(fd).size > 128 * 1024) throw 0; run = JSON.parse(readFileSync(fd, 'utf8')) as ProjectScriptRun; }
       finally { closeSync(fd); }
       if (run.version !== 1 || !id(run.runId) || !id(run.requestId) || !workspaceId(run.workspaceId)
         || run.sessionId !== undefined && (typeof run.sessionId !== 'string' || !run.sessionId)
@@ -183,7 +190,9 @@ export class ProjectScriptRuns {
     const live = [...this.live.values()].find(value => value.run.workspaceId === workspace && value.run.requestId === requestId);
     if (live) return structuredClone(live.run);
     const undurable = [...this.undurable.values()].find(run => run.workspaceId === workspace && run.requestId === requestId);
-    return undurable ? structuredClone(undurable) : this.list(workspace).runs.find(run => run.requestId === requestId);
+    if (undurable) return structuredClone(undurable);
+    const file = this.requestFile(workspace, requestId);
+    return lstatSync(file, {throwIfNoEntry: false}) ? this.read(file) : undefined;
   }
   list(workspace: string): {runs: ProjectScriptRun[]} {
     if (!workspaceId(workspace)) fail('SCRIPT_INPUT_INVALID', 'Invalid workspace identity');
@@ -209,11 +218,16 @@ export class ProjectScriptRuns {
       return {run, output: {offset, nextOffset: offset + length, bytes: [...bytes.subarray(0, length)], truncated: run.logTruncated}};
     } finally {closeSync(fd);}
   }
-  async stop(workspace: string, runId: string): Promise<ProjectScriptRun> {
+  async stop(workspace: string, runId: string, requestId?: string): Promise<ProjectScriptRun> {
     if (!workspaceId(workspace) || !id(runId)) fail('SCRIPT_INPUT_INVALID', 'Invalid script run identity');
     const live = this.live.get(runId);
-    if (live && live.run.workspaceId !== workspace) fail('SCRIPT_RUN_NOT_FOUND', 'Script run was not found in this project');
-    if (!live) return this.owned(workspace, runId); // Historical interrupted/unknown runs are never resumed or relaunched.
+    if (live && (live.run.workspaceId !== workspace || requestId !== undefined && live.run.requestId !== requestId))
+      fail('SCRIPT_RUN_NOT_FOUND', 'Script run was not found in this project');
+    if (!live) {
+      if (requestId === undefined) return this.owned(workspace, runId);
+      const run = this.capturedRequest(workspace, requestId);
+      return run?.runId === runId ? run : fail('SCRIPT_RUN_NOT_FOUND', 'Script run was not found in this project');
+    }
     live.run.cancelRequested = true;
     let writeFailure: unknown;
     try {this.save(live);} catch (error) {writeFailure = error;}
