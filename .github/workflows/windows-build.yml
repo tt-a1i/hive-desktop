@@ -232,7 +232,7 @@ jobs:
           name: windows-native-workspace
           path: |
             target/windows-*.png
-            target/windows-html-preview-receipt.json
+            target/windows-html-preview-*.json
           if-no-files-found: warn
       - name: Verify update and rollback from the extracted Windows desktop
         if: ${{ !cancelled() && steps.extracted_runtime.outcome == 'success' }}
@@ -370,6 +370,7 @@ jobs:
         shell: pwsh
         env:
           HIVE_WINDOWS_PREVIEW_PATH: target/windows-replay-workspace.png
+          HIVE_WINDOWS_HTML_PREVIEW: '1'
         run: |
           node scripts/check-desktop-startup.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-replay.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -388,6 +389,7 @@ jobs:
           path: |
             target/windows-*.png
             target/windows-replay.log
+            target/windows-html-preview-*.json
             target/windows-terminal-smoke.log
             target/replay-provenance.json
             target/replay-functional-receipt.json

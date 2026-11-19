@@ -71,7 +71,10 @@ try {
   assert.equal(process.platform, 'win32', 'Requires an interactive Windows desktop');
   await mkdir(dirname(receiptPath), { recursive: true });
   root = await mkdtemp(join(tmpdir(), 'hive-win-image-memory-'));
-  const env = { ...process.env, NODE_OPTIONS: `--require="${guard}"`, PI_OFFLINE: '1' };
+  // Node parses backslashes in quoted NODE_OPTIONS as escapes on Windows.
+  // Forward slashes also work in Windows paths, including paths with spaces.
+  const guardOptionPath = guard.replaceAll('\\', '/');
+  const env = { ...process.env, NODE_OPTIONS: `--require="${guardOptionPath}"`, PI_OFFLINE: '1' };
   delete env.HIVE_DESKTOP_NODE;
   delete env.HIVE_DESKTOP_RUNTIME;
   // Preparation runs in its own process so that its Hive server and descendants

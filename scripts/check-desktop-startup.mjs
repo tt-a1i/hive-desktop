@@ -121,12 +121,40 @@ try {
         <button id="add">Increment packaged artifact</button><p id="state">Artifact has not run</p>
         <button id="picker">Check host file selection</button><input type="file" id="file"><p id="picker-result"></p>
         <button id="navigate">Check blocked navigation</button><p id="isolation">Checking artifact isolation</p>
+        <p id="script-state">Artifact script not started</p><p id="navigation-result"></p><p id="increment-result"></p><div id="checks"></div>
         <script>
+          document.querySelector('#script-state').textContent = 'Artifact script running';
+          const describeError = error => String(error && (error.stack || error.message) || error);
+          window.addEventListener('error', event => {
+            document.querySelector('#script-state').textContent = 'Artifact script error: ' + describeError(event.error || event.message);
+          });
+          window.addEventListener('unhandledrejection', event => {
+            document.querySelector('#script-state').textContent = 'Artifact promise error: ' + describeError(event.reason);
+          });
+          function report(name, result) {
+            const line = document.createElement('p');
+            line.textContent = name + ': ' + result;
+            document.querySelector('#checks').append(line);
+          }
           const canary = ${JSON.stringify(origin)};
           function denied(access) { try { access(); return false; } catch { return true; } }
-          const isolated = denied(() => parent.document.body) && denied(() => localStorage.getItem('fixture')) &&
-            typeof RTCPeerConnection === 'undefined' && typeof window.ipc === 'undefined' &&
-            window.open(canary + '/popup') == null;
+          function check(name, verify) {
+            try {
+              const passed = verify();
+              report(name, passed ? 'passed' : 'FAILED');
+              return passed;
+            } catch (error) {
+              report(name, 'ERROR ' + describeError(error));
+              return false;
+            }
+          }
+          const isolated = [
+            check('Parent document inaccessible', () => denied(() => parent.document.body)),
+            check('Opaque-origin storage inaccessible', () => denied(() => localStorage.getItem('fixture'))),
+            check('Realtime peer API absent', () => typeof RTCPeerConnection === 'undefined'),
+            check('Host IPC absent', () => typeof window.ipc === 'undefined'),
+            check('Popup rejected', () => window.open(canary + '/popup') == null),
+          ].every(Boolean);
           const imageBlocked = new Promise(resolve => {
             const image = new Image();
             image.onload = () => resolve(false);
@@ -134,10 +162,27 @@ try {
             image.src = canary + '/image';
           });
           const blocked = url => fetch(url).then(() => false, () => true);
-          Promise.all([imageBlocked, blocked(canary + '/fetch'), blocked(${JSON.stringify(pathToFileURL(hostFile).href)})])
-            .then(results => document.querySelector('#isolation').textContent =
-              isolated && results.every(Boolean) ? 'Artifact isolation verified' : 'Artifact isolation failed');
-          document.querySelector('#navigate').onclick = () => { location.href = canary + '/navigate'; };
+          const observe = (name, promise) => {
+            report(name, 'pending');
+            return promise.then(passed => {
+              report(name, passed ? 'passed' : 'FAILED');
+              return passed;
+            });
+          };
+          Promise.all([
+            observe('Image request rejected', imageBlocked),
+            observe('Fetch request rejected', blocked(canary + '/fetch')),
+            observe('Local file request rejected', blocked(${JSON.stringify(pathToFileURL(hostFile).href)})),
+          ]).then(results => {
+            document.querySelector('#isolation').textContent =
+              isolated && results.every(Boolean) ? 'Artifact isolation verified' : 'Artifact isolation failed';
+            document.querySelector('#script-state').textContent = 'Artifact checks completed';
+          });
+          document.querySelector('#navigate').onclick = () => {
+            document.querySelector('#navigation-result').textContent = 'Artifact navigation attempted';
+            location.href = canary + '/navigate';
+            setTimeout(() => document.querySelector('#navigation-result').textContent = 'Artifact retained after navigation', 250);
+          };
           document.querySelector('#picker').onclick = () => {
             const input = document.querySelector('#file');
             const clickBlocked = !input.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
@@ -152,6 +197,7 @@ try {
           const state = document.querySelector('#state');
           state.textContent = isolated ? 'Packaged artifact counter 0' : 'Artifact isolation failed';
           document.querySelector('#add').onclick = () => {
+            document.querySelector('#increment-result').textContent = 'Increment handler ran';
             if (isolated) state.textContent = 'Packaged artifact counter 1';
           };
         </script>`);

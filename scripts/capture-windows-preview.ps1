@@ -22,6 +22,15 @@ public static class PreviewWindow {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll", EntryPoint = "PostMessageW")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     [DllImport("dwmapi.dll")] public static extern int DwmFlush();
+    public delegate bool ChildWindowCallback(IntPtr window, IntPtr data);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr window, ChildWindowCallback callback, IntPtr data);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr window, System.Text.StringBuilder name, int size);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    public static IntPtr[] DescendantWindows(IntPtr parent) {
+        var children = new System.Collections.Generic.List<IntPtr>();
+        EnumChildWindows(parent, (window, data) => { children.Add(window); return children.Count < 64; }, IntPtr.Zero);
+        return children.ToArray();
+    }
 }
 '@
 [void][PreviewWindow]::SetProcessDPIAware()
@@ -30,9 +39,9 @@ $window = $app.MainWindowHandle
 if ($window -eq [IntPtr]::Zero -or $app.MainWindowTitle -ne 'Hive') {
     throw "Could not identify the fixture Hive window (title '$($app.MainWindowTitle)')."
 }
-function Save-FixtureWindow([string] $FilePath) {
+function Save-FixtureWindow([string] $FilePath, [IntPtr] $Handle = $window) {
     $rect = New-Object PreviewWindow+Rect
-    if (-not [PreviewWindow]::GetWindowRect($window, [ref]$rect)) { throw 'Window bounds unavailable.' }
+    if (-not [PreviewWindow]::GetWindowRect($Handle, [ref]$rect)) { throw 'Window bounds unavailable.' }
     $image = New-Object System.Drawing.Bitmap ($rect.Right - $rect.Left), ($rect.Bottom - $rect.Top)
     $hash = [System.Security.Cryptography.SHA256]::Create()
     try {
@@ -47,7 +56,7 @@ function Save-FixtureWindow([string] $FilePath) {
             try {
                 $dc = $graphics.GetHdc()
                 try {
-                    if (-not [PreviewWindow]::PrintWindow($window, $dc, 2)) { throw 'PrintWindow failed.' }
+                    if (-not [PreviewWindow]::PrintWindow($Handle, $dc, 2)) { throw 'PrintWindow failed.' }
                 } finally { $graphics.ReleaseHdc($dc) }
             } finally { $graphics.Dispose() }
             $stream = New-Object System.IO.MemoryStream
@@ -293,6 +302,76 @@ function Wait-Appearance([string] $Mode, [string] $Label) {
     throw "Appearance '$Mode' was not persisted and selected in the native window."
 }
 
+function Save-ArtifactDiagnostics($Preview, [string] $Phase, [string] $Reason) {
+    # Capture the owned WebView window before its finally block closes it. The
+    # outer failure handler can only see the parent source viewer afterward.
+    $directory = [System.IO.Path]::GetDirectoryName($OutputPath)
+    $mode = if ($env:HIVE_WINDOWS_HTML_REOPEN_ONLY -eq '1') { 'cold' } else { 'initial' }
+    $diagnosticsDeadline = [DateTime]::UtcNow.AddSeconds(8)
+    $rows = New-Object 'System.Collections.Generic.List[object]'
+    $nativeWindows = New-Object 'System.Collections.Generic.List[object]'
+    function Add-ArtifactAutomationTree($Element, [string] $Source) {
+        $queue = New-Object 'System.Collections.Generic.Queue[object]'
+        $queue.Enqueue([pscustomobject]@{ Element = $Element; Depth = 0 })
+        $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+        while ($queue.Count -gt 0 -and $rows.Count -lt 512 -and [DateTime]::UtcNow -lt $diagnosticsDeadline) {
+            $entry = $queue.Dequeue()
+            try {
+                $current = $entry.Element.Current
+                $rows.Add([pscustomobject]@{
+                    Source = $Source; Depth = $entry.Depth; Name = $current.Name
+                    AutomationId = $current.AutomationId; ControlType = $current.ControlType.ProgrammaticName
+                    ProcessId = $current.ProcessId; NativeWindowHandle = $current.NativeWindowHandle
+                    Enabled = $current.IsEnabled; Offscreen = $current.IsOffscreen
+                    Bounds = $current.BoundingRectangle.ToString()
+                })
+                if ($entry.Depth -ge 20) { continue }
+                $child = $walker.GetFirstChild($entry.Element)
+                while ($null -ne $child -and $queue.Count -lt 512 -and [DateTime]::UtcNow -lt $diagnosticsDeadline) {
+                    $queue.Enqueue([pscustomobject]@{ Element = $child; Depth = $entry.Depth + 1 })
+                    $child = $walker.GetNextSibling($child)
+                }
+            } catch {
+                $rows.Add([pscustomobject]@{ Source = $Source; Error = $_.Exception.Message })
+            }
+        }
+    }
+    try {
+        $handle = [IntPtr]$Preview.Current.NativeWindowHandle
+        if ($handle -ne [IntPtr]::Zero) {
+            try { Save-FixtureWindow (Join-Path $directory "windows-html-preview-$mode-$Phase.png") $handle }
+            catch { Write-Warning "Could not capture the owned HTML window: $_" }
+        }
+        $diagnosticsDeadline = [DateTime]::UtcNow.AddSeconds(8)
+        Add-ArtifactAutomationTree $Preview 'owned-preview'
+        if ($handle -ne [IntPtr]::Zero) {
+            # Record native children separately. A native WebView provider can
+            # be missing from the GPUI provider's descendant tree; do not change
+            # the assertion lookup until Windows evidence establishes that.
+            foreach ($childHandle in [PreviewWindow]::DescendantWindows($handle)) {
+                if ([DateTime]::UtcNow -ge $diagnosticsDeadline) { break }
+                $class = New-Object System.Text.StringBuilder 256
+                [void][PreviewWindow]::GetClassName($childHandle, $class, $class.Capacity)
+                [uint32]$owner = 0
+                [void][PreviewWindow]::GetWindowThreadProcessId($childHandle, [ref]$owner)
+                $nativeWindows.Add([pscustomobject]@{ Handle = $childHandle.ToInt64(); Class = $class.ToString(); ProcessId = $owner })
+                if ($rows.Count -lt 512 -and [DateTime]::UtcNow -lt $diagnosticsDeadline) {
+                    try {
+                        $child = [System.Windows.Automation.AutomationElement]::FromHandle($childHandle)
+                        Add-ArtifactAutomationTree $child "native-child-$($childHandle.ToInt64())"
+                    } catch { $rows.Add([pscustomobject]@{ Source = 'native-child'; Error = $_.Exception.Message }) }
+                }
+            }
+        }
+        [pscustomobject]@{
+            Mode = $mode; Phase = $Phase; Reason = $Reason; AppProcessId = $AppProcessId
+            PreviewName = $Preview.Current.Name; PreviewHandle = $handle.ToInt64()
+            NativeChildren = @($nativeWindows.ToArray()); RawAutomation = @($rows.ToArray())
+            AutomationLimit = 512
+        } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $directory "windows-html-preview-$mode-$Phase.json")
+    } catch { Write-Warning "Could not preserve the HTML diagnostic evidence: $_" }
+}
+
 function Inspect-FixtureHtml {
     [void](Wait-Action '打开关联派单' 20)
     Invoke-Action '打开关联派单'
@@ -317,7 +396,10 @@ function Inspect-FixtureHtml {
         $deadline = [DateTime]::UtcNow.AddSeconds(20)
         do {
             $element = $preview.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-            if ($null -ne $element) { return $element }
+            if ($null -ne $element) {
+                Write-Host "Artifact assertion matched: $Name (process $($element.Current.ProcessId), $($element.Current.ControlType.ProgrammaticName))"
+                return $element
+            }
             Start-Sleep -Milliseconds 150
         } while ([DateTime]::UtcNow -lt $deadline)
         throw "WebView2 did not expose '$Name'."
@@ -330,10 +412,16 @@ function Inspect-FixtureHtml {
         [void](Wait-ArtifactControl 'Host file selection blocked')
         $navigate = Wait-ArtifactControl 'Check blocked navigation'
         $navigate.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl 'Artifact retained after navigation')
         $increment = Wait-ArtifactControl 'Increment packaged artifact'
         $increment.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl 'Increment handler ran')
         [void](Wait-ArtifactControl 'Packaged artifact counter 1')
         Write-Host 'Opened the actual report in isolated WebView2 and interacted with its HTML.'
+        Save-ArtifactDiagnostics $preview 'passed' 'All original isolation and interaction assertions passed'
+    } catch {
+        Save-ArtifactDiagnostics $preview 'failure' $_.Exception.Message
+        throw
     } finally {
         $previewHandle = [IntPtr]$preview.Current.NativeWindowHandle
         if ($previewHandle -eq [IntPtr]::Zero -or -not [PreviewWindow]::PostMessage($previewHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {

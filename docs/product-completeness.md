@@ -4,6 +4,8 @@
 
 用户已取消语音输入，交付清单以本次更新为准。普通聊天输入与草稿照常使用。
 
+Windows 图片夹具修正了预加载器路径，WebView2 失败时会保留实际子窗口证据，附件回归按 JSON 协议核对 Windows 路径。[Windows 首次失败与复验范围](acceptance-status.md#windows-原生验收夹具的失败定位2026-11-20)
+
 安装器的正常、收据故障和中断案例分组运行。退出验证会核对实际系统进程，失败时可看到安装器停在了哪一步。[包内更新器故障验收](acceptance-status.md#更新器故障注入的进程退出证据2026-11-20)
 
 Windows 多图历史可针对指定便携 ZIP 单独验收，记录窗口状态、工作集与 private bytes。[验收入口与验证范围](acceptance-status.md#windows-多图历史实测入口2026-11-20)

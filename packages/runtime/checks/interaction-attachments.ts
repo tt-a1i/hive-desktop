@@ -93,9 +93,17 @@ async function checkCopyLossBetweenQuestions() {
   assert.equal((await submit()).receipt.status, 'callback-handed');
   const wire = await wait(() => rows(cwd), value => value.length === 1);
   const answers = wire[0].result.answers;
-  assert.ok(answers.public.answers[0].includes(firstCopy));
-  assert.ok(answers.extra.answers[0].includes(secondCopy));
-  assert.ok(!answers.extra.answers[0].includes(firstCopy));
+  // The native answer contains JSON-encoded paths, so backslashes in Windows
+  // paths are escaped. Parse the records and compare their original values.
+  const references = (text: string) => text.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line));
+  const windowsReference = {name: 'sample.txt', mimeType: 'application/octet-stream', path: 'C:\\fixture\\nested\\sample.txt'};
+  assert.deepEqual(references(`Answer\n${JSON.stringify(windowsReference)}`), [windowsReference]);
+  assert.deepEqual(references(answers.public.answers[0]), [
+    {name: first.attachment.name, mimeType: first.attachment.mimeType, path: firstCopy},
+  ]);
+  assert.deepEqual(references(answers.extra.answers[0]), [
+    {name: second.attachment.name, mimeType: second.attachment.mimeType, path: secondCopy},
+  ]);
   await assert.rejects(submit());
   await writeFile(join(cwd, 'finish'), '');
   await done;
