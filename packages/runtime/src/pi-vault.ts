@@ -9,10 +9,20 @@ import type { ModelRuntime, ModelRuntimeAuthOverrides } from '@earendil-works/pi
 
 type Binding = { provider: string; reference: string; endpoint: string; api: string; fingerprint: string };
 type Store = { revision: string; agentDirectory: string; bindings: Binding[] };
+type PendingRead = { binding: Binding; controller: AbortController };
 const emptyRevision = 'missing';
 const vaultFile = 'pi-vault.json';
 
 export class VaultError extends Error {}
+
+function sameBinding(left: Binding, right: Binding) {
+  return left.provider === right.provider && left.reference === right.reference &&
+    left.endpoint === right.endpoint && left.api === right.api && left.fingerprint === right.fingerprint;
+}
+
+function bindingChanged() {
+  return new VaultError('模型配置或密码库引用已变化，请刷新后重试。');
+}
 
 function reference(value: unknown): string {
   if (typeof value !== 'string' || value.length > 2048 || !value.startsWith('op://')
@@ -114,7 +124,7 @@ function providerDefinition(config: ReturnType<typeof readConfig>, id: string) {
 export class PiVault {
   private tail: Promise<unknown> = Promise.resolve();
   private readonly abort = new AbortController();
-  private readonly pending = new Set<Promise<string>>();
+  private readonly pending = new Map<Promise<string>, PendingRead>();
   readonly agentDirectory = getAgentDir();
 
   constructor(private readonly dataDir: string) {}
@@ -175,7 +185,7 @@ export class PiVault {
       const store = await this.store();
       const config = readConfig(join(this.agentDirectory, 'models.json'));
       if (store.revision !== revision || config.revision !== configRevision) {
-        throw new VaultError('模型配置或密码库引用已变化，请刷新后重试。');
+        throw bindingChanged();
       }
       const bindings = store.agentDirectory === this.agentDirectory
         ? store.bindings.filter(item => item.provider !== provider) : [];
@@ -185,7 +195,7 @@ export class PiVault {
       }
       this.abort.signal.throwIfAborted();
       if (readConfig(join(this.agentDirectory, 'models.json')).revision !== configRevision) {
-        throw new VaultError('模型配置或密码库引用已变化，请刷新后重试。');
+        throw bindingChanged();
       }
       await mkdir(this.dataDir, { recursive: true, mode: 0o700 });
       const stage = join(this.dataDir, `.pi-vault-${randomUUID()}.tmp`);
@@ -193,6 +203,8 @@ export class PiVault {
         await writeFile(stage, JSON.stringify({ version: 1, revision: randomUUID(),
           agentDirectory: this.agentDirectory, bindings }), { flag: 'wx', mode: 0o600, flush: true });
         await rename(stage, this.path);
+        for (const {binding, controller} of this.pending.values())
+          if (!bindings.some(current => sameBinding(current, binding))) controller.abort(bindingChanged());
       } finally { await rm(stage, { force: true }); }
       return this.view();
     });
@@ -213,17 +225,34 @@ export class PiVault {
     }
   }
 
+  async assertBound(binding: Binding) {
+    for (;;) {
+      const mutation = this.tail;
+      this.abort.signal.throwIfAborted();
+      await mutation;
+      const store = await this.store();
+      this.abort.signal.throwIfAborted();
+      // A save can replace the file while it is being read. Check the
+      // committed binding after that save, even if the old read succeeded.
+      if (mutation !== this.tail) continue;
+      if (store.agentDirectory !== this.agentDirectory || !store.bindings.some(current => sameBinding(current, binding)))
+        throw bindingChanged();
+      return;
+    }
+  }
+
   resolve(binding: Binding, signal?: AbortSignal) {
-    const operation = readOp(binding.reference, signal
-      ? AbortSignal.any([signal, this.abort.signal]) : this.abort.signal);
-    this.pending.add(operation);
+    const controller = new AbortController();
+    const lifetime = AbortSignal.any([this.abort.signal, controller.signal, ...(signal ? [signal] : [])]);
+    const operation = this.assertBound(binding).then(() => readOp(binding.reference, lifetime));
+    this.pending.set(operation, {binding, controller});
     void operation.finally(() => this.pending.delete(operation)).catch(() => {});
     return operation;
   }
 
   async close() {
     this.abort.abort(new VaultError('桌面后台已关闭。'));
-    await Promise.allSettled([this.tail, ...this.pending]);
+    await Promise.allSettled([this.tail, ...this.pending.keys()]);
   }
 }
 
@@ -248,6 +277,9 @@ export class PiVaultSession {
       const apiKey = await this.key(binding, model, options?.signal);
       const auth = typeof target === 'string' ? await getAuth(target, { ...options, apiKey })
         : await getAuth(target, { ...options, apiKey });
+      await this.vault.assertBound(binding);
+      options?.signal?.throwIfAborted();
+      this.vault.assertTarget(binding, model);
       if (!auth || (auth.auth.baseUrl && endpoint(auth.auth.baseUrl) !== binding.endpoint)) {
         throw new VaultError('无法为已确认的模型接口配置密码库凭据。');
       }
@@ -310,6 +342,7 @@ export class PiVaultSession {
       turn.keys.set(binding.provider, readable);
     }
     const secret = await readable;
+    await this.vault.assertBound(binding);
     signal.throwIfAborted();
     this.vault.assertTarget(binding, model);
     return secret;

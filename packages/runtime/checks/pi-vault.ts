@@ -241,7 +241,43 @@ else process.stdout.write(state.key);
   assert.match(JSON.stringify(completed.history), /Chat Completions credential accepted/);
   assert.equal(requests.length, 3);
   assert.equal(requests.at(-1)?.auth, `Bearer ${keys[0]}`);
-  console.log('PI_VAULT_OK: CLI lifecycle, SDK loopback, queue recovery, rotation, retargeting and persisted redaction');
+
+  await rm(release, {force: true});
+  await command('deferred');
+  const beforeRevocation = (await log()).length;
+  await runtime.chats.prompt(compatChat.id, 'Preserve this input when its reference is removed');
+  const revokedPid = await waitFor(async () => (await log()).at(beforeRevocation)?.pid);
+  const beforeRemoval = await runtime.piVault.view();
+  await runtime.piVault.change(beforeRemoval.revision, beforeRemoval.configRevision, provider, null);
+  const revoked = await waitFor(async () => {
+    const snapshot = await runtime!.chats.open(compatChat.id);
+    return snapshot.busy ? undefined : snapshot;
+  });
+  assert.equal(requests.length, 3, 'Removing the reference must prevent the suspended read from authorizing a model request');
+  assert.throws(() => process.kill(revokedPid, 0), {code: 'ESRCH'});
+  assert.equal(revoked.pending, 1);
+  assert.match(JSON.stringify(revoked.deliveryFailure), /密码库引用已变化/);
+  assert.ok(!JSON.stringify(revoked.history).includes('Preserve this input when its reference is removed'));
+
+  const replacementRef = 'op://Fixture Vault/Replacement Model/credential';
+  const unbound = await runtime.piVault.view();
+  await runtime.piVault.change(unbound.revision, unbound.configRevision, provider, replacementRef);
+  await command('key', keys[1]);
+  await runtime.chats.resume(compatChat.id);
+  const retried = await waitFor(async () => {
+    const snapshot = await runtime!.chats.open(compatChat.id);
+    return !snapshot.busy && snapshot.pending === 0 ? snapshot : undefined;
+  });
+  assert.equal(requests.length, 4);
+  assert.equal(requests.at(-1)?.auth, `Bearer ${keys[1]}`);
+  assert.deepEqual((await log()).at(-1)?.args, ['read', '--no-newline', replacementRef]);
+  assert.match(JSON.stringify(retried.history), /Preserve this input when its reference is removed/);
+  for (const key of keys) {
+    assert.ok(!JSON.stringify(events).includes(key));
+    assert.ok(!JSON.stringify(retried.history).includes(key));
+    assert.ok(requests.every(request => !request.input.includes(key)));
+  }
+  console.log('PI_VAULT_OK: CLI lifecycle, SDK loopback, queue recovery, rotation, revocation, retargeting and persisted redaction');
 } finally {
   try { await runtime?.close(); }
   finally {
