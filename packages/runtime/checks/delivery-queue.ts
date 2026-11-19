@@ -70,6 +70,39 @@ try {
  await completed.idle();
  assert.equal(executedCompleted, false);
  assert.deepEqual(completed.pending, []);
+
+ // The native turn can finish just before Stop, with the rejected steer
+ // still settling. The abort then has no active turn to interrupt.
+ const primaryStarted = deferred(), finishPrimary = deferred(), primaryRemoved = deferred(), finishSteer = deferred();
+ const stopExecutions: string[] = [];
+ const stopOptions = { directory, sessionId: "stop-during-steer", completedIds: () => [], onError: unexpected,
+  execute: async (item: DeliveryItem) => {
+   stopExecutions.push(item.text);
+   if (item.text === "primary") { primaryStarted.resolve(); await finishPrimary.promise; }
+  },
+ };
+ const stopping = new DeliveryQueue({ ...stopOptions,
+  steer: async () => { await finishSteer.promise; return false; },
+  onState: busy => { if (busy && stopping.pendingCount === 1 && stopExecutions.length === 1) primaryRemoved.resolve(); },
+ });
+ await stopping.enqueue("primary");
+ await primaryStarted.promise;
+ await stopping.enqueue("append or queue", true, {version: 1, origin: "user", displayText: "append or queue"}, undefined, {steerUser: true});
+ const queuedId = stopping.pending[1]!.id;
+ finishPrimary.resolve();
+ await primaryRemoved.promise;
+ const pausing = stopping.pause();
+ finishSteer.resolve();
+ await pausing;
+ stopping.discardCurrent();
+ assert.deepEqual(stopExecutions, ["primary"], "Stop cannot start a fallback turn after the native steer declines");
+ const coldPaused = new DeliveryQueue({ ...stopOptions, startPaused: true });
+ assert.deepEqual(coldPaused.pendingUserInputs.map(item => [item.deliveryId, item.text, item.editable]), [[queuedId, "append or queue", true]]);
+ coldPaused.resume();
+ await coldPaused.idle();
+ assert.deepEqual(stopExecutions, ["primary", "append or queue"]);
+ assert.equal(coldPaused.pendingCount, 0);
+
  const states: { busy: boolean; pending: number }[] = [];
  const observed = new DeliveryQueue({ directory, sessionId: "observed", startPaused: true,
   completedIds: () => [], onError: () => {},

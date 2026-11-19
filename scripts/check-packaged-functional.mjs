@@ -15,7 +15,7 @@ const node = join(resources, 'node', process.platform === 'darwin' ? 'bin/node' 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ts = createRequire(join(root, 'packages/runtime/package.json'))('typescript');
 const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-functional-'));
-const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queued-input-mutation', 'queued-input-wire',
+const checks = ['delivery-queue', 'queued-input-mutations', 'queued-input-failed-rollback', 'queued-input-mutation', 'queued-input-wire',
   'conversation-search', 'conversation-search-codex', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity', 'html-artifacts',
   'codex-desktop-view',
@@ -33,12 +33,15 @@ const checks = ['queued-input-mutations', 'queued-input-failed-rollback', 'queue
   ...(process.platform === 'win32' ? ['project-scripts-windows'] : []),
   // These fixtures use POSIX executable peers/hooks. The Windows PTY and
   // JSONL Git checks above run natively rather than passing via a skipped peer.
-  ...(process.platform === 'win32' ? [] : ['chat-worktrees', 'git-remotes-wire', 'project-scripts-wire', 'profile-native-launch'])];
+  ...(process.platform === 'win32' ? [] : ['queued-user-inputs-peers', 'chat-worktrees', 'git-remotes-wire', 'project-scripts-wire', 'profile-native-launch'])];
 const receipt = {pass: false, bundle, actualInference: false, checks: []};
 try {
   await mkdir(join(directory, 'agent'));
   await mkdir(join(directory, 'fixtures'));
   await copyFile(join(root, 'packages/runtime/checks/fixtures/codex-queue-peer.cjs'), join(directory, 'fixtures/codex-queue-peer.cjs'));
+  if (process.platform !== 'win32') {
+    await copyFile(join(root, 'packages/runtime/checks/fixtures/claude-reasoning-peer.cjs'), join(directory, 'fixtures/claude-reasoning-peer.cjs'));
+  }
   await copyFile(join(root, 'packages/runtime/checks/fixtures/session-history-peer.cjs'), join(directory, 'fixtures/session-history-peer.cjs'));
   for (const fixture of ['worktree-backend-cwd-peer.cjs', 'claude-modes-peer.cjs', 'acp-peer.cjs', 'acp-team-peer.cjs', 'acp-runtime-peer.cjs', 'pi-vault-op.cs', 'codex-desktop-view-peer.cjs']) {
     await copyFile(join(root, 'packages/runtime/checks/fixtures', fixture), join(directory, 'fixtures', fixture));

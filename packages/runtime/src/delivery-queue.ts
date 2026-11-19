@@ -282,6 +282,9 @@ export class DeliveryQueue {
    this.steering.delete(item.id);
    if (steering) await steering;
    if (!this.options.completedIds().includes(item.id)) {
+    // Stop can pause while a native steer settles. Keep an unconsumed item
+    // queued so explicit resume can start its fallback turn.
+    if (this.paused) return;
     // Persist before the SDK can consume the delivery, including across crashes.
     this.replace([{ ...item, queueState: "started" }, ...this.items.slice(1)]);
     this.attemptedId = item.id;
