@@ -22,6 +22,8 @@ Pi 文件的原生会话 ID 与记录不符时，正文搜索和冷打开都会�
 
 归档切换查询、离开页面或后端断开时会释放旧搜索结果。macOS 解包实测无效查询不能恢复之前的会话，新查询可恢复准确目标。长分叉夹具中，打开归档第一页时 Rust 进程的峰值物理内存增量中位数由 21.3 MiB 降至 9.3 MiB。[归档与搜索内存验收](validation/2026-11-19-unicode-history-search.md#归档结果与桌面搜索内存)
 
+会话内查找支持 Unicode 的预组合与分解形式。macOS 解包实测 Markdown、思考、工具补丁和助手失败的定位，以及只有已保存调用的工具恢复到原卡片。[会话内查找验收](validation/2026-11-19-unicode-history-search.md#会话内-unicode-查找与工具消息定位)
+
 冷态历史原图读取已与待投递文件解耦，内置 Pi 可以在后台重启后按先前接收的投递 ID 找回原图。桌面已回收仅用于浏览的空闲 Codex 0.169.0 进程。macOS 解包窗口实测浏览八个会话后，常驻测试进程从八个降为一个，返回工作区后降为零。已由 Hive 接管的会话和待发任务通过独立检查。当前 Windows 原生验收继续跟踪。[历史原图](validation/2026-11-19-cold-browse-and-history-images.md) · [浏览进程回收](validation/2026-11-19-codex-desktop-view-release.md)
 
 跨 Agent 接续的自动刷新只读取状态，窗口按事件序号保留较新的队列和交互。隔离冷 ACP 对照的刷新帧从 6.36 MB 降到 8,767 字节，完整打开仍能读取全部 1,505 条记录。[接续状态验收](validation/2026-11-19-handoff-target-state.md)

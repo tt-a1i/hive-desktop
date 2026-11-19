@@ -69,3 +69,15 @@ GPT-6.2 Sol 在基线 `f4d6f35` 的 macOS 原生界面先加载两页共 105 条
 同一个包还复验了全局与项目侧栏的正文命中、消息定位和不可读历史提示。完成恢复后采样时，Node 下曾有短暂的 Git 子进程。退出后，已记录的桌面、Node 和 Git 进程均已结束。
 
 本地证据位于 `.artifacts/archive-search-memory-CWK22c/`，包括 `sol-baseline-native.json`、`sol-candidate-wire.log`、`native-memory-comparison.json`、`workflow-6VeySp/receipt.json`、`native-window-zVFeP0/receipt.json`、原生辅助功能树和包内回归收据。ZIP SHA-256 为 `af5ce97bb6d7934eb3fb810b313e38bcca97f3291b85b6931d5992bcd6339366`。
+
+## 会话内 Unicode 查找与工具消息定位
+
+GPT-6.2 Sol 在基线 `926597a` 对应的 macOS 原生包复现两处差异。全局搜索可以用预组合字符命中分解形式的正文，但进入原会话后，⌘F 用同一查询无法匹配 Markdown、折叠思考或工具补丁。全局搜索还能命中仅保存了调用、尚无结果的工具，打开后却找不到对应行。
+
+现在会话内查找先按 NFC 规范化查询与可搜索字段，再做字面匹配。原 Markdown 和工具补丁的字节保持不变。匹配计数对辅助功能可读。历史工具调用尚无结果时，桌面按原调用 ID 显示保存下来的参数和“未记录结果”。历史中已有结果的工具沿用原结果行。助手失败详情也可从全局历史找到。
+
+`e499784` 的 macOS arm64 签名 ZIP 解包后，用同一实际窗口搜索预组合和分解形式的 Markdown、思考与补丁。两种形式都显示一条命中。思考自动展开，补丁从工具卡打开且保留原文。全局搜索未完成工具的参数后，能打开原调用并核对完整输入。全局搜索失败详情时，原历史错误会定位并展开。隔离待发队列保留同一投递 ID，也没有自动执行。
+
+原始 Pi JSONL 的全部消息逐字节保留，正常打开时仅追加内置 Pi 的运行时元数据。退出时 Node 后台确认关闭，记录的桌面及后台进程均已结束。代码测试覆盖 NFC 字面匹配与已存在结果的工具去重。129 项 Rust 测试通过，1 项忽略。五项包内回归与便携冒烟通过，Windows MSVC 交叉检查通过。原生 Windows 窗口和运行中尚未保存到历史的工具状态还有独立验收范围。本轮没有调用模型或发布。
+
+证据位于 `.artifacts/conversation-find-complete-8JEDnn/`，包括 `sol-baseline-native.json`、`candidate-qRTYtu/receipt.json`、两类工具与失败详情的原生辅助功能树和包内回归收据。ZIP SHA-256 为 `aaecee202728ce63676ce348bc90ec9f210707f3cb422bf9d59d6ccc3bea6b88`。
