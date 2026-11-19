@@ -1,5 +1,5 @@
 import type { AgentProfileRef } from './agent-profiles.js';
-import { readGitRemote, remoteBranchOid, remoteVersion } from './git-remotes.js';
+import { readGitRemote, remoteBranchOid, remoteVersion, type VerifiedGitPush } from './git-remotes.js';
 import { getGitWorkspaceStatus } from './git-workspace.js';
 import { validateInitializationPlan, type InitializationPlan } from './project-worktree-initialization.js';
 import { execFile } from 'node:child_process';
@@ -106,14 +106,17 @@ async function commonDir(cwd: string): Promise<string> {
   return realpath(resolve(cwd, await git(cwd, 'rev-parse', '--git-common-dir')));
 }
 async function writeIntent(ownerDir: string, intent: Intent): Promise<void> {
+  const document: Intent = intent.creation ? {...intent, version: intent.creation.version === 2 ? 3 : 2} : intent;
+  validateIntentCreation(document);
+  await writeOwnerDocument(ownerDir, 'intent.json', document);
+}
+async function writeOwnerDocument(ownerDir: string, filename: string, document: unknown): Promise<void> {
   const tmp = join(ownerDir, `.${randomUUID()}.tmp`);
   try {
-    const document: Intent = intent.creation ? {...intent, version: intent.creation.version === 2 ? 3 : 2} : intent;
-    validateIntentCreation(document);
     const file = await open(tmp, 'wx', 0o600);
     try { await file.writeFile(JSON.stringify(document)); await file.sync(); }
     finally { await file.close(); }
-    await rename(tmp, join(ownerDir, 'intent.json'));
+    await rename(tmp, join(ownerDir, filename));
     if (process.platform !== 'win32') {
       const directory = await open(ownerDir, 'r');
       try { await directory.sync(); } finally { await directory.close(); }
@@ -313,8 +316,48 @@ async function cleanWorktree(record: ManagedWorktree) {
   return status.headOid;
 }
 
-async function confirmPushed(record: ManagedWorktree, head: string) {
+const pushReceiptFile = 'verified-push.json';
+type PushReceipt = Pick<VerifiedGitPush, 'headOid' | 'remote' | 'branch' | 'transport'> & {version: 1; ownerToken: string};
+
+/** Record only the selected destination observed after a successful managed-session push. */
+export async function recordManagedWorktreePush(dataRoot: string, record: ManagedWorktree, proof: VerifiedGitPush) {
+  const {workspace, headOid, remote, branch, transport} = proof;
+  if (workspace.repositoryRoot !== record.managedWorktreeRoot || workspace.gitDir !== record.gitDir
+    || workspace.commonDir !== record.repoCommonDir || workspace.projectRoot !== record.executionPath
+    || workspace.branch !== record.branch || workspace.headOid !== headOid)
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Verified push does not belong to this worktree.');
+  await validateManagedWorktree(dataRoot, record);
+  const receipt: PushReceipt = {version: 1, ownerToken: record.ownerToken, headOid, remote, branch, transport};
+  await writeOwnerDocument(ownerDir(await realpath(dataRoot), record.chatId), pushReceiptFile, receipt);
+}
+
+async function readPushReceipt(dir: string, record: ManagedWorktree, head: string): Promise<PushReceipt | undefined> {
+  try {
+    const receipt = JSON.parse(await readFile(join(dir, pushReceiptFile), 'utf8')) as PushReceipt | null;
+    if (receipt?.version !== 1 || receipt.ownerToken !== record.ownerToken
+      || typeof receipt.headOid !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(receipt.headOid)
+      || typeof receipt.remote !== 'string' || !receipt.remote || typeof receipt.branch !== 'string' || !receipt.branch
+      || typeof receipt.transport !== 'string' || !/^[a-f0-9]{64}$/.test(receipt.transport))
+      throw new Error('Invalid proof');
+    if (receipt.headOid === head) return receipt;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+      throw new GitWorktreeError('WORKTREE_PUSH_RECEIPT_INVALID', 'The saved push proof is unavailable. Push and verify the current commit again before removing the worktree.');
+  }
+}
+
+async function confirmPushed(dir: string, record: ManagedWorktree, head: string) {
   const cwd = record.managedWorktreeRoot;
+  let receiptFailure: unknown;
+  try {
+    const proof = await readPushReceipt(dir, record, head);
+    if (proof) return await confirmRemoteCoverage(cwd, head, proof.remote, proof.branch, proof.transport);
+  } catch (error) {
+    receiptFailure = error;
+  }
+
+  // A broken or stale receipt does not override an independently verifiable
+  // configured upstream or the existing same-name tracking branch.
   const [upstreamRemote, upstreamRef] = (await git(cwd, 'for-each-ref', '--format=%(upstream:remotename)%00%(upstream:remoteref)', `refs/heads/${record.branch}`)).split('\0');
   let remote = upstreamRemote;
   let branch = upstreamRef?.startsWith('refs/heads/') ? upstreamRef.slice('refs/heads/'.length) : undefined;
@@ -325,12 +368,20 @@ async function confirmPushed(record: ManagedWorktree, head: string) {
     if (candidates.length === 1) [remote, branch] = [candidates[0], record.branch];
   }
   if (!remote || remote === '.' || !branch)
-    throw new GitWorktreeError('UNPUSHED_COMMITS', 'Worktree has commits without an upstream. Push the branch or configure its remote tracking branch before removing the worktree.');
+    throw receiptFailure ?? new GitWorktreeError('UNPUSHED_COMMITS', 'Worktree has commits without an upstream. Push the branch or configure its remote tracking branch before removing the worktree.');
+  try { return await confirmRemoteCoverage(cwd, head, remote, branch); }
+  catch (error) { throw receiptFailure ?? error; }
+}
+
+async function confirmRemoteCoverage(cwd: string, head: string, remote: string, branch: string, expectedTransport?: string) {
   const context = await readGitRemote(cwd, remote);
+  const transport = remoteVersion(context.url);
+  if (expectedTransport !== undefined && expectedTransport !== transport)
+    throw new GitWorktreeError('UNPUSHED_COMMITS', 'The remote for the saved push has changed. Verify a new push before removing the worktree.');
   const oid = await remoteBranchOid(context, branch);
   if (!oid || (oid !== head && await git(cwd, 'rev-list', head, '--not', oid, '--max-count=1')))
     throw new GitWorktreeError('UNPUSHED_COMMITS', 'Worktree has commits that are not confirmed on the configured remote branch.');
-  return { remote, branch, oid, transport: remoteVersion(context.url) };
+  return { remote, branch, oid, transport };
 }
 
 function removalVersion(record: ManagedWorktree, head: string, repository: string, pushed?: Awaited<ReturnType<typeof confirmPushed>>) {
@@ -338,10 +389,10 @@ function removalVersion(record: ManagedWorktree, head: string, repository: strin
 }
 
 export async function previewManagedWorktreeRemoval(dataRoot: string, record: ManagedWorktree) {
-  await removalOwnership(dataRoot, record);
+  const {root} = await removalOwnership(dataRoot, record);
   const repository = await repositoryIdentity(record.repoCommonDir);
   const head = await cleanWorktree(record);
-  const pushed = head === record.baseOid ? undefined : await confirmPushed(record, head);
+  const pushed = head === record.baseOid ? undefined : await confirmPushed(ownerDir(root, record.chatId), record, head);
   return {path: record.managedWorktreeRoot, branch: record.branch, headOid: head,
     ...(pushed && {verifiedRemote: {remote: pushed.remote, branch: pushed.branch}}),
     version: removalVersion(record, head, repository, pushed)};
@@ -359,11 +410,11 @@ export async function removeManagedWorktree(dataRoot: string, record: ManagedWor
   const {root, intent} = await removalOwnership(dataRoot, record);
   const repository = await repositoryIdentity(record.repoCommonDir);
   const head = await cleanWorktree(record);
-  const pushed = head === record.baseOid ? undefined : await confirmPushed(record, head);
+  const dir = ownerDir(root, record.chatId);
+  const pushed = head === record.baseOid ? undefined : await confirmPushed(dir, record, head);
   if (removalVersion(record, head, repository, pushed) !== preview.version
     || await repositoryIdentity(record.repoCommonDir) !== repository)
     throw new GitWorktreeError('STALE_PREVIEW', 'Worktree or remote changed. Review the removal again.');
-  const dir = ownerDir(root, record.chatId);
   const pending: Intent = {...intent, removal:{headOid:head,repositoryIdentity:repository}};
   await writeIntent(dir, pending);
   // The durable write can outlast an external Git operation on the same path.

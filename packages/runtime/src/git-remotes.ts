@@ -122,7 +122,11 @@ export async function previewGitPush(projectRoot: string, target: GitPushTarget,
  return {version: remoteVersion({...payload, transportFingerprint: remoteVersion(context.url), git}), ...payload};
 }
 export interface GitPushResult {ok: boolean; pushed: true|'unknown'; verified: boolean; headOid: string; remoteOid: string | null; error?: {code: string; message: string}; nativeTrackingRefsMayUpdate: true}
-export async function pushGitBranch(projectRoot: string, request: GitPushTarget & {expectedVersion: string}, options: GitRemoteOptions = {}): Promise<GitPushResult> {
+export interface VerifiedGitPush extends GitPushTarget {
+ workspace: GitWorkspaceVersion; headOid: string; transport: string;
+}
+export async function pushGitBranch(projectRoot: string, request: GitPushTarget & {expectedVersion: string},
+ options: GitRemoteOptions & {recordVerifiedPush?: (proof: VerifiedGitPush) => Promise<void>} = {}): Promise<GitPushResult> {
  const preview = await previewGitPush(projectRoot, request, options); if (preview.version !== request.expectedVersion) throw remoteError('STALE_PREVIEW', 'Branch, HEAD, configuration or remote changed; refresh push preview');
  if (preview.relation === 'diverged') throw remoteError('NON_FAST_FORWARD', 'The approved remote commit is not an ancestor of this local commit; integrate the remote branch and preview again');
  if (preview.relation === 'unknown-history') throw remoteError('REMOTE_HISTORY_REQUIRED', 'Remote history is not present locally; fetch it explicitly in your native Git tools, then preview again. No fetch or push was started');
@@ -142,5 +146,13 @@ export async function pushGitBranch(projectRoot: string, request: GitPushTarget 
   remoteOid = await remoteBranchOid(observed, request.branch, options); verified = remoteOid === preview.headOid;
  } catch (error) {failure ??= error;}
  if (failure || !verified) return {ok: false, pushed: 'unknown', verified, headOid: preview.headOid, remoteOid, nativeTrackingRefsMayUpdate: true, error: {code: 'PUSH_STATE_UNCERTAIN', message: redactRemoteText(failure instanceof Error ? failure.message : 'Push completed but the remote branch could not be verified; inspect the remote before retrying')}};
- return {ok: true, pushed: true, verified: true, headOid: preview.headOid, remoteOid, nativeTrackingRefsMayUpdate: true};
+ const result = {ok: true, pushed: true, verified: true, headOid: preview.headOid, remoteOid, nativeTrackingRefsMayUpdate: true} as const;
+ try {
+  await options.recordVerifiedPush?.({workspace: context.workspace, headOid: preview.headOid,
+   remote: request.remote, branch: request.branch, transport: remoteVersion(context.url)});
+ } catch {
+  // A local receipt error cannot change the already-verified remote outcome.
+  return {...result, error: {code: 'WORKTREE_PUSH_RECEIPT_FAILED', message: 'The remote push was verified, but Hive could not save the proof for worktree removal. Check the local worktree before retrying.'}};
+ }
+ return result;
 }

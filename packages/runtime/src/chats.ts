@@ -49,7 +49,7 @@ import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffO
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
 import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
 import { previewGithubPr, createGithubPr, updateGithubPr, type GithubPrTarget, type GithubPrWriteRequest } from './github-prs.js';
-import { createManagedWorktree, GitWorktreeError, previewManagedWorktreeRemoval, readWorktreeIntent, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
+import { createManagedWorktree, GitWorktreeError, previewManagedWorktreeRemoval, readWorktreeIntent, recordManagedWorktreePush, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
 import { readdir, realpath } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
@@ -694,9 +694,13 @@ export class Chats implements StructuredSessionPort {
   async gitPushApply(workspaceId: string, remote: unknown, branch: unknown, expectedVersion: unknown, sessionId?: unknown) {
     return this.withGitOperation(async () => {
       const directory = await this.executionDirectory(workspaceId, sessionId);
+      const managedId = typeof sessionId === 'string' && this.index.get(sessionId).execution ? sessionId : undefined;
       try {
         return await pushGitBranch(directory, {remote: gitText(remote, 'remote'), branch: gitText(branch, 'branch'),
-          expectedVersion: gitText(expectedVersion, 'expectedVersion')});
+          expectedVersion: gitText(expectedVersion, 'expectedVersion')}, managedId ? {recordVerifiedPush: async proof => {
+          const {record} = await readWorktreeIntent(this.dataDir, managedId);
+          await recordManagedWorktreePush(this.dataDir, record, proof);
+        }} : {});
       } catch (error) {
         // The native push helper returns its own uncertain result after a
         // write attempt. Exceptions here are validation/preview failures.

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
-import { access, chmod, mkdir, mkdtemp, readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, realpath, rename, rmdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
@@ -39,15 +39,20 @@ await writeFile(badProgram, `#!/bin/sh\nprintf wrong > ${quote(forbidden)}\nexit
 const networkGuard = join(directory, 'no-outbound-network.cjs');
 await writeFile(networkGuard, `const net=require('node:net');const local=h=>h===undefined||['localhost','127.0.0.1','::1','[::1]'].includes(h);const connect=net.Socket.prototype.connect;net.Socket.prototype.connect=function(...a){const first=Array.isArray(a[0])?a[0][0]:a[0];const host=first&&typeof first==='object'?first.host:typeof first==='number'&&typeof a[1]==='string'?a[1]:undefined;if(!local(host))throw Error('fixture blocks outbound network');return connect.apply(this,a);};const nativeFetch=globalThis.fetch;globalThis.fetch=async function(input,...rest){const u=new URL(typeof input==='string'||input instanceof URL?input:input.url);if(!local(u.hostname))throw Error('fixture blocks outbound fetch');return nativeFetch(input,...rest);};`);
 const entry = process.env.HIVE_DESKTOP_TEST_RUNTIME ?? fileURLToPath(new URL('../dist/main.js', import.meta.url));
-const child = spawn(process.execPath, ['--require', networkGuard, ...(entry.endsWith('.ts') ? ['--import', createRequire(import.meta.url).resolve('tsx')] : []), entry], {cwd: directory, stdio: ['pipe', 'pipe', 'pipe'], env: {...env,
+const startRuntime = () => spawn(process.execPath, ['--require', networkGuard, ...(entry.endsWith('.ts') ? ['--import', createRequire(import.meta.url).resolve('tsx')] : []), entry], {cwd: directory, stdio: ['pipe', 'pipe', 'pipe'], env: {...env,
  PATH: bin + ':' + (env.PATH ?? ''), HIVE_DESKTOP_DATA_DIR: join(directory, 'state'), PI_CODING_AGENT_DIR: agent, PI_OFFLINE: '1',
  HIVE_GIT_REMOTE_WIRE_STATE: statePath, GH_REPO: 'wrong-owner/wrong-repo', GH_HOST: 'wrong.example'}});
-const exited = once(child, 'exit'); let diagnostics = '', sequence = 0;
-child.stderr.on('data', chunk => {diagnostics += String(chunk);});
+let diagnostics = '', sequence = 0;
 const pending = new Map<number, {resolve(value: any): void; reject(error: Error): void}>();
-const reader = createInterface({input: child.stdout});
-reader.on('line', line => {const response = JSON.parse(line), request = pending.get(response.id); if (request) {pending.delete(response.id); request.resolve(response);}});
-child.on('exit', () => {for (const request of pending.values()) request.reject(Error('Runtime exited before reply: ' + diagnostics)); pending.clear();});
+function connectRuntime() {
+ const child = startRuntime(), exited = once(child, 'exit');
+ child.stderr.on('data', chunk => {diagnostics += String(chunk);});
+ const reader = createInterface({input: child.stdout});
+ reader.on('line', line => {const response = JSON.parse(line), request = pending.get(response.id); if (request) {pending.delete(response.id); request.resolve(response);}});
+ child.on('exit', () => {for (const request of pending.values()) request.reject(Error('Runtime exited before reply: ' + diagnostics)); pending.clear();});
+ return {child, exited, reader};
+}
+let {child, exited, reader} = connectRuntime();
 async function frame(method: string, params: Record<string, unknown> = {}) {
  return new Promise<any>((resolve, reject) => {const id = ++sequence; const timer = setTimeout(() => {pending.delete(id); reject(Error('RPC timed out: ' + method));}, 60000);
   pending.set(id, {resolve: value => {clearTimeout(timer); resolve(value);}, reject: error => {clearTimeout(timer); reject(error);}}); child.stdin.write(JSON.stringify({id, method, params}) + '\n');});
@@ -75,6 +80,46 @@ try {
  assert.throws(() => git(bare, 'rev-parse', '--verify', 'refs/heads/session-published'));
  const fresh = await rpc('git.push.preview', target), sessionHead = git(worktree, 'rev-parse', 'HEAD');
  const pushed = await rpc('git.push.apply', {...target, expectedVersion: fresh.preview.version}); assert.equal(pushed.ok, true); assert.equal(pushed.pushed, true); assert.equal(pushed.headOid, sessionHead); assert.equal(pushed.remoteOid, sessionHead); assert.equal(git(bare, 'rev-parse', 'refs/heads/session-published'), sessionHead);
+ const removalScope = {workspaceId: workspace.id, sessionId: session.id};
+ const removalPreview = await rpc('chat.worktrees.removal.preview', removalScope);
+ assert.deepEqual(removalPreview.verifiedRemote, {remote: 'origin', branch: 'session-published'});
+ assert.throws(() => git(worktree, 'rev-parse', '--abbrev-ref', '@{upstream}'));
+ const receiptFile = join(dirname(worktree), 'verified-push.json');
+ assert.equal(JSON.parse(await readFile(receiptFile, 'utf8')).headOid, sessionHead);
+ await rename(receiptFile, receiptFile + '.saved');
+ await mkdir(receiptFile);
+ try {
+  const repeat = await rpc('git.push.preview', target);
+  const outcome = await rpc('git.push.apply', {...target, expectedVersion: repeat.preview.version});
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.pushed, true);
+  assert.equal(outcome.verified, true);
+  assert.equal(outcome.error.code, 'WORKTREE_PUSH_RECEIPT_FAILED');
+ } finally {
+  await rmdir(receiptFile);
+  await rename(receiptFile + '.saved', receiptFile);
+ }
+ git(bare, 'update-ref', '-d', 'refs/heads/session-published');
+ assert.equal((await frame('chat.worktrees.removal.apply', {...removalScope, expectedVersion: removalPreview.version})).error.code, 'UNPUSHED_COMMITS');
+ git(worktree, 'push', '--set-upstream', 'origin', 'HEAD:refs/heads/legacy-published');
+ try {
+  const legacy = await rpc('chat.worktrees.removal.preview', removalScope);
+  assert.deepEqual(legacy.verifiedRemote, {remote: 'origin', branch: 'legacy-published'});
+  await rename(receiptFile, receiptFile + '.saved');
+  await writeFile(receiptFile, 'invalid receipt');
+  try {
+   const corrupted = await rpc('chat.worktrees.removal.preview', removalScope);
+   assert.deepEqual(corrupted.verifiedRemote, legacy.verifiedRemote);
+  } finally {await rename(receiptFile + '.saved', receiptFile);}
+ } finally {git(worktree, 'branch', '--unset-upstream');}
+ git(bare, 'update-ref', 'refs/heads/session-published', sessionHead);
+ git(worktree, 'push', foreignBare, 'HEAD:refs/heads/session-published');
+ git(worktree, 'remote', 'set-url', 'origin', foreignBare);
+ try {assert.equal((await frame('chat.worktrees.removal.preview', removalScope)).error.code, 'UNPUSHED_COMMITS');}
+ finally {git(worktree, 'remote', 'set-url', 'origin', bare); git(foreignBare, 'update-ref', '-d', 'refs/heads/session-published');}
+ git(worktree, 'commit', '--allow-empty', '-m', 'unpublished newer tip');
+ try {assert.equal((await frame('chat.worktrees.removal.preview', removalScope)).error.code, 'UNPUSHED_COMMITS');}
+ finally {git(worktree, 'reset', '--hard', sessionHead);}
  assert.equal(git(repo, 'rev-parse', 'HEAD'), rootHead); assert.deepEqual(await readFile(join(repo, '.git/index')), rootIndex); assert.deepEqual(await readFile(join(outside, '.git/index')), unrelatedIndex); assert.throws(() => git(foreignBare, 'show-ref'));
  const rootPreview = await rpc('git.push.preview', {workspaceId: workspace.id, remote: 'origin', branch: 'root-only', ...overrides}); assert.equal(rootPreview.ok, true); assert.equal(rootPreview.preview.workspace.projectRoot, repo); assert.equal(rootPreview.preview.headOid, rootHead);
  refused(await frame('git.remotes', {...scope, workspaceId: otherWorkspace.id})); refused(await frame('git.push.preview', {...target, workspaceId: otherWorkspace.id}));
@@ -109,7 +154,21 @@ try {
  assert.equal(shutdownReturned, false); assert.equal(pushReturned, false); assert.equal(child.exitCode, null);
  await writeFile(release, 'release'); const completed = await pushing; assert.equal(completed.ok, true); assert.equal(completed.pushed, true); await shutdown; assert.equal((await exited)[0], 0, diagnostics);
  assert.equal(await readFile(finished, 'utf8'), 'finished'); assert.equal(git(bare, 'rev-parse', 'refs/heads/closing-push'), sessionHead);
- await writeFile(join(directory, 'receipt.json'), JSON.stringify({pass: true, actualJsonl: true, runtimeEntry: entry, realLocalBareGit: true, controlledGithubOnly: true, noHostedAccountOrModel: true, outboundNodeNetworkBlocked: true, payloadPathsAndProgramsIgnored: true, worktreeAndRootIsolation: true, missingAndForeignSourceRejected: true, stalePreconditionsNotApplied: true, prCreateUpdateAndUnknown: true, privateBodyFile: true, shutdownWaitsForRealPush: true, windowsNativeValidated: false}, null, 2));
+ // A fresh backend reads the last confirmed destination, then removes only the checkout.
+ reader.close();
+ ({child, exited, reader} = connectRuntime());
+ shuttingDown = false;
+ await rpc('initialize');
+ const coldRemoval = await rpc('chat.worktrees.removal.preview', removalScope);
+ assert.deepEqual(coldRemoval.verifiedRemote, {remote: 'origin', branch: 'closing-push'});
+ assert.equal((await rpc('chat.worktrees.removal.apply', {...removalScope, expectedVersion: coldRemoval.version})).ok, true);
+ assert.equal(await exists(worktree), false);
+ assert.equal(git(repo, 'rev-parse', session.execution.branch), sessionHead);
+ assert.equal(git(bare, 'rev-parse', 'refs/heads/closing-push'), sessionHead);
+ shuttingDown = true;
+ await rpc('shutdown');
+ assert.equal((await exited)[0], 0, diagnostics);
+ await writeFile(join(directory, 'receipt.json'), JSON.stringify({pass: true, actualJsonl: true, runtimeEntry: entry, realLocalBareGit: true, controlledGithubOnly: true, noHostedAccountOrModel: true, outboundNodeNetworkBlocked: true, payloadPathsAndProgramsIgnored: true, worktreeAndRootIsolation: true, missingAndForeignSourceRejected: true, stalePreconditionsNotApplied: true, prCreateUpdateAndUnknown: true, privateBodyFile: true, shutdownWaitsForRealPush: true, alternateBranchPushAllowsColdRemoval: true, removedRemoteChangedTransportNewTipRejected: true, verifiedPushSurvivesReceiptWriteFailure: true, windowsNativeValidated: false}, null, 2));
  console.log('GIT_REMOTES_WIRE_OK', directory);
 } catch (error) {await writeFile(join(directory, 'failure.json'), JSON.stringify({error: String(error), stack: (error as Error).stack, diagnostics}, null, 2)); throw error;}
 finally {
