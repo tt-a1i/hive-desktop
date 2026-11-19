@@ -1,5 +1,7 @@
+use crate::artifacts::ArtifactSource;
 use crate::language::tr;
 use gpui_kit::{prelude::FluentBuilder, *};
+use std::path::Path;
 
 pub(crate) fn supported_path(path: &str) -> bool {
     std::path::Path::new(path)
@@ -11,6 +13,7 @@ pub(crate) fn supported_path(path: &str) -> bool {
 }
 
 pub(crate) struct HtmlPreview {
+    source: ArtifactSource,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     _webview: Option<wry::WebView>,
     #[cfg(target_os = "windows")]
@@ -19,11 +22,31 @@ pub(crate) struct HtmlPreview {
 }
 
 impl HtmlPreview {
+    pub(crate) fn focus_existing(cx: &mut App, source: &ArtifactSource) -> bool {
+        cx.windows()
+            .into_iter()
+            .filter_map(|window| window.downcast::<Self>())
+            .find(|window| window.read(cx).is_ok_and(|preview| &preview.source == source))
+            .is_some_and(|window| {
+                window
+                    .update(cx, |_, window, _| window.activate_window())
+                    .is_ok()
+            })
+    }
+
     pub(crate) fn open(
         cx: &mut App,
-        name: &str,
+        source: ArtifactSource,
         html: String,
-    ) -> Result<WindowHandle<Self>, String> {
+    ) -> Result<(), String> {
+        // The original viewer may have closed while its snapshot request was in flight.
+        if Self::focus_existing(cx, &source) {
+            return Ok(());
+        }
+        let name = Path::new(&source.path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(&source.path);
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
                 title: Some(format!("{} — {name}", tr("隔离 HTML 预览")).into()),
@@ -34,15 +57,17 @@ impl HtmlPreview {
             ..Default::default()
         };
         cx.open_window(options, move |window, cx| {
-            let preview = Self::build(window, html);
+            let preview = Self::build(window, source, html);
             cx.new(|_| preview)
         })
+        .map(|_| ())
         .map_err(|error| error.to_string())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    fn build(_: &Window, _: String) -> Self {
+    fn build(_: &Window, source: ArtifactSource, _: String) -> Self {
         Self {
+            source,
             error: Some(tr("此平台暂不支持隔离 HTML 预览。").to_owned()),
         }
     }
@@ -265,7 +290,7 @@ mod engine {
     }
 
     impl HtmlPreview {
-        pub(super) fn build(window: &Window, html: String) -> Self {
+        pub(super) fn build(window: &Window, source: ArtifactSource, html: String) -> Self {
             #[cfg(target_os = "macos")]
             let result = configure(window, html)
                 .map(|view| (view, ()))
@@ -276,12 +301,14 @@ mod engine {
                 .and_then(|profile| Ok((configure(window, html, &profile)?, profile)));
             match result {
                 Ok((webview, _profile)) => Self {
+                    source,
                     _webview: Some(webview),
                     #[cfg(target_os = "windows")]
                     _profile: Some(_profile),
                     error: None,
                 },
                 Err(error) => Self {
+                    source,
                     _webview: None,
                     #[cfg(target_os = "windows")]
                     _profile: None,

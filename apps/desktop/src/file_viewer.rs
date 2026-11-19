@@ -173,7 +173,6 @@ struct FileViewer {
     error: Option<PreviewError>,
     loading: bool,
     html_loading: bool,
-    html_preview: Option<WindowHandle<HtmlPreview>>,
     scroll: ScrollHandle,
 }
 impl HiveApp {
@@ -298,7 +297,6 @@ fn open_viewer(
             error: None,
             loading: false,
             html_loading: false,
-            html_preview: None,
             scroll: ScrollHandle::new(),
         };
         // HiveApp is still borrowed by the click handler. Read its target only
@@ -330,16 +328,12 @@ impl FileViewer {
         if self.html_loading || !self.current(cx) {
             return;
         }
-        if let Some(open) = self.html_preview
-            && open
-                .update(cx, |_, window, _| window.activate_window())
-                .is_ok()
-        {
-            return;
-        }
         let Some((runtime, source)) = self.html_source() else {
             return;
         };
+        if HtmlPreview::focus_existing(cx, source) {
+            return;
+        }
         let (runtime, source) = (runtime.clone(), source.clone());
         self.html_loading = true;
         self.error = None;
@@ -370,22 +364,15 @@ impl FileViewer {
                     }),
                 Err(error) => Err(error.to_string()),
             };
-            let name = Path::new(&source.path)
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or(&source.path);
             let _ = this.update(cx, |this, cx| {
                 this.html_loading = false;
                 if !this.current(cx) {
                     this.stale();
-                } else {
-                    match result.and_then(|snapshot| {
-                        this.warning = snapshot.warning;
-                        HtmlPreview::open(cx, name, snapshot.html)
-                    }) {
-                        Ok(handle) => this.html_preview = Some(handle),
-                        Err(error) => this.error = Some(PreviewError::Source(error)),
-                    }
+                } else if let Err(error) = result.and_then(|snapshot| {
+                    this.warning = snapshot.warning;
+                    HtmlPreview::open(cx, source, snapshot.html)
+                }) {
+                    this.error = Some(PreviewError::Source(error));
                 }
                 cx.notify();
             });
