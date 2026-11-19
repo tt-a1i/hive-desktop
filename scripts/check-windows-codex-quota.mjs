@@ -31,7 +31,6 @@ const execFileAsync = promisify(execFile);
 const { start, deadline, stopAll } = createWindowsFixtureProcesses();
 const result = { status: 'failed', checks: {}, error: null, cleanupErrors: [] };
 let root;
-let fixtureEnv;
 let observedOwned = [];
 let desktopLog = '';
 
@@ -66,10 +65,9 @@ async function exists(path) {
     throw error;
   }
 }
-async function observerCommand(command, env) {
+async function observerCommand(command) {
   try {
     return await execFileAsync(powershell, ['-NoProfile', '-NonInteractive', '-Command', command], {
-      env,
       windowsHide: true,
       timeout: 15000,
       maxBuffer: 4 * 1024 * 1024,
@@ -87,19 +85,19 @@ async function observerCommand(command, env) {
     throw failure;
   }
 }
-async function processes(env) {
+async function processes() {
   const command =
     'Get-CimInstance -ClassName Win32_Process -Property ProcessId,ParentProcessId,Name,CreationDate | Select-Object ProcessId,ParentProcessId,Name,CreationDate | ConvertTo-Json -Compress';
-  const { stdout } = await observerCommand(command, env);
+  const { stdout } = await observerCommand(command);
   const list = JSON.parse(stdout);
   return Array.isArray(list) ? list : [list];
 }
-async function prepareObserver(env) {
+async function prepareObserver() {
   result.checks.observerWarmup = [];
   for (let attempt = 1; attempt <= 2; attempt++) {
     const started = Date.now();
     try {
-      const snapshot = await processes(env);
+      const snapshot = await processes();
       assert(
         snapshot.some((item) => item.ProcessId === process.pid),
         'Process observer must see the fixture before launching the CLI',
@@ -127,7 +125,7 @@ async function prepareObserver(env) {
     }
   }
 }
-async function processSnapshot(peerPid, helperPid, unrelatedPid, desktopPid, env) {
+async function processSnapshot(peerPid, helperPid, unrelatedPid, desktopPid) {
   for (const pid of [peerPid, helperPid, unrelatedPid, desktopPid]) {
     assert(Number.isSafeInteger(pid) && pid > 0);
   }
@@ -150,7 +148,7 @@ async function processSnapshot(peerPid, helperPid, unrelatedPid, desktopPid, env
     $other = $all | Where-Object { $_.ProcessId -eq ${unrelatedPid} } | Select-Object ProcessId,ParentProcessId,Name,CreationDate
     @{ chain = $chain; helper = $helper; other = $other; hostFound = $hostFound } | ConvertTo-Json -Depth 5 -Compress
   `;
-  const { stdout } = await observerCommand(command, env);
+  const { stdout } = await observerCommand(command);
   return JSON.parse(stdout);
 }
 function sameProcess(a, b) {
@@ -191,8 +189,9 @@ try {
     NODE_OPTIONS: `--require="${guard.replaceAll('\\', '/')}"`,
     HIVE_DESKTOP_TRACE_RPC: '1',
   };
-  fixtureEnv = env;
-  await prepareObserver(env);
+  // The observer is a test tool, not part of the isolated application or CLI.
+  // Match the inherited runner environment used by the native CLI checks.
+  await prepareObserver();
   const unrelated = start(node, ['-e', 'setInterval(()=>{},1000)'], {
     env,
     stdio: 'ignore',
@@ -236,7 +235,6 @@ try {
     pids.helper,
     unrelated.child.pid,
     desktop.child.pid,
-    env,
   );
   const chain = snapshot.chain;
   const helper = snapshot.helper;
@@ -254,10 +252,10 @@ try {
   await writeFile(join(root, 'release'), 'release');
   await untilOrDriverExit(() => exists(join(root, 'ui-observed')), 'quota result in UI', driver);
   await until(async () => {
-    const after = await processes(env);
+    const after = await processes();
     return owned.every((old) => !after.some((item) => sameProcess(old, item)));
   }, 'owned probe process cleanup');
-  const after = await processes(env);
+  const after = await processes();
   assert(
     after.some((item) => sameProcess(other, item)),
     'unrelated process must survive probe cleanup',
@@ -293,11 +291,11 @@ try {
   process.exitCode = 1;
 } finally {
   result.cleanupErrors.push(...(await stopAll()));
-  if (observedOwned.length && fixtureEnv) {
+  if (observedOwned.length) {
     try {
       await until(
         async () => {
-          const remaining = await processes(fixtureEnv);
+          const remaining = await processes();
           return observedOwned.every((old) => !remaining.some((item) => sameProcess(old, item)));
         },
         'owned probe processes after cleanup',

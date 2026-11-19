@@ -42,7 +42,7 @@
 
 队列回放已在 Windows 窗口打开编辑框并写入正文，普通草稿保持原样。保存时离线 Codex 对端未答复两项能力查询，编辑请求也一直等待。原队列 ID 和附件摘要仍在，没有自动投递。夹具现在回答这两项只读查询，对未知请求明确返回不支持，本地按窗口的请求顺序已完成编辑与撤回。修复夹具后，原 Windows ZIP 已通过真实编辑、撤回及重启后显式继续。普通草稿、原投递 ID、附件 ID 及 57 字节私有副本摘要均保留，编辑后的正文只发送一次，撤回项从未发送，最终待发为空。两次退出码为 0，后台均确认关闭。[完整 Windows 队列回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44614866570) [队列窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44611218114)
 
-额度首次回放未到达受控 CLI 协议。外层等待与 UIA 单控件等待同设为 30 秒，先结束的外层未留下窗口阶段收据。现在保留 UI 提前退出的原因、最后一个窗口操作和假对端收到的方法名；额度显示及进程退出仍待 Windows 实证。第二次已通过设置页驱动受控 CLI 收到 initialize、initialized、account/read 和 account/rateLimits/read。捕获进程归属时 CIM 命令失败，原收据不足以确定原因。回放现在预先验证 Windows 进程观察器可用，保留耗时及脱敏错误，检查真实 Job、CLI、管道后代和最终退出的要求不变。[第二次原生回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44614978856) [额度窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44611211870)
+额度首次回放未到达受控 CLI 协议。外层等待与 UIA 单控件等待同设为 30 秒，先结束的外层未留下窗口阶段收据。现在保留 UI 提前退出的原因、最后一个窗口操作和假对端收到的方法名；额度显示及进程退出仍待 Windows 实证。第二次已通过设置页驱动受控 CLI 收到 initialize、initialized、account/read 和 account/rateLimits/read。捕获进程归属时 CIM 命令失败，原收据不足以确定原因。回放现在预先验证 Windows 进程观察器可用，保留耗时及脱敏错误，检查真实 Job、CLI、管道后代和最终退出的要求不变。独立观察器在桌面使用的精简环境中两次预检均超时，尚未启动应用；同平台通过的原生 CLI 检查使用 runner 环境。现仅让测试观察器使用 runner 环境，受测应用及假 CLI 继续使用隔离配置。[诊断回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44618583460) [第二次原生回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44614978856) [额度窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44611211870)
 
 ## Windows 无名称控件与读取更新收据（2026-11-20）
 
