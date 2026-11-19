@@ -22,9 +22,14 @@ use std::collections::HashMap;
 pub struct Interactions {
     uncertain: acp::Uncertain,
     pub sessions: HashMap<String, Vec<InteractionCard>>,
-    receipts: HashMap<String, Vec<serde_json::Value>>,
+    receipts: HashMap<String, QuestionReceipts>,
     receipt_requests: HashMap<String, u64>,
     receipt_revision: u64,
+}
+
+struct QuestionReceipts {
+    rows: Vec<serde_json::Value>,
+    has_unreadable: bool,
 }
 pub struct InteractionCard {
     raw: AgentInteraction,

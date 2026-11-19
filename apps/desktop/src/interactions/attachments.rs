@@ -58,7 +58,10 @@ impl HiveApp {
     pub(super) fn load_question_receipts(&mut self, cx: &mut Context<Self>) {
         let (Some(workspace), Some(session), Some(runtime)) = (
             self.workspace.clone(),
-            self.session.as_ref().map(|s| s.id.clone()),
+            self.session
+                .as_ref()
+                .filter(|s| matches!(s.backend, crate::protocol::Backend::Codex))
+                .map(|s| s.id.clone()),
             self.runtime.clone(),
         ) else {
             self.interactions.receipts.clear();
@@ -105,7 +108,10 @@ impl HiveApp {
                 if let Ok(value) = result {
                     this.interactions.receipts.insert(
                         key,
-                        value["receipts"].as_array().cloned().unwrap_or_default(),
+                        QuestionReceipts {
+                            rows: value["receipts"].as_array().cloned().unwrap_or_default(),
+                            has_unreadable: value["unreadableReceipts"].as_u64().unwrap_or(0) > 0,
+                        },
                     );
                 } else {
                     this.interactions.receipt_requests.remove(&key);

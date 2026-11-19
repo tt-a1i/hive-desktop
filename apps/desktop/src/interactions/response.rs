@@ -142,30 +142,13 @@ impl HiveApp {
             }
             let result = runtime.request("chat.respondInteraction", params).await;
             let safe_retry = if result.is_err() && has_attachments {
-                match runtime
+                runtime
                     .request(
-                        "chat.interactionAttachments.list",
-                        json!({"sessionId":session}),
+                        "chat.interactionAttachments.status",
+                        json!({"sessionId":session,"interactionId":id}),
                     )
                     .await
-                {
-                    Ok(value) => value["receipts"]
-                        .as_array()
-                        .map(|receipts| {
-                            receipts
-                                .iter()
-                                .find(|receipt| {
-                                    receipt["interactionId"] == id
-                                        && receipt["threadId"].as_str() == identity.0.as_deref()
-                                        && receipt["turnId"].as_str() == identity.1.as_deref()
-                                        && receipt["itemId"].as_str() == identity.2.as_deref()
-                                        && receipt["nativeRequestId"] == identity.3
-                                })
-                                .is_none_or(|receipt| receipt["status"] == "draft")
-                        })
-                        .unwrap_or(false),
-                    Err(_) => false,
-                }
+                    .is_ok_and(|value| value["safeToRetry"] == true)
             } else {
                 false
             };

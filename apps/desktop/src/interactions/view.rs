@@ -131,12 +131,10 @@ impl HiveApp {
             session
         );
         let cards = self.interactions.sessions.get(&session);
-        let receipts = self
-            .interactions
-            .receipts
-            .get(&receipt_key)
+        let receipt_state = self.interactions.receipts.get(&receipt_key);
+        let receipts = receipt_state
             .into_iter()
-            .flatten()
+            .flat_map(|receipt_state| &receipt_state.rows)
             .filter(|receipt| {
                 receipt["status"] != "draft"
                     || (receipt["attachments"].as_array().is_some_and(|files| !files.is_empty())
@@ -149,6 +147,18 @@ impl HiveApp {
             .w_full()
             .min_w_0()
             .gap_3()
+            .when(receipt_state.is_some_and(|state| state.has_unreadable), |v| {
+                let message = tr("部分问题附件收据无法读取。");
+                v.child(
+                    div()
+                        .id("question-attachment-receipts-incomplete")
+                        .role(Role::Status)
+                        .aria_label(message)
+                        .text_sm()
+                        .text_color(Color::Muted.get(cx))
+                        .child(message),
+                )
+            })
             .when(
                 self.session
                     .as_ref()
@@ -504,6 +514,9 @@ impl HiveApp {
                                 )
                                 .child(
                                     div()
+                                        .id(("interaction-error", i))
+                                        .role(Role::Alert)
+                                        .aria_label(error.clone())
                                         .text_xs()
                                         .text_color(Color::Error.get(cx))
                                         .child(error),
