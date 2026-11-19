@@ -138,7 +138,9 @@ impl Editor {
             self.stop(cx);
             return;
         }
-        if key.key == "tab" && key.modifiers.number_of_modifiers() == 0 {
+        if key.key == "tab"
+            && (key.modifiers == Modifiers::none() || key.modifiers == Modifiers::shift())
+        {
             self.stop(cx);
             return;
         }

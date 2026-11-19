@@ -137,8 +137,7 @@ fn main() {
             cx.set_global(composer::ComposerPreferences::default());
             keybindings::init(cx);
             appearance::apply(None, cx);
-            let os = cx.platform_info().os;
-            cx.bind_keys(keybindings::startup_bindings(os));
+            cx.bind_keys(keybindings::startup_bindings(cx));
             cx.bind_keys([
                 KeyBinding::new("escape", CloseConversationFind, Some("HiveConversation")),
                 KeyBinding::new("down", NextSessionResult, Some("HiveSessionSearch")),

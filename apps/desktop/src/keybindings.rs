@@ -3,8 +3,8 @@ pub(crate) use editor::Editor;
 
 use crate::language::tr;
 use gpui_kit::{
-    Action, App, Global, KeyBinding, Keymap, Keystroke, Modifiers, OperatingSystem,
-    component::kbd::Kbd,
+    Action, App, Global, KeyBinding, KeybindingKeystroke, Keymap, Keystroke, Modifiers,
+    OperatingSystem, component::kbd::Kbd,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,6 +13,7 @@ use std::{
 };
 
 pub(crate) const FILE: &str = "desktop-keybindings.json";
+const CHORD_CONFLICT: &str = "快捷键与另一个操作冲突，请选择不同的组合键。";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TargetGroup {
@@ -203,23 +204,6 @@ impl Target {
         }
     }
 
-    fn key_binding(self, chord: &'static str) -> KeyBinding {
-        match self {
-            Self::NewSession => KeyBinding::new(chord, crate::NewSessionShortcut, None),
-            Self::Search => KeyBinding::new(chord, crate::OpenSessionSearch, None),
-            Self::Find => KeyBinding::new(chord, crate::OpenConversationFind, None),
-            Self::PreviousSession => KeyBinding::new(chord, crate::SelectPreviousSession, None),
-            Self::NextSession => KeyBinding::new(chord, crate::SelectNextSession, None),
-            Self::ToggleSidebar => KeyBinding::new(chord, crate::ToggleSidebar, None),
-            Self::ToggleTerminal => KeyBinding::new(chord, crate::ToggleWorkspaceTerminal, None),
-            Self::OpenGitWorkspace => KeyBinding::new(chord, crate::OpenGitWorkspaceShortcut, None),
-            Self::SearchProjectFiles => KeyBinding::new(chord, crate::OpenProjectFilePicker, None),
-            Self::ChooseModel => KeyBinding::new(chord, crate::OpenModelPicker, None),
-            Self::ToggleMode => KeyBinding::new(chord, crate::ToggleSessionMode, None),
-            Self::Preferences => KeyBinding::new(chord, crate::OpenPreferences, None),
-        }
-    }
-
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -272,7 +256,11 @@ struct StoredBindings {
 }
 
 impl StoredBindings {
-    fn into_bindings(self, os: OperatingSystem) -> Result<Bindings, &'static str> {
+    fn into_bindings(
+        self,
+        os: OperatingSystem,
+        dispatch_key: impl Fn(Keystroke) -> Keystroke,
+    ) -> Result<Bindings, &'static str> {
         let mut bindings = Bindings::defaults(os);
         let mut missing = Vec::new();
         for (target, value) in [
@@ -295,15 +283,31 @@ impl StoredBindings {
             bindings.set(target, value.flatten());
         }
 
-        // A new action's default must not take over a saved custom shortcut.
         let mut bindings = bindings.normalized(os)?;
+        let mut claimed = Vec::new();
+        // Previously, custom bindings were appended after the original defaults.
+        // GPUI gives the most recently registered binding priority.
+        for use_default in [false, true] {
+            for target in TARGETS.into_iter().rev() {
+                if let Some(raw) = bindings.get(target)
+                    && (raw == target.default(os)) == use_default
+                {
+                    let chord = dispatch_key(validate_chord(raw, os)?);
+                    if claimed.contains(&chord) {
+                        bindings.set(target, None);
+                    } else {
+                        claimed.push(chord);
+                    }
+                }
+            }
+        }
+        // Newly introduced defaults yield to saved bindings on the same key.
         for target in missing {
-            let chord = validate_chord(target.default(os), os)?.unparse(os);
-            if !TARGETS
-                .iter()
-                .any(|target| bindings.get(*target).as_ref() == Some(&chord))
-            {
-                bindings.set(target, Some(chord));
+            let chord = validate_chord(target.default(os), os)?;
+            let effective = dispatch_key(chord.clone());
+            if !claimed.contains(&effective) {
+                claimed.push(effective);
+                bindings.set(target, Some(chord.unparse(os)));
             }
         }
         Ok(bindings)
@@ -370,7 +374,7 @@ impl Bindings {
             if let Some(raw) = self.get(target) {
                 let key = validate_chord(raw, os)?;
                 if seen.contains(&key) {
-                    return Err("快捷键与另一个操作冲突，请选择不同的组合键。");
+                    return Err(CHORD_CONFLICT);
                 }
                 seen.push(key.clone());
                 next.set(target, Some(key.unparse(os)));
@@ -453,7 +457,11 @@ fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
-fn load(root: &Path, os: OperatingSystem) -> io::Result<Bindings> {
+fn load(
+    root: &Path,
+    os: OperatingSystem,
+    dispatch_key: impl Fn(Keystroke) -> Keystroke,
+) -> io::Result<Bindings> {
     let file = match fs::File::open(root.join(FILE)) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Bindings::defaults(os)),
@@ -471,7 +479,7 @@ fn load(root: &Path, os: OperatingSystem) -> io::Result<Bindings> {
         return Err(invalid("快捷键文件缺少操作字段，原文件未修改。"));
     }
     let stored: StoredRead = serde_json::from_value(value)?;
-    stored.bindings.into_bindings(os).map_err(invalid)
+    stored.bindings.into_bindings(os, dispatch_key).map_err(invalid)
 }
 
 fn save(root: &Path, bindings: &Bindings, os: OperatingSystem) -> io::Result<()> {
@@ -490,10 +498,14 @@ fn save(root: &Path, bindings: &Bindings, os: OperatingSystem) -> io::Result<()>
     Ok(())
 }
 
-pub(crate) fn startup_bindings(os: OperatingSystem) -> Vec<KeyBinding> {
+pub(crate) fn startup_bindings(cx: &App) -> Vec<KeyBinding> {
+    let os = cx.platform_info().os;
     TARGETS
         .into_iter()
-        .map(|target| target.key_binding(target.default(os)))
+        .map(|target| {
+            KeyBinding::load(target.default(os), target.action(), None, false, None, cx)
+                .expect("valid default Hive shortcut")
+        })
         .collect()
 }
 
@@ -503,28 +515,49 @@ fn protected_binding(binding: &KeyBinding) -> bool {
         .any(|target| target.action().name() == binding.action().name())
 }
 
-fn check_registered(bindings: &Bindings, cx: &App) -> Result<(), &'static str> {
-    let os = cx.platform_info().os;
+fn dispatch_key(key: Keystroke, cx: &App) -> Keystroke {
+    KeybindingKeystroke::new_with_mapper(key, false, cx.keyboard_mapper().as_ref())
+        .inner()
+        .clone()
+}
+
+fn check_conflicts(
+    bindings: &Bindings,
+    os: OperatingSystem,
+    dispatch_key: impl Fn(Keystroke) -> Keystroke,
+    is_protected: impl Fn(&Keystroke) -> bool,
+) -> Result<(), &'static str> {
+    let mut claimed = Vec::with_capacity(TARGETS.len());
     for target in TARGETS {
         if let Some(chord) = bindings.get(target) {
-            // These existing Hive global defaults already own their chords.
-            if TARGETS
-                .into_iter()
-                .any(|existing| chord == existing.default(os))
-            {
-                continue;
+            let key = dispatch_key(validate_chord(chord, os)?);
+            if claimed.contains(&key) {
+                return Err(CHORD_CONFLICT);
             }
-            let key = validate_chord(chord, os)?;
-            if cx
-                .all_bindings_for_input(&[key])
-                .iter()
-                .any(protected_binding)
-            {
+            // These existing Hive global defaults already own their chords.
+            let existing_default = TARGETS
+                .into_iter()
+                .any(|existing| chord == existing.default(os));
+            if !existing_default && is_protected(&key) {
                 return Err("此组合键已用于现有组件或文字编辑，请选择其他组合。");
             }
+            claimed.push(key);
         }
     }
     Ok(())
+}
+
+fn check_registered(bindings: &Bindings, cx: &App) -> Result<(), &'static str> {
+    check_conflicts(
+        bindings,
+        cx.platform_info().os,
+        |key| dispatch_key(key, cx),
+        |key| {
+            cx.all_bindings_for_input(std::slice::from_ref(key))
+                .iter()
+                .any(protected_binding)
+        },
+    )
 }
 
 type BindingChanges = Vec<(&'static str, Option<KeyBinding>)>;
@@ -620,11 +653,8 @@ pub(crate) fn restore(root: &Path, cx: &mut App) {
     }
     // Replace only changed Hive bindings. Component and input bindings stay registered.
     let active_before = cx.global::<Preferences>().active.clone();
-    let loaded = load(root, cx.platform_info().os).and_then(|bindings| {
-        live_delta(&active_before, &bindings, cx)
-            .map(|(normalized, delta)| (normalized, delta))
-            .map_err(io::Error::other)
-    });
+    let loaded = load(root, cx.platform_info().os, |key| dispatch_key(key, cx))
+        .and_then(|bindings| live_delta(&active_before, &bindings, cx).map_err(io::Error::other));
     let state = cx.global_mut::<Preferences>();
     state.root = Some(root.to_owned());
     if state.applied {
@@ -652,9 +682,8 @@ fn reload(cx: &mut App) {
         return;
     };
     let active_before = cx.global::<Preferences>().active.clone();
-    let loaded = load(&root, cx.platform_info().os).and_then(|bindings| {
-        live_delta(&active_before, &bindings, cx).map_err(io::Error::other)
-    });
+    let loaded = load(&root, cx.platform_info().os, |key| dispatch_key(key, cx))
+        .and_then(|bindings| live_delta(&active_before, &bindings, cx).map_err(io::Error::other));
     match loaded {
         Ok((bindings, delta)) => {
             let state = cx.global_mut::<Preferences>();
@@ -725,7 +754,7 @@ fn explain_error(error: &str) -> String {
     for message in [
         "快捷键文件版本不受支持，原文件未修改。",
         "快捷键文件缺少操作字段，原文件未修改。",
-        "快捷键与另一个操作冲突，请选择不同的组合键。",
+        CHORD_CONFLICT,
         "请录制一个带修饰键的组合键，不支持连续按键。",
         "快捷键格式无效，请重新录制。",
         "macOS 请使用 Command 组合键；Windows 请使用 Ctrl 组合，不使用 Win 或 AltGr。",

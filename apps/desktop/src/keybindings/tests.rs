@@ -1,6 +1,8 @@
-use super::{Bindings, FILE, Preferences, Target, load, save, validate_chord};
+use super::{
+    Bindings, CHORD_CONFLICT, FILE, Preferences, Target, check_conflicts, load, save, validate_chord,
+};
 use gpui_kit::{KeyBinding, Keymap, Keystroke, OperatingSystem};
-use std::fs;
+use std::{convert::identity, fs};
 
 #[test]
 fn validates_single_modified_chords_and_detects_collisions() {
@@ -52,7 +54,7 @@ fn atomic_settings_keep_active_bindings_until_restart_and_protect_old_file() {
     let bytes = fs::read(root.path().join(FILE)).unwrap();
     assert_eq!(state.active, defaults);
     assert_eq!(state.saved, state.draft);
-    assert_eq!(load(root.path(), os).unwrap(), state.saved);
+    assert_eq!(load(root.path(), os, identity).unwrap(), state.saved);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -96,19 +98,19 @@ fn unknown_or_partial_files_are_not_migrated_or_overwritten() {
         "not json",
     ] {
         fs::write(&path, value).unwrap();
-        assert!(load(root.path(), OperatingSystem::Mac).is_err());
+        assert!(load(root.path(), OperatingSystem::Mac, identity).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), value);
     }
     fs::remove_file(&path).unwrap();
     assert_eq!(
-        load(root.path(), OperatingSystem::Mac).unwrap(),
+        load(root.path(), OperatingSystem::Mac, identity).unwrap(),
         Bindings::defaults(OperatingSystem::Mac)
     );
     assert!(!path.exists());
     let defaults = Bindings::defaults(OperatingSystem::Windows);
     save(root.path(), &defaults, OperatingSystem::Windows).unwrap();
     assert_eq!(
-        load(root.path(), OperatingSystem::Windows).unwrap(),
+        load(root.path(), OperatingSystem::Windows, identity).unwrap(),
         defaults
     );
 }
@@ -180,7 +182,7 @@ fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
     let root = tempfile::tempdir().unwrap();
     let legacy = r#"{"version":1,"bindings":{"search":"cmd-shift-j","find":null,"preferences":"cmd-,"}}"#;
     fs::write(root.path().join(FILE), legacy).unwrap();
-    let migrated = load(root.path(), OperatingSystem::Mac).unwrap();
+    let migrated = load(root.path(), OperatingSystem::Mac, identity).unwrap();
     assert_eq!(migrated.get(Target::Search).as_deref(), Some("cmd-shift-j"));
     assert_eq!(migrated.get(Target::Find), &None);
     assert_eq!(migrated.get(Target::Preferences).as_deref(), Some("cmd-,"));
@@ -195,7 +197,7 @@ fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
 
     let with_disabled_new = r#"{"version":1,"bindings":{"search":"cmd-shift-j","find":"cmd-f","preferences":"cmd-,","new_session":null}}"#;
     fs::write(root.path().join(FILE), with_disabled_new).unwrap();
-    let loaded = load(root.path(), OperatingSystem::Mac).unwrap();
+    let loaded = load(root.path(), OperatingSystem::Mac, identity).unwrap();
     assert_eq!(loaded.get(Target::NewSession), &None);
 }
 
@@ -213,7 +215,7 @@ fn legacy_custom_shortcuts_take_priority_over_new_defaults() {
         let legacy_bytes = serde_json::to_vec(&legacy).unwrap();
         fs::write(&path, &legacy_bytes).unwrap();
 
-        let mut migrated = load(root.path(), os).unwrap();
+        let mut migrated = load(root.path(), os, identity).unwrap();
         assert_eq!(fs::read(&path).unwrap(), legacy_bytes);
         assert_eq!(migrated.get(Target::Search).as_deref(), Some(search));
         assert_eq!(migrated.get(Target::Find).as_deref(), Some(find));
@@ -227,7 +229,7 @@ fn legacy_custom_shortcuts_take_priority_over_new_defaults() {
 
         migrated.set(Target::Search, Some(Target::Search.default(os).to_owned()));
         save(root.path(), &migrated, os).unwrap();
-        assert_eq!(load(root.path(), os).unwrap(), migrated);
+        assert_eq!(load(root.path(), os, identity).unwrap(), migrated);
     }
 }
 
@@ -237,17 +239,82 @@ fn migration_rejects_duplicate_explicit_shortcuts() {
     let path = root.path().join(FILE);
     let config = br#"{"version":1,"bindings":{"search":"cmd-;","find":"cmd-f","preferences":null,"previous_session":"cmd-;"}}"#;
     fs::write(&path, config).unwrap();
-    assert!(load(root.path(), OperatingSystem::Mac).is_err());
+    assert!(load(root.path(), OperatingSystem::Mac, identity).is_err());
     assert_eq!(fs::read(&path).unwrap(), config);
 }
 
 #[test]
+fn shortcuts_that_dispatch_as_the_same_key_conflict() {
+    let os = OperatingSystem::Windows;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    let old = br#"{"version":1,"bindings":{"search":"ctrl-shift-;","find":"ctrl-:","preferences":null}}"#;
+    fs::write(&path, old).unwrap();
+
+    // Model the Windows US keyboard mapper's output for this key. Production
+    // asks the active platform mapper and works with its dispatch identity.
+    let dispatch_key = |mut key: Keystroke| {
+        if key.modifiers.shift && key.key == ";" {
+            key.modifiers.shift = false;
+            key.key = ":".to_owned();
+        }
+        key
+    };
+    let unmapped = load(root.path(), os, identity).unwrap();
+    assert_eq!(
+        check_conflicts(&unmapped, os, dispatch_key, |_| false),
+        Err(CHORD_CONFLICT)
+    );
+
+    let loaded = load(root.path(), os, dispatch_key).unwrap();
+    assert_eq!(loaded.get(Target::Find).as_deref(), Some("ctrl-:"));
+    assert_eq!(loaded.get(Target::Search), &None);
+    assert_eq!(loaded.get(Target::Preferences), &None);
+    assert_eq!(
+        loaded.get(Target::PreviousSession).as_deref(),
+        Some("ctrl-;")
+    );
+    assert_eq!(fs::read(&path).unwrap(), old);
+    assert_eq!(check_conflicts(&loaded, os, dispatch_key, |_| false), Ok(()));
+    save(root.path(), &loaded, os).unwrap();
+    assert_eq!(load(root.path(), os, dispatch_key).unwrap(), loaded);
+}
+
+#[test]
+fn added_defaults_yield_to_saved_shortcuts_after_layout_mapping() {
+    let os = OperatingSystem::Windows;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    let old = br#"{"version":1,"bindings":{"search":"ctrl-shift-,","find":"ctrl-f","preferences":null}}"#;
+    fs::write(&path, old).unwrap();
+
+    // On a layout where Shift+comma produces a semicolon, the old custom
+    // shortcut takes priority over the new action's semicolon default.
+    let loaded = load(root.path(), os, |mut key| {
+        if key.modifiers.shift && key.key == "," {
+            key.modifiers.shift = false;
+            key.key = ";".to_owned();
+        }
+        key
+    })
+    .unwrap();
+    assert_eq!(loaded.get(Target::Search).as_deref(), Some("ctrl-shift-,"));
+    assert_eq!(loaded.get(Target::Find).as_deref(), Some("ctrl-f"));
+    assert_eq!(loaded.get(Target::PreviousSession), &None);
+    assert_eq!(loaded.get(Target::Preferences), &None);
+    assert_eq!(fs::read(&path).unwrap(), old);
+}
+
+#[test]
 fn repeated_live_rebinds_keep_the_keymap_bounded_and_preserve_other_bindings() {
-    use super::{replace_bindings, startup_bindings};
+    use super::replace_bindings;
     use gpui_kit::{Action, KeyContext, Unbind, base::input::Copy};
 
-    let os = OperatingSystem::Mac;
-    let mut map = Keymap::new(startup_bindings(os));
+    let mut map = Keymap::new(vec![
+        KeyBinding::new("cmd-k", crate::OpenSessionSearch, None),
+        KeyBinding::new("cmd-`", crate::ToggleWorkspaceTerminal, None),
+        KeyBinding::new("cmd-b", crate::ToggleSidebar, None),
+    ]);
     map.add_bindings([
         KeyBinding::new("cmd-q", crate::Quit, None),
         KeyBinding::new("cmd-c", Copy, None),
