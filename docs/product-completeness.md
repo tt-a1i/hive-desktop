@@ -20,6 +20,8 @@ macOS 本地包确认同一 HTML 产物跨文件详情复用预览窗口，保�
 
 macOS 的 Node 后台被强制终止后，正在运行的项目脚本和同组子进程会被回收。中断执行记录保留，单次运行的日志缺失也不会阻止后台冷启动。[脚本进程与恢复验收](validation/2026-11-19-worktree-setup-native.md)
 
+Codex 问题附件按整次回复限制数量。草稿保存跟随原问题，切换会话仍可读回。一个项目的损坏收据不会阻断其他项目的普通问答或审批。[问题附件验收](validation/2026-11-19-codex-question-attachments-desktop.md)
+
 ## 2026-11-14 历史计划
 
 2026-11-14。用户已在当前会话确认并授权持续推进。本文整理执行顺序；需求和工作项继续使用 GitHub Issues，父任务为 #1，首批工作为 [#29](https://github.com/tt-a1i/hive-desktop/issues/29)。完整目标仍未完成。
