@@ -1125,16 +1125,24 @@ export class Chats implements StructuredSessionPort {
     return readClaudeSessionMessages(record.nativeclaudeSessionId, directory, nativeProfileLaunch(profile).env, this.closeAbort.signal);
   }
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
-  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError, allowHandoffQueueEdits = false) {
+  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError, allowOfflineQueueEdits = false) {
+    const acpVersion = allowOfflineQueueEdits && this.canEditOfflineAcp(record) ? this.index.snapshotVersion(record.id) : undefined;
     const workspace = await this.workspace(record.workspaceId);
     let history: unknown[] = [], historyMessageIds: string[] = [];
     let historyWarning: string | undefined;
+    let acpTranscript: AcpHistory | undefined;
     const hasDurableSource = record.backend === 'pi' || record.backend === 'pi-rpc' || record.backend === 'acp' ? !!record.sessionFile
       : record.backend === 'codex' ? !!record.codexThreadId : !!record.nativeclaudeSessionId;
     if (!hasDurableSource) historyWarning = 'No durable native history source is recorded for this older conversation; history completeness cannot be verified';
     try {
       if (record.backend === 'acp') {
-        if(record.sessionFile){const transcript=await AcpHistory.load(record.sessionFile);if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new Error('ACP native session identity does not match its local transcript');history=transcript.state.history;historyMessageIds=transcript.state.historyIds;}
+        if (record.sessionFile) {
+          const transcript = await AcpHistory.load(record.sessionFile);
+          if (!transcript || transcript.state.sessionId !== record.acpSessionId) throw new Error('ACP native session identity does not match its local transcript');
+          history = transcript.state.history;
+          historyMessageIds = transcript.state.historyIds;
+          acpTranscript = transcript;
+        }
         historyWarning=record.sessionFile?'This is the local ACP transcript; native restore support is checked only on explicit activation':undefined;
       } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
         if (record.sessionFile) {
@@ -1178,9 +1186,18 @@ export class Chats implements StructuredSessionPort {
     const sourceAgent = record.originAgentId ?? record.agentId;
     if (sourceAgent) history = history.map(message => restoreHistoricalReport(message,
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, sourceAgent, dispatchId, payload)));
-    const queue = allowHandoffQueueEdits && this.offlineHandoffEditable(record) ? this.offlineHandoffQueue(record)
+    let acpQueue: DeliveryQueue | undefined;
+    if (acpVersion !== undefined && acpTranscript) {
+      // Pending worktree initialization keeps the transcript visible but disables edits.
+      const ready = await this.initializationReady(record).then(() => true, (error: unknown) => {
+        if (error instanceof WorktreeInitializationError) return false;
+        throw error;
+      });
+      if (ready) acpQueue = this.offlineAcpQueue(record, acpVersion, acpTranscript);
+    }
+    const queue = acpQueue ?? (allowOfflineQueueEdits && this.offlineHandoffEditable(record) ? this.offlineHandoffQueue(record)
       : new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
-      completedIds: () => [], userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }});
+      completedIds: () => [], userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }}));
     return {...record, ...(record.backend==='acp'&&{capabilities:{...acpCapabilities(undefined,!!record.sessionFile),...(record.capabilities&&{lastObserved:record.capabilities})}}), executionPath: record.execution?.path ?? workspace.path, history:history.map((message,index)=>handoffMessage(record.backend,message,historyMessageIds[index])), historyMessageIds,
       readOnly: true, identityError: {code: identityError.code, message: identityError.message},
       ...(historyWarning && {historyIncomplete: true, historyWarning}),
@@ -1259,6 +1276,39 @@ export class Chats implements StructuredSessionPort {
   private offlineHandoffQueue(record:ChatRecord){
     return new DeliveryQueue({directory:this.queueDir,sessionId:record.id,startPaused:true,completedIds:()=>[],prepare:item=>this.prepareHandoffItem(record,item),
       userInputMutationReason:item=>(record.originAgentId===`${record.workspaceId}:orchestrator`&&item.presentation?.messageSequence===undefined?'legacy':undefined),onError:()=>{},execute:async()=>{throw new Error('An offline handoff queue cannot execute');}});
+  }
+  private canEditOfflineAcp(record: ChatRecord): boolean {
+    return record.backend === 'acp' && !record.handoff && !record.archived && !!record.profile
+      && record.identityState === 'known' && !!record.originAgentId && record.agentId === record.originAgentId
+      && !!record.sessionFile && !!record.acpSessionId
+      && record.capabilities?.features?.nativeResume?.state === 'supported'
+      && record.capabilities?.features?.teamTool?.state === 'supported'
+      && !this.closing && !this.removing.has(record.workspaceId)
+      && !this.live.has(record.id) && !this.opening.has(record.id);
+  }
+  private offlineAcpQueue(record: ChatRecord, version: number, transcript: AcpHistory): DeliveryQueue | undefined {
+    // The transcript read yields to native startup. Re-check ownership before a
+    // synchronous spool operation can proceed, including starts initiated by Hive.
+    if (!this.index.peek(record.id) || this.index.snapshotVersion(record.id) !== version || !this.canEditOfflineAcp(record)
+      || transcript.file !== record.sessionFile || transcript.state.sessionId !== record.acpSessionId) return;
+    try { this.profiles.resolveForExecutionSnapshot(record.profile!, 'acp'); }
+    catch { return; }
+    const deliveries = transcript.state.deliveries;
+    const completed: string[] = [];
+    for (const id in deliveries) {
+      if (Object.hasOwn(deliveries, id) && deliveries[id] === 'completed') completed.push(id);
+    }
+    const queue: DeliveryQueue = new DeliveryQueue({
+      directory: this.queueDir, sessionId: record.id, startPaused: true, completedIds: () => completed,
+      userInputMutationReason: item => {
+        if (Object.hasOwn(deliveries, item.id) && deliveries[item.id] === 'sent') return 'attempted';
+        if (record.lastDeliveryFailure && record.lastDeliveryFailure.deliveryId === queue.headId) return 'read-only';
+        if (record.originAgentId === `${record.workspaceId}:orchestrator` && item.presentation?.messageSequence === undefined) return 'legacy';
+      },
+      onError: () => {},
+      execute: async () => { throw new Error('An offline ACP queue cannot execute'); },
+    });
+    return queue;
   }
   private reconcileHandoffQueue(record:ChatRecord,queue:DeliveryQueue){
     if(!record.handoff||queue.busy)return;
@@ -1369,9 +1419,11 @@ export class Chats implements StructuredSessionPort {
       return {...snapshot,readOnly:false,passive:true,handoffSnapshot,handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}};
     }
     if(record.backend==='acp'&&!this.live.has(id)){
-      await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
-      const {identityError,readOnly,...snapshot}=await this.readOnlySnapshot(this.index.get(id),new SessionIdentityError('ACP_PASSIVE_SESSION','Activate explicitly to negotiate native restore and the Hive team bridge'));
-      const nativeReadOnly=!!record.sessionFile&&record.capabilities?.features?.nativeResume?.state==='unsupported';
+      await this.runnableIdentity(record);
+      await this.executionDirectory(record.workspaceId,id);
+      const current = this.index.get(id);
+      const {identityError,readOnly,...snapshot}=await this.readOnlySnapshot(current,new SessionIdentityError('ACP_PASSIVE_SESSION','Activate explicitly to negotiate native restore and the Hive team bridge'),true);
+      const nativeReadOnly=!!current.sessionFile&&current.capabilities?.features?.nativeResume?.state==='unsupported';
       return {...snapshot,readOnly:nativeReadOnly,passive:true,...(nativeReadOnly&&{identityError:{code:'ACP_NATIVE_RESUME_UNAVAILABLE',message:'The last agent handshake did not support native restore; only the local transcript is available. Explicit activation can recheck this capability.'}})};
     }
     if(record.lineage&&!this.live.has(id)){
@@ -1617,8 +1669,10 @@ export class Chats implements StructuredSessionPort {
       }finally{this.handoffStarting.delete(id);}
     });
   }
-  private reconcileUserInputs(record: ChatRecord, queue: DeliveryQueue): void {
+  private reconcileUserInputs(record: ChatRecord, queue: DeliveryQueue, acpDeliveries?: AcpHistory['state']['deliveries']): boolean {
+    let changed = false;
     for (const item of queue.pending) {
+      if (acpDeliveries && Object.hasOwn(acpDeliveries, item.id)) continue;
       const sequence = item.presentation?.messageSequence;
       if (sequence === undefined) continue;
       const row = this.hive.getUserInput(record.workspaceId, (record.agentId ?? record.originAgentId)!, sequence);
@@ -1632,7 +1686,9 @@ export class Chats implements StructuredSessionPort {
       const replacement = row.type === 'user_input_cancelled' ? null
         : replaceQueuedInput(item, authoritative.text);
       queue.reconcilePendingUserInput(item.id, replacement);
+      changed = true;
     }
+    return changed;
   }
   async mutateQueuedInput(id: string, deliveryId: string, expectedText: unknown, text?: unknown) {
     if (typeof expectedText !== 'string' || (text !== undefined && typeof text !== 'string')) throw new TypeError('Queue text must be a string');
@@ -1643,6 +1699,7 @@ export class Chats implements StructuredSessionPort {
       let record = this.index.get(id);
       let chat: LiveChat | undefined;
       let queue: DeliveryQueue;
+      let acpTranscript: AcpHistory | undefined;
       if (record.handoff && !this.live.has(id) && this.handoffDeliveries.get(id)?.status !== 'consumed') {
         record = await this.runnableIdentity(record);
         await this.initializationReady(record);
@@ -1651,6 +1708,23 @@ export class Chats implements StructuredSessionPort {
         record = this.index.get(id);
         if (!this.offlineHandoffEditable(record)) throw new Error('Handoff queue state changed; reopen the conversation');
         queue = this.offlineHandoffQueue(record);
+      } else if (record.backend === 'acp' && !record.handoff) {
+        const existing = this.live.get(id);
+        record = await this.runnableIdentity(record);
+        const version = this.index.snapshotVersion(id);
+        await this.initializationReady(record);
+        if (existing) {
+          if (this.live.get(id) !== existing || existing.cleanup) throw new Error('ACP session ownership changed; reopen the conversation');
+          chat = existing;
+          queue = existing.queue;
+          record = this.index.get(id);
+        } else {
+          await this.executionDirectory(record.workspaceId, id);
+          if (this.canEditOfflineAcp(record)) acpTranscript = await AcpHistory.load(record.sessionFile!);
+          const offline = acpTranscript && this.offlineAcpQueue(record, version, acpTranscript);
+          if (!offline) throw new Error('The saved ACP session cannot edit queued input; reopen the conversation');
+          queue = offline;
+        }
       } else {
         chat = await this.require(id);
         queue = chat.queue;
@@ -1658,6 +1732,7 @@ export class Chats implements StructuredSessionPort {
       }
       if (this.closing || chat?.failure || chat?.cleanup || chat?.reasoningFailure || this.deliveryFailure(id, queue)) throw new Error('Conversation cannot change queued input in its current state');
       this.assertWorkspaceAvailable(record.workspaceId);
+      if (acpTranscript && this.reconcileUserInputs(record, queue, acpTranscript.state.deliveries)) this.publishQueueState(id, queue);
       const item = queue.pending.find(item => item.id === deliveryId);
       const visible = queue.pendingUserInputs.find(item => item.deliveryId === deliveryId);
       if (!item || !visible?.editable) throw new Error('Only unstarted user input can be changed');
@@ -1686,7 +1761,7 @@ export class Chats implements StructuredSessionPort {
         // COMMIT can fail after spool persistence. Restore from SQLite before another
         // turn can start; a failed restore keeps the queue paused and fails closed.
         const paused = queue.pause();
-        try { this.reconcileUserInputs(record, queue); }
+        try { this.reconcileUserInputs(record, queue, acpTranscript?.state.deliveries); }
         catch (recoveryError) {
           const failure = recoveryError instanceof Error ? recoveryError : new Error(String(recoveryError));
           if (chat) this.failLive(id, chat, failure);
