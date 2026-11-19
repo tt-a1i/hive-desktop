@@ -953,8 +953,14 @@ impl HiveApp {
                         surface.child(div().id("read-only-conversation-status").role(Role::Status).aria_label(notice).px_1().text_xs().text_color(Color::Secondary.get(cx)).child(notice))
                     })
                     .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none() && !self.needs_codex_mode_recovery(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
-                    .when_some(access.identity_error.as_ref().filter(|error| error.code != "PASSIVE_HANDOFF"), |surface, error| surface.child(div().px_1().text_xs().text_color(Color::Error.get(cx)).child(format!("{}: {}", error.code, error.message))))
-                    .when(access.history_incomplete || access.history_warning.is_some(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(access.history_warning.clone().unwrap_or_else(|| tr("此会话的历史记录不完整。").to_owned()))))
+                    .when_some(access.identity_error.as_ref().filter(|error| error.code != "PASSIVE_HANDOFF"), |surface, error| {
+                        let notice = format!("{}: {}", error.code, error.message);
+                        surface.child(div().id("conversation-identity-error").role(Role::Alert).aria_label(notice.clone()).px_1().text_xs().text_color(Color::Error.get(cx)).child(notice))
+                    })
+                    .when(access.history_incomplete || access.history_warning.is_some(), |surface| {
+                        let notice = access.history_warning.clone().unwrap_or_else(|| tr("此会话的历史记录不完整。").to_owned());
+                        surface.child(div().id("conversation-history-warning").role(Role::Status).aria_label(notice.clone()).px_1().text_xs().text_color(Color::Secondary.get(cx)).child(notice))
+                    })
             })
             .when(self.can_check_saved_codex_modes(), |surface| surface.child(self.render_codex_mode_recovery(cx)))
             .when(self.current_history_access().and_then(|access| access.identity_error.as_ref())

@@ -285,7 +285,7 @@ impl Render for SidebarSearch {
                         )
                     })
                     .when_some(self.page.warning(), |list, warning| {
-                        list.child(div().id("sidebar-search-incomplete").role(Role::Status).p_2().text_xs().text_color(Color::Error.get(cx)).child(warning))
+                        list.child(div().id("sidebar-search-incomplete").role(Role::Status).aria_label(warning.clone()).p_2().text_xs().text_color(Color::Error.get(cx)).child(warning))
                     })
                     .when(
                         !self.loading && self.error.is_none() && self.page.matches.is_empty(),

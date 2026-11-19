@@ -1,12 +1,9 @@
 import { AcpHistory } from './agents/acp-history.js';
-import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
-import { createInterface } from 'node:readline';
 import { setImmediate } from 'node:timers/promises';
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { ChatRecord } from './chat-index.js';
-import { externalPiBranch, externalPiMessage } from './agents/external-pi-history.js';
+import { externalPiBranch, externalPiMessage, readPiTranscript } from './agents/external-pi-history.js';
 import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
 import { readClaudeMetadata } from './agents/claude-metadata.js';
 import { ClaudeProjection } from './agents/claude-projection.js';
@@ -228,39 +225,8 @@ function find(rows: readonly { id: string; text: string }[], first: string, rest
   return matches;
 }
 
-async function piRows(file: string, backend: 'pi' | 'pi-rpc', signal?: AbortSignal): Promise<Row[]> {
-  const before = await stat(file);
-  if (!before.isFile()) throw new Error('Pi transcript is not a regular file');
-  signal?.throwIfAborted();
-  const entries: SessionEntry[] = [];
-  const seen = new Set<string>();
-  let header = false;
-  const input = createReadStream(file, {encoding: 'utf8', ...(signal && {signal})});
-  const lines = createInterface({input, crlfDelay: Infinity});
-  try {
-    for await (const raw of lines) {
-      if (!raw.trim()) continue;
-      let parsed: unknown;
-      try { parsed = JSON.parse(raw); } catch { throw new Error('Malformed Pi transcript'); }
-      if (!object(parsed)) throw new Error('Invalid Pi transcript entry');
-      if (!header) {
-        if (parsed.type !== 'session' || typeof parsed.id !== 'string') throw new Error('Invalid Pi transcript header');
-        header = true;
-        continue;
-      }
-      if (typeof parsed.type !== 'string' || typeof parsed.id !== 'string' || !parsed.id ||
-          !(parsed.parentId === null || typeof parsed.parentId === 'string') || seen.has(parsed.id)) throw new Error('Invalid Pi transcript entry');
-      seen.add(parsed.id);
-      entries.push(parsed as unknown as SessionEntry);
-    }
-  } finally {
-    lines.close();
-    input.destroy();
-  }
-  signal?.throwIfAborted();
-  if (!header) throw new Error('Missing Pi transcript header');
-  const after = await stat(file);
-  if (before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('Pi transcript changed while being read; retry search');
+async function piRows(file: string, backend: 'pi' | 'pi-rpc', expectedId: string | undefined, signal?: AbortSignal): Promise<Row[]> {
+  const entries = await readPiTranscript(file, expectedId, signal);
   const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null);
   const sources = piUserInputSources(branch);
   const rows: Row[] = [];
@@ -333,17 +299,24 @@ export async function searchConversation(record: ChatRecord, query: string, opti
   let truncated = false;
   let unresolved = false;
   try {
-    if(record.backend==='acp'){
-      if(record.sessionFile){const transcript=await AcpHistory.load(record.sessionFile, signal);if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new Error('ACP transcript identity mismatch');rows=transcript.state.history.map((message,index)=>({id:desktopMessageId(transcript.state.historyIds[index]!,message),message}));warning='ACP local transcript may differ from native history; no agent was started for search';}
+    if (record.backend === 'acp') {
+      if (record.sessionFile) {
+        const transcript = await AcpHistory.load(record.sessionFile, signal);
+        if (!transcript || transcript.state.sessionId !== record.acpSessionId) throw new Error('ACP transcript identity mismatch');
+        rows = transcript.state.history.map((message, index) => ({id: desktopMessageId(transcript.state.historyIds[index]!, message), message}));
+        warning = 'ACP local transcript may differ from native history; no agent was started for search';
+      } else if (record.acpSessionId) warning = 'The saved ACP session has no local transcript path';
     } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
+      const {backend} = record;
+      const nativeId = backend === 'pi' ? record.piSessionId : record.externalPiSessionId;
       if (record.sessionFile) {
         const file = record.sessionFile;
-        const loaded = await freshRows([file], async () => ({ rows: await piRows(file, record.backend as 'pi' | 'pi-rpc', signal), complete: true }), signal);
+        const loaded = await freshRows([file], async () => ({ rows: await piRows(file, backend, nativeId, signal), complete: true }), signal);
         rows = loaded.rows;
         truncated = loaded.truncated;
         unresolved = loaded.unresolved;
       }
-      else if (record.piSessionId || record.externalPiSessionId) warning = 'Pi transcript path is unavailable';
+      else if (nativeId) warning = 'Pi transcript path is unavailable';
     } else if (record.backend === 'claude') {
       if (record.nativeclaudeSessionId) {
         const sessionId = record.nativeclaudeSessionId;

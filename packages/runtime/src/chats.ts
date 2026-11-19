@@ -37,8 +37,7 @@ import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, SessionIdentityError, type ChatRecord, type ChatBackend } from './chat-index.js';
-import type { SessionEntry } from '@earendil-works/pi-coding-agent';
-import { externalPiBranch, externalPiMessage } from './agents/external-pi-history.js';
+import { externalPiBranch, externalPiMessage, readPiTranscript, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
 import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
 import { ClaudeProjection } from './agents/claude-projection.js';
 import { readClaudeMetadata } from './agents/claude-metadata.js';
@@ -950,9 +949,21 @@ export class Chats implements StructuredSessionPort {
     const executionPath = await this.executionPath(record, workspace);
     if (record.backend === 'acp' && (record.model || record.reasoning || record.nativeMode)) throw new SessionIdentityError('ACP_SETTING_UNSUPPORTED','ACP does not accept locally stored model, reasoning or mode overrides');
     const sessionFile = record.sessionFile;
+    if (record.backend === 'acp' && record.acpSessionId && !sessionFile)
+      throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT', 'The saved ACP session has no local transcript path');
     if (record.backend === 'acp' && sessionFile) {
       const source=await AcpHistory.load(sessionFile);
       if(!record.acpSessionId || source?.state.sessionId!==record.acpSessionId) throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT','The saved ACP transcript and native session identity disagree');
+    }
+    const piNativeId = record.backend === 'pi' ? record.piSessionId : record.backend === 'pi-rpc' ? record.externalPiSessionId : undefined;
+    if (piNativeId) {
+      try {
+        if (!sessionFile) throw new Error('Saved Pi transcript path is unavailable');
+        await verifyPiTranscriptIdentity(sessionFile, piNativeId, this.closeAbort.signal);
+      } catch (error) {
+        this.closeAbort.signal.throwIfAborted();
+        throw new SessionIdentityError('PI_SESSION_IDENTITY_CONFLICT', `Cannot restore the original Pi conversation: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
     if (sessionFile && !existsSync(sessionFile)) {
       throw new Error(`找不到已保存的 Pi 会话文件。恢复文件后可重新打开会话：${sessionFile}`);
@@ -1005,6 +1016,8 @@ export class Chats implements StructuredSessionPort {
     try {
       this.closeAbort.signal.throwIfAborted();
       if (earlyFailure) throw earlyFailure;
+      if (piNativeId && handle.sessionId !== piNativeId)
+        throw new SessionIdentityError('PI_SESSION_IDENTITY_CONFLICT', 'Pi did not restore the original native session');
       if (record.backend === 'acp') {
         const acp=handle as AcpSessionHandle;
         this.index.save({...this.index.get(record.id),sessionFile:handle.sessionFile??null,acpSessionId:handle.sessionId,capabilities:acpCapabilities(acp,true)});
@@ -1162,18 +1175,14 @@ export class Chats implements StructuredSessionPort {
           history = transcript.state.history;
           historyMessageIds = transcript.state.historyIds;
           acpTranscript = transcript;
+          historyWarning = 'This is the local ACP transcript; native restore support is checked only on explicit activation';
+        } else {
+          historyWarning = record.acpSessionId ? 'The saved ACP session has no local transcript path' : undefined;
         }
-        historyWarning=record.sessionFile?'This is the local ACP transcript; native restore support is checked only on explicit activation':undefined;
       } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
         if (record.sessionFile) {
-          const lines = readFileSync(record.sessionFile, 'utf8').split('\n').filter(line => line.trim());
-          const values = lines.map(line => { try { return JSON.parse(line) as Record<string, unknown>; } catch { throw new Error('Saved Pi transcript contains malformed JSON; the original file was not changed'); } });
-          const header = values.shift();
-          if (header?.type !== 'session' || typeof header.id !== 'string') throw new Error('Saved Pi transcript header is invalid');
-          const entries = values.map(value => {
-            if (typeof value.type !== 'string' || typeof value.id !== 'string' || !(value.parentId === null || typeof value.parentId === 'string')) throw new Error('Saved Pi transcript entry is invalid');
-            return value as unknown as SessionEntry;
-          });
+          const nativeId = record.backend === 'pi' ? record.piSessionId : record.externalPiSessionId;
+          const entries = await readPiTranscript(record.sessionFile, nativeId, this.closeAbort.signal);
           const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null), sources = piUserInputSources(branch);
           for (const entry of branch) {
             const note = sources.notes.get(entry.id);
@@ -1513,6 +1522,8 @@ export class Chats implements StructuredSessionPort {
     const cleanup=this.live.get(id)?.cleanup;
     if(cleanup)await cleanup;
     const record=this.index.get(id);
+    if (record.backend === 'acp' && record.acpSessionId && !record.sessionFile && !this.live.has(id))
+      throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT', 'The saved ACP session has no local transcript path');
     if (record.execution && (await readWorktreeIntent(this.dataDir, id).catch(() => undefined))?.removed)
       throw new GitWorktreeError('WORKTREE_REMOVED', 'This worktree was removed. The conversation history and local branch are retained.');
     if(record.handoff&&!this.live.has(id)){

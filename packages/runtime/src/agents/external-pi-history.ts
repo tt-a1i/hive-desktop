@@ -1,6 +1,69 @@
 import type { PiUserInput } from './pi-user-input.js';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
+
+function assertPiTranscriptHeader(header: unknown, expected?: string): void {
+  if (!header || typeof header !== 'object' || !('type' in header) || header.type !== 'session'
+    || !('id' in header) || typeof header.id !== 'string' || !header.id)
+    throw new Error('Invalid Pi transcript header');
+  if (expected !== undefined && header.id !== expected)
+    throw new Error('The saved Pi transcript does not match the original native session ID');
+}
+
+async function* piTranscriptLines(file: string, signal?: AbortSignal): AsyncGenerator<string> {
+  const input = createReadStream(file, {encoding: 'utf8', ...(signal && {signal})});
+  const lines = createInterface({input, crlfDelay: Infinity});
+  try {
+    for await (const line of lines) {
+      signal?.throwIfAborted();
+      if (line.trim()) yield line;
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+}
+
+export async function verifyPiTranscriptIdentity(file: string, expected: string, signal?: AbortSignal): Promise<void> {
+  if (!(await stat(file)).isFile()) throw new Error('Pi transcript is not a regular file');
+  for await (const header of piTranscriptLines(file, signal)) {
+    assertPiTranscriptHeader(JSON.parse(header), expected);
+    return;
+  }
+  throw new Error('Missing Pi transcript header');
+}
+
+export async function readPiTranscript(file: string, expectedId?: string, signal?: AbortSignal): Promise<SessionEntry[]> {
+  const before = await stat(file, {bigint: true});
+  if (!before.isFile()) throw new Error('Pi transcript is not a regular file');
+  signal?.throwIfAborted();
+  const entries: SessionEntry[] = [];
+  const seen = new Set<string>();
+  let header = false;
+  for await (const raw of piTranscriptLines(file, signal)) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { throw new Error('Malformed Pi transcript'); }
+    if (!header) {
+      assertPiTranscriptHeader(parsed, expectedId);
+      header = true;
+      continue;
+    }
+    const entry = parsed as Partial<SessionEntry> | null;
+    if (!entry || typeof entry.type !== 'string' || typeof entry.id !== 'string' || !entry.id ||
+      !(entry.parentId === null || typeof entry.parentId === 'string') || seen.has(entry.id)) throw new Error('Invalid Pi transcript entry');
+    seen.add(entry.id);
+    entries.push(entry as SessionEntry);
+  }
+  signal?.throwIfAborted();
+  if (!header) throw new Error('Missing Pi transcript header');
+  const after = await stat(file, {bigint: true});
+  if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
+    before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw new Error('Pi transcript changed while being read; retry');
+  return entries;
+}
 
 export function externalPiBranch(entries: readonly SessionEntry[], leafId: string | null): SessionEntry[] {
   const byId = new Map(entries.map(entry => [entry.id, entry]));

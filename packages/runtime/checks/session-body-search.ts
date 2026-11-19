@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ChatIndex, type ChatRecord } from '../src/chat-index.js';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
+import { createDesktopSessionManager } from '../src/agents/pi-session-manager.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'hive-session-body-search-'));
 const data = join(directory, 'state');
@@ -133,7 +134,66 @@ try {
   await rename(executionPath + '.fixture-missing', executionPath);
   assert.equal((await runtime.chats.sessionExecution(owned.id)).path, executionPath);
   assert.deepEqual((await runtime.chats.projectFilesSearch(owned.workspaceId, 'tracked', 0, owned.id)).paths, ['tracked.txt']);
-  console.log('SESSION_BODY_SEARCH_OK: cold corpus, full body, Unicode, scope, archives, pagination, invalidation, warnings, offline worktree; no Agents/model calls.');
+
+  const transcripts = join(directory, 'native-pi');
+  const original = createDesktopSessionManager(executionPath, transcripts);
+  const originalFile = original.getSessionFile()!;
+  const originalId = original.getSessionId();
+  const appendAnswer = (manager: typeof original, text: string) => manager.appendMessage({
+    role: 'assistant', content: [{type: 'text', text}], api: 'openai-responses', model: 'fixture', provider: 'fixture',
+    usage: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: {input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0}},
+    stopReason: 'stop', timestamp: 2,
+  });
+  const firstId = original.appendMessage({role: 'user', content: 'Original branch', timestamp: 1});
+  appendAnswer(original, 'Original continuation');
+  const branchFile = original.createBranchedSession(firstId)!;
+  const branch = createDesktopSessionManager(executionPath, transcripts, branchFile);
+  const foreignText = 'Foreign branch search marker';
+  const foreignId = appendAnswer(branch, foreignText);
+  assert.notEqual(originalId, branch.getSessionId());
+  const foreignBytes = await readFile(branchFile);
+  const validBranch = await runtime.chats.createRecord(workspaces[0]!, 'pi');
+  const external = await runtime.chats.createRecord(workspaces[0]!, 'pi-rpc');
+  const {profile: acpProfile} = await runtime.profiles.create({
+    driver: 'acp', label: 'Missing transcript check',
+    launch: {command: process.execPath, args: ['-e', "require('node:fs').writeFileSync(process.argv[1], 'unexpected ACP process')", join(directory, 'acp-started')]},
+  }, (await runtime.profiles.list()).storeVersion);
+  const missingAcp = await runtime.chats.createRecord(workspaces[0]!, 'acp', {profile: acpProfile.ref});
+  const newAcp = await runtime.chats.createRecord(workspaces[0]!, 'acp', {profile: acpProfile.ref});
+  await runtime.close(); runtime = undefined;
+  const sources = new ChatIndex(join(data, 'chats'));
+  sources.save({...sources.get(owned.id), sessionFile: originalFile, piSessionId: originalId});
+  sources.save({...validBranch, sessionFile: branchFile, piSessionId: branch.getSessionId()});
+  sources.save({...external, sessionFile: branchFile, externalPiSessionId: originalId});
+  sources.save({...missingAcp, acpSessionId: 'saved-acp-id'});
+  await writeFile(originalFile, foreignBytes);
+  await rename(executionPath, executionPath + '.fixture-missing');
+  runtime = await createDesktopRuntime(data, () => events++);
+  page = await runtime.chats.search(foreignText, false, 0, workspaces[0]);
+  assert.deepEqual(page.matches.map(hit => [hit.session.id, hit.bodyMatch?.messageId]), [[validBranch.id, foreignId]]);
+  for (const id of [owned.id, external.id])
+    assert.match(page.incompleteHistory.find(item => item.sessionId === id)?.message ?? '', /original native session ID/);
+  assert.match(page.incompleteHistory.find(item => item.sessionId === missingAcp.id)?.message ?? '', /no local transcript path/);
+  assert.ok(!page.incompleteHistory.some(item => item.sessionId === newAcp.id));
+  const unavailable = await runtime.chats.open(owned.id);
+  assert.ok('readOnly' in unavailable && unavailable.readOnly);
+  assert.match(unavailable.historyWarning ?? '', /original native session ID/);
+  assert.deepEqual(unavailable.historyMessageIds, []);
+  await rename(executionPath + '.fixture-missing', executionPath);
+  const wrongIdentity = await runtime.chats.open(owned.id);
+  assert.ok('readOnly' in wrongIdentity && wrongIdentity.readOnly);
+  assert.equal(wrongIdentity.identityError?.code, 'PI_SESSION_IDENTITY_CONFLICT');
+  assert.equal(wrongIdentity.piSessionId, originalId);
+  assert.deepEqual(wrongIdentity.historyMessageIds, []);
+  await assert.rejects(runtime.chats.prompt(owned.id, 'Must not run in the wrong native session'), /PI_SESSION_IDENTITY_CONFLICT/);
+  assert.deepEqual(await readFile(originalFile), foreignBytes);
+  const lostAcp = await runtime.chats.open(missingAcp.id);
+  assert.ok('readOnly' in lostAcp && lostAcp.readOnly);
+  assert.match(lostAcp.historyWarning ?? '', /no local transcript path/);
+  await assert.rejects(runtime.chats.resume(missingAcp.id), /ACP_SESSION_IDENTITY_CONFLICT/);
+  await assert.rejects(readFile(join(directory, 'acp-started')), {code: 'ENOENT'});
+  assert.equal(events, 0, 'Opening and searching foreign or missing sources must not activate an Agent');
+  console.log('SESSION_BODY_SEARCH_OK: cold corpus, full body, Unicode, scope, archives, pagination, invalidation, warnings, offline worktree and native transcript identity; no Agents/model calls.');
 } finally {
   await runtime?.close();
   await rm(directory, {recursive: true, force: true});
