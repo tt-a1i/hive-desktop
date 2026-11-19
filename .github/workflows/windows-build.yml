@@ -15,6 +15,7 @@ on:
         options:
           - standard
           - project-reference
+          - git-preview
           - archived-search
           - reading-position
           - codex-quota
@@ -405,7 +406,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'checkpoint-comparison')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'git-preview', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'checkpoint-comparison')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -508,6 +509,13 @@ jobs:
         run: |
           powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File scripts/windows-shortcut-layout-ci.ps1 -FixtureExe (Resolve-Path 'target/replay-extracted/hive-desktop.exe').Path -ReceiptPath (Join-Path $PWD 'target/windows-shortcut-layout.json') 2>&1 | Tee-Object -FilePath target/windows-shortcut-layout.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Replay native Git staged preview and cancellation
+        if: ${{ inputs.replay_scenario == 'git-preview' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-git-preview.mjs --bundle target/replay-extracted --receipt target/windows-git-preview.json 2>&1 | Tee-Object -FilePath target/windows-git-preview.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay native worktree project reference
         if: ${{ inputs.replay_scenario == 'project-reference' }}
         timeout-minutes: 8
@@ -573,6 +581,8 @@ jobs:
             target/windows-shortcut-layout.json
             target/windows-shortcut-layout-ui.json
             target/windows-shortcut-layout.log
+            target/windows-git-preview*.json
+            target/windows-git-preview*.log
             target/windows-project-reference.json
             target/windows-project-reference.log
             target/windows-project-reference-desktop.log

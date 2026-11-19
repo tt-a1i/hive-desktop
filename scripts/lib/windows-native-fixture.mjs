@@ -146,6 +146,7 @@ export async function runWindowsNativeFixture(config) {
       assert.deepEqual(await deadline(desktop.done, 30000, `${phase} desktop exit`), [0, null]);
       assert.match(log.stderr, /"shutdown"/, 'desktop must request normal shutdown');
       assert.match(log.stderr, /reply 0 ok/, 'the backend must acknowledge normal shutdown');
+      for (const method of config.forbiddenRpc ?? []) assert.ok(!log.stderr.includes(`"${method}"`), `Unexpected RPC ${method}`);
       await run(
         node,
         [seed, root, resources, config.verifyMode(phase)],
