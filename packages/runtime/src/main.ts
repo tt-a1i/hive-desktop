@@ -418,6 +418,21 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'chat.refreshPiModels': return chats.refreshPiModels(text(params, 'sessionId'));
     case 'chat.commands': return chats.commands(text(params, 'sessionId'));
     case 'chat.usage': return chats.usage(text(params, 'sessionId'));
+    case 'chat.codexModes.previewRecovery':
+      exact(params, ['workspaceId', 'sessionId', 'viewRevision']);
+      return chats.recoverCodexModes(text(params, 'workspaceId'), text(params, 'sessionId'), viewRevision(params.viewRevision));
+    case 'chat.codexModes.applyRecovery': {
+      exact(params, ['workspaceId', 'sessionId', 'viewRevision', 'sessionVersion', 'choices']);
+      const choices = record(params.choices);
+      exact(choices, ['mode', 'permissionMode']);
+      return chats.recoverCodexModes(text(params, 'workspaceId'), text(params, 'sessionId'), viewRevision(params.viewRevision), {
+        sessionVersion: viewRevision(params.sessionVersion),
+        choices: {
+          ...(choices.mode === null ? {mode: null} : choices.mode !== undefined ? {mode: text(choices, 'mode')} : {}),
+          ...(choices.permissionMode !== undefined && {permissionMode: text(choices, 'permissionMode')}),
+        },
+      });
+    }
     case 'chat.permissionMode':
     case 'chat.mode': {
       const id = text(params, 'sessionId'), permission = method === 'chat.permissionMode';

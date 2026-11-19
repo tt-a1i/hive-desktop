@@ -299,10 +299,6 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   try {
     options.signal?.throwIfAborted();
     mkdirSync(options.sessionDir, { recursive: true, mode: 0o700 });
-    if (options.threadId) {
-      projection = new CodexProjection(options.sessionDir, options.threadId);
-      projection.invalidateHistory();
-    }
     let cursor: string | null = null;
     do {
       const page: { data: Model[]; nextCursor: string | null } = await transport.sendRequest('model/list', { cursor, includeHidden: true });
@@ -311,6 +307,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     if (options.mode || options.permissionMode) await modes.validateInitial();
     const modelParams = options.model ? { model: options.model.id, modelProvider: options.model.provider } : {};
     if (options.threadId) {
+      projection = new CodexProjection(options.sessionDir, options.threadId);
       await resume({ ...modelParams, ...modes.threadParams(), ...(options.deferGoalContinuation&&{deferGoalContinuation:true}) });
     }
     else response = await transport.sendRequest<ThreadLaunchReceipt>('thread/start', { cwd: options.cwd, allowProviderModelFallback: false, ...modelParams, ...modes.threadParams(),

@@ -247,6 +247,8 @@ pub struct OpenSession {
     pub read_only: bool,
     pub identity_error: Option<SnapshotIdentityError>,
     #[serde(default)]
+    pub can_check_saved_codex_modes: bool,
+    #[serde(default)]
     pub history_incomplete: bool,
     pub history_warning: Option<String>,
     #[serde(default)]

@@ -23,7 +23,17 @@ const validApproval = (value: unknown) => {
     ['sandbox_approval', 'rules', 'skill_approval', 'request_permissions', 'mcp_elicitations']
       .every(key => typeof (granular as Record<string, unknown>)[key] === 'boolean');
 };
-const unsupported = (error: unknown) => error instanceof CodexRpcError && [-32601, -32602].includes(error.code);
+const unsupported = (error: unknown) => error instanceof CodexRpcError && error.code === -32601;
+
+export class CodexSavedModeError extends Error {
+  constructor(readonly code: 'CODEX_SAVED_MODE_UNAVAILABLE' | 'CODEX_PERMISSION_ACK_UNCONFIRMED', message: string) {
+    super(message);
+  }
+}
+
+type RecoveryAxis = {saved: string; options: SessionModeState['options']; canInherit: boolean};
+export type CodexModeRecoveryChoices = {mode?: RecoveryAxis; permissionMode?: RecoveryAxis};
+export type CodexModeReplacement = {mode?: string | null; permissionMode?: string};
 
 /** Permission and collaboration are independent sticky native settings. */
 export class CodexModes {
@@ -67,7 +77,9 @@ export class CodexModes {
     const collaborationOptions: string[] = [];
     if (!this.collaborationLoaded) try {
       const result = await this.transport.sendRequest<{data: {mode: string | null}[]}>('collaborationMode/list', {});
-      if (!Array.isArray(result?.data)) throw new Error('Invalid Codex collaboration mode response');
+      if (!Array.isArray(result?.data) || result.data.some(entry =>
+        !entry || typeof entry !== 'object' || (entry.mode !== null && typeof entry.mode !== 'string')))
+        throw new Error('Invalid Codex collaboration mode response');
       for (const id of ['default', 'plan']) if (result.data.some(entry => entry.mode === id)) collaborationOptions.push(`native-${id}`);
       this.collaborationOptions = collaborationOptions;
       delete this.collaborationDescription;
@@ -89,15 +101,37 @@ export class CodexModes {
   }
   async validateInitial() {
     await this.load();
-    if (this.collaboration && !this.collaborationOptions.includes(this.collaboration)) throw new TypeError(`Unsupported Codex collaboration mode: ${this.collaboration}`);
-    if (this.permission && !this.permissionOptions.includes(this.permission)) throw new TypeError(`Unsupported Codex permission mode: ${this.permission}`);
+    if (this.collaboration && !this.collaborationOptions.includes(this.collaboration))
+      throw new CodexSavedModeError('CODEX_SAVED_MODE_UNAVAILABLE', this.collaborationLoaded
+        ? `Unsupported Codex collaboration mode: ${this.collaboration}`
+        : 'Could not verify the saved Codex collaboration mode.');
+    if (this.permission && !this.permissionOptions.includes(this.permission))
+      throw new CodexSavedModeError('CODEX_SAVED_MODE_UNAVAILABLE', this.permissionsLoaded
+        ? `Unsupported Codex permission mode: ${this.permission}`
+        : 'Could not verify the saved Codex permission mode.');
+  }
+  async recoveryChoices(): Promise<CodexModeRecoveryChoices> {
+    await this.load();
+    if ((this.collaboration && !this.collaborationLoaded) || (this.permission && !this.permissionsLoaded))
+      throw new Error('Could not verify the saved modes against the current Codex backend. No settings were changed.');
+    const choices: CodexModeRecoveryChoices = {};
+    if (this.collaboration && !this.collaborationOptions.includes(this.collaboration)) {
+      const options = this.mode().options;
+      choices.mode = {saved: this.collaboration, options, canInherit: options.length === 0};
+    }
+    if (this.permission && !this.permissionOptions.includes(this.permission)) {
+      const options = this.permissionMode().options;
+      choices.permissionMode = {saved: this.permission, options, canInherit: false};
+    }
+    return choices;
   }
   threadParams() { const p = this.permission && policies[this.permission]; return p ? { approvalPolicy: p.approvalPolicy, sandbox: p.sandbox } : {}; }
   confirmThreadSettings(receipt: CodexThreadModeReceipt) {
     const { approvalPolicy, sandbox, collaborationMode } = receipt;
     const expected = this.permission && policies[this.permission];
     if (expected && (approvalPolicy !== expected.approvalPolicy || sandbox?.type !== expected.sandboxPolicy.type)) {
-      throw new Error('Codex did not confirm the requested thread sandbox and approval policy');
+      throw new CodexSavedModeError('CODEX_PERMISSION_ACK_UNCONFIRMED',
+        'Codex did not confirm the requested thread sandbox and approval policy');
     }
     // Thread start/resume selects the native sandbox class. Local configuration
     // can still fill in its network access or writable roots until turn/start.

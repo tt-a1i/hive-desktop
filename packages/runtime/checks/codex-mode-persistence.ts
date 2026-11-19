@@ -38,6 +38,9 @@ try {
  await writeFile(join(project,'modes-control.json'),JSON.stringify({threadReceipt:{sandbox:{type:'dangerFullAccess'}}}));
  runtime = await createDesktopRuntime(data, () => {});
  await assert.rejects(runtime.chats.prompt(chat.id,'Do not run under a different sandbox'), /did not confirm/);
+ const mismatch = await runtime.chats.openDesktopView(chat.id, 1);
+ assert.ok('identityError' in mismatch && mismatch.identityError?.code === 'CODEX_PERMISSION_ACK_UNCONFIRMED');
+ assert.equal(mismatch.readOnly, true);
  assert.deepEqual(index().get(chat.id).nativeMode, {backend:'codex',mode:'native-plan',permissionMode:'workspace-write'});
  await runtime.close(); runtime = undefined;
  await writeFile(join(project,'modes-control.json'),JSON.stringify({error:-32601}));

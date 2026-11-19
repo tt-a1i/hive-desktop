@@ -10,14 +10,19 @@ const sandboxes={
 const control=()=>fs.existsSync('modes-control.json')?JSON.parse(fs.readFileSync('modes-control.json','utf8')):{};
 readline.createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line); if(!q.method)return; const answer=result=>send({id:q.id,result});
- if(q.id!==undefined)fs.appendFileSync('modes-wire.jsonl',JSON.stringify(q)+'\n');
+ if(q.id!==undefined)fs.appendFileSync('modes-wire.jsonl',JSON.stringify({...q,pid:process.pid})+'\n');
  if(q.method==='initialize')answer({});
  else if(q.method==='model/list')answer({data:[{id:'synthetic',model:'synthetic',displayName:'Synthetic',hidden:false}],nextCursor:null});
  else if(q.method==='configRequirements/read')answer({requirements:control().requirements??null});
- else if(q.method==='collaborationMode/list'){const c=control(); if(c.error)send({id:q.id,error:{code:c.error,message:'fixture'}}); else answer({data:[{mode:'plan'},{mode:'default'}]});}
+ else if(q.method==='collaborationMode/list'){
+  const c=control();
+  const reply=()=>c.error?send({id:q.id,error:{code:c.error,message:'fixture'}}):answer({data:c.modes??[{mode:'plan'},{mode:'default'}]});
+  if(c.modeDelay) setTimeout(reply,c.modeDelay); else reply();
+ }
  else if(q.method==='thread/start'||q.method==='thread/resume'){
   const c=control();
   if(c.legacyPath)thread.path='legacy-rollout.jsonl';
+  if(c.turns)thread.turns=structuredClone(c.turns);
   answer({thread,model:'synthetic',modelProvider:'openai',
    approvalPolicy:q.params.approvalPolicy??'on-request',
    sandbox:sandboxes[q.params.sandbox??'read-only'],

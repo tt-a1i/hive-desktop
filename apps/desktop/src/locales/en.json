@@ -2195,5 +2195,18 @@
   "模型接口已变更，请重新确认 1Password 引用。": "The model endpoint changed. Confirm the 1Password reference again.",
   "已关联 1Password 的模型不存在。": "The model linked to 1Password no longer exists.",
   "无法为已确认的模型接口配置密码库凭据。": "Could not configure the vault credential for the confirmed model endpoint.",
-  "1Password 凭据仅在发送模型请求时读取。": "Hive reads 1Password credentials during model requests."
+  "1Password 凭据仅在发送模型请求时读取。": "Hive reads 1Password credentials during model requests.",
+  "后台未确认已保存替代模式。": "The background service did not confirm the replacement settings.",
+  "检查当前 Codex 支持的模式。保存后请重新打开会话，历史和待发消息会保留。": "Check which modes Codex supports. After saving, reopen the conversation. Your history and queued messages will be kept.",
+  "已保存的访问权限": "Saved access permissions",
+  "已保存的协作模式": "Saved collaboration mode",
+  "使用 Codex 默认协作设置": "Use Codex collaboration defaults",
+  "当前 Codex 没有可用的权限替代项。请检查会话使用的 Codex 配置。": "Codex has no available replacement permissions. Check this conversation's Codex configuration.",
+  "替代模式已保存。": "Replacement settings saved.",
+  "已保存的模式已可用。": "The saved modes are available again.",
+  "正在检查 Codex…": "Checking Codex…",
+  "检查可用模式": "Check available modes",
+  "保存替代模式": "Save replacement settings",
+  "重新打开会话": "Reopen conversation",
+  "请检查此会话使用的 Codex 配置，再重新打开会话。": "Check this conversation's Codex configuration and reopen it."
 }

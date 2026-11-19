@@ -952,9 +952,18 @@ impl HiveApp {
                         let notice = tr("此历史会话仅供阅读；草稿已保留，不能发送、继续或更改模型。");
                         surface.child(div().id("read-only-conversation-status").role(Role::Status).aria_label(notice).px_1().text_xs().text_color(Color::Secondary.get(cx)).child(notice))
                     })
-                    .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
+                    .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none() && !self.needs_codex_mode_recovery(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
                     .when_some(access.identity_error.as_ref().filter(|error| error.code != "PASSIVE_HANDOFF"), |surface, error| surface.child(div().px_1().text_xs().text_color(Color::Error.get(cx)).child(format!("{}: {}", error.code, error.message))))
                     .when(access.history_incomplete || access.history_warning.is_some(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(access.history_warning.clone().unwrap_or_else(|| tr("此会话的历史记录不完整。").to_owned()))))
+            })
+            .when(self.can_check_saved_codex_modes(), |surface| surface.child(self.render_codex_mode_recovery(cx)))
+            .when(self.current_history_access().and_then(|access| access.identity_error.as_ref())
+                .is_some_and(|error| error.code == "CODEX_PERMISSION_ACK_UNCONFIRMED"), |surface| {
+                surface.child(h_flex().flex_wrap().gap_2().px_1()
+                    .child(div().text_xs().child(tr("请检查此会话使用的 Codex 配置，再重新打开会话。")))
+                    .child(Button::new("recheck-codex-permission").outline().small().label(tr("重新打开会话"))
+                        .disabled(!self.connected || self.closing)
+                        .on_click(cx.listener(|this,_,_,cx| { if let Some(id)=this.session.as_ref().map(|s|s.id.clone()) { this.show_session(id,cx); } }))))
             })
             .when_some(self.history_navigation.initialization.as_ref(), |surface, setup| {
                 let ready = matches!(setup.status.as_str(), "succeeded" | "skipped" | "disabled");

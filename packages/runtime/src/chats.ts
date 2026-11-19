@@ -32,6 +32,8 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { readSessionMessages as readClaudeSessionMessages, type ClaudeSessionHandle } from './agents/claude.js';
 import { type CodexSessionHandle } from './agents/codex.js';
+import { CodexModes, CodexSavedModeError, type CodexModeReplacement } from './agents/codex-modes.js';
+import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, SessionIdentityError, type ChatRecord, type ChatBackend } from './chat-index.js';
@@ -68,10 +70,11 @@ interface LiveChat {
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string; handoffDelivery?: HandoffDelivery };
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
 export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & { sequence: number };
-type SessionSnapshotError = SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError;
+type SessionSnapshotError = SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError | CodexSavedModeError;
 function isSessionSnapshotError(error: unknown): error is SessionSnapshotError {
   return error instanceof SessionIdentityError || error instanceof DispatchOriginError ||
-    error instanceof WorktreeInitializationError || error instanceof HandoffError || error instanceof GitWorktreeError;
+    error instanceof WorktreeInitializationError || error instanceof HandoffError || error instanceof GitWorktreeError ||
+    error instanceof CodexSavedModeError;
 }
 const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
 
@@ -222,6 +225,7 @@ export class Chats implements StructuredSessionPort {
   private async initializationReady(record: ChatRecord) {await this.initialization?.assertReady(record.workspaceId, record.id);}
   private readonly live = new Map<string, LiveChat>();
   private readonly opening = new Map<string, Promise<LiveChat>>();
+  private readonly probingCodexModes = new Map<string, Promise<void>>();
   private desktopViewRevision = 0;
   private desktopSession: string | undefined;
   private readonly desktopReads = new Map<string, number>();
@@ -1240,6 +1244,11 @@ export class Chats implements StructuredSessionPort {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     await this.initializationReady(this.index.get(id));
     await this.runnableIdentity(this.index.get(id));
+    const probe = this.probingCodexModes.get(id);
+    if (probe) {
+      await probe;
+      return this.require(id, browse);
+    }
     const chat = this.live.get(id) ?? await this.requireOpening(id);
     if (chat.cleanup) {
       await chat.cleanup;
@@ -1291,14 +1300,17 @@ export class Chats implements StructuredSessionPort {
     return {ok: true};
   }
 
-  async readDesktopView<T>(id: string, revision: number, read: () => Promise<T>): Promise<T> {
+  private assertDesktopView(id: string, revision: number) {
     if (this.desktopSession !== id || this.desktopViewRevision !== revision)
       throw new Error('Stale desktop conversation view');
+  }
+
+  async readDesktopView<T>(id: string, revision: number, read: () => Promise<T>): Promise<T> {
+    this.assertDesktopView(id, revision);
     this.desktopReads.set(id, (this.desktopReads.get(id) ?? 0) + 1);
     try {
       const result = await read();
-      if (this.desktopSession !== id || this.desktopViewRevision !== revision)
-        throw new Error('Stale desktop conversation view');
+      this.assertDesktopView(id, revision);
       return result;
     }
     finally {
@@ -1502,7 +1514,8 @@ export class Chats implements StructuredSessionPort {
       await this.reconcileHandoffOffline(record);
       const handoffSnapshot=await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId);
       const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'),{allowOfflineQueueEdits:true});
-      return {...snapshot,readOnly:false,passive:true,handoffSnapshot,handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}};
+      return {...snapshot,readOnly:false,passive:true,handoffSnapshot,handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'},
+        canCheckSavedCodexModes: record.backend === 'codex' && !!record.nativeMode};
     }
     if(record.backend==='acp'&&!this.live.has(id)){
       await this.runnableIdentity(record);
@@ -1516,7 +1529,8 @@ export class Chats implements StructuredSessionPort {
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.initialization?.created(record.workspaceId,id,{deferLaunch:true});
       const {readOnly,identityError,...snapshot}=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_FORK','Fork opened without activating an Agent'));
-      return {...snapshot,readOnly:false,initialization:await this.initialization?.get(record.workspaceId,id)};
+      return {...snapshot,readOnly:false,initialization:await this.initialization?.get(record.workspaceId,id),
+        canCheckSavedCodexModes: record.backend === 'codex' && !!record.nativeMode};
     }
     const snapshot=this.snapshot(id,await this.require(id,browse),includeLiveHistory);
     return record.handoff?{...snapshot,passive:false,handoffSnapshot:await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}}:snapshot; }
@@ -2127,6 +2141,74 @@ export class Chats implements StructuredSessionPort {
       }
     });
   }
+  recoverCodexModes(workspaceId: string, id: string, viewRevision: number,
+      replacement?: {sessionVersion: number; choices: CodexModeReplacement}) {
+    return this.withWorkspace(workspaceId, async () => {
+      this.assertDesktopView(id, viewRevision);
+      this.assertWorkspaceAvailable(workspaceId);
+      const record = this.index.get(id);
+      if (record.workspaceId !== workspaceId || record.backend !== 'codex' || !record.nativeMode)
+        throw new Error('This conversation has no saved Codex mode settings to recover');
+      if (this.live.has(id) || this.opening.has(id))
+        throw new Error('Close the active Codex session before recovering its saved mode settings');
+      let releaseProbe!: () => void;
+      this.probingCodexModes.set(id, new Promise<void>(resolve => { releaseProbe = resolve; }));
+      try {
+        const sessionVersion = this.index.snapshotVersion(id);
+        if (replacement && replacement.sessionVersion !== sessionVersion)
+          throw new Error('The conversation changed. Check its saved modes again.');
+        const current = await this.runnableIdentity(record);
+        const cwd = await this.executionPath(current, await this.workspace(workspaceId));
+        const profile = await this.selectedProfile(current.backend, current.profile);
+        const signal = this.closeAbort.signal;
+        const transport = await CodexTransport.start({cwd, ...nativeProfileLaunch(profile), signal,
+          requestTimeoutMs: 5_000});
+        const closeProbe = () => { void transport.close(200).catch(() => {}); };
+        signal.addEventListener('abort', closeProbe, {once: true});
+        let choices;
+        try {
+          signal.throwIfAborted();
+          const modes = new CodexModes(transport, current.nativeMode?.mode, current.nativeMode?.permissionMode);
+          choices = await modes.recoveryChoices();
+        } finally {
+          try { await transport.close(); }
+          finally { signal.removeEventListener('abort', closeProbe); }
+        }
+        signal.throwIfAborted();
+        this.assertDesktopView(id, viewRevision);
+        this.assertWorkspaceAvailable(workspaceId);
+        if (this.index.snapshotVersion(id) !== sessionVersion)
+          throw new Error('The conversation changed. Check its saved modes again.');
+        if (!replacement) return {sessionVersion, ...choices};
+        if (!choices.mode && !choices.permissionMode)
+          throw new Error('The saved Codex modes are available again. Reopen the conversation.');
+        const nativeMode: NonNullable<ChatRecord['nativeMode']> = {...current.nativeMode, backend: 'codex'};
+        for (const axis of ['mode', 'permissionMode'] as const) {
+          const choice = choices[axis];
+          const selected = replacement.choices[axis];
+          if (!choice) {
+            if (selected !== undefined) throw new Error('Recovery can only replace an unavailable saved mode');
+          } else if (selected === null && choice.canInherit) {
+            delete nativeMode[axis];
+          } else if (typeof selected === 'string' && choice.options.some(option => option.id === selected)) {
+            nativeMode[axis] = selected;
+          } else {
+            throw new Error('Select an available replacement for every unavailable saved mode');
+          }
+        }
+        if (nativeMode.mode || nativeMode.permissionMode) this.index.save({...current, nativeMode});
+        else {
+          const {nativeMode: _, ...rest} = current;
+          this.index.save(rest);
+        }
+        return {ok: true};
+      } finally {
+        this.probingCodexModes.delete(id);
+        releaseProbe();
+      }
+    });
+  }
+
   async mode(id: string, selected?: unknown, permission = false, browse = false) {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);

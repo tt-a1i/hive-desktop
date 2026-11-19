@@ -4,8 +4,10 @@ const stateFile=process.env.HIVE_HISTORY_STATE, log=process.env.HIVE_HISTORY_LOG
 const initial=[{id:'t1',status:'completed',itemsView:'full',items:[{id:'u1',type:'userMessage',content:[{type:'text',text:'first'}]}]},{id:'t2',status:'completed',itemsView:'full',items:[{id:'u2',type:'userMessage',content:[{type:'text',text:'second'}]}]}];
 const state=fs.existsSync(stateFile)?JSON.parse(fs.readFileSync(stateFile,'utf8')):{source:{thread:{id:'source',cwd:process.env.HIVE_HISTORY_SOURCE,path:'/native/source',historyMode:'paginated'},turns:initial},next:0};
 function save(){fs.writeFileSync(stateFile,JSON.stringify(state));}
-rl.createInterface({input:process.stdin}).on('line',line=>{const x=JSON.parse(line);fs.appendFileSync(log,JSON.stringify(x)+'\n');if(!x.id)return;let result;
+rl.createInterface({input:process.stdin}).on('line',line=>{const x=JSON.parse(line);fs.appendFileSync(log,JSON.stringify({...x,cwd:process.cwd()})+'\n');if(!x.id)return;let result;
 if(x.method==='initialize')result={userAgent:'hive_desktop/0.169.0 (Mac OS 26.7.3; arm64) dumb (hive_desktop; 0.1.0)'};
+else if(x.method==='configRequirements/read')result={requirements:null};
+else if(x.method==='collaborationMode/list')result={data:[{mode:'default'}]};
 else if(x.method==='thread/read')result={thread:state[x.params.threadId]?.thread};
 else if(x.method==='thread/resume'&&x.params.excludeTurns===true&&x.params.deferGoalContinuation===true)result={thread:state[x.params.threadId]?.thread};
 else if(x.method==='thread/turns/list'){const turns=state[x.params.threadId].turns,n=x.params.cursor?Number(x.params.cursor):0;result={data:turns.slice(n,n+1),nextCursor:n+1<turns.length?String(n+1):null};}

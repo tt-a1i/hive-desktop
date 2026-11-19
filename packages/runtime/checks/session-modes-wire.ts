@@ -1,12 +1,18 @@
 /** Production JSONL RPCs with synthetic local Codex and Claude peers; no inference. */
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {once} from 'node:events';
-import {mkdtemp,mkdir,readFile,unlink,writeFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,rename,rm,unlink,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createInterface} from 'node:readline';
+import {setTimeout as delay} from 'node:timers/promises';
+import {ChatIndex} from '../src/chat-index.js';
+import {CodexProjection} from '../src/agents/codex-projection.js';
+import {codexMetadataFile} from '../src/agents/codex-metadata.js';
+import {DeliveryQueue} from '../src/delivery-queue.js';
 const dir=await mkdtemp(join(tmpdir(),'hive-session-modes-wire-'));
 const runtime=resolve(process.env.HIVE_MODES_RUNTIME??'.');
 const codex=fileURLToPath(new URL('./codex-modes-peer.cjs',import.meta.url));
@@ -25,6 +31,7 @@ function start(){
  return {rpc,stop,agent};
 }
 let session=start();const ids:Record<string,string>={};
+let codexWorkspace: string;
 const acpRuns = new Map<string, {sessionId: string; root: string; nativeId: string; mode: string; permission?: string}>();
 const api = async (method: string, params: Record<string, unknown> = {}) => {
  const response = await session.rpc(method, params);
@@ -39,6 +46,7 @@ const modeOption = (state: {options: {id:string;label:string}[]}, label: string)
 try{
  assert.ok((await session.rpc('initialize')).result.hivePort);
  const ws=(await session.rpc('hive.request',{method:'POST',path:'/api/workspaces',body:{path:dir,name:'Mode wire',autostart_orchestrator:false}})).result;
+ codexWorkspace=ws.id;
  for(const backend of ['codex','claude']){const response=await session.rpc('chat.createRecord',{workspaceId:ws.id,backend});assert.equal(response.error,undefined);ids[backend]=response.result.id;}
  for(const backend of ['codex','claude']){
   const sessionId=ids[backend],selected=backend==='codex'?'native-plan':'acceptEdits';
@@ -121,3 +129,146 @@ const codexWire=parse(await readFile(join(dir,'modes-wire.jsonl'),'utf8')),claud
 assert.equal(codexWire.filter(x=>x.method==='turn/start').length,0);assert.equal(claudeWire.filter(x=>x.event==='query').length,0);
 assert.ok(claudeWire.some(x=>x.event==='set_permission_mode'&&x.request.mode==='acceptEdits'));
 console.log('SESSION_MODES_WIRE_OK: production RPCs, synthetic peers, cold persistence and invalid mode rejection; no inference.');
+
+const sessionId = ids.codex!;
+const workspaceId = codexWorkspace!;
+const indexDirectory = join(data, 'chats');
+const indexPath = join(indexDirectory, 'index.json');
+const index = () => new ChatIndex(indexDirectory);
+const savedRecord = index().get(sessionId);
+const nativeId = 'modes-thread';
+index().save({...savedRecord, codexThreadId: nativeId, identityState:'known', originAgentId:`${workspaceId}:orchestrator`});
+const history = {id:'kept-turn', status:'completed', items:[{id:'kept-item', type:'agentMessage', text:'Previously saved Codex reply'}]};
+const nativeDirectory = join(indexDirectory, 'codex');
+await mkdir(nativeDirectory, {recursive: true});
+new CodexProjection(nativeDirectory, nativeId).recover([history], true);
+const projectionFile = codexMetadataFile(nativeDirectory,nativeId)+'.display.json';
+const originalProjection = await readFile(projectionFile);
+const queues = join(indexDirectory, 'deliveries');
+const spool = join(queues, createHash('sha256').update(sessionId).digest('hex')+'.json');
+const queued = 'A queued request awaiting explicit continuation';
+await new DeliveryQueue({directory:queues,sessionId,startPaused:true,completedIds:()=>[],
+ execute:async()=>{throw new Error('Unexpected offline delivery')}, onError:assert.fail,
+}).enqueue(queued,true,{version:1,origin:'user',displayText:queued});
+const originalSpool = await readFile(spool);
+const fixture = async (value: Record<string, unknown>) => writeFile(join(dir,'modes-control.json'), JSON.stringify({turns:[history],...value}));
+const wireRows = async () => parse(await readFile(join(dir,'modes-wire.jsonl'),'utf8'));
+async function waitFor<T>(read: () => Promise<T | undefined>) {
+ const deadline = Date.now()+5000;
+ for (;;) {
+  const value = await read();
+  if (value !== undefined) return value;
+  assert.ok(Date.now()<deadline,'Timed out waiting for the Codex protocol event');
+  await delay(25);
+ }
+}
+const failure = async (method: string, params: Record<string, unknown>, match: RegExp) => {
+ const response = await session.rpc(method,params);
+ assert.match(response.error?.message??'',match);
+};
+const preview = 'chat.codexModes.previewRecovery', apply = 'chat.codexModes.applyRecovery';
+const replacements = {mode:'native-default',permissionMode:'read-only'};
+const recoverable = {modes:[{mode:'default'}],requirements:{allowedSandboxModes:['read-only']}};
+await fixture(recoverable);
+const recoveryStart = (await wireRows()).length;
+session = start();
+try {
+ await api('initialize');
+ const open = (viewRevision: number) => api('chat.open',{sessionId,viewRevision});
+ const scope = {workspaceId,sessionId,viewRevision:1};
+ const readOnly = await open(1);
+ assert.equal(readOnly.readOnly,true);
+ assert.equal(readOnly.identityError.code,'CODEX_SAVED_MODE_UNAVAILABLE');
+ assert.notEqual(readOnly.historyIncomplete,true);
+ assert.deepEqual(readOnly.historyMessageIds,['kept-item']);
+ assert.match(JSON.stringify(readOnly.history),/Previously saved Codex reply/);
+ assert.equal(readOnly.pendingUserInputs[0].text,queued);
+ await failure('chat.resume',{sessionId},/Unsupported Codex collaboration mode/);
+ await failure(preview,{...scope,workspaceId:'another-workspace'},/no saved Codex mode/);
+ await fixture({...recoverable,modes:[{unexpected:true}]});
+ await failure(preview,scope,/Could not verify the saved modes/);
+ await fixture({...recoverable,error:-32602});
+ await failure(preview,scope,/Could not verify the saved modes/);
+ await fixture({error:-32601});
+ const inherit = await api(preview,scope);
+ assert.equal(inherit.mode.canInherit,true);
+ assert.equal(inherit.permissionMode,undefined);
+ await fixture({requirements:{allowedSandboxModes:['read-only']}});
+ const permissionsOnly = await api(preview,scope);
+ assert.equal(permissionsOnly.mode,undefined);
+ assert.equal(permissionsOnly.permissionMode.canInherit,false);
+ await failure(apply,{...scope,sessionVersion:permissionsOnly.sessionVersion,choices:replacements},/only replace an unavailable/);
+ await fixture(recoverable);
+ const choices = await api(preview,scope);
+ assert.deepEqual([choices.mode.saved,choices.permissionMode.saved],['native-plan','workspace-write']);
+ assert.deepEqual([choices.mode.options[0].id,choices.permissionMode.options[0].id],Object.values(replacements));
+ const change = {...scope,sessionVersion:choices.sessionVersion,choices:replacements};
+ await failure(apply,{...change,choices:{mode:'native-default'}},/every unavailable saved mode/);
+ await failure(apply,{...change,choices:{...replacements,permissionMode:null}},/permissionMode is required/);
+ await rename(indexPath,indexPath+'.test-backup');
+ await mkdir(indexPath);
+ try { await failure(apply,change,/EISDIR|EPERM|EEXIST/); }
+ finally { await rm(indexPath,{recursive:true}); await rename(indexPath+'.test-backup',indexPath); }
+ await fixture({...recoverable,modeDelay:500});
+ const before = (await wireRows()).length;
+ const staleWrite = failure(apply,change,/Stale desktop conversation view/);
+ await waitFor(async () => (await wireRows()).slice(before).find(row=>row.method==='collaborationMode/list'));
+ await api('chat.clearView',{viewRevision:2});
+ const reopenedDuringProbe = open(3);
+ await staleWrite;
+ assert.deepEqual(index().get(sessionId).nativeMode,savedRecord.nativeMode);
+ assert.equal((await reopenedDuringProbe).readOnly,true);
+ await fixture(recoverable);
+ await api(apply,{...change,viewRevision:3});
+ const {nativeMode,...unchanged} = index().get(sessionId);
+ const {nativeMode:oldNativeMode,...expectedUnchanged} = {...savedRecord,codexThreadId:nativeId,
+  identityState:'known',originAgentId:`${workspaceId}:orchestrator`};
+ assert.deepEqual(unchanged,expectedUnchanged);
+ assert.deepEqual(nativeMode,{backend:'codex',...replacements});
+ assert.deepEqual(await readFile(spool),originalSpool);
+ assert.deepEqual(await readFile(projectionFile),originalProjection);
+ const recoveryWire = (await wireRows()).slice(recoveryStart);
+ assert.ok(recoveryWire.every(row => ['initialize','model/list','configRequirements/read','collaborationMode/list'].includes(row.method)));
+ if (process.platform !== 'win32') for (const pid of new Set<number>(recoveryWire.map(row=>row.pid)))
+  assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});
+ const reopened = await open(4);
+ assert.notEqual(reopened.readOnly,true);
+ assert.equal(reopened.codexThreadId,nativeId);
+ assert.equal(reopened.pendingUserInputs[0].text,queued);
+ assert.deepEqual(reopened.historyMessageIds,['kept-item']);
+ const reopenedWire = (await wireRows()).slice(recoveryStart);
+ assert.ok(reopenedWire.some(row=>row.method==='thread/resume'&&row.params.threadId===nativeId&&row.params.sandbox==='read-only'));
+ assert.ok(!reopenedWire.some(row=>row.method==='turn/start'||row.method==='turn/steer'));
+ await api('chat.resume',{sessionId});
+ const sent = await waitFor(async () => (await wireRows()).slice(recoveryStart).find(row=>row.method==='turn/start'));
+ assert.equal(sent.params.threadId,nativeId);
+ assert.equal(sent.params.collaborationMode.mode,'default');
+ assert.equal(sent.params.sandboxPolicy.type,'readOnly');
+ assert.ok(sent.params.input.some((item:{text?:string})=>item.text?.includes(queued)));
+ await waitFor(async () => DeliveryQueue.persistedCount(queues,sessionId) === 0 ? true : undefined);
+ console.log('CODEX_MODE_RECOVERY_WIRE_OK: retained historical item and paused input, rejected ambiguous and stale writes, closed probe processes, then resumed the same thread with the chosen modes only on explicit continuation.');
+} finally {
+ await session.stop();
+}
+
+await fixture({modes:[{mode:'plan'}]});
+session = start();
+try {
+ await api('initialize');
+ const viewRevision = 1;
+ assert.equal((await api('chat.open',{sessionId,viewRevision})).readOnly,true);
+ await fixture({modes:[{mode:'plan'}],modeDelay:30_000});
+ const before = (await wireRows()).length;
+ const pending = session.rpc(preview,{workspaceId,sessionId,viewRevision}).then(response=>response.error,error=>error);
+ const probe = await waitFor(async () => (await wireRows()).slice(before).find(row=>row.method==='collaborationMode/list'));
+ await Promise.race([
+  session.stop(),
+  delay(4_000,undefined,{ref:false}).then(()=>assert.fail('Shutdown waited for a stalled Codex capability request')),
+ ]);
+ assert.ok(await pending);
+ if (process.platform !== 'win32') assert.throws(()=>process.kill(probe.pid,0),{code:'ESRCH'});
+ console.log('CODEX_MODE_RECOVERY_SHUTDOWN_OK: closing the runtime stops an in-flight capability probe and reaps its process.');
+} finally {
+ await session.stop();
+ await rm(dir,{recursive:true,force:true});
+}

@@ -11,6 +11,8 @@ use gpui_kit::{
 };
 use serde_json::json;
 
+mod recovery;
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ModeState {
@@ -55,6 +57,7 @@ struct ModeOption {
 pub struct ModePicker {
     mode: ModeSlot,
     permission: ModeSlot,
+    recovery: recovery::Recovery,
 }
 
 #[derive(Default)]
