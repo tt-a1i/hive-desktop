@@ -41,12 +41,24 @@ try{
 
  const otherProject=join(directory,'other-project');await mkdir(otherProject);
  const other=(await rpc('hive.request',{method:'POST',path:'/api/workspaces',body:{path:otherProject,name:'Corrupt script history',autostart_orchestrator:false}})).result;
- const otherScript=(await rpc('script.settings.save',{workspaceId:other.id,expectedRevision:'0',script:{name:'Run once',command:'printf once >> executions'}})).result.scripts[0];
+ const otherScript=(await rpc('script.settings.save',{workspaceId:other.id,expectedRevision:'0',script:{name:'Run once',command:'printf once >> executions; while [ ! -f release ]; do sleep 0.1; done'}})).result.scripts[0];
  const otherRequest={workspaceId:other.id,scriptId:otherScript.id,expectedVersion:otherScript.version,requestId:randomUUID()};
  const otherRun=(await rpc('script.run',otherRequest)).result;
- await until(()=>rpc('script.get',{workspaceId:other.id,runId:otherRun.runId}),value=>value.result?.run.status==='succeeded');
  const receiptName=createHash('sha256').update(JSON.stringify([other.id,otherRequest.requestId])).digest('hex')+'.json';
  const receipt=join(directory,'state','project-script-runs',receiptName);
+ await until(()=>readFile(join(otherProject,'executions'),'utf8').catch(()=>''),value=>value==='once');
+ await rm(receipt);
+ let replay;
+ try {
+  const pendingRun=await rpc('script.get',{workspaceId:other.id,runId:otherRun.runId});
+  assert.equal(pendingRun.result?.run.runId,otherRun.runId);
+  assert.equal((await rpc('script.run',{...otherRequest,expectedVersion:randomUUID()})).error.code,'SCRIPT_RUN_REQUEST_CONFLICT');
+  replay=await rpc('script.run',otherRequest);
+ } finally {
+  await writeFile(join(otherProject,'release'),'');
+ }
+ assert.equal(replay.result?.runId,otherRun.runId,'live request must retain its original run after loss of the receipt');
+ await until(()=>rpc('script.get',{workspaceId:other.id,runId:otherRun.runId}),value=>value.result?.run.status==='succeeded');
  const corrupt='{ incomplete';await writeFile(receipt,corrupt);
  const history=await rpc('script.runs',{workspaceId:ws.id});
  const healthyLog=await rpc('script.get',{workspaceId:ws.id,runId,offset:0,limit:128});

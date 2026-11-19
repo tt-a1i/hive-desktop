@@ -1,7 +1,7 @@
 /** Native Windows cmd/PTY/JSONL acceptance. No model, account, GUI, or inferred cwd from terminal text. */
 import assert from 'node:assert/strict';
 import {execFileSync, spawn} from 'node:child_process';
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {access, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
@@ -153,6 +153,11 @@ if (process.platform !== 'win32') {
   const mainShellPid = await interactive(ws.id, 'main-interactive'), otherShellPid = await interactive(otherWs.id, 'other-interactive');
   const keep = await tree(otherWs.id, 'keep-other'), cancelled = await tree(ws.id, 'cancel-A', a.id, true);
   sameDirectory(cancelled.run.cwd, await realpath(a.execution.path));
+  const receiptName = createHash('sha256').update(JSON.stringify([ws.id, cancelled.input.requestId])).digest('hex') + '.json';
+  await rm(join(data, 'project-script-runs', receiptName));
+  const replay = await rpc('script.run', cancelled.input);
+  assert.equal(replay.runId, cancelled.run.runId);
+  assert.equal((await rpc('script.get', {workspaceId: ws.id, runId: replay.runId})).run.nativeRunId, cancelled.run.nativeRunId);
   // cmd and its descendants deliberately moved to hold, so Windows no longer locks A.
   // This permits an actual missing directory, rather than merely hiding .git metadata.
   await rename(a.execution.path, a.execution.path + '.missing');
@@ -169,7 +174,7 @@ if (process.platform !== 'win32') {
   const persisted = await Promise.all((await readdir(join(data, 'project-script-runs'))).filter(name => name.endsWith('.json')).map(async name => JSON.parse(await readFile(join(data, 'project-script-runs', name), 'utf8'))));
   const final = persisted.find(run => run.runId === keep.run.runId); assert.ok(final); assert.equal(final.status, 'cancelled'); assert.equal(final.cancelRequested, true); assert.ok(Number.isInteger(final.exitCode));
   assert.equal(await readFile(join(project, 'same.txt'), 'utf8'), 'ROOT'); assert.equal(await readFile(join(a.execution.path, 'same.txt'), 'utf8'), 'A'); assert.equal(await readFile(join(b.execution.path, 'same.txt'), 'utf8'), 'B');
-  Object.assign(receipt, {pass: true, realWindowsPty: true, entry, shell: 'cmd.exe', observations, sameRequestOnce: true, nativeNonzeroExitCode: 23,
+  Object.assign(receipt, {pass: true, realWindowsPty: true, entry, shell: 'cmd.exe', observations, sameRequestOnce: true, liveReplayAfterReceiptLoss: true, nativeNonzeroExitCode: 23,
    cancellationWithActuallyMissingSource: true, workspaceDeletionWaitsForPidTrees: true, closeWaitsForPidTrees: true, otherWorkspaceAndInteractivePreserved: true});
   console.log('PROJECT_SCRIPTS_WINDOWS_OK: actual cmd/PTY/JSONL, root/A/B file IO, native exit codes, idempotency, stop/delete/close PID trees; no models or accounts.');
  } catch (error) {receipt.error = error instanceof Error ? error.stack ?? error.message : String(error); receipt.diagnostics = diagnostics.slice(-12000); throw error;}

@@ -114,23 +114,26 @@ export class ProjectScriptRuns {
   private async start(input: {workspaceId: string; scriptId: string; expectedVersion: string; sessionId?: string; requestId: string}, captured?: ProjectScript, onCapturedExit?: () => void): Promise<ProjectScriptRun> {
     this.check(input.workspaceId);
     const file = this.requestFile(input.workspaceId, input.requestId);
-    const duplicate = () => {
-      const run = this.read(file);
+    const duplicate = (run: ProjectScriptRun) => {
       if (run.script.id !== input.scriptId || run.script.version !== input.expectedVersion || run.sessionId !== input.sessionId)
         fail('SCRIPT_REQUEST_CONFLICT', 'This request identity already belongs to a different script run');
       return structuredClone(run);
     };
-    if (existsSync(file)) return duplicate();
+    const previous = this.capturedRequest(input.workspaceId, input.requestId);
+    if (previous) return duplicate(previous);
     const script = captured ?? await this.settings.capture(input.workspaceId, input.scriptId, input.expectedVersion);
     const cwd = await realpath(await this.executionDirectory(input.workspaceId, input.sessionId));
     if (!statSync(cwd).isDirectory()) fail('SCRIPT_SOURCE_UNAVAILABLE', 'The selected execution directory is unavailable');
     this.check(input.workspaceId);
+    // Another request can start while settings and the execution directory are being resolved.
+    const concurrent = this.capturedRequest(input.workspaceId, input.requestId);
+    if (concurrent) return duplicate(concurrent);
     const run: ProjectScriptRun = {version: 1, runId: randomUUID(), requestId: input.requestId, workspaceId: input.workspaceId,
       ...(input.sessionId !== undefined && {sessionId: input.sessionId}), cwd, script, status: 'starting', startedAt: Date.now(), exitCode: null,
       cancelRequested: false, logBytes: 0, logTruncated: false};
     const fd = openSync(this.logFile(run.runId), 'wx', 0o600);
     try { this.persist(file, run, true); }
-    catch (error) { closeSync(fd); unlinkSync(this.logFile(run.runId)); if ((error as NodeJS.ErrnoException).code === 'EEXIST') return duplicate(); throw new ProjectScriptRunError('SCRIPT_RUN_WRITE_FAILED', 'Script run could not be recorded; no command was started'); }
+    catch (error) { closeSync(fd); unlinkSync(this.logFile(run.runId)); if ((error as NodeJS.ErrnoException).code === 'EEXIST') return duplicate(this.read(file)); throw new ProjectScriptRunError('SCRIPT_RUN_WRITE_FAILED', 'Script run could not be recorded; no command was started'); }
     let resolve!: () => void;
     const live: Live = {run, file, fd, exited: new Promise<void>(done => {resolve = done;}), resolve: () => resolve(), checkpointBytes: 0, checkpointAt: Date.now()};
     if (this.mutations) live.releaseMutation = this.mutations.begin(input.workspaceId);
@@ -206,7 +209,7 @@ export class ProjectScriptRuns {
   list(workspace: string, requestId?: unknown): {runs: ProjectScriptRun[]; unreadableRunCount: number; requestState?: RequestState} {
     if (!workspaceId(workspace)) fail('SCRIPT_INPUT_INVALID', 'Invalid workspace identity');
     if (requestId !== undefined && !id(requestId)) return fail('SCRIPT_INPUT_INVALID', 'Invalid script request identity');
-    const runs: ProjectScriptRun[] = [];
+    const runs = new Map<string, ProjectScriptRun>();
     let unreadableRunCount = 0;
     for (const name of readdirSync(this.directory)) {
       if (!RECEIPT_FILE.test(name)) continue;
@@ -218,9 +221,11 @@ export class ProjectScriptRuns {
         unreadableRunCount++;
         continue;
       }
-      if (run.workspaceId === workspace) runs.push(structuredClone(this.live.get(run.runId)?.run ?? this.undurable.get(run.runId) ?? run));
+      if (run.workspaceId === workspace) runs.set(run.runId, run);
     }
-    return {runs: runs.sort((a,b) => b.startedAt - a.startedAt), unreadableRunCount,
+    for (const run of this.undurable.values()) if (run.workspaceId === workspace) runs.set(run.runId, structuredClone(run));
+    for (const {run} of this.live.values()) if (run.workspaceId === workspace) runs.set(run.runId, structuredClone(run));
+    return {runs: [...runs.values()].sort((a,b) => b.startedAt - a.startedAt), unreadableRunCount,
       ...(requestId !== undefined && {requestState: this.requestState(workspace, requestId)})};
   }
   private owned(workspace: string, runId: string) {

@@ -113,7 +113,12 @@ try {
   assert.equal(persisted[0].id, newer.id);
   const original = index.find((item: { id: string }) => item.id === newer.id);
   await rename(original.sessionFile, original.sessionFile + '.offline');
-  await assert.rejects(second.request('chat.open', { sessionId: newer.id }));
+  const missing = await second.request('chat.open', { sessionId: newer.id });
+  assert.equal(missing.id, newer.id);
+  assert.equal(missing.readOnly, true);
+  assert.equal(missing.identityError.code, 'PI_SESSION_IDENTITY_CONFLICT');
+  await assert.rejects(second.request('chat.prompt', { sessionId: newer.id, text: '离线草稿' }));
+  await assert.rejects(readFile(original.sessionFile), { code: 'ENOENT' });
   assert.deepEqual(JSON.parse(await readFile(indexPath, 'utf8')).find((item: { id: string }) => item.id === newer.id), original);
   await rename(original.sessionFile + '.offline', original.sessionFile);
   const unavailable = await second.request('chat.open', { sessionId: newer.id });
