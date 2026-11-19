@@ -8,6 +8,8 @@
 
 ## Windows 原生验收夹具的失败定位（2026-11-20）
 
+第二次在相同 ZIP 上重跑，48 张原始图片的准备和字节比对通过。窗口夹具在加载 UI Automation 程序集前使用其中的类型，因而未进入 UIA 或内存采样。已经将类型初始化移入程序集加载之后。[Windows 原始作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44577393291)
+
 首轮图片专项使用固定 ZIP 哈希。Windows Node 在解析预加载参数时吃掉目录分隔符，夹具准备进程退出，所以该作业没有图片内存读数。路径已改为 Node 可识别的正斜杠并保留引号。[原始 replay](https://github.com/tt-a1i/hive-desktop/actions/runs/44573274450)
 
 另外两个真实 Windows 作业均成功重开成员会话，随后分别无法读到 HTML 预览的隔离标记、或点击后的计数 1。旧错误截图取自预览关闭后的父窗口。复演现与常规构建使用同一 HTML 步骤，失败时在子窗口关闭前保存截图、窗口句柄与辅助功能树，继续要求隔离标记、交互计数和无越界请求。现有实证不足以断定是 UIA 读取、点击派发还是预览内容本身失败。[隔离标记失败](https://github.com/tt-a1i/hive-desktop/actions/runs/44562821701) · [计数失败](https://github.com/tt-a1i/hive-desktop/actions/runs/44562148936)

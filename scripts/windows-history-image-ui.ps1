@@ -7,7 +7,6 @@ $app = $null
 $root = $null
 $window = [IntPtr]::Zero
 $owned = @()
-$scope = [System.Windows.Automation.TreeScope]::Descendants
 function All-Controls { return @($root.FindAll($scope, [System.Windows.Automation.Condition]::TrueCondition)) }
 function Find-Name([string]$name) { return @(All-Controls | Where-Object { $_.Current.Name -ceq $name }) }
 function Wait-Name([string]$name, [int]$timeout=30) {
@@ -106,6 +105,7 @@ function Snapshot-Failure {
 }
 try {
 Add-Type -AssemblyName UIAutomationClient
+$scope = [System.Windows.Automation.TreeScope]::Descendants
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type @'
