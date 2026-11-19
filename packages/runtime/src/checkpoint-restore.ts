@@ -220,21 +220,7 @@ export async function inspectCheckpointRestore(input: RestoreInput) {
   validateSnapshot(input, owned, target);
   const changes = fileChanges(future, target);
   assertExclusionsSafe(changes, future.preview);
-  return {owned, root, changes};
-}
-
-/** Apply or explicitly resume the code portion of a confirmed rewind. The
- * caller owns the execution lease and keeps the conversation gated throughout. */
-export async function restoreCheckpoint(input: RestoreInput): Promise<void> {
-  const {owned, root, changes} = await inspectCheckpointRestore(input);
-  const future = input.future.manifest, target = input.target.manifest;
   const before = future.preview.workspace, after = target.preview.workspace;
-  const byPath = new Map(changes.map(change => [change.path, change]));
-  const retiredDirectories = new Set<string>();
-  for (const change of changes) if (change.before) {
-    let parent = change.path;
-    while (parent.includes('/')) { parent = parent.slice(0, parent.lastIndexOf('/')); retiredDirectories.add(parent); }
-  }
   const checkGit = async () => {
     await validateManagedWorktree(input.dataRoot, owned);
     const state = await getGitWorkspaceVersion(root);
@@ -257,6 +243,21 @@ export async function restoreCheckpoint(input: RestoreInput): Promise<void> {
   if (objects.length) {
     const types = await gitRef(root, ['cat-file', '--batch-check=%(objectname) %(objecttype)'], objects.join('\n') + '\n');
     if (types !== objects.map(oid => `${oid} blob`).join('\n')) conflict('Target index references an unavailable Git blob');
+  }
+  return {owned, root, changes, checkGit};
+}
+
+/** Apply or explicitly resume the code portion of a confirmed rewind. The
+ * caller owns the execution lease and keeps the conversation gated throughout. */
+export async function restoreCheckpoint(input: RestoreInput): Promise<void> {
+  const {owned, root, changes, checkGit} = await inspectCheckpointRestore(input);
+  const future = input.future.manifest, target = input.target.manifest;
+  const after = target.preview.workspace;
+  const byPath = new Map(changes.map(change => [change.path, change]));
+  const retiredDirectories = new Set<string>();
+  for (const change of changes) if (change.before) {
+    let parent = change.path;
+    while (parent.includes('/')) { parent = parent.slice(0, parent.lastIndexOf('/')); retiredDirectories.add(parent); }
   }
   const archive = join(dirname(root), `restore-${input.operationId}`);
   await restoreClaim(archive, JSON.stringify({version: 1, owner: owned.ownerToken, future: future.checkpointId, target: target.checkpointId}), async () => {

@@ -89,6 +89,21 @@ try {
   await assert.rejects(wire.rpc('history.rewind.apply',request),/Explicit confirmation/);
   assert.ok(!(await calls()).some(call=>call.method==='thread/fork'||call.method==='thread/revert'));
 
+  const gitDir = git(execution, 'rev-parse', '--absolute-git-dir');
+  const indexLock = join(gitDir, 'index.lock');
+  await writeFile(indexLock, 'owned by another Git process', {flag:'wx'});
+  const locked = await wire.rpc('history.rewind.apply',{...request,requestId:randomUUID(),confirmed:true});
+  assert.equal(locked.state,'failed',JSON.stringify(locked));
+  assert.match(locked.error,/locked by another operation/);
+  assert.equal(await readFile(indexLock,'utf8'),'owned by another Git process');
+  assert.equal(await readFile(join(execution,'tracked.txt'),'utf8'),'future file');
+  await assert.rejects(state(),{code:'ENOENT'}); // The peer writes state only after a native mutation.
+  assert.ok(!(await calls()).some(call=>call.method==='thread/fork'||call.method==='thread/revert'));
+  assert.equal((await wire.rpc('history.capabilities',base)).rewind,true);
+  await unlink(indexLock);
+  const fresh = await wire.rpc('history.rewind.preview',selection);
+  request.previewToken = fresh.previewToken;
+
   // The native peer persists the rewind but dies before replying. The product
   // must cold-recover the exact result without repeating the native mutation.
   await writeFile(dropResponse,'yes');

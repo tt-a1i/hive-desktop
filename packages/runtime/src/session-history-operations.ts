@@ -227,7 +227,8 @@ export class SessionHistoryOperations {
    control=await this.control(source);if(historyHash((await control.read(source.record.codexThreadId!)).turns)!==preview.sourceFingerprint)fail('STALE_SOURCE','Native history changed since preview');
    let checkpoint:ExportedCodeCheckpoint;if(preview.checkpointId&&!preview.input.rewind)checkpoint=await cp.export(preview.checkpointId);else{const captured=await cp.capture({expectedVersion:preview.codeVersion,requestId:op.operationId});checkpoint=await cp.export(captured.checkpointId);}
    op=await this.journal.save({...op,checkpointId:checkpoint.manifest.checkpointId});
-   if(preview.input.rewind){const restore=await this.rewindCodeInput(op,preview,cp);if(restore)await inspectCheckpointRestore(restore);}
+   const restore=preview.input.rewind?await this.rewindCodeInput(op,preview,cp):undefined;
+   if(restore)await inspectCheckpointRestore(restore);
    const setup=await this.port.setup(op.workspaceId);const creation:WorktreeCreation={version:setup?2:1,...(setup&&{setup}),forkOperationId:op.operationId,workspaceId:op.workspaceId,backend:'codex',...(source.record.profile&&{profile:source.record.profile}),...(source.record.legacyConfiguration&&{legacyConfiguration:true}),identityState:'known',originAgentId:source.record.originAgentId!,...(source.record.model&&{model:source.record.model})};
    const owned=await createForkWorktree({projectRoot:source.projectRoot,dataRoot:this.dataDir,chatId:op.childSessionId,creation,operationId:op.operationId,baseOid:checkpoint.manifest.preview.workspace.headOid!});
    await materializeCheckpoint({dataRoot:this.dataDir,record:owned,operationId:op.operationId,checkpoint});op=await this.journal.save({...op,state:'worktreeReady'});
@@ -243,6 +244,7 @@ export class SessionHistoryOperations {
     await this.port.retire(op.sourceSessionId);
     const current=await control.rewind({threadId:source.record.codexThreadId!,beforeTurnId:preview.boundaryTurnId,expectedSource:preview.sourceFingerprint,fingerprint:historyHash,onRequested:async()=>{
      if(await this.port.quiescent(op.workspaceId,op.sourceSessionId)!==preview.ledgerFingerprint||(await cp.preview()).version!==preview.codeVersion)fail('STALE_SOURCE','Source changed after backup and before rewind');
+     if(restore)await inspectCheckpointRestore(restore);
      await this.port.guardRewind(op.sourceSessionId,op.operationId,true);
      op=await this.journal.save({...op,rewindRequested:true});
     }});
