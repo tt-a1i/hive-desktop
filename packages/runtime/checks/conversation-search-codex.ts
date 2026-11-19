@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexProjection } from '../src/agents/codex-projection.js';
-import { codexMetadataFile } from '../src/agents/codex-metadata.js';
+import { codexMetadataFile, writeCodexMetadata } from '../src/agents/codex-metadata.js';
 import { searchConversation } from '../src/conversation-search.js';
 import { desktopHistoryMessage } from '../src/desktop-history.js';
 import type { ChatRecord } from '../src/chat-index.js';
@@ -73,5 +73,35 @@ try {
   assert.ok(found.matches.every(match => visible.some(entry => entry.item.id === match.messageId)), 'all search hits exist in the visible projection');
   assert.equal((await searchConversation(coherentRecord, 'obsolete', options)).matches.length, 0);
   assert.equal((await searchConversation(coherentRecord, 'outdated', options)).matches.length, 0);
+
+  const fork = new CodexProjection(dir, 'fork');
+  const user = (id: string) => ({id, type: 'userMessage', content: [{type: 'text', text: `Native raw ${id}`}]});
+  fork.recover([
+    {id:'inherited-turn', status:'completed', items:[user('inherited-user')]},
+    {id:'local-turn', status:'completed', items:[user('exact-user'), user('legacy-user'),
+      {id:'assistant', type:'agentMessage', text:'Visible assistant provenance needle'}]},
+  ], true);
+  const presentation = (displayText: string) => ({version: 1 as const, origin: 'user' as const, displayText});
+  const delivery = (turnId: string, itemId: string | undefined, deliveryId: string, displayText: string) =>
+    ({turnId, itemId, deliveryId, presentation: presentation(displayText)});
+  writeCodexMetadata(dir, 'fork', {version:1, context:[], completed:[],
+    inheritedDeliveries:[
+      delivery('inherited-turn', 'inherited-user', 'first-inherited', 'Visible inherited provenance needle'),
+      delivery('inherited-turn', 'inherited-user', 'duplicate-inherited', 'Suppressed inherited duplicate'),
+    ],
+    deliveries:[
+      delivery('inherited-turn', 'inherited-user', 'duplicate-local', 'Suppressed local duplicate'),
+      delivery('inherited-turn', 'legacy-user', 'wrong-turn', 'Suppressed wrong turn'),
+      delivery('local-turn', undefined, 'first-legacy', 'Visible legacy provenance needle'),
+      delivery('local-turn', undefined, 'duplicate-legacy', 'Suppressed legacy duplicate'),
+      delivery('local-turn', 'exact-user', 'first-exact', 'Visible exact provenance needle'),
+      delivery('local-turn', 'exact-user', 'duplicate-exact', 'Suppressed exact duplicate'),
+    ],
+  });
+  const forkRecord = {...record, codexThreadId:'fork'};
+  const forkResult = await searchConversation(forkRecord, 'provenance needle', options);
+  assert.equal(forkResult.complete, true);
+  assert.deepEqual(forkResult.matches.map(match => match.messageId), ['first-inherited', 'first-exact', 'first-legacy', 'assistant']);
+  assert.deepEqual((await searchConversation(forkRecord, 'suppressed', options)).matches, []);
   console.log('Codex search snapshot completeness checks passed');
 } finally { await rm(dir, {recursive:true, force:true}); }

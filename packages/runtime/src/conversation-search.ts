@@ -1,7 +1,8 @@
 import { AcpHistory } from './agents/acp-history.js';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { setImmediate } from 'node:timers/promises';
 import type { SessionMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { ChatRecord } from './chat-index.js';
@@ -10,8 +11,7 @@ import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
 import { readClaudeMetadata } from './agents/claude-metadata.js';
 import { ClaudeProjection } from './agents/claude-projection.js';
 import { codexMetadataFile, readCodexMetadata } from './agents/codex-metadata.js';
-import { normalizeCodexItem, type CodexItem } from './agents/codex-history.js';
-import { readFile } from 'node:fs/promises';
+import { normalizeCodexItem, type CodexDelivery, type CodexItem } from './agents/codex-history.js';
 
 export type ConversationSearchMatch = { messageId: string; snippet: string };
 export type ConversationSearchResult = { matches: ConversationSearchMatch[]; complete: boolean; warning?: string };
@@ -282,16 +282,42 @@ async function codexRows(record: ChatRecord, directory: string, signal?: AbortSi
   const metadata = readCodexMetadata(directory, record.codexThreadId);
   const complete = data.completeHistory === true && data.searchVersion === 2 && Array.isArray(data.searchEntries);
   const entries: unknown[] = complete ? data.searchEntries as unknown[] : data.entries;
+  // Preserve the journal's first-match order, including inherited exact
+  // bindings and the separate fallback for older local user deliveries.
+  const exact = new Map<string, Map<string, CodexDelivery>>();
+  for (const deliveries of [metadata.inheritedDeliveries ?? [], metadata.deliveries]) {
+    for (const delivery of deliveries) {
+      if (delivery.itemId === undefined) continue;
+      let turn = exact.get(delivery.turnId);
+      if (!turn) {
+        turn = new Map();
+        exact.set(delivery.turnId, turn);
+      }
+      if (!turn.has(delivery.itemId)) turn.set(delivery.itemId, delivery);
+    }
+  }
+  const legacy = new Map<string, CodexDelivery>();
+  for (const delivery of metadata.deliveries)
+    if (delivery.itemId === undefined && !legacy.has(delivery.turnId)) legacy.set(delivery.turnId, delivery);
+  const sources = new Map<string, string>();
+  for (const source of metadata.inheritedSources ?? [])
+    if (!sources.has(source.itemId)) sources.set(source.itemId, source.sourceSessionId);
+
   const seenIds = new Set<string>();
-  const rows = entries.map((entry: unknown) => {
+  const rows: Row[] = [];
+  for (let index = 0; index < entries.length; index++) {
+    // Large journals can otherwise keep the sidecar from reading a cancel
+    // request until the entire native history has been normalized.
+    if (index > 0 && index % 2048 === 0) await setImmediate(undefined, {signal});
+    const entry = entries[index];
     if (!object(entry) || typeof entry.turnId !== 'string' || !object(entry.item) || typeof entry.item.id !== 'string' || typeof entry.item.type !== 'string') throw new Error('Invalid Codex display journal entry');
     const item = entry.item as CodexItem;
     if (complete && (!item.id || !entry.turnId || seenIds.has(item.id) || item.status === 'inProgress' || item.type === 'hiveProjectionNotice')) throw new Error('Invalid complete Codex history snapshot');
-    seenIds.add(item.id);
-    const delivery = [...(metadata.inheritedDeliveries ?? []), ...metadata.deliveries].find(d => d.turnId === entry.turnId && d.itemId === item.id)
-      ?? metadata.deliveries.find(d => d.turnId === entry.turnId && d.itemId === undefined && item.type === 'userMessage');
-    return { id: item.id, message: normalizeCodexItem(item, delivery, metadata.inheritedSources?.find(source => source.itemId === item.id)?.sourceSessionId) };
-  });
+    if (complete) seenIds.add(item.id);
+    const delivery = exact.get(entry.turnId)?.get(item.id)
+      ?? (item.type === 'userMessage' ? legacy.get(entry.turnId) : undefined);
+    rows.push({ id: item.id, message: normalizeCodexItem(item, delivery, sources.get(item.id)) });
+  }
   return { rows, complete };
 }
 
