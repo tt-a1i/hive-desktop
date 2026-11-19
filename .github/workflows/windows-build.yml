@@ -227,6 +227,16 @@ jobs:
           path: |
             target/windows-*.png
           if-no-files-found: warn
+      - name: Verify update and rollback from the extracted Windows desktop
+        timeout-minutes: 18
+        run: node scripts/check-windows-native-update.mjs --bundle target/portable-windows-extracted --build-candidate --receipt target/windows-native-update.json
+      - name: Preserve native update evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-update-receipt
+          path: target/windows-native-update.json
+          if-no-files-found: warn
   native-supervision:
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.replay_run }}
     runs-on: windows-latest
