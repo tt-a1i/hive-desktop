@@ -1,0 +1,198 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const argument = (name) => {
+  const i = process.argv.indexOf(name);
+  assert(i >= 0 && process.argv[i + 1], `Missing ${name}`);
+  return resolve(process.argv[i + 1]);
+};
+// Shared ownership for fixture child processes. Call stopAll() in finally.
+export function createWindowsFixtureProcesses() {
+  const children = new Map();
+  async function deadline(promise, ms, label) {
+    let timer;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(Error(label)), ms);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  function start(command, args, options) {
+    const child = spawn(command, args, options);
+    const done = once(child, 'close').finally(() => children.delete(child));
+    children.set(child, done);
+    done.catch(() => {});
+    return { child, done };
+  }
+  async function run(command, args, options, label, timeout = 120000) {
+    const { done } = start(command, args, options);
+    assert.deepEqual(await deadline(done, timeout, label), [0, null], `${label} failed`);
+  }
+  async function stopAll() {
+    const errors = [];
+    for (const [child, done] of [...children]) {
+      try {
+        if (child.pid && child.exitCode === null && child.signalCode === null) {
+          const killer = spawn(join(process.env.SystemRoot, 'System32', 'taskkill.exe'),
+            ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+          const [code] = await once(killer, 'close');
+          if (code !== 0 && child.exitCode === null && child.signalCode === null) {
+            throw Error(`Could not stop fixture ${child.pid}`);
+          }
+        }
+        await deadline(done.catch(() => {}), 15000, 'fixture cleanup');
+      } catch (error) {
+        errors.push(String(error));
+      }
+    }
+    return errors;
+  }
+  return { start, deadline, run, stopAll };
+}
+
+export async function runWindowsNativeFixture(config) {
+  const bundle = argument('--bundle'), receiptPath = argument('--receipt'), resources = join(bundle, 'resources');
+  const executable = join(bundle, 'hive-desktop.exe'), node = join(resources, 'node', 'node.exe');
+  const seed = fileURLToPath(new URL('../fixtures/' + config.seed, import.meta.url));
+  const guard = fileURLToPath(new URL('../fixtures/windows-image-network-guard.cjs', import.meta.url));
+  const ui = fileURLToPath(new URL('../' + config.ui, import.meta.url));
+  let root;
+  let env;
+  const { start, deadline, run, stopAll } = createWindowsFixtureProcesses();
+  const logs = [];
+  const result = { status: 'failed', stages: {}, error: null, cleanupErrors: [] };
+  try {
+    assert.equal(process.platform, 'win32', 'Requires an interactive Windows desktop');
+    await mkdir(dirname(receiptPath), { recursive: true });
+    root = await mkdtemp(join(tmpdir(), 'hive-win-' + config.name + '-'));
+    env = {
+      ...process.env,
+      PI_OFFLINE: '1',
+      HIVE_DESKTOP_DATA_DIR: join(root, 'state'),
+      PI_CODING_AGENT_DIR: join(root, 'offline-pi'),
+      NODE_OPTIONS: `--require="${guard.replaceAll('\\', '/')}"`,
+      HIVE_DESKTOP_TRACE_RPC: '1',
+    };
+    delete env.HIVE_DESKTOP_NODE;
+    delete env.HIVE_DESKTOP_RUNTIME;
+    if (config.isolatedHome) {
+      Object.assign(env, {HOME:root, USERPROFILE:root, CODEX_HOME:join(root, 'codex-home')});
+      for (const key of Object.keys(env)) {
+        if (key.endsWith('_API_KEY') || key.startsWith('GH_') || key.startsWith('GITHUB_')) delete env[key];
+      }
+    }
+    await run(node, [seed, root, resources], { env, stdio: 'inherit' }, 'seed');
+    const fixture = JSON.parse(await readFile(join(root, config.fixtureFile + '-seed.json'), 'utf8'));
+    result.fixture = config.summary(fixture);
+    Object.assign(env, fixture.environment ?? {});
+    for (const phase of ['select', 'reopen']) {
+      const desktop = start(executable, [], {
+        cwd: fixture.project,
+        env,
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      // Keep the parent-observed exit even if the UI script fails first.
+      void desktop.done.then(
+        ([code, signal]) => { result.stages[`${phase}Exit`] = { code, signal }; },
+        error => { result.stages[`${phase}Exit`] = { error: String(error) }; },
+      );
+      const log = { phase, stderr: '' };
+      logs.push(log);
+      desktop.child.stderr.setEncoding('utf8');
+      desktop.child.stderr.on('data', (chunk) => {
+        log.stderr += chunk;
+      });
+      const uiReceipt = join(root, `${config.fixtureFile}-ui-${phase}.json`);
+      const powershell = start(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          ui,
+          '-AppProcessId',
+          String(desktop.child.pid),
+          '-Executable',
+          executable,
+          '-Phase',
+          phase,
+          ...config.uiArguments(fixture),
+          '-OutputPath',
+          uiReceipt,
+          '-EvidenceDirectory',
+          dirname(receiptPath),
+        ],
+        { stdio: 'inherit' },
+      );
+      let uiExit;
+      try {
+        uiExit = await deadline(powershell.done, 120000, `${phase} UI timed out`);
+      } finally {
+        try {
+          result.stages[phase] = JSON.parse(await readFile(uiReceipt, 'utf8'));
+        } catch {}
+      }
+      assert.deepEqual(uiExit, [0, null], `${phase} UI failed`);
+      assert.deepEqual(await deadline(desktop.done, 30000, `${phase} desktop exit`), [0, null]);
+      assert.match(log.stderr, /"shutdown"/, 'desktop must request normal shutdown');
+      assert.match(log.stderr, /reply 0 ok/, 'the backend must acknowledge normal shutdown');
+      await run(
+        node,
+        [seed, root, resources, config.verifyMode(phase)],
+        { env, stdio: 'inherit' },
+        `${phase} disk verification`,
+      );
+      result.stages[`${phase}Disk`] = JSON.parse(
+        await readFile(
+          join(root, `${config.fixtureFile}-${config.verifyMode(phase)}.json`),
+          'utf8',
+        ),
+      );
+    }
+    result.status = 'passed';
+  } catch (error) {
+    result.error = String(error?.stack ?? error);
+    process.exitCode = 1;
+  } finally {
+    result.cleanupErrors.push(...await stopAll());
+    if (root && env && config.failureMode && result.status !== 'passed') {
+      try {
+        await run(node, [seed, root, resources, config.failureMode], {env, stdio:'inherit'}, 'failure disk inspection');
+        result.failureDisk = JSON.parse(await readFile(join(root, `${config.fixtureFile}-${config.failureMode}.json`), 'utf8'));
+      } catch (error) { result.failureDiskError = String(error?.stack ?? error); }
+    }
+    if (root) {
+      try {
+        await rm(root, { recursive: true, force: true });
+      } catch (error) {
+        result.cleanupErrors.push(String(error));
+      }
+    }
+    if (result.cleanupErrors.length) {
+      result.status = 'failed';
+      process.exitCode = 1;
+    }
+    try {
+      await mkdir(dirname(receiptPath), { recursive: true });
+      await writeFile(receiptPath, JSON.stringify(result, null, 2) + '\n');
+      await writeFile(
+        join(dirname(receiptPath), `windows-${config.name}-desktop.log`),
+        logs.map((log) => `${log.phase}\n${log.stderr}`).join('\n'),
+      );
+    } catch (error) {
+      console.error(error);
+      process.exitCode = 1;
+    }
+  }
+
+}

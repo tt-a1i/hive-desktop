@@ -16,7 +16,9 @@ on:
           - standard
           - project-reference
           - archived-search
+          - codex-quota
           - handoff-range
+          - queued-inputs
       replay_update:
         description: Replay only native update and rollback from the retained portable artifact
         required: false
@@ -390,7 +392,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search', 'handoff-range')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search', 'handoff-range', 'codex-quota', 'queued-inputs')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -473,6 +475,20 @@ jobs:
         run: |
           node scripts/check-windows-archived-search.mjs --handoff-range --bundle target/replay-extracted --receipt target/windows-handoff-range.json 2>&1 | Tee-Object -FilePath target/windows-handoff-range.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Replay native Codex quota and process cleanup
+        if: ${{ inputs.replay_scenario == 'codex-quota' }}
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          node scripts/check-windows-codex-quota.mjs --bundle target/replay-extracted --receipt target/windows-codex-quota.json 2>&1 | Tee-Object -FilePath target/windows-codex-quota.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Replay native queued input edit and cancellation
+        if: ${{ inputs.replay_scenario == 'queued-inputs' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-queued-inputs.mjs --bundle target/replay-extracted --receipt target/windows-queued-inputs.json 2>&1 | Tee-Object -FilePath target/windows-queued-inputs.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload replay evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -496,8 +512,13 @@ jobs:
             target/windows-project-reference-desktop.log
             target/windows-archived-search*.json
             target/windows-archived-search*.log
+            target/windows-codex-quota.json
+            target/windows-codex-quota.log
+            target/windows-codex-quota-desktop.log
             target/windows-handoff-range*.json
             target/windows-handoff-range*.log
+            target/windows-queued-inputs*.json
+            target/windows-queued-inputs*.log
           if-no-files-found: warn
 
   replay-update:
