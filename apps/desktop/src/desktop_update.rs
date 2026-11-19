@@ -83,10 +83,19 @@ pub(crate) fn authorize_candidate_startup() -> std::io::Result<()> {
 
 pub(crate) fn report_startup() -> std::io::Result<()> {
     use std::io::Write;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static REPORTED: AtomicBool = AtomicBool::new(false);
+    if REPORTED.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let Some(path) = std::env::var_os("HIVE_DESKTOP_UPDATE_READY").map(PathBuf::from) else {
         return Ok(());
     };
-    if path.file_name().and_then(|name| name.to_str()) != Some("ready.json") || path.exists() {
+    if path.file_name().and_then(|name| name.to_str()) != Some("ready.json") {
+        return Ok(());
+    }
+    if path.exists() {
+        REPORTED.store(true, Ordering::Relaxed);
         return Ok(());
     }
     let parent = path
@@ -99,6 +108,7 @@ pub(crate) fn report_startup() -> std::io::Result<()> {
     )?;
     temporary.flush()?;
     temporary.persist_noclobber(path)?;
+    REPORTED.store(true, Ordering::Relaxed);
     Ok(())
 }
 

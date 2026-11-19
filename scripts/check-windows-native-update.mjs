@@ -211,11 +211,14 @@ async function runCase(name, expectedState, current, candidate, candidateSha, ba
     assert.equal((await nativeIdentity(executable)).version, version);
     const installedSha = await hashDesktopFile(executable);
     assert.equal(installedSha, expectedState === 'installed' ? candidateSha : oldSha);
-    const transactions = (await readdir(directory)).filter(entry => entry.startsWith('.hive-desktop-install-'));
-    assert.equal(transactions.length, 1);
-    const plan = JSON.parse(await readFile(join(directory, transactions[0], 'install-plan.json'), 'utf8'));
-    assert.equal(plan.oldExecutableSha256, oldSha);
-    assert.equal(plan.newExecutableSha256, candidateSha);
+    const release = releases.get(name);
+    assert.match(result.transactionId, /^\.hive-desktop-install-[a-zA-Z0-9]+$/);
+    assert.equal(result.archiveSha256, release.sha256);
+    await until('settled installer and recovery entry to be reclaimed', async () =>
+      !(await readdir(directory)).some(entry => entry === result.transactionId || entry.startsWith('Recover Hive Desktop ')));
+    const cached = join(data, 'desktop-updates', release.sha256 + '.zip');
+    if (expectedState === 'installed') await assert.rejects(stat(cached), { code: 'ENOENT' });
+    else assert.equal(await hashDesktopFile(cached), release.sha256, 'rollback must retain the verified download for retry');
     assert.equal(JSON.parse(await readFile(draftFile, 'utf8')).input, draft);
     details.phase = 'relaunched window and shutdown';
     const replacement = await until('relaunched native window', async () =>
@@ -225,9 +228,9 @@ async function runCase(name, expectedState, current, candidate, candidateSha, ba
     await until('owned desktop and installer processes to exit', async () => !(await processes(directory)).length, 20_000);
     details.phase = 'installer handoff confirmation';
     verifyUpdateTrace(Buffer.concat(log).toString());
-    const release = releases.get(name);
     Object.assign(details, { phase: 'verified', result, oldSha, installedSha, archiveSha: release.sha256,
-      archiveBytes: release.bytes, draftRetained: true, sameSession: session, allOwnedProcessesExited: true });
+      archiveBytes: release.bytes, draftRetained: true, sameSession: session, allOwnedProcessesExited: true,
+      settledInstallerReclaimed: true, cachedForRetry: expectedState === 'rolledBack' });
   } finally {
     details.trace = Buffer.concat(log).toString();
     await ui('StopFixture', ['-Directory', directory]).catch(error => console.error(error.message));

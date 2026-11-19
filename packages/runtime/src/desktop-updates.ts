@@ -3,7 +3,7 @@ import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpa
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractDesktopUpdate, verifyDesktopPackage } from './desktop-update-archive.js';
-import { desktopPackagePaths, hashDesktopFile, prepareDesktopRecoveryEntry, removeDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
+import { desktopPackagePaths, hashDesktopFile, prepareDesktopRecoveryEntry, reclaimDesktopUpdateTransactions, removeDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
 
 const manifestLimit = 64 * 1024;
 const archiveLimit = 2 * 1024 * 1024 * 1024;
@@ -165,6 +165,7 @@ export class DesktopUpdates {
   async check(): Promise<Check> {
     const policy = await loadPolicy(this.policyPath);
     if (!policy) return { state: 'disabled' };
+    await this.reclaimLocalArtifacts(policy).catch(() => {});
     let manifest: Buffer;
     try {
       manifest = await this.fetchManifest(policy);
@@ -176,6 +177,54 @@ export class DesktopUpdates {
     }
     const candidate = this.inspect(policy, manifest);
     return candidate.state === 'available' ? (await this.cachedUpdate(policy, candidate) ?? candidate) : candidate;
+  }
+
+  private async installedLocation() {
+    const resources = dirname(fileURLToPath(this.policyPath));
+    const installation = await realpath(resolve(resources, process.platform === 'darwin' ? '../..' : '..'));
+    const current = desktopPackagePaths(installation);
+    if (await realpath(resources) !== current.resources || await realpath(process.execPath) !== current.node) {
+      throw new Error('Updates require the installed desktop and its bundled Node');
+    }
+    const dataDirectory = await realpath(this.dataDirectory);
+    const relativeData = relative(installation, dataDirectory);
+    if (!relativeData || (!isAbsolute(relativeData) && relativeData !== '..' && !relativeData.startsWith(`..${sep}`))) {
+      throw new Error('Desktop update cannot move an installation containing its own user data');
+    }
+    return { installation, current, dataDirectory };
+  }
+
+  private async reclaimLocalArtifacts(policy: Policy) {
+    if (this.staging || this.preparing) return;
+    const { installation, dataDirectory } = await this.installedLocation();
+    const directory = join(dataDirectory, 'desktop-updates');
+    if (await realpath(directory) !== directory) return;
+    if (process.env.HIVE_DESKTOP_UPDATE_AUTHORIZE === '1') {
+      const ready = process.env.HIVE_DESKTOP_UPDATE_READY;
+      if (!ready) return;
+      const receipt = asObject(JSON.parse(await readFile(join(directory, 'install-result.json'), 'utf8')));
+      if (receipt.state !== 'installed' || receipt.version !== policy.installedVersion
+        || receipt.transactionId !== basename(dirname(ready))) return;
+    }
+    await reclaimDesktopUpdateTransactions(installation, dataDirectory);
+    for (const name of await readdir(directory)) {
+      this.closing.signal.throwIfAborted();
+      if (!/^[a-f0-9]{64}\.manifest\.json$/.test(name)) continue;
+      try {
+        const attestation = join(directory, name);
+        const metadata = await lstat(attestation);
+        if (!metadata.isFile() || metadata.size > manifestLimit) continue;
+        const release = releaseDocument(await readFile(attestation), policy.key);
+        if (newer(release.version, policy.installedVersion)) continue;
+        const asset = release.assets.find(entry => entry.platform === process.platform && entry.arch === process.arch);
+        if (!asset || name !== `${asset.sha256}.manifest.json`) continue;
+        const archive = join(directory, `${asset.sha256}.zip`);
+        const info = await lstat(archive);
+        if (!info.isFile() || info.size !== asset.bytes) continue;
+        await rm(archive);
+        await rm(attestation);
+      } catch { /* Unverified cache entries remain untouched. */ }
+    }
   }
 
   private async cachedUpdate(policy: Policy, selected?: Available): Promise<Available | undefined> {
@@ -263,17 +312,7 @@ export class DesktopUpdates {
       const policy = await loadPolicy(this.policyPath);
       if (!policy) throw new Error('This desktop package has no update channel');
       const signal = this.closing.signal;
-      const resources = dirname(fileURLToPath(this.policyPath));
-      const installation = await realpath(resolve(resources, process.platform === 'darwin' ? '../..' : '..'));
-      const current = desktopPackagePaths(installation);
-      if (await realpath(resources) !== current.resources || await realpath(process.execPath) !== current.node) {
-        throw new Error('Updates require the installed desktop and its bundled Node');
-      }
-      const dataDirectory = await realpath(this.dataDirectory);
-      const relativeData = relative(installation, dataDirectory);
-      if (!relativeData || (!isAbsolute(relativeData) && relativeData !== '..' && !relativeData.startsWith(`..${sep}`))) {
-        throw new Error('Desktop update cannot move an installation containing its own user data');
-      }
+      const { installation, current, dataDirectory } = await this.installedLocation();
       const currentIdentity = await verifyDesktopPackage(installation, policy.installedVersion, signal);
       const prepared = await this.preparePackage(expectedVersion, sha256, dirname(installation));
       try {
@@ -287,6 +326,7 @@ export class DesktopUpdates {
           installation, dataDirectory, fromVersion: policy.installedVersion, toVersion: expectedVersion,
           oldExecutableSha256: currentIdentity.executableSha256,
           newExecutableSha256: prepared.identity.executableSha256,
+          archiveSha256: prepared.sha256,
           ...(currentIdentity.macSignature && {oldMacSignature: true}),
           ...(prepared.identity.macSignature && {newMacSignature: true}),
         };

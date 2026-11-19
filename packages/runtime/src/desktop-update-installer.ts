@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { createReadStream } from 'node:fs';
-import { lstat, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -16,6 +16,7 @@ export type DesktopInstallPlan = {
   toVersion: string;
   oldExecutableSha256: string;
   newExecutableSha256: string;
+  archiveSha256?: string;
   oldMacSignature?: true;
   newMacSignature?: true;
 };
@@ -25,6 +26,7 @@ type Journal = {
   fromVersion: string;
   toVersion: string;
   candidatePid?: number | undefined;
+  settledBy?: number | undefined;
   error?: string | undefined;
 };
 
@@ -178,7 +180,8 @@ export async function removeDesktopRecoveryEntry(transaction: string) {
 async function transactionPaths(plan: DesktopInstallPlan, transaction: string) {
   if (!isAbsolute(plan.installation) || !isAbsolute(plan.dataDirectory)
     || dirname(transaction) !== dirname(plan.installation) || transaction === plan.installation || await realpath(transaction) !== transaction
-    || !/^[a-f0-9]{64}$/.test(plan.oldExecutableSha256) || !/^[a-f0-9]{64}$/.test(plan.newExecutableSha256)) {
+    || !/^[a-f0-9]{64}$/.test(plan.oldExecutableSha256) || !/^[a-f0-9]{64}$/.test(plan.newExecutableSha256)
+    || (plan.archiveSha256 !== undefined && !/^[a-f0-9]{64}$/.test(plan.archiveSha256))) {
     throw new Error('Desktop update transaction must be beside the installation');
   }
   if ([plan.oldMacSignature, plan.newMacSignature].some(value => value !== undefined && (value !== true || process.platform !== 'darwin'))
@@ -218,9 +221,98 @@ export async function installDesktopUpdate(plan: DesktopInstallPlan, transaction
 
 type TransactionPaths = Awaited<ReturnType<typeof transactionPaths>>;
 
+const terminalStates: Journal['state'][] = ['installed', 'rolledBack', 'failed'];
+const validPid = (pid: number) => Number.isSafeInteger(pid) && pid > 1;
+
+async function readJournal(plan: DesktopInstallPlan, path: string): Promise<Journal> {
+  const state = JSON.parse(await readFile(path, 'utf8')) as Journal;
+  if (state.fromVersion !== plan.fromVersion || state.toVersion !== plan.toVersion
+    || ![...terminalStates, 'replacing', 'starting', 'recoveryRequired'].includes(state.state)
+    || (state.candidatePid !== undefined && !validPid(state.candidatePid))
+    || (state.settledBy !== undefined && (!validPid(state.settledBy) || !terminalStates.includes(state.state))))
+    throw new Error('Invalid desktop update journal');
+  return state;
+}
+
+/** A settled transaction no longer owns a usable backup or needs recovery.
+ * Keep its small journal until a process outside the directory can remove it. */
+async function settleTransaction(transaction: string, paths: TransactionPaths, state: Journal) {
+  try { await atomicJson(paths.journal, { ...state, settledBy: process.pid }); }
+  catch { return; } // The original recovery entry and package stay usable.
+  await removeDesktopRecoveryEntry(transaction).catch(() => {});
+  await rm(state.state === 'installed' ? paths.previous : paths.next, { recursive: true, force: true }).catch(() => {});
+}
+
+async function reclaimSettledTransaction(plan: DesktopInstallPlan, transaction: string) {
+  if (!recoveryEntry(transaction)) return;
+  const paths = await transactionPaths(plan, transaction);
+  await withInstallLock(plan.installation, async () => {
+    const state = await readJournal(plan, paths.journal);
+    if (!state.settledBy || isLive(state.settledBy)) return;
+    const installed = state.state === 'installed';
+    // A recovery may still need both trees if the current installation vanished.
+    await checkExecutable(plan.installation, installed ? plan.newExecutableSha256 : plan.oldExecutableSha256);
+    if (installed && plan.archiveSha256) {
+      const cache = dirname(paths.receipt);
+      if (await realpath(cache).catch(() => undefined) === cache) {
+        await rm(join(cache, `${plan.archiveSha256}.zip`), { force: true });
+        await rm(join(cache, `${plan.archiveSha256}.manifest.json`), { force: true });
+      }
+    }
+    await removeDesktopRecoveryEntry(transaction);
+    // If a file is temporarily locked, a later attempt still needs the plan
+    // and terminal journal. Remove those only after releasing bulky files.
+    for (const name of await readdir(transaction)) {
+      if (name === 'install-plan.json' || name === 'install-status.json') continue;
+      await rm(join(transaction, name), { recursive: true, force: true });
+    }
+    await rm(paths.journal);
+    await rm(join(transaction, 'install-plan.json'));
+    await rmdir(transaction);
+  });
+}
+
+/** Retry cleanup of settled transactions if a previous installer could not start its cleaner. */
+export async function reclaimDesktopUpdateTransactions(installation: string, dataDirectory: string) {
+  for (const entry of await readdir(dirname(installation), { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const transaction = join(dirname(installation), entry.name);
+    if (!recoveryEntry(transaction)) continue;
+    try {
+      if (await realpath(transaction) !== transaction) continue;
+      const plan = JSON.parse(await readFile(join(transaction, 'install-plan.json'), 'utf8')) as DesktopInstallPlan;
+      if (plan.installation === installation && plan.dataDirectory === dataDirectory)
+        await reclaimSettledTransaction(plan, transaction);
+    } catch { /* Pending, busy and unverified transactions stay in place. */ }
+  }
+}
+
+async function scheduleInstallerCleanup(plan: DesktopInstallPlan, transaction: string) {
+  if (!recoveryEntry(transaction)) return;
+  try {
+    const paths = await transactionPaths(plan, transaction);
+    const state = await readJournal(plan, paths.journal);
+    if (state.settledBy !== process.pid) return;
+    // Windows locks the running node.exe and can hold the installer's cwd.
+    // Run the cleaner from the selected installation instead of the transaction.
+    const child = spawn(desktopPackagePaths(plan.installation).node,
+      [join(transaction, 'installer.mjs'), '--cleanup'], { cwd: dirname(transaction), stdio: 'ignore', detached: true, windowsHide: true });
+    await once(child, 'spawn');
+    child.unref();
+  } catch { /* The installed runtime can retry during the next update check. */ }
+}
+
+function writeReceipt(paths: TransactionPaths, plan: DesktopInstallPlan, transaction: string,
+    state: 'installed' | 'rolledBack' | 'failed', error?: string) {
+  return atomicJson(paths.receipt, {
+    state, version: state === 'installed' ? plan.toVersion : plan.fromVersion, requestedVersion: plan.toVersion,
+    transactionId: basename(transaction), archiveSha256: plan.archiveSha256, error,
+  });
+}
+
 async function installLocked(plan: DesktopInstallPlan, transaction: string, paths: TransactionPaths) {
   const { installation, dataDirectory, fromVersion, toVersion } = plan;
-  const { next, previous, readiness, journal, receipt } = paths;
+  const { next, previous, readiness, journal } = paths;
   if (await exists(journal)) throw new Error('This desktop update has already started. Use the recovery entry to inspect it.');
   let movedOld = false;
   let movedNew = false;
@@ -245,9 +337,8 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
     startedHealthy = true;
     candidate.unref();
     await record('installed');
-    await atomicJson(receipt, { state: 'installed', version: toVersion, requestedVersion: toVersion });
-    await rm(previous, { recursive: true, force: true }).catch(() => {});
-    await removeDesktopRecoveryEntry(transaction).catch(() => {});
+    await writeReceipt(paths, plan, transaction, 'installed');
+    await settleTransaction(transaction, paths, { state: 'installed', fromVersion, toVersion, candidatePid: candidate.pid });
   } catch (error) {
     // Once the application has accepted the workspace, keep it running even
     // if writing the final receipt fails. Recovery can finish that commit.
@@ -259,12 +350,12 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
       if (movedOld) await move(previous, installation);
       // Before replacement, launch only the verified original and never an unexpected occupant.
       await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
-      await atomicJson(receipt, { state: movedOld ? 'rolledBack' : 'failed', version: fromVersion, requestedVersion: toVersion, error: message });
+      await writeReceipt(paths, plan, transaction, movedOld ? 'rolledBack' : 'failed', message);
       await record(movedOld ? 'rolledBack' : 'failed', message);
       const original = launch(installation, dataDirectory);
       await once(original, 'spawn');
       original.unref();
-      await removeDesktopRecoveryEntry(transaction).catch(() => {});
+      await settleTransaction(transaction, paths, { state: movedOld ? 'rolledBack' : 'failed', fromVersion, toVersion, error: message });
     } catch (recoveryError) {
       const detail = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
       await record('recoveryRequired', `${message}\n${detail}`);
@@ -277,21 +368,20 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
 export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction: string) {
   const paths = await transactionPaths(plan, transaction);
   const { installation, dataDirectory, fromVersion, toVersion } = plan;
-  const { next, previous, readiness, journal, receipt } = paths;
+  const { next, previous, readiness, journal } = paths;
   return withInstallLock(installation, async () => {
     let state: Journal;
-    try { state = JSON.parse(await readFile(journal, 'utf8')) as Journal; }
+    try { state = await readJournal(plan, journal); }
     catch (error) {
       if (missing(error)) return 'Nothing to recover. The installation was not changed.';
       throw error;
     }
-    if (state.fromVersion !== fromVersion || state.toVersion !== toVersion
-      || !['replacing', 'starting', 'installed', 'rolledBack', 'failed', 'recoveryRequired'].includes(state.state)
-      || (state.candidatePid !== undefined && (!Number.isSafeInteger(state.candidatePid) || state.candidatePid <= 1))) {
-      throw new Error('Invalid desktop update journal');
-    }
     if (state.state === 'rolledBack' || state.state === 'failed') {
       await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
+      if (!state.settledBy) {
+        await writeReceipt(paths, plan, transaction, state.state, state.error);
+        await settleTransaction(transaction, paths, state);
+      }
       return 'The original installation is already available.';
     }
 
@@ -304,8 +394,8 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
     if (state.state === 'installed' || (candidateReady && await exists(previous) && !await exists(next))) {
       await checkExecutable(installation, plan.newExecutableSha256, plan.newMacSignature);
       await atomicJson(journal, { ...state, state: 'installed', error: undefined });
-      await atomicJson(receipt, { state: 'installed', version: toVersion, requestedVersion: toVersion });
-      await rm(previous, { recursive: true, force: true }).catch(() => {});
+      await writeReceipt(paths, plan, transaction, 'installed');
+      await settleTransaction(transaction, paths, { ...state, state: 'installed', error: undefined });
       return `Desktop ${toVersion} is installed. You can open it from the normal location.`;
     }
     if (state.candidatePid !== undefined && isLive(state.candidatePid)) {
@@ -323,8 +413,9 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
     }
     await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
     const message = 'Desktop installation was interrupted.';
-    await atomicJson(receipt, { state: 'rolledBack', version: fromVersion, requestedVersion: toVersion, error: message });
+    await writeReceipt(paths, plan, transaction, 'rolledBack', message);
     await atomicJson(journal, { ...state, state: 'rolledBack', error: message });
+    await settleTransaction(transaction, paths, { ...state, state: 'rolledBack', error: message });
     return `Desktop ${fromVersion} was recovered. You can open it from the normal location.`;
   });
 }
@@ -332,8 +423,20 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
 async function main() {
   const transaction = await realpath(dirname(process.argv[1]!));
   const plan = JSON.parse(await readFile(join(transaction, 'install-plan.json'), 'utf8')) as DesktopInstallPlan;
+  if (process.argv[2] === '--cleanup') {
+    const state = await readJournal(plan, join(transaction, 'install-status.json'));
+    if (!state.settledBy || await realpath(process.execPath) !== desktopPackagePaths(plan.installation).node) return;
+    const deadline = Date.now() + 5000;
+    while (isLive(state.settledBy)) {
+      if (Date.now() >= deadline) return;
+      await delay(50);
+    }
+    await reclaimSettledTransaction(plan, transaction);
+    return;
+  }
   if (process.argv[2] === '--recover') {
     console.log(await recoverDesktopUpdate(plan, transaction));
+    await scheduleInstallerCleanup(plan, transaction);
     return;
   }
   const parent = Number(process.argv[2]);
@@ -344,6 +447,7 @@ async function main() {
     await delay(100);
   }
   await installDesktopUpdate(plan, transaction);
+  await scheduleInstallerCleanup(plan, transaction);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

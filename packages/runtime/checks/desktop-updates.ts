@@ -145,6 +145,15 @@ try {
     ? pathToFileURL(join(dirname(compiledRuntime), 'desktop-updates.js'))
     : new URL('../dist/desktop-updates.js', import.meta.url);
   const runOwnershipCheck = join(root, 'installer-ownership.mjs');
+  const obsolete = Buffer.from('obsolete, signed archive');
+  const obsoleteSha = createHash('sha256').update(obsolete).digest('hex');
+  const unsigned = Buffer.from('not a signed archive');
+  const unsignedSha = createHash('sha256').update(unsigned).digest('hex');
+  await writeFile(join(staging, obsoleteSha + '.zip'), obsolete);
+  await writeFile(join(staging, obsoleteSha + '.manifest.json'),
+    JSON.stringify(envelope('0.1.0', [{...asset, sha256:obsoleteSha,bytes:obsolete.length}])));
+  await writeFile(join(staging, unsignedSha + '.zip'), unsigned);
+  await writeFile(join(staging, unsignedSha + '.manifest.json'), '{}');
   await writeFile(runOwnershipCheck, `
     import assert from 'node:assert/strict';
     import {readFile,readdir} from 'node:fs/promises';
@@ -156,6 +165,23 @@ try {
       name.startsWith('.hive-desktop-install-') || name.startsWith('Recover Hive Desktop '));
     const make = () => new DesktopUpdates(directory, new URL(${JSON.stringify(pathToFileURL(installedPolicy).href)}));
     const prepare = owner => owner.prepareInstaller('0.1.3', ${JSON.stringify(zippedHash)});
+
+    const cache = join(directory, 'desktop-updates');
+    const obsolete = join(cache, ${JSON.stringify(obsoleteSha + '.zip')});
+    const unsigned = join(cache, ${JSON.stringify(unsignedSha + '.zip')});
+    const updates = make();
+    process.env.HIVE_DESKTOP_UPDATE_AUTHORIZE = '1';
+    process.env.HIVE_DESKTOP_UPDATE_READY = join(parent, '.hive-desktop-install-Future', 'ready.json');
+    await updates.check();
+    assert.equal((await readFile(obsolete, 'utf8')), 'obsolete, signed archive');
+    delete process.env.HIVE_DESKTOP_UPDATE_AUTHORIZE;
+    delete process.env.HIVE_DESKTOP_UPDATE_READY;
+    await updates.check();
+    assert.equal((await readFile(unsigned, 'utf8')), 'not a signed archive');
+    assert.equal((await readFile(join(cache, ${JSON.stringify(zippedHash + '.zip')}))).length, ${zippedBytes.length});
+    await assert.rejects(readFile(obsolete), {code:'ENOENT'});
+    await assert.rejects(readFile(obsolete.replace(/\\.zip$/, '.manifest.json')), {code:'ENOENT'});
+    await updates.close();
 
     const ordinaryExit = make();
     await prepare(ordinaryExit);
