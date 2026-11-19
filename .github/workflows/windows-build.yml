@@ -21,6 +21,7 @@ on:
           - handoff-range
           - queued-inputs
           - queued-stop-rejection
+          - checkpoint-comparison
       replay_update:
         description: Replay only native update and rollback from the retained portable artifact
         required: false
@@ -390,11 +391,11 @@ jobs:
         with:
           node-version: 22.23.3
       - uses: pnpm/action-setup@v6
-        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
+        if: ${{ (inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard')) || inputs.replay_scenario == 'checkpoint-comparison' }}
         with:
           version: 10.30.3
       - name: Install package-check compiler only without lifecycle scripts
-        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
+        if: ${{ (inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard')) || inputs.replay_scenario == 'checkpoint-comparison' }}
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Reject incompatible replay selections
         shell: pwsh
@@ -404,7 +405,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs', 'queued-stop-rejection', 'checkpoint-comparison')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -422,15 +423,56 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
           $archive = 'target/replay-download/hive-desktop-windows-portable.zip'
           if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) { throw 'Original portable zip is missing from artifact.' }
           $origin = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:REPLAY_RUN" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or $null -eq $origin.head_sha) { throw 'Could not read original run provenance.' }
+          if ($env:REPLAY_SCENARIO -eq 'checkpoint-comparison') {
+            if ($origin.event -ne 'push' -or $origin.repository.full_name -ne $env:GITHUB_REPOSITORY -or $origin.head_repository.full_name -ne $env:GITHUB_REPOSITORY) { throw 'Checkpoint comparison requires a push from this repository.' }
+            if ($origin.head_sha -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid original source commit.' }
+            "CHECKPOINT_SOURCE_HEAD=$($origin.head_sha)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          }
           New-Item -ItemType Directory -Force -Path target | Out-Null
           [ordered]@{ originalRun = $env:REPLAY_RUN; originalHead = $origin.head_sha; fixtureHead = $env:GITHUB_SHA; archiveSha256 = (Get-FileHash -Algorithm SHA256 $archive).Hash } | ConvertTo-Json | Set-Content -Encoding utf8 target/replay-provenance.json
           Expand-Archive -LiteralPath $archive -DestinationPath target/replay-extracted
           if (-not (Test-Path -LiteralPath 'target/replay-extracted/hive-desktop.exe' -PathType Leaf)) { throw 'Extracted artifact is not a portable desktop bundle.' }
+      - name: Checkout version-matched functional checks
+        if: ${{ inputs.replay_scenario == 'checkpoint-comparison' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CHECKPOINT_SOURCE_HEAD }}
+          path: target/checkpoint-functional-source
+          persist-credentials: false
+      - name: Prepare checkpoint-only fixture overrides
+        if: ${{ inputs.replay_scenario == 'checkpoint-comparison' }}
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:GITHUB_WORKSPACE 'target/checkpoint-functional-source'
+          $actualChecksHead = git -C $source rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actualChecksHead -ne $env:CHECKPOINT_SOURCE_HEAD) { throw 'Original fixture checkout does not match package provenance.' }
+          $paths = @('packages/runtime/checks/checkpoint-restore.ts', 'scripts/check-packaged-functional.mjs')
+          $overrides = @($paths | ForEach-Object {
+            $path = $_
+            $originalBlob = git -C $source rev-parse "HEAD:$path"
+            if ($LASTEXITCODE -ne 0) { throw "Missing original fixture: $path" }
+            $overrideBlob = git rev-parse "HEAD:$path"
+            if ($LASTEXITCODE -ne 0) { throw "Missing checkpoint override: $path" }
+            Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE $path) -Destination (Join-Path $source $path)
+            $materializedBlob = git -C $source hash-object --path=$path $path
+            if ($LASTEXITCODE -ne 0 -or $materializedBlob -ne $overrideBlob) { throw "Checkpoint override differs from its recorded source: $path" }
+            [ordered]@{ path = $path; originalBlob = $originalBlob; overrideBlob = $overrideBlob; materializedBlob = $materializedBlob }
+          })
+          $changed = @(git -C $source diff --name-only)
+          if ($LASTEXITCODE -ne 0 -or @($changed | Where-Object { $_ -notin $paths }).Count -ne 0) { throw 'Version-matched checks contain an unexpected modification.' }
+          New-Item -ItemType Junction -Path (Join-Path $source 'packages/runtime/node_modules') -Target (Join-Path $env:GITHUB_WORKSPACE 'packages/runtime/node_modules') | Out-Null
+          $original = Get-Content -LiteralPath target/replay-provenance.json -Raw | ConvertFrom-Json
+          [ordered]@{ originalRun = $original.originalRun; originalChecksHead = $actualChecksHead; overridesHead = $env:GITHUB_SHA; archiveSha256 = $original.archiveSha256; overrides = $overrides; changedFiles = $changed } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 target/checkpoint-fixture-provenance.json
+      - name: Check version-matched functional runtime with checkpoint groups
+        if: ${{ inputs.replay_scenario == 'checkpoint-comparison' }}
+        timeout-minutes: 25
+        run: node target/checkpoint-functional-source/scripts/check-packaged-functional.mjs --bundle target/replay-extracted --receipt target/replay-functional-receipt.json
       - name: Check original extracted functional runtime
         if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
         timeout-minutes: 25
@@ -523,6 +565,7 @@ jobs:
             target/windows-html-preview-*.json
             target/windows-terminal-smoke.log
             target/replay-provenance.json
+            target/checkpoint-fixture-provenance.json
             target/replay-functional-receipt.json
             target/windows-image-memory.json
             target/windows-image-memory.log
