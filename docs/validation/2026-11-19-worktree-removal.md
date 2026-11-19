@@ -26,3 +26,13 @@ macOS 从签名 ZIP 解包后，在原生窗口确认移除，注入收据写入
 源码为 `6f2f778`。包复用 `c8ff5bf` 的原生程序和同一份 Node，只更新工作树运行时代码及其源映射。完整归档清单、严格验签、工作树专项和包内 Node、PTY、Hive HTTP/SQLite 与正常退出均通过。当前版本的 Windows 原生窗口仍待验收。本轮没有发布或替换已安装应用。
 
 证据位于 `.artifacts/worktree-removal-receipt-DsjIew/`。原生窗口收据为 `native-window-jakijb/receipt.json`。ZIP SHA-256 为 `09ad0ec6900ca18681d40e06edc954a7acdba3d2c926153893baccc18d1cf016`。
+
+## 推送到不同名分支后的清理
+
+GPT-6.2 Sol 在真实 bare 仓库和生产 JSONL 中复现了旧版错误。独立工作树推到不同名的远端分支后，清理仍提示需要推送。`c08fbc9` 保存最近一次由 Hive 验证成功的目标及提交，清理时按当前远端和分支重新验证。上游配置保持由用户管理。已配置的上游及唯一同名跟踪分支仍可独立验证。远端改址、目标分支删除或本地新增提交时，如果没有其他证据确认当前提交已发布，继续保留检出。远端推送已确认但本地记录写入失败时，Hive 显示两项实际结果。
+
+旧包和解包新版从原生 Git 面板推送到本地 bare 仓库的 `review/desktop-checkout`。独立 Git 命令确认远端提交和工作树文件相同，且未设置上游。冷重开后，旧包拒绝清理。新版可预览并确认清理本地检出，两端分支保留。再次冷重开仍可读原会话，历史字节、原项目和另一棵独立工作树保持一致。测试窗口均收到后台关闭确认。
+
+证据位于 `.artifacts/exact-script-recovery-IX8tP2/`，旧包和新版原生收据分别为 `git-baseline-gAwOws/renamed-push-receipt.json`、`git-candidate-NTbeQx/renamed-push-receipt.json`。额外生产 JSONL 回归在 `.artifacts/worktree-push-receipt-X0TQXo/after.json`。当前 Windows 版本通过 MSVC 交叉检查，原生操作待验。本批使用本地包和本地 bare 仓库。
+
+本地 macOS ZIP SHA-256 为 `47abf2f95afdf5b230efd75f59912675e869fe87646252211af2afd03a7cf83b`。归档逐项核对，解包通过严格验签、真实 Node/PTY/Hive SQLite 冒烟和四项包内专项。130 项 Rust 测试通过，1 项子进程入口按设计忽略。原生操作和包内检查均未调用模型，本批未发布。
