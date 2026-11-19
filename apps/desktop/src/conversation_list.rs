@@ -352,7 +352,11 @@ impl HiveApp {
                         return;
                     };
                     let app = view.read(cx);
-                    if app.open_request != open_request || !app.viewing_conversation() {
+                    if app.open_request != open_request
+                        || !app.viewing_conversation()
+                        || app.showing_welcome_guide
+                        || (app.sidebar_open && window.viewport_size().width < px(820.))
+                    {
                         return;
                     }
                     let keep = |id: &String, markdown: &markdown::MarkdownView, cx: &App| {

@@ -1075,9 +1075,6 @@ impl Render for HiveApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(feature = "ui-preview")]
         crate::ui_preview::maybe_apply(self, window, cx);
-        if !self.viewing_conversation() && !self.conversation_list.visible_history_images.is_empty() {
-            self.sync_history_image_visibility(Default::default(), cx);
-        }
         let locale = cx.global::<crate::language::Language>().locale;
         if self.interface_locale != Some(locale) {
             self.localize_placeholders(window, cx);
@@ -1263,10 +1260,25 @@ impl Render for HiveApp {
             }
         }
         let narrow = window.viewport_size().width < px(820.);
+        let show_main_pane = !narrow || !self.sidebar_open;
+        let show_auxiliary_pane = self.memory.visible
+            || self.workflows.visible
+            || self.collaboration.visible
+            || self.member_panel;
+        let show_history = !welcome && !open_failed && self.session.is_some();
+        let render_history = show_main_pane && !show_auxiliary_pane && show_history;
+        if !render_history && !self.conversation_list.markdown.is_empty() {
+            self.conversation_list.markdown = Default::default();
+        }
+        if (!render_history || !self.viewing_conversation())
+            && !self.conversation_list.visible_history_images.is_empty()
+        {
+            self.sync_history_image_visibility(Default::default(), cx);
+        }
         let preferences = self.settings_panel || self.roles.visible;
         self.ensure_preferences_modal(window, cx);
         if !self.loading
-            && (!narrow || !self.sidebar_open)
+            && show_main_pane
             && self.viewing_conversation()
             && std::mem::take(&mut self.focus_project_input)
         {
@@ -1274,7 +1286,7 @@ impl Render for HiveApp {
             window.on_next_frame(move |window, cx| focus.focus(window, cx));
         }
         if !preferences
-            && (!narrow || !self.sidebar_open)
+            && show_main_pane
             && self.collaboration.visible
             && std::mem::take(&mut self.collaboration.focus_navigation)
         {
@@ -1368,8 +1380,8 @@ impl Render for HiveApp {
                     .when(self.sidebar_open, |view| {
                         view.child(self.render_navigation(narrow, window, cx))
                     })
-                    .when(!narrow || !self.sidebar_open, |view| {
-                        view.child(if self.memory.visible || self.workflows.visible || self.collaboration.visible || self.member_panel {
+                    .when(show_main_pane, |view| {
+                        view.child(if show_auxiliary_pane {
                             let body = if self.memory.visible {
                                 self.render_memory(cx).into_any_element()
                             } else if self.workflows.visible {
@@ -2156,12 +2168,9 @@ impl Render for HiveApp {
                                             ),
                                     )
                                 })
-                                .when(
-                                    !welcome && !open_failed && self.session.is_some(),
-                                    |surface| {
-                                        surface.child(self.render_conversation_list(narrow, cx))
-                                    },
-                                )
+                                .when(show_history, |surface| {
+                                    surface.child(self.render_conversation_list(narrow, cx))
+                                })
                                 .when(!welcome, |surface| {
                                     surface.child(
                                         v_flex()
