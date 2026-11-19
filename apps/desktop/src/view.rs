@@ -963,14 +963,23 @@ impl HiveApp {
                     })
             })
             .when(self.can_check_saved_codex_modes(), |surface| surface.child(self.render_codex_mode_recovery(cx)))
-            .when(self.current_history_access().and_then(|access| access.identity_error.as_ref())
-                .is_some_and(|error| error.code == "CODEX_PERMISSION_ACK_UNCONFIRMED"), |surface| {
-                surface.child(h_flex().flex_wrap().gap_2().px_1()
-                    .child(div().text_xs().child(tr("请检查此会话使用的 Codex 配置，再重新打开会话。")))
-                    .child(Button::new("recheck-codex-permission").outline().small().label(tr("重新打开会话"))
-                        .disabled(!self.connected || self.closing)
-                        .on_click(cx.listener(|this,_,_,cx| { if let Some(id)=this.session.as_ref().map(|s|s.id.clone()) { this.show_session(id,cx); } }))))
-            })
+            .when_some(self.current_history_access()
+                .and_then(|access| access.identity_error.as_ref())
+                .filter(|error| matches!(error.code.as_str(), "CODEX_PERMISSION_ACK_UNCONFIRMED"
+                    | "PI_SESSION_IDENTITY_CONFLICT" | "CODEX_DELIVERY_METADATA_MISSING" | "WORKTREE_UNAVAILABLE")),
+                |surface, error| {
+                    surface.child(h_flex().flex_wrap().gap_2().px_1()
+                        .when(error.code == "CODEX_PERMISSION_ACK_UNCONFIRMED", |row| {
+                            row.child(div().text_xs().child(tr("请检查此会话使用的 Codex 配置，再重新打开会话。")))
+                        })
+                        .child(Button::new("recheck-saved-session").outline().small().label(tr("重新打开会话"))
+                            .disabled(!self.connected || self.closing || self.loading)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(session) = &this.session {
+                                    this.show_session(session.id.clone(), cx);
+                                }
+                            }))))
+                })
             .when_some(self.history_navigation.initialization.as_ref(), |surface, setup| {
                 let ready = matches!(setup.status.as_str(), "succeeded" | "skipped" | "disabled");
                 let retryable = matches!(setup.status.as_str(), "pending" | "failed" | "cancelled" | "interrupted" | "unknown");
