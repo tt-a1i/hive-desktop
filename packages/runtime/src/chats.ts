@@ -2066,9 +2066,10 @@ export class Chats implements StructuredSessionPort {
       if (!submission) return {receipt: this.interactionAttachments.write(receipt, 'draft')};
       const composed = composeQuestionAttachmentResponse(submission.response, receipt);
       chat.handle.validateInteractionResponse!(interactionId, composed);
-      // Synchronous durable preparation and final pending check precede callback handoff.
+      // Verify copies before durable preparation and the final pending check.
       // No answer text enters the receipt. Cold reads never replay this native callback.
-      this.interactionAttachments.validateCopies(receipt);
+      await this.interactionAttachments.validateCopies(receipt);
+      recheck();
       const prepared = this.interactionAttachments.write(receipt, 'prepared');
       recheck();
       const result = chat.handle.respondInteraction!(interactionId, composed);

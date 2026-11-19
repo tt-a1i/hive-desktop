@@ -3,7 +3,7 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, re
 import { join } from 'node:path';
 import type { CodexInteraction } from './agents/types.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
-import { attachmentIds, type ChatAttachment, type ChatAttachments } from './image-attachments.js';
+import { attachmentIds, verifyProjectCopy, type ChatAttachment, type ChatAttachments } from './image-attachments.js';
 
 export type QuestionAttachmentMap = Record<string, string[]>;
 export interface InteractionAttachmentReceipt {
@@ -91,7 +91,11 @@ export class InteractionAttachments {
   }
   /** Check every resolved private copy together immediately before preparation.
    * Paths can still disappear after this check or after native delivery. */
-  validateCopies(receipt: InteractionAttachmentReceipt): void {
+  async validateCopies(receipt: InteractionAttachmentReceipt): Promise<void> {
+    for (const {attachment, filePath} of receipt.attachments) {
+      if (attachment.projectFile) await verifyProjectCopy(filePath, attachment.size, attachment.projectFile);
+    }
+    // Do not yield while checking all paths after asynchronous hashing.
     for (const {attachment, filePath} of receipt.attachments) {
       const info = statSync(filePath);
       if (!info.isFile() || info.size !== attachment.size) throw new Error('Attachment copy is unavailable or changed');

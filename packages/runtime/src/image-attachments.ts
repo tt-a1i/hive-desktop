@@ -1,5 +1,7 @@
 import { WORKSPACE_UPLOAD_MAX_BYTES } from '@tt-a1i/hive/dist/src/server/upload-limits.js';
 import { open, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, isAbsolute, extname } from 'node:path';
 import {
   promptImages,
@@ -57,6 +59,20 @@ export function decodeImageInput(source: string): { text: string; ids: string[] 
   const text = source.slice(0, at);
   if (encodeImageInput(text, ids) !== source) throw new TypeError('附件元数据不是规范格式。');
   return { text, ids };
+}
+/** Verify project snapshots without loading the complete copy into memory. */
+export async function verifyProjectCopy(filePath: string, size: number, reference: ProjectFileReference): Promise<void> {
+  const info = await stat(filePath);
+  if (!info.isFile() || info.size !== size) throw new Error('Attachment copy is unavailable or changed');
+  const hash = createHash('sha256');
+  let read = 0;
+  for await (const chunk of createReadStream(filePath)) {
+    const bytes = chunk as Buffer;
+    read += bytes.length;
+    if (read > size) throw new Error('Attachment copy is unavailable or changed');
+    hash.update(bytes);
+  }
+  if (read !== size || hash.digest('hex') !== reference.sha256) throw new Error('Attachment copy is unavailable or changed');
 }
 export class ChatAttachments {
   constructor(private readonly hive: HiveHost, private readonly references?: ProjectFileReferences) {}
@@ -128,6 +144,7 @@ export class ChatAttachments {
       const info = await stat(upload.localPath);
       if (!info.isFile() || info.size !== upload.record.sizeBytes) throw new Error('Attachment copy is unavailable or changed');
       const projectFile = await this.projectReference(workspaceId, id);
+      if (projectFile) await verifyProjectCopy(upload.localPath, upload.record.sizeBytes, projectFile);
       result.push({attachment: {...this.ref(workspaceId, id, upload.record.originalName, upload.record.mimeType, upload.record.sizeBytes), ...(projectFile ? {projectFile} : {})}, filePath: upload.localPath});
     }
     return result;
@@ -144,6 +161,7 @@ export class ChatAttachments {
       if (nativeImage && !bytes) throw new Error('图片附件无法读取，请重新选择。');
       const image = bytes ? promptImages([{type:'image',mimeType:upload.record.mimeType,data:bytes.data.toString('base64')}])[0] : undefined;
       const projectFile = await this.projectReference(workspaceId, id);
+      if (projectFile) await verifyProjectCopy(upload.localPath, upload.record.sizeBytes, projectFile);
       result.push({attachment:{...this.ref(workspaceId,id,upload.record.originalName,upload.record.mimeType,upload.record.sizeBytes), ...(projectFile ? {projectFile} : {})},
         ...(image ? {image} : {filePath:upload.localPath})});
     }

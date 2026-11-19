@@ -5,6 +5,8 @@ import {join, resolve} from 'node:path';
 import {createDesktopRuntime} from '../src/desktop-runtime.js';
 import {CodexTransport} from '../src/agents/codex-transport.js';
 import {randomUUID} from 'node:crypto';
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
 import type {PiSessionHandle} from '../src/agents/types.js';
 
 await mkdir(resolve('.artifacts'), {recursive:true});
@@ -110,9 +112,93 @@ async function checkCopyLossBetweenQuestions() {
   assert.equal((await rows(cwd)).length, 1);
 }
 
+async function checkCopyLossDuringProjectVerification() {
+  const {ws, record, card, cwd, done} = await start();
+  const plainSource = join(cwd, 'plain.txt');
+  await writeFile(plainSource, 'ordinary');
+  await writeFile(join(cwd, 'snapshot.txt'), 'snapshot');
+  const ordinary = await runtime.chats.attachments.add(ws.id, plainSource);
+  const project = await runtime.chats.projectFilesAttach(ws.id, 'snapshot.txt');
+  const mapping = {public: [ordinary.attachment.id, project.attachment.id]};
+  const draft = (await runtime.chats.saveInteractionAttachments(record.id, card.id, mapping)).receipt;
+  const uploads = runtime.chats.attachments;
+  const resolve = uploads.questionReferences.bind(uploads);
+  const originalStream = fs.createReadStream;
+  let armed = false, removed = false;
+  uploads.questionReferences = async (...args: Parameters<typeof resolve>) => {
+    const refs = await resolve(...args);
+    armed = true; // The next stream belongs to the final copy check.
+    return refs;
+  };
+  fs.createReadStream = ((...args: Parameters<typeof originalStream>) => {
+    const stream = originalStream(...args);
+    if (armed && args[0] === project.filePath) {
+      armed = false;
+      stream.once('data', () => { fs.unlinkSync(ordinary.filePath!); removed = true; });
+    }
+    return stream;
+  }) as typeof fs.createReadStream;
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), {code: 'ENOENT'});
+    assert.equal(removed, true);
+    assert.deepEqual(await rows(cwd), []);
+    assert.deepEqual(runtime.chats.interactionAttachmentStatus(record.id, card.id), {safeToRetry: true});
+    assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
+  } finally {
+    fs.createReadStream = originalStream;
+    syncBuiltinESMExports();
+    uploads.questionReferences = resolve;
+  }
+  await writeFile(ordinary.filePath!, 'ordinary');
+  await runtime.chats.respondInteraction(record.id, card.id, answer, mapping);
+  assert.equal((await wait(() => rows(cwd), value => value.length === 1)).length, 1);
+  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping));
+  await writeFile(join(cwd, 'finish'), '');
+  await done;
+  assert.equal((await rows(cwd)).length, 1);
+}
+
+async function checkProjectSnapshotReplacement() {
+  const {ws, record, card, cwd, done} = await start();
+  const source = join(cwd, 'snapshot.txt');
+  await writeFile(source, 'original');
+  const project = await runtime.chats.projectFilesAttach(ws.id, 'snapshot.txt');
+  const mapping = {public: [project.attachment.id]};
+  const draft = (await runtime.chats.saveInteractionAttachments(record.id, card.id, mapping)).receipt;
+  await writeFile(project.filePath!, 'replaced');
+  await assert.rejects(runtime.chats.prompt(record.id, 'send corrupted snapshot', [project.attachment.id]), /copy is unavailable or changed/);
+  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), /copy is unavailable or changed/);
+  assert.deepEqual(await rows(cwd), []);
+  assert.deepEqual(runtime.chats.interactionAttachmentStatus(record.id, card.id), {safeToRetry: true});
+  assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
+  await writeFile(project.filePath!, 'original');
+  const uploads = runtime.chats.attachments;
+  const resolve = uploads.questionReferences.bind(uploads);
+  uploads.questionReferences = async (...args: Parameters<typeof resolve>) => {
+    const refs = await resolve(...args);
+    await writeFile(project.filePath!, 'replaced');
+    return refs;
+  };
+  try {
+    await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping), /copy is unavailable or changed/);
+    assert.deepEqual(await rows(cwd), []);
+    assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
+  } finally { uploads.questionReferences = resolve; }
+  await writeFile(project.filePath!, 'original');
+  await runtime.chats.respondInteraction(record.id, card.id, answer, mapping);
+  assert.equal((await wait(() => rows(cwd), value => value.length === 1)).length, 1);
+  await assert.rejects(runtime.chats.respondInteraction(record.id, card.id, answer, mapping));
+  await writeFile(join(cwd, 'finish'), '');
+  await done;
+  assert.equal((await rows(cwd)).length, 1);
+}
+
 try {
  await runtime.settings.update({piCommand:null,codexCommand:process.execPath});
  await checkCopyLossBetweenQuestions();
+ await checkProjectSnapshotReplacement();
+ await checkCopyLossDuringProjectVerification();
  const a=await start(), other=await start();
  const file=join(dir,'document.txt'), image=join(dir,'image.png');const bytes=Buffer.from('file copy sentinel');const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC','base64');await writeFile(file,bytes);await writeFile(image,png);
  const doc=await runtime.chats.attachments.add(a.ws.id,file), img=await runtime.chats.attachments.add(a.ws.id,image), foreign=await runtime.chats.attachments.add(other.ws.id,file);await unlink(file);await unlink(image);

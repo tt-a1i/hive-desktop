@@ -43,6 +43,11 @@ try {
   const recovered = (await runtime.chats.attachments.get(ws.id, [staged.attachment.id]))[0]!;
   assert.deepEqual(recovered.attachment.projectFile, expected);
   assert.deepEqual(await readFile(recovered.filePath!), bytes);
+  const replacement = Buffer.alloc(bytes.length, 0x78);
+  await writeFile(staged.filePath!, replacement);
+  await assert.rejects(runtime.chats.attachments.get(ws.id, [staged.attachment.id]), /copy is unavailable or changed/);
+  await assert.rejects(runtime.chats.attachments.questionReferences(ws.id, [staged.attachment.id]), /copy is unavailable or changed/);
+  await writeFile(staged.filePath!, bytes);
   await unlink(source);
   assert.deepEqual(await runtime.chats.projectFileStatus(ws.id, staged.attachment.id), { state: 'missing' });
   assert.deepEqual(await readFile(recovered.filePath!), bytes);
