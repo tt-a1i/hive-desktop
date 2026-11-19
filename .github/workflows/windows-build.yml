@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      replay_shortcut_layout:
+        description: Replay only the isolated Windows keyboard-layout shortcut acceptance
+        required: false
+        type: boolean
+        default: false
       replay_functional:
         description: Check the exact retained package before replaying its native window
         required: false
@@ -48,7 +53,7 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout) }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -246,7 +251,7 @@ jobs:
           path: target/windows-native-update.json
           if-no-files-found: warn
   native-supervision:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -266,7 +271,7 @@ jobs:
       - name: Test native process supervision
         run: cargo test --locked --manifest-path apps/desktop/Cargo.toml --no-default-features --features process-supervisor-check --bin process-supervisor-check -- --nocapture
   native-clis:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -312,7 +317,7 @@ jobs:
             .artifacts/file-attachments/wire-receipt.json
           if-no-files-found: warn
   replay:
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.replay_run != '' || inputs.replay_image_memory) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.replay_run != '' || inputs.replay_image_memory || inputs.replay_shortcut_layout) }}
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -323,12 +328,20 @@ jobs:
         with:
           node-version: 22.23.3
       - uses: pnpm/action-setup@v6
-        if: ${{ inputs.replay_functional && !inputs.replay_image_memory }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
         with:
           version: 10.30.3
       - name: Install package-check compiler only without lifecycle scripts
-        if: ${{ inputs.replay_functional && !inputs.replay_image_memory }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Reject incompatible replay selections
+        shell: pwsh
+        env:
+          IMAGE_REPLAY: ${{ inputs.replay_image_memory }}
+          FUNCTIONAL_REPLAY: ${{ inputs.replay_functional }}
+          SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
+        run: |
+          if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
         shell: pwsh
         run: |
@@ -354,18 +367,18 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath target/replay-extracted
           if (-not (Test-Path -LiteralPath 'target/replay-extracted/hive-desktop.exe' -PathType Leaf)) { throw 'Extracted artifact is not a portable desktop bundle.' }
       - name: Check original extracted functional runtime
-        if: ${{ inputs.replay_functional && !inputs.replay_image_memory }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
         timeout-minutes: 25
         run: node scripts/check-packaged-functional.mjs --bundle target/replay-extracted --receipt target/replay-functional-receipt.json
       - name: Smoke extracted Windows terminal bridge
-        if: ${{ !inputs.replay_image_memory }}
+        if: ${{ !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
         timeout-minutes: 5
         shell: pwsh
         run: |
           node scripts/check-windows-terminal.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-terminal-smoke.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay native window fixture
-        if: ${{ !inputs.replay_image_memory }}
+        if: ${{ !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
         timeout-minutes: 4
         shell: pwsh
         env:
@@ -375,11 +388,18 @@ jobs:
           node scripts/check-desktop-startup.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-replay.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Measure native history-image memory
-        if: ${{ inputs.replay_image_memory }}
+        if: ${{ inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
         timeout-minutes: 8
         shell: pwsh
         run: |
           node scripts/check-windows-history-image-memory.mjs --bundle target/replay-extracted --receipt target/windows-image-memory.json 2>&1 | Tee-Object -FilePath target/windows-image-memory.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Replay Windows shortcut layout changes
+        if: ${{ inputs.replay_shortcut_layout }}
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File scripts/windows-shortcut-layout-ci.ps1 -FixtureExe (Resolve-Path 'target/replay-extracted/hive-desktop.exe').Path -ReceiptPath (Join-Path $PWD 'target/windows-shortcut-layout.json') 2>&1 | Tee-Object -FilePath target/windows-shortcut-layout.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload replay evidence
         if: always()
@@ -396,4 +416,7 @@ jobs:
             target/windows-image-memory.json
             target/windows-image-memory.log
             target/windows-image-desktop.log
+            target/windows-shortcut-layout.json
+            target/windows-shortcut-layout-ui.json
+            target/windows-shortcut-layout.log
           if-no-files-found: warn

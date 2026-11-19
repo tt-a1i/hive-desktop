@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][int]$AppProcessId, [Parameter(Mandatory)][string]$Executable,
+﻿param([Parameter(Mandatory)][int]$AppProcessId, [Parameter(Mandatory)][string]$Executable,
       [Parameter(Mandatory)][string]$OutputPath, [Parameter(Mandatory)][string]$EvidenceDirectory)
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -104,10 +104,21 @@ function Snapshot-Failure {
  }
 }
 try {
+Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName UIAutomationClient
 $scope = [System.Windows.Automation.TreeScope]::Descendants
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+$result.dependencies = @{
+ powerShellVersion = $PSVersionTable.PSVersion.ToString()
+ treeScopeAssembly = [System.Windows.Automation.TreeScope].Assembly.FullName
+ automationElementAssembly = [System.Windows.Automation.AutomationElement].Assembly.FullName
+}
+$expectedDimensions = "848 $([char]0x00d7) 569"
+if ('848 × 569' -cne $expectedDimensions) {
+ throw 'PowerShell did not decode the image dimension text as UTF-8'
+}
+$result.dependencies.dimensionTextDecoded = $true
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
