@@ -35,3 +35,15 @@ ACP v1 按当前原生会话公开的选项显示模式。通用对端可以公�
 源码为 `c855e8f` 和 `41a11be`。127 项 Rust 测试通过，1 项子进程入口按设计忽略。模式、Codex、ACP 注册及协作检查和包内 Node、PTY、Hive HTTP/SQLite 冒烟通过。Windows x86_64 MSVC 交叉检查通过，Windows 原生操作仍待验收。未发布。
 
 macOS ZIP SHA-256 为 `78d1c7c074d54e2dd333fdabca0715792e29030a5cfe5f5a3700f4c5fcbbbc7a`。签名及归档清单已核对。证据位于 `.artifacts/native-mode-verification-PdWMNg/`，原生窗口见 `window-official-2agDUr/receipt.json` 和 `window-controlled-DJ3fbP/receipt.json`，包内 Codex 回执见 `packaged-codex-o0GpXz/receipt.json`。
+
+## 保存模式失效后的恢复
+
+本次修复关闭了上述只读恢复缺口。后端报告旧模式不可用时，窗口保留聊天记录、草稿和待发消息，并提供检查和保存操作。查询使用该会话固定的 Codex 配置与执行目录。用户必须为所有失效设置明确选择替代项。协作模式没有任何可选项时，可以明确选择沿用 Codex 默认值。权限只能换成当前公布的权限预设。原生线程未确认权限时，窗口保留只读历史，并引导检查配置后重新打开。
+
+GPT-6.2 Sol 查出了三个关联问题。现在模式校验未通过时，已保存的历史正文索引保持完整。退出会中止正在等待的能力查询并回收进程。探测期间切走再切回，重新打开会等待本次探测清理，仍可读取会话。过期窗口、工作区不符、不明确的协议结果和磁盘写入失败均无法保存替代设置。真实 Git 工作树的分叉检查同时核对探针目录、父会话设置保持原值，以及工作树初始化脚本和原生线程均未启动。
+
+在签名 ZIP 解包后的 macOS 窗口中，使用受控 Codex 对端复现计划模式和工作区写入权限同时失效。检查后分别选择默认协作与只读权限。只选一项时保存按钮仍不可用。保存前后历史索引文件和待发队列逐字节一致。随后显式打开原线程，通过正常退出与冷重开核对历史、草稿及权限。两次退出都有后台确认，已观察的桌面、后台和 Codex 进程全部退出。窗口验收无回合请求。包内 JSONL 检查另行确认只有用户显式继续，才会向同一受控线程送出待发消息。
+
+源码为 `c8ff5bf`。模式、历史分叉、桌面会话导航、包内模式恢复与退出检查通过。Rust 127 项通过，1 项辅助进程入口按设计忽略。Windows x86_64 MSVC 交叉检查通过，Windows 原生操作仍待验收。本地 ZIP 严格验签、完整归档清单及包内 Node、真实 PTY、Hive HTTP/SQLite 和正常退出冒烟通过。本轮没有真实模型请求或发布。
+
+本地证据位于 `.artifacts/codex-saved-mode-recovery-DFyeXV/`。窗口收据为 `native-window-X5jBNJ/receipt.json`。macOS ZIP SHA-256 为 `4816fc9f7104a033bc14e05b52646aa6e59dd9c36b06a4155ef943bb2f4e2844`。
