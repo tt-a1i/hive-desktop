@@ -38,6 +38,14 @@
 
 受控原生协议检查覆盖多桶、空值、非法数值、账号类型、程序来源、超时、断开、关闭和 PID 回收。本机 Codex 0.169.0 仅执行一次真实只读检查，返回一个主要窗口；脱敏收据为 `.artifacts/functional-parity/account-limits-code/.artifacts/account-limits/official-receipt.json`。该收据确认启动 wrapper 退出，没有单独枚举真实 CLI 的所有子孙进程，不扩大其证明范围。
 
+### 2026-11-19 原生窗口与读取时间
+
+从解包后的 macOS 应用，在实际设置页使用现有安装的 Codex 0.169.0 读取一次额度，核对普通使用状态、剩余比例、窗口时长和重置时间。旧版英文窗口通过原生辅助功能可读到账户状态和额度窗口，读取时间缺少可访问的文本。`7afb169` 为读取时间补上原生辅助功能标签。
+
+新版在 760 像素宽的中文窗口通过同一设置入口调用官方原生可执行文件。后台先执行 `account/read` 并明确禁止刷新令牌，再执行 `account/rateLimits/read`。辅助功能读到一个主要窗口、普通使用状态，以及与后台响应相同的读取时间。验证中未启动模型、登录或写入全局设置。应用和记录的后台及 CLI 子进程均退出。脱敏证据在 `.artifacts/current-native-codex-quota-JTTYbl/` 和 `.artifacts/checkpoint-preflight-and-native-quota-eUMYFA/quota-native-executable/`。
+
+同一新版包的 760 像素宽英文窗口也使用已安装的常规 Codex 启动命令成功读取额度。该轮直接查看设置页和实际后台请求日志，窗口显示主要额度窗口及可读的 `Checked at`。先前带协议观测的两次常规启动请求失败，已保留其失败状态和可访问的读取时间。正常英文验收位于 `quota-default-english/`。Windows 原生额度窗口仍需运行验证。
+
 ## 合并后检查与仍待验证
 
 Rust 桌面测试为 94 passed、1 ignored；Node 严格构建、项目脚本、成员工作树、工作树执行来源、历史归属、团队投递、Codex 生命周期与会话终端回归通过。日志前缀为 `.artifacts/functional-parity/integrated-*` 与 `quota-*`。定向 Windows MSVC 交叉检查通过，不等于 Windows 原生操作通过。

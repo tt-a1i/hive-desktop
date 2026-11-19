@@ -34,6 +34,10 @@ Pi 文件的原生会话 ID 与记录不符时，正文搜索和冷打开都会�
 
 ACP 接续目标在身份及首条投递回执均可核对时，可冷态编辑和撤回后续尚未投递的输入。放弃不确定投递后，当前窗口立即清除旧的等待状态，并保留原生记录和 Hive 审计。[冷队列验收](validation/2026-11-19-codex-search-acp-cold-queue.md#acp-接续完成后的冷队列)
 
+选择代码检查点回退前会核对 Git 索引锁和目标对象。macOS 原生窗口验证锁存在时保留原历史、文件和暂存区，解除锁后能回退并单独重开完整备份。[锁冲突和冷恢复验收](validation/2026-11-19-native-rewind.md#git-索引锁与回退前检查)
+
+Codex 额度设置已通过 macOS 原生窗口和真实只读查询核对，辅助功能可读取窗口、普通使用资格与后台返回的读取时间。[额度验收](validation/2026-11-15-project-scripts-worker-worktrees-account-limits.md#2026-11-19-原生窗口与读取时间)
+
 项目文件选择器可用不同 Unicode 写法找到同一个文件。macOS 原生窗验证了工作树隔离、文件准确引用和源文件移走后的冷态快照。ACP 冷队列版本也重跑了真实 Terra 主控和官方 ACP 成员的派单、文件汇报和冷恢复。[文件名验收](validation/2026-11-19-project-reference-worktrees.md#unicode-文件名) · [真实协作复验](validation/2026-11-19-native-acp-collaboration.md#acp-冷队列修复后的真实复验)
 
 自定义快捷键保存和分发使用同一平台键位映射，避免不同写法的等效键位绕过冲突检查。macOS 解包实测默认组合键和旧自定义组合键均触发对应动作，Shift‑Tab 和窗口失焦可退出录制。[原生快捷键验收](validation/2026-11-19-keybindings-native.md)
