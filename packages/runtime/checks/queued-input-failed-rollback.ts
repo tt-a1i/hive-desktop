@@ -5,43 +5,41 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Chats } from '../src/chats.js';
 import { DeliveryQueue } from '../src/delivery-queue.js';
-import { DispatchExecutionOrigins } from '../src/dispatch-execution-origins.js';
 const directory = mkdtempSync(join(tmpdir(), 'hive-failed-rollback-'));
 try {
  for (const mode of ['edit', 'edit-busy', 'cancel-committed'] as const) {
   const fixedProfile = { id: 'default-pi', revision: 1 };
-  const id = mode, record = { id, workspaceId: 'workspace', backend: 'pi' as const, profile: fixedProfile, agentId: 'workspace:orchestrator', originAgentId: 'workspace:orchestrator', identityState: 'known' as const };
+  const id = mode, record = { id, workspaceId: 'workspace', backend: 'pi' as const, profile: fixedProfile, agentId: 'workspace:orchestrator', originAgentId: 'workspace:orchestrator', identityState: 'known' as const,
+   title: 'Queue rollback fixture', sessionFile: null, updatedAt: 1 };
   const executed: string[] = [], completed: string[] = [];
   let releaseHead!: () => void, enteredHead!: () => void;
   const headEntered = new Promise<void>(resolve => { enteredHead = resolve; });
   const headBlocked = new Promise<void>(resolve => { releaseHead = resolve; });
   let aborted = 0, disposed = 0, exited = 0, loads = 0;
   const rows = new Map<number, { type: 'user_input' | 'user_input_cancelled'; text: string }>([[1, {type:'user_input',text:'head'}], [2, {type:'user_input',text:'original'}]]);
-  const chats: any = Object.create(Chats.prototype);
-  Object.assign(chats, { closing: false, removing: new Set(), activating: new Map(), handoffStarting: new Set(), live: new Map(), opening: new Map(), mutatingQueues: new Set(), sequences: new Map(), emit: () => {},
-   // This lifecycle fixture starts after profile initialization. Keep the
-   // authoritative identity check active while isolating the queue write fault.
-   profilesReady: Promise.resolve(),
-   profiles: { resolveForExecution: async (ref: unknown, backend: string) => {
+  const profiles = { initialize: async () => {}, resolveForExecution: async (ref: unknown, backend: string) => {
     assert.deepEqual(ref, fixedProfile); assert.equal(backend, 'pi');
     return {ref: fixedProfile, driver: 'pi', enabled: true, launch: {args: []}};
-   } },
-   dispatchOrigins: new DispatchExecutionOrigins(join(directory, id + '-origins')),
-   index: { get: () => record, peek: () => record, forAgent: () => record },
-   hive: { getUserInput: (_w: string,_a: string,s: number) => rows.get(s), mutateUserInput: (_w: string,_a: string,s: number,_e: string,replacement: string | null,persist: () => void) => {
+  } };
+  const hive = { getUserInput: (_w: string,_a: string,s: number) => rows.get(s), mutateUserInput: (_w: string,_a: string,s: number,_e: string,replacement: string | null,persist: () => void) => {
     const before = rows.get(s)!;
     rows.set(s, {type:replacement === null ? 'user_input_cancelled' : 'user_input',text:replacement ?? before.text});
     try { persist(); if (mode !== 'cancel-committed') throw new Error('SQL commit failed'); }
     catch (error) { rows.set(s,before); throw error; }
-   } },
-  });
-  const makeQueue = () => new DeliveryQueue({directory,sessionId:id,startPaused:true,completedIds:()=>completed,onError:()=>{}, execute: async item => {
+  } };
+  // Use the real runtime state and index, and substitute only the failing
+  // ledger port, profile settings and owned backend lifecycle.
+  const dataDir = join(directory, id);
+  const chats: any = new Chats(hive as never, dataDir, () => {}, {} as never, {get: async () => ({})} as never, {} as never, profiles as never);
+  chats.index.save(record);
+  const queueDir = join(dataDir,'chats','deliveries');
+  const makeQueue = () => new DeliveryQueue({directory:queueDir,sessionId:id,startPaused:true,completedIds:()=>completed,onError:()=>{}, execute: async item => {
    if (item.text === 'head') { enteredHead(); await headBlocked; }
    else executed.push(item.text);
    completed.push(item.id);
   }});
   const independent: string[] = [];
-  const otherQueue = new DeliveryQueue({ directory, sessionId: id + '-independent', startPaused: true, completedIds: () => [], onError: error => { throw error; }, execute: async item => { independent.push(item.text); } });
+  const otherQueue = new DeliveryQueue({ directory:queueDir, sessionId: id + '-independent', startPaused: true, completedIds: () => [], onError: error => { throw error; }, execute: async item => { independent.push(item.text); } });
   await otherQueue.enqueue('unrelated chat', true, { version: 1, origin: 'user', displayText: 'unrelated chat' });
   let queue = makeQueue();
   const live = {queue,handle:{abort:async()=>{aborted++;releaseHead();},dispose:async()=>{disposed++;}},aborted:false,onExit:()=>{exited++;}};
@@ -53,7 +51,8 @@ try {
   const target=queue.pending.find(item=>item.text==='original')!;
   // First rename succeeds; all immediate recovery/final cleanup writes fail.
   queue.reconcilePendingUserInput=()=>{throw new Error('rollback spool write failed');};
-  await assert.rejects(chats.mutateQueuedInput(id,target.id,'original',mode==='cancel-committed'?undefined:'UNCOMMITTED'), /failed/);
+  await assert.rejects(chats.mutateQueuedInput(id,target.id,'original',mode==='cancel-committed'?undefined:'UNCOMMITTED'),
+   {message: mode==='cancel-committed' ? 'rollback spool write failed' : 'SQL commit failed'});
   await live.cleanup;
   otherQueue.resume();await otherQueue.idle();assert.deepEqual(independent,['unrelated chat']);
   assert.equal(aborted,1);assert.equal(disposed,1);assert.equal(exited,1);
