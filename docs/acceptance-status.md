@@ -1,5 +1,13 @@
 # 完整目标的当前验收状态
 
+## 当前签名 ZIP 与回退启动（2026-11-19）
+
+本地 macOS ZIP 的后台来自 `a06a8ad`，Rust 可执行代码与 `655ec80` 的包相同。逐项核对归档，解包通过严格验签和真实 PTY、Hive HTTP/SQLite、退出冒烟。57 项包内功能检查均在同一个解包目录通过。首次运行通过 54 项，Git 远端回归超过检查器原有的 60 秒。将该项上限设为 120 秒后补跑余下三项，保留了原有断言。队列回退夹具已改用真实聊天初始化，再次覆盖写入失败、活跃队头和撤回清理。[回退启动与包证据](validation/2026-11-19-update-installer-ownership.md#写入结果失败后的回退启动)
+
+同一包的真实 macOS 应用通过正常升级、失败回退，以及收据写入故障后的旧版重开和手动恢复。两条路径均核对原 SQLite 和草稿，应用及后台均结束。Mac 锁屏期间已核对进程和文件，当前设置窗口操作、Windows 原生安装与真实 1Password 授权仍待验。总目标继续实施，包未推广或发布。
+
+`.artifacts/current-package-regression-queK7q/validation-rollup.json` 汇总 SHA-256、57 项结果及实际应用收据。首次回归和 SQLite、Git、签名归档证据保留在同一目录。
+
 ## macOS 本地优化包（2026-11-19）
 
 从干净的 `557c293` 构建 arm64 优化包。ZIP、DMG 与原应用逐项核对一致，56 项包内功能回归通过。从 ZIP 解包后的原生窗口在两套固定 Codex 配置中分别完成 GPT-6.1 Terra 请求，核对独立工作树、原线程及零推理冷恢复。Windows 对同一源码已交叉检查。[打包与实测](validation/2026-11-19-local-optimized-package.md)

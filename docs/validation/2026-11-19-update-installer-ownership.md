@@ -41,3 +41,15 @@ GPT-6.2 Sol 在已有原生更新证据中核对到，回退后的解包候选�
 证据在 `.artifacts/update-download-recovery-cMFaYJ/`，包括旧版失败日志 `baseline.log`、`update-native/receipt.json`、原生窗口状态、`packaged-receipt.json`、严格签名及解包清单。macOS ZIP SHA-256 为 `53be20a4272effec2c802f1e6f589d3da67d1b607dca373d8c1891e6be92b23c`。包内下载及安装两项专项、实际 PTY 与 Hive HTTP/SQLite 冒烟通过。
 
 从该 ZIP 中的 `0.1.0` 应用和两份已验签的 `0.1.1` 测试归档复验整个更新流程。正常归档由设置页安装后，实际重启为 `0.1.1`，设置显示安装成功，已用归档和安装事务回收。故障归档的后台在启动时退出，安装器将实际可执行文件恢复为原来的 `0.1.0`，新窗口显示回退结果。回环渠道随后返回 HTTP 503，设置仍提供基于本地归档的安装入口。两轮均保留同一会话的原草稿，安装前收到对应的后台退出确认，并核对所有进程最终退出。两个最终安装都通过各自版本的便携包冒烟。记录见 `mac-update-replay/` 和 `actual-window-rollup.json`。Windows 本轮完成目标交叉编译，原生更新仍需运行证据。
+
+## 写入结果失败后的回退启动
+
+GPT-6.2 Sol 用真实安装器子进程和文件系统复现了故障。新版启动失败后，旧版文件已恢复且通过完整性校验，但结果收据无法写入，导致旧版没有重开。手动恢复补写的收据也丢失了新版最初的失败原因。
+
+`a06a8ad` 在回退时先记录终态及原始诊断，并确保验证通过的旧版会启动，即使结果收据无法写入。恢复入口保留到补写完成。反复执行恢复只核对结果和回收资源，后续更新写入的收据继续保留。
+
+从本地签名 ZIP 解包的 `0.1.0` 和已验签的故障 `0.1.1` 测试归档复验。安装器执行真实目录替换，故障候选未通过启动确认。阻止收据写入后，恢复出的旧版主程序 SHA-256 和签名均相符，实际启动并打开原隔离 SQLite 数据库。草稿字节未变。关闭旧版后恢复收据目录，通过生成的 `Recover Hive Desktop` 命令补写结果，保留「Updated desktop did not finish startup」。恢复命令没有另起桌面进程，应用、后台和安装进程都已退出。
+
+另从同一份 `0.1.0` 安装已验签的正常 `0.1.1`。新版确认启动并打开原 SQLite 数据库，原草稿内容完全相同。收据记录为已安装，已用归档、事务目录和恢复入口均被移除。两版桌面和后台均已退出。原生进程收据为 `.artifacts/current-package-regression-queK7q/signed-success-1BsbRA/actual-application-receipt.json`。
+
+本次 Mac 锁屏期间验证了实际进程、签名、数据目录和恢复入口。设置窗口操作仍待复验，Windows 当前安装也待实测。没有替换用户安装或发布。源码和包内更新专项、严格验签、实际 PTY 和 Hive SQLite 冒烟通过。原生进程证据位于 `.artifacts/current-package-regression-queK7q/signed-rollback-rR4Zcg/actual-application-receipt.json`，本地 ZIP SHA-256 为 `fc5d0dc5bace95c684039548e8f7a64c4d35ac0c48a684c4e8c3620046fb483f`。
