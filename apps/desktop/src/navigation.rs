@@ -194,6 +194,26 @@ impl HiveApp {
                         ),
                 )
             })
+            .child(
+                Button::new("open-global-conversation-search")
+                    .custom(palette::quiet_icon_variant(cx))
+                    .compact()
+                    .xsmall()
+                    .h(px(24.))
+                    .w(px(24.))
+                    .rounded_md()
+                    .icon(Glyph::Search)
+                    .tooltip(crate::keybindings::hint(
+                        crate::keybindings::Target::Search,
+                        "搜索所有项目的会话",
+                        cx,
+                    ))
+                    .accessibility_label(tr("搜索所有项目的会话"))
+                    .disabled(!self.connected)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_session_search(window, cx);
+                    })),
+            )
             .when(!self.connected && self.runtime.is_some(), |view| {
                 view.child(
                     h_flex()

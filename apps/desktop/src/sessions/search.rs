@@ -166,7 +166,9 @@ impl HiveApp {
             search
         });
         let focus = search.read(cx).query.read(cx).focus_handle(cx);
+        let dismiss_search = search.downgrade();
         window.open_dialog(cx, move |dialog, _, _| {
+            let dismiss_search = dismiss_search.clone();
             dialog
                 .title(if archived {
                     tr("已归档会话")
@@ -177,6 +179,13 @@ impl HiveApp {
                 // Input's Enter propagates to the dialog before PressEnter is
                 // delivered. Keep it alive for open_selected to navigate/close.
                 .on_ok(|_, _, _| false)
+                .on_close(move |_, _, cx| {
+                    // The dialog remains mounted during its exit transition.
+                    let _ = dismiss_search.update(cx, |search, _| {
+                        search.generation += 1;
+                        search.task = None;
+                    });
+                })
                 .child(search.clone())
         });
         window.on_next_frame(move |window, cx| focus.focus(window, cx));

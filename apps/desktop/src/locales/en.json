@@ -1099,6 +1099,7 @@
   "搜索会话名称、项目路径或 Agent": "Search conversation names, project paths or Agents",
   "搜索会话名称、项目路径或 Agent…": "Search conversation names, project paths or Agents…",
   "搜索会话模型": "Search conversation models",
+  "搜索所有项目的会话": "Search conversations across all projects",
   "搜索内容不能超过 200 个字符": "Search cannot exceed 200 characters",
   "搜索内容需为 200 个字符以内的文本。": "Search query must be text up to 200 characters.",
   "搜索名称、完整说明、来源或路径…": "Search names, full descriptions, sources or paths…",
