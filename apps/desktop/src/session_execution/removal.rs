@@ -188,27 +188,56 @@ impl WorktreeRemoval {
 impl Render for WorktreeRemoval {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let enabled = !self.busy && self.current(cx);
+        let description =
+            tr("移除这份本地检出。Git 分支和会话历史会保留，原会话将以只读方式打开。");
+        let checking = tr("正在核对工作树和在途操作…");
+        let removed = tr("工作树已清理。原会话历史和 Git 分支已保留。");
         v_flex()
             .gap_3()
             .min_w_0()
-            .child(div().text_sm().child(tr(
-                "移除这份本地检出。Git 分支和会话历史会保留，原会话将以只读方式打开。",
-            )))
+            .child(
+                div()
+                    .id("worktree-removal-description")
+                    .role(Role::Label)
+                    .aria_value(description)
+                    .text_sm()
+                    .child(description),
+            )
             .when_some(self.preview.as_ref(), |view, preview| {
+                let revision = format!("{} · {}", preview.branch, preview.head_oid);
                 view.child(
                     v_flex()
                         .gap_1()
                         .min_w_0()
                         .text_sm()
-                        .child(div().child(preview.path.clone()))
-                        .child(div().child(format!("{} · {}", preview.branch, preview.head_oid)))
+                        .child(
+                            div()
+                                .id("worktree-removal-path")
+                                .role(Role::Label)
+                                .aria_value(preview.path.clone())
+                                .child(preview.path.clone()),
+                        )
+                        .child(
+                            div()
+                                .id("worktree-removal-revision")
+                                .role(Role::Label)
+                                .aria_value(revision.clone())
+                                .child(revision),
+                        )
                         .when_some(preview.verified_remote.as_ref(), |detail, remote| {
-                            detail.child(div().child(format!(
+                            let verified = format!(
                                 "{} {}/{}",
                                 tr("已核对远端分支"),
                                 remote.remote,
                                 remote.branch
-                            )))
+                            );
+                            detail.child(
+                                div()
+                                    .id("worktree-removal-remote")
+                                    .role(Role::Label)
+                                    .aria_value(verified.clone())
+                                    .child(verified),
+                            )
                         }),
                 )
             })
@@ -217,7 +246,8 @@ impl Render for WorktreeRemoval {
                     div()
                         .id("worktree-removal-busy")
                         .role(Role::Status)
-                        .child(tr("正在核对工作树和在途操作…")),
+                        .aria_label(checking)
+                        .child(checking),
                 )
             })
             .when_some(self.error.clone(), |view, error| {
@@ -225,6 +255,7 @@ impl Render for WorktreeRemoval {
                     div()
                         .id("worktree-removal-error")
                         .role(Role::Alert)
+                        .aria_label(error.clone())
                         .text_color(Color::Error.get(cx))
                         .child(error),
                 )
@@ -234,7 +265,8 @@ impl Render for WorktreeRemoval {
                     div()
                         .id("worktree-removal-done")
                         .role(Role::Status)
-                        .child(tr("工作树已清理。原会话历史和 Git 分支已保留。")),
+                        .aria_label(removed)
+                        .child(removed),
                 )
             })
             .when(!self.removed, |view| {
