@@ -8,7 +8,7 @@ import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
 import { readClaudeMetadata } from './agents/claude-metadata.js';
 import { ClaudeProjection } from './agents/claude-projection.js';
 import { codexMetadataFile, readCodexMetadata } from './agents/codex-metadata.js';
-import { codexDeliveryLookup, normalizeCodexItem } from './agents/codex-history.js';
+import { codexDeliveryLookup, normalizeCodexItem, type CodexMetadata } from './agents/codex-history.js';
 import { parseCodexProjection } from './agents/codex-projection.js';
 
 export type ConversationSearchMatch = { messageId: string; snippet: string };
@@ -242,12 +242,10 @@ async function piRows(file: string, backend: 'pi' | 'pi-rpc', expectedId: string
   return rows;
 }
 
-async function codexRows(record: ChatRecord, directory: string, signal?: AbortSignal): Promise<{ rows: Row[]; complete: boolean }> {
-  if (!record.codexThreadId) return { rows: [], complete: true };
-  const source = await readFile(`${codexMetadataFile(directory, record.codexThreadId)}.display.json`, {encoding: 'utf8', ...(signal && {signal})});
+async function codexRows(metadataPath: string, metadata: CodexMetadata, signal?: AbortSignal): Promise<{ rows: Row[]; complete: boolean }> {
+  const source = await readFile(`${metadataPath}.display.json`, {encoding: 'utf8', ...(signal && {signal})});
   signal?.throwIfAborted();
   const projection = parseCodexProjection(source);
-  const metadata = readCodexMetadata(directory, record.codexThreadId);
   const {entries, completeHistory} = projection;
   const deliveryFor = codexDeliveryLookup(metadata);
   const sources = new Map<string, string>();
@@ -276,6 +274,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
   let codexSynced = false;
   let truncated = false;
   let unresolved = false;
+  let canSearchLive = true;
   try {
     if (record.backend === 'acp') {
       if (record.sessionFile) {
@@ -311,8 +310,14 @@ export async function searchConversation(record: ChatRecord, query: string, opti
         warning = 'Claude history completeness cannot be verified from the SDK';
       }
     } else if (record.codexThreadId) {
-      const metadata = codexMetadataFile(options.codexDirectory, record.codexThreadId);
-      const loaded = await freshRows([metadata, `${metadata}.display.json`], () => codexRows(record, options.codexDirectory, signal), signal);
+      const threadId = record.codexThreadId;
+      const path = codexMetadataFile(options.codexDirectory, threadId);
+      canSearchLive = false;
+      const loaded = await freshRows([path, `${path}.required`, `${path}.display.json`], () => {
+        const metadata = readCodexMetadata(options.codexDirectory, threadId);
+        canSearchLive = true;
+        return codexRows(path, metadata, signal);
+      }, signal);
       rows = loaded.rows;
       codexSynced = loaded.complete;
       truncated = loaded.truncated;
@@ -325,7 +330,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
   }
   signal?.throwIfAborted();
   const live = options.liveHistory;
-  if (live) {
+  if (live && canSearchLive) {
     if (live.history.length !== live.historyMessageIds.length) {
       warning = 'Live conversation history has mismatched message IDs';
     } else {

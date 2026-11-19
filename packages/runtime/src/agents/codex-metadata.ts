@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
+import { SessionIdentityError } from '../chat-index.js';
 import type { CodexMetadata, CodexTurn } from './codex-history.js';
 import { CodexProjection } from './codex-projection.js';
 
@@ -12,7 +13,17 @@ export function readCodexMetadata(directory: string, threadId: string): CodexMet
   let value: CodexMetadata;
   try { value = JSON.parse(readFileSync(codexMetadataFile(directory, threadId), 'utf8')); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, context: [], deliveries: [], completed: [] };
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      try {
+        statSync(`${codexMetadataFile(directory, threadId)}.required`);
+      } catch (markerError) {
+        if ((markerError as NodeJS.ErrnoException).code === 'ENOENT')
+          return { version: 1, context: [], deliveries: [], completed: [] };
+        throw markerError;
+      }
+      throw new SessionIdentityError('CODEX_DELIVERY_METADATA_MISSING',
+        'Saved Hive delivery metadata is missing. Restore the original metadata file to recover message identities and attachments.');
+    }
     throw error;
   }
   if (value.version !== 1 || !Array.isArray(value.context) || !Array.isArray(value.deliveries) || !Array.isArray(value.completed)
@@ -30,6 +41,18 @@ export function writeCodexMetadata(directory: string, threadId: string, metadata
   try {
     writeFileSync(temporary, JSON.stringify(metadata), { encoding: 'utf8', mode: 0o600, flush: true });
     renameSync(temporary, target);
+    // Only mark a successfully published Hive delivery. A failed first write
+    // must remain retryable without inventing a missing historical file.
+    if (metadata.deliveries.length || metadata.inheritedDeliveries?.length || metadata.inheritedSources?.length) {
+      try { writeFileSync(`${target}.required`, '', { mode: 0o600, flag: 'wx', flush: true }); }
+      catch (error) {
+        // Metadata is already durable. Do not fail an accepted native delivery
+        // and risk replay just because the independent guard could not be made.
+        // A later metadata write will retry the guard.
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST')
+          console.error('[hive-desktop] Could not persist Codex delivery metadata guard:', error);
+      }
+    }
   } finally {
     rmSync(temporary, { force: true });
   }

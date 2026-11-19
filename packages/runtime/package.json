@@ -54,7 +54,7 @@
     "check:terminal-command": "tsx checks/terminal-command.ts",
     "check:pty-live-pid": "tsx checks/pty-live-pid.ts",
     "check:queue-mutations": "pnpm build && tsx checks/queued-input-mutations.ts && tsx checks/queued-input-mutation.ts && tsx checks/queued-input-failed-rollback.ts && tsx checks/queued-input-wire.ts",
-    "check:conversation-search": "tsx checks/conversation-search.ts && tsx checks/conversation-search-codex.ts && tsx checks/session-body-search.ts && tsx checks/conversation-search-tools.ts",
+    "check:conversation-search": "tsx checks/conversation-search.ts && tsx checks/conversation-search-codex.ts && tsx checks/session-body-search.ts && tsx checks/conversation-search-tools.ts && tsx checks/codex-metadata-recovery.ts && tsx checks/codex-metadata-marker.ts",
     "check:project-files": "tsx checks/project-files.ts && tsx checks/project-file-references.ts",
     "check:git-workspace": "tsx checks/git-workspace.ts && tsx checks/workspace-git.ts",
     "check:git-index": "pnpm build && tsx checks/git-mutations.ts && tsx checks/git-index-wire.ts && tsx checks/git-write-lifecycle.ts",

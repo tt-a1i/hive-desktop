@@ -16,7 +16,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ts = createRequire(join(root, 'packages/runtime/package.json'))('typescript');
 const directory = await mkdtemp(join(tmpdir(), 'hive-packaged-functional-'));
 const checks = ['delivery-queue', 'queued-input-mutations', 'queued-input-failed-rollback', 'queued-input-mutation', 'queued-input-wire',
-  'conversation-search', 'conversation-search-codex', 'session-body-search', 'project-files', 'project-file-references',
+  'conversation-search', 'conversation-search-codex', 'codex-metadata-recovery', 'codex-metadata-marker', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity', 'html-artifacts',
   'codex-desktop-view',
   'member-worktrees-wire', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments',

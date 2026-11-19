@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexProjection } from '../src/agents/codex-projection.js';
@@ -103,5 +103,44 @@ try {
   assert.equal(forkResult.complete, true);
   assert.deepEqual(forkResult.matches.map(match => match.messageId), ['first-inherited', 'first-exact', 'first-legacy', 'assistant']);
   assert.deepEqual((await searchConversation(forkRecord, 'suppressed', options)).matches, []);
+  // A failed first write must not create a false requirement; retry succeeds.
+  const failedPath = codexMetadataFile(dir, 'first-write-failure');
+  const oneDelivery = {version:1 as const, context:[], completed:[], deliveries:[{turnId:'turn',
+    itemId:'item', deliveryId:'delivery', presentation:{version:1 as const, origin:'user' as const, displayText:'message'}}]};
+  await mkdir(failedPath);
+  assert.throws(() => writeCodexMetadata(dir, 'first-write-failure', oneDelivery));
+  await assert.rejects(stat(failedPath + '.required'), {code:'ENOENT'});
+  await rm(failedPath, {recursive:true});
+  writeCodexMetadata(dir, 'first-write-failure', oneDelivery);
+  assert.ok((await stat(failedPath + '.required')).isFile());
+
+  // Persisted Hive presentation is needed to distinguish its user-visible
+  // message from native input carrying a private attachment copy path.
+  const guarded = new CodexProjection(dir, 'guarded');
+  guarded.recover([{id:'turn', status:'completed', items:[{id:'native-id', type:'userMessage',
+    content:[{type:'text', text:'user phrase\n\nprivate attachment /fixture/secret.txt'}]}]}], true);
+  const attachment = {id:'11111111-1111-4111-8111-111111111111', workspaceId:'w', name:'file.txt',
+    mimeType:'application/octet-stream', size:5, projectFile:{relativePath:'file.txt', sha256:'a'.repeat(64), sourceSessionId:'s'}};
+  writeCodexMetadata(dir, 'guarded', {version:1, context:[], completed:[], deliveries:[{turnId:'turn',
+    itemId:'native-id', deliveryId:'delivery-id', presentation:{version:1, origin:'user', displayText:'user phrase', attachments:[attachment]}}]});
+  const guardedRecord = {...record, codexThreadId:'guarded'};
+  const original = await searchConversation(guardedRecord, 'user phrase', options);
+  assert.deepEqual(original.matches, [{messageId:'delivery-id', snippet:'user phrase'}]);
+  assert.equal(original.complete, true);
+  const metadataPath = codexMetadataFile(dir, 'guarded');
+  await rename(metadataPath, metadataPath + '.held');
+  const unavailable = await searchConversation(guardedRecord, 'private', {...options,
+    liveHistory:{history:[{role:'user', content:'private attachment /fixture/secret.txt'}], historyMessageIds:['native-id']}});
+  assert.deepEqual(unavailable.matches, []);
+  assert.equal(unavailable.complete, false);
+  assert.match(unavailable.warning!, /Restore the original metadata file/);
+  await rename(metadataPath + '.held', metadataPath);
+  assert.deepEqual(await searchConversation(guardedRecord, 'user phrase', options), original);
+  // A native-only legacy thread has never had a Hive metadata requirement.
+  const legacyNative = new CodexProjection(dir, 'native-only');
+  legacyNative.recover([{id:'old-turn', status:'completed', items:[{id:'old-id', type:'userMessage',
+    content:[{type:'text', text:'legacy native text'}]}]}], true);
+  assert.deepEqual(await searchConversation({...record, codexThreadId:'native-only'}, 'legacy native', options),
+    {matches:[{messageId:'old-id', snippet:'legacy native text'}], complete:true});
   console.log('Codex search snapshot completeness checks passed');
 } finally { await rm(dir, {recursive:true, force:true}); }
