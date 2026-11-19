@@ -374,16 +374,16 @@ impl HiveApp {
                 )
             })
             .when(!question.is_secret, |view| {
-                let codex = self
+                let card = self
                     .interactions
                     .sessions
                     .get(&session)
                     .and_then(|cards| cards.iter().find(|card| card.raw.id == interaction))
-                    .is_some_and(|card| {
+                    .filter(|card| {
                         card.raw.backend == "codex"
                             && card.raw.method == "item/tool/requestUserInput"
                     });
-                if !codex {
+                let Some(card) = card else {
                     return view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(
                         if english() {
                             "Attachments are not supported for this question."
@@ -391,7 +391,8 @@ impl HiveApp {
                             "此问题不支持附件。"
                         },
                     ));
-                }
+                };
+                let attachments_disabled = disabled || card.importing_attachments();
                 view.child(
                     Button::new(("question-attachments", field))
                         .compact()
@@ -406,7 +407,7 @@ impl HiveApp {
                         } else {
                             "添加文件或图片"
                         })
-                        .disabled(disabled || draft.importing)
+                        .disabled(attachments_disabled)
                         .on_click({
                             let session = session.clone();
                             let interaction = interaction.clone();
@@ -437,16 +438,21 @@ impl HiveApp {
                             .compact()
                             .label(tr("移除"))
                             .accessibility_label(format!("{} {}", tr("移除"), item.name))
-                            .disabled(disabled || draft.importing)
+                            .disabled(attachments_disabled)
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
+                                    if !this.connected || !this.workspace_writes_allowed()
+                                        || this.session.as_ref().is_none_or(|current| current.id != session)
+                                    {
+                                        return;
+                                    }
                                     if let Some(draft) = this
                                         .interactions
                                         .sessions
                                         .get_mut(&session)
                                         .and_then(|cards| {
                                             cards.iter_mut().find(|card| {
-                                                card.raw.id == interaction && card.waiting()
+                                                card.raw.id == interaction && card.waiting() && !card.importing_attachments()
                                             })
                                         })
                                         .and_then(|card| {

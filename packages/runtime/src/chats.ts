@@ -2009,12 +2009,17 @@ export class Chats implements StructuredSessionPort {
     if (!chat || chat.failure || chat.cleanup || !chat.handle.respondInteraction) {
       throw new CodexInteractionError('INTERACTION_STALE', 'This conversation has no live native interaction');
     }
-    this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
-    // A lost response acknowledgement must not bypass an attachment receipt via the old RPC shape.
-    const receipts = this.interactionAttachments.list(this.index.get(id).workspaceId, id);
-    if (receipts.some(receipt => receipt.interactionId === interactionId && receipt.status !== 'draft'))
-      throw new CodexInteractionError('INTERACTION_STALE', 'This response may already have been handed to Codex');
+    const {workspaceId, backend} = this.index.get(id);
+    this.assertWorkspaceAvailable(workspaceId);
     if (this.preparingInteractions.has(JSON.stringify([id, interactionId]))) throw new CodexInteractionError('INTERACTION_STALE', 'An attachment operation is already in progress');
+    if (backend === 'codex') {
+      const interaction = chat.handle.interactions?.().find(value => value.id === interactionId);
+      // A lost acknowledgement must not bypass the original question's receipt via the old RPC shape.
+      if (interaction?.backend === 'codex' && interaction.method === 'item/tool/requestUserInput' &&
+        this.interactionAttachments.hasUncertainResponse(workspaceId, id, interaction)) {
+        throw new CodexInteractionError('INTERACTION_STALE', 'This response may already have been handed to Codex');
+      }
+    }
     await chat.handle.respondInteraction(interactionId, response);
     return { accepted: true };
   }

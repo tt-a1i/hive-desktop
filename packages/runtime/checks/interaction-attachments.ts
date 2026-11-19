@@ -16,7 +16,15 @@ const send=x=>process.stdout.write(JSON.stringify(x)+'\n');const notify=(method,
 let turn,answered=false;const end=()=>{turn.status='interrupted';notify('turn/completed',{turn});};
 const timer=setInterval(()=>{if(!turn||turn.status!=='inProgress')return;if(existsSync('exit'))process.exit(7);if(existsSync('turn-end'))end();else if(existsSync('native-resolve')){notify('serverRequest/resolved',{requestId:7});end();}else if(answered&&existsSync('finish')){notify('serverRequest/resolved',{requestId:7});end();}},10);
 (async()=>{for await(const line of createInterface({input:process.stdin})){const q=JSON.parse(line);if(!q.method){appendFileSync('responses.jsonl',JSON.stringify(q)+'\n');answered=true;continue;}const answer=result=>send({id:q.id,result});
-if(q.method==='initialize')answer({});else if(q.method==='model/list')answer({data:[{id:'terra',model:'gpt-6.1-terra',displayName:'Terra',hidden:false}],nextCursor:null});else if(q.method==='thread/start')answer({thread,model:'gpt-6.1-terra',modelProvider:'openai'});else if(q.method==='thread/read')answer({thread});else if(q.method==='thread/resume')answer({thread,model:'gpt-6.1-terra',modelProvider:'openai'});else if(q.method==='thread/settings/update')answer({});else if(q.method==='turn/interrupt'){answer({});notify('serverRequest/resolved',{requestId:7});end();}else if(q.method==='turn/start'){turn={id:'turn-'+thread.turns.length,status:'inProgress',items:[]};thread.turns.push(turn);answer({turn});notify('turn/started',{turn});send({id:7,method:'item/tool/requestUserInput',params:{threadId:thread.id,turnId:turn.id,itemId:'item',isBlocking:true,questions:[{id:'public',header:'Public',question:'Choose',isSecret:false,isOther:true,options:null},{id:'secret',header:'Secret',question:'Secret',isSecret:true,isOther:true,options:null}]}});}}
+if(q.method==='initialize')answer({});else if(q.method==='model/list')answer({data:[{id:'terra',model:'gpt-6.1-terra',displayName:'Terra',hidden:false}],nextCursor:null});else if(q.method==='thread/start')answer({thread,model:'gpt-6.1-terra',modelProvider:'openai'});else if(q.method==='thread/read')answer({thread});else if(q.method==='thread/resume')answer({thread,model:'gpt-6.1-terra',modelProvider:'openai'});else if(q.method==='thread/settings/update')answer({});else if(q.method==='turn/interrupt'){answer({});notify('serverRequest/resolved',{requestId:7});end();}else if(q.method==='turn/start'){
+  turn={id:'turn-'+thread.turns.length,status:'inProgress',items:[]};thread.turns.push(turn);answer({turn});notify('turn/started',{turn});
+  const identity={threadId:thread.id,turnId:turn.id,itemId:'item'};
+  if(q.params.input[0].text==='approval'){
+    send({id:7,method:'item/commandExecution/requestApproval',params:{...identity,startedAtMs:1,availableDecisions:['decline']}});
+  }else{
+    send({id:7,method:'item/tool/requestUserInput',params:{...identity,isBlocking:true,questions:[{id:'public',header:'Public',question:'Choose',isSecret:false,isOther:true,options:null},{id:'secret',header:'Secret',question:'Secret',isSecret:true,isOther:true,options:null}]}});
+  }
+}}
 clearInterval(timer);})().catch(e=>{console.error(e);process.exit(1)});
 `;
 let runtime = await createDesktopRuntime(join(dir,'state'),()=>{}, {executableEnvironment:{}});
@@ -24,7 +32,18 @@ const live = () => (runtime.chats as unknown as {live:Map<string,{handle:PiSessi
 async function wait<T>(f:()=>T|Promise<T>, p:(v:T)=>boolean):Promise<T>{const deadline=Date.now()+8000;for(;;){const v=await f();if(p(v))return v;if(Date.now()>deadline)throw new Error('fixture timed out');await new Promise(r=>setTimeout(r,10));}}
 async function rows(cwd:string){try{return (await readFile(join(cwd,'responses.jsonl'),'utf8')).trim().split('\n').map(x=>JSON.parse(x));}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return [];throw e;}}
 let count=0;
-async function start(){const cwd=join(dir,`project-${++count}`);await mkdir(cwd);await writeFile(join(cwd,'package.json'),'{"type":"commonjs"}');await writeFile(join(cwd,'app-server'),peer);const ws=await runtime.hive.request('POST','/api/workspaces',{path:cwd,name:'fixture',autostart_orchestrator:false}) as {id:string};const record=await runtime.chats.create(ws.id,'codex');const handle=live().get(record.id)!.handle;const done=handle.prompt('question');void done.catch(()=>{});const snapshot=await wait(()=>runtime.chats.open(record.id),v=>v.interactions.length===1);return {cwd,ws,record,handle,done,card:snapshot.interactions[0]!};}
+async function start(mode = 'question'){
+ const cwd = join(dir, `project-${++count}`);
+ await mkdir(cwd);
+ await writeFile(join(cwd,'package.json'),'{"type":"commonjs"}');
+ await writeFile(join(cwd,'app-server'),peer);
+ const ws = await runtime.hive.request('POST','/api/workspaces',{path:cwd,name:'fixture',autostart_orchestrator:false}) as {id:string};
+ const record = await runtime.chats.create(ws.id,'codex');
+ const handle = live().get(record.id)!.handle;
+ const done = handle.prompt(mode);void done.catch(()=>{});
+ const snapshot = await wait(()=>runtime.chats.open(record.id),v=>v.interactions.length===1);
+ return {cwd,ws,record,handle,done,card:snapshot.interactions[0]!};
+}
 const answer={answers:{public:{answers:['ANSWER-SENTINEL']},secret:{answers:['SECRET-SENTINEL']}}};
 try {
  await runtime.settings.update({piCommand:null,codexCommand:process.execPath});
@@ -45,6 +64,51 @@ try {
  const pending=runtime.chats.respondInteraction(a.record.id,a.card.id,answer,mapping);await enteredP;await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,answer,mapping));await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,answer));release();const sent=await pending;runtime.chats.attachments.questionReferences=original;
  assert.equal(sent.receipt.status,'callback-handed');const wire=await wait(()=>rows(a.cwd),v=>v.length===1);assert.equal(wire[0].result.answers.secret.answers[0],'SECRET-SENTINEL');const text=wire[0].result.answers.public.answers[0];assert.ok(text.startsWith('ANSWER-SENTINEL\n'));for(const ref of draft.attachments)assert.ok(text.includes(JSON.stringify({name:ref.attachment.name,mimeType:ref.attachment.mimeType,path:ref.filePath})));assert.equal(JSON.stringify(sent.receipt).includes('SENTINEL'),false);
  await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,answer));await writeFile(join(a.cwd,'finish'),'');await a.done;
+ // Damage an actual receipt belonging to another workspace. Both interactions
+ // have the same JSON-RPC request ID as the damaged row.
+ const receiptDirectory = join(dir, 'state', 'chats', 'interaction-attachments');
+ const unrelatedPath = join(receiptDirectory, `${sent.receipt.id}.json`);
+ const originalUnrelated = await readFile(unrelatedPath);
+ await writeFile(unrelatedPath, '{');
+ try {
+   const question = await start(), approval = await start('approval');
+   assert.equal(question.card.nativeRequestId, sent.receipt.nativeRequestId);
+   assert.equal(approval.card.nativeRequestId, sent.receipt.nativeRequestId);
+   await runtime.chats.respondInteraction(question.record.id, question.card.id, answer);
+   const decline = {decision:'decline'};
+   await runtime.chats.respondInteraction(approval.record.id, approval.card.id, decline);
+   for (const [run, expected] of [[question, answer], [approval, decline]] as const) {
+     const replies = await wait(()=>rows(run.cwd), value=>value.length===1);
+     assert.deepEqual(replies[0].result, expected);
+     await writeFile(join(run.cwd,'finish'),'');
+     await run.done;
+     assert.equal((await rows(run.cwd)).length, 1);
+   }
+ } finally {
+   await writeFile(unrelatedPath, originalUnrelated);
+ }
+
+ // Unknown state in the current question's own receipt still blocks delivery,
+ // including a caller using the older RPC shape to omit attachments.
+ const damaged = await start();
+ const input = join(dir, 'damaged-source.txt');
+ await writeFile(input, 'current question');
+ const uploaded = await runtime.chats.attachments.add(damaged.ws.id, input);
+ const damagedMapping = {public:[uploaded.attachment.id]};
+ const {receipt: damagedDraft} = await runtime.chats.saveInteractionAttachments(damaged.record.id, damaged.card.id, damagedMapping);
+ const damagedPath = join(receiptDirectory, `${damagedDraft.id}.json`);
+ await writeFile(damagedPath, '{');
+ await assert.rejects(runtime.chats.respondInteraction(damaged.record.id, damaged.card.id, answer), SyntaxError);
+ await assert.rejects(runtime.chats.respondInteraction(damaged.record.id, damaged.card.id, answer, damagedMapping), SyntaxError);
+ await writeFile(damagedPath, JSON.stringify({...damagedDraft, status: 'prepared'}));
+ await assert.rejects(runtime.chats.respondInteraction(damaged.record.id, damaged.card.id, answer), /may already have been handed/);
+ await assert.rejects(runtime.chats.respondInteraction(damaged.record.id, damaged.card.id, answer, damagedMapping), /may already have been handed/);
+ assert.deepEqual(await rows(damaged.cwd), []);
+ assert.equal((await runtime.chats.open(damaged.record.id)).interactions[0]?.state, 'pending');
+ await writeFile(damagedPath, JSON.stringify(damagedDraft));
+ await damaged.handle.abort();
+ await damaged.done;
+
  for(const mode of ['native-resolve','turn-end','abort','exit']){console.log('CHECK',mode);const run=await start();const source=join(dir,`source-${mode}`);await writeFile(source,mode);const upload=await runtime.chats.attachments.add(run.ws.id,source);let enter!:()=>void,go!:()=>void;const reached=new Promise<void>(r=>enter=r),blocked=new Promise<void>(r=>go=r);runtime.chats.attachments.questionReferences=async (...args:Parameters<typeof original>)=>{enter();await blocked;return original(...args);};const op=runtime.chats.respondInteraction(run.record.id,run.card.id,answer,{public:[upload.attachment.id]});void op.catch(()=>{});await reached;if(mode==='abort')await run.handle.abort();else await writeFile(join(run.cwd,mode),'');if(mode==='exit')await assert.rejects(run.done);else await run.done;go();await assert.rejects(op);runtime.chats.attachments.questionReferences=original;assert.deepEqual(await rows(run.cwd),[]);assert.deepEqual(runtime.chats.listInteractionAttachments(run.record.id).receipts,[]);}
  const loss=await start();const lossFile=join(dir,'loss-file');await writeFile(lossFile,'loss');const lossUpload=await runtime.chats.attachments.add(loss.ws.id,lossFile);
  await assert.rejects(runtime.chats.respondInteraction(loss.record.id,loss.card.id,{answers:{public:{answers:[]}}},{public:[lossUpload.attachment.id]}));assert.deepEqual(runtime.chats.listInteractionAttachments(loss.record.id).receipts,[]);
@@ -52,5 +116,5 @@ try {
  transport.write=async function(message:unknown){const value=message as {id?:unknown;result?:unknown;method?:unknown};if(value.id===7&&value.result!==undefined&&value.method===undefined){injected++;throw new Error('injected transport write failure');}return originalWrite.call(this,message);};
  try {await runtime.chats.respondInteraction(loss.record.id,loss.card.id,answer,{public:[lossUpload.attachment.id]});await assert.rejects(loss.done);assert.equal(injected,1);assert.deepEqual(await rows(loss.cwd),[]);assert.equal(runtime.chats.listInteractionAttachments(loss.record.id).receipts[0]!.status,'callback-handed');await assert.rejects(runtime.chats.respondInteraction(loss.record.id,loss.card.id,answer));} finally {transport.write=originalWrite;}
  console.log('CHECK cold reopen');await other.handle.abort();await other.done;const stored=runtime.chats.listInteractionAttachments(a.record.id).receipts;assert.equal(stored[0]!.status,'callback-handed');await runtime.close();runtime=await createDesktopRuntime(join(dir,'state'),()=>{}, {executableEnvironment:{}});assert.equal(runtime.chats.listInteractionAttachments(a.record.id).receipts[0]!.status,'callback-handed');await runtime.chats.open(a.record.id);assert.equal((await rows(a.cwd)).length,1);assert.equal(runtime.chats.listInteractionAttachments(loss.record.id).receipts[0]!.status,'callback-handed');assert.deepEqual(await rows(loss.cwd),[]);
- await writeFile(join(dir,'receipt.json'),JSON.stringify({pass:true,syntheticCodexPeer:true,realHiveUploads:true,noModelCalls:true,copyAndNativeImage:true,validation:true,concurrentSubmit:true,staleResolution:['native-resolve','turn-end','abort','exit'],injectedTransportWriteFailure:true,injectedReceiptWriteFailure:true,partialUploadFailure:true,coldReopenNoReplay:true},null,2));console.log(`INTERACTION_ATTACHMENTS_OK ${dir}`);
+ await writeFile(join(dir,'receipt.json'),JSON.stringify({pass:true,syntheticCodexPeer:true,realHiveUploads:true,noModelCalls:true,copyAndNativeImage:true,validation:true,concurrentSubmit:true,staleResolution:['native-resolve','turn-end','abort','exit'],injectedTransportWriteFailure:true,injectedReceiptWriteFailure:true,partialUploadFailure:true,unrelatedReceiptCorruptionIsolated:true,exactCorruptOrPreparedReceiptBlocksDelivery:true,coldReopenNoReplay:true},null,2));console.log(`INTERACTION_ATTACHMENTS_OK ${dir}`);
 } finally {await runtime.close();}

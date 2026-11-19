@@ -510,8 +510,13 @@ impl HiveApp {
                                 ),
                         )
                     })
+                    .when_some(card.attachment_import_error, |view, error| {
+                        let message = tr(error);
+                        view.child(div().id(("attachment-import-status", i)).role(Role::Status)
+                            .aria_label(message).text_xs().text_color(Color::Error.get(cx)).child(message))
+                    })
                     .when(questions && card.attachment_save_failed, |view| {
-                        view.child(Button::new(("retry-question-attachment-save", i)).compact().label(if english() { "Retry saving attachments" } else { "重试保存附件" }).disabled(disabled).on_click({ let session = session.clone(); let id = id.clone(); cx.listener(move |this, _, _, cx| this.save_question_attachments(session.clone(), id.clone(), cx)) }))
+                        view.child(Button::new(("retry-question-attachment-save", i)).compact().label(if english() { "Retry saving attachments" } else { "重试保存附件" }).disabled(disabled || card.importing_attachments()).on_click({ let session = session.clone(); let id = id.clone(); cx.listener(move |this, _, _, cx| this.save_question_attachments(session.clone(), id.clone(), cx)) }))
                     })
                     .when(questions, |view| {
                         view.child(
@@ -527,7 +532,7 @@ impl HiveApp {
                                         .px_3()
                                         .rounded_lg()
                                         .label(tr("提交回答"))
-                                        .disabled(disabled || card.attachment_save_failed || card.questions.is_empty() || card.questions.iter().any(|draft| draft.importing))
+                                        .disabled(disabled || card.attachment_save_failed || card.questions.is_empty() || card.importing_attachments())
                                         .on_click({
                                             let session = session.clone();
                                             let id = id.clone();

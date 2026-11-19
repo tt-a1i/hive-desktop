@@ -1517,6 +1517,7 @@
   "此预览不允许推送。分叉或缺少远端历史时，请先用原生 Git fetch 并自行处理，再重新预览；不会提供强制推送。": "This preview cannot be pushed. If histories diverge or remote history is missing, fetch and resolve it with native Git, then refresh. Force push is unavailable.",
   "步骤": "Step",
   "每条消息最多添加 10 个附件。": "Each message can have up to 10 attachments.",
+  "每次问题回复最多添加 10 个附件。请减少选择后再试。": "Each reply can have up to 10 attachments across all questions. Select fewer files and try again.",
   "每页最多 64 KiB，当前显示最多 1 MiB；按字节读取，不自动无限追加。": "Pages contain up to 64 KiB; the display holds at most 1 MiB. Output is read by byte offset and does not append without a limit.",
   "比较前": "Before",
   "比较后": "After",

@@ -40,6 +40,25 @@ export class InteractionAttachments {
   private key(workspaceId: string, sessionId: string, interaction: CodexInteraction) {
     return createHash('sha256').update(JSON.stringify([workspaceId, sessionId, interactionIdentity(interaction)])).digest('hex');
   }
+  hasUncertainResponse(workspaceId: string, sessionId: string, interaction: CodexInteraction): boolean {
+    const status = this.readStatus(this.key(workspaceId, sessionId, interaction));
+    return status === 'prepared' || status === 'callback-handed';
+  }
+  private readStatus(id: string): InteractionAttachmentReceipt['status'] | undefined {
+    let contents: string;
+    try {
+      contents = readFileSync(join(this.directory, `${id}.json`), 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+    const receipt: unknown = JSON.parse(contents);
+    if (!object(receipt) || receipt.id !== id ||
+      (receipt.status !== 'draft' && receipt.status !== 'prepared' && receipt.status !== 'callback-handed')) {
+      throw new Error('Invalid question attachment receipt');
+    }
+    return receipt.status;
+  }
   async prepare(workspaceId: string, sessionId: string, interaction: CodexInteraction, input: unknown): Promise<InteractionAttachmentReceipt> {
     const mapping = questionAttachments(input, interaction);
     const attachments: InteractionAttachmentReceipt['attachments'] = [];
@@ -51,9 +70,9 @@ export class InteractionAttachments {
   write(receipt: InteractionAttachmentReceipt, status: InteractionAttachmentReceipt['status']): InteractionAttachmentReceipt {
     const target = join(this.directory, `${receipt.id}.json`);
     // A prepared receipt means the callback may have run. Never turn it back into a retryable draft.
-    if (existsSync(target)) {
-      const previous = JSON.parse(readFileSync(target, 'utf8')) as InteractionAttachmentReceipt;
-      if (previous.status !== 'draft' && !(previous.status === 'prepared' && status === 'callback-handed')) throw new CodexInteractionError('INTERACTION_STALE', 'This response may already have been handed to Codex; automatic retry is disabled');
+    const previous = this.readStatus(receipt.id);
+    if (previous && previous !== 'draft' && !(previous === 'prepared' && status === 'callback-handed')) {
+      throw new CodexInteractionError('INTERACTION_STALE', 'This response may already have been handed to Codex; automatic retry is disabled');
     }
     mkdirSync(this.directory, {recursive: true, mode: 0o700});
     const saved = {...receipt, status, updatedAt: Date.now()};

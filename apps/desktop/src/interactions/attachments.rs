@@ -1,6 +1,59 @@
 use super::*;
 use serde_json::json;
 
+const MAX_QUESTION_ATTACHMENTS: usize = 10;
+const ATTACHMENT_LIMIT: &str = "每次问题回复最多添加 10 个附件。请减少选择后再试。";
+
+struct NativeQuestion {
+    thread: Option<String>,
+    turn: Option<String>,
+    item: Option<String>,
+    request: serde_json::Value,
+}
+
+impl From<&AgentInteraction> for NativeQuestion {
+    fn from(raw: &AgentInteraction) -> Self {
+        Self {
+            thread: raw.thread_id.clone(),
+            turn: raw.turn_id.clone(),
+            item: raw.item_id.clone(),
+            request: raw.native_request_id.clone(),
+        }
+    }
+}
+
+impl NativeQuestion {
+    fn matches(&self, raw: &AgentInteraction) -> bool {
+        raw.backend == "codex"
+            && raw.method == "item/tool/requestUserInput"
+            && raw.thread_id == self.thread
+            && raw.turn_id == self.turn
+            && raw.item_id == self.item
+            && raw.native_request_id == self.request
+    }
+}
+
+struct QuestionImport {
+    workspace: String,
+    session: String,
+    interaction: String,
+    question: String,
+    native: NativeQuestion,
+    connection: u64,
+    generation: u64,
+}
+
+impl InteractionCard {
+    fn remaining_attachment_slots(&self) -> usize {
+        MAX_QUESTION_ATTACHMENTS.saturating_sub(
+            self.questions
+                .iter()
+                .map(|draft| draft.attachments.len())
+                .sum(),
+        )
+    }
+}
+
 impl HiveApp {
     pub(super) fn load_question_receipts(&mut self, cx: &mut Context<Self>) {
         let (Some(workspace), Some(session), Some(runtime)) = (
@@ -8,15 +61,25 @@ impl HiveApp {
             self.session.as_ref().map(|s| s.id.clone()),
             self.runtime.clone(),
         ) else {
+            self.interactions.receipts.clear();
+            self.interactions.receipt_requests.clear();
             return;
         };
-        if !self.connected {
-            return;
-        }
         let key = format!("{}:{}:{}", self.connection_generation, workspace, session);
-        if !self.interactions.receipt_requests.insert(key.clone()) {
+        // Only the visible conversation renders receipts. Release the previous
+        // view's metadata and reject its response even if the user returns to it.
+        self.interactions.receipts.retain(|scope, _| scope == &key);
+        self.interactions
+            .receipt_requests
+            .retain(|scope, _| scope == &key);
+        if !self.connected || self.interactions.receipt_requests.contains_key(&key) {
             return;
         }
+        self.interactions.receipt_revision += 1;
+        let revision = self.interactions.receipt_revision;
+        self.interactions
+            .receipt_requests
+            .insert(key.clone(), revision);
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result = runtime
@@ -26,6 +89,9 @@ impl HiveApp {
                 )
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if this.interactions.receipt_requests.get(&key) != Some(&revision) {
+                    return;
+                }
                 if this.connection_generation != connection
                     || this.workspace.as_deref() != Some(&workspace)
                     || this
@@ -51,45 +117,36 @@ impl HiveApp {
         .detach();
     }
 
-    fn question_target(
-        &self,
-        workspace: &str,
+    fn question_attachment_card(
+        &mut self,
         session: &str,
         id: &str,
-        question: &str,
-        identity: &(
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            serde_json::Value,
-        ),
-        connection: u64,
-    ) -> bool {
-        self.connection_generation == connection
-            && self.connected
-            && !self.closing
-            && self.workspace.as_deref() == Some(workspace)
-            && self.workspace_writes_allowed()
-            && self.session.as_ref().is_some_and(|s| s.id == session)
-            && self
-                .interactions
-                .sessions
-                .get(session)
-                .and_then(|cards| cards.iter().find(|c| c.raw.id == id))
-                .is_some_and(|c| {
-                    c.waiting()
-                        && c.raw.backend == "codex"
-                        && c.raw.method == "item/tool/requestUserInput"
-                        && (
-                            c.raw.thread_id.clone(),
-                            c.raw.turn_id.clone(),
-                            c.raw.item_id.clone(),
-                            c.raw.native_request_id.clone(),
-                        ) == *identity
-                        && c.questions
-                            .iter()
-                            .any(|q| q.question.id == question && !q.question.is_secret)
-                })
+        native: &NativeQuestion,
+    ) -> Option<&mut InteractionCard> {
+        self.interactions
+            .sessions
+            .get_mut(session)?
+            .iter_mut()
+            .find(|card| card.raw.id == id && native.matches(&card.raw))
+    }
+
+    fn active_question_import(&mut self, import: &QuestionImport) -> Option<&mut InteractionCard> {
+        if self.connection_generation != import.connection || !self.connected || self.closing {
+            return None;
+        }
+        let card =
+            self.question_attachment_card(&import.session, &import.interaction, &import.native)?;
+        if !card.waiting()
+            || !card.questions.iter().any(|draft| {
+                draft.question.id == import.question
+                    && !draft.question.is_secret
+                    && draft.importing
+                    && draft.import_generation == import.generation
+            })
+        {
+            return None;
+        }
+        Some(card)
     }
     pub(super) fn choose_question_attachments(
         &mut self,
@@ -102,6 +159,16 @@ impl HiveApp {
         else {
             return;
         };
+        if !self.connected
+            || self.closing
+            || !self.workspace_writes_allowed()
+            || self
+                .session
+                .as_ref()
+                .is_none_or(|current| current.id != session)
+        {
+            return;
+        }
         let Some(card) = self
             .interactions
             .sessions
@@ -110,12 +177,18 @@ impl HiveApp {
         else {
             return;
         };
-        let identity = (
-            card.raw.thread_id.clone(),
-            card.raw.turn_id.clone(),
-            card.raw.item_id.clone(),
-            card.raw.native_request_id.clone(),
-        );
+        if !card.waiting()
+            || card.importing_attachments()
+            || card.raw.backend != "codex"
+            || card.raw.method != "item/tool/requestUserInput"
+        {
+            return;
+        }
+        if card.remaining_attachment_slots() == 0 {
+            card.attachment_import_error = Some(ATTACHMENT_LIMIT);
+            cx.notify();
+            return;
+        }
         let Some(draft) = card
             .questions
             .iter_mut()
@@ -123,15 +196,19 @@ impl HiveApp {
         else {
             return;
         };
-        if draft.importing {
-            return;
-        }
+        // One chooser, upload or draft write at a time for the whole card.
+        draft.importing = true;
         draft.import_generation += 1;
-        let generation = draft.import_generation;
-        let connection = self.connection_generation;
-        if !self.question_target(&workspace, &session, &id, &question, &identity, connection) {
-            return;
-        }
+        let import = QuestionImport {
+            workspace,
+            session,
+            interaction: id,
+            question,
+            native: NativeQuestion::from(&card.raw),
+            connection: self.connection_generation,
+            generation: draft.import_generation,
+        };
+        cx.notify();
         let receiver = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -140,36 +217,28 @@ impl HiveApp {
         });
         cx.spawn(async move |this, cx| {
             let paths = match receiver.await {
-                Ok(Ok(Some(paths))) => paths,
-                _ => return,
+                Ok(Ok(Some(paths))) if !paths.is_empty() => paths,
+                _ => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.finish_question_import(&import, Vec::new(), None, cx);
+                    });
+                    return;
+                }
             };
             let valid = this
                 .update(cx, |this, cx| {
-                    if !this.question_target(
-                        &workspace, &session, &id, &question, &identity, connection,
-                    ) {
+                    let Some(card) = this.active_question_import(&import) else {
+                        return false;
+                    };
+                    if paths.len() > card.remaining_attachment_slots() {
+                        this.finish_question_import(
+                            &import,
+                            Vec::new(),
+                            Some(ATTACHMENT_LIMIT),
+                            cx,
+                        );
                         return false;
                     }
-                    let draft = this
-                        .interactions
-                        .sessions
-                        .get_mut(&session)
-                        .unwrap()
-                        .iter_mut()
-                        .find(|c| c.raw.id == id)
-                        .unwrap()
-                        .questions
-                        .iter_mut()
-                        .find(|q| q.question.id == question)
-                        .unwrap();
-                    if draft.import_generation != generation
-                        || draft.importing
-                        || draft.attachments.len() + paths.len() > 10
-                    {
-                        return false;
-                    }
-                    draft.importing = true;
-                    cx.notify();
                     true
                 })
                 .unwrap_or(false);
@@ -187,7 +256,7 @@ impl HiveApp {
                             continue;
                         }
                     };
-                params["workspaceId"] = json!(workspace);
+                params["workspaceId"] = json!(import.workspace);
                 match runtime.request(method, params).await.ok().and_then(|v| {
                     serde_json::from_value::<crate::protocol::AttachmentRef>(
                         v["attachment"].clone(),
@@ -199,74 +268,87 @@ impl HiveApp {
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                if !this
-                    .question_target(&workspace, &session, &id, &question, &identity, connection)
-                {
-                    if let Some(card) =
-                        this.interactions
-                            .sessions
-                            .get_mut(&session)
-                            .and_then(|cards| {
-                                cards.iter_mut().find(|card| {
-                                    card.raw.id == id
-                                        && (
-                                            card.raw.thread_id.clone(),
-                                            card.raw.turn_id.clone(),
-                                            card.raw.item_id.clone(),
-                                            card.raw.native_request_id.clone(),
-                                        ) == identity
-                                })
-                            })
-                    {
-                        if let Some(draft) = card.questions.iter_mut().find(|draft| {
-                            draft.question.id == question && draft.import_generation == generation
-                        }) {
-                            draft.importing = false;
-                        }
-                    }
-                    cx.notify();
-                    return;
-                }
-                let card = this
-                    .interactions
-                    .sessions
-                    .get_mut(&session)
-                    .unwrap()
-                    .iter_mut()
-                    .find(|c| c.raw.id == id)
-                    .unwrap();
-                let draft = card
-                    .questions
-                    .iter_mut()
-                    .find(|q| q.question.id == question)
-                    .unwrap();
-                if draft.import_generation != generation {
-                    return;
-                }
-                draft.importing = false;
-                for item in ready {
-                    if !draft
-                        .attachments
-                        .iter()
-                        .any(|existing| existing.id == item.id)
-                    {
-                        draft.attachments.push(item);
-                    }
-                }
-                if failed {
-                    card.error = Some("部分附件导入失败，请重新选择。".into());
-                }
-                this.save_question_attachments(session.clone(), id.clone(), cx);
+                this.finish_question_import(
+                    &import,
+                    ready,
+                    failed.then_some("部分附件导入失败，请重新选择。"),
+                    cx,
+                );
             });
         })
         .detach();
     }
+
+    fn finish_question_import(
+        &mut self,
+        import: &QuestionImport,
+        ready: Vec<crate::protocol::AttachmentRef>,
+        error: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(card) = self.active_question_import(import) else {
+            return;
+        };
+        let draft = card
+            .questions
+            .iter_mut()
+            .find(|draft| draft.question.id == import.question)
+            .unwrap();
+        draft.importing = false;
+        let changed = !ready.is_empty();
+        if changed || error.is_some() {
+            card.attachment_import_error = error;
+        }
+        for item in ready {
+            if !draft
+                .attachments
+                .iter()
+                .any(|existing| existing.id == item.id)
+            {
+                draft.attachments.push(item);
+            }
+        }
+        if changed {
+            self.save_question_attachment_draft(
+                import.workspace.clone(),
+                import.session.clone(),
+                import.interaction.clone(),
+                cx,
+            );
+        } else {
+            cx.notify();
+        }
+    }
+
     pub(super) fn save_question_attachments(
         &mut self,
         session: String,
         id: String,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .session
+            .as_ref()
+            .is_none_or(|current| current.id != session)
+            || !self.workspace_writes_allowed()
+        {
+            return;
+        }
+        if let Some(workspace) = self.workspace.clone() {
+            self.save_question_attachment_draft(workspace, session, id, cx);
+        }
+    }
+
+    fn save_question_attachment_draft(
+        &mut self,
+        workspace: String,
+        session: String,
+        id: String,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.connected || self.closing {
+            return;
+        }
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
@@ -278,6 +360,9 @@ impl HiveApp {
         else {
             return;
         };
+        if !card.waiting() || card.importing_attachments() {
+            return;
+        }
         let mapping = card
             .questions
             .iter()
@@ -289,35 +374,32 @@ impl HiveApp {
                 )
             })
             .collect::<serde_json::Map<_, _>>();
+        if card.attachment_save_failed {
+            card.error = None;
+        }
         card.attachment_save_failed = false;
         card.submitting = true;
         card.generation += 1;
         let generation = card.generation;
-        let identity = (
-            card.raw.thread_id.clone(),
-            card.raw.turn_id.clone(),
-            card.raw.item_id.clone(),
-            card.raw.native_request_id.clone(),
-        );
-        let workspace = self.workspace.clone();
+        let identity = NativeQuestion::from(&card.raw);
         let connection = self.connection_generation;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = runtime.request("chat.interactionAttachments.save", json!({"sessionId": session, "interactionId": id, "attachmentsByQuestionId": mapping})).await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection { return; }
-                if this.workspace != workspace || this.session.as_ref().is_none_or(|current| current.id != session) {
-                    if let Some(card) = this.interactions.sessions.get_mut(&session).and_then(|cards| cards.iter_mut().find(|card| card.raw.id == id && card.generation == generation && (card.raw.thread_id.clone(), card.raw.turn_id.clone(), card.raw.item_id.clone(), card.raw.native_request_id.clone()) == identity)) {
-                        card.submitting = false;
+                if let Some(card) = this.question_attachment_card(&session, &id, &identity)
+                    .filter(|card| card.generation == generation && card.raw.state == "pending")
+                {
+                    card.submitting = false;
+                    if result.is_err() {
                         card.attachment_save_failed = true;
                         card.error = Some("附件状态保存失败，请重试保存。".into());
                     }
-                    return;
                 }
-                let Some(card) = this.interactions.sessions.get_mut(&session).and_then(|cards| cards.iter_mut().find(|c| c.raw.id == id)) else { return; };
-                if card.generation != generation || (card.raw.thread_id.clone(), card.raw.turn_id.clone(), card.raw.item_id.clone(), card.raw.native_request_id.clone()) != identity { return; }
-                card.submitting = false;
-                if result.is_err() { card.attachment_save_failed = true; card.error = Some("附件状态保存失败，请重试保存。".into()); } else { card.error = None; if let Some(workspace) = &workspace { this.interactions.receipt_requests.remove(&format!("{}:{}:{}", connection, workspace, session)); } }
+                if result.is_ok() {
+                    this.interactions.receipt_requests.remove(&format!("{connection}:{workspace}:{session}"));
+                }
                 cx.notify();
             });
         }).detach();

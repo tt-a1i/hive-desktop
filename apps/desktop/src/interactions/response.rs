@@ -50,7 +50,7 @@ impl HiveApp {
         } else {
             if card.attachment_save_failed
                 || card.questions.is_empty()
-                || card.questions.iter().any(|draft| draft.importing)
+                || card.importing_attachments()
             {
                 return;
             }

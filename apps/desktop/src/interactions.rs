@@ -23,7 +23,8 @@ pub struct Interactions {
     uncertain: acp::Uncertain,
     pub sessions: HashMap<String, Vec<InteractionCard>>,
     receipts: HashMap<String, Vec<serde_json::Value>>,
-    receipt_requests: std::collections::HashSet<String>,
+    receipt_requests: HashMap<String, u64>,
+    receipt_revision: u64,
 }
 pub struct InteractionCard {
     raw: AgentInteraction,
@@ -33,6 +34,7 @@ pub struct InteractionCard {
     initialized: bool,
     submitting: bool,
     attachment_save_failed: bool,
+    attachment_import_error: Option<&'static str>,
     generation: u64,
     error: Option<InteractionError>,
 }
@@ -98,6 +100,15 @@ impl InteractionError {
     }
 }
 impl Interactions {
+    fn retain_session_cards(&mut self, session: &str, keep: impl FnMut(&InteractionCard) -> bool) {
+        if let Some(cards) = self.sessions.get_mut(session) {
+            cards.retain(keep);
+            if cards.is_empty() {
+                self.sessions.remove(session);
+            }
+        }
+    }
+
     pub(crate) fn localize_placeholders(&self, window: &mut Window, cx: &mut App) {
         for card in self.sessions.values().flatten() {
             if card.is_pi() {
@@ -140,6 +151,7 @@ impl InteractionCard {
             initialized: false,
             submitting: false,
             attachment_save_failed: false,
+            attachment_import_error: None,
             generation: 0,
             error,
         }
@@ -160,6 +172,9 @@ impl InteractionCard {
     }
     fn waiting(&self) -> bool {
         self.raw.has_native_identity() && !self.submitting && self.raw.state == "pending"
+    }
+    fn importing_attachments(&self) -> bool {
+        self.questions.iter().any(|draft| draft.importing)
     }
     fn accepts(&self, decision: &str) -> bool {
         self.raw.params["availableDecisions"]
@@ -205,12 +220,9 @@ impl HiveApp {
         })
     }
     pub fn sync_interactions(&mut self, session: &str, snapshot: Vec<AgentInteraction>) {
-        let cards = self
-            .interactions
-            .sessions
-            .entry(session.into())
-            .or_default();
-        cards.retain(|card| snapshot.iter().any(|raw| raw.id == card.raw.id));
+        self.interactions.retain_session_cards(session, |card| {
+            snapshot.iter().any(|raw| raw.id == card.raw.id)
+        });
         for raw in snapshot {
             self.upsert_interaction(session, raw);
         }
@@ -339,9 +351,7 @@ impl HiveApp {
                     .get(session_id)
                     .and_then(|cards| cards.iter().find(|card| card.raw.id == *interaction_id))
                     .is_some_and(InteractionCard::is_pi);
-                if let Some(cards) = self.interactions.sessions.get_mut(session_id) {
-                    cards.retain(|card| card.raw.id != *interaction_id);
-                }
+                self.interactions.retain_session_cards(session_id, |card| card.raw.id != *interaction_id);
                 if self.connected
                     && !self.closing
                     && self
