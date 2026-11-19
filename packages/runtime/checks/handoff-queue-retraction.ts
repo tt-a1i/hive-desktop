@@ -129,7 +129,18 @@ try{
   const beforeEdit=await runtime.chats.handoffTargetState(test.id);
   assert.deepEqual(beforeEdit.pendingUserInputs,openedCold.pendingUserInputs);
   assert.deepEqual(beforeEdit.handoffDelivery,openedCold.handoffDelivery);
-  await runtime.chats.mutateQueuedInput(test.id,pending[1]!.id,'Second queued input should inherit context',editedText);
+  // A handoff queue that has already passed offline reconciliation must not
+  // wait for the separate Codex mode-recovery ownership gate.
+  const probes=(runtime.chats as any).probingCodexModes as Map<string,Promise<void>>;
+  let releaseProbe!:()=>void;
+  probes.set(test.id,new Promise<void>(resolve=>{releaseProbe=resolve;}));
+  try {
+   await Promise.race([
+    runtime.chats.mutateQueuedInput(test.id,pending[1]!.id,'Second queued input should inherit context',editedText),
+    new Promise<never>((_,reject)=>setTimeout(()=>reject(Error('Offline queue edit waited for mode probe')),1000)),
+   ]);
+  } finally {probes.delete(test.id);releaseProbe();}
+
   await assert.rejects(runtime.chats.mutateQueuedInput(test.id,pending[1]!.id,'Second queued input should inherit context'),/changed; reopen/);
   assert.equal(spool(test.data,test.id)[1]!.presentation!.displayText,editedText);
   assert.deepEqual(spool(test.data,test.id)[1]!.presentation!.attachments,pending[1]!.presentation!.attachments);

@@ -47,11 +47,19 @@ export class CodexModes {
   private permissionDescription?: string;
   private permissionsLoaded = false;
   private collaborationLoaded = false;
+  private loading?: Promise<void>;
   constructor(private transport: CodexTransport, collaboration?: string, permission?: string) {
     this.collaboration = collaboration ?? null; this.permission = permission ?? null;
   }
   async load() {
     if (this.permissionsLoaded && this.collaborationLoaded) return;
+    if (this.loading) return this.loading;
+    const loading = this.loadOptions();
+    this.loading = loading;
+    try { await loading; }
+    finally { if (this.loading === loading) delete this.loading; }
+  }
+  private async loadOptions() {
     // Restoring startup permissions requires persisting the exact native baseline.
     // Omitted permission mode leaves existing native defaults intact.
     const permissionOptions: string[] = [];

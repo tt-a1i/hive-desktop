@@ -13,9 +13,10 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  if(q.id!==undefined)fs.appendFileSync('modes-wire.jsonl',JSON.stringify({...q,pid:process.pid})+'\n');
  if(q.method==='initialize')answer({});
  else if(q.method==='model/list')answer({data:[{id:'synthetic',model:'synthetic',displayName:'Synthetic',hidden:false}],nextCursor:null});
- else if(q.method==='configRequirements/read')answer({requirements:control().requirements??null});
+ else if(q.method==='configRequirements/read'){if(control().exitRequirements)process.exit(17);if(!control().hangRequirements)answer({requirements:control().requirements??null});}
  else if(q.method==='collaborationMode/list'){
   const c=control();
+  if(c.hangMode)return;
   const reply=()=>c.error?send({id:q.id,error:{code:c.error,message:'fixture'}}):answer({data:c.modes??[{mode:'plan'},{mode:'default'}]});
   if(c.modeDelay) setTimeout(reply,c.modeDelay); else reply();
  }
