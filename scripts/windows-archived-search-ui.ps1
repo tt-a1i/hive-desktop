@@ -5,6 +5,9 @@
     [string]$Scenario = 'archived-search',
     [string]$SessionId = '',
     [string]$OriginAgentId = '',
+    [string]$Phase = '',
+    [string]$StateDirectory = '',
+    [string]$WorkspaceId = '',
     [Parameter(Mandatory)][string]$OutputPath,
     [Parameter(Mandatory)][string]$EvidenceDirectory
 )
@@ -96,6 +99,102 @@ function Wait-DisabledButton([string]$Name, [int]$Timeout = 15) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Unique disabled button '$Name' unavailable; matching controls: $count."
 }
+# Reading-position checks use multiple distinct native text rows and their
+# vertical geometry above the composer, not a single long message.
+function Reading-Viewport {
+    $editors = @(Find-Name 'Conversation messages')
+    if ($editors.Count -ne 1) { return @() }
+    $bottom = $editors[0].Current.BoundingRectangle.Top
+    $windowBounds = $root.Current.BoundingRectangle
+    $rows = @()
+    foreach ($control in (All-Controls)) {
+        $name = $control.Current.Name
+        if ($name -cnotmatch '^READING_ROW_([0-9]{2})$') { continue }
+        $bounds = $control.Current.BoundingRectangle
+        if ($control.Current.IsOffscreen -or $bounds.IsEmpty -or $bounds.Top -lt ($windowBounds.Top + 70) -or
+            $bounds.Bottom -gt $bottom -or -not (In-Window $control)) { continue }
+        $rows += [ordered]@{ name = $name; y = [math]::Round($bounds.Top - $windowBounds.Top, 1) }
+    }
+    return @($rows | Sort-Object y)
+}
+function Wait-ReadingViewport([int]$Timeout = 25) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)
+    $previous = ''
+    do {
+        $rows = @(Reading-Viewport)
+        $current = ConvertTo-Json -InputObject $rows -Compress -Depth 5
+        if ($rows.Count -ge 2 -and $current -ceq $previous) { return $rows }
+        $previous = $current
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'At least two stable reading rows did not appear in the viewport'
+}
+function Wait-ReadingMatch($Expected, [int]$Timeout = 25) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)
+    do {
+        $actual = @(Reading-Viewport)
+        $pairs = @()
+        foreach ($wanted in $Expected) {
+            $same = @($actual | Where-Object { $_.name -ceq $wanted.name })
+            if ($same.Count -eq 1 -and [math]::Abs($same[0].y - $wanted.y) -le 8) {
+                $pairs += [ordered]@{ name = $wanted.name; expectedY = $wanted.y; actualY = $same[0].y }
+            }
+        }
+        if ($pairs.Count -ge 2) { return $pairs }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Fewer than two original reading rows returned to their prior viewport positions'
+}
+function Wait-ReadingAnchor([int]$Timeout = 20) {
+    $path = Join-Path $StateDirectory 'desktop-reading-positions.json'
+    $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)
+    do {
+        if (Test-Path -LiteralPath $path) {
+            try {
+                $entries = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($path))
+                $matching = @(foreach ($entry in $entries) {
+                    if ($entry.workspace -ceq $WorkspaceId -and $entry.session -ceq $SessionId) { $entry }
+                })
+                if ($matching.Count -eq 1 -and $matching[0].row.Message -cmatch '^row-([0-9]+)$') {
+                    $index = [int]$Matches[1]
+                    if ($index -gt 5 -and $index -lt 75 -and $matching[0].offset -ge 0) { return $matching[0] }
+                }
+            } catch { }
+        }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'A valid middle-of-history anchor was not saved for this session'
+}
+function Move-ReadingViewport {
+    $before = @(Wait-ReadingViewport)
+    $target = Wait-VisibleOriginal $before[0].name
+    $bounds = $target.Current.BoundingRectangle
+    [void][ArchivedFixtureWindow]::SetForegroundWindow($window)
+    [void][ArchivedFixtureWindow]::SetCursorPos([int]($bounds.X + $bounds.Width / 2), [int]($bounds.Y + $bounds.Height / 2))
+    [ArchivedFixtureWindow]::mouse_event(0x0800, 0, 0, -120, [UIntPtr]::Zero)
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        $after = @(Reading-Viewport)
+        foreach ($row in $before) {
+            $same = @($after | Where-Object { $_.name -ceq $row.name })
+            if ($same.Count -eq 1 -and [math]::Abs($same[0].y - $row.y) -gt 5) { return }
+        }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'The native scroll wheel did not move the conversation viewport'
+}
+function Wait-ChangedReadingAnchor($Prior, [int]$Timeout = 20) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)
+    do {
+        try {
+            $anchor = Wait-ReadingAnchor 2
+            if ($anchor.row.Message -cne $Prior.row.Message -or
+                [math]::Abs($anchor.offset - $Prior.offset) -gt 0.5) { return $anchor }
+        } catch { }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'The reading position file did not update after the second scroll'
+}
 function Save-Window([string]$Name) {
     $rect = New-Object ArchivedFixtureWindow+Rect
     if (-not [ArchivedFixtureWindow]::GetWindowRect($window, [ref]$rect)) { throw 'Window bounds unavailable' }
@@ -120,6 +219,9 @@ public static class ArchivedFixtureWindow {
  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left,Top,Right,Bottom; }
  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect r);
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
+ [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+ [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extra);
 }
 '@
     $app = Get-Process -Id $AppProcessId
@@ -134,7 +236,53 @@ public static class ArchivedFixtureWindow {
     } while ([DateTime]::UtcNow -lt $deadline)
     if ($window -eq [IntPtr]::Zero) { throw 'Hive window unavailable' }
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($window)
-    if ($Scenario -eq 'handoff-range') {
+    if ($Scenario -eq 'reading-position') {
+        $baselinePath = Join-Path ([System.IO.Path]::GetDirectoryName($StateDirectory)) 'reading-baseline.json'
+        [void](Wait-Name 'Current conversation actions: Reading target')
+        [void](Wait-ExactValue 'Conversation messages' 'Reading position draft preserved')
+        if ($Phase -eq 'first') {
+            Invoke-Control (Wait-Name 'Find in current conversation')
+            $find = Wait-Name 'Find messages and tools in this conversation'
+            $find.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('READING_ROW_40')
+            [void](Wait-ExactValue 'Find messages and tools in this conversation' 'READING_ROW_40')
+            [void](Wait-VisibleOriginal 'READING_ROW_40')
+            Invoke-Control (Wait-Name 'Close conversation search')
+            # Two distinct wheel movements prove that the stored position was
+            # updated after user scrolling, rather than merely pre-seeded.
+            Move-ReadingViewport
+            $priorAnchor = Wait-ReadingAnchor
+            Move-ReadingViewport
+            $anchor = Wait-ChangedReadingAnchor $priorAnchor
+            $baselineRows = @(Wait-ReadingViewport)
+            $anchorIndex = [int]($anchor.row.Message -replace '^row-', '')
+            $firstIndex = [int]($baselineRows[0].name -replace '^READING_ROW_', '')
+            $lastIndex = [int]($baselineRows[-1].name -replace '^READING_ROW_', '')
+            if ($anchorIndex -lt ($firstIndex - 1) -or $anchorIndex -gt $lastIndex) { throw 'Saved anchor does not belong to the visible middle rows' }
+            [System.IO.File]::WriteAllText($baselinePath, (@{ anchor=$anchor; rows=$baselineRows } | ConvertTo-Json -Depth 10), [System.Text.UTF8Encoding]::new($false))
+            $result.initialViewport = $baselineRows
+            $result.anchor = $anchor
+            $result.checks += @('real scroll wheel moved viewport', 'middle message anchor saved')
+            Save-Window 'windows-reading-before-switch.png'
+            Invoke-Control (Wait-Name 'Pi · Reading other · Conversation')
+            [void](Wait-Name 'Current conversation actions: Reading other')
+            [void](Wait-VisibleOriginal 'OTHER_CONVERSATION_SENTINEL')
+            Invoke-Control (Wait-Name 'Pi · Reading target · Conversation')
+            [void](Wait-Name 'Current conversation actions: Reading target')
+            $result.switchedBack = @(Wait-ReadingMatch $baselineRows)
+            [void](Wait-ExactValue 'Conversation messages' 'Reading position draft preserved')
+            $result.checks += @('other conversation opened', 'multiple rows returned after switch', 'draft retained after switch')
+            Save-Window 'windows-reading-after-switch.png'
+        } elseif ($Phase -eq 'cold') {
+            $baseline = ConvertFrom-Json -InputObject ([System.IO.File]::ReadAllText($baselinePath))
+            $result.coldViewport = @(Wait-ReadingMatch $baseline.rows)
+            [void](Wait-ExactValue 'Conversation messages' 'Reading position draft preserved')
+            $result.anchor = Wait-ReadingAnchor
+            if ($result.anchor.row.Message -cne $baseline.anchor.row.Message -or
+                [math]::Abs($result.anchor.offset - $baseline.anchor.offset) -gt 2) { throw 'Cold reading anchor or offset changed' }
+            $result.checks += @('multiple rows returned after cold launch', 'anchor and offset retained', 'draft retained after cold launch')
+            Save-Window 'windows-reading-cold.png'
+        } else { throw "Unknown reading phase: $Phase" }
+    } elseif ($Scenario -eq 'handoff-range') {
         [void](Wait-Name 'Current conversation actions: Handoff source QA')
         $draft = Wait-Name 'Conversation messages'
         if ($draft.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -cne 'Preserve this handoff draft') { throw 'Initial draft changed' }

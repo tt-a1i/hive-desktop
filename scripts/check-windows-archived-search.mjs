@@ -17,7 +17,11 @@ const resources = join(bundle, 'resources');
 const executable = join(bundle, 'hive-desktop.exe');
 const node = join(resources, 'node', 'node.exe');
 const handoff = process.argv.includes('--handoff-range');
-const seedScript = fileURLToPath(new URL(handoff ? './fixtures/windows-handoff-range-seed.mjs' : './fixtures/windows-archived-search-seed.mjs', import.meta.url));
+const reading = process.argv.includes('--reading-position');
+assert.ok(!(handoff && reading), 'Select at most one scenario');
+const seedName = reading ? './fixtures/windows-reading-position-seed.mjs' :
+  handoff ? './fixtures/windows-handoff-range-seed.mjs' : './fixtures/windows-archived-search-seed.mjs';
+const seedScript = fileURLToPath(new URL(seedName, import.meta.url));
 const uiScript = fileURLToPath(new URL('./windows-archived-search-ui.ps1', import.meta.url));
 const guard = fileURLToPath(new URL('./fixtures/windows-image-network-guard.cjs', import.meta.url));
 const output = { status: 'failed', error: null, cleanupErrors: [] };
@@ -58,28 +62,42 @@ try {
   const seed = JSON.parse(await readFile(join(root, 'archived-seed.json'), 'utf8'));
   output.fixture = { sessionId: seed.sessionId, messageId: seed.messageId, historySha256: seed.historySha256,
     agentRunsBefore: seed.agentRunsBefore, execution: seed.execution };
-  const desktop = start(executable, [], { cwd: join(root, 'project'), env, stdio: ['ignore', 'ignore', 'pipe'] });
-  desktop.child.stderr.setEncoding('utf8');
-  desktop.child.stderr.on('data', chunk => { stderr += chunk; });
-  const uiReceipt = join(root, 'archived-ui.json');
-  const ui = start('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', uiScript,
-    '-AppProcessId', String(desktop.child.pid), '-Executable', executable,
-    '-Worktree', seed.worktree, ...(handoff ? ['-Scenario', 'handoff-range', '-SessionId', seed.sessionId, '-OriginAgentId', seed.originAgentId] : []), '-OutputPath', uiReceipt, '-EvidenceDirectory', dirname(receipt)], { stdio: 'inherit' });
-  let uiExit;
-  try { uiExit = await deadline(ui.closed, 120_000, 'UIA fixture timed out'); }
-  finally { try { output.window = JSON.parse(await readFile(uiReceipt, 'utf8')); } catch {} }
-  assert.deepEqual(uiExit, [0, null], 'UIA fixture failed');
-  assert.equal(output.window?.status, 'passed');
-  assert.equal(output.window?.processesExited, true);
-  assert.deepEqual(await deadline(desktop.closed, 30_000, 'Desktop exit timed out'), [0, null]);
-  if (handoff) {
-    assert.match(stderr, /"chat.handoff.preview"/);
-    assert.doesNotMatch(stderr, /"chat.handoff.apply"|"chat.handoff.recover"/);
-  } else { assert.match(stderr, /"chat.search"/); }
-  assert.match(stderr, /"chat.open"/);
-  assert.match(stderr, /send 0 "shutdown"\s*\[hive rpc\] reply 0 ok/);
-  // Settings may read the isolated provider catalog; no login, activation or send is allowed.
-  assert.doesNotMatch(stderr, /"chat\.(?:prompt|activate)"|"pi\.auth\.(?!providers")/);
+  const phases = reading ? ['first', 'cold'] : ['single'];
+  if (reading) output.readingPhases = {};
+  for (const phase of phases) {
+    const desktop = start(executable, [], { cwd: join(root, 'project'), env, stdio: ['ignore', 'ignore', 'pipe'] });
+    let phaseStderr = '';
+    desktop.child.stderr.setEncoding('utf8');
+    desktop.child.stderr.on('data', chunk => { stderr += chunk; phaseStderr += chunk; });
+    const uiReceipt = join(root, `archived-ui-${phase}.json`);
+    const scenarioArgs = reading ? ['-Scenario', 'reading-position', '-Phase', phase,
+      '-StateDirectory', join(root, 'state'), '-SessionId', seed.sessionId, '-WorkspaceId', seed.workspaceId] :
+      handoff ? ['-Scenario', 'handoff-range', '-SessionId', seed.sessionId, '-OriginAgentId', seed.originAgentId] : [];
+    const ui = start('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', uiScript,
+      '-AppProcessId', String(desktop.child.pid), '-Executable', executable,
+      '-Worktree', seed.worktree, ...scenarioArgs, '-OutputPath', uiReceipt, '-EvidenceDirectory', dirname(receipt)], { stdio: 'inherit' });
+    let uiExit;
+    let windowReceipt;
+    try { uiExit = await deadline(ui.closed, 120_000, `UIA ${phase} timed out`); }
+    finally {
+      try {
+        windowReceipt = JSON.parse(await readFile(uiReceipt, 'utf8'));
+        if (reading) output.readingPhases[phase] = windowReceipt;
+        else output.window = windowReceipt;
+      } catch {}
+    }
+    assert.deepEqual(uiExit, [0, null], `UIA ${phase} failed`);
+    assert.equal(windowReceipt?.status, 'passed');
+    assert.equal(windowReceipt?.processesExited, true);
+    assert.deepEqual(await deadline(desktop.closed, 30_000, `Desktop ${phase} exit timed out`), [0, null]);
+    if (handoff) {
+      assert.match(phaseStderr, /"chat.handoff.preview"/);
+      assert.doesNotMatch(phaseStderr, /"chat.handoff.apply"|"chat.handoff.recover"/);
+    } else if (!reading) { assert.match(phaseStderr, /"chat.search"/); }
+    assert.match(phaseStderr, /"chat.open"/);
+    assert.match(phaseStderr, /send 0 "shutdown"\s*\[hive rpc\] reply 0 ok/);
+    assert.doesNotMatch(phaseStderr, /"chat\.(?:prompt|activate)"|"pi\.auth\.(?!providers")/);
+  }
   output.isolatedPiProviderCatalogRead = /"pi\.auth\.providers"/.test(stderr);
   await run(node, [seedScript, root, resources, 'verify'], { env, stdio: 'inherit' }, 'disk verification');
   output.disk = JSON.parse(await readFile(join(root, 'archived-disk.json'), 'utf8'));

@@ -16,6 +16,7 @@ on:
           - standard
           - project-reference
           - archived-search
+          - reading-position
           - codex-quota
           - handoff-range
           - queued-inputs
@@ -394,7 +395,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search', 'handoff-range', 'codex-quota', 'queued-inputs')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search', 'reading-position', 'handoff-range', 'codex-quota', 'queued-inputs')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -469,6 +470,13 @@ jobs:
         shell: pwsh
         run: |
           node scripts/check-windows-archived-search.mjs --bundle target/replay-extracted --receipt target/windows-archived-search.json 2>&1 | Tee-Object -FilePath target/windows-archived-search.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Replay cold reading position on Windows
+        if: ${{ inputs.replay_scenario == 'reading-position' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-archived-search.mjs --reading-position --bundle target/replay-extracted --receipt target/windows-reading-position.json 2>&1 | Tee-Object -FilePath target/windows-reading-position.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay handoff range preview without activation
         if: ${{ inputs.replay_scenario == 'handoff-range' }}

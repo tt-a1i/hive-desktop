@@ -4,6 +4,14 @@
 
 用户已取消语音输入，交付清单以本次更新为准。普通聊天输入与草稿照常使用。
 
+## Windows 交接预览来源与选区通过（2026-11-20）
+
+同一 Windows ZIP 在规范化测试路径后完成全部预览操作。UIA 读出来源会话、Agent、所选首尾正文和消息 ID、前后各一条遗漏，排除的正文没有出现在预览。取消后原历史哈希、草稿和会话数不变，Agent 运行数为零。后台确认关闭，三个记录进程均退出。验证范围为受控 ACP 来源、Pi 目标的离线预览和取消，未执行真实跨厂商投递。[Windows 实窗回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44616388325)
+
+## Windows 会话阅读位置冷开（2026-11-20）
+
+新增专用窗口回放，使用 81 条独立的离线历史消息，从中段滚动并记录阅读位置。切出再返回、退出再冷开后，分别核对保存的消息 ID、偏移、至少两条可视消息的相对位置及草稿。种子和后验校验已在本地验证；Windows 实际窗口滚动与冷恢复仍待验。
+
 ## Windows 原生归档搜索及更新回退通过（2026-11-20）
 
 归档搜索已在工作树缺失、应用冷开的 Windows 窗口通过。UIA 读出唯一结果的标题、项目路径和正文命中摘要，打开后定位到原消息，显示原草稿和只读提示，发送禁用。原历史哈希、归档身份和哨兵未变，目录未重建，Agent 运行数保持为零。后台确认关闭，三个记录进程均退出。产品包 d5476eb，夹具 d00f324。[Windows 归档回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44613571276)
@@ -68,7 +76,7 @@ Windows 的首次 CIM 进程查询曾超过 15 秒。该轮还在合成进程树
 | 4. Git、Diff 与 PR（[#43](https://github.com/tt-a1i/hive-desktop/issues/43)） | macOS 窗口验证大补丁分页、跨页暂存预览、本地推送及受控 PR；macOS 提交/推送钩子与 Windows 提交钩子在后台强杀后均完成进程回收核对。[Windows 原生作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44597605905) · [Git 远端](validation/2026-11-19-native-git-remotes.md) | Windows 当前 Git/PR 窗口、实际托管 GitHub 写入及其他中断时点仍待验；远端是否已接受操作需重新核对。 |
 | 5. 独立工作树生命周期（[#45](https://github.com/tt-a1i/hive-desktop/issues/45)） | macOS 窗口验证清理、保留分支和只读恢复；真实 Git 多进程检查覆盖并发恢复与删除收据，Windows 固定包对应并发检查通过。[工作树清理](validation/2026-11-19-worktree-removal.md) · [Windows 包内结果](https://github.com/tt-a1i/hive-desktop/actions/runs/44595481053) | Windows 创建、初始化、清理和只读冷开整条窗口流程仍待验；外部 Git 操作不受 Hive 的内部锁保护。 |
 | 6. 检查点、历史编辑、回退与分叉（[#50](https://github.com/tt-a1i/hive-desktop/issues/50)） | macOS 真实 Codex 回退与故障注入核对原身份、备份、文件、索引和冷恢复；Windows 固定包通过受控协议检查。[原生历史验证](validation/2026-11-15-native-history-live.md) · [回退恢复](acceptance-status.md#历史回退写盘后强杀后台2026-11-19) | Windows 原生选择、备份、回退和故障恢复仍待验；其他后端不能推断具有相同原生回退能力。 |
-| 7. 跨后端接续与冷队列（[#53](https://github.com/tt-a1i/hive-desktop/issues/53)） | macOS 验证真实 Codex→官方 ACP 接续及冷续聊；受控 ACP 验证选区、遗漏、撤回与冷恢复，Windows 固定包现行和旧快照两组均通过。[接续记录](validation/2026-11-15-session-handoffs.md) · [Windows 包内结果](https://github.com/tt-a1i/hive-desktop/actions/runs/44595481053) | Windows 原生窗口、其他真实厂商组合与长期运行仍待验；旧快照无法补回当时未记录的选区说明。 |
+| 7. 跨后端接续与冷队列（[#53](https://github.com/tt-a1i/hive-desktop/issues/53)） | macOS 验证真实 Codex→官方 ACP 接续及冷续聊；受控 ACP 验证选区、遗漏、撤回与冷恢复，Windows 固定包现行和旧快照两组均通过。[接续记录](validation/2026-11-15-session-handoffs.md) · [Windows 包内结果](https://github.com/tt-a1i/hive-desktop/actions/runs/44595481053)  Windows 原生预览已验证选区、来源、遗漏和取消后草稿恢复。[实窗回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44616388325) | Windows 原生实际投递链路、其他真实厂商组合与长期运行仍待验；旧快照无法补回当时未记录的选区说明。 |
 | 8. 项目脚本与工作树初始化（[#47](https://github.com/tt-a1i/hive-desktop/issues/47)） | macOS 窗口、真实 PTY 和 JSONL 验证运行中收据丢失后的读取、停止与冷开；Windows 真实 cmd/PTY 验证同类进程和清理。[脚本验收](acceptance-status.md#脚本运行期间丢失收据2026-11-19) · [初始化验收](validation/2026-11-19-worktree-setup-native.md) | 当前 Windows 从配置到初始化、重试及冷开的完整窗口链路仍待验；后台进程与收据同时丢失时不能凭空恢复运行身份。 |
 | 9. 结构化提问与附件（[#51](https://github.com/tt-a1i/hive-desktop/issues/51)） | macOS 窗口及真实 Codex/Terra 验证提问附件私有副本读取；Windows 包内受控 Codex 检查覆盖多问题、副本丢失和恢复后单次交付。[桌面验收](validation/2026-11-19-codex-question-attachments-desktop.md) · [Windows 包内结果](https://github.com/tt-a1i/hive-desktop/actions/runs/44595481053) | Windows 原生选择器与真实模型回合仍待验；提交前核验不能阻止之后文件被删除或同长度替换。 |
 | 10. 快捷键与输入法（[#44](https://github.com/tt-a1i/hive-desktop/issues/44)） | Windows 原生窗口通过美式→德式→美式布局切换及两项绑定；macOS Apple 拼音候选的 Return 与布局切换后的 Cmd+, 已验证。[Windows 作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44596595507) · [输入法范围](acceptance-status.md#windows-布局改变后的已保存快捷键2026-11-20) | Windows 输入法组合态、其他输入源及完整快捷键动作矩阵仍待验；现有结果只覆盖所列布局和按键。 |
