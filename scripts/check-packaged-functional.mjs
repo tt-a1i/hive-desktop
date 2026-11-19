@@ -33,6 +33,7 @@ const checks = ['bundled-hive-version', 'delivery-queue', 'queued-input-mutation
   ...(process.platform === 'win32' ? ['project-scripts-windows'] : []),
   // These fixtures use POSIX executable peers/hooks. The Windows PTY and
   // JSONL Git checks above run natively rather than passing via a skipped peer.
+  ...(process.platform === 'darwin' ? ['git-write-owner'] : []),
   ...(process.platform === 'win32' ? [] : ['codex-probe-owner', 'pi-vault-owner', 'queued-user-inputs-peers', 'chat-worktrees', 'git-remotes-wire', 'project-scripts-wire', 'profile-native-launch'])];
 const receipt = {pass: false, bundle, actualInference: false, checks: []};
 try {
@@ -68,7 +69,7 @@ try {
     const options = {cwd: directory, stdio: 'inherit', timeout,
       env: {...process.env, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_OFFLINE: '1',
         HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js'),
-        ...(['codex-probe-owner', 'pi-vault-owner'].includes(name) && {HIVE_DESKTOP_SHELL_OWNER: join(bundle, 'Hive Desktop.app/Contents/MacOS/hive-desktop')})}};
+        ...(process.platform === 'darwin' && ['codex-probe-owner', 'pi-vault-owner', 'git-write-owner', 'git-index-wire', 'git-remotes-wire'].includes(name) && {HIVE_DESKTOP_SHELL_OWNER: join(bundle, 'Hive Desktop.app/Contents/MacOS/hive-desktop')})}};
     // Each installer group contains independent transactions. Retain the same
     // 60s gate per group instead of combining all seven into one wall budget.
     if (name === 'desktop-update-installer') {

@@ -55,11 +55,12 @@ export interface RemoteCommandResult {stdout: string; stderr: string; code: numb
 export async function remoteCommand(executable: string, args: string[], cwd: string, timeoutMs = 15000, github = false, accepted = [0]): Promise<RemoteCommandResult> {
  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120000) throw remoteError('INVALID_ARGUMENT', 'timeoutMs must be from 100 to 120000');
  const env = remoteEnvironment(github), owned = process.platform === 'win32' ? new OwnedCliProcess(executable, args, {cwd, env}) : undefined;
- const child = owned?.child ?? spawn(executable, args, {cwd, env, detached: true, windowsHide: true, stdio: 'pipe'});
+ const owner = !github && process.platform === 'darwin' ? process.env.HIVE_DESKTOP_SHELL_OWNER : undefined;
+ const child = owned?.child ?? spawn(owner ?? executable, owner ? ['--hive-owned-cli', String(process.pid), executable, ...args] : args, {cwd, env, detached: true, windowsHide: true, stdio: 'pipe'});
  let timedOut = false, exceeded = false, fault: NodeJS.ErrnoException | undefined, bytes = 0; const out: Buffer[] = [], err: Buffer[] = [];
  let escalation: ReturnType<typeof setTimeout> | undefined;
- const kill = (signal: NodeJS.Signals) => {if (owned) {void owned.close(0).catch(() => {}); return;} if (child.pid) {try {process.kill(-child.pid, signal);} catch {child.kill(signal);}}};
- const terminate = () => {kill('SIGTERM'); escalation ??= setTimeout(() => kill('SIGKILL'), 250);};
+ const kill = (signal: NodeJS.Signals) => {if (owned) {void owned.close(0).catch(() => {}); return;} if (owner) {child.kill('SIGTERM'); return;} if (child.pid) {try {process.kill(-child.pid, signal);} catch {child.kill(signal);}}};
+ const terminate = () => {kill('SIGTERM'); if (!owner) escalation ??= setTimeout(() => kill('SIGKILL'), 250);};
  const collect = (target: Buffer[], data: Buffer) => {const left = 8 * 1024 * 1024 - bytes; bytes += data.length; if (left > 0) target.push(data.subarray(0, left)); if (bytes > 8 * 1024 * 1024 && !exceeded) {exceeded = true; terminate();}};
  child.stdout.on('data', (data: Buffer) => collect(out, data)); child.stderr.on('data', (data: Buffer) => collect(err, data));
  child.on('error', error => {fault = error;}); child.stdin.on('error', error => {if ((error as NodeJS.ErrnoException).code !== 'EPIPE') {fault = error; terminate();}}); child.stdin.end();
@@ -67,7 +68,7 @@ export async function remoteCommand(executable: string, args: string[], cwd: str
  const code = await new Promise<number | null>(resolve => child.once('close', resolve));
  clearTimeout(timer); clearTimeout(escalation); if (timedOut || exceeded) kill('SIGKILL'); if (owned) await owned.close(0);
  const stderr = redactRemoteText(Buffer.concat(err).toString('utf8')).slice(0, 4000);
- if (timedOut || exceeded || fault || code === null || !accepted.includes(code)) throw remoteError(timedOut ? 'REMOTE_TIMEOUT' : exceeded ? 'OUTPUT_LIMIT' : fault?.code === 'ENOENT' ? 'CLI_NOT_FOUND' : 'REMOTE_COMMAND_FAILED', `Remote command ${timedOut ? 'timed out' : 'failed'}${stderr ? ': ' + stderr : ''}`);
+ if (timedOut || exceeded || fault || code === null || !accepted.includes(code)) throw remoteError(timedOut ? 'REMOTE_TIMEOUT' : exceeded ? 'OUTPUT_LIMIT' : (fault?.code === 'ENOENT' || (owner && stderr.startsWith('Hive probe supervision failed: No such file or directory (os error 2)'))) ? 'CLI_NOT_FOUND' : 'REMOTE_COMMAND_FAILED', `Remote command ${timedOut ? 'timed out' : 'failed'}${stderr ? ': ' + stderr : ''}`);
  return {stdout: Buffer.concat(out).toString('utf8'), stderr, code};
 }
 export const gitRemoteArgs = (args: string[]): string[] => ['--no-pager', '-c', 'core.fsmonitor=false', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', ...args];

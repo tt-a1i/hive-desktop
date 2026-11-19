@@ -39,20 +39,23 @@ async function git(workspace:GitWorkspaceVersion,args:string[],options:GitReadOp
     let timedOut=false,limitExceeded=false,outputBytes=0,startFault:NodeJS.ErrnoException|undefined;
     let timer:ReturnType<typeof setTimeout>|undefined,escalation:ReturnType<typeof setTimeout>|undefined;
     const stdout:Buffer[]=[],stderr:Buffer[]=[];
-    const child=spawn(executable,['--no-pager','-c','core.fsmonitor=false',...(preserveHooks?[]:['-c',`core.hooksPath=${NULL_FILE}`]),'-c','maintenance.auto=false','-c','gc.auto=0',...(indexPath?['-c','core.splitIndex=false','-c','splitIndex.sharedIndexExpire=never']:[]),...args],{cwd:workspace.repositoryRoot,env:environment(indexPath),detached:process.platform!=='win32',windowsHide:true,stdio:'pipe'});
+    const gitArgs=['--no-pager','-c','core.fsmonitor=false',...(preserveHooks?[]:['-c',`core.hooksPath=${NULL_FILE}`]),'-c','maintenance.auto=false','-c','gc.auto=0',...(indexPath?['-c','core.splitIndex=false','-c','splitIndex.sharedIndexExpire=never']:[]),...args];
+    const owner=process.platform==='darwin'?process.env.HIVE_DESKTOP_SHELL_OWNER:undefined;
+    const child=spawn(owner??executable,owner?['--hive-owned-cli',String(process.pid),executable,...gitArgs]:gitArgs,{cwd:workspace.repositoryRoot,env:environment(indexPath),detached:process.platform!=='win32',windowsHide:true,stdio:'pipe'});
     const stop=(signal:NodeJS.Signals)=>{
       if(!child.pid)return;
+      if(owner){child.kill('SIGTERM');return;}
       if(process.platform==='win32'){execFile('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true},()=>{});return;}
       try{process.kill(-child.pid,signal);}catch{child.kill(signal);}
     };
-    const terminate=()=>{stop('SIGTERM');clearTimeout(escalation);escalation=setTimeout(()=>stop('SIGKILL'),250);escalation.unref();};
+    const terminate=()=>{stop('SIGTERM');if(!owner){clearTimeout(escalation);escalation=setTimeout(()=>stop('SIGKILL'),250);escalation.unref();}};
     const output=(parts:Buffer[],data:Buffer)=>{const remaining=OUTPUT_LIMIT-outputBytes;outputBytes+=data.length;if(remaining>0)parts.push(data.subarray(0,remaining));if(outputBytes>OUTPUT_LIMIT&&!limitExceeded){limitExceeded=true;terminate();}};
     child.stdout.on('data',(data:Buffer)=>output(stdout,data));child.stderr.on('data',(data:Buffer)=>output(stderr,data));child.once('error',fault=>{startFault=fault;});
     child.once('close',code=>{
       clearTimeout(timer);clearTimeout(escalation);
       if(!startFault&&!timedOut&&!limitExceeded&&code!==null&&accepted.includes(code)){resolveResult(Buffer.concat(stdout));return;}
       const detail=Buffer.concat(stderr).toString('utf8').slice(0,1500).replace(/[\x00-\x08\x0b-\x1f\x7f]/g,'');
-      const kind=timedOut?'GIT_TIMEOUT':limitExceeded?'OUTPUT_LIMIT':startFault?.code==='ENOENT'?'GIT_NOT_FOUND':'GIT_OPERATION_FAILED';
+      const kind=timedOut?'GIT_TIMEOUT':limitExceeded?'OUTPUT_LIMIT':(startFault?.code==='ENOENT'||(owner&&detail.startsWith('Hive probe supervision failed: No such file or directory (os error 2)')))?'GIT_NOT_FOUND':'GIT_OPERATION_FAILED';
       reject(error(kind,`Git operation ${timedOut?'timed out':'failed'}${detail?`: ${detail}`:''}`));
     });
     timer=setTimeout(()=>{timedOut=true;terminate();},timeout);timer.unref();
@@ -132,7 +135,7 @@ export function previewGitUnstage(projectRoot:string,paths:readonly string[],opt
 async function mutate(operation:'stage'|'unstage',projectRoot:string,request:GitIndexRequest,options:GitReadOptions):Promise<GitIndexResult>{
   if(typeof request.expectedVersion!=='string'||!/^[a-f0-9]{64}$/.test(request.expectedVersion))throw error('INVALID_VERSION','Refresh the preview before changing the index');
   const workspace=await getGitWorkspaceVersion(projectRoot,options);let lock;const lockPath=workspace.indexPath+'.lock';
-  try{lock=await open(lockPath,'wx',0o666);}catch(fault){if((fault as NodeJS.ErrnoException).code==='EEXIST')throw error('INDEX_BUSY','Another Git operation holds index.lock; wait for it to finish');throw fault;}
+  try{lock=await open(lockPath,'wx',0o666);}catch(fault){if((fault as NodeJS.ErrnoException).code==='EEXIST')throw error('INDEX_BUSY','Git index.lock exists; wait for any Git operation to finish. If none is running, inspect the repository and lock before removing it');throw fault;}
   let directory:string|undefined,installed=false;
   const owner=await lock.stat();
   const ownsLock=async()=>{try{const current=await lstat(lockPath);return current.dev===owner.dev&&current.ino===owner.ino;}catch(fault){if((fault as NodeJS.ErrnoException).code==='ENOENT')return false;throw fault;}};
@@ -211,7 +214,7 @@ export async function commitGitIndex(projectRoot:string,request:GitCommitRequest
   if(typeof request.expectedVersion!=='string'||!/^[a-f0-9]{64}$/.test(request.expectedVersion))throw error('INVALID_VERSION','Refresh the complete staged preview before committing');
   if(typeof request.message!=='string'||!request.message.trim()||request.message.includes('\0')||Buffer.byteLength(request.message)>64*1024)throw error('INVALID_MESSAGE','Supply a nonempty commit message within 64 KiB');
   const workspace=await getGitWorkspaceVersion(projectRoot,options);const lockPath=workspace.indexPath+'.lock';let lock;
-  try{lock=await open(lockPath,'wx',0o666);}catch(fault){if((fault as NodeJS.ErrnoException).code==='EEXIST')throw error('INDEX_BUSY','Another Git operation holds index.lock; wait for it to finish');throw fault;}
+  try{lock=await open(lockPath,'wx',0o666);}catch(fault){if((fault as NodeJS.ErrnoException).code==='EEXIST')throw error('INDEX_BUSY','Git index.lock exists; wait for any Git operation to finish. If none is running, inspect the repository and lock before removing it');throw fault;}
   const owner=await lock.stat();const ownsLock=async()=>{try{const info=await lstat(lockPath);return info.dev===owner.dev&&info.ino===owner.ino;}catch(fault){if((fault as NodeJS.ErrnoException).code==='ENOENT')return false;throw fault;}};
   let directory:string|undefined,installed=false,commitOid:string|null=null,committed=false,outcome:GitCommitResult|undefined;
   const partial=(code:string,message:string,indexUpdated=false):GitCommitResult=>(outcome={ok:false,committed:true,applied:true,commitOid,indexUpdated,warnings:['The commit exists. Do not automatically retry or reset HEAD. Refresh and inspect the repository.'],error:{code,message}});
