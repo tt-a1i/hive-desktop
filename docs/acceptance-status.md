@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## HTML 预览关闭与正常退出（2026-11-19）
+
+macOS 签名 ZIP `d315c3f` 通过原生窗口前后对照。预览聚焦时 ⌘Q 可确认或取消，取消保留预览交互，确认后后台正常退出，冷启动读回草稿。关闭文件详情后，迟到的快照回复不再打开窗口。包内九项相关回归以及严格验签、真实 PTY、Hive HTTP/SQLite 和退出冒烟均通过。Windows 已通过 MSVC 交叉检查，原生安装仍待验收。[退出及快照证据](validation/2026-11-19-html-artifact-preview.md#从-html-预览退出及关闭后收到快照)
+
 ## 停止时保留待发消息与原生搜索重连（2026-11-19）
 
 macOS 签名 ZIP `3bd07e3` 的原生窗口通过跨项目查找、分叉消息定位、断线清理和两次重连。真实 Hive HTTP、SQLite、队列文件和受控 Codex 协议对端验证了停止时保留原待发消息，显式继续后只投递一次。解包通过 12 项相关回归、严格验签和退出冒烟。Windows x86_64 MSVC 交叉检查通过，原生安装与真实 1Password 授权仍待验收。[队列对照](validation/2026-11-14-functional-input-search-references.md#追加被拒绝时停止并继续) · [原生搜索](validation/2026-11-19-unicode-history-search.md#搜索断线与重连的原生窗口对照)
