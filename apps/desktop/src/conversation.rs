@@ -188,6 +188,7 @@ impl HiveApp {
                 pending_user_inputs,
                 completed_report_id,
                 delivery_failure,
+                handoff_delivery,
                 ..
             } => {
                 if self.session.as_ref().is_some_and(|s| s.id == id) {
@@ -211,6 +212,11 @@ impl HiveApp {
                         self.agent_diagnostic = None;
                     }
                     self.set_delivery_failure(delivery_failure.clone());
+                    if let Some(delivery) = handoff_delivery {
+                        if self.current_history_access().is_some_and(|access| access.handoff_snapshot.is_some()) {
+                            self.history_navigation.access.handoff_delivery = Some(delivery.clone());
+                        }
+                    }
                     if let Some(id) = completed_report_id {
                         self.completed_deliveries.insert(id.clone());
                     }

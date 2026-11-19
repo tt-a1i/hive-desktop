@@ -16,8 +16,17 @@ try {
   const nested = join(repo, 'nested'); await mkdir(nested);
   await writeFile(join(nested, '中文 space.txt'), 'hello');
   for (let i = 0; i < 105; i++) await writeFile(join(nested, `file-${String(i).padStart(3, '0')}.txt`), 'x');
+  const replacedDirectory = join(repo, 'directory-replacement');
+  await mkdir(replacedDirectory);
+  await writeFile(join(replacedDirectory, 'tracked.txt'), 'old');
+  execFileSync('git', ['-C', repo, 'add', 'directory-replacement/tracked.txt']);
+  await rm(replacedDirectory, { recursive: true });
+  await writeFile(replacedDirectory, 'new');
   const all = await searchProjectFiles(repo, '');
   assert(!all.paths.includes('ignored.txt'));
+  assert(all.paths.includes('directory-replacement'));
+  assert(all.paths.includes('nested/file-000.txt'));
+  assert.deepEqual((await searchProjectFiles(repo, 'directory-replacement')).paths, ['directory-replacement']);
   assert((await searchProjectFiles(repo, 'tracked ignored')).paths.includes('tracked ignored.txt'));
   const page = await searchProjectFiles(nested, 'file-');
   assert.equal(page.total, 105); assert.equal(page.paths.length, 100);

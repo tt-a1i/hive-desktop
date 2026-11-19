@@ -25,6 +25,7 @@ const address=server.address();assert.ok(address&&typeof address==='object');
 type Runtime=Awaited<ReturnType<typeof createDesktopRuntime>>;
 let runtime:Runtime|undefined;
 const results:unknown[]=[];
+const coldEvents: unknown[] = [];
 const git=(cwd:string,...args:string[])=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgSign=false',...args],{cwd,encoding:'utf8'}).trim();
 async function setup(name:string,backend:'acp'|'pi',mode='normal'){
  const folder=join(root,name),repo=join(folder,'repo'),data=join(folder,'state'),peer=join(folder,'peer'),piDir=join(folder,'target-pi');
@@ -73,20 +74,38 @@ async function protocol(peer:string){return (await readFile(join(peer,'protocol.
 async function closeRuntime(){await runtime?.close();runtime=undefined;}
 try{
  const test=await setup('queue-retract-transfer','acp');
+ const editedText = 'Second queued input edited after reopening';
+ const attachmentPath = join(test.folder, 'queued-notes.txt');
+ await writeFile(attachmentPath, 'Only the queued delivery body should change.');
+ const attachment = await runtime!.chats.attachments.add(test.ws.id, attachmentPath);
  const enqueue=DeliveryQueue.prototype.enqueue;
  DeliveryQueue.prototype.enqueue=async function(text:any,trigger:any,presentation:any,images:any){if(presentation?.origin==='user')await this.pause();return enqueue.call(this,text,trigger,presentation,images);};
  try{
   await runtime!.chats.prompt(test.id,'First queued input to retract');
-  await runtime!.chats.prompt(test.id,'Second queued input should inherit context');
+  await runtime!.chats.prompt(test.id,'Second queued input should inherit context',[attachment.id]);
   let pending=spool(test.data,test.id);assert.equal(pending.length,2);assert.ok(pending[0]!.contextRef);assert.equal(pending[1]!.contextRef,undefined);
   await assert.rejects(runtime!.chats.mutateQueuedInput(test.id,pending[0]!.id,'First queued input to retract','/help'),/ordinary nonempty text/);
   assert.equal(spool(test.data,test.id)[0]!.presentation!.displayText,'First queued input to retract');
+  await stopRun(test.ws.id,test.worker.id);await closeRuntime();
+  runtime=await createDesktopRuntime(test.data,event=>coldEvents.push(event),{executableEnvironment:{}});
+  const protocolBeforeEdit=await protocol(test.peer);
+  const openedCold=await runtime.chats.open(test.id);
+  assert.equal(openedCold.passive,true);
+  assert.deepEqual(openedCold.pendingUserInputs.map(input=>[input.deliveryId,input.editable]),pending.map(item=>[item.id,true]));
+  await runtime.chats.mutateQueuedInput(test.id,pending[1]!.id,'Second queued input should inherit context',editedText);
+  await assert.rejects(runtime.chats.mutateQueuedInput(test.id,pending[1]!.id,'Second queued input should inherit context'),/changed; reopen/);
+  assert.equal(spool(test.data,test.id)[1]!.presentation!.displayText,editedText);
+  assert.deepEqual(spool(test.data,test.id)[1]!.presentation!.attachments,pending[1]!.presentation!.attachments);
+  assert.ok(pending[1]!.presentation!.attachments?.some(value=>value.id===attachment.id));
+  assert.deepEqual(await protocol(test.peer),protocolBeforeEdit);
   const spoolFile=join(test.data,'chats','deliveries',createHash('sha256').update(test.id).digest('hex')+'.json');
   const originalRename=fs.renameSync;let spoolWrites=0;
   fs.renameSync=(a,b)=>{if(String(b)===spoolFile&&++spoolWrites===2)throw Error('Injected context-transfer spool publication failure');return originalRename(a,b);};syncBuiltinESMExports();
   try{await runtime!.chats.mutateQueuedInput(test.id,pending[0]!.id,'First queued input to retract');}finally{fs.renameSync=originalRename;syncBuiltinESMExports();}
   assert.equal(spoolWrites,2);assert.equal(spool(test.data,test.id).length,1);assert.equal(spool(test.data,test.id)[0]!.contextRef,undefined);
   const transferState=(runtime!.chats as any).handoffDeliveries.get(test.id);assert.equal(transferState.status,'reserved');assert.equal(transferState.deliveryId,spool(test.data,test.id)[0]!.id);
+  assert.ok(coldEvents.some((event:any)=>event.type==='state'&&event.sessionId===test.id&&event.pendingUserInputs?.length===1&&event.pendingUserInputs[0].text===editedText&&event.handoffDelivery?.deliveryId===pending[1]!.id));
+  assert.deepEqual(await protocol(test.peer),protocolBeforeEdit);
   await stopRun(test.ws.id,test.worker.id);await closeRuntime();runtime=await createDesktopRuntime(test.data,()=>{},{executableEnvironment:{}});
   const passiveProtocol=await protocol(test.peer);const passive=await runtime.chats.open(test.id) as any;assert.equal(passive.passive,true);assert.deepEqual(await protocol(test.peer),passiveProtocol);
 
@@ -100,12 +119,12 @@ try{
  const native=JSON.parse(await readFile(join(test.peer,opened.acpSessionId+'.json'),'utf8'));
  const inputs=native.history.filter((x:any)=>x.kind==='user_message_chunk').map((x:any)=>x.text);
  assert.equal(inputs.length,2);
- assert.ok(inputs[0].includes('Second queued input should inherit context'));
+ assert.ok(inputs[0].includes(editedText));
  assert.ok(inputs[0].includes('[Historical context — recorded material only]'));
  assert.ok(inputs[1].includes('Third normal input must not repeat historical context'));
  assert.ok(!inputs[1].includes('[Historical context — recorded material only]'));
  assert.equal(modelRequests,0);
- await writeFile(join(root,'review-repro.json'),JSON.stringify({fixed:true,firstRemainingGotHistoricalContext:true,contextOnlyOnce:true,slashEditRejected:true,rebindSpoolWriteFailureColdRepaired:true,coldPassiveNoCli:true,inputs},null,2));
+ await writeFile(join(root,'review-repro.json'),JSON.stringify({fixed:true,firstRemainingGotHistoricalContext:true,contextOnlyOnce:true,slashEditRejected:true,rebindSpoolWriteFailureColdRepaired:true,coldPassiveEditAndWithdrawNoCli:true,staleTextRejected:true,attachmentPreserved:true,inputs},null,2));
  console.log('FIXED_HANDOFF_CONTEXT_TRANSFER_SPOOL_COLD '+root);
  await stopRun(test.ws.id,test.worker.id);await closeRuntime();
 }catch(error){await writeFile(join(root,'failure.json'),JSON.stringify({message:String(error),stack:error instanceof Error?error.stack:undefined,results},null,2));throw error;}

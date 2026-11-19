@@ -83,7 +83,8 @@ export async function searchProjectFiles(projectRoot: string, query: string, off
       }
       if (!skip && (await stat(parent)).isFile()) matches.push(path);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
     }
   }
   matches.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);

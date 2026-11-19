@@ -360,6 +360,7 @@ pub enum PiEvent {
         pending_user_inputs: Vec<PendingUserInput>,
         completed_report_id: Option<String>,
         delivery_failure: Option<DeliveryFailure>,
+        handoff_delivery: Option<Value>,
     },
     #[serde(rename_all = "camelCase")]
     AssistantDelta {

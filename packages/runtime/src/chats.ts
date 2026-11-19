@@ -1,7 +1,7 @@
 import { AcpHistory } from './agents/acp-history.js';
 import { HandoffRuntime } from './handoff-runtime.js';
 import { HandoffError } from './handoff-operation-journal.js';
-import { HandoffDeliveries, assertHandoffFirstInput } from './handoff-delivery.js';
+import { HandoffDeliveries, assertHandoffFirstInput, type HandoffDelivery } from './handoff-delivery.js';
 import { handoffNativeCompletedIds } from './handoff-native-receipts.js';
 import { handoffMessage } from './handoff-message.js';
 import { desktopHistoryImage } from './desktop-history.js';
@@ -63,7 +63,7 @@ interface LiveChat {
   executionPath: string;
   failure?: Error; lastErrorMessage?: string; reasoningFailure?: Error; modeChanging?: boolean; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
 }
-type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string };
+type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string; handoffDelivery?: HandoffDelivery };
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
 export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & { sequence: number };
 const toolGuidance = '\nDesktop integration: use the registered team tool for every Hive command, passing CLI arguments as an array. Use stdin only when the command explicitly supports --stdin; team send takes task text as a positional argument. Do not run team through bash: this process serves multiple agents and bash has no agent-specific Hive credentials. Omit --cli when spawning to inherit the current backend and model. A normal assistant reply does not report or settle a dispatch. Follow Hive seen/report/accept rules.';
@@ -1067,7 +1067,7 @@ export class Chats implements StructuredSessionPort {
         onError: error => { if (!chat?.aborted) this.recordDeliveryFailure(record.id, queue, chat?.failure ?? error); },
         onState: (busy, completedReportId) => {
           if (this.mutatingQueues.has(record.id)) return;
-          this.event(record.id, { type: 'state', sessionId: record.id, busy, pending: queue.pendingCount, pendingReports: queue.pendingReports, pendingUserInputs: queue.pendingUserInputs, deliveryFailure:this.deliveryFailure(record.id,queue), ...(completedReportId && { completedReportId }) });
+          this.publishQueueState(record.id, queue, completedReportId);
           if (wasBusy && !busy) this.event(record.id, { type: 'settled', sessionId: record.id, aborted: chat?.aborted ?? false });
           wasBusy = busy;
         },
@@ -1084,6 +1084,12 @@ export class Chats implements StructuredSessionPort {
   private deliveryFailure(id:string,queue:DeliveryQueue) {
     const failure=this.index.peek(id)?.lastDeliveryFailure;
     return failure?.deliveryId===queue.headId ? failure : undefined;
+  }
+  private publishQueueState(id: string, queue: DeliveryQueue, completedReportId?: string): void {
+    const handoffDelivery = this.index.peek(id)?.handoff ? this.handoffDeliveries.get(id) : undefined;
+    this.event(id, {type: 'state', sessionId: id, busy: queue.busy, pending: queue.pendingCount,
+      pendingReports: queue.pendingReports, pendingUserInputs: queue.pendingUserInputs, deliveryFailure: this.deliveryFailure(id, queue),
+      ...(completedReportId && {completedReportId}), ...(handoffDelivery && {handoffDelivery})});
   }
   private recordDeliveryFailure(id:string,queue:DeliveryQueue,error:Error):void {
     const record=this.index.peek(id);const deliveryId=queue.headId;
@@ -1119,7 +1125,7 @@ export class Chats implements StructuredSessionPort {
     return readClaudeSessionMessages(record.nativeclaudeSessionId, directory, nativeProfileLaunch(profile).env, this.closeAbort.signal);
   }
   /** Disk projection only: neither an SDK agent session nor a vendor process is opened. */
-  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError) {
+  private async readOnlySnapshot(record: ChatRecord, identityError: SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError, allowHandoffQueueEdits = false) {
     const workspace = await this.workspace(record.workspaceId);
     let history: unknown[] = [], historyMessageIds: string[] = [];
     let historyWarning: string | undefined;
@@ -1172,7 +1178,8 @@ export class Chats implements StructuredSessionPort {
     const sourceAgent = record.originAgentId ?? record.agentId;
     if (sourceAgent) history = history.map(message => restoreHistoricalReport(message,
       (dispatchId, payload) => this.hive.findReportPresentation(record.workspaceId, sourceAgent, dispatchId, payload)));
-    const queue = new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
+    const queue = allowHandoffQueueEdits && this.offlineHandoffEditable(record) ? this.offlineHandoffQueue(record)
+      : new DeliveryQueue({directory: this.queueDir, sessionId: record.id, startPaused: true,
       completedIds: () => [], userInputMutationReason: () => 'read-only', onError: () => {}, execute: async () => { throw identityError; }});
     return {...record, ...(record.backend==='acp'&&{capabilities:{...acpCapabilities(undefined,!!record.sessionFile),...(record.capabilities&&{lastObserved:record.capabilities})}}), executionPath: record.execution?.path ?? workspace.path, history:history.map((message,index)=>handoffMessage(record.backend,message,historyMessageIds[index])), historyMessageIds,
       readOnly: true, identityError: {code: identityError.code, message: identityError.message},
@@ -1243,6 +1250,11 @@ export class Chats implements StructuredSessionPort {
       return {...item,contextRef:{operationId:record.handoff.operationId,snapshotHash:record.handoff.snapshotHash}};
     }
     return item;
+  }
+  private offlineHandoffEditable(record: ChatRecord): boolean {
+    const state = this.handoffDeliveries.get(record.id);
+    return !!record.handoff && !record.archived && !this.live.has(record.id) && !this.opening.has(record.id)
+      && (state?.status === 'pending' || state?.status === 'reserved');
   }
   private offlineHandoffQueue(record:ChatRecord){
     return new DeliveryQueue({directory:this.queueDir,sessionId:record.id,startPaused:true,completedIds:()=>[],prepare:item=>this.prepareHandoffItem(record,item),
@@ -1352,8 +1364,9 @@ export class Chats implements StructuredSessionPort {
     if(record.handoff&&!this.live.has(id)){
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.reconcileHandoffOffline(record);
-      const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'));
-      return {...snapshot,readOnly:false,passive:true,handoffSnapshot:await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId),handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}};
+      const handoffSnapshot=await this.handoffs!.getSnapshot(record.workspaceId,record.handoff.snapshotId);
+      const snapshot=await this.readOnlySnapshot(record,new SessionIdentityError('PASSIVE_HANDOFF','Handoff opened without starting an Agent'),true);
+      return {...snapshot,readOnly:false,passive:true,handoffSnapshot,handoffDelivery:this.handoffDeliveries.get(id)??{status:'pending'}};
     }
     if(record.backend==='acp'&&!this.live.has(id)){
       await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
@@ -1627,11 +1640,26 @@ export class Chats implements StructuredSessionPort {
     const record = this.index.get(id);
     this.assertWorkspaceAvailable(record.workspaceId);
     return this.withWorkspace(record.workspaceId, async () => {
-      const chat = await this.require(id);
-      if (this.closing || chat.failure || chat.cleanup || chat.reasoningFailure || this.deliveryFailure(id, chat.queue)) throw new Error('Conversation cannot change queued input in its current state');
+      let record = this.index.get(id);
+      let chat: LiveChat | undefined;
+      let queue: DeliveryQueue;
+      if (record.handoff && !this.live.has(id) && this.handoffDeliveries.get(id)?.status !== 'consumed') {
+        record = await this.runnableIdentity(record);
+        await this.initializationReady(record);
+        await this.executionDirectory(record.workspaceId, id);
+        await this.reconcileHandoffOffline(record);
+        record = this.index.get(id);
+        if (!this.offlineHandoffEditable(record)) throw new Error('Handoff queue state changed; reopen the conversation');
+        queue = this.offlineHandoffQueue(record);
+      } else {
+        chat = await this.require(id);
+        queue = chat.queue;
+        record = this.index.get(id);
+      }
+      if (this.closing || chat?.failure || chat?.cleanup || chat?.reasoningFailure || this.deliveryFailure(id, queue)) throw new Error('Conversation cannot change queued input in its current state');
       this.assertWorkspaceAvailable(record.workspaceId);
-      const item = chat.queue.pending.find(item => item.id === deliveryId);
-      const visible = chat.queue.pendingUserInputs.find(item => item.deliveryId === deliveryId);
+      const item = queue.pending.find(item => item.id === deliveryId);
+      const visible = queue.pendingUserInputs.find(item => item.deliveryId === deliveryId);
       if (!item || !visible?.editable) throw new Error('Only unstarted user input can be changed');
       if (item.presentation!.displayText !== expectedText) throw new Error('Queued input changed; reopen the editor');
       if (text !== undefined && !(text as string).trim() && !item.presentation!.attachments?.length) throw new Error('Message cannot be empty');
@@ -1643,8 +1671,8 @@ export class Chats implements StructuredSessionPort {
       this.mutatingQueues.add(id);
       try {
         const persist = () => {
-          if (replacement) chat.queue.editPendingUserInput(deliveryId, replacement);
-          else chat.queue.cancelPendingUserInput(deliveryId, { retain: sequence !== undefined });
+          if (replacement) queue.editPendingUserInput(deliveryId, replacement);
+          else queue.cancelPendingUserInput(deliveryId, { retain: sequence !== undefined });
         };
         if (sequence !== undefined) {
           this.hive.mutateUserInput(record.workspaceId, (record.agentId ?? record.originAgentId)!, sequence,
@@ -1652,23 +1680,31 @@ export class Chats implements StructuredSessionPort {
             replacement ? replacement.presentation!.sourceText ?? replacement.presentation!.displayText : null, persist);
           // SQL COMMIT succeeded. A canceled source remains a non-executable tombstone
           // if final spool cleanup fails, and cold reconciliation safely removes it.
-          if (!replacement) chat.queue.reconcilePendingUserInput(deliveryId, null);
+          if (!replacement) queue.reconcilePendingUserInput(deliveryId, null);
         } else persist();
       } catch (error) {
         // COMMIT can fail after spool persistence. Restore from SQLite before another
         // turn can start; a failed restore keeps the queue paused and fails closed.
-        const paused = chat.queue.pause();
-        try { this.reconcileUserInputs(record, chat.queue); }
-        catch (recoveryError) { this.failLive(id, chat, recoveryError instanceof Error ? recoveryError : new Error(String(recoveryError))); }
+        const paused = queue.pause();
+        try { this.reconcileUserInputs(record, queue); }
+        catch (recoveryError) {
+          const failure = recoveryError instanceof Error ? recoveryError : new Error(String(recoveryError));
+          if (chat) this.failLive(id, chat, failure);
+          else this.recordDeliveryFailure(id, queue, failure);
+        }
         void paused.catch(() => {});
         throw error;
       } finally {
+        if (record.handoff) {
+          try { this.reconcileHandoffQueue(record, queue); }
+          catch (error) {
+            void queue.pause();
+            this.recordDeliveryFailure(id, queue, error instanceof Error ? error : new Error(String(error)));
+          }
+        }
         this.mutatingQueues.delete(id);
-        chat.queue.notifyPendingUserInputs();
-      }
-      if(record.handoff){
-        try{this.reconcileHandoffQueue(this.index.get(id),chat.queue);}
-        catch(error){void chat.queue.pause();this.recordDeliveryFailure(id,chat.queue,error instanceof Error?error:new Error(String(error)));}
+        if (chat) queue.notifyPendingUserInputs();
+        else this.publishQueueState(id, queue);
       }
       return { ok: true };
     });
@@ -1798,13 +1834,14 @@ export class Chats implements StructuredSessionPort {
   }
   async resume(id: string) {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
-    const record=this.index.get(id);
-    if(record.handoff){
-      await this.reconcileHandoffOffline(record);
-      const state=this.handoffDeliveries.get(id);
-      if(state?.status!=='consumed'&&state?.status!=='reserved')throw new SessionIdentityError('HANDOFF_INPUT_REQUIRED','Enter an ordinary text input first; uncertain context is never automatically retried');
-    }
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
+      const record = this.index.get(id);
+      if (record.handoff) {
+        await this.reconcileHandoffOffline(record);
+        const state = this.handoffDeliveries.get(id);
+        if (state?.status !== 'consumed' && state?.status !== 'reserved')
+          throw new SessionIdentityError('HANDOFF_INPUT_REQUIRED', 'Enter an ordinary text input first; uncertain context is never automatically retried');
+      }
       this.handoffStarting.add(id);
       try{
       await this.activationAvailable(id);
