@@ -47,10 +47,54 @@ function In-Window($Control) {
 function Invoke-Control($Control) {
     if (-not (In-Window $Control)) {
         $Control.SetFocus()
-        Start-Sleep -Milliseconds 300
+        $deadline = [DateTime]::UtcNow.AddSeconds(8)
+        do {
+            if (In-Window $Control) { break }
+            Start-Sleep -Milliseconds 120
+        } while ([DateTime]::UtcNow -lt $deadline)
     }
     if (-not (In-Window $Control)) { throw "Control outside window: $($Control.Current.Name)" }
     $Control.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
+function Wait-ExactValue([string]$Name, [string]$Expected, [int]$Timeout = 15) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)
+    $last = '<unavailable>'
+    do {
+        $items = @(Find-Name $Name)
+        if ($items.Count -eq 1) {
+            $pattern = $null
+            if ($items[0].TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+                $last = $pattern.Current.Value -replace "`r`n", "`n"
+                if ($last -ceq $Expected) { return $items[0] }
+            }
+        }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "UIA value for '$Name' did not reach expected text; last value: '$last'."
+}
+function Wait-VisibleOriginal([string]$Name, [int]$Timeout = 25) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)
+    $count = 0
+    do {
+        $items = @(Find-Name $Name)
+        $count = $items.Count
+        if ($count -eq 1 -and (In-Window $items[0])) { return $items[0] }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Unique original message was not visible in the window; matching controls: $count."
+}
+function Wait-DisabledButton([string]$Name, [int]$Timeout = 15) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)
+    $count = 0
+    do {
+        $items = @(Find-Name $Name | Where-Object {
+            $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button
+        })
+        $count = $items.Count
+        if ($count -eq 1 -and -not $items[0].Current.IsEnabled) { return }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Unique disabled button '$Name' unavailable; matching controls: $count."
 }
 function Save-Window([string]$Name) {
     $rect = New-Object ArchivedFixtureWindow+Rect
@@ -155,23 +199,21 @@ public static class ArchivedFixtureWindow {
         Invoke-Control (Wait-Name 'Archive conversation')
         $search = Wait-Name 'Search archived threads…'
         $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('Cerulean Recovery 8DA7')
-        $query = $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
-        if ($query -cne 'Cerulean Recovery 8DA7') { throw 'Archive search input changed' }
+        [void](Wait-ExactValue 'Search archived threads…' 'Cerulean Recovery 8DA7')
         $deadline = [DateTime]::UtcNow.AddSeconds(25)
         $matchedGroup = $null
         $open = @()
         do {
             $groups = @(All-Controls | Where-Object {
                 $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Group -and
-                $_.Current.Name.StartsWith('Independent history QA · Archived worktree QA · ', [System.StringComparison]::Ordinal) -and
+                ([string]$_.Current.Name).StartsWith('Independent history QA · Archived worktree QA · ', [System.StringComparison]::Ordinal) -and
                 $_.Current.Name.Contains('Cerulean Recovery 8DA7')
             })
-            if ($groups.Count -gt 1) { throw 'Archived search exposed duplicate matching result groups' }
             if ($groups.Count -eq 1) {
                 $actions = $groups[0].FindAll([System.Windows.Automation.TreeScope]::Descendants,
                     [System.Windows.Automation.Condition]::TrueCondition)
                 $open = @($actions | Where-Object {
-                    $_.Current.Name.StartsWith('Open conversation: Independent history QA · Archived worktree QA · ', [System.StringComparison]::Ordinal) -and
+                    ([string]$_.Current.Name).StartsWith('Open conversation: Independent history QA · Archived worktree QA · ', [System.StringComparison]::Ordinal) -and
                     $_.Current.Name.Contains('Cerulean Recovery 8DA7') -and $_.Current.IsEnabled -and (In-Window $_)
                 })
                 if ($open.Count -eq 1 -and (In-Window $groups[0])) {
@@ -181,19 +223,16 @@ public static class ArchivedFixtureWindow {
             }
             Start-Sleep -Milliseconds 200
         } while ([DateTime]::UtcNow -lt $deadline)
-        if ($null -eq $matchedGroup) { throw 'Archived result lacks an accessible title, project, body snippet or unique open action' }
+        if ($null -eq $matchedGroup) { throw "Archived result lacks a unique accessible title, project, body snippet or open action; matching groups: $($groups.Count)." }
         $result.archiveResultName = $matchedGroup.Current.Name
         Save-Window 'windows-archived-search-result.png'
         $result.checks += 'accessible archived result title, project and body snippet'
         Invoke-Control $open[0]
         [void](Wait-Name 'Current conversation actions: Independent history QA')
-        $original = Wait-Name 'The durable transcript records Cerulean Recovery 8DA7 after the checkout was moved.'
-        if (-not (In-Window $original)) { throw 'Original message is outside the visible window' }
+        [void](Wait-VisibleOriginal 'The durable transcript records Cerulean Recovery 8DA7 after the checkout was moved.')
         [void](Wait-Name 'This historical session is read only. Your draft is preserved; sending, resuming and model changes are unavailable.')
-        $draft = Wait-Name 'Conversation messages'
-        if ($draft.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -cne 'Offline archive draft preserved') { throw 'Draft changed' }
-        $send = @(Find-Name 'Send message')
-        if ($send.Count -ne 1 -or $send[0].Current.IsEnabled) { throw 'Read-only send control is missing or enabled' }
+        [void](Wait-ExactValue 'Conversation messages' 'Offline archive draft preserved')
+        Wait-DisabledButton 'Send message'
         if (Test-Path -LiteralPath $Worktree) { throw 'Missing worktree was recreated while the conversation was open' }
         $result.checks += @('original message in viewport', 'read-only notice', 'draft retained', 'send disabled', 'worktree still missing')
         Save-Window 'windows-archived-original-message.png'
