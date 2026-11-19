@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { link, mkdir, mkdtemp, readFile, realpath, rm, rmdir, symlink, unlink, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, rmdir, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodeCheckpoints } from '../src/code-checkpoints.js';
@@ -72,15 +72,52 @@ async function run(group: 'guards' | 'recovery') {
     assert.notEqual(targetHead, futureHead);
     const indexLock = join(owned.gitDir, 'index.lock');
     if (group === 'guards') {
+      const indexPath = join(owned.gitDir, 'index');
+      const indexStagePath = join(owned.gitDir, `hive-restore-index-${operationId}`);
+      const indexBefore = await readFile(indexPath);
+      const workspace = async () => {
+        const rows: {path: string; mode: number; kind: string; value?: string | Buffer}[] = [];
+        const walk = async (directory: string, prefix = '') => {
+          for (const entry of (await readdir(directory, {withFileTypes: true})).sort((a, b) => a.name.localeCompare(b.name))) {
+            const path = join(directory, entry.name), relative = prefix + entry.name;
+            const info = await lstat(path), mode = info.mode & 0o777;
+            if (info.isSymbolicLink()) rows.push({path: relative, mode, kind: 'link', value: await readlink(path)});
+            else if (info.isDirectory()) { rows.push({path: relative, mode, kind: 'directory'}); await walk(path, relative + '/'); }
+            else { assert.ok(info.isFile()); rows.push({path: relative, mode, kind: 'file', value: await readFile(path)}); }
+          }
+        };
+        await walk(tree);
+        return rows;
+      };
+      const workspaceBefore = await workspace();
+      const unchanged = async (stage: string) => {
+        mark(stage);
+        assert.equal(git(tree, 'rev-parse', 'HEAD'), futureHead);
+        assert.deepEqual(await readFile(indexPath), indexBefore);
+        assert.deepEqual(await workspace(), workspaceBefore);
+        await assert.rejects(stat(join(tree, '..', `restore-${operationId}`)), {code: 'ENOENT'});
+        await assert.rejects(stat(indexStagePath), {code: 'ENOENT'});
+      };
       mark('guards');
       await assert.rejects(restoreCheckpoint({...request, sessionId: randomUUID()}));
+      await unchanged('wrong-session.rejected');
       await assert.rejects(restoreCheckpoint({...request, workspaceId: 'different-project'}), /exact owned worktree/);
+      await unchanged('wrong-workspace.rejected');
 
       await writeFile(indexLock, 'someone else owns this lock', {flag: 'wx'});
+      const foreignLock = await lstat(indexLock, {bigint: true});
       await assert.rejects(restoreCheckpoint(request), /locked by another operation/);
+      await unchanged('foreign-index.rejected');
       assert.equal(await readFile(indexLock, 'utf8'), 'someone else owns this lock');
+      const retainedLock = await lstat(indexLock, {bigint: true});
+      assert.equal(retainedLock.dev, foreignLock.dev);
+      assert.equal(retainedLock.ino, foreignLock.ino);
+      assert.equal(retainedLock.mode, foreignLock.mode);
+      assert.equal(retainedLock.mtimeNs, foreignLock.mtimeNs);
       assert.equal(await readFile(join(tree, 'tracked.txt'), 'utf8'), 'future-disk');
       await unlink(indexLock);
+      console.log('CHECKPOINT_RESTORE_OK guards: rejected scope and foreign index lock preserve HEAD/index/workspace; no restore claim');
+      return;
     }
 
     if (group === 'recovery') {
