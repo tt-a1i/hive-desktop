@@ -1,13 +1,44 @@
+import { execFile } from 'node:child_process';
 import { createHash, createPublicKey, randomUUID, verify, type KeyObject } from 'node:crypto';
 import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { extractDesktopUpdate, verifyDesktopPackage } from './desktop-update-archive.js';
 import { desktopPackagePaths, hashDesktopFile, isLive, prepareDesktopRecoveryEntry, reclaimDesktopUpdateTransactions, removeDesktopRecoveryEntry, type DesktopInstallPlan } from './desktop-update-installer.js';
 
 const manifestLimit = 64 * 1024;
 const archiveLimit = 2 * 1024 * 1024 * 1024;
 const downloadPart = /^download-([1-9]\d{0,9})-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.part(?:\.manifest)?$/;
+const execFileAsync = promisify(execFile);
+
+function diskSpaceError(error: unknown): Error {
+  return new Error('[DESKTOP_UPDATE_DISK_FULL] Not enough disk space for the desktop update. Free space and try again.', { cause: error });
+}
+
+function updateDiskError(error: unknown): never {
+  if (error instanceof Error && (error as NodeJS.ErrnoException).code === 'ENOSPC') {
+    throw diskSpaceError(error);
+  }
+  throw error;
+}
+
+async function copyUpdateFile(source: string, destination: string): Promise<void> {
+  if (process.platform !== 'darwin') {
+    return copyFile(source, destination);
+  }
+  // The bundled Node currently falls back to a byte copy on Darwin. macOS
+  // cp tries an APFS clone and falls back when crossing volumes.
+  try {
+    await execFileAsync('/bin/cp', ['-c', source, destination], { env: { LC_ALL: 'C' } });
+  } catch (error) {
+    if (error instanceof Error && 'stderr' in error && typeof error.stderr === 'string'
+      && error.stderr.trimEnd().endsWith(': No space left on device')) {
+      throw diskSpaceError(error);
+    }
+    throw error;
+  }
+}
 
 async function reclaimPartialDownloads(directory: string, names: string[]) {
   for (const name of names) {
@@ -271,7 +302,8 @@ export class DesktopUpdates {
 
   stage(expectedVersion: string, expectedSha256: string): Promise<{ version: string; sha256: string }> {
     if (this.staging || this.preparing) throw new Error('A desktop update is already downloading or preparing');
-    this.staging = this.download(expectedVersion, expectedSha256).finally(() => { this.staging = undefined; });
+    this.staging = this.download(expectedVersion, expectedSha256).catch(updateDiskError)
+      .finally(() => { this.staging = undefined; });
     return this.staging;
   }
 
@@ -347,7 +379,8 @@ export class DesktopUpdates {
         };
         const executable = join(prepared.directory, process.platform === 'win32' ? 'node.exe' : 'node');
         const program = join(prepared.directory, 'installer.mjs');
-        await copyFile(current.node, executable);
+        // Keep an independent runtime outside the installation being replaced.
+        await copyUpdateFile(current.node, executable);
         if (process.platform === 'darwin') await chmod(executable, 0o700);
         await copyFile(new URL('./desktop-update-installer.js', import.meta.url), program);
         await writeFile(join(prepared.directory, 'install-plan.json'), JSON.stringify(plan), { flag: 'wx', mode: 0o600, flush: true });
@@ -366,7 +399,7 @@ export class DesktopUpdates {
   private prepareExclusively<T>(operation: () => Promise<T>): Promise<T> {
     this.closing.signal.throwIfAborted();
     if (this.staging || this.preparing) throw new Error('A desktop update is already downloading or preparing');
-    const task = operation().finally(() => { this.preparing = undefined; });
+    const task = operation().catch(updateDiskError).finally(() => { this.preparing = undefined; });
     this.preparing = task;
     return task;
   }
@@ -393,7 +426,7 @@ export class DesktopUpdates {
     const directory = await mkdtemp(besideInstallation ? join(besideInstallation, '.hive-desktop-install-') : join(staging, 'prepare-'));
     try {
       const snapshot = join(directory, 'bundle.zip');
-      await copyFile(archive, snapshot);
+      await copyUpdateFile(archive, snapshot);
       if ((await lstat(snapshot)).size !== checked.asset.bytes || await hashDesktopFile(snapshot, signal) !== sha256) {
         throw new Error('Staged desktop update archive verification failed');
       }

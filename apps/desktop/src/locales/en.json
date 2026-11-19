@@ -2145,6 +2145,7 @@
   "（原生估算）": " (native estimate)",
   "（文档为空）": "(Empty document)",
   "桌面更新": "Desktop updates",
+  "磁盘空间不足。请释放空间后重试桌面更新。": "Not enough disk space for the desktop update. Free space and try again.",
   "检查更新": "Check for updates",
   "下载更新": "Download update",
   "正在检查更新…": "Checking for updates…",

@@ -24,6 +24,14 @@ enum Check {
     Available(Candidate),
 }
 
+fn update_error(error: String) -> String {
+    if error.starts_with("[DESKTOP_UPDATE_DISK_FULL]") {
+        tr("磁盘空间不足。请释放空间后重试桌面更新。").to_owned()
+    } else {
+        error
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct State {
     checking: bool,
@@ -131,7 +139,7 @@ impl HiveApp {
                         state.downloaded = true
                     }
                     Ok(_) => state.error = Some(tr("更新下载收据不匹配。").to_owned()),
-                    Err(error) => state.error = Some(error),
+                    Err(error) => state.error = Some(update_error(error)),
                 }
                 cx.notify();
             });
@@ -237,7 +245,7 @@ impl HiveApp {
                             }
                         }
                     }
-                    Err(error) => this.desktop_updates.error = Some(error),
+                    Err(error) => this.desktop_updates.error = Some(update_error(error)),
                 }
                 cx.notify();
             });
