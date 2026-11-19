@@ -67,8 +67,9 @@ try {
     // Registration includes a no-MCP deadline. Handoff runtime checks boot
     // several real runtimes/worktrees; Windows source runs measured 122/92/76s.
     const multipleBoots = ['session-history-rewind', 'session-handoff-runtime', 'handoff-runtime-failures', 'handoff-runtime-delivery'].includes(name);
-    // The remote Git check now cold-starts a second runtime to verify removal.
-    const timeout = multipleBoots ? 180_000 : ['acp-runtime-registration', 'git-remotes-wire'].includes(name) ? 120_000 : 60_000;
+    // Worktree intent concurrency exercises several independent real Git and
+    // process races; Windows took 58.45s in a passing packaged run.
+    const timeout = multipleBoots ? 180_000 : ['acp-runtime-registration', 'git-remotes-wire', 'worktree-intent-concurrency'].includes(name) ? 120_000 : 60_000;
     const options = {cwd: directory, stdio: 'inherit', timeout,
       env: {...process.env, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_OFFLINE: '1',
         HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js'),
@@ -93,8 +94,13 @@ try {
         receipt.checks.push({name: `${name}/${group}`, exitCode: 0, elapsedMs});
       }
     } else {
-      execFileSync(node, [file], options);
-      receipt.checks.push({name, exitCode: 0});
+      const started = Date.now();
+      try {
+        execFileSync(node, [file], options);
+      } finally {
+        if (name === 'worktree-intent-concurrency') console.log(`[packaged-functional] ${name} elapsed ${Date.now() - started} ms`);
+      }
+      receipt.checks.push({name, exitCode: 0, ...(name === 'worktree-intent-concurrency' && {elapsedMs: Date.now() - started})});
     }
     if (name === 'pi-vault' && process.platform === 'darwin') {
       const owner = join(bundle, 'Hive Desktop.app/Contents/MacOS/hive-desktop');
