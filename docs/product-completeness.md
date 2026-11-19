@@ -44,6 +44,8 @@ Codex 额度设置已通过 macOS 原生窗口和真实只读查询核对，辅�
 
 macOS 的 Node 后台被强制终止后，正在运行的项目脚本和同组子进程会被回收。中断执行记录保留，单次运行的日志缺失也不会阻止后台冷启动。[脚本进程与恢复验收](validation/2026-11-19-worktree-setup-native.md)
 
+损坏的项目脚本运行记录不会阻止后台冷启动，其他工作树仍可按原请求读取初始化、明确重试或跳过。macOS 原生窗已验证原命令、执行次数及草稿冷恢复。[损坏记录验收](validation/2026-11-19-worktree-setup-native.md#损坏的脚本运行记录与冷恢复)
+
 Codex 问题附件按整次回复限制数量。草稿保存跟随原问题，切换会话仍可读回。一个项目的损坏收据不会阻断其他项目的普通问答或审批。[问题附件验收](validation/2026-11-19-codex-question-attachments-desktop.md)
 
 Codex 问题附件的重试只核对当前提问。其他损坏收据不影响提交前失败后的重试，可读收据仍能冷启动查看。macOS 原生窗口验证恢复副本后只交付一次。[重试和冷恢复验收](validation/2026-11-19-codex-question-attachments-desktop.md#收据损坏时保留已验证历史和可重试回复)
