@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory)][int]$AppProcessId,
     [Parameter(Mandatory)][string]$Executable,
     [Parameter(Mandatory)][ValidateSet('select','reopen')][string]$Phase,
