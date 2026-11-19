@@ -18,6 +18,13 @@ pub(super) struct Uncertain {
     session: Option<String>, profile: Option<ProfileRef>, generation: u64, connection: u64, open: u64,
     loading: bool, deliveries: Vec<Delivery>, resolved: Vec<Delivery>, native: Option<String>, blocked: Option<String>, error: Option<String>, confirm: Option<String>, notice: bool,
 }
+impl Uncertain {
+    fn cancel_confirmation(&mut self, id: &str) {
+        if !self.loading && self.confirm.as_deref() == Some(id) {
+            self.confirm = None;
+        }
+    }
+}
 impl HiveApp {
     fn acp_scope(&self) -> Option<(String, ProfileRef)> {
         let session=self.session.as_ref()?;
@@ -80,7 +87,7 @@ impl HiveApp {
                     let source=format!("{}{} · {}{}",delivery.origin,delivery.dispatch_id.as_ref().map(|id|format!(" · {id}")).unwrap_or_default(),delivery.notice,if delivery.attachments.is_empty(){String::new()}else{format!(" · {}: {}",if english(){"Attachments"}else{"附件"},delivery.attachments.iter().map(|a|a.name.as_str()).collect::<Vec<_>>().join(", "))});
                     v_flex().gap_1().child(div().id(("acp-uncertain-source",index)).role(Role::Label).aria_label(source.clone()).aria_value(source.clone()).text_xs().child(source)).child(div().id(("acp-uncertain-text",index)).role(Role::Label).aria_label(text.clone()).aria_value(text.clone()).text_sm().child(text.clone()))
                         .when(!confirm,|v| {let id=id.clone();v.child(Button::new(("acp-discard-ask",index)).label(if english(){"Discard this queued wait…"}else{"放弃这次等待投递…"}).disabled(state.loading || state.error.is_some()).on_click(cx.listener(move |this,_,_,cx|{this.interactions.uncertain.confirm=Some(id.clone());cx.notify();})))})
-                        .when(confirm,|v| {let id=id.clone();let text=text.clone();let version=delivery.version.clone();v.child(div().id(("acp-uncertain-confirmation",index)).role(Role::Label).aria_label(confirmation_notice).aria_value(confirmation_notice).text_xs().child(confirmation_notice)).child(Button::new(("acp-discard-confirm",index)).label(if english(){"Confirm discard queued wait"}else{"确认放弃这次等待投递"}).disabled(state.loading || state.error.is_some() || !self.connected).on_click(cx.listener(move |this,_,_,cx|this.discard_uncertain_acp(id.clone(),text.clone(),version.clone(),cx))))})
+                        .when(confirm,|v| {let id=id.clone();let text=text.clone();let version=delivery.version.clone();let cancel_id=id.clone();v.child(div().id(("acp-uncertain-confirmation",index)).role(Role::Label).aria_label(confirmation_notice).aria_value(confirmation_notice).text_xs().child(confirmation_notice)).child(Button::new(("acp-discard-cancel",index)).label(if english(){"Cancel discard"}else{"取消放弃"}).disabled(state.loading).on_click(cx.listener(move |this,_,_,cx|{this.interactions.uncertain.cancel_confirmation(&cancel_id);cx.notify();}))).child(Button::new(("acp-discard-confirm",index)).label(if english(){"Confirm discard queued wait"}else{"确认放弃这次等待投递"}).disabled(state.loading || state.error.is_some() || !self.connected).on_click(cx.listener(move |this,_,_,cx|this.discard_uncertain_acp(id.clone(),text.clone(),version.clone(),cx))))})
                 }))
                 .children(state.resolved.iter().enumerate().map(|(index,delivery)|v_flex().gap_1().child(div().id(("local-wait-receipt",index)).role(Role::Status).aria_label(delivery.notice.clone()).text_xs().child(delivery.notice.clone())).child(div().text_sm().child(delivery.text.clone()))))
             )
@@ -89,8 +96,21 @@ impl HiveApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{Preview, Discard};
+    use super::{Preview, Discard, Uncertain};
     use serde_json::json;
+    #[test]
+    fn cancel_only_clears_matching_idle_confirmation() {
+        let mut state = Uncertain { confirm: Some("delivery-a".into()), notice: true, ..Uncertain::default() };
+        state.cancel_confirmation("delivery-b");
+        assert_eq!(state.confirm.as_deref(), Some("delivery-a"));
+        state.loading = true;
+        state.cancel_confirmation("delivery-a");
+        assert_eq!(state.confirm.as_deref(), Some("delivery-a"));
+        state.loading = false;
+        state.cancel_confirmation("delivery-a");
+        assert_eq!(state.confirm, None);
+        assert!(state.notice);
+    }
     #[test]
     fn preview_and_discard_keep_identity_and_unknown_outcome() {
         let preview: Preview = serde_json::from_value(json!({"sessionId":"s","profile":{"id":"p","revision":2},"deliveries":[{"deliveryId":"d","text":"original","origin":"user","notice":"may have run"}]})).unwrap();
