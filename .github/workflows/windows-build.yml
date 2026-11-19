@@ -7,6 +7,15 @@ on:
         description: Existing Windows run ID whose portable artifact will be replayed
         required: false
         type: string
+      replay_scenario:
+        description: Optional isolated replay scenario
+        required: false
+        type: choice
+        default: standard
+        options:
+          - standard
+          - project-reference
+          - archived-search
       replay_update:
         description: Replay only native update and rollback from the retained portable artifact
         required: false
@@ -58,7 +67,7 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update && (inputs.replay_scenario == '' || inputs.replay_scenario == 'standard')) }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -278,7 +287,7 @@ jobs:
           path: target/windows-native-update.json
           if-no-files-found: warn
   native-supervision:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update && (inputs.replay_scenario == '' || inputs.replay_scenario == 'standard')) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -307,7 +316,7 @@ jobs:
           path: target/windows-git-hook-ownership.json
           if-no-files-found: warn
   native-clis:
-    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update && (inputs.replay_scenario == '' || inputs.replay_scenario == 'standard')) }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -353,7 +362,7 @@ jobs:
             .artifacts/file-attachments/wire-receipt.json
           if-no-files-found: warn
   replay:
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.replay_update && (inputs.replay_run != '' || inputs.replay_image_memory || inputs.replay_shortcut_layout) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.replay_update && (inputs.replay_run != '' || inputs.replay_image_memory || inputs.replay_shortcut_layout || (inputs.replay_scenario != '' && inputs.replay_scenario != 'standard')) }}
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -364,11 +373,11 @@ jobs:
         with:
           node-version: 22.23.3
       - uses: pnpm/action-setup@v6
-        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
         with:
           version: 10.30.3
       - name: Install package-check compiler only without lifecycle scripts
-        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Reject incompatible replay selections
         shell: pwsh
@@ -376,7 +385,10 @@ jobs:
           IMAGE_REPLAY: ${{ inputs.replay_image_memory }}
           FUNCTIONAL_REPLAY: ${{ inputs.replay_functional }}
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
+          REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
         shell: pwsh
@@ -403,18 +415,18 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath target/replay-extracted
           if (-not (Test-Path -LiteralPath 'target/replay-extracted/hive-desktop.exe' -PathType Leaf)) { throw 'Extracted artifact is not a portable desktop bundle.' }
       - name: Check original extracted functional runtime
-        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
+        if: ${{ inputs.replay_functional && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
         timeout-minutes: 25
         run: node scripts/check-packaged-functional.mjs --bundle target/replay-extracted --receipt target/replay-functional-receipt.json
       - name: Smoke extracted Windows terminal bridge
-        if: ${{ !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
+        if: ${{ !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
         timeout-minutes: 5
         shell: pwsh
         run: |
           node scripts/check-windows-terminal.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-terminal-smoke.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Replay native window fixture
-        if: ${{ !inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
+        if: ${{ !inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
         timeout-minutes: 4
         shell: pwsh
         env:
@@ -424,7 +436,7 @@ jobs:
           node scripts/check-desktop-startup.mjs --bundle target/replay-extracted 2>&1 | Tee-Object -FilePath target/windows-replay.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Measure native history-image memory
-        if: ${{ inputs.replay_image_memory && !inputs.replay_shortcut_layout }}
+        if: ${{ inputs.replay_image_memory && !inputs.replay_shortcut_layout && (!inputs.replay_scenario || inputs.replay_scenario == 'standard') }}
         timeout-minutes: 8
         shell: pwsh
         run: |
@@ -436,6 +448,20 @@ jobs:
         shell: pwsh
         run: |
           powershell.exe -STA -NoProfile -ExecutionPolicy Bypass -File scripts/windows-shortcut-layout-ci.ps1 -FixtureExe (Resolve-Path 'target/replay-extracted/hive-desktop.exe').Path -ReceiptPath (Join-Path $PWD 'target/windows-shortcut-layout.json') 2>&1 | Tee-Object -FilePath target/windows-shortcut-layout.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Replay native worktree project reference
+        if: ${{ inputs.replay_scenario == 'project-reference' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-project-reference.mjs --bundle target/replay-extracted --receipt target/windows-project-reference.json 2>&1 | Tee-Object -FilePath target/windows-project-reference.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Replay archived search with a missing worktree
+        if: ${{ inputs.replay_scenario == 'archived-search' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-archived-search.mjs --bundle target/replay-extracted --receipt target/windows-archived-search.json 2>&1 | Tee-Object -FilePath target/windows-archived-search.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload replay evidence
         if: always()
@@ -455,6 +481,11 @@ jobs:
             target/windows-shortcut-layout.json
             target/windows-shortcut-layout-ui.json
             target/windows-shortcut-layout.log
+            target/windows-project-reference.json
+            target/windows-project-reference.log
+            target/windows-project-reference-desktop.log
+            target/windows-archived-search*.json
+            target/windows-archived-search*.log
           if-no-files-found: warn
 
   replay-update:
@@ -475,9 +506,10 @@ jobs:
           IMAGE_REPLAY: ${{ inputs.replay_image_memory }}
           FUNCTIONAL_REPLAY: ${{ inputs.replay_functional }}
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
+          REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
           if ($env:REPLAY_RUN -cnotmatch '^[1-9][0-9]*$') { throw 'replay_run must be a positive integer.' }
-          if ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true') { throw 'Update replay cannot be combined with other replay selections.' }
+          if ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true' -or ($env:REPLAY_SCENARIO -ne '' -and $env:REPLAY_SCENARIO -ne 'standard')) { throw 'Update replay cannot be combined with other replay selections.' }
       - name: Download original portable artifact
         uses: actions/download-artifact@v4
         with:

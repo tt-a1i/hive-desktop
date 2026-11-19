@@ -4,11 +4,13 @@
 
 用户已取消语音输入，交付清单以本次更新为准。普通聊天输入与草稿照常使用。
 
-Windows Git 提交钩子的进程归属通过真实桌面 transport、JSONL 请求和系统句柄核对；当前已交叉编译，待原生作业确认。[测试范围](acceptance-status.md#windows-桌面后台与-git-提交钩子归属2026-11-20)
+Windows 可分别回放私有文件快照冷开，以及归档会话在工作树缺失时的只读正文搜索。[证据与验证范围](acceptance-status.md#windows-工作树文件引用冷恢复入口2026-11-20)
 
-Windows 的会话搜索验收已加入预组合查询、分解形式的历史正文、摘要和原消息定位，使用隔离的本地记录。[验证范围](acceptance-status.md#windows-历史正文的-unicode-搜索与原消息定位2026-11-20)
+Windows Git 提交钩子的进程归属通过真实桌面 transport、JSONL 请求和系统句柄核对；Windows 原生作业已确认强杀后台后的同组回收和外部锁保留。[测试范围](acceptance-status.md#windows-桌面后台与-git-提交钩子归属2026-11-20)
 
-Windows 工作树并发验收单独记录多进程场景的总耗时，工作树操作本身沿用原时限。[实测耗时与回放范围](acceptance-status.md#windows-工作树并发检查的时间预算2026-11-20)
+Windows 固定包已实测预组合查询命中分解形式的历史正文、摘要、原消息定位及返回主会话；原消息字节和两处草稿均经核对。[验证范围](acceptance-status.md#windows-历史正文的-unicode-搜索与原消息定位2026-11-20)
+
+固定 Windows ZIP 的全部 62 项包内功能检查通过。工作树并发用时 60.919 秒，现行和旧版交接冷恢复分别在各自的 60 秒内完成。[实测耗时与回放范围](acceptance-status.md#windows-工作树并发检查的时间预算2026-11-20)
 
 Windows 更新确认标题增加了读屏名称，并可对同一便携 ZIP 独立回放安装和回退。旧包首轮在安装器交接前失败。[来源核对和原生验证边界](acceptance-status.md#windows-原生更新确认窗口2026-11-20)
 
