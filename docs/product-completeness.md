@@ -30,6 +30,8 @@ Pi 文件的原生会话 ID 与记录不符时，正文搜索和冷打开都会�
 
 ACP 接续目标在身份及首条投递回执均可核对时，可冷态编辑和撤回后续尚未投递的输入。放弃不确定投递后，当前窗口立即清除旧的等待状态，并保留原生记录和 Hive 审计。[冷队列验收](validation/2026-11-19-codex-search-acp-cold-queue.md#acp-接续完成后的冷队列)
 
+项目文件选择器可用不同 Unicode 写法找到同一个文件。macOS 原生窗验证了工作树隔离、文件准确引用和源文件移走后的冷态快照。ACP 冷队列版本也重跑了真实 Terra 主控和官方 ACP 成员的派单、文件汇报和冷恢复。[文件名验收](validation/2026-11-19-project-reference-worktrees.md#unicode-文件名) · [真实协作复验](validation/2026-11-19-native-acp-collaboration.md#acp-冷队列修复后的真实复验)
+
 自定义快捷键保存和分发使用同一平台键位映射，避免不同写法的等效键位绕过冲突检查。macOS 解包实测默认组合键和旧自定义组合键均触发对应动作，Shift‑Tab 和窗口失焦可退出录制。[原生快捷键验收](validation/2026-11-19-keybindings-native.md)
 
 macOS 的 Node 后台被强制终止后，正在运行的项目脚本和同组子进程会被回收。中断执行记录保留，单次运行的日志缺失也不会阻止后台冷启动。[脚本进程与恢复验收](validation/2026-11-19-worktree-setup-native.md)

@@ -15,3 +15,11 @@ macOS arm64 本地优化包的源码为 `1b3c069ac174e5ec6f30a52a4947beeeebd4470
 Rust 120 项测试通过，1 项子进程入口按设计忽略。实际包内 Node、PTY、HTTP 与 SQLite 工作区、退出冒烟均通过。Windows x86_64 MSVC 交叉检查通过，当前流程仍待 Windows 原生验收。
 
 本地包、守护日志、进程退出记录和独立验收收据在 `.artifacts/native-mixed-team-fixed-suhPAY/`。首次发现按钮问题的窗口日志和 Rust 检查在 `.artifacts/native-mixed-team-window-Uy5mEQ/`。本轮没有发布或替换已安装应用。
+
+## ACP 冷队列修复后的真实复验
+
+从含 `312f5d0` 的已签名解包应用启动。实际窗口用两个隔离工作树及各自固定的会话配置，从成员页启动官方 Codex ACP 2.6.0，再在原生 Codex 0.169.0 会话发送一条任务。传输记录核对两端均使用 `openai/gpt-6.1-terra`。同一已有账号的全局模型和账号设置保持原值。
+
+一次实际派单、一次成员显式汇报及同一个汇报目标均由生产 SQLite 核对。独立验证读回成员生成的 58 字节文件，确认主控在汇报后才实际读取文件并计算同一 SHA-256。四次开始推理，其中成员一次。退出并重开后，主控结论和成员原始记录均可在窗口查看，期间没有观察到新推理或 ACP 启动。两次退出收到后台关闭确认，记录的桌面、后台和原生子进程均已退出。
+
+证据位于 `.artifacts/native-terra-current-LjNhfE/`，包括独立 `receipt.json`、`live-settled.ax.jsonl`、`cold-leader.ax.jsonl`、`cold-worker.ax.jsonl` 和进程记录。测试 ZIP 的 SHA-256 为 `956775e4272e9b2c27592447825bb194d0f55d43bc6a459882151b86378a3843`。新的 Unicode 文件搜索包单独执行原生检查。Windows 的真实模型和原生更新流程仍待运行证据。

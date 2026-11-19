@@ -16,3 +16,11 @@
 项目文件检索、引用与独立工作树专项通过。118 项 Rust 测试通过，另有一项子进程入口按设计忽略。macOS 包通过严格签名验证及 Node、PTY、Hive HTTP/SQLite 和退出冒烟。Windows x86_64 MSVC 交叉检查通过，原生窗口待复验。没有发布。
 
 本地证据位于 `.artifacts/project-reference-worktrees-byiT5X/`，包含实际运行和冷启动日志、三份草稿及其私有副本、验收脚本和 `receipt.json`。
+
+## Unicode 文件名
+
+GPT-6.2 Sol 在真实 Git 工作树复现了 `Résumé 工作树.txt` 的搜索差异。旧版可用预组合的 `RÉSUMÉ` 找到文件，等价的分解形式返回空列表。`9969085` 用同一 Unicode 形式比较搜索词和路径，选择结果仍保留 Git 返回的原路径。
+
+在旧版及新版 macOS 原生窗口使用相同的独立工作树夹具。新版两种输入均显示同一条文件结果，另一个工作树的选择器保持空列表。选中该文件后，草稿中记录的路径、来源会话和 SHA-256 与对应工作树相符，Hive 私有副本的字节也经核对。移走源文件后冷重开，原生窗口仍从草稿打开原引用，显示源文件缺失，并可预览保存的内容。三个窗口均正常退出，记录的后台进程均已结束。此流程没有发送聊天消息。
+
+后台类型检查、源码和包内的三项文件专项，以及便携包冒烟均通过。签名应用与本地 ZIP 的文件、链接、权限和内容校验一致。证据在 `.artifacts/project-reference-unicode-RDbJix/`，包括两种查询的辅助功能树、`snapshot.json`、冷启动记录、`packaged-functional-receipt.json` 和 ZIP 清单。ZIP SHA-256 为 `b2eb4da8f36ce0ed35751b9947c0279c8a34bee00a0a5c171a995911056339bd`。Windows 原生窗口仍需在对应平台复验。
