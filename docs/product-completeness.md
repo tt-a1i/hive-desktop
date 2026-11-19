@@ -14,6 +14,8 @@ macOS 本地包确认同一 HTML 产物跨文件详情复用预览窗口，保�
 
 冷态历史原图读取已与待投递文件解耦，内置 Pi 可以在后台重启后按先前接收的投递 ID 找回原图。桌面已回收仅用于浏览的空闲 Codex 0.169.0 进程。macOS 解包窗口实测浏览八个会话后，常驻测试进程从八个降为一个，返回工作区后降为零。已由 Hive 接管的会话和待发任务通过独立检查。当前 Windows 原生验收继续跟踪。[历史原图](validation/2026-11-19-cold-browse-and-history-images.md) · [浏览进程回收](validation/2026-11-19-codex-desktop-view-release.md)
 
+跨 Agent 接续的自动刷新只读取状态，窗口按事件序号保留较新的队列和交互。隔离冷 ACP 对照的刷新帧从 6.36 MB 降到 8,767 字节，完整打开仍能读取全部 1,505 条记录。[接续状态验收](validation/2026-11-19-handoff-target-state.md)
+
 ## 2026-11-14 历史计划
 
 2026-11-14。用户已在当前会话确认并授权持续推进。本文整理执行顺序；需求和工作项继续使用 GitHub Issues，父任务为 #1，首批工作为 [#29](https://github.com/tt-a1i/hive-desktop/issues/29)。完整目标仍未完成。
