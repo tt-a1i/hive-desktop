@@ -6,6 +6,8 @@
 
 macOS 上的 Git 提交或推送遇到后台强杀时，原生宿主会回收 Git 钩子及其同组辅助进程。残留索引锁保留供检查。[中断时的进程与仓库实测](acceptance-status.md#git-提交与推送中断后的进程回收2026-11-20)
 
+Windows 原生回放定位到了 HTML 子文档导航后显示白页的问题。候选修复在实际子框架上取消导航，等待包含新代码的 Windows 可执行文件验收。[子窗口实证与修复范围](acceptance-status.md#windows-html-预览的子框架导航2026-11-20)
+
 Windows 图片夹具修正了预加载器路径和 UI Automation 加载顺序；同一 ZIP 已核对 48 张原始图片的字节，WebView2 失败时会保留实际子窗口证据，附件回归按 JSON 协议核对 Windows 路径。[Windows 首次失败与复验范围](acceptance-status.md#windows-原生验收夹具的失败定位2026-11-20)
 
 安装器的正常、收据故障和中断案例分组运行。退出验证会核对实际系统进程，失败时可看到安装器停在了哪一步。[包内更新器故障验收](acceptance-status.md#更新器故障注入的进程退出证据2026-11-20)

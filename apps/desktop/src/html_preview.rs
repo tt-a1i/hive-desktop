@@ -239,8 +239,10 @@ mod engine {
         use webview2_com::Microsoft::Web::WebView2::Win32::{
             COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
             COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL, ICoreWebView2_22,
+            ICoreWebView2_4, ICoreWebView2Frame2,
         };
         use webview2_com::{
+            FrameCreatedEventHandler, FrameNavigationStartingEventHandler,
             NavigationStartingEventHandler, WebResourceRequestedEventHandler, take_pwstr,
         };
         use windows_core::{HSTRING, Interface, PWSTR};
@@ -249,6 +251,11 @@ mod engine {
         let environment = view.environment();
         let mut token = Default::default();
         unsafe {
+            let mut version = PWSTR::null();
+            match environment.BrowserVersionString(&mut version) {
+                Ok(()) => eprintln!("[html-preview] WebView2 runtime {}", take_pwstr(version)),
+                Err(error) => eprintln!("[html-preview] runtime version unavailable: {error}"),
+            }
             native
                 .cast::<ICoreWebView2_22>()?
                 .AddWebResourceRequestedFilterWithRequestSourceKinds(
@@ -279,17 +286,60 @@ mod engine {
                 })),
                 &mut token,
             )?;
-            native.add_FrameNavigationStarting(
-                &NavigationStartingEventHandler::create(Box::new(move |_, args| {
-                    if let Some(args) = args {
-                        let mut uri = PWSTR::null();
-                        args.Uri(&mut uri)?;
-                        args.SetCancel(!internal_frame(&take_pwstr(uri)))?;
+            // Install the frame-scoped event before loading the document. WebView2
+            // runs it after the older WebView-level FrameNavigationStarting event.
+            // Registration and callbacks stay on the owning WebView's UI STA.
+            native.cast::<ICoreWebView2_4>()?.add_FrameCreated(
+                &FrameCreatedEventHandler::create(Box::new(move |_, args| {
+                    let Some(args) = args else { return Ok(()) };
+                    let result = (|| {
+                        let frame = args.Frame()?.cast::<ICoreWebView2Frame2>()?;
+                        let mut frame_token = Default::default();
+                        // COM retains the handler until the frame is destroyed.
+                        // It captures neither the frame nor the preview, so there
+                        // is no reference cycle or cross-thread view access.
+                        frame.add_NavigationStarting(
+                            &FrameNavigationStartingEventHandler::create(Box::new(|_, args| {
+                                cancel_windows_frame_navigation(args, "frame")
+                            })),
+                            &mut frame_token,
+                        )
+                    })();
+                    if let Err(error) = &result {
+                        eprintln!("[html-preview] frame navigation guard registration failed: {error}");
                     }
-                    Ok(())
+                    result
                 })),
                 &mut token,
             )?;
+            // Keep the existing WebView-level guard as an additional boundary.
+            native.add_FrameNavigationStarting(
+                &NavigationStartingEventHandler::create(Box::new(move |_, args| {
+                    cancel_windows_frame_navigation(args, "webview fallback")
+                })),
+                &mut token,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn cancel_windows_frame_navigation(
+        args: Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2NavigationStartingEventArgs>,
+        scope: &str,
+    ) -> windows_core::Result<()> {
+        use webview2_com::take_pwstr;
+        use windows_core::PWSTR;
+        if let Some(args) = args {
+            let mut uri = PWSTR::null();
+            unsafe {
+                args.Uri(&mut uri)?;
+                if !internal_frame(&take_pwstr(uri)) {
+                    // Only strengthen cancellation; never undo another guard.
+                    args.SetCancel(true)?;
+                    eprintln!("[html-preview] cancelled frame navigation ({scope})");
+                }
+            }
         }
         Ok(())
     }
