@@ -9,6 +9,10 @@ use std::{
 #[path = "git_hook_windows.rs"]
 mod git_hook_windows;
 
+#[cfg(windows)]
+#[path = "vault_windows.rs"]
+mod vault_windows;
+
 #[test]
 fn a_large_history_frame_releases_the_wire_buffer_before_the_next_frame() {
     let history = "厚".repeat(2 * 1024 * 1024);

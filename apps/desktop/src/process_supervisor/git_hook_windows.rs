@@ -9,8 +9,8 @@ use windows_sys::Win32::{
     },
 };
 
-struct Probe(OwnedHandle);
-struct RuntimeCleanup(std::sync::Arc<Runtime>);
+pub(super) struct Probe(pub(super) OwnedHandle);
+pub(super) struct RuntimeCleanup(pub(super) std::sync::Arc<Runtime>);
 impl Drop for RuntimeCleanup {
     fn drop(&mut self) {
         if let Err(error) = smol::block_on(self.0.shutdown_checked(Duration::ZERO)) {
@@ -19,7 +19,7 @@ impl Drop for RuntimeCleanup {
     }
 }
 impl Probe {
-    fn open(pid: u32, terminate: bool) -> Self {
+    pub(super) fn open(pid: u32, terminate: bool) -> Self {
         let rights = PROCESS_SYNCHRONIZE
             | PROCESS_QUERY_LIMITED_INFORMATION
             | if terminate { PROCESS_TERMINATE } else { 0 };
@@ -31,7 +31,7 @@ impl Probe {
         );
         Self(unsafe { OwnedHandle::from_raw_handle(handle) })
     }
-    fn running(&self) -> bool {
+    pub(super) fn running(&self) -> bool {
         match unsafe { WaitForSingleObject(self.0.as_raw_handle(), 0) } {
             WAIT_OBJECT_0 => false,
             WAIT_TIMEOUT => true,
@@ -40,7 +40,7 @@ impl Probe {
     }
 }
 
-fn run(command: &mut Command) -> String {
+pub(super) fn run(command: &mut Command) -> String {
     let output = command.output().unwrap();
     assert!(
         output.status.success(),
