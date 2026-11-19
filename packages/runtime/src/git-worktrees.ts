@@ -4,7 +4,7 @@ import { getGitWorkspaceStatus } from './git-workspace.js';
 import { validateInitializationPlan, type InitializationPlan } from './project-worktree-initialization.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, readFile, realpath, rename, rm, rmdir } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -36,7 +36,8 @@ export interface WorktreeCreation {
   forkOperationId?: string;
   handoffOperationId?: string;
 }
-type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation; forkPublished?: boolean; handoffPublished?: boolean; removed?: true };
+type RemovalIntent = {headOid: string; repositoryIdentity: string};
+type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation; forkPublished?: boolean; handoffPublished?: boolean; removal?: RemovalIntent; removed?: true };
 function validateIntentCreation(intent: Intent): void {
   if (intent?.version !== undefined && (![2, 3].includes(intent.version) || intent.creation === undefined)
     || intent?.creation !== undefined && ![2, 3].includes(intent.version!))
@@ -45,6 +46,10 @@ function validateIntentCreation(intent: Intent): void {
   if (intent.forkPublished !== undefined && (intent.forkPublished !== true || !intent.creation?.forkOperationId)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork publication provenance is invalid');
   if (intent.handoffPublished !== undefined && (intent.handoffPublished !== true || !intent.creation?.handoffOperationId)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Handoff publication provenance is invalid');
   if (intent.removed !== undefined && (intent.removed !== true || intent.state !== 'ready')) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree removal record is invalid');
+  if (intent.removal !== undefined && (intent.state !== 'ready' || intent.removed || !intent.record?.gitDir
+    || !intent.removal || typeof intent.removal.headOid !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(intent.removal.headOid)
+    || typeof intent.removal.repositoryIdentity !== 'string' || !/^\d+:\d+$/.test(intent.removal.repositoryIdentity)))
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Pending worktree removal record is invalid');
   validateCreation(intent?.creation);
 }
 function validateCreation(creation: WorktreeCreation | undefined): void {
@@ -192,17 +197,14 @@ async function worktreeGitDir(worktree: string, common: string): Promise<string>
 async function verifyIdentity(dataRoot: string, record: ManagedWorktree): Promise<{ root: string; intent: Intent; locked: boolean; gitDir: string }> {
   const root = await realpath(dataRoot);
   const dir = ownerDir(root, record.chatId);
-  if (await realpath(join(root, 'worktrees')) !== join(root, 'worktrees') || await realpath(dir) !== dir) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership directory was replaced');
-  const intent = JSON.parse(await readFile(join(dir, 'intent.json'), 'utf8')) as Intent;
-  validateIntentCreation(intent);
+  let intent = await readIntent(root, dir, record.chatId);
   const keys: (keyof ManagedWorktree)[] = ['version', 'projectRoot', 'chatId', 'ownerToken', 'repoCommonDir', 'gitDir', 'managedWorktreeRoot', 'executionPath', 'projectPrefix', 'branch', 'baseOid'];
-  if (!intent || !['creating', 'ready'].includes(intent.state) || !intent.record || keys.some(key => intent.record[key] !== record[key]) || record.version !== 1) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership does not match');
+  if (keys.some(key => intent.record[key] !== record[key]) || record.version !== 1) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership does not match');
+  intent = await reconcileRemoval(dir, intent);
   if (intent.removed) throw new GitWorktreeError('WORKTREE_REMOVED', 'This worktree was removed. The conversation history and local branch are retained.');
-  if (await realpath(record.projectRoot) !== record.projectRoot || await commonDir(record.projectRoot) !== record.repoCommonDir) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Original project repository identity changed');
-  const originalTop = await realpath(await git(record.projectRoot, 'rev-parse', '--show-toplevel'));
-  if (relative(originalTop, record.projectRoot) !== record.projectPrefix) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Original project scope changed');
-  const expected = join(dir, 'tree');
-  if (record.managedWorktreeRoot !== expected || record.executionPath !== join(expected, record.projectPrefix) || isAbsolute(record.projectPrefix) || record.projectPrefix.split(/[\\/]/).includes('..')) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid managed worktree location');
+  const expected = await verifyOriginalProject(dir, record);
+  if (intent.removal && await isAbsent(expected))
+    throw new GitWorktreeError('WORKTREE_REMOVAL_UNCERTAIN', 'The worktree is missing but its removal could not be verified. Check the original repository and local branch.');
   if (await realpath(expected) !== expected || await realpath(record.executionPath) !== record.executionPath) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree path was replaced');
   if (await commonDir(expected) !== record.repoCommonDir || await realpath(await git(expected, 'rev-parse', '--show-toplevel')) !== expected) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree repository identity changed');
   const gitDir = await worktreeGitDir(expected, record.repoCommonDir);
@@ -225,6 +227,53 @@ async function verifyIdentity(dataRoot: string, record: ManagedWorktree): Promis
   }
   if (!item || !item.includes(`branch refs/heads/${record.branch}`)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree is not registered to this repository');
   return { root, intent, gitDir, locked: item.some(line => line === 'locked' || line.startsWith('locked ')) };
+}
+
+async function verifyOriginalProject(dir: string, record: ManagedWorktree): Promise<string> {
+  if (await realpath(record.projectRoot) !== record.projectRoot || await commonDir(record.projectRoot) !== record.repoCommonDir) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Original project repository identity changed');
+  const originalTop = await realpath(await git(record.projectRoot, 'rev-parse', '--show-toplevel'));
+  if (relative(originalTop, record.projectRoot) !== record.projectPrefix) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Original project scope changed');
+  const expected = join(dir, 'tree');
+  if (record.managedWorktreeRoot !== expected || record.executionPath !== join(expected, record.projectPrefix) || isAbsolute(record.projectPrefix) || record.projectPrefix.split(/[\\/]/).includes('..')) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid managed worktree location');
+  return expected;
+}
+
+async function isAbsent(path: string): Promise<boolean> {
+  try { await lstat(path); return false; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    throw error;
+  }
+}
+
+async function repositoryIdentity(common: string): Promise<string> {
+  const info = await lstat(common, {bigint:true});
+  if (!info.isDirectory() || !info.ino)
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Cannot verify the original Git metadata directory identity');
+  return `${info.dev}:${info.ino}`;
+}
+
+/** A restart may complete the receipt, never the removal itself. */
+async function reconcileRemoval(dir: string, intent: Intent): Promise<Intent> {
+  const {removal, record} = intent;
+  if (!removal || !await isAbsent(join(dir, 'tree'))) return intent;
+  const expected = await verifyOriginalProject(dir, record);
+  if (await repositoryIdentity(record.repoCommonDir) !== removal.repositoryIdentity) return intent;
+  const gitDir = record.gitDir;
+  if (!gitDir || !contained(join(record.repoCommonDir, 'worktrees'), gitDir) || !await isAbsent(gitDir)) return intent;
+  const registered = (await git(record.projectRoot, 'worktree', 'list', '--porcelain', '-z')).split('\0');
+  if (registered.some(line => line.startsWith('worktree ') && relative(expected, line.slice('worktree '.length)) === '')) return intent;
+  const branchHead = await git(record.projectRoot, 'for-each-ref', '--format=%(objectname) %(refname)', `refs/heads/${record.branch}`);
+  if (branchHead !== `${removal.headOid} refs/heads/${record.branch}` || !await isAbsent(expected)
+    || !await isAbsent(gitDir) || await repositoryIdentity(record.repoCommonDir) !== removal.repositoryIdentity) return intent;
+  return finishRemoval(dir, intent);
+}
+
+async function finishRemoval(dir: string, intent: Intent): Promise<Intent> {
+  const {removal: _, ...original} = intent;
+  const removed: Intent = {...original, removed: true};
+  await writeIntent(dir, removed);
+  return removed;
 }
 async function verify(dataRoot: string, record: ManagedWorktree): Promise<{ root: string; intent: Intent; locked: boolean; gitDir: string }> {
   try { return await verifyIdentity(dataRoot, record); }
@@ -284,13 +333,18 @@ async function confirmPushed(record: ManagedWorktree, head: string) {
   return { remote, branch, oid, transport: remoteVersion(context.url) };
 }
 
+function removalVersion(record: ManagedWorktree, head: string, repository: string, pushed?: Awaited<ReturnType<typeof confirmPushed>>) {
+  return remoteVersion([record.ownerToken, record.gitDir, head, repository, pushed]);
+}
+
 export async function previewManagedWorktreeRemoval(dataRoot: string, record: ManagedWorktree) {
   await removalOwnership(dataRoot, record);
+  const repository = await repositoryIdentity(record.repoCommonDir);
   const head = await cleanWorktree(record);
   const pushed = head === record.baseOid ? undefined : await confirmPushed(record, head);
   return {path: record.managedWorktreeRoot, branch: record.branch, headOid: head,
     ...(pushed && {verifiedRemote: {remote: pushed.remote, branch: pushed.branch}}),
-    version: remoteVersion([record.ownerToken, record.gitDir, head, pushed])};
+    version: removalVersion(record, head, repository, pushed)};
 }
 
 /** The caller holds execution admission closed until this ends. Preserve Git's
@@ -303,23 +357,40 @@ export async function removeManagedWorktree(dataRoot: string, record: ManagedWor
     throw new GitWorktreeError('STALE_PREVIEW', 'Worktree or remote changed. Review the removal again.');
   await options.beforeRemove?.();
   const {root, intent} = await removalOwnership(dataRoot, record);
-  if (await cleanWorktree(record) !== preview.headOid) throw new GitWorktreeError('STALE_PREVIEW', 'Worktree changed. Review the removal again.');
+  const repository = await repositoryIdentity(record.repoCommonDir);
+  const head = await cleanWorktree(record);
+  const pushed = head === record.baseOid ? undefined : await confirmPushed(record, head);
+  if (removalVersion(record, head, repository, pushed) !== preview.version
+    || await repositoryIdentity(record.repoCommonDir) !== repository)
+    throw new GitWorktreeError('STALE_PREVIEW', 'Worktree or remote changed. Review the removal again.');
+  const dir = ownerDir(root, record.chatId);
+  const pending: Intent = {...intent, removal:{headOid:head,repositoryIdentity:repository}};
+  await writeIntent(dir, pending);
+  // The durable write can outlast an external Git operation on the same path.
+  // Recheck the worktree ownership and file state immediately before deletion.
+  await removalOwnership(dataRoot, record);
+  if (await cleanWorktree(record) !== head || await repositoryIdentity(record.repoCommonDir) !== repository)
+    throw new GitWorktreeError('STALE_PREVIEW', 'Worktree changed while saving the removal intent. Review the removal again.');
   try {
     await git(record.projectRoot, 'worktree', 'remove', '--', record.managedWorktreeRoot);
-    await writeIntent(ownerDir(root, record.chatId), {...intent, removed: true});
+    await finishRemoval(dir, pending);
   } catch (error) {
     throw new GitWorktreeError('WORKTREE_REMOVAL_UNCERTAIN', 'Git removal or its receipt could not be confirmed. Refresh and inspect the saved path before retrying.', {cause: error});
   }
 }
 
-/** Inspect an interrupted creation without modifying it. */
+/** Read saved provenance and reconcile an already-completed removal. */
 export async function readWorktreeIntent(dataRoot: string, chatId: string): Promise<Intent> {
   const root = await realpath(dataRoot);
   const dir = ownerDir(root, chatId);
+  return reconcileRemoval(dir, await readIntent(root, dir, chatId));
+}
+async function readIntent(root: string, dir: string, chatId: string): Promise<Intent> {
   if (await realpath(join(root, 'worktrees')) !== join(root, 'worktrees') || await realpath(dir) !== dir) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership directory was replaced');
   const intent = JSON.parse(await readFile(join(dir, 'intent.json'), 'utf8')) as Intent;
+  if (!intent || !['creating', 'ready'].includes(intent.state) || intent.record?.version !== 1 || intent.record.chatId !== chatId)
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid worktree intent');
   validateIntentCreation(intent);
-  if (!intent || !['creating', 'ready'].includes(intent.state) || intent.record?.version !== 1 || intent.record.chatId !== chatId) throw new Error('Invalid worktree intent');
   return intent;
 }
 /** Claim an already-created, verified worktree after an interrupted save. Never creates or overwrites a tree. */

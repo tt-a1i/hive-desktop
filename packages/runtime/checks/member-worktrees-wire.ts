@@ -8,15 +8,34 @@ import {dirname,join} from 'node:path';
 import {createInterface} from 'node:readline';
 import {DatabaseSync} from 'node:sqlite';
 import {createDesktopSessionManager} from '../src/agents/pi-session-manager.js';
+import {DispatchExecutionOrigins} from '../src/dispatch-execution-origins.js';
 type Frame={result?:unknown;error?:{code:string;message:string}};
 type Session={id:string;backend:string;workspaceId:string;originAgentId?:string;agentId?:string;identityState:string;execution:{kind:string;path:string;branch:string}};
 const directory=await mkdtemp(join(tmpdir(),'hive-member-worktrees-wire-')),repo=join(directory,'repo'),data=join(directory,'state');
 await mkdir(repo);await mkdir(join(directory,'pi'));await writeFile(join(directory,'gitconfig'),'');
 const git=(...args:string[])=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgSign=false',...args],{cwd:repo,stdio:'pipe'});
 git('init','--template=');await writeFile(join(repo,'base.txt'),'base');git('add','.');git('commit','-qm','base');
-const guard='const original=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==="string"?input:input instanceof URL?input:input.url);if(!["127.0.0.1","localhost","::1"].includes(url.hostname))return Promise.reject(new Error("Fixture disallows external fetch"));return original(input,init);};';
-function start(){
- const child=spawn(process.execPath,['--import',`data:text/javascript,${encodeURIComponent(guard)}`,process.env.HIVE_DESKTOP_TEST_RUNTIME ?? 'dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:data,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1',GIT_CONFIG_GLOBAL:join(directory,'gitconfig'),GIT_CONFIG_NOSYSTEM:'1'},stdio:['pipe','pipe','pipe']});
+const guard=`
+ const original=globalThis.fetch;
+ globalThis.fetch=(input,init)=>{
+  const url=new URL(typeof input==="string"?input:input instanceof URL?input:input.url);
+  if(!["127.0.0.1","localhost","::1"].includes(url.hostname))return Promise.reject(new Error("Fixture disallows external fetch"));
+  return original(input,init);
+ };
+ const target=process.env.HIVE_TEST_WORKTREE_REMOVAL_RECEIPT;
+ if(target){
+  const {default:fs}=await import("node:fs");
+  const rename=fs.promises.rename;
+  fs.promises.rename=async(source,destination)=>{
+   if(destination===target&&JSON.parse(await fs.promises.readFile(source,"utf8")).removed===true)
+    throw Object.assign(new Error("Injected removal receipt disk failure"),{code:"EIO"});
+   return rename(source,destination);
+  };
+  (await import("node:module")).syncBuiltinESMExports();
+ }
+`;
+function start(failedReceipt?: string){
+ const child=spawn(process.execPath,['--import',`data:text/javascript,${encodeURIComponent(guard)}`,process.env.HIVE_DESKTOP_TEST_RUNTIME ?? 'dist/main.js'],{cwd:process.cwd(),env:{...process.env,HIVE_DESKTOP_DATA_DIR:data,PI_CODING_AGENT_DIR:join(directory,'pi'),PI_OFFLINE:'1',GIT_CONFIG_GLOBAL:join(directory,'gitconfig'),GIT_CONFIG_NOSYSTEM:'1',HIVE_TEST_WORKTREE_REMOVAL_RECEIPT:failedReceipt??''},stdio:['pipe','pipe','pipe']});
  const exited=once(child,'exit');let id=0,stderr='';child.stderr.on('data',chunk=>{stderr+=String(chunk);});
  const pending=new Map<number,{resolve(frame:Frame):void;reject(error:Error):void}>();const lines=createInterface({input:child.stdout});
  lines.on('line',line=>{const frame=JSON.parse(line) as Frame&{id:number};const request=pending.get(frame.id);if(request){pending.delete(frame.id);request.resolve(frame);}});
@@ -59,7 +78,12 @@ try{
  manager.appendMessage({role:'user',content:'original worktree history',timestamp:Date.now()});
  manager.appendMessage({role:'assistant',content:[{type:'text',text:'Persisted worktree removal proof'}],api:'openai-responses',provider:'fixture',model:'fixture',stopReason:'stop',timestamp:Date.now(),
   usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}});
- wire=start();
+ const dispatchId = 'retired-fixture-dispatch';
+ new DispatchExecutionOrigins(join(data,'chats','dispatch-execution-origins')).put({
+  workspaceId:ws.id,dispatchId,sourceSessionId:scope.sessionId,sourceAgentId:workerId,
+ });
+ const intentPath = join(dirname(original.execution.path),'intent.json');
+ wire=start(intentPath);
  await wire.rpc('initialize');
  const preview = await wire.rpc('chat.worktrees.removal.preview', scope);
  assert.equal(preview.error, undefined);
@@ -76,16 +100,23 @@ try{
  assert.equal(await readFile(local,'utf8'),'user files must stay');
  await rm(local);
  const head = git('rev-parse',original.execution.branch).toString();
- assert.deepEqual((await wire.rpc('chat.worktrees.removal.apply', confirmation)).result,{ok:true,...scope});
+ assert.equal((await wire.rpc('chat.worktrees.removal.apply', confirmation)).error?.code,'WORKTREE_REMOVAL_UNCERTAIN');
+ const unfinished=JSON.parse(await readFile(intentPath,'utf8'));
+ assert.equal(unfinished.removal.headOid,head.trim());
+ assert.equal(unfinished.removed,undefined);
  await assert.rejects(readFile(join(original.execution.path,'base.txt')), {code:'ENOENT'});
  assert.equal(await readFile(join(repo,'base.txt'),'utf8'),'base');
  assert.equal(git('rev-parse',original.execution.branch).toString(),head);
+ await wire.close();wire=start();await wire.rpc('initialize');
+ const dispatch = await wire.rpc('dispatch.session',{workspaceId:ws.id,dispatchId,sourceAgentId:workerId});
+ assert.equal(dispatch.error,undefined);
+ assert.equal((dispatch.result as {sourceSessionId:string}).sourceSessionId,original.id);
+ assert.equal(JSON.parse(await readFile(intentPath,'utf8')).removed,true);
  const history = (await wire.rpc('member.worktrees',{workspaceId:ws.id,memberId:workerId})).result as
   {sessions:{id:string;executionAvailable:boolean;executionError?:{code:string}}[]};
  const retired = history.sessions.find(item=>item.id===original.id);
  assert.equal(retired?.executionAvailable,false);
  assert.equal(retired?.executionError?.code,'WORKTREE_REMOVED');
- await wire.close();wire=start();await wire.rpc('initialize');
  const cold = (await wire.rpc('chat.open',scope)).result as {readOnly:boolean;history:unknown[];identityError:{code:string}};
  assert.equal(cold.readOnly,true);
  assert.equal(cold.identityError.code,'WORKTREE_REMOVED');
@@ -93,5 +124,5 @@ try{
  assert.equal((await wire.rpc('chat.execution', {sessionId:scope.sessionId})).error?.code,'WORKTREE_REMOVED');
  const search = (await wire.rpc('chat.search',{workspaceId:ws.id,query:'Persisted worktree removal proof'})).result as {matches:{session:{id:string}}[]};
  assert.deepEqual(search.matches.map(item=>item.session.id),[scope.sessionId]);
- await wire.close();await writeFile(join(directory,'receipt.json'),JSON.stringify({pass:true,productionJsonl:true,realHiveSqliteGit:true,backends:sessions.map(item=>item.backend),noAgentRuns:true,coldRecovery:true,removal:{branchRetained:true,terminalGuard:true,staleGuard:true,dirtyGuard:true,readOnlyColdHistory:true}},null,2)+'\n');console.log(JSON.stringify({pass:true,directory}));
+ await wire.close();await writeFile(join(directory,'receipt.json'),JSON.stringify({pass:true,productionJsonl:true,realHiveSqliteGit:true,backends:sessions.map(item=>item.backend),noAgentRuns:true,coldRecovery:true,removal:{branchRetained:true,terminalGuard:true,staleGuard:true,dirtyGuard:true,receiptRecovered:true,dispatchSourceRetained:true,readOnlyColdHistory:true}},null,2)+'\n');console.log(JSON.stringify({pass:true,directory}));
 }finally{db?.close();await wire.close();}

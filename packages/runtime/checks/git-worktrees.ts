@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import { chmod, cp, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createManagedWorktree, previewManagedWorktreeRemoval, readWorktreeIntent, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree } from '../src/git-worktrees.js';
 const root = await mkdtemp(join(tmpdir(), 'hive worktree '));
 function git(cwd: string, ...args: string[]) { return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim(); }
@@ -110,9 +112,84 @@ try {
   await assert.rejects(removeManagedWorktree(data, fromLinked, {active:false, expectedVersion:pushed.version}), (error:any) => error.code === 'UNPUSHED_COMMITS');
   assert.equal(await readFile(join(fromLinked.executionPath, 'commit.txt'), 'utf8'), 'unpushed');
   git(fromLinked.managedWorktreeRoot, 'push', 'fixture', `HEAD:refs/heads/${fromLinked.branch}`);
-  await removeManagedWorktree(data, fromLinked, {active:false, expectedVersion:pushed.version});
+  await assert.rejects(removeManagedWorktree(data, fromLinked, {active:false, expectedVersion:pushed.version,
+    beforeRemove: async () => { git(bare, 'update-ref', '-d', `refs/heads/${fromLinked.branch}`); },
+  }), (error:any) => error.code === 'UNPUSHED_COMMITS');
+  assert.equal(await readFile(join(fromLinked.executionPath, 'commit.txt'), 'utf8'), 'unpushed');
+  git(fromLinked.managedWorktreeRoot, 'push', 'fixture', `HEAD:refs/heads/${fromLinked.branch}`);
+
+  const removalIntent = join(dirname(fromLinked.managedWorktreeRoot), 'intent.json');
+  const originalRename = fs.promises.rename;
+  let rejectPhase: 'intent' | 'receipt' = 'intent';
+  fs.promises.rename = async (source, destination) => {
+    if (destination === removalIntent) {
+      const document = JSON.parse(await readFile(source, 'utf8'));
+      if ((rejectPhase === 'intent' && document.removal) || (rejectPhase === 'receipt' && document.removed))
+        throw Object.assign(new Error('Injected worktree removal disk error'), {code:'EIO'});
+    }
+    return originalRename(source, destination);
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(removeManagedWorktree(data, fromLinked, {active:false, expectedVersion:pushed.version}),
+      (error:any) => error.code === 'EIO');
+    assert.equal(await readFile(join(fromLinked.executionPath, 'commit.txt'), 'utf8'), 'unpushed');
+    rejectPhase = 'receipt';
+    await assert.rejects(removeManagedWorktree(data, fromLinked, {active:false, expectedVersion:pushed.version}),
+      (error:any) => error.code === 'WORKTREE_REMOVAL_UNCERTAIN');
+  } finally {
+    fs.promises.rename = originalRename;
+    syncBuiltinESMExports();
+  }
+  const pending = await readFile(removalIntent, 'utf8');
+  assert.equal(JSON.parse(pending).removal.headOid, pushed.headOid);
+  assert.equal(JSON.parse(pending).removed, undefined);
+  assert.ok(!git(project, 'worktree', 'list', '--porcelain').includes(fromLinked.managedWorktreeRoot));
+  await mkdir(fromLinked.managedWorktreeRoot);
+  assert.equal((await readWorktreeIntent(data, fromLinked.chatId)).removed, undefined, 'an unrelated replacement blocks reconciliation');
+  await rm(fromLinked.managedWorktreeRoot, {recursive:true});
+  git(project, 'update-ref', `refs/heads/${fromLinked.branch}`, fromLinked.baseOid);
+  await assert.rejects(validateManagedWorktree(data, fromLinked), (error:any) => error.code === 'WORKTREE_REMOVAL_UNCERTAIN');
+  assert.equal(await readFile(removalIntent, 'utf8'), pending);
+  git(project, 'update-ref', `refs/heads/${fromLinked.branch}`, pushed.headOid);
   assert.equal(git(project, 'rev-parse', fromLinked.branch), pushed.headOid);
+  const common = fromLinked.repoCommonDir;
+  await rename(common, common + '.held');
+  try {
+    await cp(common + '.held', common, {recursive:true});
+    assert.equal(git(project, 'rev-parse', fromLinked.branch), pushed.headOid);
+    assert.equal((await readWorktreeIntent(data, fromLinked.chatId)).removed, undefined, 'replacement Git metadata is not the original repository');
+    assert.equal(await readFile(removalIntent, 'utf8'), pending);
+  } finally {
+    await rm(common, {recursive:true,force:true});
+    await rename(common + '.held', common);
+  }
   assert.equal((await readWorktreeIntent(data, fromLinked.chatId)).removed, true);
+  assert.equal(JSON.parse(await readFile(removalIntent, 'utf8')).removal, undefined);
+  const external = await createManagedWorktree({projectRoot:project,dataRoot:data,chatId:'externally-removed'});
+  git(project,'worktree','remove','--',external.managedWorktreeRoot);
+  assert.equal((await readWorktreeIntent(data, external.chatId)).removed, undefined);
+  await assert.rejects(validateManagedWorktree(data, external), (error:any) => error.code === 'IDENTITY_MISMATCH');
+  const contested = await createManagedWorktree({projectRoot:project,dataRoot:data,chatId:'replaced-during-removal'});
+  const contestedIntent = join(dirname(contested.managedWorktreeRoot), 'intent.json');
+  let replacementInstalled = false;
+  fs.promises.rename = async (source, destination) => {
+    await originalRename(source, destination);
+    if (destination !== contestedIntent || !JSON.parse(await readFile(destination, 'utf8')).removal || replacementInstalled) return;
+    git(project,'worktree','remove','--',contested.managedWorktreeRoot);
+    git(project,'worktree','add','-b','external-replacement',contested.managedWorktreeRoot);
+    replacementInstalled = true;
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(removeManagedWorktree(data, contested, {active:false}), (error:any) => error.code === 'IDENTITY_MISMATCH');
+  } finally {
+    fs.promises.rename = originalRename;
+    syncBuiltinESMExports();
+  }
+  assert.equal(replacementInstalled,true);
+  assert.equal(git(contested.managedWorktreeRoot,'branch','--show-current'),'external-replacement');
+  assert.equal((await readWorktreeIntent(data, contested.chatId)).removed,undefined);
   await removeManagedWorktree(data, first, { active: false });
   assert.equal(git(project, 'branch', '--list', 'hive/first'), 'hive/first');
   await removeManagedWorktree(data, second, { active: false });
