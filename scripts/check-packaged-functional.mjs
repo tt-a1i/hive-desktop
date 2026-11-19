@@ -65,10 +65,16 @@ try {
     const multipleBoots = ['session-history-rewind', 'session-handoff-runtime', 'handoff-runtime-failures', 'handoff-runtime-delivery'].includes(name);
     // The remote Git check now cold-starts a second runtime to verify removal.
     const timeout = multipleBoots ? 180_000 : ['acp-runtime-registration', 'git-remotes-wire'].includes(name) ? 120_000 : 60_000;
-    execFileSync(node, [file], {cwd: directory, stdio: 'inherit', timeout,
+    const options = {cwd: directory, stdio: 'inherit', timeout,
       env: {...process.env, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_OFFLINE: '1',
-        HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js')}});
+        HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js')}};
+    execFileSync(node, [file], options);
     receipt.checks.push({name, exitCode: 0});
+    if (name === 'session-history-rewind' && process.platform === 'darwin') {
+      console.log('[packaged-functional] session-history-rewind-sidecar-crash');
+      execFileSync(node, [file, '--sidecar-crash'], options);
+      receipt.checks.push({name: 'session-history-rewind-sidecar-crash', exitCode: 0});
+    }
   }
   receipt.pass = true;
   console.log('PACKAGED_FUNCTIONAL_OK: bundled runtime, dependency graph and Node; controlled storage/protocol checks, no model inference.');

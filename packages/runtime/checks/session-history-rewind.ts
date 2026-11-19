@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,10 @@ const log = join(root, 'requests.jsonl'), native = join(root, 'native.json');
 const dropResponse = join(root, 'lost-revert-reply'), dropBefore = join(root, 'drop-before');
 const runtime = process.env.HIVE_DESKTOP_TEST_RUNTIME ?? fileURLToPath(new URL('../dist/main.js', import.meta.url));
 const peer = fileURLToPath(new URL('./fixtures/session-history-peer.cjs', import.meta.url));
+const sidecarCrash = process.argv.includes('--sidecar-crash');
+if (sidecarCrash && process.platform !== 'darwin') {
+  throw new Error('--sidecar-crash is supported by this check on macOS only');
+}
 let execution = project;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgSign=false',...args], {cwd, encoding:'utf8', env:{...process.env, GIT_OPTIONAL_LOCKS:'0'}}).trim();
 const guard = `const fetch=globalThis.fetch;globalThis.fetch=(input,init)=>{const url=new URL(typeof input==='string'?input:input instanceof URL?input:input.url);if(!['127.0.0.1','localhost','::1'].includes(url.hostname))return Promise.reject(Error('fixture prohibits remote access'));return fetch(input,init);};`;
@@ -39,6 +44,11 @@ function start() {
   });
   return {
     rpc,
+    kill: async () => {
+      child.kill('SIGKILL');
+      assert.deepEqual(await exited, [null, 'SIGKILL']);
+      lines.close();
+    },
     close:async()=>{if(child.exitCode===null){try{await rpc('shutdown');}catch(error){child.kill();throw error;}finally{await exited;}}lines.close();assert.equal(child.exitCode,0,stderr);},
     async loseOutput() {
       child.stdout.destroy();
@@ -104,24 +114,66 @@ try {
   const fresh = await wire.rpc('history.rewind.preview',selection);
   request.previewToken = fresh.previewToken;
 
-  // The native peer persists the rewind but dies before replying. The product
-  // must cold-recover the exact result without repeating the native mutation.
-  await writeFile(dropResponse,'yes');
-  const uncertain=await wire.rpc('history.rewind.apply',{...request,confirmed:true});
-  assert.equal(uncertain.state,'uncertain',JSON.stringify(uncertain));
-  assert.equal(uncertain.recoverable,true);
-  assert.equal((await wire.rpc('chat.open',{sessionId:chat.id})).identityError.code,'HISTORY_REWIND_PENDING');
+  let operationId: string | undefined;
+  if (sidecarCrash) {
+    // Pause after persistence but before the native reply, then kill the sidecar.
+    await writeFile(dropResponse, 'pause');
+    const interrupted = wire.rpc('history.rewind.apply', {...request, confirmed:true})
+      .then(() => { throw Error('Unexpected rewind response'); }, () => {});
+    let peerPid = 0;
+    for (let i = 0; i < 300; i++) {
+      try {
+        peerPid = Number(await readFile(dropResponse + '.ready', 'utf8'));
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        await delay(100);
+      }
+    }
+    assert.ok(peerPid, 'Peer did not persist and pause');
+    assert.deepEqual((await state()).source.turns.map((turn:any)=>turn.id), ['t1']);
+    await wire.kill();
+    await interrupted;
+    wire = undefined;
+    for (let i = 0; i < 100; i++) {
+      try {
+        process.kill(peerPid, 0);
+        await delay(100);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') break;
+        throw error;
+      }
+    }
+    assert.throws(() => process.kill(peerPid, 0), {code:'ESRCH'});
+  } else {
+    // The peer dies before replying; the still-running sidecar reports uncertainty.
+    await writeFile(dropResponse, 'yes');
+    const uncertain = await wire.rpc('history.rewind.apply', {...request, confirmed:true});
+    assert.equal(uncertain.state, 'uncertain', JSON.stringify(uncertain));
+    assert.equal(uncertain.recoverable, true);
+    operationId = uncertain.operationId;
+    assert.equal((await wire.rpc('chat.open', {sessionId:chat.id})).identityError.code, 'HISTORY_REWIND_PENDING');
+    await wire.close();
+    wire = undefined;
+  }
   assert.equal(await readFile(join(execution,'tracked.txt'),'utf8'),'future file');
   assert.deepEqual((await state()).source.turns.map((turn:any)=>turn.id),['t1']);
   assert.equal((await state()).source.thread.path,'/native/source-rewound');
   assert.deepEqual((await state()).child1.turns.map((turn:any)=>turn.id),['t1','t2']);
   const backupRequestTypes=(await calls()).filter(call=>['thread/fork','thread/revert'].includes(call.method)).map(call=>call.method);
   assert.deepEqual(backupRequestTypes,['thread/fork','thread/revert']);
-  await wire.close();wire=undefined;
 
   await unlink(dropResponse);
   wire=start();await wire.rpc('initialize');
-  const recovered=await wire.rpc('history.operations.recover',{workspaceId:workspace.id,operationId:uncertain.operationId});
+  const operations=await wire.rpc('history.operations.list',{workspaceId:workspace.id});
+  const pending=operations.operations.find((op:any)=>op.sourceSessionId===chat.id && op.recoverable);
+  assert.ok(pending,JSON.stringify(operations));
+  assert.notEqual(pending.state,'ready');
+  if (operationId) assert.equal(pending.operationId, operationId);
+  assert.equal((await wire.rpc('chat.open',{sessionId:chat.id})).identityError.code,'HISTORY_REWIND_PENDING');
+  assert.equal(await readFile(join(execution,'tracked.txt'),'utf8'),'future file');
+  assert.deepEqual((await calls()).filter(call=>['thread/fork','thread/revert'].includes(call.method)).map(call=>call.method),backupRequestTypes);
+  const recovered=await wire.rpc('history.operations.recover',{workspaceId:workspace.id,operationId:pending.operationId});
   assert.equal(recovered.state,'ready',JSON.stringify(recovered));
   assert.equal(recovered.session.id,chat.id);
   assert.notEqual(recovered.backupSession.id,chat.id);
@@ -148,7 +200,7 @@ try {
   assert.equal(await readFile(join(project,'tracked.txt'),'utf8'),'original root');
   await wire.loseOutput();
   wire=undefined;
-  console.log('SESSION_HISTORY_REWIND_OK: backup first, exact native prefix, code restore, cold recovery and original delivery receipts');
+  console.log((sidecarCrash ? 'SESSION_HISTORY_REWIND_SIDECAR_CRASH_OK:' : 'SESSION_HISTORY_REWIND_OK:') + ' backup first, exact native prefix, code restore, cold recovery and original delivery receipts');
 } finally {
   try { await wire?.close(); } finally { await rm(root,{recursive:true,force:true,maxRetries:5}); }
 }
