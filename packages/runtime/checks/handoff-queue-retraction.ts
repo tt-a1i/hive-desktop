@@ -77,7 +77,7 @@ try{
  const editedText = 'Second queued input edited after reopening';
  const attachmentPath = join(test.folder, 'queued-notes.txt');
  await writeFile(attachmentPath, 'Only the queued delivery body should change.');
- const attachment = await runtime!.chats.attachments.add(test.ws.id, attachmentPath);
+ const {attachment} = await runtime!.chats.attachments.add(test.ws.id, attachmentPath);
  const enqueue=DeliveryQueue.prototype.enqueue;
  DeliveryQueue.prototype.enqueue=async function(text:any,trigger:any,presentation:any,images:any){if(presentation?.origin==='user')await this.pause();return enqueue.call(this,text,trigger,presentation,images);};
  try{
