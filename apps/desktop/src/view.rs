@@ -1499,6 +1499,7 @@ impl Render for HiveApp {
                                                         cx.notify();
                                                     })),
                                             )
+                                            .child(self.global_search_button(cx))
                                         })
                                         .when(!welcome, |bar| {
                                             bar.when_some(

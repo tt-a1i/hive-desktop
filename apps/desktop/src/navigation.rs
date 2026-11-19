@@ -194,26 +194,7 @@ impl HiveApp {
                         ),
                 )
             })
-            .child(
-                Button::new("open-global-conversation-search")
-                    .custom(palette::quiet_icon_variant(cx))
-                    .compact()
-                    .xsmall()
-                    .h(px(24.))
-                    .w(px(24.))
-                    .rounded_md()
-                    .icon(Glyph::Search)
-                    .tooltip(crate::keybindings::hint(
-                        crate::keybindings::Target::Search,
-                        "搜索所有项目的会话",
-                        cx,
-                    ))
-                    .accessibility_label(tr("搜索所有项目的会话"))
-                    .disabled(!self.connected)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_session_search(window, cx);
-                    })),
-            )
+            .child(self.global_search_button(cx))
             .when(!self.connected && self.runtime.is_some(), |view| {
                 view.child(
                     h_flex()
@@ -236,6 +217,27 @@ impl HiveApp {
             .when(!in_sidebar && !self.viewing_conversation(), |view| {
                 view.child(self.return_to_chat_button(cx))
             })
+    }
+
+    pub(crate) fn global_search_button(&self, cx: &Context<Self>) -> Button {
+        Button::new("open-global-conversation-search")
+            .custom(palette::quiet_icon_variant(cx))
+            .compact()
+            .xsmall()
+            .h(px(24.))
+            .w(px(24.))
+            .rounded_md()
+            .icon(Glyph::Search)
+            .tooltip(crate::keybindings::hint(
+                crate::keybindings::Target::Search,
+                "搜索所有项目的会话",
+                cx,
+            ))
+            .accessibility_label(tr("搜索所有项目的会话"))
+            .disabled(!self.connected)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.open_session_search(window, cx);
+            }))
     }
 
     pub fn new_chat_menu(
