@@ -187,33 +187,42 @@ async function checkTransaction(healthy: boolean, receiptFault = false, lockedCa
   await rm(root, { recursive: true, maxRetries: 10, retryDelay: 100 });
 }
 
-async function checkInterruptedReplacement() {
-  const root = join(fixture, 'interrupted');
+async function checkInterruptedReplacement(beforeJournal = false) {
+  const root = join(fixture, beforeJournal ? 'interrupted-before-journal' : 'interrupted-after-backup');
   const installation = join(root, 'installation');
   const dataDirectory = join(root, 'data');
   await mkdir(join(dataDirectory, 'desktop-updates'), { recursive: true });
   const draft = join(dataDirectory, 'draft.txt');
   await writeFile(draft, 'Draft before interruption');
   const current = await executable(installation, '0.1.0', true);
+  const digest = 'e'.repeat(64);
+  const cache = join(dataDirectory, 'desktop-updates', `${digest}.zip`);
+  const attestation = cache.replace(/\.zip$/, '.manifest.json');
+  const receiptPath = join(dataDirectory, 'desktop-updates/install-result.json');
+  const earlierReceipt = '{"transactionId":"earlier-transaction"}';
+  await writeFile(cache, 'Verified fixture ZIP');
+  await writeFile(attestation, '{}');
+  await writeFile(receiptPath, earlierReceipt);
   const {transaction, program, node, entry} = await prepareTransaction(root, {
     installation, dataDirectory, fromVersion: '0.1.0', toVersion: '0.1.1',
-    oldExecutableSha256: checksum, newExecutableSha256: checksum,
+    oldExecutableSha256: checksum, newExecutableSha256: checksum, archiveSha256: digest,
   });
-  await executable(join(transaction, 'next'), '0.1.1', true);
-  const gate = join(transaction, 'after-first-rename.cjs');
-  const marker = join(transaction, 'backup-moved');
-  // The real first rename has happened when the process reaches this barrier.
-  // Pause only this test child so termination lands before the second rename.
+  const next = await executable(join(transaction, 'next'), '0.1.1', true);
+  const journal = join(transaction, 'install-status.json');
+  const previous = join(transaction, 'previous');
+  const gate = join(transaction, 'rename-gate.cjs');
+  const marker = join(transaction, 'at-rename');
+  // Pause only the test installer with the lock held, either before the journal
+  // is committed or once the original has actually moved to the backup path.
   await writeFile(gate, `
     const fs = require('node:fs/promises');
     const {syncBuiltinESMExports} = require('node:module');
     const rename = fs.rename;
     fs.rename = async (from, to) => {
-      await rename(from, to);
-      if (to === process.env.HIVE_TEST_PREVIOUS) {
-        await fs.writeFile(process.env.HIVE_TEST_MARKER, 'moved');
-        await new Promise(resolve => setTimeout(resolve, 30000));
-      }
+      if (to !== process.env.HIVE_TEST_RENAME_TARGET) return rename(from, to);
+      if (!process.env.HIVE_TEST_BEFORE_RENAME) await rename(from, to);
+      await fs.writeFile(process.env.HIVE_TEST_MARKER, 'paused');
+      await new Promise(resolve => setTimeout(resolve, 30000));
     };
     syncBuiltinESMExports();
   `);
@@ -224,29 +233,50 @@ async function checkInterruptedReplacement() {
   const installer = spawn(node, [program, String(original.pid)], {
     stdio: 'ignore',
     env: { ...env, NODE_OPTIONS: `--require "${gate.replaceAll('\\', '/')}"`,
-      HIVE_TEST_PREVIOUS: join(transaction, 'previous'), HIVE_TEST_MARKER: marker },
+      HIVE_TEST_RENAME_TARGET: beforeJournal ? journal : previous,
+      HIVE_TEST_BEFORE_RENAME: beforeJournal ? '1' : '', HIVE_TEST_MARKER: marker },
   });
   const exited = once(installer, 'exit');
   const recover = () => promisify(execFile)(node, [program, '--recover'], { env, timeout: 10000 });
   try {
     for (let i = 0; i < 200; i++) {
-      assert.equal(installer.exitCode, null, 'installer exited before first rename');
-      if (await readFile(marker, 'utf8').catch(() => '') === 'moved') break;
+      assert.equal(installer.exitCode, null, 'installer exited before reaching the rename gate');
+      if (await readFile(marker, 'utf8').catch(() => '') === 'paused') break;
       await delay(25);
     }
-    assert.equal(await readFile(marker, 'utf8'), 'moved');
-    await assert.rejects(readFile(current), { code: 'ENOENT' });
+    assert.equal(await readFile(marker, 'utf8'), 'paused');
+    if (beforeJournal) {
+      await assert.rejects(lstat(journal), { code: 'ENOENT' });
+      assert.equal(await hashDesktopFile(current), checksum);
+    } else await assert.rejects(lstat(current), { code: 'ENOENT' });
     await assert.rejects(recover(), /Another desktop installer is running/);
   } finally {
     if (installer.exitCode === null && installer.signalCode === null) installer.kill('SIGKILL');
     await exited;
   }
   assert.match(await readFile(entry, 'utf8'), /installer\.mjs.*--recover/);
-  const { stdout } = await recover();
-  assert.match(stdout, /0\.1\.0 was recovered/);
+  if (beforeJournal) {
+    await mkdir(previous);
+    await assert.rejects(recover(), /Cannot verify an unstarted desktop update/);
+    await assert.rejects(lstat(journal), { code: 'ENOENT' });
+    assert.equal(await hashDesktopFile(next), checksum);
+    await rm(previous, { recursive: true });
+    env.NODE_OPTIONS = process.env.NODE_OPTIONS;
+    env.HIVE_TEST_KEEP_ROLLBACK_TRANSACTION = '1';
+    assert.match((await recover()).stdout, /The pending update was cancelled/);
+    assert.match((await recover()).stdout, /The pending update was cancelled/);
+    await assert.rejects(promisify(execFile)(node, [program, String(original.pid)], { env, timeout: 10000 }), /This desktop update has already started/);
+    assert.equal(await readFile(receiptPath, 'utf8'), earlierReceipt);
+    await reclaimDesktopUpdateTransactions(installation, dataDirectory);
+  } else {
+    assert.match((await recover()).stdout, /0\.1\.0 was recovered/);
+    const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
+    assert.equal(receipt.state, 'rolledBack');
+  }
   assert.equal(JSON.parse(await readFile(join(dirname(current), 'fixture.json'), 'utf8')).version, '0.1.0');
-  const receipt = JSON.parse(await readFile(join(dataDirectory, 'desktop-updates/install-result.json'), 'utf8'));
-  assert.equal(receipt.state, 'rolledBack');
+  assert.equal(await hashDesktopFile(current), checksum);
+  assert.equal(await readFile(cache, 'utf8'), 'Verified fixture ZIP');
+  assert.equal(await readFile(attestation, 'utf8'), '{}');
   assert.equal(await readFile(draft, 'utf8'), 'Draft before interruption');
   await waitForRemoval(transaction);
   await assert.rejects(lstat(entry), {code:'ENOENT'});
@@ -259,6 +289,7 @@ try {
   await checkTransaction(false, true);
   await checkTransaction(false, true, false, true);
   await checkInterruptedReplacement();
+  await checkInterruptedReplacement(true);
   console.log('DESKTOP_UPDATE_INSTALLER_OK: replacement, failed-start rollback, interrupted-installer recovery, and unchanged user data.');
 } finally {
   if (previousOptions === undefined) delete process.env.NODE_OPTIONS;

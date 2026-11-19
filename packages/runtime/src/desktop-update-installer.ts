@@ -22,7 +22,7 @@ export type DesktopInstallPlan = {
 };
 
 type Journal = {
-  state: 'replacing' | 'starting' | 'installed' | 'rolledBack' | 'failed' | 'recoveryRequired';
+  state: 'replacing' | 'starting' | 'installed' | 'rolledBack' | 'failed' | 'cancelled' | 'recoveryRequired';
   fromVersion: string;
   toVersion: string;
   candidatePid?: number | undefined;
@@ -222,7 +222,7 @@ export async function installDesktopUpdate(plan: DesktopInstallPlan, transaction
 
 type TransactionPaths = Awaited<ReturnType<typeof transactionPaths>>;
 
-const terminalStates: Journal['state'][] = ['installed', 'rolledBack', 'failed'];
+const terminalStates: Journal['state'][] = ['installed', 'rolledBack', 'failed', 'cancelled'];
 const validPid = (pid: number) => Number.isSafeInteger(pid) && pid > 1;
 
 async function readJournal(plan: DesktopInstallPlan, path: string): Promise<Journal> {
@@ -403,10 +403,23 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
   const { next, previous, readiness, journal } = paths;
   return withInstallLock(installation, async () => {
     let state: Journal;
+    const cancelled = 'The pending update was cancelled. The original installation is still available.';
     try { state = await readJournal(plan, journal); }
     catch (error) {
-      if (missing(error)) return 'Nothing to recover. The installation was not changed.';
-      throw error;
+      if (!missing(error)) throw error;
+      if (!recoveryEntry(transaction) || await exists(previous)
+        || !(await lstat(next).catch(error => { if (!missing(error)) throw error; }))?.isDirectory()) {
+        throw new Error('Cannot verify an unstarted desktop update. Recovery kept the packages untouched.');
+      }
+      await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
+      // A later installer must see this cancellation under the same lock.
+      // The detached cleaner removes the unused candidate without changing the receipt or cached download.
+      await atomicJson(journal, { state: 'cancelled', fromVersion, toVersion, settledBy: process.pid } satisfies Journal);
+      return cancelled;
+    }
+    if (state.state === 'cancelled') {
+      await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
+      return cancelled;
     }
     if (state.state === 'rolledBack' || state.state === 'failed') {
       await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
