@@ -19,7 +19,7 @@ const queries = async () => (await readFile(join(project, 'queue-peer-queries.js
   .trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
 let runtime;
 try {
-  if (mode === 'seed' || mode === 'stop-seed' || mode === 'declined-seed') {
+  if (mode === 'seed' || mode === 'stop-seed' || mode === 'declined-seed' || mode === 'unknown-seed') {
     const stopRejection = mode !== 'seed';
     const rejectionCode = mode === 'declined-seed' ? -32600 : -32603;
     await Promise.all([project, data, pi].map(path => mkdir(path, {recursive: true})));
@@ -68,7 +68,7 @@ try {
     assert(first?.editable && (stopRejection || second?.editable));
     assert.equal(opened.pendingUserInputs.length, stopRejection ? 1 : 2);
     const [copy] = await runtime.chats.attachments.get(workspace.id, [attachment.id]);
-    const fixture = {workspaceId: workspace.id, sessionId: chat.id, project, originalText, editedText,
+    const fixture = {unknownRecovery:mode==='unknown-seed',workspaceId: workspace.id, sessionId: chat.id, project, originalText, editedText,
       canceledText, draft, deliveryId: first.deliveryId, canceledId: second?.deliveryId,
       attachmentId: attachment.id, attachmentSha256: digest(await readFile(copy.filePath)),
       queriesBefore: await queries(), environment: {HIVE_CODEX_COMMAND: command, CODEX_HOME:join(root, 'codex-home')}};
@@ -92,6 +92,54 @@ try {
     const savedDraft = JSON.parse(await readFile(join(data, 'desktop-drafts', `session-${fixture.sessionId}.json`), 'utf8'));
     const nativeQueries = await queries();
     let stopEvidence;
+    if(fixture.unknownRecovery && mode!=='inspect') {
+      const snapshot=JSON.parse(await readFile(fixture.snapshotPath,'utf8'));
+      const original=snapshot.find(item=>item.presentation.displayText===fixture.originalText);
+      assert.equal(snapshot.length,2);assert(original&&original.steerAttemptVersion===1);
+      assert.equal(original.presentation.attachments[0].id,fixture.attachmentId);
+      assert(snapshot.some(item=>item.id===fixture.primaryId&&item.presentation.attachments[0].id===fixture.primaryAttachmentId));
+      const rejection=JSON.parse(await readFile(fixture.rejectionPath,'utf8'));assert.equal(rejection.errorCode,-32603);
+      assert(JSON.stringify(rejection.input).includes(fixture.originalText));assert(JSON.stringify(nativeQueries[0].input).includes(fixture.primaryText));
+      const [primaryCopy]=await runtime.chats.attachments.get(fixture.workspaceId,[fixture.primaryAttachmentId]);
+      assert.equal(digest(await readFile(primaryCopy.filePath)),fixture.primaryAttachmentSha256);
+      const primaryHistory=opened.history.filter(item=>item.presentation?.deliveryId===fixture.primaryId);
+      assert.equal(primaryHistory.length,1);assert.equal(primaryHistory[0].presentation.attachments[0].id,fixture.primaryAttachmentId);
+      const interrupts=(await readFile(join(project,'queue-peer-interrupts.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+      assert.equal(interrupts.length,1);assert.equal(interrupts[0].turnId,rejection.turnId);assert(interrupts[0].rejectionAlreadySent);
+      const native=await readFile(join(project,'queue-peer-thread.json'));
+      const source=runtime.hive.getUserInput(fixture.workspaceId,opened.agentId,original.presentation.messageSequence);
+      if(mode==='before'){
+        assert.equal(nativeQueries.length,1);assert.equal(opened.pendingUserInputs.length,1);assert.equal(opened.pendingUserInputs[0].editable,false);
+        fixture.deliveryId=original.id;fixture.unknownNativeSha256=digest(native);fixture.unknownSource=source;fixture.queriesBefore=nativeQueries;
+        await runtime.chats.prompt(fixture.sessionId,fixture.canceledText,[fixture.attachmentId]);
+        const queue=await runtime.chats.open(fixture.sessionId);assert.equal(queue.busy,false);assert.equal(queue.pendingUserInputs.length,2);
+        const tail=queue.pendingUserInputs[1];assert(tail.editable);assert.equal(tail.text,fixture.canceledText);fixture.tailId=tail.deliveryId;
+        await writeFile(join(root,'queue-seed.json'),JSON.stringify(fixture));
+      }else{
+        const review=await runtime.chats.uncertainDeliveries(fixture.sessionId);assert.equal(review.deliveries.length,0);
+        const receipt=review.resolved.find(item=>item.deliveryId===original.id);assert(receipt&&receipt.text===fixture.originalText);
+        assert.deepEqual({...source},fixture.unknownSource,'Local disposal cannot change authoritative Hive input/audit');
+        const receipts=JSON.parse(await readFile(join(data,'chats','steer-dispositions',digest(fixture.sessionId)+'.json'),'utf8'));
+        assert.equal(receipts.length,1);assert.equal(receipts[0].deliveryId,original.id);assert.equal(receipts[0].nativeOutcome,'unknown');assert.equal(receipts[0].disposition,'discarded-local-wait');
+        assert.deepEqual(receipts[0].presentation,original.presentation);
+        assert(!opened.pendingUserInputs.some(item=>item.deliveryId===original.id),'Discarded waiting input cannot return after restart');
+        if(mode==='resolved'){
+          assert.equal(digest(native),fixture.unknownNativeSha256,'Native history cannot change during local disposal');
+          assert.deepEqual(nativeQueries,fixture.queriesBefore);assert.equal(opened.pendingUserInputs.length,1);
+          assert.equal(opened.pendingUserInputs[0].deliveryId,fixture.tailId);assert.equal(opened.pendingUserInputs[0].attachments[0].id,fixture.attachmentId);assert(opened.pendingUserInputs[0].editable);
+          await writeFile(join(project,'queue-peer-control.json'),JSON.stringify({complete:true}));
+        }else{
+          assert.equal(mode,'after');assert.equal(opened.pending,0);assert.equal(nativeQueries.length,2);assert.deepEqual(nativeQueries.slice(0,1),fixture.queriesBefore);
+          const last=JSON.stringify(nativeQueries[1].input);assert(last.includes(fixture.canceledText));assert(!last.includes(fixture.originalText));
+          assert.equal(opened.completedDeliveryIds.filter(id=>id===fixture.tailId).length,1);
+        }
+      }
+      assert.equal(savedDraft.input,fixture.draft);
+      await writeFile(join(root,`queue-${mode}.json`),JSON.stringify({mode,unknownRecovery:true,rejectionCode:-32603,originalDeliveryId:original.id,tailId:fixture.tailId,
+        originalAttachmentId:fixture.attachmentId,originalAttachmentSha256:fixture.attachmentSha256,nativeTurns:nativeQueries.length,pending:(await runtime.chats.open(fixture.sessionId)).pendingUserInputs,
+        localDecisionOnly:mode!=='before',nativeHistoryUnchangedDuringDecision:mode==='resolved',originalNeverResent:!JSON.stringify(nativeQueries).includes(fixture.originalText),
+        draftPreserved:true,tailSentExactlyOnce:mode==='after'}));
+    } else {
     if(fixture.stopRejection && mode!=='inspect') {
       const snapshot=JSON.parse(await readFile(fixture.snapshotPath,'utf8'));
       assert.equal(snapshot.length,2);
@@ -159,6 +207,7 @@ try {
       ...(stopEvidence&&{stopEvidence}),
       nativeTurns:nativeQueries.length, pending:opened.pendingUserInputs,
       ...(!fixture.stopRejection&&{canceledInputNeverSent:true}), editedInputSentExactlyOnce:mode === 'after'}));
+    }
     }
   }
 } finally { await runtime?.close(); }

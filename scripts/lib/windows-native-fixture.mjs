@@ -94,7 +94,7 @@ export async function runWindowsNativeFixture(config) {
     const fixture = JSON.parse(await readFile(join(root, config.fixtureFile + '-seed.json'), 'utf8'));
     result.fixture = config.summary(fixture);
     Object.assign(env, fixture.environment ?? {});
-    for (const phase of ['select', 'reopen']) {
+    for (const phase of config.phases ?? ['select', 'reopen']) {
       const desktop = start(executable, [], {
         cwd: fixture.project,
         env,

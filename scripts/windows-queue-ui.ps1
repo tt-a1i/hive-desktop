@@ -1,7 +1,7 @@
 ﻿param(
     [Parameter(Mandatory)][int]$AppProcessId,
     [Parameter(Mandatory)][string]$Executable,
-    [Parameter(Mandatory)][ValidateSet('select','reopen')][string]$Phase,
+    [Parameter(Mandatory)][ValidateSet('select','resolve','reopen')][string]$Phase,
     [Parameter(Mandatory)][string]$OriginalText,
     [Parameter(Mandatory)][string]$EditedText,
     [Parameter(Mandatory)][string]$CanceledText,
@@ -10,6 +10,7 @@
     [Parameter(Mandatory)][string]$EvidenceDirectory,
     [switch]$StopRejection,
     [switch]$DefiniteRejection,
+    [switch]$UnknownRecovery,
     [string]$SpoolPath,
     [string]$RejectionPath,
     [string]$SnapshotPath
@@ -80,7 +81,7 @@ try {
             if (@($snapshot).Count -ne 2) { throw 'Both original deliveries must exist before Stop' }
             [IO.File]::WriteAllText($SnapshotPath,($snapshot | ConvertTo-Json -Depth 24),[Text.UTF8Encoding]::new($false))
             $composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Draft)
-            $prefix=if($DefiniteRejection){'windows-queued-stop-declined'}else{'windows-queued-stop-rejection'}
+            $prefix=if($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}else{'windows-queued-stop-rejection'}
             Save-NativeWindow (Join-Path $EvidenceDirectory "$prefix-before-stop.png")
             Invoke-Control (Wait-Name 'Stop')
             [void](Wait-Name 'Resume processing')
@@ -88,6 +89,12 @@ try {
             $result.stages.nativeSteerRejectedBeforeStop=$true
             $result.stages.stopInvoked=$true
         }
+        if ($UnknownRecovery) {
+            $unknown=Wait-Control {param($c) $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Group -and ([string]$c.Current.Name).StartsWith($OriginalText+' ·',[StringComparison]::Ordinal)} 'protected uncertain original'
+            $actions=@($unknown.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -in @('Edit queued message','Cancel queued message') })
+            if ($actions.Count) { throw 'Uncertain attempted input became editable or retractable' }
+            $result.stages.unknownProtected=$true
+        } else {
         Invoke-Control (Row-Action $OriginalText 'Edit queued message')
         $input=Wait-Name 'Queued message text'
         $input.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($EditedText)
@@ -106,17 +113,43 @@ try {
         if ($remaining.Count) { throw 'Canceled input remained in the executable queue' }
         $result.stages.edited=$true; $result.stages.canceled=$true
         } else { $result.stages.edited=$true }
+        }
+    } elseif ($Phase -eq 'resolve') {
+        [void](Row-Action $CanceledText 'Edit queued message')
+        Invoke-Control (Wait-Name 'Review uncertain deliveries')
+        $source=Wait-Control {param($c) ([string]$c.Current.Name).StartsWith('user · This new appended input',[StringComparison]::Ordinal)} 'uncertain original source read through UIA'
+        $text=Wait-Control {param($c) $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and $c.Current.Name -ceq $OriginalText} 'exact uncertain original read through UIA'
+        $result.stages.reviewSource=$source.Current.Name
+        $result.stages.reviewText=$text.Current.Name
+        Invoke-Control (Wait-Name 'Discard this queued wait…')
+        $confirmation='The agent may already have acted. This only discards the queued wait; native work and Hive audit remain.'
+        [void](Wait-Control {param($c) $c.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and $c.Current.Name -ceq $confirmation} 'second confirmation read through UIA')
+        $result.stages.confirmationRead=$confirmation
+        Save-NativeWindow (Join-Path $EvidenceDirectory 'windows-queued-stop-unknown-confirm.png')
+        Invoke-Control (Wait-Name 'Confirm discard queued wait')
+        [void](Wait-Name 'Queued wait discarded; native outcome remains unknown.')
+        [void](Wait-Control {param($c) ([string]$c.Current.Name).StartsWith('Local wait discarded at ',[StringComparison]::Ordinal)} 'durable local disposition receipt')
+        [void](Row-Action $CanceledText 'Edit queued message')
+        $result.stages.explicitLocalDiscard=$true
     } else {
+        if ($UnknownRecovery) {
+            [void](Row-Action $CanceledText 'Edit queued message')
+            Invoke-Control (Wait-Name 'Review uncertain deliveries')
+            [void](Wait-Control {param($c) ([string]$c.Current.Name).StartsWith('Local wait discarded at ',[StringComparison]::Ordinal)} 'cold disposition receipt')
+            if (@(All-Controls | Where-Object { ([string]$_.Current.Name).StartsWith($OriginalText+' ·',[StringComparison]::Ordinal) }).Count) { throw 'Discarded local wait returned after restart' }
+            $result.stages.coldReceiptRetained=$true
+        } else {
         [void](Row-Action $EditedText 'Edit queued message')
         if (@(All-Controls | Where-Object { ([string]$_.Current.Name).StartsWith($CanceledText + ' ·',[StringComparison]::Ordinal) }).Count) {
             throw 'Canceled input returned after cold reopen'
+        }
         }
         Invoke-Control (Wait-Name 'Resume processing')
         [void](Wait-Control {param($c) $c.Current.Name -match 'Synthetic queued completion'} 'controlled resumed completion')
         $result.stages.explicitResume=$true
     }
     Assert-Draft
-    $prefix=if($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
+    $prefix=if($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
     Save-NativeWindow (Join-Path $EvidenceDirectory ("$prefix-$Phase.png"))
     if (-not $app.CloseMainWindow()) { throw 'Could not request normal exit' }
     if (-not $app.WaitForExit(30000)) { throw 'Desktop did not exit' }
@@ -125,7 +158,7 @@ try {
     $result.error=$_.Exception.ToString()
     if ($root) {
         try { $result.controls=@(All-Controls | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 180) } catch {}
-        $prefix=if($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
+        $prefix=if($UnknownRecovery){'windows-queued-stop-unknown'}elseif($DefiniteRejection){'windows-queued-stop-declined'}elseif($StopRejection){'windows-queued-stop-rejection'}else{'windows-queued-inputs'}
         try { Save-NativeWindow (Join-Path $EvidenceDirectory ("$prefix-$Phase-failure.png")) } catch { $result.captureError=$_.Exception.Message }
     }
 } finally {
