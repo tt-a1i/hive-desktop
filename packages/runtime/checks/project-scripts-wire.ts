@@ -23,7 +23,8 @@ try{
  const script=saved.scripts[0];
  const missing=await rpc('script.run',{workspaceId:ws.id,scriptId:randomUUID(),expectedVersion:randomUUID(),requestId:randomUUID()});
  assert.equal(missing.error.code,'SCRIPT_SETTINGS_NOT_FOUND');assert.ok(missing.error.message.startsWith('[SCRIPT_SETTINGS_NOT_FOUND] '));
- const stale=await rpc('script.run',{workspaceId:ws.id,scriptId:script.id,expectedVersion:randomUUID(),requestId:randomUUID()});
+ const staleRequestId=randomUUID();
+ const stale=await rpc('script.run',{workspaceId:ws.id,scriptId:script.id,expectedVersion:randomUUID(),requestId:staleRequestId});
  assert.equal(stale.error.code,'SCRIPT_SETTINGS_CONFLICT');assert.ok(stale.error.message.startsWith('[SCRIPT_SETTINGS_CONFLICT] '));
  const invalid=await rpc('script.settings.save',{workspaceId:ws.id,expectedRevision:saved.revision,script:{name:'',command:'true'}});
  assert.equal(invalid.error.code,'SCRIPT_SETTINGS_INVALID');assert.ok(invalid.error.message.startsWith('[SCRIPT_SETTINGS_INVALID] '));
@@ -55,6 +56,13 @@ try{
  assert.deepEqual(history.result,{runs:[done.result.run],unreadableRunCount:1});
  assert.equal(emptyHistory.unreadableRunCount,0);
  assert.deepEqual((await rpc('script.runs',{workspaceId:other.id})).result,{runs:[],unreadableRunCount:1});
+ const checkRequest=(workspaceId:string,requestId:string)=>rpc('script.runs',{workspaceId,requestId});
+ const absent=await checkRequest(ws.id,staleRequestId);
+ assert.deepEqual(absent.result,{...history.result,requestState:'absent'});
+ assert.deepEqual((await checkRequest(ws.id,request.requestId)).result,{...history.result,requestState:'present'});
+ assert.deepEqual((await checkRequest(ws.id,otherRequest.requestId)).result,{...history.result,requestState:'absent'});
+ assert.deepEqual((await checkRequest(other.id,otherRequest.requestId)).result,{runs:[],unreadableRunCount:1,requestState:'unreadable'});
+ assert.equal((await checkRequest(ws.id,'bad-id')).error.code,'SCRIPT_RUN_INPUT_INVALID');
  assert.deepEqual(healthyLog.result,done.result);
  assert.equal(historicalStop.result.status,'failed');
  assert.equal((await rpc('script.get',{workspaceId:other.id,runId})).error.code,'SCRIPT_RUN_NOT_FOUND');

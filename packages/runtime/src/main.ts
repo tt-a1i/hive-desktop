@@ -249,7 +249,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'script.settings.save': return runtime.projectScripts.save(text(params, 'workspaceId'), text(params, 'expectedRevision'), record(params.script) as {id?: string; name: unknown; command: unknown});
     case 'script.settings.remove': return runtime.projectScripts.remove(text(params, 'workspaceId'), text(params, 'expectedRevision'), text(params, 'scriptId'));
     case 'script.run': return runtime.scriptRuns.run(params);
-    case 'script.runs': return runtime.scriptRuns.list(text(params, 'workspaceId'));
+    case 'script.runs': return runtime.scriptRuns.list(text(params, 'workspaceId'), params.requestId);
     case 'script.get': return runtime.scriptRuns.get(text(params, 'workspaceId'), text(params, 'runId'), params.offset as number | undefined, params.limit as number | undefined);
     case 'script.stop': return runtime.scriptRuns.stop(text(params, 'workspaceId'), text(params, 'runId'));
     case 'terminal.list': return terminal.list(text(params, 'workspaceId'), params.sessionId === undefined ? undefined : text(params, 'sessionId'));

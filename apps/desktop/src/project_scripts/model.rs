@@ -172,10 +172,30 @@ impl Status {
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+enum RequestState {
+    Absent,
+    Present,
+    Unreadable,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Runs {
     pub runs: Vec<Run>,
     #[serde(default)]
     pub unreadable_run_count: usize,
+    request_state: Option<RequestState>,
+}
+impl Runs {
+    pub fn confirms_absence(&self, request: &str, inspected: Option<&str>) -> bool {
+        if inspected != Some(request) {
+            return false;
+        }
+        let absent = match &self.request_state {
+            Some(state) => matches!(state, RequestState::Absent),
+            None => self.unreadable_run_count == 0,
+        };
+        absent && self.runs.iter().all(|run| run.request_id != request)
+    }
 }
 #[derive(Deserialize)]
 pub struct RunPage {
@@ -469,6 +489,29 @@ mod tests {
         );
     }
     #[test]
+    fn partial_script_history_requires_exact_absence_to_release_request() {
+        let report = |state: Option<&str>| {
+            decode::<Runs>(
+                serde_json::json!({"runs":[],"unreadableRunCount":1,"requestState":state}),
+            )
+            .unwrap()
+        };
+        for state in [None, Some("present"), Some("unreadable")] {
+            assert!(!report(state).confirms_absence("request-a", Some("request-a")));
+        }
+        let absent = report(Some("absent"));
+        assert!(!absent.confirms_absence("request-a", Some("request-b")));
+        let mut recovery = Recovery::default();
+        recovery.rejected("[SCRIPT_SETTINGS_CONFLICT] Script changed before starting");
+        let not_proven_absent = !absent.confirms_absence("request-a", Some("request-a"));
+        recovery.refreshed(false, not_proven_absent);
+        assert!(!recovery.releasable());
+        recovery.refreshed(true, not_proven_absent);
+        assert!(recovery.releasable());
+        recovery.refreshed(false, true);
+        assert!(!recovery.releasable());
+    }
+    #[test]
     fn abandoning_requires_exact_preflight_error_then_explicit_absent_refresh() {
         let mut recovery = Recovery::default();
         for error in [
@@ -604,8 +647,8 @@ impl Recovery {
             });
         self.absent_after_refresh = false;
     }
-    pub fn refreshed(&mut self, manual: bool, request_exists: bool) {
-        if request_exists {
+    pub fn refreshed(&mut self, manual: bool, absence_unconfirmed: bool) {
+        if absence_unconfirmed {
             self.absent_after_refresh = false;
         } else if manual {
             self.absent_after_refresh = self.preflight_rejected;

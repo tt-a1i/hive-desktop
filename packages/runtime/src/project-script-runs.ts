@@ -26,6 +26,7 @@ const workspaceId = (value: unknown): value is string => typeof value === 'strin
 const active = (run: ProjectScriptRun) => run.status === 'starting' || run.status === 'running';
 const LIMIT = 16 * 1024 * 1024;
 const RECEIPT_FILE = /^[0-9a-f]{64}\.json$/;
+type RequestState = 'absent' | 'present' | 'unreadable';
 interface Live {run: ProjectScriptRun; file: string; fd: number; exited: Promise<void>; resolve: () => void; checkpointBytes: number; checkpointAt: number; persistenceError?: boolean; releaseMutation?: () => void}
 /** Captured run manifests are independent of editable settings. A request is durably claimed before spawning. */
 export class ProjectScriptRuns {
@@ -195,8 +196,16 @@ export class ProjectScriptRuns {
     const file = this.requestFile(workspace, requestId);
     return lstatSync(file, {throwIfNoEntry: false}) ? this.read(file) : undefined;
   }
-  list(workspace: string): {runs: ProjectScriptRun[]; unreadableRunCount: number} {
+  private requestState(workspace: string, requestId: string): RequestState {
+    try { return this.capturedRequest(workspace, requestId) ? 'present' : 'absent'; }
+    catch (error) {
+      if (error instanceof ProjectScriptRunError && error.code === 'SCRIPT_RUN_CORRUPT') return 'unreadable';
+      throw error;
+    }
+  }
+  list(workspace: string, requestId?: unknown): {runs: ProjectScriptRun[]; unreadableRunCount: number; requestState?: RequestState} {
     if (!workspaceId(workspace)) fail('SCRIPT_INPUT_INVALID', 'Invalid workspace identity');
+    if (requestId !== undefined && !id(requestId)) return fail('SCRIPT_INPUT_INVALID', 'Invalid script request identity');
     const runs: ProjectScriptRun[] = [];
     let unreadableRunCount = 0;
     for (const name of readdirSync(this.directory)) {
@@ -211,7 +220,8 @@ export class ProjectScriptRuns {
       }
       if (run.workspaceId === workspace) runs.push(structuredClone(this.live.get(run.runId)?.run ?? this.undurable.get(run.runId) ?? run));
     }
-    return {runs: runs.sort((a,b) => b.startedAt - a.startedAt), unreadableRunCount};
+    return {runs: runs.sort((a,b) => b.startedAt - a.startedAt), unreadableRunCount,
+      ...(requestId !== undefined && {requestState: this.requestState(workspace, requestId)})};
   }
   private owned(workspace: string, runId: string) {
     if (!workspaceId(workspace) || !id(runId)) fail('SCRIPT_INPUT_INVALID', 'Invalid script run identity');

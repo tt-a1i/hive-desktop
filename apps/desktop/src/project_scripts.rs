@@ -592,6 +592,10 @@ impl Page {
         let scope = self.scope.clone().unwrap();
         // A read clicked before the rejection may inspect status, but cannot prove a later rejection safe to leave.
         let qualify_absence = manual && !self.run_busy;
+        let inspected_request = self
+            .state()
+            .and_then(|state| state.pending.as_ref())
+            .map(|pending| pending.request.clone());
         let epoch = self.epoch;
         self.runs_busy = true;
         cx.spawn(async move |this, cx| {
@@ -601,9 +605,13 @@ impl Page {
             {
                 return;
             }
+            let mut params = json!({"workspaceId":scope.workspace});
+            if let Some(request_id) = &inspected_request {
+                params["requestId"] = json!(request_id);
+            }
             let result = scope
                 .runtime
-                .request("script.runs", json!({"workspaceId":scope.workspace}))
+                .request("script.runs", params)
                 .await
                 .and_then(decode::<Runs>)
                 .and_then(|value| {
@@ -618,24 +626,21 @@ impl Page {
                 }
                 this.runs_busy = false;
                 match result {
-                    Ok(Runs {
-                        runs,
-                        unreadable_run_count,
-                    }) => {
-                        this.runs_incomplete = unreadable_run_count != 0;
-                        let complete = !this.runs_incomplete;
+                    Ok(value) => {
+                        this.runs_incomplete = value.unreadable_run_count != 0;
+                        let runs = &value.runs;
                         let selection = this.selection_generation;
                         let mut confirmed = None;
                         let mut directory_conflict = None;
                         {
                             let state = this.state_mut().unwrap();
                             if let Some(pending) = state.pending.as_mut() {
-                                if !complete {
-                                    pending.recovery.invalidate_refresh();
-                                }
                                 pending.recovery.refreshed(
-                                    qualify_absence && complete,
-                                    runs.iter().any(|run| run.request_id == pending.request),
+                                    qualify_absence,
+                                    !value.confirms_absence(
+                                        &pending.request,
+                                        inspected_request.as_deref(),
+                                    ),
                                 );
                             }
                             if let Some((pending, found)) =
@@ -659,9 +664,9 @@ impl Page {
                                 state.pending = None;
                             }
                             if manual {
-                                state.reconcile_abandoned(&runs);
+                                state.reconcile_abandoned(runs);
                             }
-                            state.runs = runs;
+                            state.runs = value.runs;
                         }
                         if let Some((stamp, last_error)) = confirmed {
                             if stamp.current(this.attempt) {
