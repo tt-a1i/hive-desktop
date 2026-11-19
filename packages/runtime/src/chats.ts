@@ -28,7 +28,7 @@ import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { readSessionMessages as readClaudeSessionMessages, type ClaudeSessionHandle } from './agents/claude.js';
 import { type CodexSessionHandle } from './agents/codex.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
@@ -47,7 +47,7 @@ import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffO
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
 import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
 import { previewGithubPr, createGithubPr, updateGithubPr, type GithubPrTarget, type GithubPrWriteRequest } from './github-prs.js';
-import { createManagedWorktree, GitWorktreeError, readWorktreeIntent, recoverManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
+import { createManagedWorktree, GitWorktreeError, previewManagedWorktreeRemoval, readWorktreeIntent, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree, type WorktreeCreation } from './git-worktrees.js';
 import { readdir, realpath } from 'node:fs/promises';
 import type { DesktopSettings } from './desktop-settings.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
@@ -316,7 +316,11 @@ export class Chats implements StructuredSessionPort {
       record = this.index.establishOrigin(record.id, source.sourceAgentId);
       let directory: string;
       try { directory = await this.executionDirectory(workspaceId, record.id); }
-      catch (error) { throw new ArtifactSourceError('DISPATCH_SOURCE_UNAVAILABLE', 'The original dispatch execution directory is unavailable; no other conversation was substituted.', {cause: error}); }
+      catch (error) {
+        if (error instanceof GitWorktreeError && error.code === 'WORKTREE_REMOVED' && record.execution)
+          directory = record.execution.path; // Only the history route may open the known retired source.
+        else throw new ArtifactSourceError('DISPATCH_SOURCE_UNAVAILABLE', 'The original dispatch execution directory is unavailable; no other conversation was substituted.', {cause: error});
+      }
       return {session: this.publicSession(record, directory), sourceSessionId: record.id, sourceAgentId: source.sourceAgentId};
     });
   }
@@ -327,6 +331,71 @@ export class Chats implements StructuredSessionPort {
     this.gitOperations.add(action);
     try { return await action; }
     finally { this.gitOperations.delete(action); release?.(); }
+  }
+  async drainGitOperations(): Promise<void> { await Promise.allSettled(this.gitOperations); }
+
+  private async worktreeRemovalSource(workspaceId: string, id: string, hasShell: () => Promise<boolean>) {
+    this.assertWorkspaceAvailable(workspaceId);
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const record = this.index.get(id);
+    if (record.workspaceId !== workspaceId || !record.execution)
+      throw new GitWorktreeError('WORKTREE_SOURCE_INVALID', 'Select a managed worktree in this workspace.');
+    const live = this.live.get(id);
+    if (record.agentId || live?.onExit)
+      throw new GitWorktreeError('WORKTREE_IN_USE', 'This conversation is the current collaboration target. Activate a different conversation for this Agent first.');
+    if (live?.cleanup || live?.queue.busy || live?.handle.interactions?.().length ||
+      (live?.queue.pendingCount ?? DeliveryQueue.persistedCount(this.queueDir, id)) ||
+      this.opening.has(id) || this.startingForInput.has(id) || await hasShell())
+      throw new GitWorktreeError('WORKTREE_IN_USE', 'Finish pending messages and close workspace terminals before removing this worktree.');
+    if (record.originAgentId) {
+      const team = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(workspaceId)}/team`) as {id: string; pending_task_count: number; open_dispatches?: unknown[]}[];
+      const orchestrator = record.originAgentId === `${workspaceId}:orchestrator`;
+      if (team.some(member => (orchestrator || member.id === record.originAgentId) &&
+        (member.pending_task_count > 0 || member.open_dispatches?.length)))
+        throw new GitWorktreeError('WORKTREE_IN_USE', 'Settle this Agent’s open dispatches before removing the worktree.');
+    }
+    const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
+    const workspace = workspaces.find(item => item.id === workspaceId);
+    if (!workspace) throw new Error('Workspace not found');
+    await this.executionPath(record, workspace); // Check history gates and the original project binding.
+    const {record: owned} = await readWorktreeIntent(this.dataDir, id);
+    for (const item of workspaces) {
+      const path = await realpath(item.path).catch(() => item.path);
+      const fromTree = relative(owned.managedWorktreeRoot, path);
+      if (!fromTree || (!isAbsolute(fromTree) && fromTree !== '..' && !fromTree.startsWith(`..${sep}`)))
+        throw new GitWorktreeError('WORKTREE_IN_USE', 'A workspace uses this worktree as its project directory.');
+    }
+    return owned;
+  }
+
+  async previewWorktreeRemoval(workspaceId: string, id: string, hasShell: () => Promise<boolean>) {
+    return this.withGitOperation(async () => {
+      const owned = await this.worktreeRemovalSource(workspaceId, id, hasShell);
+      return {workspaceId, sessionId: id, ...await previewManagedWorktreeRemoval(this.dataDir, owned)};
+    });
+  }
+
+  async applyWorktreeRemoval(workspaceId: string, id: string, expectedVersion: string, hasShell: () => Promise<boolean>) {
+    let release: () => void;
+    try { release = this.executionMutations!.acquire(workspaceId); }
+    catch (error) {
+      throw new GitWorktreeError('WORKTREE_IN_USE', 'A project script, Git operation or other workspace operation is active. Wait for it before removing the worktree.', {cause:error});
+    }
+    const removal = Promise.resolve().then(() => this.hive.withWorkspaceWorkflowIdle(workspaceId, async () => {
+      const owned = await this.worktreeRemovalSource(workspaceId, id, hasShell);
+      await removeManagedWorktree(this.dataDir, owned, {
+        active: false, expectedVersion,
+        beforeRemove: async () => {
+          const live = this.live.get(id);
+          if (live) await this.stopLive(id, live);
+          await this.worktreeRemovalSource(workspaceId, id, hasShell);
+        },
+      });
+      return {ok: true as const, workspaceId, sessionId: id};
+    }));
+    this.gitOperations.add(removal);
+    try { return await removal; }
+    finally { this.gitOperations.delete(removal); release(); }
   }
   /** Resolve only persisted ownership. A missing worktree never falls back to the team root. */
   private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
@@ -1266,6 +1335,8 @@ export class Chats implements StructuredSessionPort {
     const cleanup=this.live.get(id)?.cleanup;
     if(cleanup)await cleanup;
     const record=this.index.get(id);
+    if (record.execution && (await readWorktreeIntent(this.dataDir, id).catch(() => undefined))?.removed)
+      throw new GitWorktreeError('WORKTREE_REMOVED', 'This worktree was removed. The conversation history and local branch are retained.');
     if(record.handoff&&!this.live.has(id)){
       await this.assertHistoryReady(record);await this.runnableIdentity(record);await this.executionDirectory(record.workspaceId,id);
       await this.reconcileHandoffOffline(record);

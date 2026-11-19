@@ -1,3 +1,5 @@
+mod removal;
+
 use crate::{
     app::HiveApp,
     language::tr,
@@ -90,6 +92,12 @@ struct MemberHistory {
     session: Session,
     execution_available: bool,
     execution_error: Option<ExecutionError>,
+}
+impl MemberHistory {
+    fn history_available(&self) -> bool {
+        self.execution_available
+            || self.execution_error.as_ref().is_some_and(|error| error.code == "WORKTREE_REMOVED")
+    }
 }
 #[derive(Clone, Deserialize)]
 struct ExecutionError {
@@ -712,7 +720,7 @@ impl WorktreeDialog {
             .history
             .sessions
             .iter()
-            .find(|item| item.session.id == session_id && item.execution_available)
+            .find(|item| item.session.id == session_id && item.history_available())
             .cloned()
         else {
             return;
@@ -816,7 +824,7 @@ impl Render for WorktreeDialog {
                             .child(div().text_sm().child(format!("{} · {} · {}",item.session.title,tr(item.session.backend.label()),tr(if current_binding {"当前绑定"} else {"历史会话"}))))
                             .when_some(item.session.execution.as_ref(),|view,execution| view.child(div().text_xs().text_color(Color::Muted.get(cx)).child(format!("{} · {}",execution.branch,execution.path))))
                             .when(!item.execution_available,|view| view.child(div().text_xs().text_color(Color::Error.get(cx)).child(item.execution_error.as_ref().map(|error| format!("[{}] {}",error.code,error.message)).unwrap_or_else(|| tr("原工作树不可用；恢复原目录后再打开，不会改用工作区目录。").into()))))
-                            .child(Button::new(("open-member-worktree",index)).outline().small().label(tr("打开原会话")).disabled(disabled || !item.execution_available)
+                            .child(Button::new(("open-member-worktree",index)).outline().small().label(tr("打开原会话")).disabled(disabled || !item.history_available())
                                 .on_click(cx.listener(move |this,_,window,cx| this.open_history(id.clone(),window,cx))))
                     }))))
             .when(self.loading,|view| view.child(div().id("worktree-list-loading").role(Role::Status).child(tr("正在读取工作树会话…"))))

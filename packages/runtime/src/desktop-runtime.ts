@@ -106,6 +106,10 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return chats.removeWorkspace(workspaceId, async () => {await scriptRuns.stopWorkspace(workspaceId); await terminal.detachWorkspace(workspaceId);});
     },
     requestHive: (method: string, path: string, body?: unknown) => {
+      if (method.toUpperCase() === 'POST' && path === '/api/workspaces') {
+        const release = executionMutations.begin('');
+        return hive.request(method, path, body).finally(release);
+      }
       if (!['GET', 'HEAD'].includes(method.toUpperCase())) {
         const match = /^\/api\/(?:ui\/)?workspaces\/([^/?#]+)(?:[/?#]|$)/.exec(path);
         if (match) chats.assertWorkspaceAvailable(decodeURIComponent(match[1]!));
@@ -118,6 +122,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       // Seal both services immediately, then drain only the operations already admitted.
       // Chats still rejects new starts and its abort signal is already canceled.
       await Promise.all([chats.history?.close(),chats.handoffs?.close()]);
+      await chats.drainGitOperations();
       initialization.close();
       const scripts = await Promise.allSettled([scriptRuns.close()]);
       const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), piVault.close(), terminal.close(), agentModels.close()]);

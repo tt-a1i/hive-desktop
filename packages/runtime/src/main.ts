@@ -6,6 +6,7 @@ import { SessionIdentityError } from './chat-index.js';
 import { HistoryOperationError } from './history-operation-journal.js';
 import { CodeCheckpointError } from './code-checkpoints.js';
 import { WorktreeInitializationError } from './project-worktree-initialization.js';
+import { GitWorktreeError } from './git-worktrees.js';
 import { ProjectScriptRunError } from './project-script-runs.js';
 import { ProjectScriptSettingsError } from './project-script-settings.js';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
@@ -308,6 +309,15 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.execution': return chats.sessionExecution(text(params, 'sessionId'));
     case 'chat.worktrees.pending': return chats.pendingWorktrees(text(params, 'workspaceId'));
+    case 'chat.worktrees.removal.preview':
+    case 'chat.worktrees.removal.apply': {
+      const apply = method === 'chat.worktrees.removal.apply';
+      exact(params, ['workspaceId', 'sessionId', ...(apply ? ['expectedVersion'] : [])]);
+      const workspaceId = text(params, 'workspaceId'), id = text(params, 'sessionId');
+      const hasShell = () => terminal.hasActiveShell(workspaceId);
+      return apply ? chats.applyWorktreeRemoval(workspaceId, id, text(params, 'expectedVersion'), hasShell)
+        : chats.previewWorktreeRemoval(workspaceId, id, hasShell);
+    }
     case 'chat.worktrees.recover': {
       exact(params, ['workspaceId', 'sessionId', 'backend', 'memberId', 'profile']);
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
@@ -404,7 +414,7 @@ input.on('line', line => {
       await writeFrame({ id, result });
     } catch (error) {
       await writeFrame({ id, error: {
-        code: error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+        code: error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

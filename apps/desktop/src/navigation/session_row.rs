@@ -120,6 +120,8 @@ impl HiveApp {
     ) -> PopupMenu {
         let archive_session = session.clone();
         let archive_app = app.clone();
+        let worktree_session = session.clone();
+        let worktree_app = app.clone();
         menu.item(
             PopupMenuItem::new(if session.pinned {
                 tr("取消置顶")
@@ -151,6 +153,16 @@ impl HiveApp {
                     )
                 });
             }),
+        )
+        .when(
+            worktree_session.execution.as_ref().is_some_and(|execution| execution.kind == "worktree"),
+            |menu| menu.item(
+                PopupMenuItem::new(tr("清理独立工作树…"))
+                    .on_click(move |_, window, cx| {
+                        let _ = worktree_app.update(cx, |this, cx|
+                            this.open_worktree_removal(worktree_session.clone(), window, cx));
+                    }),
+            ),
         )
     }
 

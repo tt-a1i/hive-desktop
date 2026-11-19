@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { chmod, mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createManagedWorktree, readWorktreeIntent, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree } from '../src/git-worktrees.js';
+import { createManagedWorktree, previewManagedWorktreeRemoval, readWorktreeIntent, recoverManagedWorktree, removeManagedWorktree, validateManagedWorktree } from '../src/git-worktrees.js';
 const root = await mkdtemp(join(tmpdir(), 'hive worktree '));
 function git(cwd: string, ...args: string[]) { return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim(); }
 try {
@@ -31,6 +31,15 @@ try {
   await writeFile(join(first.executionPath, 'new.txt'), 'untracked');
   await assert.rejects(removeManagedWorktree(data, first, { active: false }), /uncommitted/);
   await rm(join(first.executionPath, 'new.txt'));
+  await writeFile(join(project, '.git/info/exclude'), 'local-settings.json\n');
+  const ignored = join(first.executionPath, 'local-settings.json');
+  await writeFile(ignored, 'local only');
+  await assert.rejects(removeManagedWorktree(data, first, {active: false}), (error: any) => error.code === 'WORKTREE_DIRTY');
+  assert.equal(await readFile(ignored, 'utf8'), 'local only');
+  await rm(ignored);
+  git(first.executionPath, 'update-index', '--assume-unchanged', 'same.txt');
+  await assert.rejects(previewManagedWorktreeRemoval(data, first), (error: any) => error.code === 'WORKTREE_HIDDEN_CHANGES');
+  git(first.executionPath, 'update-index', '--no-assume-unchanged', 'same.txt');
   await writeFile(join(first.executionPath, 'same.txt'), 'first'); await writeFile(join(second.executionPath, 'same.txt'), 'second');
   assert.equal(await readFile(join(project, 'sub folder', 'same.txt'), 'utf8'), 'main');
   assert.equal(await readFile(join(first.executionPath, 'same.txt'), 'utf8'), 'first');
@@ -91,11 +100,22 @@ try {
   await writeFile(join(fromLinked.executionPath, 'commit.txt'), 'unpushed');
   git(fromLinked.managedWorktreeRoot, 'add', '.'); git(fromLinked.managedWorktreeRoot, 'commit', '-qm', 'local');
   await assert.rejects(removeManagedWorktree(data, fromLinked, { active: false }), /without an upstream/);
-  git(fromLinked.managedWorktreeRoot, 'reset', '--hard', fromLinked.baseOid);
-  await removeManagedWorktree(data, fromLinked, { active: false });
+  const bare = join(root, 'remote.git');
+  git(root, 'init', '--bare', '--template=', bare);
+  git(project, 'remote', 'add', 'fixture', bare);
+  git(fromLinked.managedWorktreeRoot, 'push', 'fixture', `HEAD:refs/heads/${fromLinked.branch}`);
+  const pushed = await previewManagedWorktreeRemoval(data, fromLinked);
+  assert.deepEqual(pushed.verifiedRemote, {remote:'fixture', branch:fromLinked.branch});
+  git(bare, 'update-ref', '-d', `refs/heads/${fromLinked.branch}`);
+  await assert.rejects(removeManagedWorktree(data, fromLinked, {active:false, expectedVersion:pushed.version}), (error:any) => error.code === 'UNPUSHED_COMMITS');
+  assert.equal(await readFile(join(fromLinked.executionPath, 'commit.txt'), 'utf8'), 'unpushed');
+  git(fromLinked.managedWorktreeRoot, 'push', 'fixture', `HEAD:refs/heads/${fromLinked.branch}`);
+  await removeManagedWorktree(data, fromLinked, {active:false, expectedVersion:pushed.version});
+  assert.equal(git(project, 'rev-parse', fromLinked.branch), pushed.headOid);
+  assert.equal((await readWorktreeIntent(data, fromLinked.chatId)).removed, true);
   await removeManagedWorktree(data, first, { active: false });
   assert.equal(git(project, 'branch', '--list', 'hive/first'), 'hive/first');
   await removeManagedWorktree(data, second, { active: false });
-  await assert.rejects(validateManagedWorktree(data, first));
+  await assert.rejects(validateManagedWorktree(data, first), (error: any) => error.code === 'WORKTREE_REMOVED');
   console.log('GIT_WORKTREES_OK');
 } finally { await rm(root, { recursive: true, force: true }); }
