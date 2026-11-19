@@ -55,14 +55,23 @@ const checksum = await hashDesktopFile(binary);
 const previousOptions = process.env.NODE_OPTIONS;
 process.env.NODE_OPTIONS = `--require "${preload.replaceAll('\\', '/')}"`;
 
+async function copyNodeFixture(path: string) {
+  if (process.platform === 'darwin') {
+    // The packaged Node does not clone files with COPYFILE_FICLONE on macOS.
+    await promisify(execFile)('/bin/cp', ['-c', binary, path]);
+  } else {
+    await copyFile(binary, path, constants.COPYFILE_FICLONE);
+  }
+}
+
 async function executable(directory: string, version: string, healthy: boolean) {
   const path = desktopPackagePaths(directory).executable;
   await mkdir(dirname(path), { recursive: true });
-  await copyFile(binary, path, constants.COPYFILE_FICLONE);
+  await copyNodeFixture(path);
   await writeFile(join(dirname(path), 'fixture.json'), JSON.stringify({ version, healthy }));
   const node = desktopPackagePaths(directory).node;
   await mkdir(dirname(node), { recursive: true });
-  await copyFile(binary, node, constants.COPYFILE_FICLONE);
+  await copyNodeFixture(node);
   return path;
 }
 
@@ -74,7 +83,7 @@ async function prepareTransaction(root: string, plan: DesktopInstallPlan) {
   const compiled = packagedRuntime ? join(dirname(packagedRuntime), 'desktop-update-installer.js')
     : new URL('../dist/desktop-update-installer.js', import.meta.url);
   await copyFile(compiled, program);
-  await copyFile(binary, node, constants.COPYFILE_FICLONE);
+  await copyNodeFixture(node);
   await writeFile(join(transaction, 'install-plan.json'), JSON.stringify(plan));
   return { transaction, program, node, entry: await prepareDesktopRecoveryEntry(transaction) };
 }
