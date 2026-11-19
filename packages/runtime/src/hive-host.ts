@@ -1,5 +1,7 @@
 import WebSocket from "ws";
 import { isAbsolute } from "node:path";
+import { readPackageVersion } from "@tt-a1i/hive/dist/src/server/package-version.js";
+import { createVersionService } from "@tt-a1i/hive/dist/src/server/version-service.js";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
 import { getDefaultRoleDescription } from '@tt-a1i/hive/dist/src/server/role-templates.js';
 import { resolveWorkspaceUiLanguage } from '@tt-a1i/hive/dist/src/server/workspace-ui-language.js';
@@ -77,6 +79,18 @@ export async function createHiveHost({
 	try {
 		runtime = await runHiveCommand(["--port", "0"], {
 			openBrowser: false,
+			// The embedded host is replaced with the signed desktop package.
+			versionService: createVersionService({
+				fetchLatestVersion: async () => readPackageVersion(),
+				createUpdateInstallPlan: () => ({
+					canRunHiveUpdate: false,
+					installSource: "unknown",
+					installCommand: "",
+					installArgs: [],
+					manualCommand: "",
+					note: "This runtime is updated with Hive Desktop.",
+				}),
+			}),
 			...(agentRuntimeFactory ? { agentRuntimeFactory } : {}),
 		});
 	} catch (error) {

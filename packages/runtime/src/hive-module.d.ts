@@ -8,6 +8,7 @@ declare module "@tt-a1i/hive/dist/src/cli/hive.js" {
 		argv: string[],
 		options?: {
 			openBrowser?: boolean;
+			versionService?: import("@tt-a1i/hive/dist/src/server/version-service.js").VersionService;
 			agentRuntimeFactory?: import("./hive-runtime-contract.js").HiveAgentRuntimeFactory;
 		},
 	): Promise<{ port: number; close(): Promise<void>; store: {
