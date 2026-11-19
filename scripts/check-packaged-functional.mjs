@@ -82,6 +82,17 @@ try {
         execFileSync(node, [file, '--group', group], options);
         receipt.checks.push({name: `${name}/${group}`, exitCode: 0});
       }
+    } else if (name === 'checkpoint-restore') {
+      // Scope/foreign-lock guards and partial-state recovery are independent
+      // transactions; each starts its own real repository with the same 60s gate.
+      for (const group of ['guards', 'recovery']) {
+        const started = Date.now();
+        console.log(`[packaged-functional] ${name}/${group}`);
+        execFileSync(node, [file, '--group', group], options);
+        const elapsedMs = Date.now() - started;
+        console.log(`[packaged-functional] ${name}/${group} passed in ${elapsedMs} ms`);
+        receipt.checks.push({name: `${name}/${group}`, exitCode: 0, elapsedMs});
+      }
     } else if (name === 'handoff-queue-retraction') {
       // Each group performs its own cold restore and delivery checks; keep
       // the same 60s budget for each independent scenario.

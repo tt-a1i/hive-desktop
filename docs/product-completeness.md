@@ -10,9 +10,13 @@
 
 相同 d5476eb 产品包与 51423de 夹具通过两个隔离更新场景。两次均从 UIA 读取确认标题。健康候选安装为 0.1.1；损坏候选自动回退至 0.1.0，旧程序 SHA-256 一致并保留重试缓存。两次均恢复原会话及草稿，所属进程全部退出、安装事务回收。另有 Windows 包内专项在已解包并写入安装计划后强杀准备进程，复核活跃归属保护及孤儿事务清理，并保留签名缓存。此项使用小型签名夹具；真实窗口结果见下方回放。仅使用私有渠道。[Windows 安装及回退](https://github.com/tt-a1i/hive-desktop/actions/runs/44610051238)
 
+## Windows 检查点恢复门禁（2026-11-20）
+
+同一检查曾在 Windows 的 57.554 秒及 57.693 秒通过，另一次在 60.068 秒触及专项时限，日志只记录了启动。现在将范围和索引锁拒绝、部分恢复和外部写入冲突分开，各组保留 60 秒限制，记录每阶段及分组用时。比较并交换失败后的冲突、恢复与重试仍使用同一操作 ID。另两个 Windows 包（8b0b89e、d5476eb）均已通过当时全部 62 项包内功能检查，各自的窗口与更新结果另行记录。[超时作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44601384385) · [d5476eb 包内收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44605554518)
+
 ## Windows 队列编辑与额度首次窗口结果（2026-11-20）
 
-队列回放已在 Windows 窗口打开编辑框并写入正文，普通草稿保持原样。保存时离线 Codex 对端未答复两项能力查询，编辑请求也一直等待。原队列 ID 和附件摘要仍在，没有自动投递。夹具现在回答这两项只读查询，对未知请求明确返回不支持，本地按窗口的请求顺序已完成编辑与撤回。[队列窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44611218114)
+队列回放已在 Windows 窗口打开编辑框并写入正文，普通草稿保持原样。保存时离线 Codex 对端未答复两项能力查询，编辑请求也一直等待。原队列 ID 和附件摘要仍在，没有自动投递。夹具现在回答这两项只读查询，对未知请求明确返回不支持，本地按窗口的请求顺序已完成编辑与撤回。修复夹具后，原 Windows ZIP 已通过真实编辑、撤回及重启后显式继续。普通草稿、原投递 ID、附件 ID 及 57 字节私有副本摘要均保留，编辑后的正文只发送一次，撤回项从未发送，最终待发为空。两次退出码为 0，后台均确认关闭。[完整 Windows 队列回放](https://github.com/tt-a1i/hive-desktop/actions/runs/44614866570) [队列窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44611218114)
 
 额度首次回放未到达受控 CLI 协议。外层等待与 UIA 单控件等待同设为 30 秒，先结束的外层未留下窗口阶段收据。现在保留 UI 提前退出的原因、最后一个窗口操作和假对端收到的方法名；额度显示及进程退出仍待 Windows 实证。[额度窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44611211870)
 
@@ -54,7 +58,7 @@ Windows 的首次 CIM 进程查询曾超过 15 秒。该轮还在合成进程树
 
 | 功能 | 已验证的平台与对端 | 当前剩余范围 |
 | --- | --- | --- |
-| 1. 待发编辑、撤回与停止继续（[#40](https://github.com/tt-a1i/hive-desktop/issues/40)） | macOS 窗口及真实 Codex/Terra 验过编辑、撤回和冷恢复；真实 Hive/SQLite 与受控 Codex 覆盖拒绝追加后的停止、编辑和单次继续。[队列记录](validation/2026-11-14-functional-input-search-references.md) | 当前 Windows 的完整窗口操作，以及其他真实后端的拒绝追加和停止竞态仍待验。 |
+| 1. 待发编辑、撤回与停止继续（[#40](https://github.com/tt-a1i/hive-desktop/issues/40)） | macOS 窗口及真实 Codex/Terra 验过编辑、撤回和冷恢复；真实 Hive/SQLite 与受控 Codex 覆盖拒绝追加后的停止、编辑和单次继续。[队列记录](validation/2026-11-14-functional-input-search-references.md)  Windows 受控 Codex 已验证冷态编辑、撤回、附件保留及显式单次继续。[原生窗口](https://github.com/tt-a1i/hive-desktop/actions/runs/44614866570) | Windows 窗口的拒绝追加、停止竞态及其他真实后端仍待验。 |
 | 2. 全文搜索、归档与阅读位置（[#38](https://github.com/tt-a1i/hive-desktop/issues/38)、[#41](https://github.com/tt-a1i/hive-desktop/issues/41)） | macOS 窗口覆盖归档搜索、元数据缺失提示及位置恢复；Windows 固定包通过 Unicode 等价查询、原消息定位和草稿返回。[Windows 作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44597607498)  Windows 缺失工作树的归档搜索、打开原消息及只读冷启动已通过。[窗口收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44613571276) | 其他历史组合和 Windows 阅读位置的长期恢复仍待验；旧 Codex 记录缺少标记时，无法可靠判断元数据丢失。 |
 | 3. 项目文件引用与快照（[#42](https://github.com/tt-a1i/hive-desktop/issues/42)） | macOS 和 Windows 原生窗口均已验证移走工作树源文件后，重启仍能读取私有快照。Windows 同名仓库文件保留不同内容，两次应用退出码均为 0，后台均确认关闭。另有真实 Codex/Terra 读取副本。[文件引用记录](validation/2026-11-19-project-reference-worktrees.md) · [Windows 冷开收据](https://github.com/tt-a1i/hive-desktop/actions/runs/44604549909) | 其他真实后端消费引用仍待验。 |
 | 4. Git、Diff 与 PR（[#43](https://github.com/tt-a1i/hive-desktop/issues/43)） | macOS 窗口验证大补丁分页、跨页暂存预览、本地推送及受控 PR；macOS 提交/推送钩子与 Windows 提交钩子在后台强杀后均完成进程回收核对。[Windows 原生作业](https://github.com/tt-a1i/hive-desktop/actions/runs/44597605905) · [Git 远端](validation/2026-11-19-native-git-remotes.md) | Windows 当前 Git/PR 窗口、实际托管 GitHub 写入及其他中断时点仍待验；远端是否已接受操作需重新核对。 |
