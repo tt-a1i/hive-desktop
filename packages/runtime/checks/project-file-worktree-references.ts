@@ -18,6 +18,19 @@ try {
   const a = await runtime.chats.createRecord(ws.id, 'pi', {isolation: 'worktree'});
   const b = await runtime.chats.createRecord(ws.id, 'codex', {isolation: 'worktree'});
   const aDir = (await runtime.chats.sessionExecution(a.id)).path; const bDir = (await runtime.chats.sessionExecution(b.id)).path;
+  const unicodePath = 'Re\u0301sume\u0301 工作树.txt';
+  await writeFile(join(aDir, unicodePath), 'Unicode path in the first worktree');
+  const [visiblePath] = (await runtime.chats.projectFilesSearch(ws.id, '工作树.txt', 0, a.id)).paths;
+  assert(visiblePath);
+  assert.equal(visiblePath.normalize('NFC'), unicodePath.normalize('NFC'));
+  for (const query of ['RÉSUMÉ', 'RE\u0301SUME\u0301']) {
+    assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, query, 0, a.id)).paths, [visiblePath]);
+    assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, query, 0, b.id)).paths, []);
+  }
+  const unicodeRef = await runtime.chats.projectFilesAttach(ws.id, visiblePath, a.id);
+  assert.equal(unicodeRef.attachment.projectFile?.relativePath, visiblePath);
+  assert.equal(unicodeRef.attachment.projectFile?.sourceSessionId, a.id);
+  assert.equal((await readFile(unicodeRef.filePath!)).toString(), 'Unicode path in the first worktree');
   await writeFile(join(aDir, name), 'one'); await writeFile(join(bDir, name), 'two');
   await writeFile(join(aDir, 'only-one.txt'), 'x'); await writeFile(join(bDir, 'only-two.txt'), 'x');
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, a.id)).paths, ['only-one.txt']);

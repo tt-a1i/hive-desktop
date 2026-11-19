@@ -67,10 +67,11 @@ export async function searchProjectFiles(projectRoot: string, query: string, off
   const root = await rootDirectory(projectRoot);
   const candidates = await gitFiles(root) ?? await walk(root);
   const matches: string[] = [];
-  const needle = query.toLowerCase();
+  const needle = query.normalize('NFC').toLowerCase();
   for (const candidate of new Set(candidates)) {
     const path = candidate.split(sep).join('/');
-    if (!validRelative(path) || !path.toLowerCase().includes(needle)) continue;
+    // Normalize only for matching. The listed path is also used to open the file.
+    if (!validRelative(path) || !path.normalize('NFC').toLowerCase().includes(needle)) continue;
     try {
       // Never traverse symlink directories; ignore stale deleted Git index entries.
       const parts = path.split('/');
