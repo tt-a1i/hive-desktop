@@ -1,6 +1,6 @@
 /** Controlled Codex JSONL peer and real Hive uploads/privateFS; no model calls. */
 import assert from 'node:assert/strict';
-import {mkdtemp, mkdir, writeFile, readFile, unlink} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, readFile, rename, unlink} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {createDesktopRuntime} from '../src/desktop-runtime.js';
 import {CodexTransport} from '../src/agents/codex-transport.js';
@@ -22,7 +22,7 @@ if(q.method==='initialize')answer({});else if(q.method==='model/list')answer({da
   if(q.params.input[0].text==='approval'){
     send({id:7,method:'item/commandExecution/requestApproval',params:{...identity,startedAtMs:1,availableDecisions:['decline']}});
   }else{
-    send({id:7,method:'item/tool/requestUserInput',params:{...identity,isBlocking:true,questions:[{id:'public',header:'Public',question:'Choose',isSecret:false,isOther:true,options:null},{id:'secret',header:'Secret',question:'Secret',isSecret:true,isOther:true,options:null}]}});
+    send({id:7,method:'item/tool/requestUserInput',params:{...identity,isBlocking:true,questions:[{id:'public',header:'Public',question:'Choose',isSecret:false,isOther:true,options:null},{id:'secret',header:'Secret',question:'Secret',isSecret:true,isOther:true,options:null},{id:'extra',header:'Extra',question:'Extra',isSecret:false,isOther:true,options:null}]}});
   }
 }}
 clearInterval(timer);})().catch(e=>{console.error(e);process.exit(1)});
@@ -45,8 +45,66 @@ async function start(mode = 'question'){
  return {cwd,ws,record,handle,done,card:snapshot.interactions[0]!};
 }
 const answer={answers:{public:{answers:['ANSWER-SENTINEL']},secret:{answers:['SECRET-SENTINEL']}}};
+async function checkCopyLossBetweenQuestions() {
+  const {ws, record, card, cwd, done} = await start();
+  const firstPath = join(dir, 'delayed-first.txt');
+  const secondPath = join(dir, 'delayed-second.txt');
+  await writeFile(firstPath, 'first copied content');
+  await writeFile(secondPath, 'second copied content');
+
+  const uploads = runtime.chats.attachments;
+  const first = await uploads.add(ws.id, firstPath);
+  const second = await uploads.add(ws.id, secondPath);
+  const mapping = {public: [first.attachment.id], extra: [second.attachment.id]};
+  const reply = {answers: {public: {answers: ['first answer']}, extra: {answers: ['second answer']}}};
+  const {receipt: draft} = await runtime.chats.saveInteractionAttachments(record.id, card.id, mapping);
+  const firstCopy = draft.attachments.find(item => item.questionId === 'public')!.filePath;
+  const secondCopy = draft.attachments.find(item => item.questionId === 'extra')!.filePath;
+  const submit = () => runtime.chats.respondInteraction(record.id, card.id, reply, mapping);
+
+  const resolveReferences = uploads.questionReferences.bind(uploads);
+  let markSecondReached!: () => void;
+  let resumeResolution!: () => void;
+  const secondReached = new Promise<void>(resolve => { markSecondReached = resolve; });
+  const paused = new Promise<void>(resolve => { resumeResolution = resolve; });
+  uploads.questionReferences = async (workspace, ids) => {
+    if (Array.isArray(ids) && ids.includes(second.attachment.id)) {
+      markSecondReached();
+      await paused;
+    }
+    return resolveReferences(workspace, ids);
+  };
+  try {
+    const submission = submit();
+    // Propagate early errors instead of waiting indefinitely for the second question.
+    await Promise.race([secondReached, submission.then(() => assert.fail('Submitted before resolving both questions'))]);
+    await rename(firstCopy, firstCopy + '.held');
+    resumeResolution();
+    await assert.rejects(submission, {code: 'ENOENT'});
+    assert.deepEqual(await rows(cwd), []);
+    assert.deepEqual(runtime.chats.interactionAttachmentStatus(record.id, card.id), {safeToRetry: true});
+    assert.deepEqual(runtime.chats.listInteractionAttachments(record.id).receipts, [JSON.parse(JSON.stringify(draft))]);
+    await rename(firstCopy + '.held', firstCopy);
+  } finally {
+    resumeResolution();
+    uploads.questionReferences = resolveReferences;
+  }
+
+  assert.equal((await submit()).receipt.status, 'callback-handed');
+  const wire = await wait(() => rows(cwd), value => value.length === 1);
+  const answers = wire[0].result.answers;
+  assert.ok(answers.public.answers[0].includes(firstCopy));
+  assert.ok(answers.extra.answers[0].includes(secondCopy));
+  assert.ok(!answers.extra.answers[0].includes(firstCopy));
+  await assert.rejects(submit());
+  await writeFile(join(cwd, 'finish'), '');
+  await done;
+  assert.equal((await rows(cwd)).length, 1);
+}
+
 try {
  await runtime.settings.update({piCommand:null,codexCommand:process.execPath});
+ await checkCopyLossBetweenQuestions();
  const a=await start(), other=await start();
  const file=join(dir,'document.txt'), image=join(dir,'image.png');const bytes=Buffer.from('file copy sentinel');const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC','base64');await writeFile(file,bytes);await writeFile(image,png);
  const doc=await runtime.chats.attachments.add(a.ws.id,file), img=await runtime.chats.attachments.add(a.ws.id,image), foreign=await runtime.chats.attachments.add(other.ws.id,file);await unlink(file);await unlink(image);
@@ -163,5 +221,5 @@ try {
  assert.equal((await rows(a.cwd)).length,1);
  assert.equal(runtime.chats.listInteractionAttachments(loss.record.id).receipts[0]!.status,'callback-handed');
  assert.deepEqual(await rows(loss.cwd),[]);
- await writeFile(join(dir,'receipt.json'),JSON.stringify({pass:true,syntheticCodexPeer:true,realHiveUploads:true,noModelCalls:true,copyAndNativeImage:true,validation:true,concurrentSubmit:true,staleResolution:['native-resolve','turn-end','abort','exit'],injectedTransportWriteFailure:true,injectedReceiptWriteFailure:true,partialUploadFailure:true,unrelatedReceiptCorruptionIsolated:true,exactCorruptOrPreparedReceiptBlocksDelivery:true,unrelatedCorruptionAllowsSafeRetry:true,unrelatedCorruptionPreservesColdHistory:true,coldReopenNoReplay:true},null,2));console.log(`INTERACTION_ATTACHMENTS_OK ${dir}`);
+ await writeFile(join(dir,'receipt.json'),JSON.stringify({pass:true,syntheticCodexPeer:true,realHiveUploads:true,noModelCalls:true,copyAndNativeImage:true,validation:true,concurrentSubmit:true,staleResolution:['native-resolve','turn-end','abort','exit'],injectedTransportWriteFailure:true,injectedReceiptWriteFailure:true,partialUploadFailure:true,lateCopyLossSafeRetry:true,unrelatedReceiptCorruptionIsolated:true,exactCorruptOrPreparedReceiptBlocksDelivery:true,unrelatedCorruptionAllowsSafeRetry:true,unrelatedCorruptionPreservesColdHistory:true,coldReopenNoReplay:true},null,2));console.log(`INTERACTION_ATTACHMENTS_OK ${dir}`);
 } finally {await runtime.close();}

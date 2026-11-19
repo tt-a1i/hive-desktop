@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CodexInteraction } from './agents/types.js';
 import { CodexInteractionError } from './agents/codex-interactions.js';
@@ -88,6 +88,14 @@ export class InteractionAttachments {
     return {id: this.key(workspaceId, sessionId, interaction), workspaceId, sessionId, interactionId: interaction.id,
       threadId: interaction.threadId, turnId: interaction.turnId, itemId: interaction.itemId, nativeRequestId: interaction.nativeRequestId,
       attachmentsByQuestionId: mapping, attachments, status: 'draft', updatedAt: Date.now()};
+  }
+  /** Check every resolved private copy together immediately before preparation.
+   * Paths can still disappear after this check or after native delivery. */
+  validateCopies(receipt: InteractionAttachmentReceipt): void {
+    for (const {attachment, filePath} of receipt.attachments) {
+      const info = statSync(filePath);
+      if (!info.isFile() || info.size !== attachment.size) throw new Error('Attachment copy is unavailable or changed');
+    }
   }
   write(receipt: InteractionAttachmentReceipt, status: InteractionAttachmentReceipt['status']): InteractionAttachmentReceipt {
     const target = join(this.directory, `${receipt.id}.json`);
