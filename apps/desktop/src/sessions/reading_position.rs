@@ -49,7 +49,11 @@ impl ReadingPositions {
                     "Reading positions exceed the file limit",
                 ));
             }
-            Ok(serde_json::from_reader(file)?)
+            let entries: Vec<serde_json::Value> = serde_json::from_reader(file)?;
+            Ok(entries
+                .into_iter()
+                .filter_map(|entry| serde_json::from_value(entry).ok())
+                .collect())
         };
         match load() {
             Ok(mut entries) => {
@@ -194,6 +198,87 @@ mod tests {
         assert!(store.anchor("another", "other-chat").is_some());
         store.remove_workspace("another");
         assert!(store.anchor("another", "other-chat").is_none());
+    }
+
+    #[test]
+    fn restores_valid_entries_around_corrupt_records() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join(FILE),
+            r#"[
+            {"workspace":"work","session":"first","row":{"Message":"m1"},"offset":12.5},
+            {"workspace":"work","session":"bad-type","row":{"Message":"m2"},"offset":"bad"},
+            {"workspace":"work","session":"unknown","row":{"Future":"m3"},"offset":1},
+            {"workspace":"other","session":"first","row":{"Group":"g1"},"offset":4}
+        ]"#,
+        )
+        .unwrap();
+        let mut store = ReadingPositions::default();
+        store.restore(root.path());
+        assert_eq!(
+            store.anchor("work", "first").unwrap().key,
+            RowKey::Message("m1".into())
+        );
+        assert_eq!(
+            store.anchor("other", "first").unwrap().key,
+            RowKey::Group("g1".into())
+        );
+        assert!(store.anchor("work", "unknown").is_none());
+    }
+
+    #[test]
+    fn applies_the_limit_after_discarding_bad_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let mut records: Vec<_> = (0..=SAVED_POSITIONS)
+            .map(|index| {
+                serde_json::json!({
+                    "workspace": "work", "session": format!("chat-{index}"),
+                    "row": {"Message": "m"}, "offset": 1
+                })
+            })
+            .collect();
+        records.push(serde_json::json!({"row": {"Future": "m"}}));
+        fs::write(
+            root.path().join(FILE),
+            serde_json::to_vec(&records).unwrap(),
+        )
+        .unwrap();
+        let mut store = ReadingPositions::default();
+        store.restore(root.path());
+        assert_eq!(store.entries.len(), SAVED_POSITIONS);
+        assert!(store.anchor("work", "chat-0").is_none());
+        assert!(store.anchor("work", "chat-1").is_some());
+        assert!(
+            store
+                .anchor("work", &format!("chat-{SAVED_POSITIONS}"))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_or_non_array_files_and_oversized_files() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = ReadingPositions::default();
+        store.remember(
+            "work",
+            "existing",
+            Some(ReadingAnchor {
+                key: RowKey::Message("m".into()),
+                offset: px(1.),
+            }),
+        );
+        for data in ["[{", "{}", "null"] {
+            fs::write(root.path().join(FILE), data).unwrap();
+            store.restore(root.path());
+            assert!(store.anchor("work", "existing").is_some());
+        }
+        fs::write(
+            root.path().join(FILE),
+            vec![b' '; MAX_FILE_BYTES as usize + 1],
+        )
+        .unwrap();
+        store.restore(root.path());
+        assert!(store.anchor("work", "existing").is_some());
     }
 
     #[test]
