@@ -302,7 +302,7 @@ else process.stdout.write(state.key);
     assert.ok(!JSON.stringify(retried.history).includes(key));
     assert.ok(requests.every(request => !request.input.includes(key)));
   }
-  if (process.platform !== 'win32') {
+  if (process.platform !== 'win32' && !(process.platform === 'darwin' && process.env.HIVE_DESKTOP_SHELL_OWNER)) {
     await rm(release, {force: true});
     await command('inherited-output');
     const beforeInheritedOutput = (await log()).length;

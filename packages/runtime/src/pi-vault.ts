@@ -73,7 +73,10 @@ async function readOp(value: string, signal: AbortSignal): Promise<string> {
   const command = resolveOp();
   const args = ['read', '--no-newline', value];
   const windows = process.platform === 'win32';
-  const launch = windows ? ownedWindowsCliLaunch(command, args) : { command, args };
+  const owner = process.platform === 'darwin' ? process.env.HIVE_DESKTOP_SHELL_OWNER : undefined;
+  const launch = owner
+    ? { command: owner, args: ['--hive-owned-cli', String(process.pid), command, ...args] }
+    : windows ? ownedWindowsCliLaunch(command, args) : { command, args };
   const child = spawn(launch.command, launch.args, {
     cwd: dirname(command), detached: !windows, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
   });
@@ -85,7 +88,8 @@ async function readOp(value: string, signal: AbortSignal): Promise<string> {
   let startError = false;
   const stop = () => {
     try {
-      if (windows || !child.pid) child.kill('SIGKILL');
+      if (owner) child.kill('SIGTERM');
+      else if (windows || !child.pid) child.kill('SIGKILL');
       else process.kill(-child.pid, 'SIGKILL');
     } catch {
       child.kill('SIGKILL');

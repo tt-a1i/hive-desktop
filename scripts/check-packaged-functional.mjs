@@ -33,7 +33,7 @@ const checks = ['bundled-hive-version', 'delivery-queue', 'queued-input-mutation
   ...(process.platform === 'win32' ? ['project-scripts-windows'] : []),
   // These fixtures use POSIX executable peers/hooks. The Windows PTY and
   // JSONL Git checks above run natively rather than passing via a skipped peer.
-  ...(process.platform === 'win32' ? [] : ['codex-probe-owner', 'queued-user-inputs-peers', 'chat-worktrees', 'git-remotes-wire', 'project-scripts-wire', 'profile-native-launch'])];
+  ...(process.platform === 'win32' ? [] : ['codex-probe-owner', 'pi-vault-owner', 'queued-user-inputs-peers', 'chat-worktrees', 'git-remotes-wire', 'project-scripts-wire', 'profile-native-launch'])];
 const receipt = {pass: false, bundle, actualInference: false, checks: []};
 try {
   await mkdir(join(directory, 'agent'));
@@ -68,9 +68,15 @@ try {
     const options = {cwd: directory, stdio: 'inherit', timeout,
       env: {...process.env, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_OFFLINE: '1',
         HIVE_DESKTOP_TEST_RUNTIME: join(runtime, 'dist/main.js'),
-        ...(name === 'codex-probe-owner' && {HIVE_DESKTOP_SHELL_OWNER: join(bundle, 'Hive Desktop.app/Contents/MacOS/hive-desktop')})}};
+        ...(['codex-probe-owner', 'pi-vault-owner'].includes(name) && {HIVE_DESKTOP_SHELL_OWNER: join(bundle, 'Hive Desktop.app/Contents/MacOS/hive-desktop')})}};
     execFileSync(node, [file], options);
     receipt.checks.push({name, exitCode: 0});
+    if (name === 'pi-vault' && process.platform === 'darwin') {
+      const owner = join(bundle, 'Hive Desktop.app/Contents/MacOS/hive-desktop');
+      console.log('[packaged-functional] pi-vault-native-owner');
+      execFileSync(node, [file], {...options, env: {...options.env, HIVE_DESKTOP_SHELL_OWNER: owner}});
+      receipt.checks.push({name: 'pi-vault-native-owner', exitCode: 0});
+    }
     if (name === 'session-history-rewind' && process.platform === 'darwin') {
       console.log('[packaged-functional] session-history-rewind-sidecar-crash');
       execFileSync(node, [file, '--sidecar-crash'], options);
