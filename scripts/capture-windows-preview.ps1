@@ -698,6 +698,75 @@ function Wait-UniqueSidebarResult([string] $Name) {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw "Sidebar search did not expose exactly one enabled fixture result '$Name'."
 }
+# Search saved body text with a precomposed query; the original message uses
+# decomposed accents after a long prefix. The search result must identify the
+# same member conversation and expose a useful, normalized snippet to UIA.
+try {
+    $unicodeQuery = 'Café 苔原 Unicode'
+    $unicodeMessage = (('a' + [char]0x0301) * 400) + ' Cafe' + [char]0x0301 + ' 苔原 Unicode'
+    $search = Wait-Action $searchInputName
+    $search.SetFocus()
+    $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($unicodeQuery)
+    Wait-EditorText $searchInputName $unicodeQuery
+    $listCondition = New-Object System.Windows.Automation.AndCondition(
+        (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, '搜索会话')),
+        (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::List)))
+    $buttonCondition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    $unicodeResult = $null
+    do {
+        $lists = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $listCondition)
+        if ($lists.Count -gt 1) { throw 'Unicode search exposed duplicate result lists.' }
+        if ($lists.Count -eq 1) {
+            $buttons = $lists[0].FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+            if ($buttons.Count -eq 1) {
+                $name = $buttons[0].Current.Name -replace "`r`n", "`n"
+                if ($buttons[0].Current.IsEnabled -and $name.StartsWith("$memberResultName`n", [System.StringComparison]::Ordinal) -and
+                    $name.Normalize([System.Text.NormalizationForm]::FormC).Contains($unicodeQuery)) {
+                    $unicodeResult = $buttons[0]
+                    break
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($null -eq $unicodeResult) { throw 'Unicode body search did not return the expected member and readable hit snippet.' }
+    Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-unicode-body-search.png')
+    Invoke-Action $unicodeResult.Current.Name
+    [void](Wait-Action '当前会话操作：Reviewer')
+    Wait-EditorText $searchInputName ''
+    Wait-EditorText '聊天消息' $quoted
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    $originalQuote = $null
+    do {
+        try { $originalQuote = Find-MessageQuote $unicodeMessage } catch { $originalQuote = $null }
+        if ($null -ne $originalQuote -and (Test-VisibleControl $originalQuote)) { break }
+        Start-Sleep -Milliseconds 120
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($null -eq $originalQuote -or -not (Test-VisibleControl $originalQuote)) {
+        throw 'Unicode search did not reveal the original message in the conversation viewport.'
+    }
+    Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-unicode-original-message.png')
+    Write-Host 'Unicode body snippet and original message were available through UI Automation.'
+    $search = Wait-Action $searchInputName
+    $search.SetFocus()
+    $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('启动方式核验')
+    Wait-EditorText $searchInputName '启动方式核验'
+    Wait-UniqueSidebarResult $leadResultName
+    Invoke-Action $leadResultName
+    [void](Wait-Action '当前会话操作：启动方式核验')
+    Wait-EditorText '聊天消息' $leadDraftBeforeSearch
+} catch {
+    $controls = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } |
+        Where-Object { $_ } | Select-Object -First 200)
+    Write-Host ('Unicode search failure controls: ' + (ConvertTo-Json -Compress -InputObject $controls))
+    try { Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-unicode-search-failure.png') }
+    catch { Write-Warning "Could not capture Unicode search failure: $_" }
+    throw
+}
+
 $search = Wait-Action $searchInputName
 $search.SetFocus()
 $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('Reviewer')

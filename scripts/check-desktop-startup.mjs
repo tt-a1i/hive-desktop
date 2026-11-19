@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -36,10 +37,12 @@ let child;
 let exited;
 let reader;
 try {
-  if (canary) {
+  if (windowsPreview) {
     process.env.PI_CODING_AGENT_DIR = join(directory, 'offline-pi');
     process.env.PI_OFFLINE = '1';
     await mkdir(process.env.PI_CODING_AGENT_DIR);
+  }
+  if (canary) {
     canary.listen(0, '127.0.0.1');
     await once(canary, 'listening');
   }
@@ -218,6 +221,18 @@ try {
   const { createDesktopSessionManager } = await import(pathToFileURL(join(resources, 'runtime/dist/agents/pi-session-manager.js')).href);
   const history = createDesktopSessionManager(join(directory, 'Beta'), dirname(workerFile), workerFile);
   const prompt = '请检查这个项目的启动方式和测试入口。';
+  // A body-only hit near the beginning of a longer native history. Its
+  // decomposed spelling must match the precomposed query in the Windows UI.
+  const unicodeText = 'a\u0301'.repeat(400) + ' Cafe\u0301 苔原 Unicode';
+  let unicodeMessageId;
+  if (windowsPreview) {
+    unicodeMessageId = history.appendMessage({role: 'user', timestamp: 1790000000000,
+      content: [{type: 'text', text: unicodeText}]});
+    for (let index = 0; index < 15; index++) {
+      history.appendMessage({role: 'user', timestamp: 1790000000001 + index,
+        content: [{type: 'text', text: `Older fixture message ${index + 1}`}]});
+    }
+  }
   history.appendCustomMessageEntry('hive-delivery', prompt, false,
     { version: 1, origin: 'user', displayText: prompt, deliveryId: 'fixture-input' });
   const assistant = (content, stopReason) => history.appendMessage({ role: 'assistant', content, timestamp: Date.now(),
@@ -235,6 +250,23 @@ try {
   const persisted = createDesktopSessionManager(join(directory, 'Beta'), dirname(workerFile), workerFile);
   assert.deepEqual(persisted.buildSessionContext().messages.filter(m => m.role === 'toolResult').map(m => m.toolCallId), ['read-0', 'read-1']);
   assert.ok(persisted.buildSessionContext().messages.some(m => m.role === 'assistant' && m.content.some(block => block.type === 'thinking' && block.thinking === '先核对原生会话的启动方式，再检查测试入口。')));
+  const historyBeforeSearch = windowsPreview ? await readFile(workerFile) : undefined;
+  if (historyBeforeSearch) {
+    const target = historyBeforeSearch.toString('utf8').split('\n').filter(Boolean)
+      .map(line => JSON.parse(line)).find(entry => entry.id === unicodeMessageId);
+    assert.equal(target?.message?.content?.[0]?.text, unicodeText);
+    const searchRuntime = await createDesktopRuntime(state, () => {});
+    try {
+      const result = await searchRuntime.chats.search('Café 苔原 Unicode', false, 0, workspaceId);
+      assert.equal(result.matches.length, 1, 'Unicode fixture must have exactly one matching conversation');
+      assert.equal(result.matches[0].session.id, workerChat);
+      assert.equal(result.matches[0].bodyMatch?.messageId, unicodeMessageId);
+      assert.ok(result.matches[0].bodyMatch.snippet.normalize('NFC').includes('Café 苔原 Unicode'));
+    } finally {
+      await searchRuntime.close();
+    }
+    assert.ok((await readFile(workerFile)).equals(historyBeforeSearch), 'Searching must leave the source file unchanged');
+  }
 
   // The native window must select the second project, successfully open its chat
   // and replace the obsolete selection. Booting just the sidecar cannot do this.
@@ -285,7 +317,30 @@ try {
       { env: captureEnv, stdio: 'inherit', timeout: reopenOnly ? 85_000 : 150_000 });
       assert.deepEqual(await once(probe, 'exit'), [0, null]);
     }
-    await captureWindow(false);
+    const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+    console.log('WINDOWS_UNICODE_SEARCH_BASELINE', JSON.stringify({
+      messageId: unicodeMessageId, originalBytes: historyBeforeSearch.length, originalSha256: sha256(historyBeforeSearch),
+    }));
+    let captureError;
+    try {
+      await captureWindow(false);
+    } catch (error) {
+      captureError = error;
+    }
+    const historyAfterSearch = await readFile(workerFile);
+    const retainedPrefix = historyAfterSearch.subarray(0, historyBeforeSearch.length);
+    const retainedMessage = historyAfterSearch.toString('utf8').split('\n').filter(Boolean)
+      .map(line => JSON.parse(line)).find(entry => entry.id === unicodeMessageId);
+    const prefixUnchanged = retainedPrefix.equals(historyBeforeSearch);
+    const originalMessageAndIdRetained = retainedMessage?.message?.content?.[0]?.text === unicodeText;
+    console.log('WINDOWS_UNICODE_SEARCH_RECEIPT', JSON.stringify({
+      messageId: unicodeMessageId, originalBytes: historyBeforeSearch.length,
+      originalSha256: sha256(historyBeforeSearch), retainedPrefixSha256: sha256(retainedPrefix),
+      bytesAfter: historyAfterSearch.length, prefixUnchanged, originalMessageAndIdRetained, uiPassed: !captureError,
+    }));
+    assert.ok(prefixUnchanged, 'Original Pi history bytes must remain unchanged; appended runtime metadata is allowed');
+    assert.ok(originalMessageAndIdRetained, 'Original message ID and text must remain unchanged');
+    if (captureError) throw captureError;
     await waitForSelection(leadChat);
     const renamedLead = JSON.parse(await readFile(join(state, 'chats/index.json'), 'utf8')).find(session => session.id === leadChat);
     assert.equal(renamedLead.title, '启动方式核验');
