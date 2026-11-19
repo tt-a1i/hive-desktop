@@ -56,6 +56,13 @@ impl OwnedProcess {
     pub fn id(&self) -> u32 {
         self.child.id()
     }
+    #[cfg(all(test, windows))]
+    pub(crate) fn contains_handle(
+        &self,
+        handle: windows_sys::Win32::Foundation::HANDLE,
+    ) -> io::Result<bool> {
+        self.scope.contains(handle)
+    }
     pub fn take_stdin(&mut self) -> Option<ChildStdin> {
         self.child.stdin.take()
     }

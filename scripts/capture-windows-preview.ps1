@@ -737,16 +737,28 @@ try {
     [void](Wait-Action '当前会话操作：Reviewer')
     Wait-EditorText $searchInputName ''
     Wait-EditorText '聊天消息' $quoted
+    # Plain saved user messages do not necessarily have a quote action. The
+    # captured Windows tree exposes their complete original text as a named
+    # control. Require one exact match whose bounds are inside this window.
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    $originalQuote = $null
+    $originalText = $null
     do {
-        try { $originalQuote = Find-MessageQuote $unicodeMessage } catch { $originalQuote = $null }
-        if ($null -ne $originalQuote -and (Test-VisibleControl $originalQuote)) { break }
+        $matchingText = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition) | Where-Object {
+                $_.Current.Name -ceq $unicodeMessage
+            })
+        if ($matchingText.Count -gt 1) { throw 'Unicode original message appeared in multiple controls.' }
+        if ($matchingText.Count -eq 1 -and (Test-VisibleControl $matchingText[0])) {
+            $originalText = $matchingText[0]
+            break
+        }
         Start-Sleep -Milliseconds 120
     } while ([DateTime]::UtcNow -lt $deadline)
-    if ($null -eq $originalQuote -or -not (Test-VisibleControl $originalQuote)) {
-        throw 'Unicode search did not reveal the original message in the conversation viewport.'
+    if ($null -eq $originalText) {
+        throw 'Unicode search did not reveal the unique original message within the window.'
     }
+    [void](Wait-Action '当前会话操作：Reviewer')
+    Wait-EditorText '聊天消息' $quoted
     Save-FixtureWindow (Join-Path ([System.IO.Path]::GetDirectoryName($OutputPath)) 'windows-unicode-original-message.png')
     Write-Host 'Unicode body snippet and original message were available through UI Automation.'
     $search = Wait-Action $searchInputName

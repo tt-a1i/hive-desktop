@@ -296,7 +296,16 @@ jobs:
       - name: Build runtime
         run: pnpm build:runtime
       - name: Test native process supervision
+        env:
+          HIVE_GIT_HOOK_RECEIPT: ${{ github.workspace }}/target/windows-git-hook-ownership.json
         run: cargo test --locked --manifest-path apps/desktop/Cargo.toml --no-default-features --features process-supervisor-check --bin process-supervisor-check -- --nocapture
+      - name: Preserve native Git hook ownership receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-git-hook-ownership
+          path: target/windows-git-hook-ownership.json
+          if-no-files-found: warn
   native-clis:
     if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.replay_run && !inputs.replay_image_memory && !inputs.replay_shortcut_layout && !inputs.replay_update) }}
     runs-on: windows-latest
