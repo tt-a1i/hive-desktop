@@ -177,7 +177,8 @@ impl HiveApp {
     // No parsing or matching backend error strings, and native history is retained.
     pub(crate) fn hidden_current_failure(&self, index: usize) -> bool {
         self.messages.get(index).is_some_and(|message| {
-            message.failure.is_some() && !self.conversation_find_matches(&message.id)
+            message.failure.as_ref().is_some_and(|failure| !failure.expanded)
+                && !self.conversation_find_matches(&message.id)
         }) && self.delivery_failure.as_ref().is_some_and(|failure| {
             self.messages[..index]
                 .iter()

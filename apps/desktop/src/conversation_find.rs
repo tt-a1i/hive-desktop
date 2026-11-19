@@ -12,6 +12,8 @@ use gpui_kit::{
     },
     *,
 };
+use icu_normalizer::ComposingNormalizer;
+use std::borrow::Cow;
 
 pub struct ConversationFind {
     input: Entity<InputState>,
@@ -22,32 +24,43 @@ pub struct ConversationFind {
     _subscription: Subscription,
 }
 
+fn fold(text: &str) -> Cow<'_, str> {
+    if text.is_ascii() && !text.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(ComposingNormalizer::new_nfc().normalize(text).to_lowercase())
+    }
+}
+
+fn contains(text: &str, query: &str) -> bool {
+    !query.is_empty() && fold(text).contains(query)
+}
+
 fn matches(message: &Message, input: Option<&serde_json::Value>, query: &str) -> bool {
     !query.is_empty()
-        && (message.display_body().to_lowercase().contains(query)
+        && (contains(message.display_body(), query)
             || message
                 .thinking
                 .iter()
-                .any(|block| block.text.to_lowercase().contains(query))
+                .any(|block| contains(&block.text, query))
             || message.tool.as_ref().is_some_and(|tool| {
-                tool.name.to_lowercase().contains(query)
+                contains(&tool.name, query)
                     || tool
                         .patch
                         .as_ref()
-                        .is_some_and(|patch| patch.to_lowercase().contains(query))
+                        .is_some_and(|patch| contains(patch, query))
             })
             || message
                 .failure
                 .as_ref()
                 .is_some_and(|failure| {
-                    failure.display_message().to_lowercase().contains(query)
-                        || failure.message.to_lowercase().contains(query)
+                    contains(&failure.display_message(), query) || contains(&failure.message, query)
                 })
             || message
                 .delivery
                 .as_ref()
-                .is_some_and(|card| card.raw.to_lowercase().contains(query))
-            || input.is_some_and(|input| input.to_string().to_lowercase().contains(query)))
+                .is_some_and(|card| contains(&card.raw, query))
+            || input.is_some_and(|input| contains(&input.to_string(), query)))
 }
 
 impl HiveApp {
@@ -111,7 +124,7 @@ impl HiveApp {
         let Some(find) = &mut self.conversation_find else {
             return;
         };
-        find.query = find.input.read(cx).value().trim().to_lowercase();
+        find.query = fold(find.input.read(cx).value().trim()).into_owned();
         find.hits = self
             .messages
             .iter()
@@ -161,13 +174,13 @@ impl HiveApp {
         if let Some(index) = self.message_indices.get(id).copied() {
             let message = &mut self.messages[index];
             for block in &mut message.thinking {
-                if block.text.to_lowercase().contains(&find.query) && !block.expanded {
+                if !block.expanded && contains(&block.text, &find.query) {
                     block.expanded = true;
                     message.layout_revision += 1;
                 }
             }
             if let Some(failure) = &mut message.failure {
-                if failure.message.to_lowercase().contains(&find.query) && !failure.expanded {
+                if !failure.expanded && contains(&failure.message, &find.query) {
                     failure.expanded = true;
                     message.layout_revision += 1;
                 }
@@ -218,8 +231,7 @@ impl HiveApp {
     pub(crate) fn conversation_find_patch_match(&self, id: &str, patch: Option<&str>) -> bool {
         self.conversation_find.as_ref().is_some_and(|find| {
             find.selected.as_deref() == Some(id)
-                && !find.query.is_empty()
-                && patch.is_some_and(|p| p.to_lowercase().contains(&find.query))
+                && patch.is_some_and(|p| contains(p, &find.query))
         })
     }
 
@@ -281,6 +293,9 @@ impl HiveApp {
                     )
                     .child(
                         div()
+                            .id("conversation-find-result")
+                            .role(Role::Status)
+                            .aria_label(count_label.clone())
                             .flex_shrink_0()
                             .px_2()
                             .py_0p5()
@@ -355,5 +370,21 @@ impl HiveApp {
                             })),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{contains, fold};
+
+    #[test]
+    fn find_matches_canonical_forms_without_discarding_marks() {
+        assert!(contains("Cafe\u{301} history", &fold("CAFÉ")));
+        assert!(contains("CAFÉ history", &fold("cafe\u{301}")));
+        assert!(contains("+ CAFE\u{301} patch", &fold("café patch")));
+        assert!(contains("낱말", &fold("\u{1102}\u{1161}\u{11c0}\u{1106}\u{1161}\u{11af}")));
+        assert!(!contains("Cafe\u{301} history", &fold("cafe")));
+        assert!(!contains("fullwidth Ａ", &fold("a")));
+        assert!(!contains("plain text", ""));
     }
 }

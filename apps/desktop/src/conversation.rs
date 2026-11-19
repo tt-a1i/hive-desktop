@@ -5,6 +5,32 @@ use crate::{
 use gpui_kit::*;
 use serde_json::{Value, json};
 use std::borrow::Cow;
+use std::collections::HashSet;
+
+fn assistant_tool_calls(message: &Value) -> impl Iterator<Item = &Value> {
+    message["content"].as_array()
+        .filter(|_| message["role"] == "assistant")
+        .into_iter()
+        .flatten()
+        .filter(|block| block["type"] == "toolCall")
+}
+
+fn unresolved_tool_calls(ids: &[String], history: &[Value]) -> HashSet<String> {
+    let mut pending: HashSet<_> = history
+        .iter()
+        .flat_map(assistant_tool_calls)
+        .filter_map(|call| call["id"].as_str().filter(|id| !id.is_empty()))
+        .collect();
+    if !pending.is_empty() {
+        for (id, message) in ids.iter().zip(history) {
+            if message["role"] == "toolResult" {
+                pending.remove(message["toolCallId"].as_str().unwrap_or(id));
+            }
+        }
+    }
+    pending.into_iter().map(str::to_owned).collect()
+}
+
 impl HiveApp {
     pub(crate) fn clear_conversation_messages(&mut self, cx: &mut Context<Self>) {
         self.message_indices = Default::default();
@@ -400,6 +426,39 @@ impl HiveApp {
             image_task: None,
         });
     }
+    pub(crate) fn restore_conversation_history(
+        &mut self,
+        message_ids: Vec<String>,
+        history: Vec<Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut unresolved = unresolved_tool_calls(&message_ids, &history);
+        for (message_id, message) in message_ids.into_iter().zip(history) {
+            let handoff_id = crate::session_handoff::historical_item_id(&message);
+            self.receive_message(message_id.clone(), &message, cx);
+            if let Some(rendered) = self.message_mut(&message_id)
+                && matches!(rendered.role.as_str(), "user" | "assistant")
+            {
+                rendered.handoff_item_id = handoff_id;
+            }
+            // Saved requests can outlive a stopped provider. Keep the original
+            // call ID available to search, and leave completed rows in place.
+            for call in assistant_tool_calls(&message) {
+                if let Some(id) = call["id"].as_str()
+                    && unresolved.remove(id)
+                    && self.message_index(id).is_none()
+                {
+                    let name = call["name"].as_str().unwrap_or("工具").to_owned();
+                    self.upsert_tool(id.to_owned(), name, "未记录结果", String::new(), cx);
+                    if let Some(rendered) = self.message_mut(id) {
+                        rendered.source_session_id =
+                            message["sourceSessionId"].as_str().map(str::to_owned);
+                    }
+                }
+            }
+        }
+    }
+
     // Both snapshots and live events use the same provenance contract. Never infer
     // a source from message text: users may paste a complete Hive envelope.
     pub(crate) fn receive_message(
@@ -410,15 +469,11 @@ impl HiveApp {
     ) {
         let role = message["role"].as_str().unwrap_or("assistant");
         if role == "assistant" {
-            for block in message["content"].as_array().into_iter().flatten() {
-                if block["type"] == "toolCall" {
-                    if let (Some(id), Some(args)) = (block["id"].as_str(), block.get("arguments")) {
-                        self.tool_inputs.insert(id.to_owned(), args.clone());
-                    }
+            for block in assistant_tool_calls(message) {
+                if let (Some(id), Some(args)) = (block["id"].as_str(), block.get("arguments")) {
+                    self.tool_inputs.insert(id.to_owned(), args.clone());
                 }
             }
-        }
-        if role == "assistant" {
             self.sync_thinking(&id, message, false, cx);
         }
         let text = message_text(message);
@@ -829,7 +884,7 @@ pub(crate) fn message_text(message: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::message_text;
+    use super::{message_text, unresolved_tool_calls};
     use serde_json::json;
 
     #[test]
@@ -844,6 +899,25 @@ mod tests {
         let body = message_text(&message);
         assert_eq!(body, format!("{long}\n\n\n\nlast"));
         assert!(body.capacity() < body.len() + 1024);
+    }
+
+    #[test]
+    fn history_adds_saved_calls_only_when_the_result_row_is_missing() {
+        let ids = ["assistant", "native-result", "legacy-call"].map(str::to_owned);
+        let history = [
+            json!({"role":"assistant","content":[
+                {"type":"toolCall","id":"completed"},
+                {"type":"toolCall","id":"legacy-call"},
+                {"type":"toolCall","id":"interrupted"},
+                {"type":"toolCall","id":""},
+            ]}),
+            json!({"role":"toolResult","toolCallId":"completed"}),
+            json!({"role":"toolResult"}),
+        ];
+        assert_eq!(
+            unresolved_tool_calls(&ids, &history),
+            ["interrupted".to_owned()].into_iter().collect()
+        );
     }
 }
 

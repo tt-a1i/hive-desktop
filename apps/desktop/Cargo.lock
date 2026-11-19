@@ -2889,6 +2889,7 @@ dependencies = [
  "base64 0.22.1",
  "gpui-kit",
  "hive-terminal",
+ "icu_normalizer",
  "image",
  "libc",
  "serde",

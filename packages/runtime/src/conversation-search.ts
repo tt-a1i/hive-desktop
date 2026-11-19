@@ -144,6 +144,8 @@ function messageText(value: unknown, state: { truncated: boolean }): string {
     if (input) parts.push(input);
     if (object(value.details) && typeof value.details.patch === 'string') parts.push(value.details.patch);
   }
+  if (value.role === 'assistant' && value.stopReason === 'error' && typeof value.errorMessage === 'string')
+    parts.push(value.errorMessage);
   return parts.join('\n');
 }
 // Assistant tool calls carry inputs separately from the result rendered by the

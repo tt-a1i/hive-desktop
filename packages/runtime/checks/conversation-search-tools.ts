@@ -76,10 +76,14 @@ try {
     {type:'session',id:'session',version:3,timestamp:'2026-01-01T00:00:00Z',cwd:dir},
     {type:'message',id:'a',parentId:null,timestamp:'2026-01-01T00:00:00Z',message:activeCall},
     {type:'message',id:'r',parentId:'a',timestamp:'2026-01-01T00:00:00Z',message:completedTool},
+    {type:'message',id:'failure',parentId:'r',timestamp:'2026-01-01T00:00:00Z',
+      message:{role:'assistant',content:[],stopReason:'error',errorMessage:'Cold visible failure marker'}},
   ].map(row=>JSON.stringify(row)).join('\n'));
   active = await searchConversation({...pi,sessionFile:piFile},'active-command-marker',opts);
   assert.deepEqual(active.matches.map(x=>x.messageId),['active-call']);
   assert.equal(active.complete,true, 'completion and disk update restore completeness');
+  const failure = await searchConversation({...pi,sessionFile:piFile}, 'visible failure marker', opts);
+  assert.deepEqual(failure.matches.map(match => match.messageId), ['failure']);
   const claudeBase = {...base,backend:'claude' as const,codexThreadId:undefined};
   const busyClaude = await searchConversation(claudeBase,'active-command-marker',{...opts,liveBusy:true,liveHistory:{history:[activeCall],historyMessageIds:['assistant-active']}});
   assert.deepEqual(busyClaude.matches.map(x=>x.messageId),['active-call']);

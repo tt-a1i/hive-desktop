@@ -898,15 +898,7 @@ impl HiveApp {
                         this.load_permission_mode(None, cx);
                         this.sync_git_workspace(cx);
                         this.event_sequence = open.event_sequence;
-                        for (message_id, message) in open.history_message_ids.into_iter().zip(open.history) {
-                            let handoff_id = crate::session_handoff::historical_item_id(&message);
-                            this.receive_message(message_id.clone(), &message, cx);
-                            if let Some(rendered) = this.message_mut(&message_id)
-                                && matches!(rendered.role.as_str(), "user" | "assistant")
-                            {
-                                rendered.handoff_item_id = handoff_id;
-                            }
-                        }
+                        this.restore_conversation_history(open.history_message_ids, open.history, cx);
                         if let Some(active) = open.active_message {
                             this.receive_message(active.message_id.clone(), &active.message, cx);
                             this.sync_thinking(&active.message_id, &active.message, true, cx);
@@ -917,6 +909,13 @@ impl HiveApp {
                         this.restore_conversation_position(&id, cx);
                         if let Some((target_request, target_session, message_id)) = this.search_target.take() {
                             if target_request == request && target_session == id {
+                                if let Some(message) = this.message_mut(&message_id)
+                                    && let Some(failure) = &mut message.failure
+                                    && !failure.expanded
+                                {
+                                    failure.expanded = true;
+                                    message.layout_revision += 1;
+                                }
                                 if this.scroll_to_conversation_message(&message_id, cx) {
                                     this.schedule_reading_position_save(cx);
                                 } else {
