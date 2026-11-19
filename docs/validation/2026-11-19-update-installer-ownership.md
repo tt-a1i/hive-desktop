@@ -53,3 +53,17 @@ GPT-6.2 Sol 用真实安装器子进程和文件系统复现了故障。新版�
 另从同一份 `0.1.0` 安装已验签的正常 `0.1.1`。新版确认启动并打开原 SQLite 数据库，原草稿内容完全相同。收据记录为已安装，已用归档、事务目录和恢复入口均被移除。两版桌面和后台均已退出。原生进程收据为 `.artifacts/current-package-regression-queK7q/signed-success-1BsbRA/actual-application-receipt.json`。
 
 本次 Mac 锁屏期间验证了实际进程、签名、数据目录和恢复入口。设置窗口操作仍待复验，Windows 当前安装也待实测。没有替换用户安装或发布。源码和包内更新专项、严格验签、实际 PTY 和 Hive SQLite 冒烟通过。原生进程证据位于 `.artifacts/current-package-regression-queK7q/signed-rollback-rR4Zcg/actual-application-receipt.json`，本地 ZIP SHA-256 为 `fc5d0dc5bace95c684039548e8f7a64c4d35ac0c48a684c4e8c3620046fb483f`。
+
+## 低磁盘空间准备和首次记录前的恢复
+
+`fc3d37b` 让 macOS 在同卷准备更新时优先使用写时复制。已下载归档的副本仍要核对文件大小、SHA-256 和签名。临时安装器继续使用独立的 Node 文件，旧应用被替换后仍可运行。跨卷使用系统复制，Windows 继续走原文件复制。当前包内 Node 的克隆标志在实际 APFS 上返回 `ENOSYS` 或退回普通复制。选择 macOS 自带的 `cp -c`，同卷克隆和跨卷回退都经过实测。下载或准备阶段真实返回 `ENOSPC` 时，设置页会提示释放空间并重试。[Node 22 文件复制选项](https://nodejs.org/download/release/latest-jod/docs/api/fs.html#fspromisescopyfilesrc-dest-mode) · [macOS 系统复制实现](https://github.com/apple-oss-distributions/file_cmds/blob/main/cp/utils.c)
+
+在 410 MiB 的临时 APFS 卷上，从实际签名安装的包内 Node 运行生产后台准备器。归档含 24 MiB 数据，临时安装器使用约 108 MiB 的真实 Node。同样剩余约 62 MiB 时，旧版复制 Node 失败，新版完成准备，临时 Node 与原文件摘要一致、文件身份独立且可执行。只剩约 9 MiB 时，实际解包返回空间不足，安装目录无遗留事务，原文件及缓存完整。释放限额卷空间后，使用同一归档完成准备和清理。另将缓存放到另一卷，复制和验证通过。限额卷已卸载，临时磁盘镜像已回收。
+
+原生设置页用实际完整签名包验收了友好提示和随后安装。在隔离应用的解包入口注入一次 `ENOSPC`，设置页读到本地化提示。旧应用继续运行，保留草稿及签名归档，未发生安装交接。移除故障并让回环渠道返回 503，从设置页离线重试。归档下载共一次。安装器真实升级并重启到 `0.1.1`，新窗口读到原草稿。两版应用、后台和安装进程退出，安装事务及已用缓存清理。检查器第一次用源码版本 `0.1.0` 核对已安装的 `0.1.1`，版本断言报错。随后用签名归档声明的预期版本重跑，严格验签、实际 PTY、Hive HTTP/SQLite 及退出冒烟通过。
+
+GPT-6.2 Sol 在真实安装器进程持锁、首条安装记录尚未提交时终止了安装器。旧恢复入口无法清理候选和恢复文件。`cdf84f4` 让显式手动恢复在同一把安装锁下核对旧版可执行文件和所需整包签名，确认候选存在且没有原版备份目录，再记录终态并清理。回归覆盖在途安装阻塞恢复、备份歧义、重复恢复和迟到安装器拒绝。原应用、草稿、缓存、既有安装收据保持。安装计划本身尚未写完时的强制终止不属于这个恢复入口覆盖的阶段。
+
+本地证据位于 `.artifacts/update-clone-pressure-3aFoRI/`。其中 `apfs-baseline.json`、`apfs-candidate.json`、`apfs-candidate-cross.json` 是真实文件系统压力对照，`window-healthy/receipt.json` 是原生设置与实际安装收据。Windows 原生安装仍待验收。本轮未调用模型、替换用户安装或发布。
+
+`cdf84f4` 的 macOS arm64 ZIP 逐项核对并通过解包严格验签。解包后通过六项相关回归，其中包含签名更新、替换、回退、中断恢复及清理。真实 PTY、Hive HTTP/SQLite 与退出冒烟通过。Rust 测试 131 项通过，1 项辅助进程入口忽略。Windows x86_64 MSVC 交叉检查通过。ZIP SHA-256 为 `92440b8cd0b6658e4e1a19fb4d74a00326bd0cafc9f9c15c64d2ad99a4f3be28`。
