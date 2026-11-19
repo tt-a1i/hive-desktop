@@ -185,6 +185,10 @@ impl FileSource {
 struct FileViewer {
     source: FileSource,
     target: Option<ArtifactTarget>,
+    dismissed: bool,
+    load_task: Option<Task<()>>,
+    html_task: Option<Task<()>>,
+    reveal_task: Option<Task<()>>,
     generation: u64,
     reveal_generation: u64,
     warning: Option<String>,
@@ -311,6 +315,10 @@ fn open_viewer(
         let viewer = FileViewer {
             source,
             target,
+            dismissed: false,
+            load_task: None,
+            html_task: None,
+            reveal_task: None,
             generation: 0,
             reveal_generation: 0,
             warning: None,
@@ -332,11 +340,27 @@ fn open_viewer(
         viewer
     });
     let width = (window.viewport_size().width - px(48.)).min(px(960.));
+    let dismiss = viewer.downgrade();
     window.open_dialog(cx, move |dialog, _, _| {
-        dialog.title(title.clone()).w(width).child(viewer.clone())
+        let dismiss = dismiss.clone();
+        dialog
+            .title(title.clone())
+            .w(width)
+            .on_close(move |_, _, cx| {
+                let _ = dismiss.update(cx, |viewer, _| viewer.dismiss());
+            })
+            .child(viewer.clone())
     });
 }
 impl FileViewer {
+    fn dismiss(&mut self) {
+        // The dialog keeps its contents mounted during the exit transition.
+        self.dismissed = true;
+        self.load_task = None;
+        self.html_task = None;
+        self.reveal_task = None;
+    }
+
     fn html_source(&self) -> Option<(&Arc<crate::transport::Runtime>, &ArtifactSource)> {
         match &self.source {
             FileSource::Artifact { runtime, source } | FileSource::Session { runtime, source }
@@ -349,7 +373,11 @@ impl FileViewer {
     }
 
     fn preview_html(&mut self, saved_path: bool, cx: &mut Context<Self>) {
-        if self.html_loading || !self.current(cx) || (saved_path && !self.html_saved_path) {
+        if self.dismissed
+            || self.html_loading
+            || !self.current(cx)
+            || (saved_path && !self.html_saved_path)
+        {
             return;
         }
         let Some((runtime, source)) = self.html_source() else {
@@ -370,7 +398,7 @@ impl FileViewer {
         self.html_loading = true;
         self.html_error = None;
         cx.notify();
-        cx.spawn(async move |this, cx| {
+        self.html_task = Some(cx.spawn(async move |this, cx| {
             #[derive(serde::Deserialize)]
             #[serde(rename_all = "camelCase")]
             struct Snapshot {
@@ -420,8 +448,7 @@ impl FileViewer {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 
     fn current(&self, cx: &App) -> bool {
@@ -437,7 +464,7 @@ impl FileViewer {
         ));
     }
     fn load(&mut self, cx: &mut Context<Self>) {
-        if self.loading {
+        if self.dismissed || self.loading {
             return;
         }
         if !self.current(cx) {
@@ -453,7 +480,7 @@ impl FileViewer {
         self.warning = None;
         let source = self.source.clone();
         cx.notify();
-        cx.spawn(async move |this, cx| {
+        self.load_task = Some(cx.spawn(async move |this, cx| {
             let saved_path = source.has_saved_path_preview().await;
             let resolved = source.path().await;
             let current = this
@@ -505,10 +532,12 @@ impl FileViewer {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
     fn step_source_page(&mut self, direction: isize, cx: &mut Context<Self>) {
+        if self.dismissed {
+            return;
+        }
         let Some(text) = self.text.as_mut() else {
             return;
         };
@@ -520,6 +549,9 @@ impl FileViewer {
         }
     }
     fn reveal(&mut self, cx: &mut Context<Self>) {
+        if self.dismissed {
+            return;
+        }
         if !self.current(cx) {
             self.stale();
             cx.notify();
@@ -529,7 +561,7 @@ impl FileViewer {
         let generation = self.reveal_generation;
         let read_generation = self.generation;
         let source = self.source.clone();
-        cx.spawn(async move |this, cx| {
+        self.reveal_task = Some(cx.spawn(async move |this, cx| {
             let result = source.path().await;
             let _ = this.update(cx, |this, cx| {
                 if this.reveal_generation != generation || this.generation != read_generation {
@@ -550,8 +582,7 @@ impl FileViewer {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 }
 
