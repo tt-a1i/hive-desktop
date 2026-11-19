@@ -1,4 +1,6 @@
+mod patch_reader;
 mod remotes;
+use patch_reader::PatchReader;
 use crate::{
     app::HiveApp,
     focus_scroll::{Reveal, Viewport},
@@ -312,7 +314,7 @@ struct CommitPatchResponse {
 }
 enum CommitPatch {
     Loading { _task: Task<()> },
-    Ready(Result<SharedString, Fault>),
+    Ready(Result<PatchReader, Fault>),
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -440,7 +442,7 @@ pub(crate) struct GitWorkspace {
     reload_diff_on_open: bool,
     body_scroll: ScrollHandle,
     files_scroll: ScrollHandle,
-    diff_scroll: ScrollHandle,
+    file_patch_reader: Option<PatchReader>,
     diff_state: Entity<DiffState>,
     diff_raw: bool,
     ignore_whitespace: bool,
@@ -457,7 +459,6 @@ pub(crate) struct GitWorkspace {
     commit_result: Option<CommitResult>,
     commit_scroll: ScrollHandle,
     outside_scroll: ScrollHandle,
-    commit_patch_scroll: ScrollHandle,
     commit_patch: Option<CommitPatch>,
     reload_commit_patch_on_open: bool,
     remotes: Option<Entity<remotes::RemotePanel>>,
@@ -549,7 +550,7 @@ impl HiveApp {
                 reload_diff_on_open: false,
                 body_scroll: ScrollHandle::new(),
                 files_scroll: ScrollHandle::new(),
-                diff_scroll: ScrollHandle::new(),
+                file_patch_reader: None,
                 diff_state: cx.new(|cx| {
                     DiffState::new([], cx).with_mode(
                         crate::diffs_settings::current(cx)
@@ -576,7 +577,6 @@ impl HiveApp {
                 commit_result: None,
                 commit_scroll: ScrollHandle::new(),
                 outside_scroll: ScrollHandle::new(),
-                commit_patch_scroll: ScrollHandle::new(),
                 commit_patch: None,
                 reload_commit_patch_on_open: false,
                 remotes,
@@ -977,7 +977,7 @@ impl GitWorkspace {
         }
         self.diff_error = None;
         self.diff_loading = false;
-        self.diff_scroll = ScrollHandle::new();
+        self.file_patch_reader = None;
     }
 
     fn load_diff(&mut self, cx: &mut Context<Self>) {
@@ -1029,6 +1029,7 @@ impl GitWorkspace {
         .detach();
     }
     fn sync_diff_state(&mut self, collapse_multi: bool, cx: &mut App) {
+        self.file_patch_reader = None;
         let Some(patch) = self.diff.as_ref().and_then(|diff| diff.patch.as_deref()) else {
             self.diff_has_structured = false;
             self.diff_state.update(cx, |s, cx| s.set_files([], cx));
@@ -1194,7 +1195,6 @@ impl GitWorkspace {
     }
     fn hide_commit_patch(&mut self) {
         self.commit_patch = None;
-        self.commit_patch_scroll = ScrollHandle::new();
         self.reload_commit_patch_on_open = false;
     }
     fn clear_commit_preview(&mut self) {
@@ -1227,7 +1227,7 @@ impl GitWorkspace {
                             message: "Patch response did not match the reviewed commit version".into(),
                         })
                     } else {
-                        Ok(response.patch)
+                        Ok(PatchReader::new(response.patch))
                     }
                 });
             let _ = this.update(cx, |this, cx| {
@@ -1241,6 +1241,12 @@ impl GitWorkspace {
         });
         self.commit_patch = Some(CommitPatch::Loading { _task: task });
         cx.notify();
+    }
+    fn staged_patch_reader(&mut self) -> Option<&mut PatchReader> {
+        match self.commit_patch.as_mut() {
+            Some(CommitPatch::Ready(Ok(reader))) => Some(reader),
+            _ => None,
+        }
     }
     fn apply_commit(&mut self, cx: &mut Context<Self>) {
         if !self.current(cx) || self.busy(cx) || self.status_loading || self.index_refresh_required
@@ -2135,14 +2141,18 @@ impl Render for GitWorkspace {
                                             .aria_label(message.clone()).text_xs().text_color(Color::Error.get(cx))
                                             .child(message).into_any_element()
                                     }
-                                    CommitPatch::Ready(Ok(patch)) => crate::text_reading::region(
-                                        "git-commit-patch-region".into(),
-                                        tr("已暂存补丁").to_owned(),
-                                        &self.commit_patch_scroll,
-                                        px(110.),
+                                    CommitPatch::Ready(Ok(reader)) => reader.view(
+                                        "git-commit-patch",
+                                        crate::text_reading::region(
+                                            "git-commit-patch-region".into(),
+                                            tr("已暂存补丁").to_owned(),
+                                            &reader.scroll,
+                                            px(110.),
+                                            cx,
+                                        ),
+                                        Self::staged_patch_reader,
                                         cx,
-                                    )
-                                    .child(crate::text_reading::selectable_text("git-commit-patch", patch.clone())).into_any_element(),
+                                    ).into_any_element(),
                                 })
                             })
                             .when(preview.hooks_may_modify_index, |view| {
@@ -2361,6 +2371,7 @@ impl Render for GitWorkspace {
                                                                 .disabled(!self.diff_has_structured)
                                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                                     this.diff_raw = false;
+                                                                    this.file_patch_reader = None;
                                                                     this.diff_state.update(cx, |s, cx| s.set_mode(DiffMode::Unified, cx));
                                                                     cx.notify();
                                                                 })),
@@ -2374,6 +2385,7 @@ impl Render for GitWorkspace {
                                                                 .disabled(!self.diff_has_structured)
                                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                                     this.diff_raw = false;
+                                                                    this.file_patch_reader = None;
                                                                     this.diff_state.update(cx, |s, cx| s.set_mode(DiffMode::Split, cx));
                                                                     cx.notify();
                                                                 })),
@@ -2385,7 +2397,10 @@ impl Render for GitWorkspace {
                                                                 .label(tr("原始补丁"))
                                                                 .selected(self.diff_raw || !self.diff_has_structured)
                                                                 .on_click(cx.listener(|this, _, _, cx| {
-                                                                    this.diff_raw = true;
+                                                                    if !this.diff_raw {
+                                                                        this.file_patch_reader = None;
+                                                                        this.diff_raw = true;
+                                                                    }
                                                                     cx.notify();
                                                                 })),
                                                         ),
@@ -2435,33 +2450,33 @@ impl Render for GitWorkspace {
                                             )
                                             .into_any_element()
                                     } else {
-                                        let raw_display = if patch.is_empty() {
-                                            tr("此比较没有文本内容差异").into()
-                                        } else if self.ignore_whitespace && !self.diff_raw {
-                                            let filtered = crate::diffs_settings::filter_patch_whitespace(patch);
-                                            if filtered.trim().is_empty() {
-                                                tr("忽略空白后没有代码内容差异").into()
+                                        let reader = self.file_patch_reader.get_or_insert_with(|| {
+                                            let text = if patch.is_empty() {
+                                                tr("此比较没有文本内容差异").into()
+                                            } else if self.ignore_whitespace && !self.diff_raw {
+                                                let filtered = crate::diffs_settings::filter_patch_whitespace(patch);
+                                                if filtered.trim().is_empty() {
+                                                    tr("忽略空白后没有代码内容差异").into()
+                                                } else {
+                                                    SharedString::from(filtered)
+                                                }
                                             } else {
-                                                SharedString::from(filtered)
-                                            }
-                                        } else {
-                                            patch.clone()
-                                        };
-                                        crate::text_reading::region(
+                                                patch.clone()
+                                            };
+                                            PatchReader::new(text)
+                                        });
+                                        let region = crate::text_reading::region(
                                             "git-raw-patch-region".into(),
                                             tr("Git 原始字节补丁").to_owned(),
-                                            &self.diff_scroll,
+                                            &reader.scroll,
                                             diff_height,
                                             cx,
                                         )
                                         .font_family(Theme::global(cx).mono_font_family.clone())
                                         .text_size(px(code_size))
                                         .line_height(px((code_size * 1.55).round()))
-                                        .when(code_wrap, |v| v.whitespace_normal())
-                                        .child(crate::text_reading::selectable_text(
-                                            "git-raw-patch",
-                                            raw_display,
-                                        ))
+                                        .when(code_wrap, |v| v.whitespace_normal());
+                                        reader.view("git-raw-patch", region, |this| this.file_patch_reader.as_mut(), cx)
                                         .into_any_element()
                                     })
                                 })
