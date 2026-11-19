@@ -381,6 +381,9 @@ impl HiveApp {
         self.settings_search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.settings_search_selected = 0;
+        if section != SettingsSection::Archive {
+            self.archive_settings.cancel_search();
+        }
         self.settings_section = section;
         if section == SettingsSection::Profiles {
             self.load_profiles(cx);

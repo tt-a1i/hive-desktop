@@ -35,6 +35,7 @@ pub(super) struct SidebarSearch {
     connection: u64,
     workspace: Option<String>,
     generation: u64,
+    task: Option<Task<()>>,
     page: Page,
     offset: usize,
     selected: usize,
@@ -60,6 +61,7 @@ impl SidebarSearch {
             connection: 0,
             workspace: None,
             generation: 0,
+            task: None,
             page: Page::default(),
             offset: 0,
             selected: 0,
@@ -105,6 +107,7 @@ impl SidebarSearch {
         });
     }
     fn load(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        self.task = None;
         self.generation += 1;
         let generation = self.generation;
         let connection = self.connection;
@@ -132,7 +135,7 @@ impl SidebarSearch {
         let offset = self.offset;
         self.loading = true;
         self.changed(cx);
-        cx.spawn(async move |this, cx| {
+        self.task = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 smol::Timer::after(Duration::from_millis(150)).await;
             }
@@ -165,8 +168,7 @@ impl SidebarSearch {
                 }
                 this.changed(cx);
             });
-        })
-        .detach();
+        }));
     }
     fn current(&self, generation: u64, connection: u64, cx: &App) -> bool {
         self.generation == generation

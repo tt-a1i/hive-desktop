@@ -751,7 +751,8 @@ export class Chats implements StructuredSessionPort {
       throw error;
     }
   }
-  async search(query: unknown, archived: unknown = false, offset: unknown = 0, workspaceId?: unknown) {
+  async search(query: unknown, archived: unknown = false, offset: unknown = 0, workspaceId?: unknown, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     if (workspaceId !== undefined && (typeof workspaceId !== 'string' || !workspaceId.trim())) throw new TypeError('workspaceId must be a nonempty string');
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
     if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new TypeError('Search offset must be a nonnegative integer');
@@ -760,6 +761,7 @@ export class Chats implements StructuredSessionPort {
     }
     const terms = foldSearchText(query.trim()).split(/\s+/u).filter(Boolean);
     const groups = await this.navigationEntries(false, archived, workspaceId as string | undefined);
+    signal?.throwIfAborted();
     const candidates = groups.flat();
     const bodyMatches = new Map<string, ConversationSearchMatch>();
     const incompleteHistory: {sessionId: string; title: string; message: string}[] = [];
@@ -769,6 +771,7 @@ export class Chats implements StructuredSessionPort {
       let next = 0;
       await Promise.all(Array.from({length: Math.min(4, candidates.length)}, async () => {
         for (;;) {
+          signal?.throwIfAborted();
           const hit = candidates[next++];
           if (!hit) break;
           const live = this.live.get(hit.session.id);
@@ -777,14 +780,17 @@ export class Chats implements StructuredSessionPort {
             // Search persisted history even when the original checkout is
             // offline. Fork and rewind operation gates still apply.
             await this.assertHistoryReady(hit.session);
+            signal?.throwIfAborted();
             result = await searchConversation(hit.session, query, {
               codexDirectory: join(this.sessionDir, '..', 'codex'),
               claudeDirectory: join(this.sessionDir, '..', 'claude'),
               firstMatchOnly: true,
+              ...(signal && {signal}),
               ...(hit.session.backend === 'claude' && {readClaudeHistory: () => this.readProfileClaudeHistory(hit.session, hit.session.execution?.path ?? hit.workspacePath)}),
               ...(live && !live.failure && !live.cleanup && {liveHistory: live.handle.snapshot(), liveBusy: live.queue.busy}),
             });
           } catch (error) {
+            signal?.throwIfAborted();
             result = {matches: [], complete: false, warning: error instanceof Error ? error.message : String(error)};
           }
           if (result.matches[0]) bodyMatches.set(hit.session.id, result.matches[0]);
@@ -793,6 +799,7 @@ export class Chats implements StructuredSessionPort {
         }
       }));
     }
+    signal?.throwIfAborted();
     const matches = candidates.filter(hit => {
       if (this.removing.has(hit.session.workspaceId) || !this.index.peek(hit.session.id)) return false;
       const backendName = { pi: '内置 Pi Built-in Pi', codex: 'Codex', 'pi-rpc': '外部 Pi External Pi', claude: 'Claude Code', acp: 'ACP' }[hit.session.backend];

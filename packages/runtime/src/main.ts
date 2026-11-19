@@ -64,8 +64,10 @@ const updates = new DesktopUpdates(dataDir, new URL('../../desktop-update-channe
 const { hive, chats, profiles, settings, agentModels, terminal, piAuth } = runtime;
 let closing: Promise<void> | undefined;
 let closingInstallerId: string | undefined;
+const historySearches = new Map<number | string, AbortController>();
 const close = (installerId?: string) => {
   if (!closing) {
+    for (const search of historySearches.values()) search.abort();
     closingInstallerId = installerId;
     closing = Promise.allSettled([updates.close(installerId), runtime.close()]).then(([update, sidecar]) => {
       if (sidecar.status === 'rejected') throw sidecar.reason;
@@ -100,7 +102,7 @@ function optionalModel(params: Record<string, unknown>) {
   const model = record(params.model); exact(model, ['provider', 'id']);
   return {model: {provider: text(model, 'provider'), id: text(model, 'id')}};
 }
-async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
+async function dispatch(requestId: number | string, method: string, params: Record<string, unknown>): Promise<unknown> {
   if (closing && method !== 'shutdown') throw new Error('Desktop runtime is closing');
   switch (method) {
     case 'desktop.updates.check': exact(params, []); return updates.check();
@@ -305,7 +307,24 @@ async function dispatch(method: string, params: Record<string, unknown>): Promis
     case 'project.files.search': return chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));
-    case 'chat.search': return chats.search(params.query, params.archived, params.offset, params.workspaceId);
+    case 'chat.search': {
+      if (historySearches.has(requestId)) throw new Error('Search request id is already in use');
+      const search = new AbortController();
+      historySearches.set(requestId, search);
+      try {
+        return await chats.search(params.query, params.archived, params.offset, params.workspaceId, search.signal);
+      } finally {
+        historySearches.delete(requestId);
+      }
+    }
+    case 'chat.search.cancel': {
+      exact(params, ['requestId']);
+      const target = params.requestId;
+      if (typeof target !== 'number' && typeof target !== 'string') throw new Error('Search request id is required');
+      const search = historySearches.get(target);
+      search?.abort();
+      return {cancelled: search !== undefined};
+    }
     case 'chat.list': return chats.list(text(params, 'workspaceId'));
     case 'chat.execution': return chats.sessionExecution(text(params, 'sessionId'));
     case 'chat.worktrees.pending': return chats.pendingWorktrees(text(params, 'workspaceId'));
@@ -410,11 +429,12 @@ input.on('line', line => {
       if (typeof message.id !== 'string' && typeof message.id !== 'number') throw new Error('Request id is required');
       id = message.id;
       method = text(message, 'method');
-      const result = await dispatch(method, record(message.params ?? {}));
+      const result = await dispatch(id, method, record(message.params ?? {}));
       await writeFrame({ id, result });
     } catch (error) {
       await writeFrame({ id, error: {
-        code: error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+        code: method === 'chat.search' && error instanceof Error && error.name === 'AbortError' ? 'SEARCH_CANCELLED'
+          : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

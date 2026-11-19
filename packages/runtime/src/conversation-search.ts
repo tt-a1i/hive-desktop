@@ -16,6 +16,7 @@ import { readFile } from 'node:fs/promises';
 export type ConversationSearchMatch = { messageId: string; snippet: string };
 export type ConversationSearchResult = { matches: ConversationSearchMatch[]; complete: boolean; warning?: string };
 export type ConversationSearchOptions = {
+  signal?: AbortSignal;
   /** Runtime currently processing a turn; some providers emit tool updates outside snapshots. */
   liveBusy?: boolean;
   codexDirectory: string;
@@ -39,10 +40,13 @@ async function fingerprint(paths: string[]): Promise<string> {
     }
   })));
 }
-async function freshRows(paths: string[], load: () => Promise<{ rows: Row[]; complete: boolean }>): Promise<{ rows: Row[]; complete: boolean; truncated: boolean; unresolved: boolean }> {
+async function freshRows(paths: string[], load: () => Promise<{ rows: Row[]; complete: boolean }>, signal?: AbortSignal): Promise<{ rows: Row[]; complete: boolean; truncated: boolean; unresolved: boolean }> {
   const before = await fingerprint(paths);
+  signal?.throwIfAborted();
   const loaded = await load();
+  signal?.throwIfAborted();
   if (before !== await fingerprint(paths)) throw new Error('Conversation history changed while being read; retry search');
+  signal?.throwIfAborted();
   // Do not cache by stat metadata: same-size rewrites can preserve timestamps.
   // Every search parses the durable source again; raw provider payloads are not retained.
   const projected = searchableRows(loaded.rows);
@@ -224,27 +228,36 @@ function find(rows: readonly { id: string; text: string }[], first: string, rest
   return matches;
 }
 
-async function piRows(file: string, backend: 'pi' | 'pi-rpc'): Promise<Row[]> {
+async function piRows(file: string, backend: 'pi' | 'pi-rpc', signal?: AbortSignal): Promise<Row[]> {
   const before = await stat(file);
+  if (!before.isFile()) throw new Error('Pi transcript is not a regular file');
+  signal?.throwIfAborted();
   const entries: SessionEntry[] = [];
   const seen = new Set<string>();
   let header = false;
-  const lines = createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
-  for await (const raw of lines) {
-    if (!raw.trim()) continue;
-    let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { throw new Error('Malformed Pi transcript'); }
-    if (!object(parsed)) throw new Error('Invalid Pi transcript entry');
-    if (!header) {
-      if (parsed.type !== 'session' || typeof parsed.id !== 'string') throw new Error('Invalid Pi transcript header');
-      header = true;
-      continue;
+  const input = createReadStream(file, {encoding: 'utf8', ...(signal && {signal})});
+  const lines = createInterface({input, crlfDelay: Infinity});
+  try {
+    for await (const raw of lines) {
+      if (!raw.trim()) continue;
+      let parsed: unknown;
+      try { parsed = JSON.parse(raw); } catch { throw new Error('Malformed Pi transcript'); }
+      if (!object(parsed)) throw new Error('Invalid Pi transcript entry');
+      if (!header) {
+        if (parsed.type !== 'session' || typeof parsed.id !== 'string') throw new Error('Invalid Pi transcript header');
+        header = true;
+        continue;
+      }
+      if (typeof parsed.type !== 'string' || typeof parsed.id !== 'string' || !parsed.id ||
+          !(parsed.parentId === null || typeof parsed.parentId === 'string') || seen.has(parsed.id)) throw new Error('Invalid Pi transcript entry');
+      seen.add(parsed.id);
+      entries.push(parsed as unknown as SessionEntry);
     }
-    if (typeof parsed.type !== 'string' || typeof parsed.id !== 'string' || !parsed.id ||
-        !(parsed.parentId === null || typeof parsed.parentId === 'string') || seen.has(parsed.id)) throw new Error('Invalid Pi transcript entry');
-    seen.add(parsed.id);
-    entries.push(parsed as unknown as SessionEntry);
+  } finally {
+    lines.close();
+    input.destroy();
   }
+  signal?.throwIfAborted();
   if (!header) throw new Error('Missing Pi transcript header');
   const after = await stat(file);
   if (before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs) throw new Error('Pi transcript changed while being read; retry search');
@@ -260,9 +273,11 @@ async function piRows(file: string, backend: 'pi' | 'pi-rpc'): Promise<Row[]> {
   return rows;
 }
 
-async function codexRows(record: ChatRecord, directory: string): Promise<{ rows: Row[]; complete: boolean }> {
+async function codexRows(record: ChatRecord, directory: string, signal?: AbortSignal): Promise<{ rows: Row[]; complete: boolean }> {
   if (!record.codexThreadId) return { rows: [], complete: true };
-  const data: unknown = JSON.parse(await readFile(`${codexMetadataFile(directory, record.codexThreadId)}.display.json`, 'utf8'));
+  const source = await readFile(`${codexMetadataFile(directory, record.codexThreadId)}.display.json`, {encoding: 'utf8', ...(signal && {signal})});
+  signal?.throwIfAborted();
+  const data: unknown = JSON.parse(source);
   if (!object(data) || data.version !== 1 || !Array.isArray(data.entries)) throw new Error('Invalid Codex display journal');
   const metadata = readCodexMetadata(directory, record.codexThreadId);
   const complete = data.completeHistory === true && data.searchVersion === 2 && Array.isArray(data.searchEntries);
@@ -282,6 +297,8 @@ async function codexRows(record: ChatRecord, directory: string): Promise<{ rows:
 
 /** Reads fresh persisted history each call: appended or replaced files cannot leave a stale cache. */
 export async function searchConversation(record: ChatRecord, query: string, options: ConversationSearchOptions): Promise<ConversationSearchResult> {
+  const {signal} = options;
+  signal?.throwIfAborted();
   const [first, ...rest] = foldSearchText(query.trim()).split(/\s+/u);
   if (!first) return { matches: [], complete: true };
   let rows: Row[] = [];
@@ -291,11 +308,11 @@ export async function searchConversation(record: ChatRecord, query: string, opti
   let unresolved = false;
   try {
     if(record.backend==='acp'){
-      if(record.sessionFile){const transcript=await AcpHistory.load(record.sessionFile);if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new Error('ACP transcript identity mismatch');rows=transcript.state.history.map((message,index)=>({id:desktopMessageId(transcript.state.historyIds[index]!,message),message}));warning='ACP local transcript may differ from native history; no agent was started for search';}
+      if(record.sessionFile){const transcript=await AcpHistory.load(record.sessionFile, signal);if(!transcript||transcript.state.sessionId!==record.acpSessionId)throw new Error('ACP transcript identity mismatch');rows=transcript.state.history.map((message,index)=>({id:desktopMessageId(transcript.state.historyIds[index]!,message),message}));warning='ACP local transcript may differ from native history; no agent was started for search';}
     } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
       if (record.sessionFile) {
         const file = record.sessionFile;
-        const loaded = await freshRows([file], async () => ({ rows: await piRows(file, record.backend as 'pi' | 'pi-rpc'), complete: true }));
+        const loaded = await freshRows([file], async () => ({ rows: await piRows(file, record.backend as 'pi' | 'pi-rpc', signal), complete: true }), signal);
         rows = loaded.rows;
         truncated = loaded.truncated;
         unresolved = loaded.unresolved;
@@ -308,6 +325,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
         const projection = new ClaudeProjection(() => metadata);
         if (!options.readClaudeHistory) throw new Error('The saved Claude profile is unavailable for history search');
         const messages = await options.readClaudeHistory();
+        signal?.throwIfAborted();
         for (const message of messages) projection.put(message);
         const snapshot = projection.snapshot();
         rows = snapshot.history.map((message, i) => ({ id: desktopMessageId(snapshot.historyMessageIds[i]!, message), message }));
@@ -317,7 +335,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
       }
     } else if (record.codexThreadId) {
       const metadata = codexMetadataFile(options.codexDirectory, record.codexThreadId);
-      const loaded = await freshRows([metadata, `${metadata}.display.json`], () => codexRows(record, options.codexDirectory));
+      const loaded = await freshRows([metadata, `${metadata}.display.json`], () => codexRows(record, options.codexDirectory, signal), signal);
       rows = loaded.rows;
       codexSynced = loaded.complete;
       truncated = loaded.truncated;
@@ -325,8 +343,10 @@ export async function searchConversation(record: ChatRecord, query: string, opti
       if (!loaded.complete) warning = 'Codex display journal may omit native history';
     }
   } catch (error) {
+    signal?.throwIfAborted();
     warning = `Conversation history could not be read: ${error instanceof Error ? error.message : String(error)}`;
   }
+  signal?.throwIfAborted();
   const live = options.liveHistory;
   if (live) {
     if (live.history.length !== live.historyMessageIds.length) {

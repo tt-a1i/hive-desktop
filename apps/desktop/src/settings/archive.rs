@@ -28,6 +28,7 @@ pub struct ArchiveState {
     pub warning: Option<String>,
     pub loaded: bool,
     pub generation: u64,
+    task: Option<Task<()>>,
 }
 
 impl ArchiveState {
@@ -39,7 +40,7 @@ impl ArchiveState {
             window,
             |this: &mut HiveApp, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
-                    this.load_archived_settings(false, cx);
+                    this.start_archive_search(false, true, cx);
                 }
             },
         )
@@ -55,24 +56,33 @@ impl ArchiveState {
             warning: None,
             loaded: false,
             generation: 0,
+            task: None,
         }
+    }
+
+    pub(super) fn cancel_search(&mut self) {
+        self.task = None;
+        self.generation += 1;
+        self.loading = false;
     }
 }
 
 impl HiveApp {
     pub(crate) fn load_archived_settings(&mut self, append: bool, cx: &mut Context<Self>) {
+        self.start_archive_search(append, false, cx);
+    }
+
+    fn start_archive_search(&mut self, append: bool, debounce: bool, cx: &mut Context<Self>) {
+        self.archive_settings.cancel_search();
         if !self.connected {
-            self.archive_settings.loading = false;
             cx.notify();
             return;
         }
         let Some(runtime) = self.runtime.clone() else {
-            self.archive_settings.loading = false;
             cx.notify();
             return;
         };
         let connection = self.connection_generation;
-        self.archive_settings.generation += 1;
         let generation = self.archive_settings.generation;
         self.archive_settings.loading = true;
         self.archive_settings.error = None;
@@ -85,7 +95,10 @@ impl HiveApp {
         let workspace = self.archive_settings.workspace_filter.clone();
         cx.notify();
 
-        cx.spawn(async move |this, cx| {
+        self.archive_settings.task = Some(cx.spawn(async move |this, cx| {
+            if debounce {
+                smol::Timer::after(std::time::Duration::from_millis(150)).await;
+            }
             let result =
                 crate::sessions::search::search_page(&runtime, query, true, offset, workspace)
                     .await;
@@ -96,6 +109,7 @@ impl HiveApp {
                     return;
                 }
                 this.archive_settings.loading = false;
+                this.archive_settings.task = None;
                 match result {
                     Ok(page) => {
                         this.archive_settings.warning = page.warning();
@@ -125,8 +139,7 @@ impl HiveApp {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 
     pub(crate) fn render_archive_settings(&self, _window: &mut Window, cx: &mut Context<Self>) -> Div {

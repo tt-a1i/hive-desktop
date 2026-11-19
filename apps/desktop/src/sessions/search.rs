@@ -61,7 +61,7 @@ pub(crate) async fn search_page(
         params["workspaceId"] = json!(workspace);
     }
     runtime
-        .request("chat.search", params)
+        .search(params)
         .await
         .and_then(|value| serde_json::from_value::<Page>(value).map_err(|error| error.to_string()))
 }
@@ -86,6 +86,7 @@ struct SessionSearch {
     error: Option<SearchError>,
     placeholder_locale: Option<crate::language::Locale>,
     generation: u64,
+    task: Option<Task<()>>,
     selected: usize,
     scroll: ScrollHandle,
 }
@@ -157,6 +158,7 @@ impl HiveApp {
                 error: None,
                 placeholder_locale: None,
                 generation: 0,
+                task: None,
                 selected: 0,
                 scroll: ScrollHandle::new(),
             };
@@ -183,6 +185,7 @@ impl HiveApp {
 
 impl SessionSearch {
     fn load(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        self.task = None;
         if debounce {
             self.offset = 0;
         }
@@ -198,7 +201,7 @@ impl SessionSearch {
         self.selected = 0;
         self.scroll = ScrollHandle::new();
         cx.notify();
-        cx.spawn(async move |this, cx| {
+        self.task = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 smol::Timer::after(Duration::from_millis(150)).await;
             }
@@ -231,8 +234,7 @@ impl SessionSearch {
                 }
                 cx.notify();
             });
-        })
-        .detach();
+        }));
     }
 
     fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {

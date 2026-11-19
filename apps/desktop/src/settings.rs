@@ -184,6 +184,7 @@ impl HiveApp {
     pub fn close_settings(&mut self) {
         if self.settings_panel {
             self.settings_panel = false;
+            self.archive_settings.cancel_search();
             self.pi_models.vault.close();
             self.program_setup_focus = None;
             self.executable_picker_generation += 1;

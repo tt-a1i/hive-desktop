@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import fs, { type ReadStream } from 'node:fs';
 import fsPromises, { mkdtemp, writeFile, appendFile, rm, mkdir } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -64,6 +65,31 @@ try {
   assert.equal(result.matches[0]?.messageId, 'e2999');
   assert.ok(Array.from(result.matches[0]!.snippet).length <= 222);
   assert.ok(result.matches[0]!.snippet.includes('marker'));
+
+  const controller = new AbortController();
+  const openStream = fs.createReadStream;
+  const size = (await fsPromises.stat(file)).size;
+  let opened: ReadStream | undefined;
+  let closed: Promise<void> | undefined;
+  fs.createReadStream = (path, options) => {
+    const stream = openStream(path, options);
+    if (path === file) {
+      opened = stream;
+      closed = new Promise(resolve => stream.once('close', resolve));
+      stream.once('data', () => controller.abort());
+    }
+    return stream;
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(searchConversation(record, 'marker', {...options, signal: controller.signal}), {name: 'AbortError'});
+    await closed;
+    assert.ok(opened?.closed && opened.bytesRead < size, 'a cancelled search must close its stream before reading the entire file');
+  } finally {
+    fs.createReadStream = openStream;
+    syncBuiltinESMExports();
+  }
+  assert.equal((await search('marker')).matches[0]?.messageId, 'e2999');
 
   const snippetCases = [
     {body: 'a\u0301'.repeat(400) + ' Café Marker', query: 'CAFE\u0301', contains: 'Café Marker'},

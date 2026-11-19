@@ -25,16 +25,17 @@ export class AcpHistory {
     private tail: Promise<void> = Promise.resolve();
     failed: Error | undefined;
     constructor(readonly file: string, public state: AcpHistoryState) { }
-    static async load(file: string): Promise<AcpHistory | undefined> {
+    static async load(file: string, signal?: AbortSignal): Promise<AcpHistory | undefined> {
         let raw: string;
         try {
-            raw = await readFile(file, 'utf8');
+            raw = await readFile(file, {encoding: 'utf8', ...(signal && {signal})});
         }
         catch (error) {
             if ((error as NodeJS.ErrnoException).code === 'ENOENT')
                 return;
             throw error;
         }
+        signal?.throwIfAborted();
         const state: unknown = JSON.parse(raw);
         if (!object(state) || state.version !== 1 || typeof state.sessionId !== 'string' || !Array.isArray(state.history) || !Array.isArray(state.historyIds) || state.historyIds.length !== state.history.length || !state.historyIds.every(id => typeof id === 'string') || !Array.isArray(state.contexts) || !state.contexts.every(c => object(c) && typeof c.text === 'string' && typeof c.customType === 'string') || !object(state.deliveries) || !Object.values(state.deliveries).every(v => v === 'sent' || v === 'completed'))
             throw new Error('Invalid ACP transcript');
