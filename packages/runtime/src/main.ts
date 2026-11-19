@@ -426,6 +426,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     }
     case 'chat.queue.cancel': return chats.mutateQueuedInput(text(params, 'sessionId'), text(params, 'deliveryId'), params.expectedText);
     case 'chat.interactionAttachments.list': return chats.listInteractionAttachments(text(params, 'sessionId'));
+    case 'chat.interactionAttachments.status': return chats.interactionAttachmentStatus(text(params, 'sessionId'), text(params, 'interactionId'));
     case 'chat.interactionAttachments.save': return chats.saveInteractionAttachments(text(params, 'sessionId'), text(params, 'interactionId'), params.attachmentsByQuestionId);
     case 'chat.respondInteraction': return chats.respondInteraction(text(params, 'sessionId'), text(params, 'interactionId'), params.response, params.attachmentsByQuestionId);
     case 'chat.abort': return chats.abort(text(params, 'sessionId'));

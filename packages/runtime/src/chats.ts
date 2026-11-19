@@ -2017,7 +2017,12 @@ export class Chats implements StructuredSessionPort {
   }
   listInteractionAttachments(id: string) {
     const record = this.index.get(id);
-    return {receipts: this.interactionAttachments.list(record.workspaceId, id)};
+    return this.interactionAttachments.list(record.workspaceId, id);
+  }
+  interactionAttachmentStatus(id: string, interactionId: string) {
+    const {record, interaction} = this.pendingAttachmentInteraction(id, interactionId);
+    const inProgress = this.preparingInteractions.has(JSON.stringify([id, interactionId]));
+    return {safeToRetry: !inProgress && !this.interactionAttachments.hasUncertainResponse(record.workspaceId, id, interaction)};
   }
   private pendingAttachmentInteraction(id: string, interactionId: string) {
     const record = this.index.get(id);

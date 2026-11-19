@@ -61,7 +61,7 @@ try {
  const original=runtime.chats.attachments.questionReferences.bind(runtime.chats.attachments);let entered!:()=>void,release!:()=>void;const enteredP=new Promise<void>(r=>entered=r),gate=new Promise<void>(r=>release=r);let calls=0;
  runtime.chats.attachments.questionReferences=async (...args:Parameters<typeof original>)=>{calls++;entered();await gate;return original(...args);};
  await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,undefined,mapping));await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,{answers:{bad:{answers:['bad']}}},mapping));assert.equal(calls,0,'malformed native response must fail before resolving uploads');
- const pending=runtime.chats.respondInteraction(a.record.id,a.card.id,answer,mapping);await enteredP;await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,answer,mapping));await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,answer));release();const sent=await pending;runtime.chats.attachments.questionReferences=original;
+ const pending=runtime.chats.respondInteraction(a.record.id,a.card.id,answer,mapping);await enteredP;assert.deepEqual(runtime.chats.interactionAttachmentStatus(a.record.id,a.card.id),{safeToRetry:false});await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,answer,mapping));await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,answer));release();const sent=await pending;runtime.chats.attachments.questionReferences=original;
  assert.equal(sent.receipt.status,'callback-handed');const wire=await wait(()=>rows(a.cwd),v=>v.length===1);assert.equal(wire[0].result.answers.secret.answers[0],'SECRET-SENTINEL');const text=wire[0].result.answers.public.answers[0];assert.ok(text.startsWith('ANSWER-SENTINEL\n'));for(const ref of draft.attachments)assert.ok(text.includes(JSON.stringify({name:ref.attachment.name,mimeType:ref.attachment.mimeType,path:ref.filePath})));assert.equal(JSON.stringify(sent.receipt).includes('SENTINEL'),false);
  await assert.rejects(runtime.chats.respondInteraction(a.record.id,a.card.id,answer));await writeFile(join(a.cwd,'finish'),'');await a.done;
  // Damage an actual receipt belonging to another workspace. Both interactions
@@ -69,8 +69,29 @@ try {
  const receiptDirectory = join(dir, 'state', 'chats', 'interaction-attachments');
  const unrelatedPath = join(receiptDirectory, `${sent.receipt.id}.json`);
  const originalUnrelated = await readFile(unrelatedPath);
+ const secondHistory = await start();
+ const secondSource = join(dir, 'second-project-upload.txt');
+ await writeFile(secondSource, 'second project');
+ const secondUpload = await runtime.chats.attachments.add(secondHistory.ws.id, secondSource);
+ const secondMapping = {public:[secondUpload.attachment.id]};
+ const {receipt: secondDraft} = await runtime.chats.saveInteractionAttachments(secondHistory.record.id, secondHistory.card.id, secondMapping);
  await writeFile(unrelatedPath, '{');
  try {
+   assert.deepEqual(runtime.chats.listInteractionAttachments(secondHistory.record.id), {
+     receipts:[JSON.parse(JSON.stringify(secondDraft))], unreadableReceipts:1,
+   });
+   const secondCopy = secondDraft.attachments[0]!.filePath;
+   await unlink(secondCopy);
+   await assert.rejects(runtime.chats.respondInteraction(secondHistory.record.id, secondHistory.card.id, answer, secondMapping));
+   assert.deepEqual(await rows(secondHistory.cwd), []);
+   assert.deepEqual(runtime.chats.interactionAttachmentStatus(secondHistory.record.id, secondHistory.card.id), {safeToRetry:true});
+   await writeFile(secondCopy, 'second project');
+   const retry = await runtime.chats.respondInteraction(secondHistory.record.id, secondHistory.card.id, answer, secondMapping);
+   assert.equal(retry.receipt.status, 'callback-handed');
+   await wait(()=>rows(secondHistory.cwd), value=>value.length===1);
+   await writeFile(join(secondHistory.cwd,'finish'),'');
+   await secondHistory.done;
+   assert.throws(()=>runtime.chats.interactionAttachmentStatus(secondHistory.record.id, secondHistory.card.id), /no pending Codex question/);
    const question = await start(), approval = await start('approval');
    assert.equal(question.card.nativeRequestId, sent.receipt.nativeRequestId);
    assert.equal(approval.card.nativeRequestId, sent.receipt.nativeRequestId);
@@ -98,9 +119,14 @@ try {
  const {receipt: damagedDraft} = await runtime.chats.saveInteractionAttachments(damaged.record.id, damaged.card.id, damagedMapping);
  const damagedPath = join(receiptDirectory, `${damagedDraft.id}.json`);
  await writeFile(damagedPath, '{');
+ assert.throws(()=>runtime.chats.interactionAttachmentStatus(damaged.record.id, damaged.card.id), SyntaxError);
  await assert.rejects(runtime.chats.respondInteraction(damaged.record.id, damaged.card.id, answer), SyntaxError);
  await assert.rejects(runtime.chats.respondInteraction(damaged.record.id, damaged.card.id, answer, damagedMapping), SyntaxError);
+ await writeFile(damagedPath, JSON.stringify({...damagedDraft, attachments: null}));
+ assert.deepEqual(runtime.chats.listInteractionAttachments(damaged.record.id), {receipts:[], unreadableReceipts:1});
+ assert.throws(()=>runtime.chats.interactionAttachmentStatus(damaged.record.id, damaged.card.id), /Invalid question attachment receipt/);
  await writeFile(damagedPath, JSON.stringify({...damagedDraft, status: 'prepared'}));
+ assert.deepEqual(runtime.chats.interactionAttachmentStatus(damaged.record.id, damaged.card.id), {safeToRetry:false});
  await assert.rejects(runtime.chats.respondInteraction(damaged.record.id, damaged.card.id, answer), /may already have been handed/);
  await assert.rejects(runtime.chats.respondInteraction(damaged.record.id, damaged.card.id, answer, damagedMapping), /may already have been handed/);
  assert.deepEqual(await rows(damaged.cwd), []);
@@ -115,6 +141,27 @@ try {
  const transport=CodexTransport.prototype as unknown as {write:(message:unknown)=>Promise<void>};const originalWrite=transport.write;let injected=0;
  transport.write=async function(message:unknown){const value=message as {id?:unknown;result?:unknown;method?:unknown};if(value.id===7&&value.result!==undefined&&value.method===undefined){injected++;throw new Error('injected transport write failure');}return originalWrite.call(this,message);};
  try {await runtime.chats.respondInteraction(loss.record.id,loss.card.id,answer,{public:[lossUpload.attachment.id]});await assert.rejects(loss.done);assert.equal(injected,1);assert.deepEqual(await rows(loss.cwd),[]);assert.equal(runtime.chats.listInteractionAttachments(loss.record.id).receipts[0]!.status,'callback-handed');await assert.rejects(runtime.chats.respondInteraction(loss.record.id,loss.card.id,answer));} finally {transport.write=originalWrite;}
- console.log('CHECK cold reopen');await other.handle.abort();await other.done;const stored=runtime.chats.listInteractionAttachments(a.record.id).receipts;assert.equal(stored[0]!.status,'callback-handed');await runtime.close();runtime=await createDesktopRuntime(join(dir,'state'),()=>{}, {executableEnvironment:{}});assert.equal(runtime.chats.listInteractionAttachments(a.record.id).receipts[0]!.status,'callback-handed');await runtime.chats.open(a.record.id);assert.equal((await rows(a.cwd)).length,1);assert.equal(runtime.chats.listInteractionAttachments(loss.record.id).receipts[0]!.status,'callback-handed');assert.deepEqual(await rows(loss.cwd),[]);
- await writeFile(join(dir,'receipt.json'),JSON.stringify({pass:true,syntheticCodexPeer:true,realHiveUploads:true,noModelCalls:true,copyAndNativeImage:true,validation:true,concurrentSubmit:true,staleResolution:['native-resolve','turn-end','abort','exit'],injectedTransportWriteFailure:true,injectedReceiptWriteFailure:true,partialUploadFailure:true,unrelatedReceiptCorruptionIsolated:true,exactCorruptOrPreparedReceiptBlocksDelivery:true,coldReopenNoReplay:true},null,2));console.log(`INTERACTION_ATTACHMENTS_OK ${dir}`);
+ console.log('CHECK cold reopen');
+ await other.handle.abort();
+ await other.done;
+ assert.equal(runtime.chats.listInteractionAttachments(a.record.id).receipts[0]!.status,'callback-handed');
+ await writeFile(unrelatedPath, 'null');
+ try {
+   await runtime.close();
+   runtime = await createDesktopRuntime(join(dir,'state'),()=>{}, {executableEnvironment:{}});
+   await runtime.chats.open(secondHistory.record.id);
+   const recovered = runtime.chats.listInteractionAttachments(secondHistory.record.id);
+   assert.equal(recovered.unreadableReceipts, 1);
+   assert.equal(recovered.receipts.length, 1);
+   assert.equal(recovered.receipts[0]?.status, 'callback-handed');
+   assert.equal((await rows(secondHistory.cwd)).length, 1);
+ } finally {
+   await writeFile(unrelatedPath, originalUnrelated);
+ }
+ assert.equal(runtime.chats.listInteractionAttachments(a.record.id).receipts[0]!.status,'callback-handed');
+ await runtime.chats.open(a.record.id);
+ assert.equal((await rows(a.cwd)).length,1);
+ assert.equal(runtime.chats.listInteractionAttachments(loss.record.id).receipts[0]!.status,'callback-handed');
+ assert.deepEqual(await rows(loss.cwd),[]);
+ await writeFile(join(dir,'receipt.json'),JSON.stringify({pass:true,syntheticCodexPeer:true,realHiveUploads:true,noModelCalls:true,copyAndNativeImage:true,validation:true,concurrentSubmit:true,staleResolution:['native-resolve','turn-end','abort','exit'],injectedTransportWriteFailure:true,injectedReceiptWriteFailure:true,partialUploadFailure:true,unrelatedReceiptCorruptionIsolated:true,exactCorruptOrPreparedReceiptBlocksDelivery:true,unrelatedCorruptionAllowsSafeRetry:true,unrelatedCorruptionPreservesColdHistory:true,coldReopenNoReplay:true},null,2));console.log(`INTERACTION_ATTACHMENTS_OK ${dir}`);
 } finally {await runtime.close();}

@@ -15,6 +15,33 @@ export interface InteractionAttachmentReceipt {
 }
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const invalid = (message: string) => new CodexInteractionError('INTERACTION_INVALID_RESPONSE', message);
+function readReceipt(value: unknown, id: string): InteractionAttachmentReceipt {
+  if (!object(value) || value.id !== id ||
+    (value.status !== 'draft' && value.status !== 'prepared' && value.status !== 'callback-handed') ||
+    !['workspaceId', 'sessionId', 'interactionId', 'threadId', 'turnId', 'itemId'].every(key => typeof value[key] === 'string') ||
+    (typeof value.nativeRequestId !== 'string' && typeof value.nativeRequestId !== 'number') ||
+    !Number.isFinite(value.updatedAt) || !object(value.attachmentsByQuestionId) || !Array.isArray(value.attachments)) {
+    throw new Error('Invalid question attachment receipt');
+  }
+  const uploads = new Map<string, string>();
+  for (const [questionId, ids] of Object.entries(value.attachmentsByQuestionId)) {
+    for (const uploadId of attachmentIds(ids)) {
+      if (uploads.has(uploadId)) throw new Error('Duplicate question attachment reference');
+      uploads.set(uploadId, questionId);
+    }
+  }
+  if (uploads.size > 10 || value.attachments.length !== uploads.size) throw new Error('Invalid question attachment count');
+  for (const entry of value.attachments) {
+    if (!object(entry) || typeof entry.questionId !== 'string' || typeof entry.filePath !== 'string' ||
+      !object(entry.attachment) || typeof entry.attachment.id !== 'string' || uploads.get(entry.attachment.id) !== entry.questionId ||
+      entry.attachment.workspaceId !== value.workspaceId || typeof entry.attachment.name !== 'string' ||
+      typeof entry.attachment.mimeType !== 'string' || !Number.isFinite(entry.attachment.size)) {
+      throw new Error('Invalid question attachment reference');
+    }
+    uploads.delete(entry.attachment.id);
+  }
+  return value as unknown as InteractionAttachmentReceipt;
+}
 export function questionAttachments(value: unknown, interaction: CodexInteraction): QuestionAttachmentMap {
   if (interaction.method !== 'item/tool/requestUserInput' || interaction.state !== 'pending') throw invalid('Attachments require a pending Codex question');
   if (!object(value) || Object.keys(value).length > 10) throw invalid('Invalid question attachment mapping');
@@ -52,12 +79,7 @@ export class InteractionAttachments {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
       throw error;
     }
-    const receipt: unknown = JSON.parse(contents);
-    if (!object(receipt) || receipt.id !== id ||
-      (receipt.status !== 'draft' && receipt.status !== 'prepared' && receipt.status !== 'callback-handed')) {
-      throw new Error('Invalid question attachment receipt');
-    }
-    return receipt.status;
+    return readReceipt(JSON.parse(contents), id).status;
   }
   async prepare(workspaceId: string, sessionId: string, interaction: CodexInteraction, input: unknown): Promise<InteractionAttachmentReceipt> {
     const mapping = questionAttachments(input, interaction);
@@ -87,12 +109,27 @@ export class InteractionAttachments {
     } finally { if (fd !== undefined) closeSync(fd); if (existsSync(temporary)) unlinkSync(temporary); }
     return saved;
   }
-  list(workspaceId: string, sessionId: string): InteractionAttachmentReceipt[] {
-    if (!existsSync(this.directory)) return [];
-    const receipts = readdirSync(this.directory).filter(name => /^[a-f0-9]{64}\.json$/.test(name))
-      .map(name => JSON.parse(readFileSync(join(this.directory, name), 'utf8')) as InteractionAttachmentReceipt)
-      .filter(receipt => receipt.workspaceId === workspaceId && receipt.sessionId === sessionId);
-    return receipts.sort((a, b) => a.updatedAt - b.updatedAt);
+  list(workspaceId: string, sessionId: string): {receipts: InteractionAttachmentReceipt[]; unreadableReceipts: number} {
+    const receipts: InteractionAttachmentReceipt[] = [];
+    let unreadableReceipts = 0;
+    if (!existsSync(this.directory)) return {receipts, unreadableReceipts};
+    for (const name of readdirSync(this.directory)) {
+      if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
+      try {
+        const value: unknown = JSON.parse(readFileSync(join(this.directory, name), 'utf8'));
+        if (!object(value) || typeof value.workspaceId !== 'string' || typeof value.sessionId !== 'string') {
+          throw new Error('Question attachment receipt has no owner');
+        }
+        if (value.workspaceId !== workspaceId || value.sessionId !== sessionId) continue;
+        receipts.push(readReceipt(value, name.slice(0, -5)));
+      } catch {
+        // An unreadable file may have no recoverable owner. Report its count
+        // while allowing intact receipts to remain visible in history.
+        unreadableReceipts++;
+      }
+    }
+    receipts.sort((a, b) => a.updatedAt - b.updatedAt);
+    return {receipts, unreadableReceipts};
   }
 }
 export function composeQuestionAttachmentResponse(response: unknown, receipt: InteractionAttachmentReceipt): unknown {
