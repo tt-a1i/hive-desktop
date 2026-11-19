@@ -16,6 +16,7 @@ on:
           - standard
           - project-reference
           - archived-search
+          - handoff-range
       replay_update:
         description: Replay only native update and rollback from the retained portable artifact
         required: false
@@ -389,7 +390,7 @@ jobs:
           SHORTCUT_REPLAY: ${{ inputs.replay_shortcut_layout }}
           REPLAY_SCENARIO: ${{ inputs.replay_scenario }}
         run: |
-          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search')) { throw 'Unknown replay scenario.' }
+          if ($env:REPLAY_SCENARIO -notin @('', 'standard', 'project-reference', 'archived-search', 'handoff-range')) { throw 'Unknown replay scenario.' }
           if ($env:REPLAY_SCENARIO -notin @('', 'standard') -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true' -or $env:SHORTCUT_REPLAY -eq 'true')) { throw 'A named replay scenario cannot be combined with other replay selections.' }
           if ($env:SHORTCUT_REPLAY -eq 'true' -and ($env:IMAGE_REPLAY -eq 'true' -or $env:FUNCTIONAL_REPLAY -eq 'true')) { throw 'Shortcut layout replay cannot be combined with image, functional, or default WebView replay.' }
       - name: Validate original run ID
@@ -465,6 +466,13 @@ jobs:
         run: |
           node scripts/check-windows-archived-search.mjs --bundle target/replay-extracted --receipt target/windows-archived-search.json 2>&1 | Tee-Object -FilePath target/windows-archived-search.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Replay handoff range preview without activation
+        if: ${{ inputs.replay_scenario == 'handoff-range' }}
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          node scripts/check-windows-archived-search.mjs --handoff-range --bundle target/replay-extracted --receipt target/windows-handoff-range.json 2>&1 | Tee-Object -FilePath target/windows-handoff-range.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload replay evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -488,6 +496,8 @@ jobs:
             target/windows-project-reference-desktop.log
             target/windows-archived-search*.json
             target/windows-archived-search*.log
+            target/windows-handoff-range*.json
+            target/windows-handoff-range*.log
           if-no-files-found: warn
 
   replay-update:

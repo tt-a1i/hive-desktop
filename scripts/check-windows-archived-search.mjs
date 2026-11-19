@@ -16,7 +16,8 @@ const receipt = argument('--receipt');
 const resources = join(bundle, 'resources');
 const executable = join(bundle, 'hive-desktop.exe');
 const node = join(resources, 'node', 'node.exe');
-const seedScript = fileURLToPath(new URL('./fixtures/windows-archived-search-seed.mjs', import.meta.url));
+const handoff = process.argv.includes('--handoff-range');
+const seedScript = fileURLToPath(new URL(handoff ? './fixtures/windows-handoff-range-seed.mjs' : './fixtures/windows-archived-search-seed.mjs', import.meta.url));
 const uiScript = fileURLToPath(new URL('./windows-archived-search-ui.ps1', import.meta.url));
 const guard = fileURLToPath(new URL('./fixtures/windows-image-network-guard.cjs', import.meta.url));
 const output = { status: 'failed', error: null, cleanupErrors: [] };
@@ -63,7 +64,7 @@ try {
   const uiReceipt = join(root, 'archived-ui.json');
   const ui = start('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', uiScript,
     '-AppProcessId', String(desktop.child.pid), '-Executable', executable,
-    '-Worktree', seed.worktree, '-OutputPath', uiReceipt, '-EvidenceDirectory', dirname(receipt)], { stdio: 'inherit' });
+    '-Worktree', seed.worktree, ...(handoff ? ['-Scenario', 'handoff-range', '-SessionId', seed.sessionId, '-OriginAgentId', seed.originAgentId] : []), '-OutputPath', uiReceipt, '-EvidenceDirectory', dirname(receipt)], { stdio: 'inherit' });
   let uiExit;
   try { uiExit = await deadline(ui.closed, 120_000, 'UIA fixture timed out'); }
   finally { try { output.window = JSON.parse(await readFile(uiReceipt, 'utf8')); } catch {} }
@@ -71,7 +72,10 @@ try {
   assert.equal(output.window?.status, 'passed');
   assert.equal(output.window?.processesExited, true);
   assert.deepEqual(await deadline(desktop.closed, 30_000, 'Desktop exit timed out'), [0, null]);
-  assert.match(stderr, /"chat.search"/);
+  if (handoff) {
+    assert.match(stderr, /"chat.handoff.preview"/);
+    assert.doesNotMatch(stderr, /"chat.handoff.apply"|"chat.handoff.recover"/);
+  } else { assert.match(stderr, /"chat.search"/); }
   assert.match(stderr, /"chat.open"/);
   assert.match(stderr, /send 0 "shutdown"\s*\[hive rpc\] reply 0 ok/);
   // Settings may read the isolated provider catalog; no login, activation or send is allowed.

@@ -432,7 +432,7 @@ fn strings(v: &Value) -> String {
 }
 fn ax_label(id: impl Into<ElementId>, value: impl Into<SharedString>) -> Stateful<Div> {
     let value = value.into();
-    div().id(id).role(Role::Label).aria_label(value.clone()).child(value)
+    div().id(id).role(Role::Label).aria_label(value.clone()).aria_value(value.clone()).child(value)
 }
 fn blockers(v: &Value) -> Vec<String> {
     v.as_array()
@@ -476,7 +476,7 @@ impl Render for HandoffDialog {
                     .children(blockers(&p["blockers"]).into_iter().enumerate().map(|(i,b)|ax_label(("handoff-preview-blocker",i),b).text_sm().text_color(Color::Error.get(cx))))
                     .children(history["warnings"].as_array().into_iter().flatten().filter_map(Value::as_str).enumerate().map(|(i,w)|ax_label(("handoff-warning",i),w.to_owned()).text_sm()))
                     .children(omissions.into_iter().enumerate().map(|(i,o)|ax_label(("handoff-omission",i),format!("{} · {} · {}",text("遗漏","Omitted"),o["itemId"].as_str().unwrap_or(""),format!("{} · {} · {}",o["reason"].as_str().unwrap_or(""),o["bytes"],o["sha256"].as_str().unwrap_or("")))).text_sm()))
-                    .children(facts.into_iter().enumerate().map(|(i,f)|{let source=&f["source"];v_flex().id(("handoff-fact",i)).gap_1().p_2().border_1().border_color(Color::Divider.get(cx)).child(ax_label(("handoff-fact-source",i),format!("{} · {} · {} · {} · {}",f["kind"].as_str().unwrap_or(""),source["sourceSessionId"].as_str().unwrap_or(""),source["sourceDriver"].as_str().unwrap_or(""),source["nativeItemId"].as_str().unwrap_or(""),source["executionPath"].as_str().unwrap_or(""))).text_xs()).child(ax_label(("handoff-fact-metadata",i),format!("{} · {} · {}",source["sourceProfile"],source["contentSha256"],f["excerpt"])).text_xs()).child(div().id(("handoff-fact-text",i)).role(Role::Label).aria_label(f["text"].as_str().unwrap_or("").to_owned()).text_sm().child(f["text"].as_str().unwrap_or("").to_owned())).children(f["attachments"].as_array().into_iter().flatten().enumerate().map(|(j,a)|ax_label(SharedString::from(format!("handoff-fact-attachment-{i}-{j}")),format!("{} · {} · {}",a["name"].as_str().unwrap_or(""),a["policy"].as_str().unwrap_or(""),a["availability"].as_str().unwrap_or(""))).text_xs()))}))
+                    .children(facts.into_iter().enumerate().map(|(i,f)|{let source=&f["source"];v_flex().id(("handoff-fact",i)).gap_1().p_2().border_1().border_color(Color::Divider.get(cx)).child(ax_label(("handoff-fact-source",i),format!("{} · {} · {} · {} · {}",f["kind"].as_str().unwrap_or(""),source["sourceSessionId"].as_str().unwrap_or(""),source["sourceDriver"].as_str().unwrap_or(""),source["nativeItemId"].as_str().unwrap_or(""),source["executionPath"].as_str().unwrap_or(""))).text_xs()).child(ax_label(("handoff-fact-metadata",i),format!("{} · {} · {}",source["sourceProfile"],source["contentSha256"],f["excerpt"])).text_xs()).child(ax_label(("handoff-fact-text",i),f["text"].as_str().unwrap_or("").to_owned()).text_sm()).children(f["attachments"].as_array().into_iter().flatten().enumerate().map(|(j,a)|ax_label(SharedString::from(format!("handoff-fact-attachment-{i}-{j}")),format!("{} · {} · {}",a["name"].as_str().unwrap_or(""),a["policy"].as_str().unwrap_or(""),a["availability"].as_str().unwrap_or(""))).text_xs()))}))
                     .children(required.into_iter().enumerate().filter_map(|(i,id)|{let id=id.as_str()?.to_owned();let selected=self.exclusions.contains(&id);Some(Button::new(("handoff-exclude",i)).outline().small().selected(selected).disabled(locked).label(format!("{} {id}",text("明确排除此项并重新预览","Explicitly exclude and preview again"))).on_click(cx.listener(move |this,_,_,cx|{if !this.exclusions.contains(&id){this.exclusions.push(id.clone());}this.preview=None;cx.notify();})))}))
                     .child(Button::new("handoff-apply").primary().small().label(text("确认已查看快照与遗漏，创建接续","Confirm snapshot and omissions; create handoff")).disabled(!current || self.busy || p["eligible"]!=true || p["previewId"].as_str().is_none() || p["snapshotHash"].as_str().is_none() || p["omissionsHash"].as_str().is_none()).on_click(cx.listener(|this,_,_,cx|this.apply(cx))))
             })
@@ -541,5 +541,31 @@ mod tests {
             historical_item_id(&json!({"role":"toolResult","handoffItemId":"native-id"})),
             None
         );
+    }
+
+    #[test]
+    fn preview_review_text_keeps_identity_and_exposes_label_value() {
+        use gpui_kit::*;
+        let cases: Vec<(ElementId, &str)> = vec![
+            ("handoff-source".into(), "来源: source-fixture · worker-fixture"),
+            ("handoff-range-label".into(), "来源区间：从历史开头，或选择一个已保存的用户或助手消息作为起点；终点为刚才选中的消息。"),
+            ("handoff-history-coverage".into(), "历史覆盖: last-synced-projection · not-checked-offline"),
+            (("handoff-warning", 0usize).into(), "Selected persisted range: {\"fromItemId\":\"u2\",\"throughItemId\":\"a2\"}"),
+            (("handoff-omission", 0usize).into(), "遗漏 ·  · 1 persisted item(s) before the selected range were not included · null · "),
+            (("handoff-omission", 1usize).into(), "遗漏 ·  · 1 persisted item(s) after the selected range were not included · null · "),
+            (("handoff-fact-source", 0usize).into(), "user-text · source-fixture · codex · u2 · /tmp/来源目录"),
+            (("handoff-fact-text", 0usize).into(), "来源原文片段：仅选中 u2→a2；保留中文🙂与结尾空白。 "),
+            ("handoff-code-source".into(), "代码来源: /tmp/来源目录 · HEAD 0123456789abcdef"),
+        ];
+        for (id, value) in cases {
+            let element = super::ax_label(id.clone(), value);
+            assert_eq!(Element::id(&element), Some(id));
+            assert_eq!(element.a11y_role(), Some(Role::Label));
+            let mut node = gpui_kit::accesskit::Node::new(Role::Label);
+            element.write_a11y_info(&mut node);
+            // Mac title() keeps using label(); Windows Name for Label uses value().
+            assert_eq!(node.label(), Some(value));
+            assert_eq!(node.value(), Some(value));
+        }
     }
 }
