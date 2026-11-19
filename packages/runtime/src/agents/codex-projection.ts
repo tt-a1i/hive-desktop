@@ -5,6 +5,21 @@ import { isCodexToolItem, type CodexItem, type CodexTurn } from './codex-history
 
 export type CodexDisplayEntry = { turnId: string; item: CodexItem };
 type Projection = { version: 1; entries: CodexDisplayEntry[]; completedTurns: string[]; completeHistory?: boolean; searchEntries?: CodexDisplayEntry[]; searchVersion?: number };
+
+function isDisplayEntry(entry: CodexDisplayEntry | null): boolean {
+  return typeof entry?.turnId === 'string' && typeof entry.item?.id === 'string' && typeof entry.item.type === 'string';
+}
+
+function isCompleteHistory(entries: CodexDisplayEntry[]): boolean {
+  const itemIds = new Set<string>();
+  return entries.every(entry => {
+    if (!isDisplayEntry(entry) || !entry.turnId || !entry.item.id || itemIds.has(entry.item.id)
+      || entry.item.status === 'inProgress' || entry.item.type === 'hiveProjectionNotice') return false;
+    itemIds.add(entry.item.id);
+    return true;
+  });
+}
+
 /** A UI event journal only. Never supplied to thread/resume, turn/start, or a model. */
 export class CodexProjection {
   private readonly file: string;
@@ -12,25 +27,25 @@ export class CodexProjection {
   private entries: CodexDisplayEntry[];
   private completeHistory = false;
   private searchEntries: CodexDisplayEntry[] | undefined;
-  constructor(directory: string, threadId: string) {
+  constructor(directory: string, threadId: string, options?: { requireSaved: boolean }) {
     this.file = `${codexMetadataFile(directory, threadId)}.display.json`;
     let saved: Projection;
     try { saved = JSON.parse(readFileSync(this.file, 'utf8')); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if (options?.requireSaved || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       saved = { version: 1, entries: [], completedTurns: [] };
     }
-    if (saved.version !== 1 || !Array.isArray(saved.entries)
-      || !saved.entries.every(entry => typeof entry.turnId === 'string' && typeof entry.item?.id === 'string' && typeof entry.item.type === 'string')) {
+    if (saved.version !== 1 || !Array.isArray(saved.entries) || !saved.entries.every(isDisplayEntry)) {
       throw new Error('Invalid Codex UI projection');
     }
     this.entries = saved.entries;
     this.completeHistory = saved.completeHistory === true && saved.searchVersion === 2 && Array.isArray(saved.searchEntries)
-      && saved.searchEntries.every(entry => typeof entry.turnId === 'string' && typeof entry.item?.id === 'string' && typeof entry.item.type === 'string');
+      && isCompleteHistory(saved.searchEntries);
     this.searchEntries = this.completeHistory ? saved.searchEntries : undefined;
     this.completedTurns = saved.completedTurns ?? [];
   }
   current(): CodexDisplayEntry[] { return [...this.entries]; }
+  hasCompleteHistory(): boolean { return this.completeHistory; }
   invalidateHistory(): void {
     if (!this.completeHistory) return;
     this.completeHistory = false;

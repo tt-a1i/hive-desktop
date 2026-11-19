@@ -9,6 +9,7 @@ import {join} from 'node:path';
 import {createDesktopRuntime} from '../src/desktop-runtime.js';
 import {createTeamTool} from '../src/team-tool.js';
 import {DispatchExecutionOrigins} from '../src/dispatch-execution-origins.js';
+import {codexMetadataFile} from '../src/agents/codex-metadata.js';
 import type {Chats} from '../src/chats.js';
 import type {ChatIndex} from '../src/chat-index.js';
 import type {DeliveryQueue} from '../src/delivery-queue.js';
@@ -81,6 +82,38 @@ try {
  const legacy=await runtime.chats.open('legacy-unknown');assert.equal(legacy.readOnly,true);assert.equal(legacy.identityError.code,'SESSION_IDENTITY_UNKNOWN');assert.ok(legacy.history.length>0);assert.equal(internals(runtime.chats).live.has('legacy-unknown'),false);
  await assert.rejects(runtime.chats.prompt('legacy-unknown','Do not become orchestrator'),/SESSION_IDENTITY_UNKNOWN/);await assert.rejects(runtime.chats.resume('legacy-unknown'),/SESSION_IDENTITY_UNKNOWN/);await assert.rejects(runtime.chats.setModel('legacy-unknown','openai','gpt-6.1-terra'),/SESSION_IDENTITY_UNKNOWN/);
  const unreadable=await runtime.chats.open('legacy-unreadable');assert.equal(unreadable.readOnly,true);assert.equal(unreadable.historyIncomplete,true);assert.ok(unreadable.historyWarning);
+ const coldCodexId='legacy-codex', threadId='cold-codex-thread', codexDirectory=join(data,'chats','codex');
+ const entries=[{turnId:'turn1',item:{id:'user1',type:'userMessage',content:[{type:'text',text:'Stored cold input'}]}}];
+ const journal={version:1,entries,completedTurns:['turn1'],completeHistory:true,searchVersion:2,searchEntries:entries};
+ await mkdir(codexDirectory,{recursive:true});
+ const journalFile=codexMetadataFile(codexDirectory,threadId)+'.display.json';
+ internals(runtime.chats).index.save({id:coldCodexId,workspaceId:ws.id,backend:'codex',title:'Cold Codex',
+   sessionFile:null,codexThreadId:threadId,identityState:'unknown',updatedAt:Date.now()});
+ await writeFile(journalFile,JSON.stringify(journal));
+ const complete=await runtime.chats.open(coldCodexId);
+ assert.equal(complete.readOnly,true);
+ assert.equal(complete.historyIncomplete,undefined);
+ assert.deepEqual(complete.historyMessageIds,['user1']);
+ assert.match(JSON.stringify(complete.history),/Stored cold input/);
+ for (const searchEntries of [undefined,[null],[...entries,...entries]]) {
+   const invalidJournal=JSON.stringify({...journal,searchEntries});
+   await writeFile(journalFile,invalidJournal);
+   const partial=await runtime.chats.open(coldCodexId);
+   assert.equal(partial.readOnly,true);
+   assert.equal(partial.historyIncomplete,true);
+   assert.match(partial.historyWarning!,/may omit native items/);
+   assert.deepEqual(partial.history,complete.history);
+   assert.deepEqual(partial.historyMessageIds,complete.historyMessageIds);
+   assert.equal(await readFile(journalFile,'utf8'),invalidJournal);
+ }
+ await rm(journalFile);
+ const missing=await runtime.chats.open(coldCodexId);
+ assert.equal(missing.readOnly,true);
+ assert.equal(missing.historyIncomplete,true);
+ assert.match(missing.historyWarning!,/Saved history could not be fully read: ENOENT/);
+ assert.deepEqual(missing.history,[]);
+ await assert.rejects(readFile(journalFile),{code:'ENOENT'});
+ assert.equal(internals(runtime.chats).live.has(coldCodexId),false);
  const conflicting=await runtime.chats.open('legacy-conflicting');assert.equal(conflicting.readOnly,true);assert.equal(conflicting.identityError.code,'SESSION_IDENTITY_CONFLICT');
  await assert.rejects(runtime.chats.resume('legacy-conflicting'),/SESSION_IDENTITY_CONFLICT/);
  const otherRoot=join(directory,'other');await mkdir(otherRoot);const other=await runtime.hive.request('POST','/api/workspaces',{path:otherRoot,name:'Other',autostart_orchestrator:false}) as {id:string};
@@ -91,7 +124,7 @@ try {
  await runtime.hive.request('DELETE',`/api/workspaces/${ws.id}/workers/${worker.id}`);
  const deleted=await runtime.chats.open(a.id);assert.equal(deleted.readOnly,true);assert.equal(deleted.identityError.code,'SESSION_ORIGIN_DELETED');assert.ok(deleted.history.length>0);assert.equal(internals(runtime.chats).live.has(a.id),false);
  await assert.rejects(runtime.chats.resume(a.id),/SESSION_ORIGIN_DELETED/);assert.equal(modelRequests,0);
- console.log('HISTORICAL_SESSION_IDENTITY_OK: real A→B worker rebinding, queue/busy guards, explicit A continuation stays worker, immutable dispatch navigation, exact legacy recovery, unknown/deleted read-only history and unavailable source refusal. Zero model requests.');
+ console.log('HISTORICAL_SESSION_IDENTITY_OK: worker rebinding, queue/busy guards, immutable dispatch navigation, legacy recovery, cold Codex journal validation and unavailable source refusal. Zero model requests.');
 }finally{
  await runtime?.close();if(server.listening){server.close();await once(server,'close');}
  for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}await rm(directory,{recursive:true,force:true,maxRetries:5});
