@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { prepareProcessObserver, type ProcessObserverAttempt } from './windows-process-observer.js';
 if (process.platform !== 'win32') throw new Error('This check requires actual Windows; static support is not a Windows verification');
 // Exercise the built transport and its .js Job host, as shipped in the runtime package.
 const { CodexTransport } = await import(new URL('../dist/agents/codex-transport.js', import.meta.url).href) as typeof import('../src/agents/codex-transport.js');
@@ -16,6 +17,7 @@ const evidence = resolve('../../.artifacts/windows-native-clis.json');
 const previousPath = process.env.PATH;
 process.env.PATH = `${prefix};${previousPath ?? ''}`;
 const receipts: unknown[] = [];
+const processObserver: ProcessObserverAttempt[] = [];
 const installed = { pi: JSON.parse(await readFile(join(prefix, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'), 'utf8')).version as string,
   codex: JSON.parse(await readFile(join(prefix, 'node_modules', '@openai', 'codex', 'package.json'), 'utf8')).version as string };
 assert.equal(installed.pi, '1.4.0'); assert.equal(installed.codex, '0.166.0');
@@ -184,6 +186,10 @@ async function naturalRootExitFixture(): Promise<void> {
   receipt.pass = true; receipt.naturalExitCode = 17; receipt.owned = tree;
 }
 try {
+  await prepareProcessObserver(processes, process.pid, attempt => {
+    processObserver.push(attempt);
+    console.log(JSON.stringify({ phase: 'process-observer.preflight', ...attempt }));
+  });
   await naturalRootExitFixture();
   for (const command of ['codex', join(prefix, 'codex.cmd')]) await codex(command);
   for (const command of ['pi', join(prefix, 'pi.cmd')]) await pi(command);
@@ -226,11 +232,11 @@ try {
   } finally { try { await killed.close(); } finally { killedReceipt.lifecycle = killed.diagnostics; } }
 
   await mkdir(resolve('../../.artifacts'), { recursive: true });
-  await writeFile(evidence, JSON.stringify({ pass: true, platform: process.platform, inference: false, runtimeArtifact: 'compiled dist/agents/*.js including owned-windows-cli-host.js', installed, directory, receipts,
+  await writeFile(evidence, JSON.stringify({ pass: true, platform: process.platform, inference: false, runtimeArtifact: 'compiled dist/agents/*.js including owned-windows-cli-host.js', installed, directory, processObserver, receipts,
     ownership: 'Windows-only launcher self-assigns a kill-on-close Job before spawning the original CLI. Actual natural/abnormal exit and PID+creation-time cleanup assertions retained.' }, null, 2));
   console.log(JSON.stringify({ pass: true, evidence, cases: receipts.length, inference: false }));
 } catch (error) {
   await mkdir(resolve('../../.artifacts'), { recursive: true });
-  await writeFile(evidence, JSON.stringify({ pass: false, platform: process.platform, directory, error: String(error), receipts }, null, 2));
+  await writeFile(evidence, JSON.stringify({ pass: false, platform: process.platform, directory, error: String(error), processObserver, receipts }, null, 2));
   throw error;
 } finally { if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath; }

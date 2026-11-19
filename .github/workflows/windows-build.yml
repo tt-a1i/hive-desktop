@@ -344,6 +344,8 @@ jobs:
           $env:HIVE_WINDOWS_NATIVE_CLI_PREFIX = Join-Path $env:RUNNER_TEMP 'official native CLI space'
           npm install --global --prefix "$env:HIVE_WINDOWS_NATIVE_CLI_PREFIX" @earendil-works/pi-coding-agent@1.4.0 @openai/codex@0.166.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm --filter @hive-desktop/runtime exec tsx checks/windows-process-observer-check.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pnpm --filter @hive-desktop/runtime exec tsx checks/windows-native-clis.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:HIVE_PI_COMMAND = Join-Path $env:HIVE_WINDOWS_NATIVE_CLI_PREFIX 'pi.cmd'
