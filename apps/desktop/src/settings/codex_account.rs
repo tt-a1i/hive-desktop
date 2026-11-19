@@ -329,6 +329,7 @@ impl HiveApp {
                             "cancelled" => tr("检查已取消。"),
                             _ => tr("无法读取 Codex 账号额度。"),
                         };
+                        let checked_at = format!("{}: {}", tr("读取时间"), result.checked_at);
                         v.child(
                             div()
                                 .id("codex-limits-status")
@@ -357,9 +358,12 @@ impl HiveApp {
                         )
                         .child(
                             div()
+                                .id("codex-limits-checked-at")
+                                .role(Role::Label)
+                                .aria_value(checked_at.clone())
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
-                                .child(format!("{}: {}", tr("读取时间"), result.checked_at)),
+                                .child(checked_at),
                         )
                         .children(result.windows.iter().map(|window| {
                             let label = if window.position == "primary" {
