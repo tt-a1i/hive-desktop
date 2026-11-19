@@ -35,13 +35,27 @@ let fixtureEnv;
 let observedOwned = [];
 let desktopLog = '';
 
-async function until(check, label, milliseconds = 30000) {
+async function until(check, label, milliseconds = 30000, signal) {
   const end = Date.now() + milliseconds;
   do {
+    signal?.throwIfAborted();
     if (await check()) return;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   } while (Date.now() < end);
   throw Error(`Timed out: ${label}`);
+}
+async function untilOrDriverExit(check, label, driver) {
+  const controller = new AbortController();
+  try {
+    return await Promise.race([
+      until(check, label, 120000, controller.signal),
+      driver.done.then(([code, signal]) => {
+        throw Error(`UI driver exited before ${label}: code=${code}, signal=${signal}`);
+      }),
+    ]);
+  } finally {
+    controller.abort();
+  }
 }
 async function exists(path) {
   try {
@@ -159,7 +173,7 @@ try {
     { env, stdio: 'inherit', windowsHide: true },
   );
 
-  await until(() => exists(join(root, 'quota-ready')), 'controlled quota request');
+  await untilOrDriverExit(() => exists(join(root, 'quota-ready')), 'controlled quota request', driver);
   const pids = JSON.parse(await readFile(join(root, 'peer-pids.json'), 'utf8'));
   const snapshot = await processSnapshot(
     pids.peer,
@@ -182,7 +196,7 @@ try {
   observedOwned = owned;
   result.checks.processesBefore = owned;
   await writeFile(join(root, 'release'), 'release');
-  await until(() => exists(join(root, 'ui-observed')), 'quota result in UI');
+  await untilOrDriverExit(() => exists(join(root, 'ui-observed')), 'quota result in UI', driver);
   await until(async () => {
     const after = await processes(env);
     return owned.every((old) => !after.some((item) => sameProcess(old, item)));
@@ -239,6 +253,12 @@ try {
     }
   }
   if (root) {
+    try {
+      const log = await readFile(join(root, 'requests.jsonl'), 'utf8');
+      result.checks.fixtureMethods = log.trim().split('\n').filter(Boolean).map(line => JSON.parse(line).method);
+    } catch (error) {
+      if (error.code !== 'ENOENT') result.checks.fixtureLogError = String(error);
+    }
     try {
       // Keep UI diagnostics even when the driver failed before its success signal.
       if (!result.checks.ui)

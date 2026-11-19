@@ -5,7 +5,7 @@
     [Parameter(Mandatory)][string]$OutputPath
 )
 . (Join-Path $PSScriptRoot 'windows-native-ui-common.ps1')
-$result = [ordered]@{ status = 'failed'; checks = @(); error = $null; controls = @() }
+$result = [ordered]@{ status = 'failed'; stage = 'window'; checks = @(); error = $null; controls = @() }
 $root = $null
 
 try {
@@ -22,9 +22,13 @@ try {
     if ($window -eq [IntPtr]::Zero -or $app.MainWindowTitle -ne 'Hive') { throw 'Fixture window unavailable.' }
     if (-not [NativeFixtureWindow]::SetForegroundWindow($window)) { throw 'Could not focus fixture window.' }
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($window)
+    $result.stage = 'settings'
     Invoke-Control (Wait-Name 'Settings')
+    $result.stage = 'external-programs'
     Invoke-Control (Wait-Name 'External programs')
+    $result.stage = 'quota-button'
     Invoke-Control (Wait-Name 'Read Codex account limits')
+    $result.stage = 'quota-result'
     [void](Wait-Name 'Account limits loaded')
     [void](Wait-Name 'Account allows ordinary usage')
     $windowLabel = Wait-Control { param($c) $c.Current.Name -match '^Primary window: 78% remaining.*300 minutes' } 'quota window'
@@ -42,6 +46,7 @@ try {
     if (-not $app.CloseMainWindow()) { throw 'Could not request normal exit.' }
     if (-not $app.WaitForExit(30000)) { throw 'Desktop did not exit within 30 seconds.' }
     $result.checks += @{ exitObserved = $true }
+    $result.stage = 'completed'
     $result.status = 'passed'
 } catch {
     $result.error = $_.Exception.ToString() -replace 'PRIVATE_FIXTURE_[A-Z_]+', '[redacted]'

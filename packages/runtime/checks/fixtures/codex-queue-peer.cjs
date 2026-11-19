@@ -9,6 +9,8 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);if(!q.method)return;const answer=result=>send({id:q.id,result});
  if(q.method==='initialize')answer({});
  else if(q.method==='model/list')answer({data:[{id:'terra',model:'gpt-6.1-terra',displayName:'Synthetic Terra metadata',hidden:false}],nextCursor:null});
+ else if(q.method==='configRequirements/read')answer({requirements:null});
+ else if(q.method==='collaborationMode/list')answer({data:[{mode:'default'},{mode:'plan'}]});
  else if(q.method==='thread/start'||q.method==='thread/resume'){save();answer({thread,model:'gpt-6.1-terra',modelProvider:'openai'});}
  else if(q.method==='thread/read')answer({thread});
  else if(q.method==='turn/start'){
@@ -21,4 +23,5 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   if(turn?.status==='inProgress')complete(turn);
   send({id:q.id,error:{code:-32600,message:'Synthetic turn ended before steer'}});
  }else if(q.method==='turn/interrupt'){const turn=thread.turns.find(t=>t.id===q.params.turnId);if(turn){turn.status='interrupted';save();}answer({});if(turn)notify('turn/completed',{turn});}
+ else if(q.id!==undefined)send({id:q.id,error:{code:-32601,message:'Unsupported controlled queue method: '+q.method}});
 });
