@@ -21,6 +21,13 @@ const bin = join(root, 'bin');
 const commandState = join(root, 'command.json');
 const commandLog = join(root, 'command.jsonl');
 const release = join(root, 'release');
+const helperPidFile = join(root, 'inherited-output.pid');
+const helperSource = `
+const fs = require('node:fs');
+const release = process.argv[1];
+const poll = setInterval(() => { if (fs.existsSync(release)) process.exit(0); }, 20);
+setTimeout(() => clearInterval(poll), 30_000);
+`;
 const modelFile = join(agent, 'models.json');
 const keys = ['fixture-'+randomUUID(), 'rotated-'+randomUUID()];
 const ref = 'op://Fixture Vault/Test Model/credential';
@@ -88,6 +95,17 @@ async function waitFor<T>(poll: () => Promise<T | undefined>): Promise<T> {
   throw new Error('Timed out waiting for the owned vault fixture');
 }
 
+async function waitForExit(pid: number) {
+  await waitFor(async () => {
+    try { process.kill(pid, 0); }
+    catch (error) {
+      assert.equal((error as NodeJS.ErrnoException).code, 'ESRCH');
+      return true;
+    }
+    return undefined;
+  });
+}
+
 try {
   await Promise.all([agent, project, bin].map(path => mkdir(path)));
   await writeFile(modelFile, models(endpoint));
@@ -112,6 +130,13 @@ else if (state.mode === 'deferred') {
     clearInterval(interval);
     process.stdout.write(state.key);
   }, 20);
+}
+else if (state.mode === 'inherited-output') {
+  const {spawn} = require('node:child_process');
+  const helper = spawn(process.execPath, ['-e', ${JSON.stringify(helperSource)}, ${JSON.stringify(release)}], {stdio: ['ignore', 'inherit', 'ignore']});
+  fs.writeFileSync(${JSON.stringify(helperPidFile)}, String(helper.pid));
+  helper.unref();
+  process.stdout.write(state.key);
 }
 else if (state.mode === 'fail') { process.stderr.write(state.key); process.exitCode = 1; }
 else process.stdout.write(state.key);
@@ -276,6 +301,30 @@ else process.stdout.write(state.key);
     assert.ok(!JSON.stringify(events).includes(key));
     assert.ok(!JSON.stringify(retried.history).includes(key));
     assert.ok(requests.every(request => !request.input.includes(key)));
+  }
+  if (process.platform !== 'win32') {
+    await rm(release, {force: true});
+    await command('inherited-output');
+    const beforeInheritedOutput = (await log()).length;
+    await runtime.chats.prompt(compatChat.id, 'Quit after the CLI exits with stdout still open');
+    const exitedPid = await waitFor(async () => (await log()).at(beforeInheritedOutput)?.pid);
+    await waitForExit(exitedPid);
+    const helperPid = Number(await readFile(helperPidFile, 'utf8'));
+    process.kill(helperPid, 0);
+    const closing = runtime.close();
+    const timeout = new AbortController();
+    try {
+      assert.equal(await Promise.race([
+        closing.then(() => 'closed'),
+        delay(2_000, 'blocked by inherited stdout', {signal: timeout.signal}),
+      ]), 'closed');
+      await waitForExit(helperPid);
+      assert.equal(requests.length, 4);
+    } finally {
+      timeout.abort();
+      await writeFile(release, '');
+      await closing;
+    }
   }
   console.log('PI_VAULT_OK: CLI lifecycle, SDK loopback, queue recovery, rotation, revocation, retargeting and persisted redaction');
 } finally {

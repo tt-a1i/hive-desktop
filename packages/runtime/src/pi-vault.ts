@@ -4,6 +4,7 @@ import { accessSync, constants, realpathSync, statSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
+import { ownedWindowsCliLaunch } from './agents/owned-cli-process.js';
 import { createConfigRuntime, object, readConfig } from './pi-model-file.js';
 import type { ModelRuntime, ModelRuntimeAuthOverrides } from '@earendil-works/pi-coding-agent';
 
@@ -70,8 +71,11 @@ function resolveOp(): string {
 async function readOp(value: string, signal: AbortSignal): Promise<string> {
   signal.throwIfAborted();
   const command = resolveOp();
-  const child = spawn(command, ['read', '--no-newline', value], {
-    cwd: dirname(command), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+  const args = ['read', '--no-newline', value];
+  const windows = process.platform === 'win32';
+  const launch = windows ? ownedWindowsCliLaunch(command, args) : { command, args };
+  const child = spawn(launch.command, launch.args, {
+    cwd: dirname(command), detached: !windows, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
   });
   const capacity = 16 * 1024;
   const bytes = Buffer.alloc(capacity);
@@ -79,7 +83,17 @@ async function readOp(value: string, signal: AbortSignal): Promise<string> {
   let count = 0;
   let overflow = false;
   let startError = false;
-  const stop = () => { child.kill('SIGKILL'); };
+  const stop = () => {
+    try {
+      if (windows || !child.pid) child.kill('SIGKILL');
+      else process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    } finally {
+      // A helper outside the owned group can still hold a copy of the pipe.
+      child.stdout.destroy();
+    }
+  };
   deadline.addEventListener('abort', stop, { once: true });
   child.on('error', () => { startError = true; });
   child.stdout.on('data', (chunk: Buffer) => {

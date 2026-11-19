@@ -2,6 +2,11 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import crossSpawn from 'cross-spawn';
 
+export function ownedWindowsCliLaunch(command: string, args: string[]) {
+  const host = import.meta.url.endsWith('.ts') ? './owned-windows-cli-host.ts' : './owned-windows-cli-host.js';
+  return { command: process.execPath, args: [fileURLToPath(new URL(host, import.meta.url)), command, JSON.stringify(args)] };
+}
+
 /** A spawned CLI and the shutdown promise its caller must await. */
 export class OwnedCliProcess {
   readonly child: ChildProcessWithoutNullStreams;
@@ -15,7 +20,7 @@ export class OwnedCliProcess {
   constructor(command: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv }) {
     // cross-spawn resolves Windows shims/PATHEXT and escapes argv; no shell command assembly here.
     const launch = process.platform === 'win32'
-      ? { command: process.execPath, args: [fileURLToPath(new URL(import.meta.url.endsWith('.ts') ? './owned-windows-cli-host.ts' : './owned-windows-cli-host.js', import.meta.url)), command, JSON.stringify(args)] }
+      ? ownedWindowsCliLaunch(command, args)
       : { command, args };
     this.child = crossSpawn(launch.command, launch.args, { ...options, stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true }) as ChildProcessWithoutNullStreams;
     this.child.once('spawn', () => this.record('spawn'));
