@@ -10,6 +10,7 @@ export function ownedWindowsCliLaunch(command: string, args: string[]) {
 /** A spawned CLI and the shutdown promise its caller must await. */
 export class OwnedCliProcess {
   readonly child: ChildProcessWithoutNullStreams;
+  private readonly nativeProbeOwner: boolean;
   private readonly exited: Promise<void>;
   private closed = false;
   private rootExited = false;
@@ -17,12 +18,18 @@ export class OwnedCliProcess {
   private readonly startedAt = performance.now();
   private readonly events: { atMs: number; type: string; code?: number | string | null; signal?: NodeJS.Signals | null }[] = [];
 
-  constructor(command: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv }) {
+  constructor(command: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv; readOnlyProbe?: boolean }) {
     // cross-spawn resolves Windows shims/PATHEXT and escapes argv; no shell command assembly here.
-    const launch = process.platform === 'win32'
+    const { readOnlyProbe, ...spawnOptions } = options;
+    const probeOwner = readOnlyProbe && process.platform === 'darwin'
+      ? process.env.HIVE_DESKTOP_SHELL_OWNER : undefined;
+    this.nativeProbeOwner = !!probeOwner;
+    const launch = probeOwner
+      ? { command: probeOwner, args: ['--hive-owned-cli', String(process.pid), command, ...args] }
+      : process.platform === 'win32'
       ? ownedWindowsCliLaunch(command, args)
       : { command, args };
-    this.child = crossSpawn(launch.command, launch.args, { ...options, stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true }) as ChildProcessWithoutNullStreams;
+    this.child = crossSpawn(launch.command, launch.args, { ...spawnOptions, detached: !!probeOwner, stdio: ['pipe', 'pipe', 'pipe'], shell: false, windowsHide: true }) as ChildProcessWithoutNullStreams;
     this.child.once('spawn', () => this.record('spawn'));
     this.child.once('error', error => this.record('error', (error as NodeJS.ErrnoException).code));
     this.exited = new Promise(resolve => this.child.once('close', (code, signal) => { this.closed = true; this.record('close', code, signal); resolve(); }));
@@ -66,6 +73,12 @@ export class OwnedCliProcess {
       return;
     }
     this.child.kill('SIGTERM');
+    if (this.nativeProbeOwner) {
+      // TERM asks the host to reap its CLI group. Keep the host alive while it
+      // confirms exit, including when a descendant is slow to release a pipe.
+      if (!await this.waitForExit(4000)) throw new Error('Native probe process cleanup could not be confirmed');
+      return;
+    }
     if (await this.waitForExit(1000)) return;
     this.child.kill('SIGKILL');
     if (!await this.waitForExit(2000)) throw new Error('Owned CLI did not close after SIGKILL');

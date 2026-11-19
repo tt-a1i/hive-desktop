@@ -51,6 +51,8 @@ mod session_handoff;
 mod settings;
 #[cfg(target_os = "macos")]
 mod shell_owner;
+#[cfg(target_os = "macos")]
+mod cli_owner;
 mod terminal;
 mod thinking;
 mod tool_message;
@@ -117,7 +119,10 @@ fn main() {
         return;
     }
     #[cfg(target_os = "macos")]
-    shell_owner::run_if_requested();
+    {
+        cli_owner::run_if_requested();
+        shell_owner::run_if_requested();
+    }
     if let Err(error) = desktop_update::authorize_candidate_startup() {
         eprintln!("{error}");
         std::process::exit(1);

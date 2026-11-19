@@ -1,7 +1,8 @@
-//! Sidecar ownership only. This does not adopt terminals or claim detached macOS processes.
+//! Native ownership for sidecar and explicitly contained CLI process groups.
+//! This does not adopt unrelated terminals or processes outside those groups.
 use std::{
     io,
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStdin, ChildStdout, Command, ExitStatus},
     thread,
     time::{Duration, Instant},
 };
@@ -26,6 +27,7 @@ pub struct OwnedProcess {
     scope: Scope,
     cleaned: Option<CleanupReport>,
     forced: bool,
+    exit_status: Option<ExitStatus>,
 }
 impl OwnedProcess {
     /// Windows callers gate descendant startup until this returns (the Node
@@ -47,6 +49,7 @@ impl OwnedProcess {
             scope,
             cleaned: None,
             forced: false,
+            exit_status: None,
         })
     }
     #[cfg(test)]
@@ -65,6 +68,10 @@ impl OwnedProcess {
     }
     pub fn leader_exited(&self) -> io::Result<bool> {
         self.scope.leader_exited(&self.child)
+    }
+    #[cfg(target_os = "macos")]
+    pub fn exit_status(&self) -> Option<ExitStatus> {
+        self.exit_status
     }
     pub fn is_cleaned(&self) -> bool {
         self.cleaned.is_some()
@@ -109,7 +116,7 @@ impl OwnedProcess {
             }
             thread::sleep(Duration::from_millis(10));
         }
-        self.child.wait()?;
+        self.exit_status = Some(self.child.wait()?);
         Ok(CleanupReport {
             forced: self.forced,
             scope: Scope::DESCRIPTION,

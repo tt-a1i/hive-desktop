@@ -57,37 +57,7 @@ fn run(args: Vec<OsString>, pty: bool) -> io::Result<i32> {
             }
         }
     }
-    let fd = unsafe { libc::kqueue() };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let queue = unsafe { OwnedFd::from_raw_fd(fd) };
-    let change = libc::kevent {
-        ident: parent as usize,
-        filter: libc::EVFILT_PROC,
-        flags: libc::EV_ADD | libc::EV_ONESHOT,
-        fflags: libc::NOTE_EXIT,
-        data: 0,
-        udata: std::ptr::null_mut(),
-    };
-    if unsafe {
-        libc::kevent(
-            queue.as_raw_fd(),
-            &change,
-            1,
-            std::ptr::null_mut(),
-            0,
-            std::ptr::null(),
-        )
-    } < 0
-    {
-        return Err(io::Error::last_os_error());
-    }
-    // Register first, then recheck: a parent death during registration must not
-    // allow the command to start unobserved.
-    if unsafe { libc::getppid() } != parent {
-        return Err(io::Error::other("Node owner exited before shell startup"));
-    }
+    let queue = parent_exit_queue(parent)?;
     std::thread::Builder::new()
         .name("shell-owner".into())
         .spawn(move || {
@@ -141,4 +111,41 @@ fn run(args: Vec<OsString>, pty: bool) -> io::Result<i32> {
         return Ok(128 + signal);
     }
     Ok(status.code().unwrap_or(1))
+}
+
+/// Register before rechecking the direct parent so a death during startup cannot
+/// leave an executing private process group without its owner.
+pub(crate) fn parent_exit_queue(parent: libc::pid_t) -> io::Result<OwnedFd> {
+    let fd = unsafe { libc::kqueue() };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let queue = unsafe { OwnedFd::from_raw_fd(fd) };
+    let change = libc::kevent {
+        ident: parent as usize,
+        filter: libc::EVFILT_PROC,
+        flags: libc::EV_ADD | libc::EV_ONESHOT,
+        fflags: libc::NOTE_EXIT,
+        data: 0,
+        udata: std::ptr::null_mut(),
+    };
+    if unsafe {
+        libc::kevent(
+            queue.as_raw_fd(),
+            &change,
+            1,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null(),
+        )
+    } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // Register first, then recheck: a parent death during registration must not
+    // allow the command to start unobserved.
+    if unsafe { libc::getppid() } != parent {
+        return Err(io::Error::other("Node owner exited before shell startup"));
+    }
+    Ok(queue)
 }

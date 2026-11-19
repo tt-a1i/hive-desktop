@@ -12,6 +12,8 @@ export interface CodexTransportOptions {
   args?: readonly string[];
   configDir?: string;
   env?: NodeJS.ProcessEnv;
+  /** Isolated lifecycle for desktop read-only account/limits probes only. */
+  readOnlyProbe?: boolean;
   requestTimeoutMs?: number;
   shutdownGraceMs?: number;
   signal?: AbortSignal;
@@ -52,6 +54,7 @@ export class CodexTransport {
     if (options.args?.some(arg => /^(?:--listen(?:=|$)|--$)/.test(arg))) throw new TypeError('Codex profile arguments cannot override the managed stdio transport');
     this.process = new OwnedCliProcess(options.command ?? 'codex', [...(options.args ?? []), 'app-server', '--listen', 'stdio://'], {
       cwd: options.cwd,
+      ...(options.readOnlyProbe && { readOnlyProbe: true }),
       ...((options.env || options.configDir) && { env: { ...process.env, ...options.env, ...(options.configDir && { CODEX_HOME: options.configDir }) } }),
     });
     this.child = this.process.child;
