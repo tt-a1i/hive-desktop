@@ -28,3 +28,14 @@ macOS 签名 ZIP 解包实测使用真实 Hive 派单和报告。项目根目录
 Windows 构建作业的原生验收现在也包含回环请求、图片、文件选择和导航探针。它会关闭窗口，移除源文件，再用第二次启动核对报告和快照，最后保存进程退出及回环计数收据。Node 和 PowerShell 语法检查通过。新路径仍待 Windows 原生运行。[Windows 窗口验收脚本](../../scripts/check-desktop-startup.mjs)
 
 本轮证据位于 `.artifacts/html-cold-reopen-nJbNHQ/`，包括 `native-worktree-proof/receipt.json`、两次辅助功能树、`html-runtime.log`、`artifact-origins.log`、ZIP 清单和包内冒烟。
+
+## 同名工具产物的独立预览
+
+GPT-6.2 Sol 用生产运行时代码复现了一个问题。同一会话的两次工具调用依次写入 `report.html` 时，第二张工具卡打开了第一张工具卡保存的 HTML。`55a8310` 为每份快照记录原始会话、工具调用和路径。分叉继承的工具调用继续使用原始会话。旧版只记录路径的快照可以从独立的“旧版路径预览”入口打开。打开已存快照时，文件详情仍显示实时源文件不可读的原因。
+
+快照记录首次打开交互预览时磁盘上的内容。如果文件在首次预览前已经被覆盖，工具卡只能捕获覆盖后的版本。
+
+- macOS arm64 的本地签名 ZIP 解包后，从真实 Hive 会话中两张已保存的离线 Pi 工具卡分别打开初稿和终稿。删除源文件并冷启动后，从原工具卡恢复初稿和终稿，并打开旧版路径快照。三份快照的摘要各不相同。实际 WebKit 窗口均能操作计数，回环服务收到零个请求。两次正常退出后，受测桌面和 Node 进程均已结束。第一次运行的验收脚本用原始 HTML 文字判断预览是否关闭，产生误报。脚本改用原生窗口的辅助功能标题并重新完成验收。没有模型调用。
+- 包内 Node 与冻结依赖通过 HTML 快照和 Codex 分叉来源两项回归。便携包冒烟通过，包括真实 PTY、Hive HTTP/SQLite 和退出。Rust 测试通过 127 项，1 项忽略。Windows MSVC 目标通过交叉编译检查，当前改动仍待 Windows 原生窗口验证。
+
+证据位于 `.artifacts/html-tool-versions-PONINH/`，包括 `native-window-iHhWwZ/receipt.json`、各版本的原生辅助功能树、`packaged-functional-receipt.json`、`package-smoke.log`、签名和归档清单。ZIP 的 SHA-256 为 `216405ffbc7a95d34c82825ba6428df393b2fc4ae2deea1351852a4101f32dd9`。
