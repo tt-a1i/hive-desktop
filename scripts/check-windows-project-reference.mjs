@@ -73,6 +73,11 @@ try {
       env,
       stdio: ['ignore', 'ignore', 'pipe'],
     });
+    // Keep the parent-observed exit even if the UI script fails first.
+    void desktop.done.then(
+      ([code, signal]) => { result.stages[`${phase}Exit`] = { code, signal }; },
+      error => { result.stages[`${phase}Exit`] = { error: String(error) }; },
+    );
     const log = { phase, stderr: '' };
     logs.push(log);
     desktop.child.stderr.setEncoding('utf8');
@@ -115,7 +120,8 @@ try {
     }
     assert.deepEqual(uiExit, [0, null], `${phase} UI failed`);
     assert.deepEqual(await deadline(desktop.done, 30000, `${phase} desktop exit`), [0, null]);
-    assert.match(log.stderr, /"shutdown"/, 'desktop must acknowledge normal shutdown');
+    assert.match(log.stderr, /"shutdown"/, 'desktop must request normal shutdown');
+    assert.match(log.stderr, /reply 0 ok/, 'the backend must acknowledge normal shutdown');
     await run(
       node,
       [seed, root, resources, phase === 'select' ? 'before' : 'after'],

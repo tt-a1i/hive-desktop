@@ -136,10 +136,11 @@ try {
         $result.stages.previewWorktreeContent = $true
     }
     if (-not $app.CloseMainWindow()) { throw 'Could not request normal fixture exit.' }
-    if (-not $app.WaitForExit(30000) -or $app.ExitCode -ne 0) {
-        throw 'Fixture did not exit normally.'
+    if (-not $app.WaitForExit(30000)) {
+        throw 'Fixture did not exit within 30 seconds.'
     }
-    $result.stages.normalExit = $true
+    # The Node parent owns the process handle and checks its actual exit code.
+    $result.stages.exitObserved = $true
     $result.status = 'passed'
 } catch {
     $result.error = $_.Exception.ToString()
