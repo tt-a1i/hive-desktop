@@ -21,3 +21,17 @@
 - Rust 116 项通过，1 项子进程入口按设计忽略。Windows x86_64 MSVC 交叉检查通过，尚缺对应的原生窗口走查。
 - 本地包通过严格签名验证和包内 Node、PTY、SQLite、Hive HTTP 与退出冒烟检查。没有发布。
 - 证据位于 `.artifacts/native-session-mode-aVDXJw/`，含 `receipt.json`、实际原生回合、冷启动及桌面退出日志和 `package-smoke.log`。
+
+## 后台回执与 ACP 原生选项
+
+GPT-6.2 Sol 复现了 Codex 冷恢复会忽略原生沙箱和审批回执。现在显式保存的权限先核对原生沙箱类型和审批策略，再允许发送。只有回执与权限预设完全一致时才显示已生效。若线程沿用了额外的可写目录或网络设置，界面继续显示下回合待生效，下回合发送完整权限参数。回合请求须返回有效的原生回合 ID 才更新生效状态。若已保存的模式被后端取消支持，发送仍被阻止，原会话的历史查看及模式修复入口还需补齐。
+
+ACP v1 按当前原生会话公开的选项显示模式。通用对端可以公开一个模式选择器，也支持旧的 `session/set_mode`。官方 Codex ACP 公开协作模式和权限预设时，桌面分别显示两组。设置更改核对原生回执，随后的原生通知可以更新生效状态。冷连接读取 `session/load` 的当前状态，不重放设置。只读浏览不建立 ACP 连接，显式连接也不会接管同一成员已有的活跃会话。[ACP v1 会话模式](https://agentclientprotocol.com/protocol/v1/session-modes) · [ACP v1 配置选项](https://agentclientprotocol.com/protocol/v1/session-config-options)
+
+使用实际 Codex 0.169.0 核对了三种权限的线程启动回执，以及同一测试线程的冷恢复回执。实际官方 `@agentclientprotocol/codex-acp` 2.6.0 公开了两组选项，并确认计划和只读。原生方法记录无推理请求。另用真实 Hive、SQLite 和受控 ACP 对端验证了连接后新投递能正常执行、另一活跃会话不被替换、两种模式协议、冷读不重放、拒绝错误回执，以及同一批原生帧里的后续更新优先于先前回执。
+
+从新版签名 ZIP 解包后，在 macOS 原生窗口通过“连接 ACP 以设置模式”打开官方 Codex ACP，分别选择 Plan 和 Read-only，两个控件都报告当前生效。用受控 ACP 对端再完成选择、关闭、冷重开并重新连接，确认 `session/load` 使用同一原生会话，未重发设置。三次正常退出均收到后台确认，测试进程全部退出。包内 Codex 适配器还用隔离目录验证三种权限的原生启动回执，并用上一批测试线程的副本确认冷恢复时的默认协作和工作区写入已生效。以上检查均未发起推理。
+
+源码为 `c855e8f` 和 `41a11be`。127 项 Rust 测试通过，1 项子进程入口按设计忽略。模式、Codex、ACP 注册及协作检查和包内 Node、PTY、Hive HTTP/SQLite 冒烟通过。Windows x86_64 MSVC 交叉检查通过，Windows 原生操作仍待验收。未发布。
+
+macOS ZIP SHA-256 为 `78d1c7c074d54e2dd333fdabca0715792e29030a5cfe5f5a3700f4c5fcbbbc7a`。签名及归档清单已核对。证据位于 `.artifacts/native-mode-verification-PdWMNg/`，原生窗口见 `window-official-2agDUr/receipt.json` 和 `window-controlled-DJ3fbP/receipt.json`，包内 Codex 回执见 `packaged-codex-o0GpXz/receipt.json`。

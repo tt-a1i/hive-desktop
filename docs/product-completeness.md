@@ -22,6 +22,8 @@ macOS 的 Node 后台被强制终止后，正在运行的项目脚本和同组�
 
 Codex 问题附件按整次回复限制数量。草稿保存跟随原问题，切换会话仍可读回。一个项目的损坏收据不会阻断其他项目的普通问答或审批。[问题附件验收](validation/2026-11-19-codex-question-attachments-desktop.md)
 
+Codex 核对线程及回合的原生回执后更新模式。ACP v1 可读取并选择后端提供的会话模式，官方 Codex ACP 可分别选择协作与访问权限。[原生模式验收](validation/2026-11-19-codex-session-modes-desktop.md)
+
 ## 2026-11-14 历史计划
 
 2026-11-14。用户已在当前会话确认并授权持续推进。本文整理执行顺序；需求和工作项继续使用 GitHub Issues，父任务为 #1，首批工作为 [#29](https://github.com/tt-a1i/hive-desktop/issues/29)。完整目标仍未完成。
