@@ -889,6 +889,7 @@ impl HiveApp {
             return;
         }
         self.quit_confirm_open = true;
+        window.activate_window();
         let weak_close = cx.weak_entity();
         let weak_ok = cx.weak_entity();
         let busy = self.has_busy_work();

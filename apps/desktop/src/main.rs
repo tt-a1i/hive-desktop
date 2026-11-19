@@ -154,6 +154,8 @@ fn main() {
                     None,
                 ),
             ]);
+            #[cfg(target_os = "macos")]
+            language::install_application_menu(cx);
             cx.activate(true);
             gpui_kit::open_window(
                 WindowOptions {

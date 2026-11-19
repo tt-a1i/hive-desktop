@@ -39,6 +39,17 @@ pub fn english() -> bool {
     component::locale().starts_with("en")
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn install_application_menu(cx: &mut App) {
+    use gpui_kit::{Menu, MenuItem};
+
+    // Native views, including the isolated WebKit preview, can own keyboard
+    // focus. AppKit's menu shortcut dispatches the same orderly quit action.
+    cx.set_menus([Menu::new("Hive Desktop").items([
+        MenuItem::action(tr("退出 Hive Desktop"), crate::Quit),
+    ])]);
+}
+
 // Only explicitly marked application-owned static text is translated. Runtime
 // messages, user content, tools and diagnostics never pass through this lookup.
 pub fn tr(chinese: &'static str) -> &'static str {
@@ -302,6 +313,8 @@ pub fn restore(root: &Path, cx: &mut App) {
         Err(error) => state.notice = Some(Notice::LoadedError(error)),
     }
     component::set_locale(state.locale.component_locale());
+    #[cfg(target_os = "macos")]
+    install_application_menu(cx);
     cx.refresh_windows();
 }
 pub fn choose(locale: Locale, cx: &mut App) -> bool {

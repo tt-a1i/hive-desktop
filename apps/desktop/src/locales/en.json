@@ -1957,6 +1957,7 @@
   "连续成功的工具可合并为工作过程，也可逐项展示。失败、中断和执行中的工具始终单独显示；详情仍可展开。": "Group consecutive successful tools into work activity, or show each tool separately. Failed, interrupted and running tools always appear individually. Details remain expandable.",
   "退出信号": "Exit signal",
   "退出应用": "Quit",
+  "退出 Hive Desktop": "Quit Hive Desktop",
   "退出码": "Exit code",
   "适应窗口": "Fit to window",
   "选择": "Select",
