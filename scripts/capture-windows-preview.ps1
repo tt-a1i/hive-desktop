@@ -293,7 +293,74 @@ function Wait-Appearance([string] $Mode, [string] $Label) {
     throw "Appearance '$Mode' was not persisted and selected in the native window."
 }
 
+function Inspect-FixtureHtml {
+    [void](Wait-Action '打开关联派单' 20)
+    Invoke-Action '打开关联派单'
+    Invoke-Action '预览文件: review.html'
+    Invoke-Action '交互预览'
+    $desktop = [System.Windows.Automation.AutomationElement]::RootElement
+    $windowName = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, '隔离 HTML 预览 — review.html')
+    $windowOwner = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppProcessId)
+    $artifactWindow = New-Object System.Windows.Automation.AndCondition($windowName, $windowOwner)
+    $deadline = [DateTime]::UtcNow.AddSeconds(20)
+    do {
+        $preview = $desktop.FindFirst([System.Windows.Automation.TreeScope]::Children, $artifactWindow)
+        if ($null -ne $preview) { break }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($null -eq $preview) { throw 'Could not find the owned HTML preview window.' }
+    function Wait-ArtifactControl([string] $Name) {
+        $condition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+        $deadline = [DateTime]::UtcNow.AddSeconds(20)
+        do {
+            $element = $preview.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+            if ($null -ne $element) { return $element }
+            Start-Sleep -Milliseconds 150
+        } while ([DateTime]::UtcNow -lt $deadline)
+        throw "WebView2 did not expose '$Name'."
+    }
+    try {
+        [void](Wait-ArtifactControl 'Artifact isolation verified')
+        [void](Wait-ArtifactControl 'Packaged artifact counter 0')
+        $fileSelection = Wait-ArtifactControl 'Check host file selection'
+        $fileSelection.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl 'Host file selection blocked')
+        $navigate = Wait-ArtifactControl 'Check blocked navigation'
+        $navigate.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        $increment = Wait-ArtifactControl 'Increment packaged artifact'
+        $increment.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        [void](Wait-ArtifactControl 'Packaged artifact counter 1')
+        Write-Host 'Opened the actual report in isolated WebView2 and interacted with its HTML.'
+    } finally {
+        $previewHandle = [IntPtr]$preview.Current.NativeWindowHandle
+        if ($previewHandle -eq [IntPtr]::Zero -or -not [PreviewWindow]::PostMessage($previewHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+            throw 'Could not close the owned HTML preview window.'
+        }
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        if ($null -eq $desktop.FindFirst([System.Windows.Automation.TreeScope]::Children, $artifactWindow)) { return }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'The fixture HTML window remained open after close.'
+}
+
+function Close-FixtureMainWindow {
+    if (-not [PreviewWindow]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+        throw 'Could not close the fixture main window.'
+    }
+}
+
 try {
+if ($env:HIVE_WINDOWS_HTML_REOPEN_ONLY -eq '1') {
+    Inspect-FixtureHtml
+    Close-FixtureMainWindow
+    return
+}
+
 # Only operate on this test app's window and the temporary Reviewer created by the startup check.
 Save-FixtureWindow $OutputPath
 [void](Wait-Action '打开或收起工作区与会话导航')
@@ -614,45 +681,8 @@ Wait-EditorText '聊天消息' '后台恢复核验草稿'
 Write-Host 'Pinned and unpinned the named conversation without changing its timestamp or draft.'
 
 if ($env:HIVE_WINDOWS_HTML_PREVIEW -eq '1') {
-    Invoke-Action '打开关联派单'
-    Invoke-Action '预览文件: review.html'
-    Invoke-Action '交互预览'
-    $desktop = [System.Windows.Automation.AutomationElement]::RootElement
-    $windowName = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::NameProperty, '隔离 HTML 预览 — review.html')
-    $windowOwner = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppProcessId)
-    $artifactWindow = New-Object System.Windows.Automation.AndCondition($windowName, $windowOwner)
-    $deadline = [DateTime]::UtcNow.AddSeconds(20)
-    do {
-        $preview = $desktop.FindFirst([System.Windows.Automation.TreeScope]::Children, $artifactWindow)
-        if ($null -ne $preview) { break }
-        Start-Sleep -Milliseconds 150
-    } while ([DateTime]::UtcNow -lt $deadline)
-    if ($null -eq $preview) { throw 'Could not find the owned HTML preview window.' }
-    function Wait-ArtifactControl([string] $Name) {
-        $condition = New-Object System.Windows.Automation.PropertyCondition(
-            [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
-        $deadline = [DateTime]::UtcNow.AddSeconds(20)
-        do {
-            $element = $preview.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
-            if ($null -ne $element) { return $element }
-            Start-Sleep -Milliseconds 150
-        } while ([DateTime]::UtcNow -lt $deadline)
-        throw "WebView2 did not expose '$Name'."
-    }
-    try {
-        [void](Wait-ArtifactControl 'Packaged artifact counter 0')
-        $increment = Wait-ArtifactControl 'Increment packaged artifact'
-        $increment.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-        [void](Wait-ArtifactControl 'Packaged artifact counter 1')
-        Write-Host 'Opened the actual report in isolated WebView2 and interacted with its HTML.'
-    } finally {
-        $previewHandle = [IntPtr]$preview.Current.NativeWindowHandle
-        if ($previewHandle -eq [IntPtr]::Zero -or -not [PreviewWindow]::PostMessage($previewHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
-            throw 'Could not close the owned HTML preview window.'
-        }
-    }
+    Inspect-FixtureHtml
+    Close-FixtureMainWindow
 }
 } catch {
     Save-FixtureFailure $_.Exception.Message

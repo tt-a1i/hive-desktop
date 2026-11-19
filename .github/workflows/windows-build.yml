@@ -226,6 +226,7 @@ jobs:
           name: windows-native-workspace
           path: |
             target/windows-*.png
+            target/windows-html-preview-receipt.json
           if-no-files-found: warn
       - name: Verify update and rollback from the extracted Windows desktop
         timeout-minutes: 18

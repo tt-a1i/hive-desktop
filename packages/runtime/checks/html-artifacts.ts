@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
@@ -58,8 +58,22 @@ try {
   await writeFile(worktreeFile, '<p>Changed live artifact</p>');
   assert.deepEqual(await open(), first);
 
+  await rm(join(execution.path, 'large.html'));
+  await rm(join(execution.path, 'invalid.html'));
+  git('-C', execution.path, 'add', '--', artifact);
+  git('-C', execution.path, 'commit', '-qm', 'Keep the later HTML on the worktree branch');
+  const remote = join(root, 'local-backup.git');
+  git('init', '--bare', '--template=', remote);
+  git('remote', 'add', 'local-backup', remote);
+  git('-C', execution.path, 'push', '--set-upstream', 'local-backup', 'HEAD');
   await runtime.close();
-  await rename(execution.path, join(root, 'offline-worktree'));
+  runtime = await createDesktopRuntime(data, () => {});
+  const removal = await runtime.chats.previewWorktreeRemoval(workspace.id, isolated.id, async () => false);
+  assert.equal(removal.verifiedRemote?.remote, 'local-backup');
+  assert.deepEqual(await runtime.chats.applyWorktreeRemoval(workspace.id, isolated.id, removal.version, async () => false),
+    {ok: true, workspaceId: workspace.id, sessionId: isolated.id});
+  await assert.rejects(stat(execution.path), {code: 'ENOENT'});
+  await runtime.close();
   runtime = await createDesktopRuntime(data, () => {});
   assert.deepEqual(await open(), first);
   await assert.rejects(runtime.chats.resolveArtifact(workspace.id, request), /ARTIFACT_SOURCE_UNAVAILABLE/);

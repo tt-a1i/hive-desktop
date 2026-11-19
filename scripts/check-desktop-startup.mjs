@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -23,10 +24,22 @@ const executable = mac ? join(contents, 'MacOS', 'hive-desktop') : join(bundle, 
 const { createDesktopRuntime } = await import(pathToFileURL(join(resources, 'runtime/dist/desktop-runtime.js')).href);
 const directory = await mkdtemp(join(tmpdir(), 'hive-native-restore-'));
 const state = join(directory, 'state');
+const windowsPreview = process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH;
+const windowsHtml = windowsPreview && process.env.HIVE_WINDOWS_HTML_PREVIEW === '1';
+const htmlPath = join(directory, 'Beta', 'review.html');
+const canaryRequests = [];
+const canary = windowsHtml ? createServer((request, response) => {
+  canaryRequests.push(request.url);
+  response.end('Loopback canary');
+}) : undefined;
 let child;
 let exited;
 let reader;
 try {
+  if (canary) {
+    canary.listen(0, '127.0.0.1');
+    await once(canary, 'listening');
+  }
   const runtime = await createDesktopRuntime(state, () => {});
   let workspaceId;
   let chatId;
@@ -97,13 +110,42 @@ try {
     const inbox = JSON.parse(await team(member.id, ['messages', '--dispatch', dispatch]));
     await writeFile(join(directory, 'Beta', 'review.txt'), 'pnpm dev');
     const artifacts = ['--artifact', 'review.txt'];
-    if (process.platform === 'win32' && process.env.HIVE_WINDOWS_HTML_PREVIEW === '1') {
-      await writeFile(join(directory, 'Beta', 'review.html'), `<!doctype html><meta charset="utf-8">
+    if (canary) {
+      const hostFile = join(directory, 'local-canary.txt');
+      await writeFile(hostFile, 'Fixture file outside the project');
+      const origin = 'http://127.0.0.1:' + canary.address().port;
+      await writeFile(htmlPath, `<!doctype html><meta charset="utf-8">
         <button id="add">Increment packaged artifact</button><p id="state">Artifact has not run</p>
+        <button id="picker">Check host file selection</button><input type="file" id="file"><p id="picker-result"></p>
+        <button id="navigate">Check blocked navigation</button><p id="isolation">Checking artifact isolation</p>
         <script>
+          const canary = ${JSON.stringify(origin)};
           function denied(access) { try { access(); return false; } catch { return true; } }
           const isolated = denied(() => parent.document.body) && denied(() => localStorage.getItem('fixture')) &&
-            typeof RTCPeerConnection === 'undefined' && typeof window.ipc === 'undefined';
+            typeof RTCPeerConnection === 'undefined' && typeof window.ipc === 'undefined' &&
+            window.open(canary + '/popup') == null;
+          const imageBlocked = new Promise(resolve => {
+            const image = new Image();
+            image.onload = () => resolve(false);
+            image.onerror = () => resolve(true);
+            image.src = canary + '/image';
+          });
+          const blocked = url => fetch(url).then(() => false, () => true);
+          Promise.all([imageBlocked, blocked(canary + '/fetch'), blocked(${JSON.stringify(pathToFileURL(hostFile).href)})])
+            .then(results => document.querySelector('#isolation').textContent =
+              isolated && results.every(Boolean) ? 'Artifact isolation verified' : 'Artifact isolation failed');
+          document.querySelector('#navigate').onclick = () => { location.href = canary + '/navigate'; };
+          document.querySelector('#picker').onclick = () => {
+            const input = document.querySelector('#file');
+            const clickBlocked = !input.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+            let pickerBlocked = typeof input.showPicker !== 'function';
+            if (!pickerBlocked) {
+              try { input.showPicker(); } catch (error) { pickerBlocked = error.name === 'NotAllowedError'; }
+            }
+            document.querySelector('#picker-result').textContent =
+              clickBlocked && pickerBlocked && typeof showOpenFilePicker === 'undefined'
+              ? 'Host file selection blocked' : 'Host file selection allowed';
+          };
           const state = document.querySelector('#state');
           state.textContent = isolated ? 'Packaged artifact counter 0' : 'Artifact isolation failed';
           document.querySelector('#add').onclick = () => {
@@ -147,7 +189,6 @@ try {
 
   // The native window must select the second project, successfully open its chat
   // and replace the obsolete selection. Booting just the sidecar cannot do this.
-  const windowsPreview = process.platform === 'win32' && process.env.HIVE_WINDOWS_PREVIEW_PATH;
   const existingDraft = '请保留这条跟进问题。';
   const testerDraft = 'Tester 原成员会话的独立草稿。';
   const draftDir = join(state, 'desktop-drafts');
@@ -161,11 +202,14 @@ try {
     }));
   }
   const env = { ...process.env, HIVE_DESKTOP_DATA_DIR: state, HIVE_DESKTOP_TRACE_RPC: '1' };
-  if (language) await writeFile(join(state, 'desktop-language.json'), JSON.stringify(language));
+  if (language || windowsHtml) await writeFile(join(state, 'desktop-language.json'), JSON.stringify(language ?? 'zh'));
   delete env.HIVE_DESKTOP_NODE;
   delete env.HIVE_DESKTOP_RUNTIME;
-  child = spawn(executable, [], { env, cwd: directory, stdio: 'inherit' });
-  exited = once(child, 'exit');
+  function launch() {
+    child = spawn(executable, [], { env, cwd: directory, stdio: 'inherit' });
+    exited = once(child, 'exit');
+  }
+  launch();
   reader = new DatabaseSync(join(state, 'hive/runtime.sqlite'), { readOnly: true });
   const readProfiles = reader.prepare("SELECT value FROM app_state WHERE key = 'desktop_agent_profiles'");
   const profilesBefore = JSON.parse(readProfiles.get().value);
@@ -185,9 +229,14 @@ try {
   await waitForSelection(chatId);
   if (windowsPreview) {
     const capture = fileURLToPath(new URL('./capture-windows-preview.ps1', import.meta.url));
-    execFileSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
-      '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-TesterDraft', testerDraft, '-DispatchId', dispatch, '-DataDirectory', state, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
-    { stdio: 'inherit', timeout: 120_000 });
+    async function captureWindow(reopenOnly) {
+      const captureEnv = {...process.env, HIVE_WINDOWS_HTML_REOPEN_ONLY: reopenOnly ? '1' : '0'};
+      const probe = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', capture,
+        '-AppProcessId', String(child.pid), '-WorkerFile', workerFile, '-WorkerPrompt', prompt, '-ExistingDraft', existingDraft, '-TesterDraft', testerDraft, '-DispatchId', dispatch, '-DataDirectory', state, '-TasksFile', join(directory, 'Beta', '.hive', 'tasks.md'), '-OutputPath', resolve(windowsPreview)],
+      { env: captureEnv, stdio: 'inherit', timeout: reopenOnly ? 85_000 : 150_000 });
+      assert.deepEqual(await once(probe, 'exit'), [0, null]);
+    }
+    await captureWindow(false);
     await waitForSelection(leadChat);
     const renamedLead = JSON.parse(await readFile(join(state, 'chats/index.json'), 'utf8')).find(session => session.id === leadChat);
     assert.equal(renamedLead.title, '启动方式核验');
@@ -210,10 +259,38 @@ try {
       profilesAfter.desktopExecutables.codexCommand);
     assert.equal(profilesAfter.desktopExecutables.codexCommand, String.raw`C:\Fixture Programs\codex.exe`);
     assert.equal(JSON.parse(await readFile(workerDraft, 'utf8')).input, `> ${prompt}\n\n${existingDraft}`);
+    if (windowsHtml) {
+      async function confirmNormalExit() {
+        let timer;
+        try {
+          const result = await Promise.race([exited, new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('Native desktop did not exit after closing its window')), 15_000);
+          })]);
+          assert.deepEqual(result, [0, null]);
+          return child.pid;
+        } finally { clearTimeout(timer); }
+      }
+      const firstPid = await confirmNormalExit();
+      assert.deepEqual(canaryRequests, []);
+      await rm(htmlPath);
+      launch();
+      await captureWindow(true);
+      const secondPid = await confirmNormalExit();
+      assert.notEqual(secondPid, firstPid);
+      assert.deepEqual(canaryRequests, []);
+      await writeFile(join(dirname(resolve(windowsPreview)), 'windows-html-preview-receipt.json'), JSON.stringify({
+        ok: true, windowsWebView2: true, sourceRemovedBeforeColdReopen: true,
+        loopbackRequests: canaryRequests, exitedPids: [firstPid, secondPid],
+      }, null, 2) + '\n');
+    }
   }
   console.log('Native desktop opened the saved project and recovered its missing chat selection from the extracted bundle.');
 } finally {
   reader?.close();
   if (child && child.exitCode === null && child.signalCode === null) { child.kill(); await exited; }
+  if (canary?.listening) {
+    canary.closeAllConnections();
+    await new Promise(resolve => canary.close(resolve));
+  }
   await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
 }
