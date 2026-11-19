@@ -52,12 +52,12 @@ function Request-Layout([IntPtr]$Window,[IntPtr]$Layout) {
     if ([LayoutFixture]::SendMessageTimeoutW($Window,0x50,[IntPtr]::Zero,$Layout,2,3000,[ref]$result) -eq [IntPtr]::Zero) { throw 'Layout change request failed or timed out.' }
     Wait-Until { [LayoutFixture]::GetKeyboardLayout($tid) -eq $Layout } 'layout change acknowledgement'
 }
-function Press-Key([IntPtr]$Window,[ushort]$Key,[bool]$Chord) {
+function Press-Key([IntPtr]$Window,[uint16]$Key,[bool]$Chord) {
     if ([LayoutFixture]::GetForegroundWindow() -ne $Window) { throw 'Fixture lost foreground; no input sent.' }
     foreach ($code in @(0x11,0x10,[int]$Key)) { if (([int][LayoutFixture]::GetAsyncKeyState($code) -band 0x8000) -ne 0) { throw 'A required key is physically held; no input sent.' } }
-    $held=[Collections.Generic.List[ushort]]::new()
+    $held=[Collections.Generic.List[uint16]]::new()
     try {
-        if ($Chord) { foreach ($code in @(0x11,0x10)) { [LayoutFixture]::Key([ushort]$code,$false); $held.Add([ushort]$code) } }
+        if ($Chord) { foreach ($code in @(0x11,0x10)) { [LayoutFixture]::Key([uint16]$code,$false); $held.Add([uint16]$code) } }
         [LayoutFixture]::Key($Key,$false); $held.Add($Key)
     } finally {
         # Release any keys we injected even if focus changed during the chord.
@@ -72,7 +72,7 @@ if ($n -lt 2 -or [LayoutFixture]::GetKeyboardLayoutList($n,$layouts) -ne $n) { t
 $us=@($layouts | Where-Object { ($_.ToInt64() -band 0xffff) -eq 0x0409 } | Select-Object -First 1)
 $de=@($layouts | Where-Object { ($_.ToInt64() -band 0xffff) -eq 0x0407 } | Select-Object -First 1)
 if ($us.Count -ne 1 -or $de.Count -ne 1) { throw 'SKIP: US and German layouts must already be loaded.' }
-[ushort]$vkUs=0; [ushort]$vkDe=0
+[uint16]$vkUs=0; [uint16]$vkDe=0
 $charUs=[LayoutFixture]::ShiftedSemicolon($us[0],[ref]$vkUs)
 $charDe=[LayoutFixture]::ShiftedSemicolon($de[0],[ref]$vkDe)
 if ($charUs -cne ':' -or $charDe -cne ';') { throw "SKIP: actual layouts did not produce expected shifted semicolon mapping (US=$charUs, DE=$charDe)." }

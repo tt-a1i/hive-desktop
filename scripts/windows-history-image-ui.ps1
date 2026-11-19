@@ -161,7 +161,10 @@ public static class ImageFixtureWindow {
  Invoke-Control (Wait-Name 'Jump to latest message')
  Observe-Image 'LATEST_HISTORY_IMAGE_48' '992 × 684'
  Sample 'returnedTail'
- $empty=@(All-Controls | Where-Object { $_.Current.Name -like '*Empty conversation*' -and $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button })
+ $emptyName = 'Pi · Empty conversation · Conversation'
+ $empty = @(Find-Name $emptyName | Where-Object {
+  $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button
+ })
  if ($empty.Count -ne 1) { throw "Expected one empty-conversation button, found $($empty.Count)" }
  Invoke-Control $empty[0]
  $until=[DateTime]::UtcNow.AddSeconds(20)
@@ -171,7 +174,8 @@ public static class ImageFixtureWindow {
   Start-Sleep -Milliseconds 200
  } while ([DateTime]::UtcNow -lt $until)
  if ($tail.Count -ne 0) { throw 'Photo conversation remained visible after switching' }
- [void](Wait-Name 'Empty conversation')
+ [void](Wait-Name 'Current conversation actions: Empty conversation')
+ $result.ui += @{ selectedConversation = 'Empty conversation' }
  Sample 'emptyConversation'
  # Remember only processes descended from this fixture, then verify they exit.
  $all = @(Get-CimInstance Win32_Process)
