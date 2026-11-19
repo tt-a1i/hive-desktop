@@ -26,6 +26,7 @@ type Journal = {
   fromVersion: string;
   toVersion: string;
   candidatePid?: number | undefined;
+  previousReceiptOwner?: string | null | undefined;
   settledBy?: number | undefined;
   error?: string | undefined;
 };
@@ -229,6 +230,7 @@ async function readJournal(plan: DesktopInstallPlan, path: string): Promise<Jour
   if (state.fromVersion !== plan.fromVersion || state.toVersion !== plan.toVersion
     || ![...terminalStates, 'replacing', 'starting', 'recoveryRequired'].includes(state.state)
     || (state.candidatePid !== undefined && !validPid(state.candidatePid))
+    || (state.previousReceiptOwner != null && typeof state.previousReceiptOwner !== 'string')
     || (state.settledBy !== undefined && (!validPid(state.settledBy) || !terminalStates.includes(state.state))))
     throw new Error('Invalid desktop update journal');
   return state;
@@ -310,6 +312,24 @@ function writeReceipt(paths: TransactionPaths, plan: DesktopInstallPlan, transac
   });
 }
 
+async function readReceiptOwner(path: string): Promise<string | null> {
+  try {
+    const receipt = JSON.parse(await readFile(path, 'utf8'));
+    if (typeof receipt?.transactionId === 'string') return receipt.transactionId;
+  } catch { /* A missing or unavailable receipt has no known owner. */ }
+  return null;
+}
+
+async function writeRecoveredReceipt(paths: TransactionPaths, plan: DesktopInstallPlan, transaction: string,
+    journal: Journal, state: 'installed' | 'rolledBack' | 'failed', error?: string) {
+  if (journal.previousReceiptOwner !== undefined) {
+    const owner = await readReceiptOwner(paths.receipt);
+    // A later update may have written a result even if it restored the same desktop version.
+    if (owner !== null && owner !== journal.previousReceiptOwner && owner !== basename(transaction)) return;
+  }
+  await writeReceipt(paths, plan, transaction, state, error);
+}
+
 async function installLocked(plan: DesktopInstallPlan, transaction: string, paths: TransactionPaths) {
   const { installation, dataDirectory, fromVersion, toVersion } = plan;
   const { next, previous, readiness, journal } = paths;
@@ -318,8 +338,11 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
   let movedNew = false;
   let startedHealthy = false;
   let candidate: ChildProcess | undefined;
-  const record = (state: Journal['state'], error?: string) =>
-    atomicJson(journal, { state, fromVersion, toVersion, candidatePid: candidate?.pid, error } satisfies Journal);
+  const previousReceiptOwner = await readReceiptOwner(paths.receipt);
+  const result = (state: Journal['state'], error?: string): Journal => ({
+    state, fromVersion, toVersion, candidatePid: candidate?.pid, previousReceiptOwner, error,
+  });
+  const record = (state: Journal['state'], error?: string) => atomicJson(journal, result(state, error));
   try {
     await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
     await checkExecutable(next, plan.newExecutableSha256, plan.newMacSignature);
@@ -338,27 +361,36 @@ async function installLocked(plan: DesktopInstallPlan, transaction: string, path
     candidate.unref();
     await record('installed');
     await writeReceipt(paths, plan, transaction, 'installed');
-    await settleTransaction(transaction, paths, { state: 'installed', fromVersion, toVersion, candidatePid: candidate.pid });
+    await settleTransaction(transaction, paths, result('installed'));
   } catch (error) {
     // Once the application has accepted the workspace, keep it running even
     // if writing the final receipt fails. Recovery can finish that commit.
     if (startedHealthy) throw error;
     const message = error instanceof Error ? error.message : String(error);
+    const restoredState = movedOld ? 'rolledBack' : 'failed';
+    let reopenedOriginal = false;
     try {
       if (candidate?.pid) await stopCandidate(candidate);
       if (movedNew) await move(installation, next);
       if (movedOld) await move(previous, installation);
       // Before replacement, launch only the verified original and never an unexpected occupant.
       await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
-      await writeReceipt(paths, plan, transaction, movedOld ? 'rolledBack' : 'failed', message);
-      await record(movedOld ? 'rolledBack' : 'failed', message);
-      const original = launch(installation, dataDirectory);
-      await once(original, 'spawn');
-      original.unref();
-      await settleTransaction(transaction, paths, { state: movedOld ? 'rolledBack' : 'failed', fromVersion, toVersion, error: message });
+      try {
+        await record(restoredState, message);
+        await writeReceipt(paths, plan, transaction, restoredState, message);
+      } finally {
+        // A result write must not prevent the verified, restored application from opening.
+        const original = launch(installation, dataDirectory);
+        await once(original, 'spawn');
+        original.unref();
+        reopenedOriginal = true;
+      }
+      await settleTransaction(transaction, paths, result(restoredState, message));
     } catch (recoveryError) {
-      const detail = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
-      await record('recoveryRequired', `${message}\n${detail}`);
+      if (!reopenedOriginal) {
+        const detail = recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
+        await record('recoveryRequired', `${message}\n${detail}`);
+      }
       throw recoveryError;
     }
   }
@@ -379,7 +411,7 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
     if (state.state === 'rolledBack' || state.state === 'failed') {
       await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
       if (!state.settledBy) {
-        await writeReceipt(paths, plan, transaction, state.state, state.error);
+        await writeRecoveredReceipt(paths, plan, transaction, state, state.state, state.error);
         await settleTransaction(transaction, paths, state);
       }
       return 'The original installation is already available.';
@@ -393,9 +425,12 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
     );
     if (state.state === 'installed' || (candidateReady && await exists(previous) && !await exists(next))) {
       await checkExecutable(installation, plan.newExecutableSha256, plan.newMacSignature);
-      await atomicJson(journal, { ...state, state: 'installed', error: undefined });
-      await writeReceipt(paths, plan, transaction, 'installed');
-      await settleTransaction(transaction, paths, { ...state, state: 'installed', error: undefined });
+      if (!state.settledBy) {
+        const installed: Journal = { ...state, state: 'installed', error: undefined };
+        await atomicJson(journal, installed);
+        await writeRecoveredReceipt(paths, plan, transaction, state, 'installed');
+        await settleTransaction(transaction, paths, installed);
+      }
       return `Desktop ${toVersion} is installed. You can open it from the normal location.`;
     }
     if (state.candidatePid !== undefined && isLive(state.candidatePid)) {
@@ -413,7 +448,7 @@ export async function recoverDesktopUpdate(plan: DesktopInstallPlan, transaction
     }
     await checkExecutable(installation, plan.oldExecutableSha256, plan.oldMacSignature);
     const message = 'Desktop installation was interrupted.';
-    await writeReceipt(paths, plan, transaction, 'rolledBack', message);
+    await writeRecoveredReceipt(paths, plan, transaction, state, 'rolledBack', message);
     await atomicJson(journal, { ...state, state: 'rolledBack', error: message });
     await settleTransaction(transaction, paths, { ...state, state: 'rolledBack', error: message });
     return `Desktop ${fromVersion} was recovered. You can open it from the normal location.`;

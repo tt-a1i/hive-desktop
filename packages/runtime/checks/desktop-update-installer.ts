@@ -14,6 +14,7 @@ const preload = join(fixture, 'startup.cjs');
 await writeFile(preload, `
   const fs = require('node:fs');
   const path = require('node:path');
+  if (process.argv[2] === '--cleanup' && process.env.HIVE_TEST_KEEP_ROLLBACK_TRANSACTION) process.exit(0);
   if (process.env.HIVE_TEST_INSTALL_RECEIPT) {
     const io = fs.promises;
     const rename = io.rename;
@@ -96,7 +97,7 @@ async function waitForExit(directory: string, version: string) {
   assert.fail(`Desktop fixture ${version} did not exit`);
 }
 
-async function checkTransaction(healthy: boolean, receiptFault = false, lockedCache = false) {
+async function checkTransaction(healthy: boolean, receiptFault = false, lockedCache = false, supersededReceipt = false) {
   const root = join(fixture, receiptFault ? 'receipt-failure' : healthy ? 'healthy' : 'broken');
   const installation = join(root, 'installation');
   const dataDirectory = join(root, 'data');
@@ -119,24 +120,45 @@ async function checkTransaction(healthy: boolean, receiptFault = false, lockedCa
   await once(original, 'exit');
   const run = (mode: string, fault?: string) => promisify(execFile)(node, [program, mode], {
     windowsHide: true, timeout: 10000, env:{ ...process.env, HIVE_TEST_INSTALL_RECEIPT: fault ?? '',
-      HIVE_TEST_LOCKED_UPDATE_ZIP: lockedCache ? releaseCache : '' },
+      HIVE_TEST_LOCKED_UPDATE_ZIP: lockedCache ? releaseCache : '',
+      HIVE_TEST_KEEP_ROLLBACK_TRANSACTION: !healthy && receiptFault ? '1' : '' },
   });
+  const expected = healthy ? '0.1.1' : '0.1.0';
+  const state = healthy ? 'installed' : 'rolledBack';
+  const laterReceipt = { state: 'rolledBack', version: expected, requestedVersion: '0.1.2', transactionId: '.hive-desktop-install-later' };
+  const startupFailure = 'Updated desktop exited before startup completed (37)';
   if (receiptFault) {
     await assert.rejects(run(String(original.pid), receiptPath), /Injected terminal receipt failure/);
     await assert.rejects(readFile(receiptPath), {code:'ENOENT'});
     assert.match(await readFile(entry, 'utf8'), /--recover/);
-    assert.equal(JSON.parse(await readFile(join(transaction, 'install-status.json'), 'utf8')).settledBy, undefined);
-    await lstat(desktopPackagePaths(join(transaction,'previous')).executable);
-    await waitForExit(dataDirectory, '0.1.1');
-    assert.match((await run('--recover')).stdout, /0\.1\.1 is installed/);
+    const journal = JSON.parse(await readFile(join(transaction, 'install-status.json'), 'utf8'));
+    assert.equal(journal.settledBy, undefined);
+    assert.equal(journal.state, state);
+    if (healthy) await lstat(desktopPackagePaths(join(transaction, 'previous')).executable);
+    else {
+      assert.equal(journal.error, startupFailure);
+      await assert.rejects(run('--recover', receiptPath), /Injected terminal receipt failure/);
+    }
+    await waitForExit(dataDirectory, expected);
+    if (supersededReceipt) await writeFile(receiptPath, JSON.stringify(laterReceipt));
+    const recoveryMessage = healthy ? /0\.1\.1 is installed/ : /The original installation is already available/;
+    assert.match((await run('--recover')).stdout, recoveryMessage);
+    if (!healthy) {
+      // Keep the real transaction around to exercise the settled recovery path too.
+      assert.match((await run('--recover')).stdout, recoveryMessage);
+      await reclaimDesktopUpdateTransactions(installation, dataDirectory);
+    }
   } else await run(String(original.pid));
 
-  const expected = healthy ? '0.1.1' : '0.1.0';
   const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));
-  assert.equal(receipt.state, healthy ? 'installed' : 'rolledBack', JSON.stringify(receipt));
+  assert.equal(receipt.state, state, JSON.stringify(receipt));
   await waitForExit(dataDirectory, expected);
   assert.equal(receipt.version, expected);
-  assert.equal(receipt.requestedVersion, '0.1.1');
+  if (supersededReceipt) assert.deepEqual(receipt, laterReceipt);
+  else {
+    assert.equal(receipt.requestedVersion, '0.1.1');
+    if (receiptFault && !healthy) assert.equal(receipt.error, startupFailure);
+  }
   assert.equal(JSON.parse(await readFile(join(dirname(current), 'fixture.json'), 'utf8')).version, expected);
   assert.equal(await readFile(join(dataDirectory, 'started'), 'utf8'), healthy ? '0.1.1\n' : '0.1.1\n0.1.0\n');
   assert.equal(await readFile(draft, 'utf8'), 'User draft must survive replacement.');
@@ -234,6 +256,8 @@ try {
   await checkTransaction(true, false, true);
   await checkTransaction(false);
   await checkTransaction(true, true);
+  await checkTransaction(false, true);
+  await checkTransaction(false, true, false, true);
   await checkInterruptedReplacement();
   console.log('DESKTOP_UPDATE_INSTALLER_OK: replacement, failed-start rollback, interrupted-installer recovery, and unchanged user data.');
 } finally {
