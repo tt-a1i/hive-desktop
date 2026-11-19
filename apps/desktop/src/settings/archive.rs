@@ -334,7 +334,21 @@ impl HiveApp {
                             } else {
                                 hit.title.clone()
                             };
-                            super::settings_row(index > 0, cx).child(
+                            let mut accessible_result = format!(
+                                "{title} · {} · {}",
+                                hit.workspace_name, hit.workspace_path
+                            );
+                            if let Some(snippet) = &snippet {
+                                accessible_result.push('\n');
+                                accessible_result.push_str(snippet);
+                            }
+                            let restore_label = format!("{}: {accessible_result}", tr("恢复会话"));
+                            let open_label = format!("{}: {accessible_result}", tr("打开会话"));
+                            super::settings_row(index > 0, cx)
+                                .id(("archive-result-group", index))
+                                .role(Role::Group)
+                                .aria_label(accessible_result)
+                                .child(
                                 h_flex()
                                     .w_full()
                                     .min_w_0()
@@ -405,6 +419,7 @@ impl HiveApp {
                                                     .px_2p5()
                                                     .rounded_md()
                                                     .label(tr("恢复会话"))
+                                                    .accessibility_label(restore_label)
                                                     .disabled(!self.connected || restoring)
                                                     .on_click(cx.listener(move |this, _, _, cx| {
                                                         this.set_session_archived(
@@ -426,6 +441,7 @@ impl HiveApp {
                                                     .px_2p5()
                                                     .rounded_md()
                                                     .label(tr("打开会话"))
+                                                    .accessibility_label(open_label)
                                                     .disabled(!self.connected)
                                                     .on_click(cx.listener(
                                                         move |this, _, window, cx| {

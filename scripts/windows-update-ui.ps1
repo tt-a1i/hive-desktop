@@ -115,9 +115,27 @@ if ($Action -eq 'Install') {
     Invoke-Control '检查更新'
     Invoke-Control '下载更新' 40
     Invoke-Control '安装并重启' 150
-    [void](Wait-Control '安装更新并重启？')
-    # The confirmation button and the settings row have the same label.
-    Invoke-Control '安装并重启' -Last
+    # The modal exposes its buttons in Windows UIA but its title is not exposed.
+    # Require the modal-only button set, so the identically named settings row
+    # cannot be mistaken for the confirmation action.
+    $end = [DateTime]::UtcNow.AddSeconds(10)
+    $confirm = $null
+    do {
+        $buttons = @($root.FindAll($scope, [System.Windows.Automation.Condition]::TrueCondition) |
+            Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+                $_.Current.Name -and $_.Current.IsEnabled -and (Test-InWindow $_) })
+        $accept = @($buttons | Where-Object { $_.Current.Name -ceq '安装并重启' })
+        $cancel = @($buttons | Where-Object { $_.Current.Name -ceq '取消' })
+        if ($buttons.Count -eq 2 -and $accept.Count -eq 1 -and $cancel.Count -eq 1) {
+            $confirm = $accept[0]
+            break
+        }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $end)
+    if ($null -eq $confirm) { throw 'The update confirmation dialog did not expose its expected two buttons.' }
+    $titleVisible = @((Find-Controls '安装更新并重启？') | Where-Object { $_.Current.IsEnabled -and (Test-InWindow $_) }).Count -gt 0
+    [Console]::Out.WriteLine('HIVE_UPDATE_TITLE_ACCESSIBLE=' + $titleVisible.ToString().ToLowerInvariant())
+    $confirm.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
 } else {
     $end = [DateTime]::UtcNow.AddSeconds(10)
     do {

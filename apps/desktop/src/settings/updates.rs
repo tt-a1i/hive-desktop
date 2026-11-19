@@ -171,7 +171,7 @@ impl HiveApp {
                     div()
                         .id("desktop-update-confirmation-title")
                         .role(Role::Label)
-                        .aria_label(tr("安装更新并重启？"))
+                        .aria_value(tr("安装更新并重启？"))
                         .child(tr("安装更新并重启？")),
                 )
                 .description(tr(

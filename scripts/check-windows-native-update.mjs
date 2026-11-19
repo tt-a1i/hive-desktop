@@ -201,7 +201,10 @@ async function runCase(name, expectedState, current, candidate, candidateSha, ba
   const details = { name, expectedState, originalPid: original.pid, phase: 'native update controls' };
   outcomes.push(details);
   try {
-    await ui('Install', ['-AppProcessId', String(original.pid), '-Executable', executable, '-Draft', draft], 240_000);
+    const installUi = await ui('Install', ['-AppProcessId', String(original.pid), '-Executable', executable, '-Draft', draft], 240_000);
+    const titleEvidence = [...installUi.stdout.matchAll(/^HIVE_UPDATE_TITLE_ACCESSIBLE=(true|false)\r?$/gm)];
+    assert.equal(titleEvidence.length, 1, 'Missing or ambiguous confirmation title accessibility evidence');
+    details.confirmationTitleAccessible = titleEvidence[0][1] === 'true';
     details.phase = 'installer receipt';
     const resultFile = join(data, 'desktop-updates', 'install-result.json');
     const result = await until(`${name} install receipt`, () => readFile(resultFile, 'utf8').then(JSON.parse, error => {
@@ -268,6 +271,11 @@ try {
     await runCase('broken', 'rolledBack', current, candidate, candidateSha, endpoint);
   } catch (error) {
     failures.push({ name: 'broken', error: error.stack ?? String(error) });
+  }
+  for (const outcome of outcomes) {
+    if (outcome.confirmationTitleAccessible === false) {
+      failures.push({ name: outcome.name, error: 'Update confirmation title is not exposed to Windows UI Automation.' });
+    }
   }
   if (failures.length) {
     await save(receipt, { ok: false, outcomes, failures });

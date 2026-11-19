@@ -74,7 +74,9 @@ try {
   assert.match(stderr, /"chat.search"/);
   assert.match(stderr, /"chat.open"/);
   assert.match(stderr, /send 0 "shutdown"\s*\[hive rpc\] reply 0 ok/);
-  assert.doesNotMatch(stderr, /"chat.prompt"|"chat.activate"|"pi.auth/);
+  // Settings may read the isolated provider catalog; no login, activation or send is allowed.
+  assert.doesNotMatch(stderr, /"chat\.(?:prompt|activate)"|"pi\.auth\.(?!providers")/);
+  output.isolatedPiProviderCatalogRead = /"pi\.auth\.providers"/.test(stderr);
   await run(node, [seedScript, root, resources, 'verify'], { env, stdio: 'inherit' }, 'disk verification');
   output.disk = JSON.parse(await readFile(join(root, 'archived-disk.json'), 'utf8'));
   output.shutdownAcknowledged = true;

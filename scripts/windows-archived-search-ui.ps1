@@ -82,17 +82,36 @@ public static class ArchivedFixtureWindow {
     Invoke-Control (Wait-Name 'Archive conversation')
     $search = Wait-Name 'Search archived threads…'
     $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('Cerulean Recovery 8DA7')
-    [void](Wait-Name 'Independent history QA')
+    $query = $search.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+    if ($query -cne 'Cerulean Recovery 8DA7') { throw 'Archive search input changed' }
     $deadline = [DateTime]::UtcNow.AddSeconds(25)
+    $matchedGroup = $null
+    $open = @()
     do {
-        $snippet = @(All-Controls | Where-Object { $_.Current.Name -like '*Cerulean Recovery 8DA7*' -and (In-Window $_) })
-        $open = @(Find-Name 'Open conversation' | Where-Object { $_.Current.IsEnabled -and (In-Window $_) })
-        if ($snippet.Count -ge 1 -and $open.Count -eq 1) { break }
+        $groups = @(All-Controls | Where-Object {
+            $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Group -and
+            $_.Current.Name.StartsWith('Independent history QA · Archived worktree QA · ', [System.StringComparison]::Ordinal) -and
+            $_.Current.Name.Contains('Cerulean Recovery 8DA7')
+        })
+        if ($groups.Count -gt 1) { throw 'Archived search exposed duplicate matching result groups' }
+        if ($groups.Count -eq 1) {
+            $actions = $groups[0].FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition)
+            $open = @($actions | Where-Object {
+                $_.Current.Name.StartsWith('Open conversation: Independent history QA · Archived worktree QA · ', [System.StringComparison]::Ordinal) -and
+                $_.Current.Name.Contains('Cerulean Recovery 8DA7') -and $_.Current.IsEnabled -and (In-Window $_)
+            })
+            if ($open.Count -eq 1 -and (In-Window $groups[0])) {
+                $matchedGroup = $groups[0]
+                break
+            }
+        }
         Start-Sleep -Milliseconds 200
     } while ([DateTime]::UtcNow -lt $deadline)
-    if ($snippet.Count -lt 1 -or $open.Count -ne 1) { throw 'Archived body result or unique open action unavailable' }
+    if ($null -eq $matchedGroup) { throw 'Archived result lacks an accessible title, project, body snippet or unique open action' }
+    $result.archiveResultName = $matchedGroup.Current.Name
     Save-Window 'windows-archived-search-result.png'
-    $result.checks += 'archived body search and unique result'
+    $result.checks += 'accessible archived result title, project and body snippet'
     Invoke-Control $open[0]
     [void](Wait-Name 'Current conversation actions: Independent history QA')
     $original = Wait-Name 'The durable transcript records Cerulean Recovery 8DA7 after the checkout was moved.'
