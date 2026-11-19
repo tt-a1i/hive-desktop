@@ -1,4 +1,4 @@
-mod patch_reader;
+pub(crate) mod patch_reader;
 mod remotes;
 use patch_reader::PatchReader;
 use crate::{

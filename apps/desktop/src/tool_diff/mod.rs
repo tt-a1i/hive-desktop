@@ -13,6 +13,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use crate::git_workspace::patch_reader::PatchReader;
 use serde_json::Value;
 
 struct ToolDiff {
@@ -23,7 +24,7 @@ struct ToolDiff {
     raw: bool,
     ignore_whitespace: bool,
     loading: bool,
-    scroll: ScrollHandle,
+    raw_reader: Option<PatchReader>,
     raw_focus: FocusHandle,
 }
 
@@ -102,7 +103,7 @@ impl HiveApp {
                 raw: false,
                 ignore_whitespace: initial_ignore_ws,
                 loading: true,
-                scroll: ScrollHandle::new(),
+                raw_reader: None,
                 raw_focus: cx.focus_handle().tab_stop(true),
             };
             cx.spawn(async move |this, cx| {
@@ -288,6 +289,7 @@ impl Render for ToolDiff {
                                     .disabled(!has_files)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.raw = false;
+                                        this.raw_reader = None;
                                         window.focus(&this.state.read(cx).focus_handle(cx), cx);
                                         this.state
                                             .update(cx, |s, cx| s.set_mode(DiffMode::Unified, cx));
@@ -307,6 +309,7 @@ impl Render for ToolDiff {
                                     .disabled(!has_files)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.raw = false;
+                                        this.raw_reader = None;
                                         window.focus(&this.state.read(cx).focus_handle(cx), cx);
                                         this.state
                                             .update(cx, |s, cx| s.set_mode(DiffMode::Split, cx));
@@ -343,6 +346,7 @@ impl Render for ToolDiff {
                                     .disabled(self.loading || self.document.as_ref().is_none_or(|d| d.raw.is_empty()))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.ignore_whitespace = !this.ignore_whitespace;
+                                        this.raw_reader = None;
                                         if let Some(doc) = &this.document {
                                             apply_tool_diff_files(
                                                 &this.state,
@@ -515,6 +519,30 @@ impl Render for ToolDiff {
                 )
             })
             .when(self.raw, |view| {
+                let reader = self.raw_reader.get_or_insert_with(|| {
+                    let text = raw_patch_text(
+                        self.document.as_ref().map(|d| d.raw.as_str()).unwrap_or_default(),
+                        self.ignore_whitespace,
+                    );
+                    PatchReader::new(text.into()).without_copy_button()
+                });
+                let region = crate::text_reading::region(
+                    "tool-diff-raw".into(),
+                    tr("原始补丁，可用方向键或翻页键滚动").into(),
+                    &reader.scroll,
+                    height,
+                    cx,
+                )
+                .border_0()
+                .rounded_none()
+                .px_3p5()
+                .py_3()
+                .track_focus(&self.raw_focus)
+                .font_family(Theme::global(cx).mono_font_family.clone())
+                .text_size(px(code_size))
+                .line_height(px((code_size * 1.6).round()))
+                .when(code_wrap, |v| v.whitespace_normal())
+                .text_color(Color::Text.get(cx));
                 view.child(
                     div()
                         .min_w_0()
@@ -524,43 +552,55 @@ impl Render for ToolDiff {
                         .border_color(Color::Divider.get(cx))
                         .overflow_hidden()
                         .child(
-                            crate::text_reading::region(
-                                "tool-diff-raw".into(),
-                                tr("原始补丁，可用方向键或翻页键滚动").into(),
-                                &self.scroll,
-                                height,
-                                cx,
-                            )
-                            .border_0()
-                            .rounded_none()
-                            .px_3p5()
-                            .py_3()
-                            .track_focus(&self.raw_focus)
-                            .font_family(Theme::global(cx).mono_font_family.clone())
-                            .text_size(px(code_size))
-                            .line_height(px((code_size * 1.6).round()))
-                            .when(code_wrap, |v| v.whitespace_normal())
-                            .text_color(Color::Text.get(cx))
-                            .child(crate::text_reading::selectable_text(
-                                "tool-diff-source",
-                                self.document
-                                    .as_ref()
-                                    .map(|d| {
-                                        if self.ignore_whitespace {
-                                            let filtered = crate::diffs_settings::filter_patch_whitespace(&d.raw);
-                                            if filtered.trim().is_empty() && !d.raw.trim().is_empty() {
-                                                tr("忽略空白后没有代码内容变更。").into()
-                                            } else {
-                                                filtered
-                                            }
-                                        } else {
-                                            d.raw.clone()
-                                        }
-                                    })
-                                    .unwrap_or_default(),
-                            )),
+                            reader.view("tool-diff-source", region, |this| this.raw_reader.as_mut(), cx)
                         ),
                 )
             })
+    }
+}
+
+fn raw_patch_text(raw: &str, ignore_whitespace: bool) -> String {
+    if !ignore_whitespace {
+        return raw.to_owned();
+    }
+    let filtered = crate::diffs_settings::filter_patch_whitespace(raw);
+    if filtered.trim().is_empty() && !raw.trim().is_empty() {
+        tr("忽略空白后没有代码内容变更。").into()
+    } else {
+        filtered
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::raw_patch_text;
+    use crate::text_reading::TextPages;
+
+    #[test]
+    fn raw_tool_patch_pages_preserve_history_bytes_including_invalid_patch() {
+        let raw = format!("invalid header\r\n{}+last", "+中文🦀\r\n".repeat(1200));
+        let mut pages = TextPages::new(raw_patch_text(&raw, false).into());
+        assert!(pages.count() > 1);
+        let mut restored = String::new();
+        for page in 0..pages.count() {
+            pages.show(page);
+            assert!(pages.visible.len() <= 32 * 1024);
+            assert!(pages.visible.lines().count() <= 256);
+            restored.push_str(&pages.visible);
+        }
+        assert_eq!(restored.as_bytes(), raw.as_bytes());
+        assert_eq!(pages.full.as_bytes(), raw.as_bytes());
+        assert_eq!(raw_patch_text(&raw, true), raw);
+    }
+
+    #[test]
+    fn raw_tool_patch_keeps_existing_whitespace_filter_semantics() {
+        let raw = "--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n";
+        assert_eq!(raw_patch_text(raw, false), raw);
+        assert_eq!(raw_patch_text(raw, true), crate::diffs_settings::filter_patch_whitespace(raw));
+        let whitespace = "--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+ old\n";
+        assert_eq!(raw_patch_text(whitespace, true), crate::language::tr("忽略空白后没有代码内容变更。"));
+        assert!(raw_patch_text("", true).is_empty());
     }
 }

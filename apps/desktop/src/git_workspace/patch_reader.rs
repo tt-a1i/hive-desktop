@@ -1,4 +1,3 @@
-use super::GitWorkspace;
 use crate::{language::tr, palette::Color, text_reading};
 use gpui_kit::{
     component::{
@@ -9,9 +8,10 @@ use gpui_kit::{
     *,
 };
 
-pub(super) struct PatchReader {
+pub(crate) struct PatchReader {
     text: text_reading::TextPages,
     pub scroll: ScrollHandle,
+    copy_button: bool,
 }
 
 impl PatchReader {
@@ -19,7 +19,13 @@ impl PatchReader {
         Self {
             text: text_reading::TextPages::new(patch),
             scroll: ScrollHandle::new(),
+            copy_button: true,
         }
+    }
+
+    pub fn without_copy_button(mut self) -> Self {
+        self.copy_button = false;
+        self
     }
 
     fn show(&mut self, page: usize) {
@@ -28,12 +34,12 @@ impl PatchReader {
         }
     }
 
-    pub fn view(
+    pub fn view<T: 'static>(
         &self,
         id: &'static str,
         region: Stateful<Div>,
-        reader: fn(&mut GitWorkspace) -> Option<&mut Self>,
-        cx: &Context<GitWorkspace>,
+        reader: fn(&mut T) -> Option<&mut Self>,
+        cx: &Context<T>,
     ) -> impl IntoElement {
         let page = self.text.page;
         let count = self.text.count();
@@ -87,7 +93,7 @@ impl PatchReader {
                                     }
                                 })),
                         )
-                        .child(
+                        .when(self.copy_button, |controls| controls.child(
                             Button::new((group_id, "copy"))
                                 .ghost()
                                 .xsmall()
@@ -99,7 +105,7 @@ impl PatchReader {
                                         ));
                                     }
                                 })),
-                        ),
+                        )),
                 )
             })
     }
