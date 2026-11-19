@@ -2,6 +2,8 @@
 
 2026-11-19 当前工作以 [功能总任务 #39](https://github.com/tt-a1i/hive-desktop/issues/39) 的本地可用性和后端正确性为先。T3 Code、Cindy 和 Beluga 提供功能参考。界面改动限于实际操作所需的入口、状态和错误反馈。Apache Maka 的 Rust 分支提供内存及运行时回收参考。[Maka 源码对比](research/2026-11-19-maka-rust-preview.md)
 
+用户已取消语音输入，交付清单以本次更新为准。普通聊天输入与草稿照常使用。
+
 macOS 本地优化包已验证原生 Codex 和官方 ACP 的真实协作及被动冷恢复，并实测长会话 Markdown 导出的内存。当前版本的 Windows 原生包与实际窗口仍待复验。更新使用隔离渠道，本轮交付本地证据。[协作验收](validation/2026-11-19-native-acp-collaboration.md) · [导出内存实测](validation/2026-11-19-streaming-markdown-export.md)
 
 #45 的独立会话工作树清理已补齐。macOS 原生窗口验证本地文件保护、确认清理、保留分支及冷启动只读搜索。真实 bare 仓库和包内 JSONL 验证已推送证明与在用保护。[工作树清理验收](validation/2026-11-19-worktree-removal.md)

@@ -87,68 +87,6 @@ impl HiveApp {
                             )
                             .on_click(cx.listener(|this, _, _, cx| this.choose_images(cx))),
                     )
-                    .when(
-                        cfg!(any(target_os = "macos", target_os = "windows")),
-                        |row| {
-                            let running = self.voice.running();
-                            let pending = self.voice.pending();
-                            let label = if self.voice.finishing() {
-                                tr("正在结束听写…")
-                            } else if running {
-                                tr("完成听写")
-                            } else if pending {
-                                tr("插入听写文字")
-                            } else {
-                                tr("开始听写")
-                            };
-                            row.child(
-                                Button::new("composer-dictation")
-                                    .custom(palette::quiet_icon_variant(cx))
-                                    .compact()
-                                    .xsmall()
-                                    .h(px(28.))
-                                    .w(px(28.))
-                                    .rounded_lg()
-                                    .icon(if running {
-                                        Glyph::Square
-                                    } else if pending {
-                                        Glyph::Check
-                                    } else {
-                                        Glyph::Mic
-                                    })
-                                    .tooltip(label)
-                                    .accessibility_label(label)
-                                    .disabled(
-                                        self.voice.finishing() || (!running && !self.can_dictate()),
-                                    )
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        if this.voice.pending() {
-                                            this.insert_voice_text(window, cx);
-                                        } else {
-                                            this.toggle_voice_input(window, cx);
-                                        }
-                                    })),
-                            )
-                            .when(running || pending, |row| {
-                                row.child(
-                                    Button::new("cancel-dictation")
-                                        .custom(palette::quiet_icon_variant(cx))
-                                        .compact()
-                                        .xsmall()
-                                        .h(px(28.))
-                                        .w(px(28.))
-                                        .rounded_lg()
-                                        .icon(Glyph::X)
-                                        .tooltip(tr("取消听写"))
-                                        .accessibility_label(tr("取消听写"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            let _ = this.voice.cancel();
-                                            cx.notify();
-                                        })),
-                                )
-                            })
-                        },
-                    )
                     .child(
                         Button::new("reference-project-file")
                             .custom(palette::quiet_icon_variant(cx))

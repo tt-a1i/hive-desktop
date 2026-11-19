@@ -138,7 +138,6 @@ pub struct HiveApp {
     pub terminal_drawer_drag: Option<(f32, f32)>,
     pub(crate) git_workspace: Option<Entity<crate::git_workspace::GitWorkspace>>,
     pub input: Entity<TextareaState>,
-    pub(crate) voice: crate::voice_input::VoiceInput,
     pub(crate) draft_store: Option<crate::drafts::DraftStore>,
     pub(crate) draft_save_task: Option<Task<()>>,
     pub attachments: crate::attachments::Attachments,
@@ -617,7 +616,6 @@ impl HiveApp {
             terminal: crate::terminal::WorkspaceTerminal::new(cx),
             history_navigation: crate::history_navigation::HistoryNavigation::default(),
             input,
-            voice: Default::default(),
             composer_can_submit: false,
             composer_submit_on_enter: true,
             composer_has_text: false,
@@ -942,16 +940,12 @@ impl HiveApp {
     }
     fn shutdown_and_quit(&mut self, cx: &mut Context<Self>) {
         let runtime = self.runtime.take();
-        let voice = self.voice.cancel();
         let installer_id = self
             .desktop_updates
             .installer
             .as_ref()
             .map(|installer| installer.id.clone());
         cx.spawn(async move |this, cx| {
-            if let Some(voice) = voice {
-                let _ = voice.recv().await;
-            }
             if let Some(runtime) = runtime {
                 let grace = std::time::Duration::from_secs(3);
                 let shutdown = match installer_id.as_deref() {

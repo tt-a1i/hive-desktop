@@ -32,8 +32,6 @@ export async function prepareMacBundle(contents,{version,iconSource}) {
   run('/usr/bin/iconutil',['-c','icns','-o',join(resources,'HiveDesktop.icns'),iconset]);
  }finally{await rm(temporary,{recursive:true,force:true});}
  const plist={CFBundleExecutable:'hive-desktop',CFBundleIdentifier:'com.hive.desktop.dev',CFBundleName:'Hive Desktop',CFBundleDisplayName:'Hive Desktop',CFBundlePackageType:'APPL',CFBundleVersion:numericVersion,CFBundleShortVersionString:numericVersion,CFBundleGetInfoString:`Hive Desktop ${version} development build`,CFBundleIconFile:'HiveDesktop.icns',LSMinimumSystemVersion:minimum,LSApplicationCategoryType:'public.app-category.developer-tools',NSHighResolutionCapable:true};
- plist.NSMicrophoneUsageDescription='Hive Desktop uses the microphone when you start dictation to add text to your unsent draft.';
- plist.NSSpeechRecognitionUsageDescription='Hive Desktop uses on-device speech recognition when you dictate a draft.';
  run('/usr/bin/plutil',['-convert','xml1','-o',join(contents,'Info.plist'),'-'],JSON.stringify(plist));
  const hivePackage=JSON.parse(await readFile(join(dirname(dirname(iconSource)),'package.json'),'utf8'));
  const iconSha256=createHash('sha256').update(await readFile(iconSource)).digest('hex');

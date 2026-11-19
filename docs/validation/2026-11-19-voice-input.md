@@ -1,5 +1,7 @@
 # 本机听写与草稿
 
+历史记录。用户于 2026-11-19 取消语音输入，该功能已从当前本地交付范围移除。
+
 `58050b7` 在聊天输入框加入开始、完成和取消听写。启动后用系统本机语言识别，单次最多采集 60 秒。识别文字追加到原草稿，发送仍由用户触发。应用输入法正在组字时，会保留已经识别的结果并显示插入按钮。切换会话、取消听写、发送原草稿、后台断开及退出时结束听写，避免迟到结果进入另一份草稿。
 
 macOS 使用系统 Speech 和 AVFoundation。麦克风和语音识别的系统授权由用户触发，仅在本机语言支持离线识别时启动。Windows 使用系统已安装的桌面识别器。两个平台的听写进程由应用按需启动和回收。进程间只返回识别文字及状态，采集期间无需写入音频文件。[Apple 本机识别要求](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition?changes=_3) · [Windows 桌面识别 API](https://learn.microsoft.com/en-us/dotnet/api/system.speech.recognition.speechrecognitionengine.recognizeasync?view=netframework-4.8.1)

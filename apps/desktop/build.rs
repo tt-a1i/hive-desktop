@@ -85,11 +85,6 @@ fn build_identity() {
 
 fn main() {
     build_identity();
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
-        && env::var_os("CARGO_FEATURE_DESKTOP").is_some()
-    {
-        build_voice_capture();
-    }
     // Expanding a GPUI tool group overflows the default Windows main-thread
     // stack in the packaged debug executable. Reserve space for the UI thread;
     // the OS commits pages as they are used.
@@ -100,57 +95,5 @@ fn main() {
             "-Wl,--stack,8388608"
         };
         println!("cargo:rustc-link-arg-bin=hive-desktop={stack}");
-    }
-}
-
-fn build_voice_capture() {
-    println!("cargo:rerun-if-changed=src/voice_capture.m");
-    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
-    let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));
-    let object = output.join("voice_capture.o");
-    let archive = output.join("libhive_voice.a");
-    let architecture = match env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
-        Ok("aarch64") => "arm64",
-        Ok("x86_64") => "x86_64",
-        _ => panic!("Unsupported macOS architecture"),
-    };
-    let minimum = env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| {
-        if architecture == "arm64" {
-            "11.0"
-        } else {
-            "10.15"
-        }
-        .to_owned()
-    });
-    let target = format!("{architecture}-apple-macos{minimum}");
-    let status = Command::new("xcrun")
-        .args([
-            "--sdk",
-            "macosx",
-            "clang",
-            "-target",
-            &target,
-            "-fobjc-arc",
-            "-fblocks",
-            "-O2",
-            "-c",
-            "src/voice_capture.m",
-            "-o",
-        ])
-        .arg(&object)
-        .status()
-        .expect("run macOS speech compiler");
-    assert!(status.success(), "Compile macOS speech capture");
-    let status = Command::new("xcrun")
-        .args(["ar", "crs"])
-        .arg(archive)
-        .arg(object)
-        .status()
-        .expect("run macOS archiver");
-    assert!(status.success(), "Archive macOS speech capture");
-    println!("cargo:rustc-link-search=native={}", output.display());
-    println!("cargo:rustc-link-lib=static=hive_voice");
-    for framework in ["AVFoundation", "Foundation", "Speech"] {
-        println!("cargo:rustc-link-lib=framework={framework}");
     }
 }
