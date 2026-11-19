@@ -7,7 +7,7 @@ import { isDeliveryPresentation, type DeliveryPresentation } from '../delivery-p
 import { CodexTransport, CodexRpcError, type CodexServerRequest } from './codex-transport.js';
 import { updateCodexSettings } from './codex-settings.js';
 import { mkdirSync } from 'node:fs';
-import { CodexModes } from './codex-modes.js';
+import { CodexModes, type CodexThreadModeReceipt } from './codex-modes.js';
 import { CodexInteractions } from './codex-interactions.js';
 import { CodexProjection } from './codex-projection.js';
 import { CodexEvents } from './codex-events.js';
@@ -52,6 +52,7 @@ export interface CodexSessionHandle extends PiSessionHandle {
   dispose(): Promise<void>;
 }
 type Model = { id: string; model: string; displayName: string; hidden: boolean; supportedReasoningEfforts?: {reasoningEffort:string;description:string}[] };
+type ThreadLaunchReceipt = CodexThreadResponse & CodexThreadModeReceipt;
 type InFlightDelivery = { id: string; text: string; presentation: DeliveryPresentation; itemId?: string; accepted?: boolean };
 type Run = { appended: InFlightDelivery[]; requests: Set<Promise<unknown>>; tools: Set<Promise<unknown>>; nativeTools: Map<string, { done: Promise<void>; complete(): void }>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: InFlightDelivery;
   terminal: Promise<CodexTurn>; resolve: (turn: CodexTurn) => void; reject: (error: Error) => void; done: Promise<void>; error?: Error };
@@ -69,7 +70,7 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   let metadata: CodexMetadata = options.threadId ? readCodexMetadata(options.sessionDir, options.threadId)
     : { version: 1, context: [], deliveries: [], completed: [] };
   let deliveryIndex: Map<string, Map<string | undefined, CodexDelivery>> | undefined;
-  let response: CodexThreadResponse;
+  let response: ThreadLaunchReceipt;
   let events: CodexEvents | undefined;
   let projection: CodexProjection | undefined;
   const emit = (event: PiEvent) => options.onEvent(event);
@@ -224,9 +225,12 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
   if(options.deferGoalContinuation&&!defersNativeGoals){await transport.close();throw new Error('This native history fork requires Codex 0.169.0 deferred continuation support');}
   const modes = new CodexModes(transport, options.mode, options.permissionMode);
   const resume = async (extra: Record<string, unknown> = {}) => {
-    response = await transport.sendRequest<CodexThreadResponse>('thread/resume', { threadId, excludeTurns: true, ...(defersNativeGoals&&{deferGoalContinuation:true}), ...extra });
+    response = await transport.sendRequest<ThreadLaunchReceipt>('thread/resume', { threadId, excludeTurns: true, ...(defersNativeGoals&&{deferGoalContinuation:true}), ...extra });
+    if (response.thread.id !== threadId) throw new Error('Codex returned a different thread ID');
     if (response.thread.historyMode === 'legacy' && response.thread.turns.length === 0 && response.thread.path) {
-      response = await transport.sendRequest<CodexThreadResponse>('thread/read', { threadId, includeTurns: true });
+      const { thread } = await transport.sendRequest<{ thread: CodexThreadResponse['thread'] }>('thread/read', { threadId, includeTurns: true });
+      if (thread.id !== threadId) throw new Error('Codex returned a different thread ID');
+      response = { ...response, thread };
     }
   };
   let settledTurns: CodexTurn[] = [];
@@ -308,11 +312,11 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     const modelParams = options.model ? { model: options.model.id, modelProvider: options.model.provider } : {};
     if (options.threadId) {
       await resume({ ...modelParams, ...modes.threadParams(), ...(options.deferGoalContinuation&&{deferGoalContinuation:true}) });
-      if (response!.thread.id !== options.threadId) throw new Error('Codex returned a different thread ID');
     }
-    else response = await transport.sendRequest<CodexThreadResponse>('thread/start', { cwd: options.cwd, allowProviderModelFallback: false, ...modelParams, ...modes.threadParams(),
+    else response = await transport.sendRequest<ThreadLaunchReceipt>('thread/start', { cwd: options.cwd, allowProviderModelFallback: false, ...modelParams, ...modes.threadParams(),
       dynamicTools: options.customTools?.map(tool => ({ type: 'function', name: tool.name, description: tool.description, inputSchema: tool.parameters })) ?? [] });
     if (options.model && (response!.model !== options.model.id || response!.modelProvider !== options.model.provider)) throw new Error('Codex did not select the requested model/provider');
+    modes.confirmThreadSettings(response!);
     threadId = response!.thread.id;
     persist(metadata);
     projection ??= new CodexProjection(options.sessionDir, threadId);
@@ -398,8 +402,9 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
             input: [...(text ? [{ type: 'text', text, text_elements: [] }] : []), ...images.map(image=>({type:'image',url:`data:${image.mimeType};base64,${image.data}`}))],
             ...(metadata.context.length > 0 && { additionalContext: { 'hive-context': { kind: 'application',
               value: metadata.context.map(entry => entry.text).join('\n\n') } } }) });
-          modes.accepted();
+          if (typeof started?.turn?.id !== 'string' || !started.turn.id) throw new Error('Codex did not confirm the turn identity');
           run.turnId = started.turn.id;
+          modes.accepted();
           materialized = true;
           await notifyMaterialized();
           rememberDelivery(run.turnId);

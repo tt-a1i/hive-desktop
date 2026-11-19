@@ -10,6 +10,10 @@ const create = (extra: Record<string,unknown> = {}) => createCodexSession({cwd:d
 try {
  const session = await create();
  assert.equal((await session.mode!()).selected, null);
+ const inherited = await session.permissionMode!();
+ assert.equal(inherited.selected, null);
+ assert.equal(inherited.applied, 'read-only');
+ assert.equal(inherited.pendingNextTurn, false);
  assert.deepEqual((await session.mode!()).options.map(o=>o.id), ['native-default','native-plan']);
  await session.setPermissionMode!('workspace-write');
  await session.setMode!('native-plan');
@@ -22,9 +26,22 @@ try {
  await session.setMode!('native-default');
  await session.prompt('again');
  await session.dispose();
- const resumed = await create({threadId:'modes-thread',permissionMode:'full-access',mode:'native-plan'});
+ await writeFile(join(dir,'modes-control.json'),JSON.stringify({legacyPath:true,resumeMode:'default'}));
+ const resumed = await create({threadId:'modes-thread',permissionMode:'full-access',mode:'native-plan',model:{provider:'openai',id:'synthetic'}});
  assert.ok(!(await resumed.permissionMode!()).options.some(o=>o.id==='inherit'));
+ assert.equal((await resumed.permissionMode!()).applied,'full-access');
+ assert.equal((await resumed.permissionMode!()).pendingNextTurn,false);
+ assert.equal((await resumed.mode!()).applied,'native-default');
+ assert.equal((await resumed.mode!()).pendingNextTurn,true);
+ await writeFile(join(dir,'modes-control.json'),JSON.stringify({rejectTurn:true}));
+ await assert.rejects(resumed.prompt('rejected'), /fixture rejected turn/);
+ await writeFile(join(dir,'modes-control.json'),JSON.stringify({omitTurn:true}));
+ await assert.rejects(resumed.prompt('missing identity'), /did not confirm the turn identity/);
+ assert.equal((await resumed.mode!()).applied,'native-default');
+ assert.equal((await resumed.mode!()).pendingNextTurn,true);
+ await writeFile(join(dir,'modes-control.json'),'{}');
  await resumed.prompt('resumed');
+ assert.equal((await resumed.mode!()).applied,'native-plan');
  await resumed.dispose();
  const wire = (await readFile(join(dir,'modes-wire.jsonl'),'utf8')).trim().split('\n').map(line=>JSON.parse(line));
  const turns=wire.filter(q=>q.method==='turn/start').map(q=>q.params);
@@ -33,9 +50,23 @@ try {
  assert.deepEqual(turns[0].collaborationMode,{mode:'plan',settings:{model:'synthetic',reasoning_effort:'medium',developer_instructions:null}});
  assert.deepEqual(turns[1].sandboxPolicy,{type:'readOnly',networkAccess:false});
  assert.equal(turns[1].collaborationMode.mode,'default');
- assert.deepEqual(turns[2].sandboxPolicy,{type:'dangerFullAccess'});
+ assert.deepEqual(turns.at(-1).sandboxPolicy,{type:'dangerFullAccess'});
  const resume=wire.find(q=>q.method==='thread/resume');
  assert.equal(resume.params.sandbox,'danger-full-access'); assert.equal(resume.params.approvalPolicy,'never');
+ assert.ok(wire.some(q=>q.method==='thread/read'&&q.params.includeTurns), 'Legacy read must preserve the thread launch receipt');
+ await writeFile(join(dir,'modes-control.json'),JSON.stringify({threadReceipt:{sandbox:{type:'dangerFullAccess'}}}));
+ await assert.rejects(create({permissionMode:'read-only'}), /did not confirm/);
+ await writeFile(join(dir,'modes-control.json'),JSON.stringify({threadReceipt:{approvalPolicy:'never'}}));
+ await assert.rejects(create({threadId:'modes-thread',permissionMode:'read-only'}), /did not confirm/);
+ await writeFile(join(dir,'modes-control.json'),JSON.stringify({threadReceipt:{
+  sandbox:{type:'workspaceWrite',writableRoots:[],networkAccess:true,excludeTmpdirEnvVar:false,excludeSlashTmp:false}
+ }}));
+ const configured = await create({permissionMode:'workspace-write'});
+ assert.equal((await configured.permissionMode!()).applied,null);
+ assert.equal((await configured.permissionMode!()).pendingNextTurn,true);
+ await configured.prompt('apply workspace defaults');
+ assert.equal((await configured.permissionMode!()).applied,'workspace-write');
+ await configured.dispose();
  await writeFile(join(dir,'modes-control.json'),JSON.stringify({error:-32601,requirements:{allowedApprovalPolicies:['on-request'],allowedSandboxModes:['read-only']}}));
  const restricted = await create();
  assert.deepEqual((await restricted.mode!()).options,[]);

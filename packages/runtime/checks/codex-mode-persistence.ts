@@ -24,6 +24,7 @@ try {
  const collaboration = await runtime.chats.mode(chat.id), permission = await runtime.chats.mode(chat.id, undefined, true);
  assert.equal(collaboration.selected, 'native-plan'); assert.equal(collaboration.pendingNextTurn, true);
  assert.equal(permission.selected, 'workspace-write');
+ assert.equal(permission.applied, 'workspace-write'); assert.equal(permission.pendingNextTurn, false);
  const wire = async () => (await readFile(join(project, 'modes-wire.jsonl'), 'utf8')).trim().split('\n').map(row => JSON.parse(row));
  const starts = (await wire()).filter(row => row.method === 'thread/start');
  assert.equal(starts.at(-1).params.sandbox, 'workspace-write'); assert.equal(starts.at(-1).params.approvalPolicy, 'on-request');
@@ -34,10 +35,15 @@ try {
  assert.equal((await runtime.chats.mode(chat.id)).selected,'native-plan');
  assert.equal((await runtime.chats.mode(chat.id, undefined, true)).selected,'workspace-write');
  await runtime.close(); runtime = undefined;
+ await writeFile(join(project,'modes-control.json'),JSON.stringify({threadReceipt:{sandbox:{type:'dangerFullAccess'}}}));
+ runtime = await createDesktopRuntime(data, () => {});
+ await assert.rejects(runtime.chats.prompt(chat.id,'Do not run under a different sandbox'), /did not confirm/);
+ assert.deepEqual(index().get(chat.id).nativeMode, {backend:'codex',mode:'native-plan',permissionMode:'workspace-write'});
+ await runtime.close(); runtime = undefined;
  await writeFile(join(project,'modes-control.json'),JSON.stringify({error:-32601}));
  runtime = await createDesktopRuntime(data, () => {});
  await assert.rejects(runtime.chats.mode(chat.id), /Unsupported Codex collaboration mode/);
  await assert.rejects(runtime.chats.prompt(chat.id,'Do not submit with unavailable saved mode'));
  assert.equal((await wire()).filter(row => row.method==='turn/start').length,0);
- console.log('CODEX_MODE_PERSISTENCE_OK: two axes retained across cold start, disk failure and unsupported saved mode fail closed; no inference.');
+ console.log('CODEX_MODE_PERSISTENCE_OK: two axes retained across cold start; disk failure, mismatched receipt and unsupported saved mode fail closed; no inference.');
 } finally { await runtime?.close(); if (prior === undefined) delete process.env.HIVE_CODEX_COMMAND; else process.env.HIVE_CODEX_COMMAND=prior; }

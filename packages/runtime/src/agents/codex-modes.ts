@@ -1,5 +1,12 @@
+import { isDeepStrictEqual } from 'node:util';
 import { CodexRpcError, type CodexTransport } from './codex-transport.js';
 import type { SessionModeState } from './types.js';
+
+export type CodexThreadModeReceipt = {
+  approvalPolicy?: unknown;
+  sandbox?: { type?: unknown } | null;
+  collaborationMode?: { mode?: unknown } | null;
+};
 
 type Policy = { approvalPolicy: string; sandbox: string; sandboxPolicy: Record<string, unknown> };
 const policies: Record<string, Policy> = {
@@ -71,7 +78,7 @@ export class CodexModes {
     }
   }
   private state(selected: string | null, applied: string | null, options: string[], description?: string): SessionModeState {
-    return { backend: 'codex', selected, applied, pendingNextTurn: selected !== applied, options: options.map(id => ({id, label: labels[id]!})), ...(description && {description}) };
+    return { backend: 'codex', selected, applied, pendingNextTurn: selected !== null && selected !== applied, options: options.map(id => ({id, label: labels[id]!})), ...(description && {description}) };
   }
   mode() { return this.state(this.collaboration, this.appliedCollaboration, this.collaborationOptions, this.collaborationDescription); }
   permissionMode() { return this.state(this.permission, this.appliedPermission, this.permissionOptions, this.permissionDescription); }
@@ -86,11 +93,27 @@ export class CodexModes {
     if (this.permission && !this.permissionOptions.includes(this.permission)) throw new TypeError(`Unsupported Codex permission mode: ${this.permission}`);
   }
   threadParams() { const p = this.permission && policies[this.permission]; return p ? { approvalPolicy: p.approvalPolicy, sandbox: p.sandbox } : {}; }
+  confirmThreadSettings(receipt: CodexThreadModeReceipt) {
+    const { approvalPolicy, sandbox, collaborationMode } = receipt;
+    const expected = this.permission && policies[this.permission];
+    if (expected && (approvalPolicy !== expected.approvalPolicy || sandbox?.type !== expected.sandboxPolicy.type)) {
+      throw new Error('Codex did not confirm the requested thread sandbox and approval policy');
+    }
+    // Thread start/resume selects the native sandbox class. Local configuration
+    // can still fill in its network access or writable roots until turn/start.
+    this.appliedPermission = Object.entries(policies).find(([, policy]) =>
+      approvalPolicy === policy.approvalPolicy && isDeepStrictEqual(sandbox, policy.sandboxPolicy))?.[0] ?? null;
+    const mode = collaborationMode?.mode;
+    this.appliedCollaboration = mode === 'default' || mode === 'plan' ? `native-${mode}` : null;
+  }
   turnParams(model: string, effort: string | null) {
     const p = this.permission && policies[this.permission];
     const policy = p ? { approvalPolicy: p.approvalPolicy, sandboxPolicy: p.sandboxPolicy } : undefined;
     return { ...policy, ...(this.collaboration && { collaborationMode: { mode: this.collaboration.slice(7), settings: { model, reasoning_effort: effort, developer_instructions: null } } }) };
   }
   needsReasoning() { return this.collaboration !== null; }
-  accepted() { this.appliedCollaboration = this.collaboration; this.appliedPermission = this.permission; }
+  accepted() {
+    this.appliedCollaboration = this.collaboration ?? this.appliedCollaboration;
+    this.appliedPermission = this.permission ?? this.appliedPermission;
+  }
 }
