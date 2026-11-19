@@ -7,6 +7,28 @@
     [Parameter(Mandatory)][string]$EvidenceDirectory
 )
 . (Join-Path $PSScriptRoot 'windows-native-ui-common.ps1')
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class GitPreviewWheel {
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extra);
+}
+'@
+function Read-Geometry($Control) {
+    $r = $Control.Current.BoundingRectangle
+    return [ordered]@{x=$r.X;y=$r.Y;width=$r.Width;height=$r.Height;offscreen=$Control.Current.IsOffscreen}
+}
+function Visible-InWindow($Control) {
+    $r = $Control.Current.BoundingRectangle
+    return (-not $Control.Current.IsOffscreen -and -not $r.IsEmpty -and
+        $root.Current.BoundingRectangle.Contains($r.X + $r.Width / 2, $r.Y + $r.Height / 2))
+}
+function Read-Focus {
+    $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+    if ($null -eq $focused) { return $null }
+    return [ordered]@{name=$focused.Current.Name;processId=$focused.Current.ProcessId;geometry=(Read-Geometry $focused)}
+}
 $result = [ordered]@{status='failed';phase=$Phase;stages=[ordered]@{};error=$null;controls=@()}
 $root = $null
 try {
@@ -43,7 +65,33 @@ try {
         Invoke-Control (Wait-Name 'View staged patch')
         [void](Wait-Control {param($c) ([string]$c.Current.Name).Contains('+STAGED_PRIVATE_FIXTURE') } 'expected staged patch')
         $result.stages.patchVerified = $true
-        Invoke-Control (Wait-Name 'Cancel')
+        # Scroll the drawer with the patch still expanded, outside its nested
+        # patch viewport. Keep every observed position and focus for review.
+        $cancel = Wait-Name 'Cancel'
+        $result.stages.expandedCancelBefore = Read-Geometry $cancel
+        $result.stages.focusBeforeScroll = Read-Focus
+        $wheelAnchor = Wait-Name 'Staged changes in the entire repository'
+        $anchor = $wheelAnchor.Current.BoundingRectangle
+        if ($anchor.IsEmpty -or $wheelAnchor.Current.IsOffscreen) { throw 'Patch toggle is not visible for drawer scrolling.' }
+        $wheelX = [int]($anchor.X - 8)
+        $wheelY = [int]($anchor.Y + $anchor.Height / 2)
+        if (-not $root.Current.BoundingRectangle.Contains($wheelX, $wheelY)) { throw 'Drawer gutter is outside the window.' }
+        if (-not [GitPreviewWheel]::SetCursorPos($wheelX, $wheelY)) { throw 'Could not position mouse for drawer scrolling.' }
+        $result.stages.wheelAnchor = @{control=(Read-Geometry $wheelAnchor);x=$wheelX;y=$wheelY}
+        $result.stages.wheelSamples = @()
+        for ($i = 0; $i -lt 12 -and -not (Visible-InWindow $cancel); $i++) {
+            [GitPreviewWheel]::mouse_event(0x0800, 0, 0, -120, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 200
+            $cancel = Wait-Name 'Cancel'
+            $result.stages.wheelSamples += ,(Read-Geometry $cancel)
+        }
+        $result.stages.expandedCancelAfter = Read-Geometry $cancel
+        if (-not (Visible-InWindow $cancel)) { throw 'Drawer scroll did not reveal Cancel with the patch expanded.' }
+        [void](Wait-Name 'Hide staged patch')
+        Invoke-Control $cancel
+        [void](Wait-Name 'Commit…')
+        $result.stages.focusAfterCancel = Read-Focus
+        $result.stages.cancelledExpandedPatch = $true
         Invoke-Control (Wait-Name 'Close Git drawer')
         $composer = Wait-Name 'Conversation messages'
         if ($composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -cne $Draft) { throw 'Chat draft changed after cancel.' }
