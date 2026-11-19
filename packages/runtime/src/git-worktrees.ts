@@ -6,7 +6,8 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, realpath, rename, rm, rmdir } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
+import { DatabaseSync } from 'node:sqlite';
 
 const run = promisify(execFile);
 export interface ManagedWorktree {
@@ -105,10 +106,42 @@ function contained(root: string, path: string): boolean {
 async function commonDir(cwd: string): Promise<string> {
   return realpath(resolve(cwd, await git(cwd, 'rev-parse', '--git-common-dir')));
 }
-async function writeIntent(ownerDir: string, intent: Intent): Promise<void> {
+async function writeIntent(ownerDir: string, intent: Intent, expected: Intent | null): Promise<void> {
   const document: Intent = intent.creation ? {...intent, version: intent.creation.version === 2 ? 3 : 2} : intent;
   validateIntentCreation(document);
-  await writeOwnerDocument(ownerDir, 'intent.json', document);
+  if (await realpath(ownerDir) !== ownerDir) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership directory was replaced');
+  // Reuse the installer's SQLite lock: OS handles release it even after SIGKILL.
+  // Never delete this file: every writer must continue locking the same inode.
+  const lockPath = join(ownerDir, 'intent-lock.sqlite');
+  try {
+    const info = await lstat(lockPath);
+    if (!info.isFile() || info.isSymbolicLink()) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree metadata lock was replaced');
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const lock = new DatabaseSync(lockPath);
+  try {
+    try { lock.exec('PRAGMA busy_timeout=0; BEGIN IMMEDIATE'); }
+    catch (error) {
+      if ((error as {errcode?: number}).errcode === 5)
+        throw new GitWorktreeError('WORKTREE_METADATA_BUSY', 'Another Hive process is updating this worktree. Refresh and retry.', {cause: error});
+      throw error;
+    }
+    let current: Intent | null;
+    try { current = JSON.parse(await readFile(join(ownerDir, 'intent.json'), 'utf8')) as Intent; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') current = null;
+      else throw new GitWorktreeError('IDENTITY_MISMATCH', 'Worktree ownership receipt could not be read; it was not replaced.', {cause: error});
+    }
+    // Compare JSON values: optional undefined fields do not survive persistence.
+    const persisted = (value: Intent | null) => JSON.parse(JSON.stringify(value?.creation
+      ? {...value, version: value.creation.version === 2 ? 3 : 2} : value));
+    if (isDeepStrictEqual(current, persisted(document))) return; // Concurrent identical publication is already complete.
+    if (!isDeepStrictEqual(current, persisted(expected))) {
+      if (current?.removed && current.record?.ownerToken === document.record.ownerToken)
+        throw new GitWorktreeError('WORKTREE_REMOVED', 'This worktree was removed. The conversation history and local branch are retained.');
+      throw new GitWorktreeError('WORKTREE_METADATA_CHANGED', 'Worktree ownership changed in another Hive process. Refresh and retry.');
+    }
+    await writeOwnerDocument(ownerDir, 'intent.json', document);
+  } finally { lock.close(); }
 }
 async function writeOwnerDocument(ownerDir: string, filename: string, document: unknown): Promise<void> {
   const tmp = join(ownerDir, `.${randomUUID()}.tmp`);
@@ -175,8 +208,17 @@ async function createWorktree(input: { projectRoot: string; dataRoot: string; ch
   const worktree = join(dir, 'tree');
   const record: ManagedWorktree = { version: 1, projectRoot: project, chatId: input.chatId, ownerToken: randomUUID(), repoCommonDir: common,
     managedWorktreeRoot: worktree, executionPath: join(worktree, prefix), projectPrefix: prefix, branch, baseOid };
-  try { await writeIntent(dir, { state: 'creating', record, ...(input.creation && {creation: input.creation}) }); }
-  catch (error) { await rmdir(dir).catch(() => {}); throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Could not save worktree creation intent', { cause: error }); }
+  const creating: Intent = {state: 'creating', record: {...record}, ...(input.creation && {creation: input.creation})};
+  try { await writeIntent(dir, creating, null); }
+  catch (error) {
+    // No other managed writer can recover this exclusively created directory
+    // before its first receipt exists. Keep published receipts and their lock.
+    if (await isAbsent(join(dir, 'intent.json'))) {
+      await rm(join(dir, 'intent-lock.sqlite'), {force: true});
+      await rmdir(dir).catch(() => {});
+    }
+    throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Could not save worktree creation intent', { cause: error });
+  }
   await git(project, 'worktree', 'add', ...(forkBase ? ['--no-checkout'] : []), '-b', branch, '--', worktree, baseOid);
   try {
     const gitDir = await worktreeGitDir(worktree, common);
@@ -187,7 +229,7 @@ async function createWorktree(input: { projectRoot: string; dataRoot: string; ch
   } catch (error) {
     throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Worktree created but ownership marker could not be established; retain it for manual inspection', { cause: error });
   }
-  try { await writeIntent(dir, { state: 'ready', record, ...(input.creation && {creation: input.creation}) }); }
+  try { await writeIntent(dir, { state: 'ready', record, ...(input.creation && {creation: input.creation}) }, creating); }
   catch (error) { throw new GitWorktreeError('METADATA_WRITE_FAILED', 'Worktree created but ownership publication failed; inspect creation intent to recover', { cause: error }); }
   if (!forkBase) await validateManagedWorktree(root, record);
   return record;
@@ -275,7 +317,7 @@ async function reconcileRemoval(dir: string, intent: Intent): Promise<Intent> {
 async function finishRemoval(dir: string, intent: Intent): Promise<Intent> {
   const {removal: _, ...original} = intent;
   const removed: Intent = {...original, removed: true};
-  await writeIntent(dir, removed);
+  await writeIntent(dir, removed, intent);
   return removed;
 }
 async function verify(dataRoot: string, record: ManagedWorktree): Promise<{ root: string; intent: Intent; locked: boolean; gitDir: string }> {
@@ -416,7 +458,7 @@ export async function removeManagedWorktree(dataRoot: string, record: ManagedWor
     || await repositoryIdentity(record.repoCommonDir) !== repository)
     throw new GitWorktreeError('STALE_PREVIEW', 'Worktree or remote changed. Review the removal again.');
   const pending: Intent = {...intent, removal:{headOid:head,repositoryIdentity:repository}};
-  await writeIntent(dir, pending);
+  await writeIntent(dir, pending, intent);
   // The durable write can outlast an external Git operation on the same path.
   // Recheck the worktree ownership and file state immediately before deletion.
   await removalOwnership(dataRoot, record);
@@ -426,6 +468,11 @@ export async function removeManagedWorktree(dataRoot: string, record: ManagedWor
     await git(record.projectRoot, 'worktree', 'remove', '--', record.managedWorktreeRoot);
     await finishRemoval(dir, pending);
   } catch (error) {
+    // Another process may have completed the same confirmed removal. Re-read
+    // and reconcile its authoritative receipt instead of replacing it or
+    // reporting an uncertain result after completion has been proved.
+    const current = await readWorktreeIntent(dataRoot, record.chatId).catch(() => undefined);
+    if (current?.removed && isDeepStrictEqual(current.record, record)) return;
     throw new GitWorktreeError('WORKTREE_REMOVAL_UNCERTAIN', 'Git removal or its receipt could not be confirmed. Refresh and inspect the saved path before retrying.', {cause: error});
   }
 }
@@ -449,7 +496,7 @@ export async function recoverManagedWorktree(dataRoot: string, record: ManagedWo
   const { root, intent, gitDir } = await verify(dataRoot, record);
   if (intent.creation?.forkOperationId || intent.creation?.handoffOperationId) throw new GitWorktreeError('FORK_PENDING', 'Snapshot worktree requires its dedicated recovery');
   const recovered = { ...record, gitDir };
-  if (intent.state === 'creating') await writeIntent(ownerDir(root, record.chatId), { ...intent, state: 'ready', record: recovered });
+  if (intent.state === 'creating') await writeIntent(ownerDir(root, record.chatId), { ...intent, state: 'ready', record: recovered }, intent);
   await validateManagedWorktree(root, recovered);
   return recovered;
 }
@@ -468,7 +515,7 @@ export async function publishForkWorktree(dataRoot: string, record: ManagedWorkt
   if (intent.state !== 'ready' || intent.creation?.forkOperationId !== operationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Fork operation does not own this worktree');
   const materialization = JSON.parse(await readFile(join(ownerDir(root,record.chatId),'materialize.json'),'utf8')) as {version?: number; operationId?: string; state?: string};
   if (materialization.version !== 1 || materialization.operationId !== operationId || materialization.state !== 'ready') throw new GitWorktreeError('FORK_PENDING', 'Fork materialization is not ready');
-  if (!intent.forkPublished) await writeIntent(ownerDir(root, record.chatId), {...intent, forkPublished:true});
+  if (!intent.forkPublished) await writeIntent(ownerDir(root, record.chatId), {...intent, forkPublished:true}, intent);
 }
 
 export async function validateHandoffWorktree(dataRoot: string, record: ManagedWorktree, operationId: string): Promise<void> {
@@ -482,5 +529,5 @@ export async function publishHandoffWorktree(dataRoot: string, record: ManagedWo
   const { root, intent } = await verify(dataRoot, record);
   const materialization = JSON.parse(await readFile(join(ownerDir(root, record.chatId), 'materialize.json'), 'utf8')) as {version?:number;operationId?:string;state?:string};
   if (materialization.version !== 1 || materialization.operationId !== operationId || materialization.state !== 'ready') throw new GitWorktreeError('HANDOFF_PENDING', 'Handoff materialization is not ready');
-  if (!intent.handoffPublished) await writeIntent(ownerDir(root, record.chatId), {...intent, handoffPublished:true});
+  if (!intent.handoffPublished) await writeIntent(ownerDir(root, record.chatId), {...intent, handoffPublished:true}, intent);
 }

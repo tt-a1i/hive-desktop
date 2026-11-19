@@ -19,7 +19,7 @@ const checks = ['bundled-hive-version', 'delivery-queue', 'queued-input-mutation
   'conversation-search', 'conversation-search-codex', 'codex-metadata-recovery', 'codex-metadata-marker', 'session-body-search', 'project-files', 'project-file-references',
   'conversation-search-tools', 'git-index-wire', 'session-origin-index', 'historical-session-identity', 'html-artifacts',
   'codex-desktop-view',
-  'member-worktrees-wire', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments',
+  'member-worktrees-wire', 'worktree-intent-concurrency', 'project-script-settings', 'codex-limits', 'pty-live-pid', 'interaction-attachments',
   'codex-history-control', 'codex-fork-provenance', 'session-history-wire', 'session-history-rewind', 'checkpoint-restore',
   'agent-profiles', 'structured-launch', 'profile-runtime-binding', 'profile-runtime-wire',
   'profile-settings-atomic', 'profile-claude-offline-history', 'codex-history-profile-launch',
