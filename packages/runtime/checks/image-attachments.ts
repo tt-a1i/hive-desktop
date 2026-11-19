@@ -1,11 +1,13 @@
 /** Real upload storage, Hive user-input HTTP/SQLite and native Pi queue. No vendor inference. */
 import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
+import { ChatIndex } from '../src/chat-index.js';
 import { encodeImageInput, decodeImageInput } from '../src/image-attachments.js';
 import { desktopHistoryMessage } from '../src/desktop-history.js';
 const dir = await mkdtemp(join(tmpdir(), 'hive-attachment-input-'));
@@ -163,8 +165,48 @@ try {
   );
   assert.equal(bodies.length, 2);
   assert.ok(runtime.chats.list(ws.id).find((x) => x.id === chat.id)!.title.length > 0);
+
+  await runtime.close();
+  runtime = undefined;
+  assert.ok(reopened.sessionFile && reopened.profile);
+  const readOnlyId = randomUUID();
+  const chatsDirectory = join(dir, 'state', 'chats');
+  // A legacy record without a proven owner can display the transcript but cannot activate Pi.
+  new ChatIndex(chatsDirectory).save({id: readOnlyId, workspaceId: ws.id, backend: 'pi', profile: reopened.profile,
+    title: 'Legacy image history', identityState: 'unknown', sessionFile: reopened.sessionFile, updatedAt: Date.now()});
+  runtime = await createDesktopRuntime(join(dir, 'state'), () => {});
+  const cold = await runtime.chats.open(readOnlyId);
+  assert.equal(cold.readOnly, true);
+  const coldImage = cold.history.find((row: any) => row.presentation?.attachments?.some((attachment: any) => attachment.id === staged.attachment.id));
+  assert.ok(coldImage);
+  const coldMessageId = cold.historyMessageIds[cold.history.indexOf(coldImage)]!;
+  assert.notEqual(coldMessageId, messageId, 'Live Pi uses the delivery ID while read-only history uses the saved entry ID');
+  assert.deepEqual(await runtime.chats.historyImage(ws.id, readOnlyId, coldMessageId, 0), {messageId: coldMessageId, imageIndex: 0, data});
+
+  const spool = join(chatsDirectory, 'deliveries', `${createHash('sha256').update(readOnlyId).digest('hex')}.json`);
+  const invalidSpool = '{"pending":"invalid fixture"}\n';
+  await writeFile(spool, invalidSpool);
+  await assert.rejects(runtime.chats.open(readOnlyId), /Invalid delivery spool/);
+  assert.deepEqual(await runtime.chats.historyImage(ws.id, readOnlyId, coldMessageId, 0), {messageId: coldMessageId, imageIndex: 0, data});
+  assert.deepEqual(await runtime.chats.historyImage(ws.id, chat.id, messageId, 0), {messageId, imageIndex: 0, data});
+  await assert.rejects(runtime.chats.historyImage(ws2.id, readOnlyId, coldMessageId, 0), /another workspace/);
+  await assert.rejects(runtime.chats.historyImage(ws.id, readOnlyId, coldMessageId, 1), /image is unavailable/);
+
+  const lastEntry = JSON.parse((await readFile(reopened.sessionFile, 'utf8')).trimEnd().split('\n').at(-1)!);
+  // Pi displays a tool result under its tool call ID, so it can collide with a message ID.
+  let parentId = lastEntry.id;
+  for (const duplicateId of [coldMessageId, messageId]) {
+    const entry = {type: 'message', id: randomUUID(), parentId,
+      timestamp: new Date().toISOString(), message: {role: 'toolResult', toolCallId: duplicateId, toolName: 'fixture',
+        content: [{type: 'text', text: 'A second row with the same display ID'}], timestamp: Date.now()}};
+    await appendFile(reopened.sessionFile, JSON.stringify(entry) + '\n');
+    parentId = entry.id;
+    await assert.rejects(runtime.chats.historyImage(ws.id, readOnlyId, duplicateId, 0), /image message is unavailable/);
+  }
+  assert.equal(await readFile(spool, 'utf8'), invalidSpool);
+  assert.equal(bodies.length, 2, 'Reading saved images must not make a model request');
   console.log(
-    'IMAGE_ATTACHMENTS_OK: actual upload and original-file mutation isolation, workspace validation, Hive HTTP+SQLite user-input association, native Pi image bytes, durable queue/history/reopen, image-only message and literal metadata escaping. Loopback only, no vendor inference.',
+    'IMAGE_ATTACHMENTS_OK: upload isolation, workspace validation, Hive HTTP+SQLite user-input association, native Pi image bytes, cold reads with corrupt spool or a prior live ID, ambiguous ID rejection, image-only message and literal metadata escaping. Loopback only, no vendor inference.',
   );
 } finally {
   await runtime?.close();
