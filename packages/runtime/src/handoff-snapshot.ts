@@ -140,6 +140,13 @@ export async function readHandoffHistory(record:ChatRecord,options:HandoffHistor
   const start=options.selection.fromItemId?rows.findIndex(r=>r.id===options.selection.fromItemId):0;
   const end=rows.findIndex(r=>r.id===options.selection.throughItemId);
   if(start<0||end<start)throw new HandoffHistoryError('INVALID_SELECTION','Selected native history range is unavailable');
+  // Completeness describes the readable source, not the selected range. Tell
+  // both the reviewer and the receiving agent exactly which bounds were used.
+  // Never include the contents of entries outside the selected range.
+  warnings.push(`Selected persisted range: ${JSON.stringify({fromItemId:rows[start]!.id,throughItemId:rows[end]!.id})}`);
+  if(start>0)omitted.push({reason:`${start} persisted item(s) before the selected range were not included`});
+  const after=rows.length-end-1;
+  if(after>0)omitted.push({reason:`${after} persisted item(s) after the selected range were not included`});
   const selected=rows.slice(start,end+1);const facts:HistoricalFact[]=[];const requiresExplicitExclusionItemIds=new Set<string>();const excluded=new Set(options.excludeItemIds??[]);
   if('handoff' in record&&record.handoff){warnings.push('Inherited handoff facts are not flattened: exact prior injection mapping is unavailable');completeness='partial';}
   for(const row of selected){

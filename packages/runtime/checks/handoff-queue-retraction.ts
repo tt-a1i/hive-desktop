@@ -12,6 +12,8 @@ import {randomUUID,createHash} from 'node:crypto';
 import {createDesktopRuntime} from '../src/desktop-runtime.js';
 import {codexMetadataFile,writeCodexMetadata} from '../src/agents/codex-metadata.js';
 import {DeliveryQueue} from '../src/delivery-queue.js';
+import {handoffHistoryHash} from '../src/handoff-snapshot.js';
+import {handoffOmissionsHash,renderHistoricalContext} from '../src/handoff-render.js';
 import type {ChatIndex} from '../src/chat-index.js';
 
 const root=await realpath(await mkdtemp(join(tmpdir(),'hive-handoff-delivery-runtime-')));
@@ -27,7 +29,7 @@ let runtime:Runtime|undefined;
 const results:unknown[]=[];
 const coldEvents: unknown[] = [];
 const git=(cwd:string,...args:string[])=>execFileSync('git',['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','-c','commit.gpgSign=false',...args],{cwd,encoding:'utf8'}).trim();
-async function setup(name:string,backend:'acp'|'pi',mode='normal'){
+async function setup(name:string,backend:'acp'|'pi',mode='normal',legacy=false){
  const folder=join(root,name),repo=join(folder,'repo'),data=join(folder,'state'),peer=join(folder,'peer'),piDir=join(folder,'target-pi');
  await mkdir(repo,{recursive:true});git(repo,'init','--template=','-b','main');await writeFile(join(repo,'result.txt'),'frozen source');git(repo,'add','.');git(repo,'commit','-qm','Source');
  const forbidden=join(folder,'never.cjs');await writeFile(forbidden,`require('node:fs').writeFileSync(${JSON.stringify(join(folder,'unexpected-source-cli'))},'launched');process.exit(2);`);
@@ -45,14 +47,39 @@ async function setup(name:string,backend:'acp'|'pi',mode='normal'){
  const source=await runtime.chats.createMemberWorktree(ws.id,worker.id),index=(runtime.chats as any).index as ChatIndex;
  index.save({...index.get(source.id),codexThreadId:'offline-source'});
  const native=join(data,'chats','codex');writeCodexMetadata(native,'offline-source',{version:1,context:[],deliveries:[],completed:['source-completed-only']});
- const entries=[{turnId:'t',item:{id:'u',type:'userMessage',content:[{type:'text',text:'Historical source question'}]}},{turnId:'t',item:{id:'a',type:'agentMessage',text:'Historical source answer'}}];
+ const entries=[{turnId:'t',item:{id:'before',type:'userMessage',content:[{type:'text',text:'PRIVATE OUTSIDE BEFORE'}]}},{turnId:'t',item:{id:'u',type:'userMessage',content:[{type:'text',text:'Historical source question'}]}},{turnId:'t',item:{id:'a',type:'agentMessage',text:'Historical source answer'}},{turnId:'t',item:{id:'after',type:'agentMessage',text:'PRIVATE OUTSIDE AFTER'}}];
  await writeFile(codexMetadataFile(native,'offline-source')+'.display.json',JSON.stringify({version:1,entries,completedTurns:['t'],completeHistory:true,searchVersion:2,searchEntries:entries}));
  await runtime.profiles.enableDisable(sourceProfile.ref.id,false,(await runtime.profiles.list()).storeVersion);
  const targetProfile=await profile(backend,'Target '+name,backend==='acp'?{command:process.execPath,args:[fileURLToPath(new URL('./fixtures/acp-runtime-peer.cjs',import.meta.url)),peer,mode]}:{args:[],configDir:piDir});
- const preview=await runtime.chats.handoffs!.preview({workspaceId:ws.id,sourceSessionId:source.id,target:{driver:backend,profile:targetProfile.ref},selection:{throughItemId:'a'},code:{kind:'current'},imagePolicy:'references-only'});
+ await runtime.chats.setArchived(source.id,true);
+ // Construct a version-1 snapshot as the previous writer did, without range
+ // notices. This remains a real durable operation and is delivered after cold boot.
+ const service=runtime.chats.handoffs!;
+ const port=(service as any).port;
+ const originalRead=port.readHistory;
+ if(legacy) port.readHistory=async (...args:any[])=>{
+  const history=await originalRead(...args);
+  history.warnings=history.warnings.filter((warning:string)=>!warning.startsWith('Selected persisted range: '));
+  history.coverage.omitted=history.coverage.omitted.filter((item:any)=>!item.reason.includes('the selected range were not included'));
+  history.omissionsHash=handoffOmissionsHash(history.coverage.omitted);
+  history.renderedText=renderHistoricalContext(history);
+  history.coverage.renderedBytes=Buffer.byteLength(history.renderedText);
+  history.sha256=handoffHistoryHash(history);
+  return history;
+ };
+ let preview;
+ try { preview=await service.preview({workspaceId:ws.id,sourceSessionId:source.id,target:{driver:backend,profile:targetProfile.ref},selection:{fromItemId:'u',throughItemId:'a'},code:{kind:'current'},imagePolicy:'references-only'}); }
+ finally { port.readHistory=originalRead; }
  assert.equal(preview.eligible,true,JSON.stringify(preview.blockers));
+ const frozen=preview.snapshot.history;
+ assert.ok(!frozen.renderedText.includes('PRIVATE OUTSIDE BEFORE')&&!frozen.renderedText.includes('PRIVATE OUTSIDE AFTER'));
+ if(!legacy){
+  assert.ok(frozen.renderedText.includes('Selected persisted range:'));
+  assert.ok(frozen.renderedText.includes('1 persisted item(s) before the selected range were not included'));
+  assert.ok(frozen.renderedText.includes('1 persisted item(s) after the selected range were not included'));
+ } else assert.ok(!frozen.renderedText.includes('Selected persisted range:'));
  const operation=await runtime.chats.handoffs!.apply({workspaceId:ws.id,previewId:preview.previewId,snapshotHash:preview.snapshotHash,requestId:randomUUID(),acknowledgedOmissionsHash:preview.omissionsHash});
- return {folder,data,peer,ws,worker,id:operation.childSessionId,sourceId:source.id};
+ return {folder,data,peer,ws,worker,id:operation.childSessionId,sourceId:source.id,snapshotId:preview.snapshot.snapshotId,renderedText:frozen.renderedText,snapshotHash:preview.snapshotHash};
 }
 const owner=(id:string)=>(runtime!.chats as any).live.get(id);
 const spool=(data:string,id:string)=>DeliveryQueue.persistedItems(join(data,'chats','deliveries'),id);
@@ -89,6 +116,9 @@ try{
   await stopRun(test.ws.id,test.worker.id);await closeRuntime();
   runtime=await createDesktopRuntime(test.data,event=>coldEvents.push(event),{executableEnvironment:{}});
   const protocolBeforeEdit=await protocol(test.peer);
+  const coldSnapshot=await runtime.chats.handoffs!.getSnapshot(test.ws.id,test.snapshotId);
+  assert.equal(coldSnapshot.sha256,test.snapshotHash);
+  assert.equal(coldSnapshot.history.renderedText,test.renderedText);
   const openedCold=await runtime.chats.open(test.id);
   assert.equal(openedCold.passive,true);
   assert.deepEqual(openedCold.pendingUserInputs.map(input=>[input.deliveryId,input.editable]),pending.map(item=>[item.id,true]));
@@ -126,12 +156,32 @@ try{
  const inputs=native.history.filter((x:any)=>x.kind==='user_message_chunk').map((x:any)=>x.text);
  assert.equal(inputs.length,2);
  assert.ok(inputs[0].includes(editedText));
+ assert.ok(inputs[0].includes(test.renderedText));
  assert.ok(inputs[0].includes('[Historical context — recorded material only]'));
+ assert.ok(!inputs[0].includes('PRIVATE OUTSIDE BEFORE')&&!inputs[0].includes('PRIVATE OUTSIDE AFTER'));
  assert.ok(inputs[1].includes('Third normal input must not repeat historical context'));
  assert.ok(!inputs[1].includes('[Historical context — recorded material only]'));
  assert.equal(modelRequests,0);
  await writeFile(join(root,'review-repro.json'),JSON.stringify({fixed:true,firstRemainingGotHistoricalContext:true,contextOnlyOnce:true,slashEditRejected:true,rebindSpoolWriteFailureColdRepaired:true,coldPassiveEditAndWithdrawNoCli:true,coldHandoffStatePreservedQueue:true,staleTextRejected:true,attachmentPreserved:true,inputs},null,2));
  console.log('FIXED_HANDOFF_CONTEXT_TRANSFER_SPOOL_COLD '+root);
  await stopRun(test.ws.id,test.worker.id);await closeRuntime();
+ // Old version-1 frozen snapshots keep their exact hash and original text.
+ const legacy=await setup('legacy-range-snapshot','acp','normal',true);
+ await closeRuntime();runtime=await createDesktopRuntime(legacy.data,()=>{},{executableEnvironment:{}});
+ const legacySnapshot=await runtime.chats.handoffs!.getSnapshot(legacy.ws.id,legacy.snapshotId);
+ assert.equal(legacySnapshot.sha256,legacy.snapshotHash);
+ assert.equal(legacySnapshot.history.renderedText,legacy.renderedText);
+ assert.equal((await runtime.chats.open(legacy.id)).passive,true);
+ await runtime.chats.prompt(legacy.id,'Legacy snapshot first input');await settled(legacy.id);
+ await runtime.chats.prompt(legacy.id,'Legacy snapshot second input');await settled(legacy.id);
+ const legacyOpen=await runtime.chats.open(legacy.id) as any;
+ const legacyNative=JSON.parse(await readFile(join(legacy.peer,legacyOpen.acpSessionId+'.json'),'utf8'));
+ const legacyInputs=legacyNative.history.filter((x:any)=>x.kind==='user_message_chunk').map((x:any)=>x.text);
+ assert.equal(legacyInputs.length,2);assert.ok(legacyInputs[0].includes(legacy.renderedText));
+ assert.ok(!legacyInputs[1].includes('[Historical context — recorded material only]'));
+ assert.ok(!legacyInputs[0].includes('Selected persisted range:'));
+ assert.equal(modelRequests,0);
+ console.log('LEGACY_HANDOFF_SNAPSHOT_COLD_DELIVERED_ONCE '+root);
+ await stopRun(legacy.ws.id,legacy.worker.id);await closeRuntime();
 }catch(error){await writeFile(join(root,'failure.json'),JSON.stringify({message:String(error),stack:error instanceof Error?error.stack:undefined,results},null,2));throw error;}
 finally{await closeRuntime();await new Promise<void>(done=>server.close(()=>done()));for(const[key,value]of Object.entries(prior)){if(value===undefined)delete process.env[key];else process.env[key]=value;}console.log('Evidence retained '+root);}

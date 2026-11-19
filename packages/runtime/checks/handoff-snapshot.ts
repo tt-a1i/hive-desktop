@@ -24,6 +24,30 @@ try{
     const tool=result.facts.find(f=>f.kind==='tool-output')!;assert(tool.excerpt);assert(Buffer.byteLength(tool.text)<=8192);assert.equal(tool.excerpt.originalBytes,Buffer.byteLength('工具'.repeat(6000)));
     assert.equal(tool.source.contentSha256,createHash('sha256').update('工具'.repeat(6000)).digest('hex'));
     assert.equal(tool.tool?.status,'unknown');assert.equal(result.omissionsHash,handoffOmissionsHash(result.coverage.omitted));await verifyHandoffHistory(result,r,id=>records.get(id));
+    // Source completeness does not describe how much the user selected.
+    // Boundary facts and counts enter both the preview and injected text;
+    // omitted items never leak their contents into either.
+    const cases=[
+      {name:'from only',selection:{fromItemId:'a',throughItemId:'t'},ids:['a','t'],before:1,after:0,absent:['Original user']},
+      {name:'through only',selection:{throughItemId:'a'},ids:['u','a'],before:0,after:1,absent:['工具'.repeat(5)]},
+      {name:'one item',selection:{fromItemId:'a',throughItemId:'a'},ids:['a'],before:1,after:1,absent:['Original user','工具'.repeat(5)]},
+      {name:'whole branch',selection:{throughItemId:'t'},ids:['u','a','t'],before:0,after:0,absent:[]},
+    ];
+    for(const scenario of cases){
+      const selected=await readHandoffHistory(r,{...options(scenario.selection.throughItemId),selection:scenario.selection});
+      assert.equal(selected.coverage.completeness,'complete-local-branch',scenario.name);
+      assert.deepEqual(selected.coverage.selectedItemIds,scenario.ids,scenario.name);
+      const range=`Selected persisted range: ${JSON.stringify({fromItemId:scenario.ids[0],throughItemId:scenario.ids.at(-1)})}`;
+      assert.ok(selected.warnings.includes(range),scenario.name);
+      assert.ok(selected.renderedText.includes(range.replaceAll('"','\\"')),scenario.name);
+      for(const [count,side] of [[scenario.before,'before'],[scenario.after,'after']] as const){
+        const reason=`${count} persisted item(s) ${side} the selected range were not included`;
+        assert.equal(selected.coverage.omitted.some(item=>item.reason===reason),count>0,scenario.name);
+        assert.equal(selected.renderedText.includes(reason),count>0,scenario.name);
+      }
+      for(const text of scenario.absent)assert.ok(!selected.renderedText.includes(text),scenario.name);
+      assert.equal(selected.omissionsHash,handoffOmissionsHash(selected.coverage.omitted));
+    }
     const before=await stat(r.sessionFile);const raw=await readFile(r.sessionFile,'utf8');await writeFile(r.sessionFile,raw.replace('Original user','Modified user'));await utimes(r.sessionFile,before.atime,before.mtime);
     await assert.rejects(()=>verifyHandoffHistory(result,r,id=>records.get(id)),/changed/);
   }
