@@ -340,6 +340,8 @@ pub struct HiveApp {
     pub mcp_probe_results: HashMap<String, crate::protocol::McpProbeResult>,
     pub mcp_action_error: Option<String>,
     pub mcp_form: Option<ProjectMcpForm>,
+    pub copied_key: Option<String>,
+    pub copied_seq: u64,
     pub pending_events: Vec<PiEvent>,
     pub choosing_model: bool,
     pub usage: crate::usage::Usage,
@@ -392,6 +394,29 @@ pub struct HiveApp {
     _member_search_subscription: Subscription,
 }
 impl HiveApp {
+    pub(crate) fn is_copied(&self, key: &str) -> bool {
+        self.copied_key.as_deref() == Some(key)
+    }
+
+    pub(crate) fn mark_copied(&mut self, key: String, cx: &mut Context<Self>) {
+        self.copied_seq = self.copied_seq.wrapping_add(1);
+        let seq = self.copied_seq;
+        self.copied_key = Some(key);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(1800))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.copied_seq == seq {
+                    this.copied_key = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::register_local_notifications(window, cx);
         Self::start_global_inbox_badge(cx);
@@ -920,6 +945,8 @@ impl HiveApp {
             mcp_probe_results: HashMap::new(),
             mcp_action_error: None,
             mcp_form: None,
+            copied_key: None,
+            copied_seq: 0,
             pending_events: vec![],
             choosing_model: false,
             usage: Default::default(),

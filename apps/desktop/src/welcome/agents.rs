@@ -243,6 +243,14 @@ impl HiveApp {
                         "pi-rpc" => Some(self.program_setup_status("pi", cx)),
                         _ => None,
                     });
+                let role_tagline = match backend {
+                    "pi" => tr("开箱即用，免装外部 CLI"),
+                    "codex" => tr("深度代码修改、原生回退与分叉"),
+                    "claude" => tr("长上下文推理与原生 MCP"),
+                    "pi-rpc" => tr("连接本机外部 Pi 服务"),
+                    "acp" => tr("异构多 Agent 团队协作"),
+                    _ => "",
+                };
                 h_flex()
                     .border_t_1()
                     .border_color(Color::Divider.get(cx))
@@ -262,9 +270,34 @@ impl HiveApp {
                                     .items_center()
                                     .flex_wrap()
                                     .child(
+                                        div()
+                                            .w(px(7.))
+                                            .h(px(7.))
+                                            .rounded_full()
+                                            .flex_shrink_0()
+                                            .bg(color),
+                                    )
+                                    .child(
                                         div().text_sm().font_weight(FontWeight::MEDIUM).child(name),
                                     )
-                                    .child(div().text_xs().text_color(color).child(label)),
+                                    .child(
+                                        div()
+                                            .px_1p5()
+                                            .py(px(0.5))
+                                            .rounded_sm()
+                                            .bg(Color::Inset.get(cx))
+                                            .text_size(px(10.5))
+                                            .text_color(color)
+                                            .child(label),
+                                    )
+                                    .when(!role_tagline.is_empty(), |row| {
+                                        row.child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(role_tagline),
+                                        )
+                                    }),
                             )
                             .when_some(detail, |row, detail| {
                                 row.child(

@@ -512,6 +512,86 @@ impl HiveApp {
                                             })),
                                     ),
                             )
+                            .child({
+                                let step1_done = self.has_any_ready_agent(cx);
+                                let step2_done = project.is_some();
+                                let step_pill = |step_num: &'static str,
+                                                 label: &'static str,
+                                                 done: bool,
+                                                 active: bool,
+                                                 cx: &App| {
+                                    h_flex()
+                                        .flex_1()
+                                        .min_w(px(140.))
+                                        .items_center()
+                                        .gap_2()
+                                        .px_2p5()
+                                        .py_2()
+                                        .rounded_lg()
+                                        .bg(if done {
+                                            Color::Card.get(cx)
+                                        } else if active {
+                                            Color::AccentSoft.get(cx)
+                                        } else {
+                                            Color::Inset.get(cx)
+                                        })
+                                        .border_1()
+                                        .border_color(if done {
+                                            Color::Success.get(cx).opacity(0.45)
+                                        } else if active {
+                                            Color::Accent.get(cx).opacity(0.5)
+                                        } else {
+                                            Color::Divider.get(cx)
+                                        })
+                                        .child(
+                                            div()
+                                                .flex_shrink_0()
+                                                .w(px(20.))
+                                                .h(px(20.))
+                                                .rounded_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .bg(if done {
+                                                    Color::Success.get(cx)
+                                                } else if active {
+                                                    Color::Accent.get(cx)
+                                                } else {
+                                                    Color::Divider.get(cx)
+                                                })
+                                                .text_size(px(10.5))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_color(if done || active {
+                                                    gpui::rgb(0xffffff).into()
+                                                } else {
+                                                    Color::Muted.get(cx)
+                                                })
+                                                .child(if done { "✓" } else { step_num }),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .font_weight(if active || done {
+                                                    FontWeight::MEDIUM
+                                                } else {
+                                                    FontWeight::NORMAL
+                                                })
+                                                .text_color(if done || active {
+                                                    Color::Text.get(cx)
+                                                } else {
+                                                    Color::Muted.get(cx)
+                                                })
+                                                .child(tr(label)),
+                                        )
+                                };
+                                h_flex()
+                                    .w_full()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .child(step_pill("1", "确认可用 Agent", step1_done, !step1_done, cx))
+                                    .child(step_pill("2", "选择项目或临时对话", step2_done, step1_done && !step2_done, cx))
+                                    .child(step_pill("3", "开启首轮构建", false, step1_done && step2_done, cx))
+                            })
                             .child(self.render_welcome_guide_panel(cx))
                             .child(agent_picker)
                             .child(self.render_welcome_projects(cx))

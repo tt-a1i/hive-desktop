@@ -16,6 +16,7 @@ mod queued_inputs;
 mod quote_source;
 mod command_palette;
 mod command_picker;
+mod shortcuts_guide;
 mod conversation;
 mod conversation_find;
 mod conversation_export;

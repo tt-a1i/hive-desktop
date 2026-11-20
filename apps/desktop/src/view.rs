@@ -360,6 +360,8 @@ impl HiveApp {
             .gap_0p5()
             .when(message.role == "user", |row| row.justify_end())
             .when(delivery || !message.text.is_empty(), |row| {
+                let copy_key = format!("msg:{copy_id}");
+                let copied = self.is_copied(&copy_key);
                 row.child(
                     Button::new(("copy", index))
                         .custom(crate::palette::subtle_icon_variant(cx))
@@ -368,8 +370,10 @@ impl HiveApp {
                         .h(px(24.))
                         .w(px(24.))
                         .rounded_md()
-                        .icon(Glyph::Copy)
-                        .tooltip(if delivery {
+                        .icon(if copied { Glyph::Check } else { Glyph::Copy })
+                        .tooltip(if copied {
+                            tr("已复制")
+                        } else if delivery {
                             tr("复制完整原文")
                         } else {
                             tr("复制消息")
@@ -384,6 +388,7 @@ impl HiveApp {
                                 let text =
                                     message.delivery.as_ref().map_or(&message.text, |d| &d.raw);
                                 cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                                this.mark_copied(copy_key.clone(), cx);
                             }
                         })),
                 )

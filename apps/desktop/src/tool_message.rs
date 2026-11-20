@@ -788,7 +788,9 @@ impl HiveApp {
                                                             )),
                                                         )
                                                     })
-                                                    .child(
+                                                    .child({
+                                                        let tool_copy_key = format!("tool:{id}");
+                                                        let copied = self.is_copied(&tool_copy_key);
                                                         Button::new(("copy-tool", index))
                                                             .custom(
                                                                 crate::palette::subtle_icon_variant(
@@ -799,9 +801,9 @@ impl HiveApp {
                                                             .h(px(24.))
                                                             .w(px(24.))
                                                             .rounded_md()
-                                                            .icon(Glyph::Copy)
+                                                            .icon(if copied { Glyph::Check } else { Glyph::Copy })
                                                             .disabled(details.is_empty())
-                                                            .tooltip(tr("复制详情"))
+                                                            .tooltip(if copied { tr("已复制") } else { tr("复制详情") })
                                                             .accessibility_label(if english() {
                                                                 format!(
                                                                     "Copy {} tool details",
@@ -814,15 +816,16 @@ impl HiveApp {
                                                                 )
                                                             })
                                                             .on_click(cx.listener(
-                                                                move |_, _, _, cx| {
+                                                                move |this, _, _, cx| {
                                                                     cx.write_to_clipboard(
                                                                         ClipboardItem::new_string(
                                                                             details.clone(),
                                                                         ),
-                                                                    )
+                                                                    );
+                                                                    this.mark_copied(tool_copy_key.clone(), cx);
                                                                 },
-                                                            )),
-                                                    ),
+                                                            ))
+                                                    }),
                                             ),
                                     )
                                 })

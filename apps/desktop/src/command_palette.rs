@@ -34,6 +34,10 @@ enum PaletteAction {
     OpenMembers,
     OpenCollaboration,
     OpenWorkflows,
+    OpenInbox,
+    NewScratch,
+    OpenShortcutsGuide,
+    OpenWelcomeGuide,
     ToggleTheme,
     OpenSettings(SettingsSection),
     SwitchSession(Session),
@@ -307,6 +311,38 @@ impl HiveApp {
         });
         items.push(PaletteItem {
             group: "操作",
+            title: tr("跨项目收件箱").to_owned(),
+            subtitle: Some(tr("统一处理未读会话、待回复问题、汇报与失败工作流").to_owned()),
+            keywords: "inbox unread triage notifications 收件箱 未读 汇报".into(),
+            icon: Glyph::Inbox,
+            action: PaletteAction::OpenInbox,
+        });
+        items.push(PaletteItem {
+            group: "操作",
+            title: tr("新建无项目临时对话（Scratch）").to_owned(),
+            subtitle: Some(tr("无需打开文件夹，直接开启临时对话").to_owned()),
+            keywords: "scratch temp chat quick 临时 对话 无项目".into(),
+            icon: Glyph::SquarePen,
+            action: PaletteAction::NewScratch,
+        });
+        items.push(PaletteItem {
+            group: "操作",
+            title: tr("快捷键与效率速查").to_owned(),
+            subtitle: Some(tr("查看当前生效的全部键盘快捷键与输入框技巧").to_owned()),
+            keywords: "shortcuts keybindings help cheat sheet 快捷键 速查 帮助".into(),
+            icon: Glyph::Sparkles,
+            action: PaletteAction::OpenShortcutsGuide,
+        });
+        items.push(PaletteItem {
+            group: "操作",
+            title: tr("重新打开首次引导").to_owned(),
+            subtitle: Some(tr("检查本机 Agent 环境、导入或选择起始项目").to_owned()),
+            keywords: "welcome onboarding setup guide 引导 新手 向导".into(),
+            icon: Glyph::Compass,
+            action: PaletteAction::OpenWelcomeGuide,
+        });
+        items.push(PaletteItem {
+            group: "操作",
             title: if dark {
                 tr("切换为浅色主题").to_owned()
             } else {
@@ -437,6 +473,18 @@ impl CommandPalette {
                 }
                 PaletteAction::OpenWorkflows => {
                     this.show_workflows(window, cx);
+                }
+                PaletteAction::OpenInbox => {
+                    this.open_global_inbox(window, cx);
+                }
+                PaletteAction::NewScratch => {
+                    this.start_scratch_conversation(window, cx);
+                }
+                PaletteAction::OpenShortcutsGuide => {
+                    this.open_shortcuts_guide(window, cx);
+                }
+                PaletteAction::OpenWelcomeGuide => {
+                    this.open_welcome_setup(cx);
                 }
                 PaletteAction::ToggleTheme => {
                     let next = if Theme::global(cx).is_dark() {
@@ -640,17 +688,44 @@ impl Render for CommandPalette {
                                                             }),
                                                     ),
                                             )
-                                            .child(
-                                                div()
+                                            .child({
+                                                let chord = match &item.action {
+                                                    PaletteAction::NewSession => crate::keybindings::chord_label(crate::keybindings::Target::NewSession, cx),
+                                                    PaletteAction::ToggleSidebar => crate::keybindings::chord_label(crate::keybindings::Target::ToggleSidebar, cx),
+                                                    PaletteAction::ToggleTerminal => crate::keybindings::chord_label(crate::keybindings::Target::ToggleTerminal, cx),
+                                                    PaletteAction::OpenGit => crate::keybindings::chord_label(crate::keybindings::Target::OpenGitWorkspace, cx),
+                                                    _ => None,
+                                                };
+                                                h_flex()
                                                     .flex_shrink_0()
-                                                    .px_1p5()
-                                                    .py(px(1.))
-                                                    .rounded_sm()
-                                                    .bg(Color::Inset.get(cx))
-                                                    .text_size(px(10.5))
-                                                    .text_color(Color::Muted.get(cx))
-                                                    .child(tr(item.group).to_owned()),
-                                            ),
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .when_some(chord, |row, kbd| {
+                                                        row.child(
+                                                            div()
+                                                                .px_1p5()
+                                                                .py(px(1.))
+                                                                .rounded_sm()
+                                                                .bg(Color::Inset.get(cx))
+                                                                .border_1()
+                                                                .border_color(Color::Divider.get(cx))
+                                                                .font_family(Theme::global(cx).mono_font_family.clone())
+                                                                .text_size(px(10.))
+                                                                .text_color(Color::Secondary.get(cx))
+                                                                .child(kbd),
+                                                        )
+                                                    })
+                                                    .child(
+                                                        div()
+                                                            .px_1p5()
+                                                            .py(px(1.))
+                                                            .rounded_sm()
+                                                            .bg(Color::Inset.get(cx))
+                                                            .text_size(px(10.5))
+                                                            .text_color(Color::Muted.get(cx))
+                                                            .child(tr(item.group).to_owned()),
+                                                    )
+                                            }),
                                     )
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.execute(action.clone(), window, cx);

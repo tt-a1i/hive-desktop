@@ -1056,5 +1056,11 @@ pub(crate) fn hint(target: Target, label: &'static str, cx: &App) -> String {
     }
 }
 
+pub(crate) fn chord_label(target: Target, cx: &App) -> Option<String> {
+    let raw = cx.global::<Preferences>().active.get(target).as_deref()?;
+    let key = Keystroke::parse_with_os(raw, cx.platform_info().os).ok()?;
+    Some(Kbd::format(&key))
+}
+
 #[cfg(test)]
 mod tests;
