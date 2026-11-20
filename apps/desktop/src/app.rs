@@ -269,6 +269,8 @@ pub struct HiveApp {
     pub event_sequence: u64,
     pub open_request: u64,
     pub conversation_ready: bool,
+    pub history_page: Option<crate::protocol::HistoryPageMeta>,
+    pub loading_older_history: bool,
     pub pending_events: Vec<PiEvent>,
     pub choosing_model: bool,
     pub usage: crate::usage::Usage,
@@ -777,6 +779,8 @@ impl HiveApp {
             event_sequence: 0,
             open_request: 0,
             conversation_ready: false,
+            history_page: None,
+            loading_older_history: false,
             pending_events: vec![],
             choosing_model: false,
             usage: Default::default(),
@@ -1005,7 +1009,11 @@ impl HiveApp {
         let workspace_write = method.starts_with("chat.")
             && !matches!(
                 method,
-                "chat.open" | "chat.list" | "chat.clearView" | "chat.handoffTargetState"
+                "chat.open"
+                    | "chat.list"
+                    | "chat.clearView"
+                    | "chat.handoffTargetState"
+                    | "chat.historyPage"
             )
             || method == "hive.request"
                 && params["method"]

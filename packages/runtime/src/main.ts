@@ -25,6 +25,7 @@ import { remoteCommands } from './remote-commands.js';
 import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
 import { desktopHistoryMessage } from './desktop-history.js';
+import { sliceHistoryWindow } from './history-cursor.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
 let outputClosed = false;
@@ -402,13 +403,52 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       if (params.deferHistoryImages !== undefined && typeof params.deferHistoryImages !== 'boolean') {
         throw new TypeError('deferHistoryImages must be a boolean');
       }
+      if (params.historyLimit !== undefined && (typeof params.historyLimit !== 'number' || !Number.isSafeInteger(params.historyLimit) || params.historyLimit <= 0)) {
+        throw new TypeError('historyLimit must be a positive integer');
+      }
+      if (params.historyAroundMessageId !== undefined && typeof params.historyAroundMessageId !== 'string') {
+        throw new TypeError('historyAroundMessageId must be a string');
+      }
       const id = text(params, 'sessionId');
       const snapshot = await (params.viewRevision === undefined
         ? chats.open(id, params.includeLiveHistory)
         : chats.openDesktopView(id, viewRevision(params.viewRevision), params.includeLiveHistory));
-      return params.deferHistoryImages ? {...snapshot, history: snapshot.history.map(
-        (message, index) => desktopHistoryMessage(message, snapshot.historyMessageIds[index])
-      )} : snapshot;
+      const paged = params.historyLimit !== undefined && params.includeLiveHistory !== false
+        ? (() => {
+            const sliced = sliceHistoryWindow(snapshot.history, snapshot.historyMessageIds, {
+              limit: params.historyLimit,
+              ...(params.historyAroundMessageId ? { aroundMessageId: params.historyAroundMessageId } : {}),
+            });
+            return { ...snapshot, history: sliced.history, historyMessageIds: sliced.historyMessageIds, historyPage: sliced.historyPage };
+          })()
+        : snapshot;
+      return params.deferHistoryImages ? {...paged, history: paged.history.map(
+        (message, index) => desktopHistoryMessage(message, paged.historyMessageIds[index])
+      )} : paged;
+    }
+    case 'chat.historyPage': {
+      exact(params, ['sessionId', 'beforeIndex', 'beforeMessageId', 'limit', 'deferHistoryImages']);
+      if (typeof params.beforeIndex !== 'number' || !Number.isSafeInteger(params.beforeIndex) || params.beforeIndex < 0) {
+        throw new TypeError('beforeIndex must be a nonnegative integer');
+      }
+      if (params.beforeMessageId !== undefined && typeof params.beforeMessageId !== 'string') {
+        throw new TypeError('beforeMessageId must be a string');
+      }
+      if (params.limit !== undefined && (typeof params.limit !== 'number' || !Number.isSafeInteger(params.limit) || params.limit <= 0)) {
+        throw new TypeError('limit must be a positive integer');
+      }
+      if (params.deferHistoryImages !== undefined && typeof params.deferHistoryImages !== 'boolean') {
+        throw new TypeError('deferHistoryImages must be a boolean');
+      }
+      const page = await chats.historyPage(text(params, 'sessionId'), {
+        beforeIndex: params.beforeIndex,
+        ...(params.beforeMessageId ? { beforeMessageId: params.beforeMessageId } : {}),
+        ...(params.limit !== undefined ? { limit: params.limit } : {}),
+      });
+      return params.deferHistoryImages ? {
+        ...page,
+        history: page.history.map((message, index) => desktopHistoryMessage(message, page.historyMessageIds[index])),
+      } : page;
     }
     case 'chat.clearView': {
       exact(params, ['viewRevision']);

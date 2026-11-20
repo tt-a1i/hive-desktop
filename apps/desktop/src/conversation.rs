@@ -459,6 +459,30 @@ impl HiveApp {
         }
     }
 
+    pub(crate) fn prepend_conversation_history(
+        &mut self,
+        message_ids: Vec<String>,
+        history: Vec<Value>,
+        cx: &mut Context<Self>,
+    ) {
+        if message_ids.is_empty() {
+            return;
+        }
+        let existing_messages = std::mem::take(&mut self.messages);
+        let existing_indices = std::mem::take(&mut self.message_indices);
+        self.restore_conversation_history(message_ids, history, cx);
+        let prepended_len = self.messages.len();
+        self.messages.extend(existing_messages);
+        for (id, idx) in existing_indices {
+            self.message_indices
+                .entry(id)
+                .or_insert(idx + prepended_len);
+        }
+        self.conversation_list.state.pause_following_tail();
+        self.sync_conversation_list(cx);
+        cx.notify();
+    }
+
     // Both snapshots and live events use the same provenance contract. Never infer
     // a source from message text: users may paste a complete Hive envelope.
     pub(crate) fn receive_message(

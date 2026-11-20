@@ -22,7 +22,7 @@ impl StoredPosition {
     fn valid(&self) -> bool {
         let id = match &self.row {
             RowKey::Message(id) | RowKey::Group(id) => id,
-            RowKey::Tail => return false,
+            RowKey::Tail | RowKey::LoadOlder => return false,
         };
         self.offset.is_finite()
             && self.offset >= 0.

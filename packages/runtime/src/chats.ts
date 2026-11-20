@@ -61,6 +61,7 @@ import type { HiveHost } from './hive-host.js';
 import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract.js';
 import type { StructuredSessionPort, StructuredSessionHandle } from './structured-runtime.js';
 import { createTeamTool, createTeamCommand } from './team-tool.js';
+import { sliceHistoryWindow, type HistoryPageMeta } from './history-cursor.js';
 
 export interface MemberDesktopActivity {
   sessionId?: string;
@@ -98,6 +99,7 @@ interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
   executionPath: string;
   browseOnly: boolean;
+  lastActiveAt: number;
   activeTool?: { toolCallId: string; toolName: string; target?: string | undefined } | undefined;
   activePhase?: 'thinking' | 'responding' | undefined;
   failure?: Error; lastErrorMessage?: string; reasoningFailure?: Error; modeChanging?: boolean; cleanup?: Promise<void>; onExit?: (error?: unknown) => void;
@@ -296,7 +298,16 @@ export class Chats implements StructuredSessionPort {
     this.index = new ChatIndex(directory);
     this.handoffDeliveries=new HandoffDeliveries(dataDir);
     this.steerDispositions=new SteerDispositions(dataDir);
+    const configuredIdle = Number(process.env.HIVE_DESKTOP_WORKER_IDLE_SLEEP_MS);
+    this.workerIdleSleepMs = Number.isFinite(configuredIdle) && configuredIdle >= 1_000 ? configuredIdle : 10 * 60 * 1000;
+    const sweepPeriod = Math.min(Math.max(Math.floor(this.workerIdleSleepMs / 2), 500), 60_000);
+    this.idleSweepTimer = setInterval(() => {
+      void this.sweepIdleWorkers().catch(error => console.error('[hive-desktop] idle worker sweep failed', error));
+    }, sweepPeriod);
+    this.idleSweepTimer.unref();
   }
+  private readonly workerIdleSleepMs: number;
+  private idleSweepTimer?: NodeJS.Timeout | undefined;
   private profilesReady: Promise<void> | undefined;
   initializeProfiles(): Promise<void> {
     return this.profilesReady ??= (async () => {
@@ -975,6 +986,7 @@ export class Chats implements StructuredSessionPort {
   private event(id: string, event: PiEvent | QueueState | NavigationEvent) {
     const live = this.live.get(id);
     if (live) {
+      live.lastActiveAt = Date.now();
       if (event.type === 'tool_start') {
         live.activeTool = { toolCallId: event.toolCallId, toolName: event.toolName, target: extractToolTarget(event.args) };
         live.activePhase = undefined;
@@ -1228,7 +1240,7 @@ export class Chats implements StructuredSessionPort {
       this.pruneSettledDispatches(record, queue);
       if (earlyFailure) throw earlyFailure;
       if(record.backend==='codex')this.reconcileSteerDispositions(this.index.get(record.id),queue);
-      chat = { handle, queue, executionPath, aborted: false, browseOnly: record.backend === 'codex',
+      chat = { handle, queue, executionPath, aborted: false, browseOnly: record.backend === 'codex', lastActiveAt: Date.now(),
         ...(reasoningFailure && {reasoningFailure}) };
       this.live.set(record.id, chat);
       return chat;
@@ -1414,7 +1426,78 @@ export class Chats implements StructuredSessionPort {
     // Any operation outside the window's read requests owns the handle it gets
     // back, including Hive start before its exit callback has been installed.
     if (!browse) chat.browseOnly = false;
+    chat.lastActiveAt = Date.now();
     return chat;
+  }
+
+  /**
+   * Safely sleeps an idle worker backend process when it has no active turn,
+   * no pending interactions, no queued inputs/reports, no open Hive dispatches,
+   * and is not currently viewed by the desktop UI. Any concurrent dispatch or
+   * user send waits on `chat.cleanup` via `require()` and atomically wakes it.
+   */
+  async sleepIdleWorker(id: string, now = Date.now(), idleMs = this.workerIdleSleepMs): Promise<boolean> {
+    if (this.closing || this.desktopSession === id || this.desktopReads.has(id)) return false;
+    if (this.opening.has(id) || this.activating.has(id) || this.mutatingQueues.has(id) || this.startingForInput.has(id)) return false;
+    const record = this.index.peek(id);
+    if (!record?.agentId || record.agentId.endsWith(':orchestrator')) return false;
+    const chat = this.live.get(id);
+    if (!chat || chat.cleanup || chat.failure || chat.modeChanging) return false;
+    if (chat.queue.busy || chat.queue.pendingCount > 0 || chat.queue.pendingReports.length > 0 || chat.queue.pendingUserInputs.length > 0) return false;
+    if (chat.handle.interactions?.().length) return false;
+    if (now - chat.lastActiveAt < idleMs) return false;
+
+    // Verify with Hive that this worker has no open/unreported dispatches before sleeping.
+    try {
+      const members = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(record.workspaceId)}/team`) as {
+        id: string; pending_task_count: number; open_dispatches?: unknown[];
+      }[];
+      const member = members.find(m => m.id === record.agentId);
+      if (member && (member.pending_task_count > 0 || (member.open_dispatches?.length ?? 0) > 0)) return false;
+    } catch {
+      return false;
+    }
+
+    // Re-check all guards synchronously after the async Hive check before claiming cleanup.
+    if (this.closing || this.desktopSession === id || this.desktopReads.has(id)) return false;
+    if (this.opening.has(id) || this.activating.has(id) || this.mutatingQueues.has(id) || this.startingForInput.has(id)) return false;
+    const current = this.live.get(id);
+    if (current !== chat || chat.cleanup || chat.failure || chat.modeChanging) return false;
+    if (chat.queue.busy || chat.queue.pendingCount > 0 || chat.queue.pendingReports.length > 0 || chat.queue.pendingUserInputs.length > 0) return false;
+    if (chat.handle.interactions?.().length) return false;
+
+    const run = chat.onExit ? this.runtime.getActiveRunByAgentId(record.workspaceId, record.agentId) : undefined;
+    if (run && ['starting', 'running'].includes(run.status)) {
+      this.runtime.stopAgentRun(run.runId);
+      await this.runtime.waitForRunExit(run.runId, 15_000);
+      return true;
+    }
+
+    chat.cleanup = Promise.resolve().then(async () => {
+      try { await chat.handle.dispose(); }
+      finally {
+        if (this.live.get(id) === chat) this.live.delete(id);
+      }
+    });
+    await chat.cleanup;
+    return true;
+  }
+
+  async sweepIdleWorkers(now = Date.now(), idleMs = this.workerIdleSleepMs): Promise<string[]> {
+    const slept: string[] = [];
+    for (const id of [...this.live.keys()]) {
+      if (this.closing) break;
+      if (await this.sleepIdleWorker(id, now, idleMs)) slept.push(id);
+    }
+    return slept;
+  }
+
+  async historyPage(
+    id: string,
+    options: { beforeIndex: number; beforeMessageId?: string; limit?: number },
+  ): Promise<{ history: unknown[]; historyMessageIds: string[]; historyPage: HistoryPageMeta }> {
+    const snapshot = await this.open(id, true, true);
+    return sliceHistoryWindow(snapshot.history, snapshot.historyMessageIds, options);
   }
   private requireOpening(id: string): Promise<LiveChat> {
     const pending = this.opening.get(id);
@@ -2809,6 +2892,10 @@ export class Chats implements StructuredSessionPort {
     this.closeAbort.abort(new Error('Chat runtime is closing'));
   }
   async close() {
+    if (this.idleSweepTimer) {
+      clearInterval(this.idleSweepTimer);
+      this.idleSweepTimer = undefined;
+    }
     this.beginClose();
     this.disposing = true;
     await Promise.allSettled([...this.activating.values(), ...this.gitOperations]);

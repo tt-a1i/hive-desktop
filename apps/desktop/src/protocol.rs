@@ -257,9 +257,34 @@ pub(crate) struct InitializationActions {
 pub(crate) struct InitializationScript {
     pub(crate) name: String,
 }
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPageMeta {
+    #[serde(default)]
+    pub start_index: usize,
+    #[serde(default)]
+    pub has_older: bool,
+    #[serde(default)]
+    pub next_before_index: Option<usize>,
+    #[serde(default)]
+    pub next_before_message_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPageResponse {
+    #[serde(default)]
+    pub history: Vec<Value>,
+    #[serde(default)]
+    pub history_message_ids: Vec<String>,
+    pub history_page: HistoryPageMeta,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenSession {
+    #[serde(default)]
+    pub history_page: Option<HistoryPageMeta>,
     #[serde(default)]
     pub fork_draft: Option<Value>,
     #[serde(default)]

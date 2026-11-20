@@ -11,6 +11,7 @@ use std::{
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum RowKey {
+    LoadOlder,
     Message(String),
     Group(String),
     Tail,
@@ -22,6 +23,10 @@ pub struct ReadingAnchor {
 }
 #[derive(Clone, PartialEq, Eq)]
 enum Kind {
+    LoadOlder {
+        remaining: usize,
+        loading: bool,
+    },
     Message {
         index: usize,
         indented: bool,
@@ -86,7 +91,18 @@ impl ConversationList {
 
 impl HiveApp {
     pub(crate) fn sync_conversation_list(&mut self, cx: &App) {
-        let mut rows = Vec::with_capacity(self.messages.len() + 1);
+        let mut rows = Vec::with_capacity(self.messages.len() + 2);
+        if let Some(page) = self.history_page.as_ref().filter(|p| p.has_older && p.start_index > 0) {
+            rows.push(Row {
+                key: RowKey::LoadOlder,
+                kind: Kind::LoadOlder {
+                    remaining: page.start_index,
+                    loading: self.loading_older_history,
+                },
+                revision: page.start_index as u64 * 2 + u64::from(self.loading_older_history),
+                expanded: false,
+            });
+        }
         let mut offset = 0;
         for group in self
             .messages
@@ -277,6 +293,36 @@ impl HiveApp {
                     return div().into_any_element();
                 };
                 let content = match row.kind {
+                    Kind::LoadOlder { remaining, loading } => {
+                        use crate::language::{english, tr};
+                        use gpui_kit::component::{Disableable, Sizable, button::Button, h_flex};
+                        let label = if loading {
+                            tr("正在加载更早历史…").to_owned()
+                        } else if english() {
+                            format!("Load earlier history ({remaining} more)")
+                        } else {
+                            format!("加载更早历史（还有 {remaining} 条）")
+                        };
+                        h_flex()
+                            .w_full()
+                            .justify_center()
+                            .py_2()
+                            .child(
+                                Button::new("load-older-history")
+                                    .outline()
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(28.))
+                                    .px_3()
+                                    .rounded_full()
+                                    .label(label)
+                                    .disabled(loading || !this.connected)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.load_older_history(cx);
+                                    })),
+                            )
+                            .into_any_element()
+                    }
                     Kind::Message { index, .. } => {
                         let markdown = this.show_message_markdown(index, cx);
                         if markdown.is_some() {
