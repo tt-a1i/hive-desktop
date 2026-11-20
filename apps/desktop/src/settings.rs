@@ -323,6 +323,7 @@ impl HiveApp {
                 match result {
                     Ok(value) => match serde_json::from_value::<ExecutableSettings>(value) {
                         Ok(settings) => {
+                            this.refresh_readiness(cx);
                             if replace_inputs {
                                 let inputs = [
                                     (this.pi_command.clone(), pi, settings.pi_command.clone().unwrap_or_default()),

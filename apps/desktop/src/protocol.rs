@@ -259,6 +259,43 @@ pub(crate) struct InitializationScript {
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct McpResourceStatus {
+    pub name: String,
+    pub source: String,
+    pub transport: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendReadiness {
+    pub backend: String,
+    pub level: String,
+    #[serde(default)]
+    pub executable: Option<String>,
+    #[serde(default)]
+    pub config_error: Option<String>,
+    #[serde(default)]
+    pub remediation_key: String,
+    #[serde(default)]
+    pub mcp_count: usize,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadinessReport {
+    #[serde(default)]
+    pub backends: Vec<BackendReadiness>,
+    #[serde(default)]
+    pub mcp_resources: Vec<McpResourceStatus>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HistoryPageMeta {
     #[serde(default)]
     pub start_index: usize,

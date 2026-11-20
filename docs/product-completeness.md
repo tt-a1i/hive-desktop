@@ -1,5 +1,34 @@
 # 完整产品实施与验收
 
+2026-11-20 阶段 A 收口与阶段 B 演进：
+- **Windows 实窗尾项全量清零**：`2771662` 的完整 Windows 作业（[44650058197](https://github.com/tt-a1i/hive-desktop/actions/runs/44650058197)）及六项独立 UIA 原生窗口回放全部绿灯通过，包括：全部 75+ 包内功能检查、Windows WebView2 隔离 HTML 预览（含子框架导航拦截、显式快照重开与源文件移走后的冷开恢复）、原生更新与回退；[Git 提交预览取消后焦点回落与冷开草稿保留](https://github.com/tt-a1i/hive-desktop/actions/runs/44653738858)；[历史回退遇外来索引锁的 UIA 完整错误读取与冷开](https://github.com/tt-a1i/hive-desktop/actions/runs/44653745654)；[旧格式待发队列显式重发与冷开核验](https://github.com/tt-a1i/hive-desktop/actions/runs/44654750841)；[Codex/ACP/Pi 会话模式窗口检查与冷恢复](https://github.com/tt-a1i/hive-desktop/actions/runs/44654757246)；[工作树初始化失败冷开、重试与发送屏障](https://github.com/tt-a1i/hive-desktop/actions/runs/44654772190)；[结构化提问附件系统选择器与私有副本冷开](https://github.com/tt-a1i/hive-desktop/actions/runs/44657666736)。
+- **仓库与工作树卫生收口**：已安全清理 10 个已合入 `main` 的临时 git worktree 与 4 个过时本地分支，并将 `.artifacts/` 从 3.7 GB 清理至 154 MB（保留 `current-package/` 验收收据与 `hive-desktop-macos-arm64-candidate.zip`）。
+- **阶段 B 四大进阶跃迁（已合入源码并通过 Rust / Runtime 门禁）**：
+  1. **多 Agent 团队协作“实时态势驾驶舱”**（对标 Cindy）：`team.members` 附带只读实时运行态（`desktop_activity`），协作概览顶部新增主控与 Worker 实时态势驾驶舱（空闲 / 思考与工具执行中 / 等待交互或审批 / 队列待发 / 异常停止、活跃工具与目标文件一行摘要、worktree 分支标识、待阅汇报高亮），派单卡片支持一键直达成员会话并返回主控会话。
+  2. **行内词/字符级 Diff 高亮与高频输入微交互**（对标 T3 Code）：工具 Diff、Git Diff 抽屉与“设置 → Diff”接入 `Word / Character / Off` 行内局部变更高亮切换（1,000 字节行长上限保障大补丁有界内存）；`@` 项目文件引用弹窗与附件卡片移除后焦点自动回落至输入框，并补齐 `Tab / Shift-Tab / Escape` 键盘流转。
+  3. **超长会话游标分页加载与空闲 Worker 安全休眠调度**（对标 Apache Maka `rust-preview`）：`chat.open` 支持可选 `historyLimit` 与 `historyAroundMessageId`（保障全文搜索跳转与阅读锚点零破坏），新增 `chat.historyPage` 向后游标分页及会话顶部“加载更早历史”按钮；空闲 Worker 在无活跃回合、无待处理交互、无排队输入/未结算汇报且无未结派单时安全释放常驻进程，新派单或用户发送通过 `require()` + `chat.cleanup` 原子唤醒防丢消息。
+  4. **后端环境只读就绪度诊断与 MCP / 扩展资源可观测性**（对标 Cindy & Beluga）：新增只读 `desktop.readiness` RPC，在首次引导与“设置 → 外部程序”清晰区分内置 Pi、Codex、Claude Code、外部 Pi、ACP 的就绪状态、程序缺失、路径无效、凭据存在性与修复指引，并展示 Codex/Claude/Pi 本地配置的 MCP 服务器与扩展资源及解析错误（严格脱敏，不发起模型推理、不修改全局配置）。
+
+## #38–#53 逐票据收口核对表
+
+| 票据 | 范围 | 已闭环证据 | 客观外部环境边界 |
+| --- | --- | --- | --- |
+| [#38](https://github.com/tt-a1i/hive-desktop/issues/38) | 归档搜索与恢复 | macOS/Windows 原生窗口归档搜索、缺失工作树只读冷开、Unicode 原文大小写保留通过 | 无核心阻断；旧版未存标记的历史无法回溯元数据 |
+| [#39](https://github.com/tt-a1i/hive-desktop/issues/39) | 功能总任务（含桌面更新、隔离 HTML、1Password） | macOS 签名包与 Windows 完整构建 [44650058197](https://github.com/tt-a1i/hive-desktop/actions/runs/44650058197) 全部通过（含 WebView2 快照重开与隔离更新回退） | 真实 1Password 桌面系统授权弹窗、正式发布签名公证需本机人工交互 |
+| [#40](https://github.com/tt-a1i/hive-desktop/issues/40) | 待发编辑、撤回、停止继续与旧格式恢复 | macOS 实窗 + 真实 Codex/Terra；Windows 明确拒绝/结果不明/旧格式显式重发（[44654750841](https://github.com/tt-a1i/hive-desktop/actions/runs/44654750841)）全部通过 | Claude/Antigravity 按约定不验 |
+| [#41](https://github.com/tt-a1i/hive-desktop/issues/41) | 跨会话全文搜索与阅读位置锚点 | macOS/Windows 原生窗口 Unicode 搜索定位与 81 条消息中段锚点冷恢复（[44625237770](https://github.com/tt-a1i/hive-desktop/actions/runs/44625237770)）通过 | 跨大版本历史兼容持续回归 |
+| [#42](https://github.com/tt-a1i/hive-desktop/issues/42) | 项目文件引用与私有快照 | macOS/Windows 原生窗口移走源文件后冷开读取私有快照（[44604549909](https://github.com/tt-a1i/hive-desktop/actions/runs/44604549909)）+ 真实 Codex/Terra 读取通过 | 其他真实厂商端按需验证 |
+| [#43](https://github.com/tt-a1i/hive-desktop/issues/43) | Git 状态、Diff、提交预览与 PR | macOS 大补丁/远端/PR 通过；Windows 提交钩子进程回收与 102 文件提交预览取消焦点回落/冷开草稿（[44653738858](https://github.com/tt-a1i/hive-desktop/actions/runs/44653738858)）通过 | 实际托管 GitHub 写入需人工仓库授权 |
+| [#44](https://github.com/tt-a1i/hive-desktop/issues/44) | 自定义快捷键与输入法 | macOS Apple 拼音候选 Return + 布局切换通过；Windows 美式→德式→美式布局切换快捷键（[44596595507](https://github.com/tt-a1i/hive-desktop/actions/runs/44596595507)）通过 | 托管 Windows Server 2025 镜像缺少系统中文基础组件（`NotPresent` / `0x80070057`），中文候选需带中文语言包的实体 Windows 验证 |
+| [#45](https://github.com/tt-a1i/hive-desktop/issues/45) | 独立工作树生命周期 | macOS/Windows 脏树保护（[44629097764](https://github.com/tt-a1i/hive-desktop/actions/runs/44629097764)）、干净树移除与只读冷开（[44632602383](https://github.com/tt-a1i/hive-desktop/actions/runs/44632602383)）及跨进程并发检查通过 | 外部手动 Git 操作不受 Hive 内部锁保护 |
+| [#47](https://github.com/tt-a1i/hive-desktop/issues/47) | 项目脚本与工作树初始化 | macOS/Windows PTY 进程生命周期与初始化失败冷开、重试、发送屏障（[44654772190](https://github.com/tt-a1i/hive-desktop/actions/runs/44654772190)）全部通过 | 进程与收据同时丢失时无法凭空重建 |
+| [#48](https://github.com/tt-a1i/hive-desktop/issues/48) | 只读账号额度查询 | macOS/Windows 原生窗口隔离 CLI 读取与辅助进程树回收（[44622613933](https://github.com/tt-a1i/hive-desktop/actions/runs/44622613933)）通过 | 仅限厂商接口暴露字段 |
+| [#49](https://github.com/tt-a1i/hive-desktop/issues/49) | 原生会话模式与权限 | macOS 真实 Codex/Terra；Windows Codex/ACP/Pi 会话模式实窗检查与冷恢复（[44654757246](https://github.com/tt-a1i/hive-desktop/actions/runs/44654757246)）通过 | 内置 Pi 按契约不新增审批 |
+| [#50](https://github.com/tt-a1i/hive-desktop/issues/50) | 检查点、历史编辑、回退与分叉 | macOS 真实 Codex 回退与强杀恢复通过；Windows 检查点保护/恢复与外来索引锁 UIA 完整错误读取及冷开（[44653745654](https://github.com/tt-a1i/hive-desktop/actions/runs/44653745654)）通过 | 依赖后端原生历史回退能力 |
+| [#51](https://github.com/tt-a1i/hive-desktop/issues/51) | 结构化提问与附件 | macOS 真实 Codex/Terra；Windows 系统选择器选取、移走源文件私有副本校验、单次提交与冷开收据（[44657666736](https://github.com/tt-a1i/hive-desktop/actions/runs/44657666736)）全部通过 | 旧上传无历史摘要 |
+| [#52](https://github.com/tt-a1i/hive-desktop/issues/52) | 多实例配置与 ACP 团队协作 | macOS 真实 Codex 主控 → 官方 Codex ACP 成员派单、汇报与冷恢复通过；Windows 受控对端协议检查通过 | Windows 真实模型协作与双账号隔离待实机账号条件 |
+| [#53](https://github.com/tt-a1i/hive-desktop/issues/53) | 跨后端接续与冷队列 | macOS 真实 Codex→ACP 接续通过；Windows 包内现行/旧快照冷恢复与实窗预览（[44616388325](https://github.com/tt-a1i/hive-desktop/actions/runs/44616388325)）通过 | 其他真实厂商组合按需验证 |
+
 本轮收尾的 macOS 签名离线包通过 75 项功能检查，以及包身份、进程归属、原生启动、Codex、派单、队列与远程协议检查。Rust 测试 143 项通过、1 项原有忽略，测试和 release 编译均无警告。集成复验修复了项目文件快照损坏时原提示丢失的问题，提问回复仍通过结构化错误指出附件 ID。Windows 的新增原生回放分别按下文记录，尚待新包核验的路径继续保留。
 
 Windows 问题附件回放现会准备隔离用户的 Desktop 和 Documents，再在 Hive 窗口的辅助功能子树中定位本进程的文件名输入框。选取后仍需核对私有副本与原文逐字节一致、移走源文件、单次提交及冷开收据。

@@ -26,6 +26,7 @@ import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
 import { desktopHistoryMessage } from './desktop-history.js';
 import { sliceHistoryWindow } from './history-cursor.js';
+import { collectReadinessReport } from './readiness.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
 let outputClosed = false;
@@ -240,6 +241,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'desktop.settings.codexAccount': { exact(params, ['command', 'profile']); if (params.profile !== undefined && params.command !== undefined) throw new Error('Select a saved profile or an executable draft'); return settings.codexAccount(params.command, optionalProfile(params).profile); }
     case 'desktop.settings.probe': { exact(params, ['backend', 'command', 'profile']); if (params.profile !== undefined && params.command !== undefined) throw new Error('Select a saved profile or an executable draft'); return settings.probe(params.backend, params.command, optionalProfile(params).profile); }
     case 'desktop.settings.get': return settings.get();
+    case 'desktop.readiness': { exact(params, []); return collectReadinessReport({ settings, profiles }); }
     case 'desktop.settings.update': return settings.update(params);
     case 'worktree.initialization.get':
     case 'worktree.initialization.retry':

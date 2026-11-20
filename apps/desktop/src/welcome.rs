@@ -21,7 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-mod agents;
+pub(crate) mod agents;
 
 const GIT_BRANCH_TTL: Duration = Duration::from_secs(3);
 

@@ -138,6 +138,7 @@ impl HiveApp {
                 .vertical_scrollbar(scroll)
                 .pr_1()
                 .gap_4()
+                .child(self.render_readiness_and_mcp_card(cx))
                 .child(
                     v_flex()
                         .gap_1()
@@ -549,5 +550,267 @@ impl HiveApp {
             &self.program_scroll,
             field,
         )
+    }
+
+    fn render_readiness_and_mcp_card(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let report = self.readiness.as_ref();
+        v_flex()
+            .w_full()
+            .gap_2p5()
+            .p_3p5()
+            .rounded_xl()
+            .bg(Color::Card.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(Color::Text.get(cx))
+                                    .child(tr("后端环境就绪度与 MCP / 扩展资源")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(tr("只读检查各后端路径、凭据存在性与已配置 MCP 服务器，不发起模型推理或修改全局配置。")),
+                            ),
+                    )
+                    .child(
+                        Button::new("programs-refresh-readiness")
+                            .outline()
+                            .compact()
+                            .xsmall()
+                            .h(px(26.))
+                            .px_2p5()
+                            .rounded_md()
+                            .icon(gpui_kit::assets::IconName::RefreshCw)
+                            .label(if self.readiness_loading {
+                                tr("诊断中…")
+                            } else {
+                                tr("重新诊断")
+                            })
+                            .disabled(!self.connected || self.readiness_loading)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.refresh_readiness(cx);
+                            })),
+                    ),
+            )
+            .when_some(self.readiness_error.as_ref(), |view, err| {
+                view.child(
+                    div()
+                        .px_2p5()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(Color::ErrorSurface.get(cx))
+                        .text_xs()
+                        .text_color(Color::Error.get(cx))
+                        .child(format!("{}: {err}", tr("环境诊断读取失败"))),
+                )
+            })
+            .when_some(report, |view, report| {
+                view.child(
+                    v_flex()
+                        .w_full()
+                        .gap_1p5()
+                        .children(report.backends.iter().enumerate().map(|(i, b)| {
+                            let (badge_text, badge_color) =
+                                crate::welcome::agents::readiness_badge(&b.level, cx);
+                            let name = match b.backend.as_str() {
+                                "pi" => tr("内置 Pi"),
+                                "codex" => "Codex",
+                                "claude" => "Claude Code",
+                                "pi-rpc" => tr("外部 Pi"),
+                                "acp" => "ACP",
+                                other => other,
+                            };
+                            h_flex()
+                                .id(("readiness-backend", i))
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .px_2p5()
+                                .py_1p5()
+                                .rounded_lg()
+                                .bg(Color::Inset.get(cx))
+                                .border_1()
+                                .border_color(Color::Divider.get(cx))
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_0p5()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .flex_wrap()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child(name.to_owned()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .px_1p5()
+                                                        .py(px(1.))
+                                                        .rounded_sm()
+                                                        .bg(Color::Card.get(cx))
+                                                        .text_size(px(10.5))
+                                                        .text_color(badge_color)
+                                                        .child(badge_text.to_owned()),
+                                                )
+                                                .when_some(b.executable.as_ref(), |row, exec_path| {
+                                                    row.child(
+                                                        div()
+                                                            .text_size(px(10.5))
+                                                            .text_color(Color::Muted.get(cx))
+                                                            .truncate()
+                                                            .child(exec_path.clone()),
+                                                    )
+                                                }),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .text_color(if b.config_error.is_some() {
+                                                    Color::Error.get(cx)
+                                                } else {
+                                                    Color::Muted.get(cx)
+                                                })
+                                                .truncate()
+                                                .child(
+                                                    b.config_error
+                                                        .clone()
+                                                        .unwrap_or_else(|| crate::language::localize_owned_error(&b.remediation_key)),
+                                                ),
+                                        ),
+                                )
+                        })),
+                )
+                .child(
+                    v_flex()
+                        .w_full()
+                        .gap_1p5()
+                        .pt_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(Color::Secondary.get(cx))
+                                .child(if english() {
+                                    format!(
+                                        "Configured MCP servers & extensions ({})",
+                                        report.mcp_resources.len()
+                                    )
+                                } else {
+                                    format!(
+                                        "已配置 MCP 服务器与扩展资源（{}）",
+                                        report.mcp_resources.len()
+                                    )
+                                }),
+                        )
+                        .when(report.mcp_resources.is_empty(), |col| {
+                            col.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(tr("暂未在已知本地配置文件中发现 MCP 服务器或扩展。")),
+                            )
+                        })
+                        .children(report.mcp_resources.iter().enumerate().map(|(i, res)| {
+                            let (status_label, status_color) = match res.status.as_str() {
+                                "configured" => (tr("已配置"), Color::Success.get(cx)),
+                                "disabled" => (tr("已停用"), Color::Muted.get(cx)),
+                                "error" => (tr("配置错误"), Color::Error.get(cx)),
+                                other => (other, Color::Muted.get(cx)),
+                            };
+                            h_flex()
+                                .id(("readiness-mcp", i))
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .px_2p5()
+                                .py_1()
+                                .rounded_md()
+                                .bg(Color::Inset.get(cx))
+                                .border_1()
+                                .border_color(if res.status == "error" {
+                                    Color::Error.get(cx).opacity(0.4)
+                                } else {
+                                    Color::Divider.get(cx)
+                                })
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_0p5()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .flex_wrap()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .text_color(Color::Text.get(cx))
+                                                        .child(res.name.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(10.5))
+                                                        .text_color(Color::Muted.get(cx))
+                                                        .child(format!("{} · {}", res.source, res.transport)),
+                                                )
+                                                .when_some(res.detail.as_ref(), |row, detail| {
+                                                    row.child(
+                                                        div()
+                                                            .text_size(px(10.5))
+                                                            .text_color(Color::Muted.get(cx))
+                                                            .truncate()
+                                                            .child(detail.clone()),
+                                                    )
+                                                }),
+                                        )
+                                        .when_some(res.error.as_ref(), |col, err| {
+                                            col.child(
+                                                div()
+                                                    .text_size(px(11.))
+                                                    .text_color(Color::Error.get(cx))
+                                                    .truncate()
+                                                    .child(err.clone()),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .px_1p5()
+                                        .py(px(1.))
+                                        .rounded_sm()
+                                        .bg(Color::Card.get(cx))
+                                        .text_size(px(10.5))
+                                        .text_color(status_color)
+                                        .child(status_label.to_owned()),
+                                )
+                        })),
+                )
+            })
     }
 }

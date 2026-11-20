@@ -1,5 +1,18 @@
 # 完整目标的当前验收状态
 
+## 2026-11-20 Windows 实窗尾项全量清零与阶段 B 进展
+
+- **Windows 完整构建与 6 项 UIA 原生回放全部绿灯（基线 `2771662`）**：
+  - 完整构建 + 75+ 包内功能检查 + WebView2 隔离 HTML 预览（含子框架导航与显式快照重开及移走源文件后冷开）+ 原生隔离更新与回退：[44650058197](https://github.com/tt-a1i/hive-desktop/actions/runs/44650058197)（`success`）。
+  - Git 提交预览取消后焦点回落原按钮与冷开草稿保留（`git-preview`）：[44653738858](https://github.com/tt-a1i/hive-desktop/actions/runs/44653738858)（`success`）。
+  - 历史回退遇外来 Git 索引锁 UIA 完整错误读取与冷开（`rewind-lock`）：[44653745654](https://github.com/tt-a1i/hive-desktop/actions/runs/44653745654)（`success`）。
+  - 旧格式待发队列显式重发与冷开核验（`queued-legacy-retry`）：[44654750841](https://github.com/tt-a1i/hive-desktop/actions/runs/44654750841)（`success`）。
+  - Codex / ACP / Pi 会话模式窗口检查与冷恢复（`session-modes`）：[44654757246](https://github.com/tt-a1i/hive-desktop/actions/runs/44654757246)（`success`）。
+  - 工作树初始化失败冷开、重试与发送屏障（`worktree-setup`）：[44654772190](https://github.com/tt-a1i/hive-desktop/actions/runs/44654772190)（`success`）。
+  - 结构化提问附件系统选择器、移走源文件私有副本校验与冷开收据（`question-attachment`）：[44657666736](https://github.com/tt-a1i/hive-desktop/actions/runs/44657666736)（`success`）。
+  - 说明：以上 4 项首次回放失败均定位为测试夹具脚本问题（PowerShell 5.1 精简环境缺少 `Get-FileHash`、UIA 文本尾随换行、`DropdownMenu` 指针点击及 `IFileOpenDialog` Win32 `ComboBox->Edit` 定位），修正脚本后在完全相同的 `2771662` 产品包上全部一次通过。
+- **阶段 B 四大进阶跃迁**：团队协作实时态势驾驶舱、行内词/字符级 Diff 高亮与 Composer 焦点微交互、超长会话游标分页加载与空闲 Worker 安全休眠调度、五后端只读环境就绪度与 MCP/扩展资源可观测性均已落地并通过零警告编译、144 项 Rust 单元测试及新增 Runtime 专项检查（`history-cursor-and-idle-sleep.ts`、`readiness-and-mcp.ts`）。
+
 本轮收尾的 macOS 签名离线包通过 75 项功能检查，以及包身份、进程归属、原生启动、Codex、派单、队列与远程协议检查。Rust 测试 143 项通过、1 项原有忽略，测试和 release 编译均无警告。集成复验修复了项目文件快照损坏时原提示丢失的问题，提问回复仍通过结构化错误指出附件 ID。Windows 的新增原生回放分别按下文记录，尚待新包核验的路径继续保留。
 
 Windows 问题附件回放现会准备隔离用户的 Desktop 和 Documents，再在 Hive 窗口的辅助功能子树中定位本进程的文件名输入框。选取后仍需核对私有副本与原文逐字节一致、移走源文件、单次提交及冷开收据。
