@@ -518,8 +518,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在紧凑和展开预览点击 `#repeat-1` 和编码的 `#章節`。布局记录确认两处都实际滚到第二个同名标题和中文标题。不存在的标题与代码围栏中的标题均未触发滚动，目录跳转也没有再次读取文件。诊断记录只用于隔离验收，已从应用源码移除。证据在 `.artifacts/batch37-markdown-native/layout.log`。
 - 323 项 Rust 测试通过，1 项原有忽略。TypeScript、桌面运行时、真实 Hive HTTP 与 SQLite、Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十八批
+
+本轮从 Hive Desktop `fd88496` 开始。参考 T3 Code `b985057`、Cindy `1db8327`、Beluga `eed1b7e`。Hive 上游 `main` 为 `18861b8`。
+
+- **跨重启保留工作流新事项的已读状态。** 跨项目收件箱沿用窗口和行可见性规则，按工作区与运行 ID 保存已读。原运行仍可从「需要关注」打开。同名新运行独立提示，暂缓后的唤回可以重新提示。 [Cindy 恢复已读状态](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/bots/botReadState.ts#L38-L56)
+- **用键盘翻看终端输出。** Shift+PageUp/PageDown 翻页，macOS 用 Cmd+Shift+Home/End 到首尾，Windows 用 Ctrl+Shift。右键里的「跳到最新输出」也可回到末尾。这些操作在普通终端只滚动当前标签。备用屏幕沿用既有按键路由。 [T3 Code 终端翻页](https://github.com/pingdotgg/t3code/blob/b985057d3f0ae8d368d73f98585aeb639daffbed/docs/user/terminal.md#L33-L40)
+- **从 Markdown 链接打开另一文件的指定章节。** 例如 `./setup%20guide.md#linux` 只读取当前工作树里的目标，等解析完成后定位标题。找不到标题时打开文件顶部。紧凑和展开预览沿用文件面板原查询。切换工作树后，先前的读请求不能更新当前预览。 [Beluga 跨文档跳转](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/MarkdownDoc.tsx#L225-L256)
+
+- 专项检查核对收件箱按原工作区和运行 ID 恢复，以及旧版本仍可读取暂缓记录。终端专项核对按键修饰键、首尾裁限以及备用屏幕和输入法的原有路由。文件专项核对编码路径、只读工作树范围和来源目录变化。
+- macOS 在跨项目收件箱看到旧运行后冷重开，旧运行没有重新提示，仍可打开原日志。第二条同名运行单独出现在「新事项」。实窗暂缓旧运行后，保存数据清除该运行的已读标记并保留原 ID。到期后的重新提示由 Rust 专项核对。证据在 `.artifacts/batch38-inbox-native`。
+- macOS 用两个带 200 行输出的终端标签验证翻页、首尾和右键回最新输出。普通终端的真实输入流只收到验收用的 `q`，备用屏幕仍收到了原 PageUp/PageDown 字节序列。布局诊断只用于隔离验收，已从应用源码移除。证据在 `.artifacts/batch38-markdown-native/app.log` 与 `.artifacts/competitive-ux/thirty-eighth/pty-native-bytes.log`。
+- macOS 从工作树 A 的紧凑预览和 B 的展开预览点击相同的带空格链接。每次都只读取当前工作树的目标一次，并滚到各自不同位置的 `Linux` 标题。展开预览跟随后将目标显示在文件面板。缺失标题打开目标文件顶部。另将 A 的读回包延迟 7 秒，切换 B 并打开其源文件，A 回包没有触发滚动，随后 B 仍能打开自己的章节。证据在 `.artifacts/batch38-markdown-native`。
+- 326 项桌面 Rust 测试和 9 项终端 Rust 测试通过，1 项桌面测试原有忽略。TypeScript、终端运行时、文件运行时及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **冷启动后保留工作流新事项的已读状态。** 在收件箱看到运行后退出重开，目前可能把旧运行重新提示为新事项。验收同名新运行独立提示，旧运行仍可打开原日志，暂缓到期可以再次提示。 [Cindy 恢复已读状态](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/bots/botReadState.ts#L38-L56)
-- **用键盘翻看终端滚动记录并回到最新输出。** 终端有长输出时，当前只能用鼠标浏览。验收在两个标签中分别写入带首尾标记的 200 行，翻页和首尾跳转只移动当前视图，并保留全屏程序原有按键路由。 [T3 Code 终端翻页](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/docs/user/terminal.md#L30-L47)
-- **从 Markdown 链接打开另一个文件的指定章节。** 点击 `./setup%20guide.md#linux` 当前不会打开。验收两个工作树的同名文档标题在不同位置时，只请求一次当前工作树里的文件，定位对应标题，切换工作树时延迟结果不会改变新预览。 [Beluga 跨文档跳转](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/MarkdownDoc.tsx#L225-L256)
+- **在两个收件箱里查看正在运行的工作流。** 现在要进各项目工作流页才能看运行中记录。验收「等待 Agent」折叠区只显示顶层运行，能打开准确日志，成功后静默移除，失败后原运行转入「需要关注」并提示。 [Cindy 收件箱运行中规则](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/docs/product-rules/task-inbox.md#L29-L46)
+- **用键盘在侧栏、聊天、输入框和可见面板之间切换焦点。** 现在应先离开输入框才能查看部分常用区域。验收在已打开的文件面板与输入框间往返，保留查询和原光标，跳过隐藏区域，弹窗保留自己的焦点，终端继续收到已有的 F6 输入。 [T3 Code 焦点切换](https://github.com/pingdotgg/t3code/blob/b985057d3f0ae8d368d73f98585aeb639daffbed/docs/user/keyboard-focus.md#L13-L25)
+- **切回原工作树时恢复上次打开的紧凑预览。** 目前从 A 切到 B 再回来要重新打开文件。验收两个工作树的同名文件各自准确，返回后重新读取 A 并恢复原阅读位置，显式关闭的预览不会重开。 [Beluga 按工作区显示预览](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/layout/panel/FilesTab.tsx#L181-L198)

@@ -5,7 +5,7 @@ use self::deadline::DeadlineWake;
 use super::super::{
     ActionCenter, ActionablePage, Attention, Destination, Entry, Priority, SnoozeEdit, Wake,
     read_actionable_tail, read_dispatch_inputs, read_exact_workflow_runs,
-    snoozes::{Snoozes, workflow_run_id, workflow_run_key},
+    snoozes::{Snoozes, workflow_run_key},
 };
 use super::{GlobalInbox, now_ms};
 use crate::{app::HiveApp, transport::Runtime};
@@ -13,6 +13,7 @@ use gpui_kit::*;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    path::Path,
     time::Duration,
 };
 
@@ -250,7 +251,13 @@ impl InboxBadge {
     }
 
     pub(super) fn sees(&self, item: &BadgeItem) -> bool {
-        self.seen.contains(item)
+        match item {
+            BadgeItem::WorkflowRun { workspace, run } => self
+                .reminders
+                .get(workspace)
+                .is_some_and(|saved| saved.has_seen_workflow_run(run)),
+            _ => self.seen.contains(item),
+        }
     }
 
     pub(in crate::collaboration::inbox) fn forget_unread(
@@ -265,10 +272,40 @@ impl InboxBadge {
         self.seen.remove(&item);
     }
 
-    pub(super) fn acknowledge(&mut self, items: impl IntoIterator<Item = BadgeItem>) -> bool {
+    pub(super) fn acknowledge(
+        &mut self,
+        root: Option<&Path>,
+        now: u64,
+        items: impl IntoIterator<Item = BadgeItem>,
+    ) -> bool {
         let before = self.seen.len();
-        self.seen.extend(items);
-        self.seen.len() != before
+        let mut workflow_runs = BTreeMap::<String, Vec<String>>::new();
+        for item in items {
+            if self.sees(&item) {
+                continue;
+            }
+            match item {
+                BadgeItem::WorkflowRun { workspace, run } => {
+                    workflow_runs.entry(workspace).or_default().push(run);
+                }
+                _ => {
+                    self.seen.insert(item);
+                }
+            }
+        }
+        let mut changed = self.seen.len() != before;
+        if let Some(root) = root {
+            for (workspace, runs) in workflow_runs {
+                match Snoozes::acknowledge_workflow_runs(root, &workspace, &runs, now) {
+                    Ok(saved) => {
+                        changed |= runs.iter().any(|id| saved.has_seen_workflow_run(id));
+                        self.remember_reminders(&workspace, &saved);
+                    }
+                    Err(error) => eprintln!("Could not acknowledge workflow inbox items: {error}"),
+                }
+            }
+        }
+        changed
     }
 
     pub(in crate::collaboration::inbox) fn remember_reminders(
@@ -292,11 +329,6 @@ impl InboxBadge {
     pub(in crate::collaboration::inbox) fn forget_snoozed(&mut self, edit: &SnoozeEdit) {
         if let Some(session) = edit.key.strip_prefix("unread-session:") {
             self.forget_unread(&edit.workspace, session);
-        } else if let Some(run) = workflow_run_id(&edit.key) {
-            self.seen.remove(&BadgeItem::WorkflowRun {
-                workspace: edit.workspace.clone(),
-                run: run.to_owned(),
-            });
         } else if let Some(message) = edit.key.strip_prefix("message:")
             && let Some(Wake::Dispatch { id, .. }) = &edit.wake
         {
@@ -401,6 +433,23 @@ mod tests {
             wake: Some(Wake::WorkflowRun),
             previous: None,
         };
+        let mut badge = InboxBadge::default();
+        assert!(badge.acknowledge(
+            Some(root.path()),
+            9,
+            [original_item.clone(), foreign_item.clone()],
+        ));
+        assert!(badge.sees(&original_item));
+        assert!(!badge.sees(&later_item));
+        let mut reopened = InboxBadge::default();
+        reopened.remember_reminders(workspace, &Snoozes::load(root.path(), workspace).unwrap());
+        assert!(reopened.sees(&original_item));
+        assert!(!reopened.sees(&later_item));
+        assert!(!reopened.sees(&foreign_item));
+        let other_root = tempfile::tempdir().unwrap();
+        reopened.remember_reminders(workspace, &Snoozes::load(other_root.path(), workspace).unwrap());
+        assert!(!reopened.sees(&original_item));
+
         let (saved, applied) = Snoozes::edit(
             root.path(),
             workspace,
@@ -414,17 +463,22 @@ mod tests {
         )
         .unwrap();
         assert!(applied);
-        let mut badge = InboxBadge::default();
         badge.remember_reminders(workspace, &saved);
         badge.remember_reminders(foreign, &Snoozes::load(root.path(), foreign).unwrap());
-        badge.acknowledge([original_item.clone(), foreign_item.clone()]);
-        badge.forget_snoozed(&edit);
         assert!(!badge.sees(&original_item));
         assert!(badge.sees(&foreign_item));
         assert!(!badge.pending_visible(&original_item, 19));
         assert!(badge.pending_visible(&later_item, 19));
         assert!(badge.pending_visible(&foreign_item, 19));
+        assert!(!badge.acknowledge(Some(root.path()), 19, [original_item.clone()]));
+        let after_deadline = Snoozes::expire(root.path(), workspace, 20).unwrap();
+        let mut badge = InboxBadge::default();
+        badge.remember_reminders(workspace, &after_deadline);
         assert!(badge.pending_visible(&original_item, 20));
+        assert!(!badge.sees(&original_item));
+        assert!(after_deadline.tracked_workflow_runs().any(|id| id == original));
+        assert!(badge.acknowledge(Some(root.path()), 20, [original_item.clone()]));
+        assert!(badge.sees(&original_item));
     }
 
     #[test]
@@ -480,7 +534,7 @@ mod tests {
         let new = item("beacon", "new");
         let mut badge = InboxBadge::default();
         badge.replace(&scope, Some(HashSet::from([old.clone(), other.clone()])));
-        assert!(badge.acknowledge([old.clone()]));
+        assert!(badge.acknowledge(None, 0, [old.clone()]));
         assert!(badge.sees(&old));
         assert!(!badge.sees(&other));
         badge.replace(
@@ -511,7 +565,7 @@ mod tests {
         let atlas = session("atlas");
         let question = item("beacon", "question");
         let mut badge = InboxBadge::default();
-        assert!(badge.acknowledge([atlas.clone(), beacon.clone(), question.clone()]));
+        assert!(badge.acknowledge(None, 0, [atlas.clone(), beacon.clone(), question.clone()]));
         badge.forget_unread("beacon", "example");
         assert!(!badge.sees(&beacon));
         assert!(badge.sees(&atlas));

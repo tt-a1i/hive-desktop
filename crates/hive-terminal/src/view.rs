@@ -1,6 +1,6 @@
 use crate::colors::ColorPalette;
 use crate::event::{GpuiEventProxy, ParserEvent, TerminalEvent};
-use crate::input::key_input_bytes;
+use crate::input::{KeyInput, key_input};
 use crate::mouse::pixel_to_cell;
 use crate::render::TerminalRenderer;
 use crate::terminal::TerminalState;
@@ -201,7 +201,7 @@ impl TerminalView {
         }
     }
 
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, _cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let key = event.keystroke.key.to_lowercase();
         let modifiers = &event.keystroke.modifiers;
         let clipboard_shortcut = if cfg!(target_os = "macos") {
@@ -210,29 +210,28 @@ impl TerminalView {
             modifiers.control && modifiers.shift
         };
         if clipboard_shortcut && key == "c" {
-            self.copy_selection(_cx);
-            _cx.stop_propagation();
+            self.copy_selection(cx);
+            cx.stop_propagation();
             return;
         }
         if clipboard_shortcut && key == "v" {
-            self.paste_from_clipboard(_cx);
-            _cx.stop_propagation();
+            self.paste_from_clipboard(cx);
+            cx.stop_propagation();
             return;
         }
-        // Ctrl-C without the copy shortcut must reach the shell as SIGINT.
-        if !self.input_enabled {
-            return;
-        }
-
-        if let Some(bytes) = key_input_bytes(
+        match key_input(
             &event.keystroke,
             self.state.mode(),
             self.ime.marked.is_some(),
-        ) && self.write_input_bytes(&bytes, _cx)
-        {
-            _cx.stop_propagation();
-            _cx.notify();
+            Modifiers::secondary_key(cx),
+        ) {
+            Some(KeyInput::Scroll(scroll)) => self.state.scroll_display(scroll),
+            // Ctrl-C without the copy shortcut reaches the shell as SIGINT.
+            Some(KeyInput::Write(bytes)) if self.write_input_bytes(&bytes, cx) => {}
+            _ => return,
         }
+        cx.stop_propagation();
+        cx.notify();
     }
 
     fn on_mouse_down(
@@ -472,6 +471,19 @@ impl TerminalView {
                         cx.notify();
                     });
                 }
+            }),
+        )
+        .item(
+            PopupMenuItem::new(if english {
+                "Jump to latest"
+            } else {
+                "跳到最新输出"
+            })
+            .on_click(move |_, _, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.state.scroll_to_bottom();
+                    cx.notify();
+                });
             }),
         )
     }

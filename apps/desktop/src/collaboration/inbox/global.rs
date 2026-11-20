@@ -50,6 +50,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
+    path::Path,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -531,6 +532,11 @@ impl HiveApp {
                 }
                 if !this.dismissed {
                     let root_changed = this.preferences.restore_root(app.data_dir.as_deref());
+                    if root_changed {
+                        this.projects.clear();
+                        this.new_items.clear();
+                        this.reviewing_new = None;
+                    }
                     let project_removed = this
                         .preferences
                         .forget_unavailable(app.global_inbox_workspace_list());
@@ -1532,7 +1538,14 @@ impl GlobalInbox {
                         let result = read_project(&runtime, &workspace, root.as_deref()).await;
                         if this
                             .update(cx, |this, cx| {
-                                this.apply(&workspace, connection, archive_revision, result, cx)
+                                this.apply(
+                                    &workspace,
+                                    connection,
+                                    archive_revision,
+                                    root.as_deref(),
+                                    result,
+                                    cx,
+                                )
                             })
                             .is_err()
                         {
@@ -1688,6 +1701,7 @@ impl GlobalInbox {
         workspace: &str,
         connection: u64,
         archive_revision: u64,
+        root: Option<&Path>,
         result: ProjectRead,
         cx: &mut Context<Self>,
     ) {
@@ -1698,7 +1712,9 @@ impl GlobalInbox {
             return;
         };
         let app = parent.read(cx);
-        if !app.workspaces.iter().any(|project| project.id == workspace) {
+        if app.data_dir.as_deref() != root
+            || !app.workspaces.iter().any(|project| project.id == workspace)
+        {
             return;
         }
         let project = self.projects.entry(workspace.to_owned()).or_default();
@@ -1767,7 +1783,6 @@ impl GlobalInbox {
                 &mut self.new_items,
                 snapshot,
                 &project.reminders,
-                &app.collaboration.inbox_badge,
                 now_ms(),
             );
         }
@@ -1830,7 +1845,6 @@ impl GlobalInbox {
                 &mut self.new_items,
                 snapshot,
                 &project.reminders,
-                &app.collaboration.inbox_badge,
                 now,
             );
         }
@@ -2021,7 +2035,6 @@ fn update_workflow_new_items(
     items: &mut HashSet<BadgeItem>,
     snapshot: &WorkflowRuns,
     reminders: &Reminders,
-    badge: &InboxBadge,
     now: u64,
 ) {
     let eligible: HashSet<_> = snapshot
@@ -2043,7 +2056,11 @@ fn update_workflow_new_items(
         if workspace == &snapshot.workspace_id)
             || eligible.contains(item)
     });
-    items.extend(eligible.into_iter().filter(|item| !badge.sees(item)));
+    if let Some(saved) = &reminders.saved {
+        items.extend(eligible.into_iter().filter(|item| {
+            matches!(item, BadgeItem::WorkflowRun { run, .. } if !saved.has_seen_workflow_run(run))
+        }));
+    }
 }
 
 impl Render for GlobalInbox {
@@ -2376,6 +2393,7 @@ impl Render for GlobalInbox {
                 .or_else(|| self.placement.held_reminder(&row_id));
             if !awaiting_position
                 && let Some(item) = data.badge_item(app, id, &entry, now)
+                && (!matches!(item, BadgeItem::WorkflowRun { .. }) || reminder.is_none())
                 && !app.collaboration.inbox_badge.sees(&item)
             {
                 let revision = match &item {
@@ -2696,6 +2714,8 @@ impl Render for GlobalInbox {
             None
         };
         let restore_or_acknowledge = restore.is_some() || !candidates.is_empty();
+        let root = app.data_dir.clone();
+        let dialog = cx.weak_entity();
         let parent = parent.downgrade();
         let list = v_flex()
             .gap_2()
@@ -2730,13 +2750,29 @@ impl Render for GlobalInbox {
                         .collect();
                     if !visible.is_empty() {
                         let parent = parent.clone();
-                        window.defer(cx, move |_, cx| {
+                        let root = root.clone();
+                        let dialog = dialog.clone();
+                        window.defer(cx, move |window, cx| {
+                            if !window.is_window_active() {
+                                return;
+                            }
                             let _ = parent.update(cx, |app, cx| {
-                                if app.connection_generation != connection {
+                                let badge = &app.collaboration.inbox_badge;
+                                if app.connection_generation != connection
+                                    || app.data_dir != root
+                                    || !app.connected
+                                    || app.closing
+                                    || badge.dialog.as_ref() != Some(&dialog)
+                                {
                                     return;
                                 }
                                 let current: Vec<_> = visible
                                     .into_iter()
+                                    .filter(|(item, _)| {
+                                        let workspace = item.workspace();
+                                        app.workspace_removing.as_deref() != Some(workspace)
+                                            && app.workspaces.iter().any(|p| p.id == workspace)
+                                    })
                                     .filter_map(|(item, revision)| {
                                         if let BadgeItem::UnreadSession { workspace, session } =
                                             &item
@@ -2753,7 +2789,11 @@ impl Render for GlobalInbox {
                                         Some(item)
                                     })
                                     .collect();
-                                if app.collaboration.inbox_badge.acknowledge(current) {
+                                if app.collaboration.inbox_badge.acknowledge(
+                                    root.as_deref(),
+                                    now_ms(),
+                                    current,
+                                ) {
                                     cx.notify();
                                 }
                             });
@@ -2842,38 +2882,82 @@ mod tests {
             run: run.into(),
         };
         let question = BadgeItem::Question {
-            workspace: "atlas".into(),
+            workspace: workspace.into(),
             dispatch: "dispatch".into(),
             message: "question".into(),
         };
         let mut current = HashSet::from([
-            workflow("atlas", "stale"),
+            workflow(workspace, "stale"),
             workflow("beacon", "same"),
             question.clone(),
         ]);
         let atlas: WorkflowRuns = serde_json::from_value(json!({
-            "workspaceId":"atlas","runs":[{"id":"same","name":"Daily audit","finishedAt":111,"status":"interrupted"}],"limited":false
+            "workspaceId":workspace,"runs":[{"id":"same","name":"Daily audit","finishedAt":111,"status":"interrupted"}],"limited":false
         })).unwrap();
-        update_workflow_new_items(&mut current, &atlas, &reminders, &badge, 0);
+        update_workflow_new_items(&mut current, &atlas, &reminders, 0);
         assert_eq!(
             current,
             HashSet::from([
-                workflow("atlas", "same"),
+                workflow(workspace, "same"),
                 workflow("beacon", "same"),
                 question
             ])
         );
-        update_new_items(&mut current, "atlas", HashSet::new(), &badge);
+        update_new_items(&mut current, workspace, HashSet::new(), &badge);
         assert_eq!(
             current,
-            HashSet::from([workflow("atlas", "same"), workflow("beacon", "same")])
+            HashSet::from([workflow(workspace, "same"), workflow("beacon", "same")])
         );
         let empty: WorkflowRuns = serde_json::from_value(json!({
-            "workspaceId":"atlas","runs":[],"limited":false
+            "workspaceId":workspace,"runs":[],"limited":false
         }))
         .unwrap();
-        update_workflow_new_items(&mut current, &empty, &reminders, &badge, 0);
+        update_workflow_new_items(&mut current, &empty, &reminders, 0);
         assert_eq!(current, HashSet::from([workflow("beacon", "same")]));
+    }
+
+    #[test]
+    fn reopening_new_items_suppresses_only_the_seen_run_and_keeps_both_attention_rows() {
+        use crate::collaboration::inbox::Snoozes;
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = "12345678-1234-1234-1234-123456789000";
+        let old = "11111111-0000-4000-8000-000012345678".to_owned();
+        let new = "22222222-0000-4000-8000-000012345678".to_owned();
+        Snoozes::acknowledge_workflow_runs(root.path(), workspace, std::slice::from_ref(&old), 150)
+            .unwrap();
+        let snapshot: WorkflowRuns = serde_json::from_value(json!({
+            "workspaceId":workspace,
+            "runs":[
+                {"id":old,"name":"Daily audit","finishedAt":100,"status":"failed"},
+                {"id":new,"name":"Daily audit","finishedAt":200,"status":"interrupted"},
+            ],
+            "limited":false,
+        }))
+        .unwrap();
+        let reminders = super::Reminders {
+            saved: Some(Snoozes::load(root.path(), workspace).unwrap()),
+            ..super::Reminders::default()
+        };
+        let mut items = HashSet::new();
+        update_workflow_new_items(&mut items, &snapshot, &reminders, 250);
+        assert_eq!(
+            items,
+            HashSet::from([BadgeItem::WorkflowRun {
+                workspace: workspace.into(),
+                run: new.clone(),
+            }])
+        );
+        assert_eq!(
+            snapshot
+                .entries()
+                .filter_map(|entry| match entry.target {
+                    super::Destination::WorkflowRun(run) => Some(run),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            [old, new],
+        );
     }
 
     #[test]
@@ -3041,7 +3125,7 @@ mod tests {
         let mut badge = InboxBadge::default();
         let mut items = HashSet::from([unseen.clone()]);
         update_new_items(&mut items, "atlas", HashSet::from([item.clone()]), &badge);
-        assert!(badge.acknowledge([item.clone()]));
+        assert!(badge.acknowledge(None, 0, [item.clone()]));
         update_new_items(&mut items, "atlas", HashSet::from([item.clone()]), &badge);
         assert_eq!(items, HashSet::from([item.clone(), unseen.clone()]));
         update_new_items(&mut items, "atlas", HashSet::new(), &badge);

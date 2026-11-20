@@ -77,10 +77,27 @@ fn heading_slug(children: &[Node]) -> String {
         .collect()
 }
 
-/// Resolve a Markdown path against the displayed file's project-relative path.
+pub(super) fn is_markdown_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+        })
+}
+
+/// Resolve a link against the displayed file's project-relative path.
 /// The runtime still checks the destination against the actual worktree.
-pub(super) fn relative_markdown_target(source: &str, destination: &str) -> Option<String> {
-    if destination.is_empty() || destination.contains(['#', '?']) {
+pub(super) fn relative_markdown_target<'a>(
+    source: &str,
+    destination: &'a str,
+) -> Option<(String, Option<&'a str>)> {
+    let (destination, fragment) = destination
+        .split_once('#')
+        .map_or((destination, None), |(path, fragment)| {
+            (path, Some(fragment))
+        });
+    if destination.is_empty() || destination.contains('?') {
         return None;
     }
     let mut path: Vec<_> = source
@@ -108,7 +125,11 @@ pub(super) fn relative_markdown_target(source: &str, destination: &str) -> Optio
             _ => path.push(part),
         }
     }
-    Some(path.join("/"))
+    let path = path.join("/");
+    if fragment.is_some() && !is_markdown_file(&path) {
+        return None;
+    }
+    Some((path, fragment.filter(|fragment| !fragment.is_empty())))
 }
 
 fn percent_decode(part: &str) -> Option<String> {
@@ -194,9 +215,37 @@ mod tests {
             ("README.md", "100%25/%2520%23find+.md", "100%/%20#find+.md"),
         ] {
             assert_eq!(
-                relative_markdown_target(source, destination).as_deref(),
-                Some(expected),
+                relative_markdown_target(source, destination),
+                Some((expected.to_owned(), None)),
                 "{destination}"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_link_fragments_are_separate_from_the_scoped_destination() {
+        for (link, path, fragment) in [
+            (
+                "./setup%20guide.md#linux",
+                "docs/setup guide.md",
+                Some("linux"),
+            ),
+            (
+                "../GUIDE.MARKDOWN#repeat-1",
+                "GUIDE.MARKDOWN",
+                Some("repeat-1"),
+            ),
+            (
+                "./spec%23v2%2emd#%E7%AB%A0%E7%AF%80",
+                "docs/spec#v2.md",
+                Some("%E7%AB%A0%E7%AF%80"),
+            ),
+            ("./setup%20guide.md#", "docs/setup guide.md", None),
+        ] {
+            assert_eq!(
+                relative_markdown_target("docs/start.md", link),
+                Some((path.to_owned(), fragment)),
+                "{link}"
             );
         }
     }
@@ -219,8 +268,13 @@ mod tests {
             "folder%5cfile.md",
             "../.git/config",
             "../%2EGIT/config",
-            "guide.md#heading",
             "#heading",
+            "guide.txt#heading",
+            "guide.md?query#heading",
+            "../../outside.md#heading",
+            "../.git/guide.md#heading",
+            "folder%2fguide.md#heading",
+            "https://example.com/guide.md#heading",
             "guide.md?query",
             "guide.md%00",
             "guide.md%0a",

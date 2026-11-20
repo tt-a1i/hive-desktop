@@ -1353,6 +1353,7 @@ impl HiveApp {
             let _ = this.update(cx, |this, cx| {
                 if this.workspace.as_ref() != Some(&workspace)
                     || this.connection_generation != connection
+                    || this.data_dir != root
                     || !this.collaboration.visible
                     || this.collaboration.inbox.generation != generation
                 {

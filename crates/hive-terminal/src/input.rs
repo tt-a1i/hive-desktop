@@ -1,5 +1,35 @@
+use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::term::TermMode;
-use gpui_kit::Keystroke;
+use gpui_kit::{Keystroke, Modifiers};
+
+#[derive(Debug)]
+pub(crate) enum KeyInput {
+    Scroll(Scroll),
+    Write(Vec<u8>),
+}
+
+pub(crate) fn key_input(
+    keystroke: &Keystroke,
+    mode: TermMode,
+    composing: bool,
+    secondary: Modifiers,
+) -> Option<KeyInput> {
+    // The alternate screen and an active IME retain their usual key routing.
+    if !composing && !mode.contains(TermMode::ALT_SCREEN) {
+        let shift = Modifiers::shift();
+        let scroll = match (keystroke.key.as_str(), keystroke.modifiers) {
+            ("pageup", modifiers) if modifiers == shift => Some(Scroll::PageUp),
+            ("pagedown", modifiers) if modifiers == shift => Some(Scroll::PageDown),
+            ("home", modifiers) if modifiers == secondary | shift => Some(Scroll::Top),
+            ("end", modifiers) if modifiers == secondary | shift => Some(Scroll::Bottom),
+            _ => None,
+        };
+        if let Some(scroll) = scroll {
+            return Some(KeyInput::Scroll(scroll));
+        }
+    }
+    key_input_bytes(keystroke, mode, composing).map(KeyInput::Write)
+}
 
 /// Platform text payloads are not proof of printable input: macOS attaches
 /// key_char="\n" to Return and key_char="\t" to Tab.

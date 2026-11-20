@@ -34,7 +34,7 @@ use gpui_kit::{
     *,
 };
 use image_preview::{ExpandedImageViewport, ImageViewport, ZoomAction};
-use markdown_links::{MarkdownHeadings, relative_markdown_target};
+use markdown_links::{MarkdownHeadings, is_markdown_file, relative_markdown_target};
 use reader_find::ReaderFind;
 use search_snippet::{SearchSnippet, path_highlights};
 use serde::Deserialize;
@@ -292,6 +292,11 @@ enum PreparedPreview {
     Image(Arc<RenderImage>),
 }
 
+struct MarkdownNavigation {
+    execution_directory: String,
+    fragment: Option<String>,
+}
+
 struct FilePathRequest {
     reader: Option<WeakEntity<ExpandedFilePreview>>,
     request_id: Rc<()>,
@@ -419,6 +424,47 @@ impl MarkdownPreview {
         self.mode == FilePreviewMode::Markdown
     }
 
+    fn reveal_initial_heading(&self, fragment: String, cx: &mut App) {
+        let Some(document) = &self.document else {
+            return;
+        };
+        let headings = self.headings.clone();
+        document.update(cx, |document, cx| {
+            if !document.rendered_text().source().is_empty() {
+                Self::reveal_heading(document, &headings, &fragment, cx);
+                return;
+            }
+
+            // Larger documents are parsed in the background. Wait for this
+            // document's parser once before looking up the heading.
+            let mut pending = Some(fragment);
+            cx.observe_self(move |document, cx| {
+                if let Some(fragment) =
+                    pending.take_if(|_| !document.rendered_text().source().is_empty())
+                {
+                    Self::reveal_heading(document, &headings, &fragment, cx);
+                }
+            })
+            .detach();
+        });
+    }
+
+    fn reveal_heading(
+        document: &mut TextViewState,
+        headings: &OnceLock<MarkdownHeadings>,
+        fragment: &str,
+        cx: &mut Context<TextViewState>,
+    ) {
+        let rendered = document.rendered_text();
+        let headings = headings.get_or_init(|| MarkdownHeadings::parse(rendered.source()));
+        if let Some(range) = headings
+            .range(fragment)
+            .and_then(|range| rendered.range_for_source(range))
+        {
+            let _ = document.reveal_range(range, cx);
+        }
+    }
+
     fn render(
         &self,
         id: &'static str,
@@ -472,15 +518,7 @@ impl MarkdownPreview {
                         }
                         if let Some(fragment) = destination.strip_prefix('#') {
                             let _ = heading_document.update(cx, |document, cx| {
-                                let rendered = document.rendered_text();
-                                let headings = headings
-                                    .get_or_init(|| MarkdownHeadings::parse(rendered.source()));
-                                if let Some(range) = headings
-                                    .range(fragment)
-                                    .and_then(|range| rendered.range_for_source(range))
-                                {
-                                    let _ = document.reveal_range(range, cx);
-                                }
+                                Self::reveal_heading(document, &headings, fragment, cx);
                             });
                         } else if let Some(url) = external_markdown_url(destination) {
                             cx.open_url(url.as_str());
@@ -490,15 +528,6 @@ impl MarkdownPreview {
                     }),
             )
     }
-}
-
-fn is_markdown_file(path: &str) -> bool {
-    std::path::Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
-        })
 }
 
 fn supports_markdown_preview(text: &str) -> bool {
@@ -2425,18 +2454,26 @@ impl FileBrowser {
         }) else {
             return false;
         };
-        let Some(path) = relative_markdown_target(&source.selection.path, destination) else {
+        let Some((path, fragment)) = relative_markdown_target(&source.selection.path, destination)
+        else {
             return false;
         };
         self.cancel_tree_preview(cx);
-        self.read_preview(Match { path, line: None }, Some(execution_directory), cx);
+        self.read_preview(
+            Match { path, line: None },
+            Some(MarkdownNavigation {
+                execution_directory,
+                fragment: fragment.map(str::to_owned),
+            }),
+            cx,
+        );
         true
     }
 
     fn read_preview(
         &mut self,
         selection: Match,
-        expected_directory: Option<String>,
+        navigation: Option<MarkdownNavigation>,
         cx: &mut Context<Self>,
     ) {
         if !self.current(cx) {
@@ -2446,6 +2483,7 @@ impl FileBrowser {
         self.reveal_missing = None;
         let scope = self.scope.as_ref().expect("current file scope");
         let allow_image = selection.line.is_none();
+        let expected_directory = navigation.as_ref().map(|link| &link.execution_directory);
         let params = scope.params(json!({
             "relativePath":selection.path,
             "allowImage":allow_image,
@@ -2535,11 +2573,15 @@ impl FileBrowser {
                         if is_markdown_file(&preview.selection.path)
                             && supports_markdown_preview(&text.full)
                         {
-                            preview.markdown = Some(MarkdownPreview::new(
+                            let markdown = MarkdownPreview::new(
                                 initial_markdown_mode(&preview.selection),
                                 &text,
                                 cx,
-                            ));
+                            );
+                            if let Some(fragment) = navigation.and_then(|link| link.fragment) {
+                                markdown.reveal_initial_heading(fragment, cx);
+                            }
+                            preview.markdown = Some(markdown);
                         }
                         preview.text = Some(text);
                         preview.sha256 = sha256;

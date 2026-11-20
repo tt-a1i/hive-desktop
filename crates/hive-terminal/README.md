@@ -29,6 +29,12 @@ BRACKETED_PASTE mode. ANSI OSC 52 cannot read or replace the system clipboard.
 IME preedit belongs to the view and is sent only on commit. Parser/UTF-16 checks
 are not evidence that a platform IME or clipboard has passed native UI validation.
 
+With the terminal focused, Shift+PageUp and Shift+PageDown move through retained
+output one page at a time. Cmd+Shift+Home/End on macOS or Ctrl+Shift+Home/End on
+Windows/Linux jump to the start or latest output. On the main screen, these
+shortcuts move the viewport without sending input. The context menu's
+**Jump to latest** action returns to the bottom.
+
 Run the focused real-parser checks from the repository root:
 
 ```sh

@@ -1,15 +1,16 @@
 use crate::{
     event::{GpuiEventProxy, ParserEvent},
-    input::{keystroke_to_bytes, paste_bytes},
+    input::{KeyInput, key_input, keystroke_to_bytes, paste_bytes},
     terminal::TerminalState,
 };
 use alacritty_terminal::{
+    grid::Scroll,
     index::{Column, Line, Point, Side},
     selection::{Selection, SelectionType},
     term::TermMode,
     vte::ansi::{Color, NamedColor},
 };
-use gpui_kit::Keystroke;
+use gpui_kit::{Keystroke, Modifiers};
 use std::sync::mpsc;
 
 fn state() -> (TerminalState, mpsc::Receiver<ParserEvent>) {
@@ -99,6 +100,109 @@ fn native_modes_control_paste_and_cursor_keys_without_intercepting_interrupt() {
         keystroke_to_bytes(&Keystroke::parse("cmd-c").unwrap(), state.mode()),
         None
     );
+}
+
+#[test]
+fn scrollback_shortcuts_keep_terminal_and_ime_navigation_on_their_existing_paths() {
+    let empty = TermMode::empty();
+    let alt_screen = TermMode::ALT_SCREEN;
+    let mac = Modifiers::command();
+    let windows = Modifiers::control();
+    let input = |key, mode, composing, secondary| {
+        key_input(&Keystroke::parse(key).unwrap(), mode, composing, secondary)
+    };
+
+    for secondary in [mac, windows] {
+        assert!(matches!(
+            input("shift-pageup", empty, false, secondary),
+            Some(KeyInput::Scroll(Scroll::PageUp))
+        ));
+        assert!(matches!(
+            input("shift-pagedown", empty, false, secondary),
+            Some(KeyInput::Scroll(Scroll::PageDown))
+        ));
+        assert!(input("shift-pageup", empty, true, secondary).is_none());
+        for (key, mode, expected) in [
+            ("pageup", empty, b"\x1b[5~".as_slice()),
+            ("alt-shift-pageup", empty, b"\x1b[5~"),
+            ("ctrl-shift-pageup", empty, b"\x1b[5~"),
+            ("shift-pageup", alt_screen, b"\x1b[5~"),
+            ("shift-pagedown", alt_screen, b"\x1b[6~"),
+            ("home", empty, b"\x1b[H"),
+            ("end", empty, b"\x1b[F"),
+        ] {
+            assert!(matches!(
+                input(key, mode, false, secondary),
+                Some(KeyInput::Write(bytes)) if bytes == expected
+            ));
+        }
+    }
+
+    assert!(matches!(
+        input("cmd-shift-home", empty, false, mac),
+        Some(KeyInput::Scroll(Scroll::Top))
+    ));
+    assert!(matches!(
+        input("cmd-shift-end", empty, false, mac),
+        Some(KeyInput::Scroll(Scroll::Bottom))
+    ));
+    assert!(matches!(
+        input("ctrl-shift-home", empty, false, windows),
+        Some(KeyInput::Scroll(Scroll::Top))
+    ));
+    assert!(matches!(
+        input("ctrl-shift-end", empty, false, windows),
+        Some(KeyInput::Scroll(Scroll::Bottom))
+    ));
+    assert!(input("cmd-shift-home", alt_screen, false, mac).is_none());
+    assert!(input("cmd-shift-home", empty, false, windows).is_none());
+    assert!(input("cmd-shift-home", empty, true, mac).is_none());
+    assert!(input("cmd-ctrl-shift-home", empty, false, mac).is_none());
+    for (mode, composing, secondary) in [
+        (alt_screen, false, windows),
+        (empty, true, windows),
+        (empty, false, mac),
+    ] {
+        assert!(matches!(
+            input("ctrl-shift-home", mode, composing, secondary),
+            Some(KeyInput::Write(bytes)) if bytes == b"\x1b[H"
+        ));
+    }
+}
+
+#[test]
+fn local_scrollback_pages_clamp_to_retained_output_and_jump_back_to_latest() {
+    let (mut state, rx) = state();
+    let output = (1..=20)
+        .map(|line| format!("line {line}\r\n"))
+        .collect::<String>();
+    state.process_bytes(output.as_bytes());
+
+    for (shortcut, expected_offset) in [
+        ("shift-pagedown", 0),
+        ("shift-pageup", 4),
+        ("shift-pageup", 8),
+        ("shift-pagedown", 4),
+        ("cmd-shift-home", 17),
+        ("shift-pageup", 17),
+        ("shift-pagedown", 13),
+        ("cmd-shift-end", 0),
+        ("shift-pageup", 4),
+    ] {
+        let Some(KeyInput::Scroll(scroll)) = key_input(
+            &Keystroke::parse(shortcut).unwrap(),
+            state.mode(),
+            false,
+            Modifiers::command(),
+        ) else {
+            panic!("{shortcut} should scroll locally");
+        };
+        state.scroll_display(scroll);
+        assert_eq!(state.display_offset(), expected_offset, "{shortcut}");
+    }
+    state.scroll_to_bottom();
+    assert_eq!(state.display_offset(), 0);
+    assert!(rx.try_recv().is_err());
 }
 
 #[test]

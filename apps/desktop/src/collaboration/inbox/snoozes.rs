@@ -71,6 +71,10 @@ pub(super) fn workflow_run_key(id: &str) -> String {
     format!("workflow-run:{id}")
 }
 
+fn seen_workflow_run_key(id: &str) -> String {
+    format!("seen-workflow-run:{id}")
+}
+
 pub(super) fn workflow_run_id(key: &str) -> Option<&str> {
     let id = key.strip_prefix("workflow-run:")?;
     (id.len() == 36 && uuid::Uuid::try_parse(id).is_ok()).then_some(id)
@@ -164,6 +168,28 @@ impl Snoozes {
         self.tracked_workflow_runs.iter()
     }
 
+    pub(super) fn has_seen_workflow_run(&self, run: &str) -> bool {
+        self.reminders.contains_key(&seen_workflow_run_key(run))
+    }
+
+    pub(super) fn acknowledge_workflow_runs(
+        root: &Path,
+        workspace: &str,
+        runs: &[String],
+        now: u64,
+    ) -> io::Result<Self> {
+        Self::update(root, workspace, |saved| {
+            for run in runs {
+                let key = workflow_run_key(run);
+                if workflow_run_id(&key).is_some() && !saved.active(&key, now) {
+                    // Keep the existing file format readable by older desktop builds.
+                    // This key does not match any inbox row or schedule a wake.
+                    saved.reminders.entry(seen_workflow_run_key(run)).or_default();
+                }
+            }
+        })
+    }
+
     pub(super) fn hides_unread(&self, session: &str, revision: u64, now: u64) -> bool {
         self.reminders.get(&unread_session_key(session)).is_some_and(|reminder| {
             !reminder.expired(now)
@@ -219,6 +245,9 @@ impl Snoozes {
                 if let Some(id) = workflow_run_id(key) {
                     // After a wake the original run may be older than the recent-run limit.
                     saved.tracked_workflow_runs.insert(id.to_owned());
+                    if next.is_some() {
+                        saved.reminders.remove(&seen_workflow_run_key(id));
+                    }
                 }
                 saved.assign(key, next);
                 applied = true;
@@ -432,6 +461,61 @@ mod tests {
     const WORKSPACE: &str = "a3b2cb99-3959-4adc-a770-b70f9d2a4cb9";
     const OTHER_WORKSPACE: &str = "c7761168-b30c-4020-80bb-23c1c357e111";
     const DISPATCH: &str = "eecc5d9c-4874-4286-8f73-ea6143246780";
+
+    #[test]
+    fn workflow_acknowledgements_keep_existing_snoozes_readable_by_the_previous_app() {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PreviousSnoozes {
+            workspace_id: String,
+            #[serde(default)]
+            keys: BTreeSet<String>,
+            #[serde(default)]
+            reminders: BTreeMap<String, Reminder>,
+            #[serde(default)]
+            released_unread: BTreeSet<String>,
+            #[serde(default)]
+            tracked_workflow_runs: BTreeSet<String>,
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let snoozed = "2b2cb2a9-3959-4adc-a770-b70f9d2a4cb9";
+        let seen = "3b2cb2a9-3959-4adc-a770-b70f9d2a4cb9".to_owned();
+        let reminder = Reminder {
+            expires_at: Some(20),
+            wake: Some(Wake::WorkflowRun),
+        };
+        let (saved, applied) = Snoozes::edit(
+            root.path(),
+            WORKSPACE,
+            &workflow_run_key(snoozed),
+            None,
+            Some(reminder.clone()),
+            10,
+        )
+        .unwrap();
+        assert!(applied);
+        assert_eq!(saved.next_expiry(), Some(20));
+
+        let saved = Snoozes::acknowledge_workflow_runs(
+            root.path(),
+            WORKSPACE,
+            std::slice::from_ref(&seen),
+            11,
+        )
+        .unwrap();
+        assert!(saved.has_seen_workflow_run(&seen));
+        assert!(!saved.active(&workflow_run_key(&seen), 12));
+        assert_eq!(saved.next_expiry(), Some(20));
+        let file = fs::File::open(Snoozes::path(root.path(), WORKSPACE).unwrap()).unwrap();
+        let previous: PreviousSnoozes = serde_json::from_reader(file).unwrap();
+        assert_eq!(previous.workspace_id, WORKSPACE);
+        assert!(previous.keys.is_empty());
+        assert!(previous.released_unread.is_empty());
+        assert_eq!(previous.tracked_workflow_runs, BTreeSet::from([snoozed.into()]));
+        assert_eq!(previous.reminders[&workflow_run_key(snoozed)], reminder);
+        assert_eq!(previous.reminders[&seen_workflow_run_key(&seen)], Reminder::default());
+    }
 
     #[test]
     fn workflow_run_reminders_retain_the_exact_row_after_cold_expiry_and_manual_wake() {
