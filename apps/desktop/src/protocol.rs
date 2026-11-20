@@ -291,6 +291,57 @@ pub struct BackendReadiness {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct McpToolInfo {
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpProbeResult {
+    pub ok: bool,
+    pub status: String,
+    #[serde(default)]
+    pub latency_ms: u64,
+    #[serde(default)]
+    pub tools: Vec<McpToolInfo>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitLocalBranch {
+    pub name: String,
+    #[serde(default)]
+    pub is_current: bool,
+    #[serde(default)]
+    pub ahead: u32,
+    #[serde(default)]
+    pub behind: u32,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchesSnapshot {
+    #[serde(default)]
+    pub current: Option<String>,
+    #[serde(default)]
+    pub local: Vec<GitLocalBranch>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStashEntry {
+    #[serde(rename = "ref")]
+    pub ref_name: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub relative_time: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadinessReport {
     #[serde(default)]
     pub backends: Vec<BackendReadiness>,

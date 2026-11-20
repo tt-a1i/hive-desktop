@@ -552,6 +552,140 @@ impl HiveApp {
         )
     }
 
+    fn probe_mcp_resource(
+        &mut self,
+        name: String,
+        scope: String,
+        config_path: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = format!("{scope}:{name}");
+        if !self.connected || self.mcp_probing.contains(&key) {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        self.mcp_probing.insert(key.clone());
+        self.mcp_action_error = None;
+        cx.notify();
+        let workspace_id = self.workspace.clone();
+        cx.spawn(async move |this, cx| {
+            let mut params = serde_json::Map::new();
+            params.insert("name".into(), serde_json::json!(name));
+            if scope == "global" || scope == "project" {
+                params.insert("scope".into(), serde_json::json!(scope));
+            }
+            if let Some(ws) = workspace_id {
+                params.insert("workspaceId".into(), serde_json::json!(ws));
+            }
+            if let Some(cfg) = config_path {
+                params.insert("configPath".into(), serde_json::json!(cfg));
+            }
+            let result = runtime
+                .request("mcp.probe", serde_json::Value::Object(params))
+                .await
+                .and_then(|v| {
+                    serde_json::from_value::<crate::protocol::McpProbeResult>(v)
+                        .map_err(|e| e.to_string())
+                });
+            let _ = this.update(cx, |this, cx| {
+                this.mcp_probing.remove(&key);
+                match result {
+                    Ok(probe) => {
+                        this.mcp_probe_results.insert(key, probe);
+                    }
+                    Err(err) => {
+                        this.mcp_probe_results.insert(
+                            key,
+                            crate::protocol::McpProbeResult {
+                                ok: false,
+                                status: "error".into(),
+                                latency_ms: 0,
+                                tools: vec![],
+                                error: Some(err),
+                            },
+                        );
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn toggle_project_mcp(&mut self, name: String, disabled: bool, cx: &mut Context<Self>) {
+        let Some(workspace_id) = self.workspace.clone() else {
+            return;
+        };
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        if !self.connected {
+            return;
+        }
+        self.mcp_action_error = None;
+        cx.spawn(async move |this, cx| {
+            let res = runtime
+                .request(
+                    "mcp.toggleProjectServer",
+                    serde_json::json!({
+                        "workspaceId": workspace_id,
+                        "name": name,
+                        "disabled": disabled,
+                    }),
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    Ok(_) => this.refresh_readiness(cx),
+                    Err(err) => {
+                        this.mcp_action_error = Some(err);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn remove_project_mcp(&mut self, name: String, cx: &mut Context<Self>) {
+        let Some(workspace_id) = self.workspace.clone() else {
+            return;
+        };
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        if !self.connected {
+            return;
+        }
+        self.mcp_action_error = None;
+        cx.spawn(async move |this, cx| {
+            let res = runtime
+                .request(
+                    "mcp.removeProjectServer",
+                    serde_json::json!({
+                        "workspaceId": workspace_id,
+                        "name": name,
+                    }),
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    Ok(_) => {
+                        this.mcp_probe_results.remove(&format!("project:{name}"));
+                        this.refresh_readiness(cx);
+                    }
+                    Err(err) => {
+                        this.mcp_action_error = Some(err);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn render_readiness_and_mcp_card(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let report = self.readiness.as_ref();
         v_flex()
@@ -616,6 +750,18 @@ impl HiveApp {
                         .text_xs()
                         .text_color(Color::Error.get(cx))
                         .child(format!("{}: {err}", tr("环境诊断读取失败"))),
+                )
+            })
+            .when_some(self.mcp_action_error.as_ref(), |view, err| {
+                view.child(
+                    div()
+                        .px_2p5()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(Color::ErrorSurface.get(cx))
+                        .text_xs()
+                        .text_color(Color::Error.get(cx))
+                        .child(err.clone()),
                 )
             })
             .when_some(report, |view, report| {
@@ -833,13 +979,146 @@ impl HiveApp {
                                                     .truncate()
                                                     .child(err.clone()),
                                             )
-                                        }),
+                                        })
+                                        .when_some(
+                                            self.mcp_probe_results.get(&format!("{}:{}", res.scope, res.name)),
+                                            |col, probe| {
+                                                let summary = if probe.ok {
+                                                    let tool_names: Vec<&str> = probe
+                                                        .tools
+                                                        .iter()
+                                                        .take(5)
+                                                        .map(|t| t.name.as_str())
+                                                        .collect();
+                                                    let more = probe.tools.len().saturating_sub(tool_names.len());
+                                                    let suffix = if tool_names.is_empty() {
+                                                        String::new()
+                                                    } else if more > 0 {
+                                                        format!(" · {} +{}", tool_names.join(", "), more)
+                                                    } else {
+                                                        format!(" · {}", tool_names.join(", "))
+                                                    };
+                                                    if english() {
+                                                        format!(
+                                                            "Handshake OK · {}ms · {} tools{}",
+                                                            probe.latency_ms,
+                                                            probe.tools.len(),
+                                                            suffix
+                                                        )
+                                                    } else {
+                                                        format!(
+                                                            "握手正常 · {}ms · {} 个工具{}",
+                                                            probe.latency_ms,
+                                                            probe.tools.len(),
+                                                            suffix
+                                                        )
+                                                    }
+                                                } else {
+                                                    format!(
+                                                        "{}: {}",
+                                                        tr("探活失败"),
+                                                        probe.error.as_deref().unwrap_or(&probe.status)
+                                                    )
+                                                };
+                                                col.child(
+                                                    div()
+                                                        .text_size(px(10.5))
+                                                        .text_color(if probe.ok {
+                                                            Color::Success.get(cx)
+                                                        } else {
+                                                            Color::Error.get(cx)
+                                                        })
+                                                        .truncate()
+                                                        .child(summary),
+                                                )
+                                            },
+                                        ),
                                 )
-                                .child(
+                                .child({
+                                    let probe_key = format!("{}:{}", res.scope, res.name);
+                                    let is_probing = self.mcp_probing.contains(&probe_key);
+                                    let can_probe = self.connected
+                                        && res.status != "error"
+                                        && res.transport != "extension";
+                                    let is_project_mcp_json = res.scope == "project"
+                                        && res
+                                            .config_path
+                                            .as_deref()
+                                            .is_some_and(|p| p.ends_with(".mcp.json"));
+                                    let is_disabled = res.status == "disabled";
+                                    let p_name = res.name.clone();
+                                    let p_scope = res.scope.clone();
+                                    let p_cfg = res.config_path.clone();
+                                    let t_name = res.name.clone();
+                                    let r_name = res.name.clone();
                                     h_flex()
                                         .flex_shrink_0()
                                         .items_center()
                                         .gap_1()
+                                        .when(can_probe, |row| {
+                                            row.child(
+                                                Button::new(("readiness-mcp-probe", i))
+                                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                                    .compact()
+                                                    .xsmall()
+                                                    .h(px(22.))
+                                                    .px_1p5()
+                                                    .rounded_sm()
+                                                    .disabled(is_probing)
+                                                    .label(if is_probing {
+                                                        tr("探活中…")
+                                                    } else {
+                                                        tr("探活")
+                                                    })
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.probe_mcp_resource(
+                                                            p_name.clone(),
+                                                            p_scope.clone(),
+                                                            p_cfg.clone(),
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                        })
+                                        .when(is_project_mcp_json && self.workspace.is_some(), |row| {
+                                            row.child(
+                                                Button::new(("readiness-mcp-toggle", i))
+                                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                                    .compact()
+                                                    .xsmall()
+                                                    .h(px(22.))
+                                                    .px_1p5()
+                                                    .rounded_sm()
+                                                    .label(if is_disabled {
+                                                        tr("启用")
+                                                    } else {
+                                                        tr("禁用")
+                                                    })
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.toggle_project_mcp(
+                                                            t_name.clone(),
+                                                            !is_disabled,
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new(("readiness-mcp-remove", i))
+                                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                                    .compact()
+                                                    .xsmall()
+                                                    .h(px(22.))
+                                                    .px_1p5()
+                                                    .rounded_sm()
+                                                    .label(tr("删除"))
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.remove_project_mcp(
+                                                            r_name.clone(),
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                        })
                                         .when_some(res.config_path.clone(), |row, cfg_path| {
                                             row.child(
                                                 Button::new(("readiness-mcp-reveal", i))
@@ -865,8 +1144,8 @@ impl HiveApp {
                                                 .text_size(px(10.5))
                                                 .text_color(status_color)
                                                 .child(status_label.to_owned()),
-                                        ),
-                                )
+                                        )
+                                })
                         })),
                 )
             })

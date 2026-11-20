@@ -1,3 +1,5 @@
+import { open, stat } from 'node:fs/promises';
+
 export interface HistoryPageMeta {
   totalCount: number;
   startIndex: number;
@@ -12,9 +14,162 @@ export interface HistorySliceResult<T> {
   historyPage: HistoryPageMeta;
 }
 
+export interface JsonlTailWindowResult {
+  lines: string[];
+  startByteOffset: number;
+  endByteOffset: number;
+  hasEarlierBytes: boolean;
+  fileSize: number;
+}
+
+export interface ToolOutputByteWindow {
+  chunk: string;
+  byteOffset: number;
+  nextByteOffset: number;
+  totalBytes: number;
+  hasMore: boolean;
+}
+
 export const DEFAULT_HISTORY_PAGE_LIMIT = 120;
 export const MAX_HISTORY_PAGE_LIMIT = 500;
 export const MAX_PAGED_TOOL_OUTPUT_CHARS = 32_768;
+export const DEFAULT_TOOL_OUTPUT_SLICE_BYTES = 32_768;
+export const MAX_TOOL_OUTPUT_SLICE_BYTES = 262_144;
+export const REVERSE_CHUNK_BYTES = 65_536;
+
+/**
+ * Reads up to `maxLines` non-empty lines from a JSONL file backwards starting at
+ * `beforeByteOffset` (defaults to EOF), scanning in fixed-size chunks so huge
+ * cold transcripts never have to be read completely into memory just to render
+ * the latest page.
+ */
+export async function readJsonlTailWindow(
+  filePath: string,
+  options: {
+    maxLines: number;
+    beforeByteOffset?: number;
+    chunkBytes?: number;
+  },
+): Promise<JsonlTailWindowResult> {
+  const maxLines = Math.max(1, Math.floor(options.maxLines));
+  const chunkBytes = Math.max(4096, Math.floor(options.chunkBytes ?? REVERSE_CHUNK_BYTES));
+  const info = await stat(filePath);
+  const fileSize = info.size;
+  const endByteOffset = options.beforeByteOffset === undefined
+    ? fileSize
+    : Math.min(Math.max(0, Math.floor(options.beforeByteOffset)), fileSize);
+
+  if (endByteOffset === 0) {
+    return { lines: [], startByteOffset: 0, endByteOffset: 0, hasEarlierBytes: false, fileSize };
+  }
+
+  const handle = await open(filePath, 'r');
+  try {
+    let cursor = endByteOffset;
+    let carry: Buffer = Buffer.alloc(0);
+    const collectedReversed: { text: string; startByte: number }[] = [];
+
+    while (cursor > 0 && collectedReversed.length < maxLines) {
+      const readLen = Math.min(chunkBytes, cursor);
+      const readPos = cursor - readLen;
+      const buf = Buffer.allocUnsafe(readLen);
+      const { bytesRead } = await handle.read(buf, 0, readLen, readPos);
+      if (bytesRead <= 0) break;
+
+      const slice = buf.subarray(0, bytesRead);
+      const combined = carry.length > 0 ? Buffer.concat([slice, carry]) : slice;
+
+      let lineEnd = combined.length;
+      for (let i = combined.length - 1; i >= 0; i--) {
+        if (combined[i] === 0x0a) {
+          const lineBuf = combined.subarray(i + 1, lineEnd);
+          const trimmed = lineBuf.toString('utf8').trim();
+          if (trimmed.length > 0) {
+            collectedReversed.push({ text: trimmed, startByte: readPos + i + 1 });
+            if (collectedReversed.length >= maxLines) {
+              const earliest = collectedReversed[collectedReversed.length - 1]!;
+              return {
+                lines: collectedReversed.reverse().map(x => x.text),
+                startByteOffset: earliest.startByte,
+                endByteOffset,
+                hasEarlierBytes: earliest.startByte > 0,
+                fileSize,
+              };
+            }
+          }
+          lineEnd = i;
+        }
+      }
+
+      carry = Buffer.from(combined.subarray(0, lineEnd));
+      cursor = readPos;
+    }
+
+    if (cursor === 0 && carry.length > 0 && collectedReversed.length < maxLines) {
+      const trimmed = carry.toString('utf8').trim();
+      if (trimmed.length > 0) {
+        collectedReversed.push({ text: trimmed, startByte: 0 });
+      }
+    }
+
+    const lines = collectedReversed.reverse().map(x => x.text);
+    const startByteOffset = collectedReversed.length > 0
+      ? collectedReversed[0]!.startByte
+      : cursor;
+
+    return {
+      lines,
+      startByteOffset,
+      endByteOffset,
+      hasEarlierBytes: startByteOffset > 0,
+      fileSize,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Slices a UTF-8 safe byte window from a full tool output string so callers can
+ * stream huge outputs incrementally by byte offset without splitting multi-byte
+ * characters.
+ */
+export function readToolOutputByteWindow(
+  fullText: string,
+  byteOffset: number,
+  byteLength: number = DEFAULT_TOOL_OUTPUT_SLICE_BYTES,
+): ToolOutputByteWindow {
+  const buf = Buffer.from(fullText, 'utf8');
+  const totalBytes = buf.length;
+  let start = Math.min(Math.max(0, Math.floor(byteOffset)), totalBytes);
+  // Advance past any UTF-8 continuation bytes (10xxxxxx)
+  while (start < totalBytes && (buf[start]! & 0xc0) === 0x80) {
+    start++;
+  }
+  const clampedLen = Math.min(Math.max(1024, Math.floor(byteLength)), MAX_TOOL_OUTPUT_SLICE_BYTES);
+  let end = Math.min(totalBytes, start + clampedLen);
+  // Back off if end lands in the middle of a multi-byte UTF-8 sequence
+  if (end < totalBytes && (buf[end]! & 0xc0) === 0x80) {
+    while (end > start && (buf[end]! & 0xc0) === 0x80) {
+      end--;
+    }
+  }
+  // Edge case: a single 4-byte char was larger than remaining slice
+  if (end === start && start < totalBytes) {
+    end = Math.min(totalBytes, start + 1);
+    while (end < totalBytes && (buf[end]! & 0xc0) === 0x80) {
+      end++;
+    }
+  }
+  const chunk = buf.subarray(start, end).toString('utf8');
+  return {
+    chunk,
+    byteOffset: start,
+    nextByteOffset: end,
+    totalBytes,
+    hasMore: end < totalBytes,
+  };
+}
 
 /**
  * Bounds oversized tool result text blocks on paginated history reads so a single
@@ -31,11 +186,17 @@ export function boundOversizedToolOutput<T>(message: T, maxChars = MAX_PAGED_TOO
     const item = block as Record<string, unknown>;
     if (item.type === 'text' && typeof item.text === 'string' && item.text.length > maxChars) {
       changed = true;
+      const totalBytes = Buffer.byteLength(item.text, 'utf8');
+      const head = item.text.slice(0, maxChars);
+      const loadedBytes = Buffer.byteLength(head, 'utf8');
       const omitted = item.text.length - maxChars;
       return {
         ...item,
-        text: `${item.text.slice(0, maxChars)}\n… [已截断 ${omitted} 字符以保持流畅；完整内容请导出 Markdown 或查看源文件]`,
+        text: `${head}\n… [已截断 ${omitted} 字符以保持流畅；可按字节窗口继续加载或导出完整 Markdown]`,
         truncatedChars: omitted,
+        totalBytes,
+        loadedBytes,
+        hasMoreBytes: loadedBytes < totalBytes,
       };
     }
     return block;
@@ -52,13 +213,6 @@ export function clampHistoryLimit(limit?: number): number {
 
 /**
  * Slices a bounded window from an authoritative conversation transcript.
- *
- * - On initial open (`beforeIndex === undefined`): returns the latest `limit` messages,
- *   or if `aroundMessageId` is found earlier in the transcript, expands the start index
- *   to include `aroundMessageId` (with 20 messages of preceding context) through the tail,
- *   preserving contiguous live event appending, search jump targeting, and reading-anchor restore.
- * - On backward pagination (`beforeIndex !== undefined`): verifies `beforeMessageId` if given
- *   (adjusting `end` if the message shifted), and returns `[max(0, end - limit), end)`.
  */
 export function sliceHistoryWindow<T>(
   history: readonly T[],

@@ -61,7 +61,17 @@ import type { HiveHost } from './hive-host.js';
 import type { HiveAgentRuntime, WorkspaceSummary } from './hive-runtime-contract.js';
 import type { StructuredSessionPort, StructuredSessionHandle } from './structured-runtime.js';
 import { createTeamTool, createTeamCommand } from './team-tool.js';
-import { sliceHistoryWindow, type HistoryPageMeta } from './history-cursor.js';
+import { readToolOutputByteWindow, sliceHistoryWindow, type HistoryPageMeta, type ToolOutputByteWindow } from './history-cursor.js';
+import {
+  checkoutGitBranch,
+  dropGitStash,
+  fetchGitRemote,
+  listGitBranches,
+  listGitStashes,
+  popGitStash,
+  pullGitBranch,
+  pushGitStash,
+} from './git-branches-stash.js';
 
 export interface MemberDesktopActivity {
   sessionId?: string;
@@ -631,6 +641,102 @@ export class Chats implements StructuredSessionPort {
       return {ok: true as const, status};
     } catch (error) {
       if (error instanceof GitWorkspaceError) return {ok: false as const, error: {code: error.code, message: error.message}};
+      throw error;
+    }
+  }
+  async gitBranches(workspaceId: string, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const branches = await listGitBranches(directory);
+      this.assertWorkspaceAvailable(workspaceId);
+      return { ok: true as const, branches };
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitCheckoutBranch(workspaceId: string, branch: string, create = false, startPoint?: string, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const result = await checkoutGitBranch(directory, { branch, create, ...(startPoint ? { startPoint } : {}) });
+      this.assertWorkspaceAvailable(workspaceId);
+      return result;
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitFetch(workspaceId: string, remote?: string, prune = true, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const result = await fetchGitRemote(directory, { ...(remote ? { remote } : {}), prune });
+      this.assertWorkspaceAvailable(workspaceId);
+      return result;
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitPull(workspaceId: string, rebase = false, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const result = await pullGitBranch(directory, { rebase });
+      this.assertWorkspaceAvailable(workspaceId);
+      return result;
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitStashList(workspaceId: string, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const { stashes } = await listGitStashes(directory);
+      this.assertWorkspaceAvailable(workspaceId);
+      return { ok: true as const, stashes };
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitStashPush(workspaceId: string, message?: string, includeUntracked = true, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const result = await pushGitStash(directory, { ...(message ? { message } : {}), includeUntracked });
+      this.assertWorkspaceAvailable(workspaceId);
+      return result;
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitStashPop(workspaceId: string, ref: string, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const result = await popGitStash(directory, { ref });
+      this.assertWorkspaceAvailable(workspaceId);
+      return result;
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
+      throw error;
+    }
+  }
+  async gitStashDrop(workspaceId: string, ref: string, sessionId?: unknown) {
+    this.assertWorkspaceAvailable(workspaceId);
+    const directory = await this.executionDirectory(workspaceId, sessionId);
+    try {
+      const result = await dropGitStash(directory, { ref });
+      this.assertWorkspaceAvailable(workspaceId);
+      return result;
+    } catch (error) {
+      if (error instanceof GitWorkspaceError) return { ok: false as const, error: { code: error.code, message: error.message } };
       throw error;
     }
   }
@@ -1534,6 +1640,63 @@ export class Chats implements StructuredSessionPort {
       }
     }
     return sliceHistoryWindow(snapshot.history, snapshot.historyMessageIds, options);
+  }
+
+  async toolOutputSlice(
+    id: string,
+    options: { messageId: string; blockIndex?: number; byteOffset?: number; byteLength?: number },
+  ): Promise<ToolOutputByteWindow> {
+    const record = this.index.peek(id);
+    const live = this.live.get(id);
+    let history: unknown[];
+    let historyMessageIds: string[];
+
+    if (!live && record?.sessionFile && this.historyPageCache?.sessionId === id && this.historyPageCache.sessionFile === record.sessionFile) {
+      let cacheValid = false;
+      try {
+        const st = statSync(record.sessionFile);
+        cacheValid = st.mtimeMs === this.historyPageCache.mtimeMs && st.size === this.historyPageCache.size;
+      } catch {
+        this.historyPageCache = undefined;
+      }
+      if (cacheValid && this.historyPageCache) {
+        history = this.historyPageCache.history;
+        historyMessageIds = this.historyPageCache.historyMessageIds;
+      } else {
+        const snapshot = await this.open(id, true, true);
+        history = snapshot.history;
+        historyMessageIds = snapshot.historyMessageIds;
+      }
+    } else {
+      const snapshot = await this.open(id, true, true);
+      history = snapshot.history;
+      historyMessageIds = snapshot.historyMessageIds;
+    }
+
+    const idx = historyMessageIds.indexOf(options.messageId);
+    if (idx < 0) {
+      throw new Error('找不到对应的工具输出消息');
+    }
+    const message = history[idx] as Record<string, unknown> | undefined;
+    if (!message || typeof message !== 'object') {
+      throw new Error('消息格式无效');
+    }
+    const content = message.content;
+    let fullText: string | undefined;
+    if (typeof content === 'string') {
+      fullText = content;
+    } else if (Array.isArray(content)) {
+      const textBlocks = content.filter(
+        (b): b is { type: string; text: string } =>
+          !!b && typeof b === 'object' && (b as Record<string, unknown>).type === 'text' && typeof (b as Record<string, unknown>).text === 'string',
+      );
+      const blockIdx = Math.max(0, Math.floor(options.blockIndex ?? 0));
+      fullText = textBlocks[blockIdx]?.text;
+    }
+    if (fullText === undefined) {
+      throw new Error('该消息不包含可分页读取的文本工具输出');
+    }
+    return readToolOutputByteWindow(fullText, options.byteOffset ?? 0, options.byteLength);
   }
   private requireOpening(id: string): Promise<LiveChat> {
     const pending = this.opening.get(id);

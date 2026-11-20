@@ -1,9 +1,10 @@
 import type { PiUserInput } from './pi-user-input.js';
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import { createReadStream } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { isDeliveryPresentation } from '../delivery-presentation.js';
+import { readJsonlTailWindow } from '../history-cursor.js';
 
 function assertPiTranscriptHeader(header: unknown, expected?: string): void {
   if (!header || typeof header !== 'object' || !('type' in header) || header.type !== 'session'
@@ -63,6 +64,80 @@ export async function readPiTranscript(file: string, expectedId?: string, signal
   if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size ||
     before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw new Error('Pi transcript changed while being read; retry');
   return entries;
+}
+
+/**
+ * Reads only the session header (first line) and a bounded tail byte window of
+ * a Pi JSONL transcript from disk using reverse 64 KiB chunked reads.
+ * Avoids reading multi-megabyte transcripts completely into memory when only
+ * the latest turns (or an earlier byte cursor) are needed.
+ */
+export async function readPiTranscriptTailWindow(
+  file: string,
+  options: {
+    maxEntries: number;
+    beforeByteOffset?: number;
+    expectedId?: string;
+    signal?: AbortSignal;
+  },
+): Promise<{
+  entries: SessionEntry[];
+  startByteOffset: number;
+  endByteOffset: number;
+  hasEarlierBytes: boolean;
+  fileSize: number;
+}> {
+  options.signal?.throwIfAborted();
+  const handle = await open(file, 'r');
+  let headerEndOffset = 0;
+  try {
+    const headBuf = Buffer.allocUnsafe(8192);
+    const { bytesRead } = await handle.read(headBuf, 0, headBuf.length, 0);
+    const headText = headBuf.subarray(0, bytesRead).toString('utf8');
+    const nl = headText.indexOf('\n');
+    const headerLine = (nl >= 0 ? headText.slice(0, nl) : headText).trim();
+    if (!headerLine) throw new Error('Missing Pi transcript header');
+    assertPiTranscriptHeader(JSON.parse(headerLine), options.expectedId);
+    headerEndOffset = nl >= 0 ? Buffer.byteLength(headText.slice(0, nl + 1), 'utf8') : bytesRead;
+  } finally {
+    await handle.close();
+  }
+
+  options.signal?.throwIfAborted();
+  const windowResult = await readJsonlTailWindow(file, {
+    maxLines: Math.max(1, options.maxEntries) + 1,
+    ...(options.beforeByteOffset !== undefined && { beforeByteOffset: options.beforeByteOffset }),
+  });
+
+  const entries: SessionEntry[] = [];
+  for (const raw of windowResult.lines) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error('Malformed Pi transcript');
+    }
+    if (parsed && typeof parsed === 'object' && (parsed as { type?: unknown }).type === 'session') continue;
+    const entry = parsed as Partial<SessionEntry> | null;
+    if (
+      !entry ||
+      typeof entry.type !== 'string' ||
+      typeof entry.id !== 'string' ||
+      !entry.id ||
+      !(entry.parentId === null || typeof entry.parentId === 'string')
+    ) {
+      throw new Error('Invalid Pi transcript entry');
+    }
+    entries.push(entry as SessionEntry);
+  }
+
+  return {
+    entries,
+    startByteOffset: Math.max(headerEndOffset, windowResult.startByteOffset),
+    endByteOffset: windowResult.endByteOffset,
+    hasEarlierBytes: windowResult.startByteOffset > headerEndOffset,
+    fileSize: windowResult.fileSize,
+  };
 }
 
 export function externalPiBranch(entries: readonly SessionEntry[], leafId: string | null): SessionEntry[] {

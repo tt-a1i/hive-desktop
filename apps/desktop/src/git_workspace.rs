@@ -477,6 +477,13 @@ pub(crate) struct GitWorkspace {
     reload_commit_patch_on_open: bool,
     remotes: Option<Entity<remotes::RemotePanel>>,
     show_remotes: bool,
+    branches: Option<crate::protocol::GitBranchesSnapshot>,
+    stashes: Vec<crate::protocol::GitStashEntry>,
+    branch_panel_open: bool,
+    stash_panel_open: bool,
+    new_branch_input: Entity<gpui_kit::component::input::InputState>,
+    ops_busy: bool,
+    ops_notice: Option<(bool, String)>,
 }
 impl HiveApp {
     fn build_git_workspace(
@@ -598,6 +605,16 @@ impl HiveApp {
                 reload_commit_patch_on_open: false,
                 remotes,
                 show_remotes: false,
+                branches: None,
+                stashes: vec![],
+                branch_panel_open: false,
+                stash_panel_open: false,
+                new_branch_input: cx.new(|cx| {
+                    gpui_kit::component::input::InputState::new(window, cx)
+                        .placeholder(tr("输入新分支名，如 feat/login"))
+                }),
+                ops_busy: false,
+                ops_notice: None,
             };
             if !preview_mock {
                 let pending = cx.weak_entity();
@@ -895,6 +912,7 @@ impl GitWorkspace {
         self.status_loading = true;
         self.clear_file_diff(cx);
         self.files_scroll = ScrollHandle::new();
+        self.load_branches_and_stashes(cx);
         cx.notify();
         let workspace = self.workspace.clone();
         let session = self.session.clone();
@@ -1338,6 +1356,517 @@ impl GitWorkspace {
         }
         cx.stop_propagation();
     }
+    fn load_branches_and_stashes(&mut self, cx: &mut Context<Self>) {
+        if self.preview_mock || !self.current(cx) {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let session = self.session.clone();
+        cx.spawn(async move |this, cx| {
+            let branches_res = runtime
+                .request(
+                    "git.branches",
+                    git_params(json!({ "workspaceId": workspace }), &session),
+                )
+                .await
+                .ok()
+                .and_then(|v| decode::<crate::protocol::GitBranchesSnapshot>(v, "branches").ok());
+            let stashes_res = runtime
+                .request(
+                    "git.stashList",
+                    git_params(json!({ "workspaceId": workspace }), &session),
+                )
+                .await
+                .ok()
+                .and_then(|v| decode::<Vec<crate::protocol::GitStashEntry>>(v, "stashes").ok());
+            let _ = this.update(cx, |this, cx| {
+                if let Some(branches) = branches_res {
+                    this.branches = Some(branches);
+                }
+                if let Some(stashes) = stashes_res {
+                    this.stashes = stashes;
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn run_git_branch_op(
+        &mut self,
+        method: &'static str,
+        payload: serde_json::Value,
+        success_fallback: &'static str,
+        close_panels: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.preview_mock || self.ops_busy || !self.current(cx) {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        self.ops_busy = true;
+        self.ops_notice = None;
+        cx.notify();
+        let session = self.session.clone();
+        cx.spawn(async move |this, cx| {
+            let res = runtime.request(method, git_params(payload, &session)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.ops_busy = false;
+                match res {
+                    Ok(value) => {
+                        if value.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+                            let msg = value
+                                .get("error")
+                                .and_then(|e| e.get("message"))
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("Git 操作失败")
+                                .to_owned();
+                            this.ops_notice = Some((true, msg));
+                        } else {
+                            let summary = value
+                                .get("summary")
+                                .and_then(|s| s.as_str())
+                                .filter(|s| !s.trim().is_empty())
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| tr(success_fallback).to_owned());
+                            this.ops_notice = Some((false, summary));
+                            if close_panels {
+                                this.branch_panel_open = false;
+                                this.stash_panel_open = false;
+                            }
+                            this.refresh(cx);
+                        }
+                    }
+                    Err(err) => {
+                        this.ops_notice = Some((true, err.to_string()));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn render_branch_stash_toolbar(&self, current: bool, cx: &Context<Self>) -> AnyElement {
+        if self.preview_mock || !current {
+            return div().into_any_element();
+        }
+        let current_branch = self
+            .branches
+            .as_ref()
+            .and_then(|b| b.current.clone())
+            .or_else(|| self.status.as_ref().map(|s| s.identity.branch_label()))
+            .unwrap_or_else(|| tr("分支").to_owned());
+        let stash_count = self.stashes.len();
+        let ws_id = self.workspace.clone();
+        let ws_fetch = ws_id.clone();
+        let ws_pull = ws_id.clone();
+        let ws_stash_push = ws_id.clone();
+
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                h_flex()
+                    .w_full()
+                    .flex_wrap()
+                    .items_center()
+                    .justify_between()
+                    .gap_1p5()
+                    .px_2p5()
+                    .py_1p5()
+                    .rounded_lg()
+                    .bg(Color::Inset.get(cx))
+                    .border_1()
+                    .border_color(Color::Divider.get(cx))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new("git-branch-switcher-toggle")
+                                    .outline()
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .icon(Glyph::GitBranch)
+                                    .label(current_branch)
+                                    .disabled(self.ops_busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.branch_panel_open = !this.branch_panel_open;
+                                        if this.branch_panel_open {
+                                            this.stash_panel_open = false;
+                                            this.load_branches_and_stashes(cx);
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("git-fetch-btn")
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .label("Fetch")
+                                    .disabled(self.ops_busy)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.run_git_branch_op(
+                                            "git.fetch",
+                                            json!({ "workspaceId": ws_fetch, "prune": true }),
+                                            "已完成 Fetch",
+                                            false,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("git-pull-btn")
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .label("Pull")
+                                    .disabled(self.ops_busy)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.run_git_branch_op(
+                                            "git.pull",
+                                            json!({ "workspaceId": ws_pull, "rebase": false }),
+                                            "已完成 Pull",
+                                            false,
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                Button::new("git-stash-push-btn")
+                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .label(tr("挂起改动"))
+                                    .disabled(self.ops_busy)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.run_git_branch_op(
+                                            "git.stashPush",
+                                            json!({ "workspaceId": ws_stash_push, "includeUntracked": true }),
+                                            "已挂起当前改动到 Stash",
+                                            false,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                Button::new("git-stash-list-toggle")
+                                    .outline()
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(24.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .label(if stash_count > 0 {
+                                        format!("Stash ({stash_count})")
+                                    } else {
+                                        "Stash".to_owned()
+                                    })
+                                    .disabled(self.ops_busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.stash_panel_open = !this.stash_panel_open;
+                                        if this.stash_panel_open {
+                                            this.branch_panel_open = false;
+                                            this.load_branches_and_stashes(cx);
+                                        }
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
+            .when_some(self.ops_notice.as_ref(), |view, (is_err, msg)| {
+                view.child(
+                    div()
+                        .px_2p5()
+                        .py_1p5()
+                        .rounded_md()
+                        .bg(if *is_err {
+                            Color::ErrorSurface.get(cx)
+                        } else {
+                            Color::Inset.get(cx)
+                        })
+                        .text_xs()
+                        .text_color(if *is_err {
+                            Color::Error.get(cx)
+                        } else {
+                            Color::Secondary.get(cx)
+                        })
+                        .child(msg.clone()),
+                )
+            })
+            .when(self.branch_panel_open, |view| {
+                let ws_create = ws_id.clone();
+                let new_branch_input = self.new_branch_input.clone();
+                let local_branches = self
+                    .branches
+                    .as_ref()
+                    .map(|b| b.local.clone())
+                    .unwrap_or_default();
+                view.child(
+                    v_flex()
+                        .w_full()
+                        .gap_2()
+                        .p_2p5()
+                        .rounded_lg()
+                        .bg(Color::Card.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .shadow(crate::palette::card_shadow(cx))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .gap_1p5()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(gpui_kit::component::input::Input::new(&new_branch_input).small()),
+                                )
+                                .child(
+                                    Button::new("git-create-branch-submit")
+                                        .primary()
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(26.))
+                                        .px_2p5()
+                                        .rounded_md()
+                                        .label(tr("新建并切换"))
+                                        .disabled(self.ops_busy)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            let name = this.new_branch_input.read(cx).value().trim().to_owned();
+                                            if name.is_empty() {
+                                                return;
+                                            }
+                                            this.new_branch_input.update(cx, |input, cx| {
+                                                input.set_value("", window, cx);
+                                            });
+                                            this.run_git_branch_op(
+                                                "git.checkoutBranch",
+                                                json!({
+                                                    "workspaceId": ws_create,
+                                                    "branch": name,
+                                                    "create": true,
+                                                }),
+                                                "已创建并切换到新分支",
+                                                true,
+                                                cx,
+                                            );
+                                        })),
+                                ),
+                        )
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .gap_1()
+                                .children(local_branches.into_iter().take(16).enumerate().map(|(i, b)| {
+                                    let ws_sw = ws_id.clone();
+                                    let b_name = b.name.clone();
+                                    let is_cur = b.is_current;
+                                    h_flex()
+                                        .id(("git-branch-item", i))
+                                        .w_full()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_2()
+                                        .px_2()
+                                        .py_1()
+                                        .rounded_md()
+                                        .bg(if is_cur {
+                                            Color::AccentSoft.get(cx)
+                                        } else {
+                                            Color::Inset.get(cx)
+                                        })
+                                        .child(
+                                            h_flex()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .items_center()
+                                                .gap_1p5()
+                                                .child(
+                                                    div()
+                                                        .text_xs()
+                                                        .font_weight(if is_cur {
+                                                            FontWeight::SEMIBOLD
+                                                        } else {
+                                                            FontWeight::NORMAL
+                                                        })
+                                                        .text_color(Color::Text.get(cx))
+                                                        .truncate()
+                                                        .child(b.name.clone()),
+                                                )
+                                                .when(b.ahead > 0 || b.behind > 0, |row| {
+                                                    row.child(
+                                                        div()
+                                                            .text_size(px(10.5))
+                                                            .text_color(Color::Muted.get(cx))
+                                                            .child(format!("↑{} ↓{}", b.ahead, b.behind)),
+                                                    )
+                                                }),
+                                        )
+                                        .child(if is_cur {
+                                            div()
+                                                .text_size(px(10.5))
+                                                .text_color(Color::Accent.get(cx))
+                                                .child(tr("当前"))
+                                                .into_any_element()
+                                        } else {
+                                            Button::new(("git-branch-switch", i))
+                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(22.))
+                                                .px_2()
+                                                .rounded_sm()
+                                                .label(tr("切换"))
+                                                .disabled(self.ops_busy)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.run_git_branch_op(
+                                                        "git.checkoutBranch",
+                                                        json!({
+                                                            "workspaceId": ws_sw,
+                                                            "branch": b_name,
+                                                            "create": false,
+                                                        }),
+                                                        "已切换分支",
+                                                        true,
+                                                        cx,
+                                                    );
+                                                }))
+                                                .into_any_element()
+                                        })
+                                })),
+                        ),
+                )
+            })
+            .when(self.stash_panel_open, |view| {
+                view.child(
+                    v_flex()
+                        .w_full()
+                        .gap_1p5()
+                        .p_2p5()
+                        .rounded_lg()
+                        .bg(Color::Card.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .shadow(crate::palette::card_shadow(cx))
+                        .when(self.stashes.is_empty(), |col| {
+                            col.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(Color::Muted.get(cx))
+                                    .child(tr("当前没有已挂起的 Stash 记录。")),
+                            )
+                        })
+                        .children(self.stashes.iter().take(12).enumerate().map(|(i, s)| {
+                            let ws_pop = ws_id.clone();
+                            let ws_drop = ws_id.clone();
+                            let ref_pop = s.ref_name.clone();
+                            let ref_drop = s.ref_name.clone();
+                            h_flex()
+                                .id(("git-stash-item", i))
+                                .w_full()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .bg(Color::Inset.get(cx))
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(Color::Text.get(cx))
+                                                .truncate()
+                                                .child(s.message.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(10.5))
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(format!("{} · {}", s.ref_name, s.relative_time)),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            Button::new(("git-stash-pop", i))
+                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(22.))
+                                                .px_2()
+                                                .rounded_sm()
+                                                .label(tr("弹出"))
+                                                .disabled(self.ops_busy)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.run_git_branch_op(
+                                                        "git.stashPop",
+                                                        json!({ "workspaceId": ws_pop, "ref": ref_pop }),
+                                                        "已弹出 Stash",
+                                                        true,
+                                                        cx,
+                                                    );
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new(("git-stash-drop", i))
+                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(22.))
+                                                .px_2()
+                                                .rounded_sm()
+                                                .label(tr("删除"))
+                                                .disabled(self.ops_busy)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.run_git_branch_op(
+                                                        "git.stashDrop",
+                                                        json!({ "workspaceId": ws_drop, "ref": ref_drop }),
+                                                        "已删除 Stash",
+                                                        false,
+                                                        cx,
+                                                    );
+                                                })),
+                                        ),
+                                )
+                        })),
+                )
+            })
+            .into_any_element()
+    }
 }
 impl Render for GitWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1572,6 +2101,7 @@ impl Render for GitWorkspace {
             v_flex()
                 .min_w_0()
                 .gap_3()
+                .child(self.render_branch_stash_toolbar(current, cx))
                 .when(!current, |view| {
                     view.child(
                         div()

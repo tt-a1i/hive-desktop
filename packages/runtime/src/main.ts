@@ -27,6 +27,13 @@ import { DesktopUpdates } from './desktop-updates.js';
 import { desktopHistoryMessage } from './desktop-history.js';
 import { boundOversizedToolOutput, sliceHistoryWindow } from './history-cursor.js';
 import { collectReadinessReport } from './readiness.js';
+import {
+  probeMcpServer,
+  removeProjectMcpServer,
+  resolveMcpServerTarget,
+  toggleProjectMcpServer,
+  upsertProjectMcpServer,
+} from './mcp-manager.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
 let outputClosed = false;
@@ -255,6 +262,75 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       }
       return collectReadinessReport({ settings, profiles, ...(workspacePath ? { workspacePath } : {}) });
     }
+    case 'mcp.probe': {
+      exact(params, ['workspaceId', 'name', 'scope', 'configPath', 'timeoutMs']);
+      const name = text(params, 'name');
+      let workspacePath: string | undefined;
+      if (typeof params.workspaceId === 'string' && params.workspaceId.trim()) {
+        try {
+          const workspaces = await runtime.requestHive('GET', '/api/workspaces') as Array<{ id: string; directory?: string; path?: string }>;
+          const ws = workspaces.find(w => w.id === params.workspaceId);
+          workspacePath = ws?.directory ?? ws?.path;
+        } catch {}
+      }
+      const target = resolveMcpServerTarget({
+        name,
+        ...(params.scope === 'global' || params.scope === 'project' ? { scope: params.scope } : {}),
+        ...(typeof params.configPath === 'string' && params.configPath.trim() ? { configPath: params.configPath.trim() } : {}),
+        ...(workspacePath ? { workspacePath } : {}),
+      });
+      if (!target) {
+        return {
+          name,
+          ok: false,
+          status: 'error',
+          latencyMs: 0,
+          tools: [],
+          error: `找不到 MCP 服务 "${name}" 的配置项`,
+        };
+      }
+      const timeoutMs = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) ? params.timeoutMs : undefined;
+      return probeMcpServer(target, timeoutMs);
+    }
+    case 'mcp.upsertProjectServer': {
+      exact(params, ['workspaceId', 'name', 'transport', 'command', 'args', 'url', 'disabled']);
+      const workspaceId = text(params, 'workspaceId');
+      chats.assertWorkspaceAvailable(workspaceId);
+      const workspaces = await runtime.requestHive('GET', '/api/workspaces') as Array<{ id: string; directory?: string; path?: string }>;
+      const ws = workspaces.find(w => w.id === workspaceId);
+      const workspacePath = ws?.directory ?? ws?.path;
+      if (!workspacePath) throw new Error('找不到目标项目目录');
+      const transport = params.transport === 'http' ? 'http' : 'stdio';
+      return upsertProjectMcpServer(workspacePath, {
+        name: text(params, 'name'),
+        transport,
+        ...(typeof params.command === 'string' ? { command: params.command } : {}),
+        ...(Array.isArray(params.args) ? { args: params.args.map(String) } : {}),
+        ...(typeof params.url === 'string' ? { url: params.url } : {}),
+        ...(typeof params.disabled === 'boolean' ? { disabled: params.disabled } : {}),
+      });
+    }
+    case 'mcp.toggleProjectServer': {
+      exact(params, ['workspaceId', 'name', 'disabled']);
+      const workspaceId = text(params, 'workspaceId');
+      chats.assertWorkspaceAvailable(workspaceId);
+      if (typeof params.disabled !== 'boolean') throw new TypeError('disabled must be a boolean');
+      const workspaces = await runtime.requestHive('GET', '/api/workspaces') as Array<{ id: string; directory?: string; path?: string }>;
+      const ws = workspaces.find(w => w.id === workspaceId);
+      const workspacePath = ws?.directory ?? ws?.path;
+      if (!workspacePath) throw new Error('找不到目标项目目录');
+      return toggleProjectMcpServer(workspacePath, text(params, 'name'), params.disabled);
+    }
+    case 'mcp.removeProjectServer': {
+      exact(params, ['workspaceId', 'name']);
+      const workspaceId = text(params, 'workspaceId');
+      chats.assertWorkspaceAvailable(workspaceId);
+      const workspaces = await runtime.requestHive('GET', '/api/workspaces') as Array<{ id: string; directory?: string; path?: string }>;
+      const ws = workspaces.find(w => w.id === workspaceId);
+      const workspacePath = ws?.directory ?? ws?.path;
+      if (!workspacePath) throw new Error('找不到目标项目目录');
+      return removeProjectMcpServer(workspacePath, text(params, 'name'));
+    }
     case 'desktop.settings.update': return settings.update(params);
     case 'worktree.initialization.get':
     case 'worktree.initialization.retry':
@@ -337,6 +413,34 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return chats.attachments.addClipboard(workspace, params.image);
     }
     case 'git.status': return chats.gitStatus(text(params, 'workspaceId'), params.offset, params.limit, params.sessionId);
+    case 'git.branches': return chats.gitBranches(text(params, 'workspaceId'), params.sessionId);
+    case 'git.checkoutBranch': return chats.gitCheckoutBranch(
+      text(params, 'workspaceId'),
+      text(params, 'branch'),
+      params.create === true,
+      typeof params.startPoint === 'string' ? params.startPoint : undefined,
+      params.sessionId,
+    );
+    case 'git.fetch': return chats.gitFetch(
+      text(params, 'workspaceId'),
+      typeof params.remote === 'string' ? params.remote : undefined,
+      params.prune !== false,
+      params.sessionId,
+    );
+    case 'git.pull': return chats.gitPull(
+      text(params, 'workspaceId'),
+      params.rebase === true,
+      params.sessionId,
+    );
+    case 'git.stashList': return chats.gitStashList(text(params, 'workspaceId'), params.sessionId);
+    case 'git.stashPush': return chats.gitStashPush(
+      text(params, 'workspaceId'),
+      typeof params.message === 'string' ? params.message : undefined,
+      params.includeUntracked !== false,
+      params.sessionId,
+    );
+    case 'git.stashPop': return chats.gitStashPop(text(params, 'workspaceId'), text(params, 'ref'), params.sessionId);
+    case 'git.stashDrop': return chats.gitStashDrop(text(params, 'workspaceId'), text(params, 'ref'), params.sessionId);
     case 'git.diff': return chats.gitDiff(text(params, 'workspaceId'), text(params, 'path'), params.comparison, params.sessionId);
     case 'git.index.preview': return chats.gitIndexPreview(text(params, 'workspaceId'), params.operation, params.paths, params.sessionId);
     case 'git.index.apply': return chats.gitIndexApply(text(params, 'workspaceId'), params.operation, params.paths, params.expectedVersion, params.sessionId);
@@ -470,6 +574,24 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         ...page,
         history: boundedHistory.map((message, index) => desktopHistoryMessage(message, page.historyMessageIds[index])),
       } : { ...page, history: boundedHistory };
+    }
+    case 'chat.toolOutputSlice': {
+      exact(params, ['sessionId', 'messageId', 'blockIndex', 'byteOffset', 'byteLength']);
+      if (params.blockIndex !== undefined && (typeof params.blockIndex !== 'number' || !Number.isSafeInteger(params.blockIndex) || params.blockIndex < 0)) {
+        throw new TypeError('blockIndex must be a nonnegative integer');
+      }
+      if (params.byteOffset !== undefined && (typeof params.byteOffset !== 'number' || !Number.isSafeInteger(params.byteOffset) || params.byteOffset < 0)) {
+        throw new TypeError('byteOffset must be a nonnegative integer');
+      }
+      if (params.byteLength !== undefined && (typeof params.byteLength !== 'number' || !Number.isSafeInteger(params.byteLength) || params.byteLength <= 0)) {
+        throw new TypeError('byteLength must be a positive integer');
+      }
+      return chats.toolOutputSlice(text(params, 'sessionId'), {
+        messageId: text(params, 'messageId'),
+        ...(params.blockIndex !== undefined ? { blockIndex: params.blockIndex } : {}),
+        ...(params.byteOffset !== undefined ? { byteOffset: params.byteOffset } : {}),
+        ...(params.byteLength !== undefined ? { byteLength: params.byteLength } : {}),
+      });
     }
     case 'chat.clearView': {
       exact(params, ['viewRevision']);

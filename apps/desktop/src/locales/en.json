@@ -2299,5 +2299,20 @@
   "设置 → 模型与接口": "Settings → Models & Endpoints",
   "设置 → Diff 与 PR": "Settings → Diffs & PR",
   "设置 → 外观": "Settings → Appearance",
-  "设置 → 快捷键": "Settings → Keybindings"
+  "设置 → 快捷键": "Settings → Keybindings",
+  "探活": "Probe",
+  "探活中…": "Probing…",
+  "探活失败": "Probe failed",
+  "输入新分支名，如 feat/login": "New branch name, e.g. feat/login",
+  "挂起改动": "Stash changes",
+  "新建并切换": "Create & switch",
+  "当前没有已挂起的 Stash 记录。": "No stashed changes.",
+  "弹出": "Pop",
+  "已完成 Fetch": "Fetch completed",
+  "已完成 Pull": "Pull completed",
+  "已挂起当前改动到 Stash": "Stashed current changes",
+  "已创建并切换到新分支": "Created and switched to new branch",
+  "已切换分支": "Switched branch",
+  "已弹出 Stash": "Popped stash",
+  "已删除 Stash": "Dropped stash"
 }

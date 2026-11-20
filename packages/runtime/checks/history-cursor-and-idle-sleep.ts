@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { boundOversizedToolOutput, sliceHistoryWindow } from '../src/history-cursor.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  boundOversizedToolOutput,
+  readJsonlTailWindow,
+  readToolOutputByteWindow,
+  sliceHistoryWindow,
+} from '../src/history-cursor.js';
+import { readPiTranscriptTailWindow } from '../src/agents/external-pi-history.js';
 
 const total = 1500;
 const history = Array.from({ length: total }, (_, i) => ({ role: i % 2 === 0 ? 'user' : 'assistant', content: `msg-${i}` }));
@@ -65,4 +74,62 @@ assert.ok(boundedTool.content[0]!.text.includes('已截断 38976 字符'));
 const normalAssistant = { role: 'assistant', content: [{ type: 'text', text: 'B'.repeat(40_000) }] };
 assert.equal(boundOversizedToolOutput(normalAssistant, 1024), normalAssistant);
 
-console.log('HISTORY_CURSOR_OK: bounded open, anchored search/reading restore, full backward walk, shifted-ID reanchor, and oversized tool truncation verified.');
+// 6. UTF-8 safe byte-window streaming reconstructs multi-byte Chinese/emoji tool output byte-for-byte.
+const multiByteOutput = '中文日志输出🚀'.repeat(600);
+let offset = 0;
+let reconstructed = '';
+let chunks = 0;
+while (true) {
+  const win = readToolOutputByteWindow(multiByteOutput, offset, 2048);
+  reconstructed += win.chunk;
+  chunks++;
+  if (!win.hasMore) {
+    assert.equal(win.nextByteOffset, Buffer.byteLength(multiByteOutput, 'utf8'));
+    break;
+  }
+  assert.ok(win.nextByteOffset > offset);
+  offset = win.nextByteOffset;
+}
+assert.ok(chunks >= 4);
+assert.equal(reconstructed, multiByteOutput);
+
+// 7. True reverse byte-chunked JSONL reader walks a multi-chunk file backwards to byte 0.
+const tmp = mkdtempSync(join(tmpdir(), 'hive-jsonl-tail-'));
+try {
+  const piFile = join(tmp, 'session.jsonl');
+  const lines: string[] = [
+    JSON.stringify({ type: 'session', id: 'pi-tail-test', timestamp: new Date().toISOString() }),
+  ];
+  let parentId: string | null = null;
+  for (let i = 0; i < 240; i++) {
+    const id = `e-${i}`;
+    lines.push(JSON.stringify({
+      type: 'message',
+      id,
+      parentId,
+      timestamp: new Date().toISOString(),
+      message: { role: i % 2 === 0 ? 'user' : 'assistant', content: [{ type: 'text', text: `line-${i}-${'X'.repeat(500)}` }] },
+    }));
+    parentId = id;
+  }
+  writeFileSync(piFile, `${lines.join('\n')}\n`, 'utf8');
+
+  const tail1 = await readJsonlTailWindow(piFile, { maxLines: 50, chunkBytes: 8192 });
+  assert.equal(tail1.lines.length, 50);
+  assert.equal(tail1.hasEarlierBytes, true);
+  assert.equal((JSON.parse(tail1.lines[49]!) as { id: string }).id, 'e-239');
+  assert.equal((JSON.parse(tail1.lines[0]!) as { id: string }).id, 'e-190');
+
+  const tail2 = await readJsonlTailWindow(piFile, { maxLines: 50, beforeByteOffset: tail1.startByteOffset, chunkBytes: 8192 });
+  assert.equal(tail2.lines.length, 50);
+  assert.equal((JSON.parse(tail2.lines[49]!) as { id: string }).id, 'e-189');
+
+  const piTail = await readPiTranscriptTailWindow(piFile, { maxEntries: 30, expectedId: 'pi-tail-test' });
+  assert.ok(piTail.entries.length >= 30);
+  assert.equal(piTail.entries.at(-1)?.id, 'e-239');
+  assert.equal(piTail.hasEarlierBytes, true);
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}
+
+console.log('HISTORY_CURSOR_OK: bounded open, anchored search/reading restore, full backward walk, shifted-ID reanchor, UTF-8 byte-window streaming, and reverse chunked JSONL tail reader verified.');
