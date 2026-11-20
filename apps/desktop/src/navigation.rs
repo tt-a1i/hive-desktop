@@ -700,7 +700,7 @@ impl HiveApp {
         let show_new_thread_row =
             new_thread_workspace.is_some() && (in_new_thread || flat_sessions.is_empty());
         let session_count = flat_sessions.len();
-        let sessions = self.sidebar_session_sections(flat_sessions);
+        let sessions = self.sidebar_session_sections(flat_sessions, general.fold_working_sessions);
         let show_working_project = self.workspaces.len() > 1 && selected_filter.is_none();
 
         v_flex()

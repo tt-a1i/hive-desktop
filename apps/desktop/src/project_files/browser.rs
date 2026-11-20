@@ -1,4 +1,5 @@
 use super::{FileError, Target};
+mod search_snippet;
 use crate::{
     app::HiveApp,
     git_workspace::{
@@ -26,6 +27,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use search_snippet::SearchSnippet;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
@@ -156,12 +158,20 @@ struct Match {
     line: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct SearchHit {
+    #[serde(flatten)]
+    selection: Match,
+    #[serde(default)]
+    snippet: Option<SearchSnippet>,
+}
+
 #[derive(Default, Deserialize)]
 struct SearchPage {
     #[serde(default)]
     paths: Vec<String>,
     #[serde(default)]
-    matches: Vec<Match>,
+    matches: Vec<SearchHit>,
     total: usize,
     #[serde(default)]
     limited: bool,
@@ -1611,7 +1621,10 @@ impl FileBrowser {
                 match result {
                     Ok(mut page) => {
                         page.matches
-                            .extend(page.paths.drain(..).map(|path| Match { path, line: None }));
+                            .extend(page.paths.drain(..).map(|path| SearchHit {
+                                selection: Match { path, line: None },
+                                snippet: None,
+                            }));
                         if offset >= page.total && offset > 0 {
                             this.search_offset =
                                 page.total.saturating_sub(1) / PAGE_SIZE * PAGE_SIZE;
@@ -1679,8 +1692,8 @@ impl FileBrowser {
     fn open_search_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.search_composing(window, cx) {
             cx.propagate();
-        } else if let Some(hit) = self.search.matches.get(self.search_selected).cloned() {
-            self.select(hit, cx);
+        } else if let Some(hit) = self.search.matches.get(self.search_selected) {
+            self.select(hit.selection.clone(), cx);
         }
     }
 
@@ -2591,8 +2604,16 @@ impl FileBrowser {
         true
     }
 
-    fn file_row(&self, hit: Match, label: String, active: usize, cx: &Context<Self>) -> Button {
-        Button::new(SharedString::from(format!(
+    fn file_row(
+        &self,
+        result: &SearchHit,
+        label: String,
+        active: usize,
+        cx: &Context<Self>,
+    ) -> Button {
+        let hit = result.selection.clone();
+        let generation = self.search_generation;
+        let row = Button::new(SharedString::from(format!(
             "browser-file-{}-{:?}",
             hit.path, hit.line
         )))
@@ -2603,15 +2624,46 @@ impl FileBrowser {
         .justify_start()
         .selected(active == self.search_selected)
         .icon(Glyph::FileText)
-        .tooltip(label.clone())
         .accessibility_label(label.clone())
-        .child(div().min_w_0().truncate().child(label))
         .on_click(cx.listener(move |this, _, _, cx| {
-            if this.search.matches.get(active) == Some(&hit) {
+            if this.search_generation == generation
+                && this
+                    .search
+                    .matches
+                    .get(active)
+                    .is_some_and(|row| row.selection == hit)
+            {
                 this.search_selected = active;
                 this.select(hit.clone(), cx);
             }
-        }))
+        }));
+        let Some((text, ranges)) = result.snippet.as_ref().and_then(SearchSnippet::display) else {
+            return row
+                .tooltip(label.clone())
+                .child(div().min_w_0().truncate().child(label));
+        };
+        let mark = HighlightStyle {
+            color: Some(Color::Accent.get(cx).into()),
+            font_weight: Some(FontWeight::SEMIBOLD),
+            ..Default::default()
+        };
+        row.h(px(42.)).tooltip(format!("{label}\n{text}")).child(
+            v_flex()
+                .min_w_0()
+                .flex_1()
+                .child(div().min_w_0().truncate().child(label))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_xs()
+                        .text_color(Color::Secondary.get(cx))
+                        .child(
+                            StyledText::new(text)
+                                .with_highlights(ranges.into_iter().map(|range| (range, mark))),
+                        ),
+                ),
+        )
     }
 
     fn tree_rows(&self, cx: &App) -> Vec<TreeRow<'_>> {
@@ -2860,11 +2912,12 @@ impl FileBrowser {
             .iter()
             .enumerate()
             .map(|(index, hit)| {
+                let hit_path = &hit.selection.path;
                 let label = hit
+                    .selection
                     .line
-                    .map_or_else(|| hit.path.clone(), |line| format!("{}:{line}", hit.path));
-                self.file_row(hit.clone(), label, index, cx)
-                    .into_any_element()
+                    .map_or_else(|| hit_path.clone(), |line| format!("{hit_path}:{line}"));
+                self.file_row(hit, label, index, cx).into_any_element()
             })
             .collect()
     }
@@ -3636,6 +3689,7 @@ impl Render for FileBrowser {
 
 #[cfg(test)]
 mod tests {
+    use super::SearchPage;
     use super::{
         Directory, DirectoryEntry, FILE_TREE_STATUS_LIMIT, FileError, FilePreviewMode, FileReveal,
         FileTreeExpansions, MARKDOWN_MAX_BLOCK_BYTES, MARKDOWN_MAX_BYTES, MARKDOWN_MAX_LINES,
@@ -3646,6 +3700,31 @@ mod tests {
     };
     use gpui_kit::{Keystroke, Modifiers, ScrollHandle, point};
     use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn content_results_accept_old_payloads_and_keep_snippets_out_of_selection_identity() {
+        let page = serde_json::from_value::<SearchPage>(json!({
+            "matches": [
+                {"path": "docs/ReadMe.md", "line": 350},
+                {"path": "docs/ReadMe.md", "line": 620, "snippet": {"text": "original", "ranges": [[0, 8]]}},
+            ],
+            "total": 2,
+        })).unwrap();
+        assert_eq!(page.matches[0].selection.path, "docs/ReadMe.md");
+        assert_eq!(page.matches[0].selection.line, Some(350));
+        assert!(page.matches[0].snippet.is_none());
+        assert_eq!(page.matches[1].selection.line, Some(620));
+        assert_eq!(
+            page.matches[1]
+                .snippet
+                .as_ref()
+                .unwrap()
+                .display()
+                .unwrap()
+                .0,
+            "original"
+        );
+    }
 
     #[test]
     fn file_dock_preserves_chat_space_and_the_existing_dialog_threshold() {

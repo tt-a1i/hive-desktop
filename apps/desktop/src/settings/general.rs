@@ -340,6 +340,70 @@ impl HiveApp {
                         )
                     })
                     .child({
+                        let hl = highlight_gen("general-fold-working");
+                        super::settings_anchor_row(
+                            "general-fold-working",
+                            true,
+                            hl.is_some(),
+                            hl.unwrap_or(0),
+                            cx,
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .min_w_0()
+                                .items_center()
+                                .justify_between()
+                                .gap_4()
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_0p5()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(Color::Text.get(cx))
+                                                .child(tr("折叠正在工作的会话")),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(Color::Muted.get(cx))
+                                                .child(tr("把后台执行的会话放入各项目的「正在工作」区段。关闭后在常规列表中显示。")),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap_2()
+                                        .when_some(
+                                            reset_control(
+                                                "reset-general-fold-working",
+                                                saved.fold_working_sessions
+                                                    != defaults.fold_working_sessions,
+                                                |s, d| s.fold_working_sessions = d.fold_working_sessions,
+                                            ),
+                                            |row, btn| row.child(btn),
+                                        )
+                                        .child(Reveal::new(
+                                            "general-fold-working-switch-reveal",
+                                            &self.general_scroll,
+                                            Switch::new("general-fold-working-switch")
+                                                .accessibility_label(tr("折叠正在工作的会话"))
+                                                .checked(saved.fold_working_sessions)
+                                                .on_change(|checked, _, cx| {
+                                                    let mut next = general::current(cx);
+                                                    next.fold_working_sessions = *checked;
+                                                    general::set(next, cx);
+                                                }),
+                                        )),
+                                ),
+                        )
+                    })
+                    .child({
                         let hl = highlight_gen("general-time-format");
                         super::settings_anchor_row(
                             "general-time-format",

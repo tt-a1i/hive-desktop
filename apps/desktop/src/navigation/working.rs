@@ -43,8 +43,15 @@ impl<'a> WorkingProject<'a> {
 
 fn partition<'a>(
     sessions: impl IntoIterator<Item = &'a Session>,
+    fold_working: bool,
     activity: impl Fn(&Session) -> Activity,
 ) -> SidebarSessions<'a> {
+    if !fold_working {
+        return SidebarSessions {
+            regular: sessions.into_iter().collect(),
+            working: Vec::new(),
+        };
+    }
     let mut regular = Vec::new();
     let mut working: Vec<WorkingProject<'_>> = Vec::new();
     for session in sessions {
@@ -69,8 +76,9 @@ impl HiveApp {
     pub(crate) fn sidebar_session_sections<'a>(
         &self,
         sessions: impl IntoIterator<Item = &'a Session>,
+        fold_working: bool,
     ) -> SidebarSessions<'a> {
-        partition(sessions, |session| {
+        partition(sessions, fold_working, |session| {
             let busy = self.busy.contains(&session.id);
             if !busy || session.pinned || session.archived {
                 return Activity::default();
@@ -227,7 +235,7 @@ mod tests {
             session("draft", "beta", false),
             session("work-a-next", "alpha", false),
         ];
-        let sections = partition(&sessions, |item| Activity {
+        let sections = partition(&sessions, true, |item| Activity {
             busy: item.id != "paused",
             needs_response: item.id == "awaiting",
             failed: item.id == "failed",
@@ -270,8 +278,20 @@ mod tests {
             0
         );
 
-        let settled = partition(&sessions, |_| Activity::default());
+        let settled = partition(&sessions, true, |_| Activity::default());
         assert!(settled.working.is_empty());
         assert_eq!(settled.regular.len(), sessions.len());
+
+        let unfolded = partition(&sessions, false, |_| {
+            panic!("disabled grouping skips activity")
+        });
+        assert!(unfolded.working.is_empty());
+        assert!(
+            unfolded
+                .regular
+                .iter()
+                .map(|item| &item.id)
+                .eq(sessions.iter().map(|item| &item.id))
+        );
     }
 }

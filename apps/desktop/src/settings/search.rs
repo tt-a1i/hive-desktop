@@ -60,6 +60,14 @@ const ENTRIES: &[Entry] = &[
     },
     Entry {
         section: Some(SettingsSection::General),
+        anchor: Some("general-fold-working"),
+        keybinding: None,
+        title: "通用 · 折叠正在工作的会话",
+        description: "把后台执行的会话放入各项目的「正在工作」区段。关闭后在常规列表中显示。",
+        keywords: "working section fold group background sessions sidebar 折叠 分组 正在工作 后台 会话 侧边栏",
+    },
+    Entry {
+        section: Some(SettingsSection::General),
         anchor: Some("general-time-format"),
         keybinding: None,
         title: "通用 · 会话时间戳格式",

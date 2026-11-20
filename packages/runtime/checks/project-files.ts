@@ -48,11 +48,13 @@ try {
   await writeFile(join(nested, 'large.txt'), Buffer.alloc(1024 * 1024 + 1, 'a'));
   await assert.rejects(previewProjectFile(nested, 'large.txt'), /preview limit/);
   assert.deepEqual(await searchProjectContents(repo, 'CAFÉ match'), {
-    matches: [{path: 'nested/unicode.txt', line: 2}], total: 1, limited: true,
+    matches: [{path: 'nested/unicode.txt', line: 2, snippet: {
+      text: 'Cafe\u0301 MATCH', ranges: [[0, 12]], leadingEllipsis: false, trailingEllipsis: false,
+    }}], total: 1, limited: true,
   });
   const nextContentPage = await searchProjectContents(repo, 'x', 100);
   assert.equal(nextContentPage.total, 105);
-  assert.deepEqual(nextContentPage.matches, Array.from({length: 5}, (_, i) => ({
+  assert.deepEqual(nextContentPage.matches.map(({path, line}) => ({path, line})), Array.from({length: 5}, (_, i) => ({
     path: `nested/file-${i + 100}.txt`, line: 1,
   })));
   const scatteredLines = [3, 350, 620, ...Array.from({length: 101}, (_, i) => 701 + i)];
@@ -70,16 +72,45 @@ try {
   await writeFile(join(repo, laterPath), '\nRÉPÉTÉ MARKER\n');
   const expected = [...scatteredLines.map(line => ({path: many, line})), {path: laterPath, line: 2}];
   for (const offset of [0, 100, 104, expected.length]) {
-    assert.deepEqual(await searchProjectContents(repo, 'RÉPÉTÉ MARKER', offset), {
-      matches: expected.slice(offset, offset + 100), total: expected.length, limited: true,
-    });
+    const {matches, ...counts} = await searchProjectContents(repo, 'RÉPÉTÉ MARKER', offset);
+    assert.deepEqual(counts, {total: expected.length, limited: true});
+    assert.deepEqual(matches.map(({path, line}) => ({path, line})), expected.slice(offset, offset + 100));
+    assert(matches.every(match => (match.snippet?.ranges.length ?? 0) >= 1));
   }
   const strict = expected.filter(result => result.path !== many || result.line <= strictLastLine);
   for (const offset of [0, 100, strict.length]) {
-    assert.deepEqual(await searchProjectContents(repo, 'RÉPÉTÉ MARKER', offset, undefined, true), {
-      matches: strict.slice(offset, offset + 100), total: strict.length, limited: true,
-    });
+    const {matches, ...counts} = await searchProjectContents(repo, 'RÉPÉTÉ MARKER', offset, undefined, true);
+    assert.deepEqual(counts, {total: strict.length, limited: true});
+    assert.deepEqual(matches.map(({path, line}) => ({path, line})), strict.slice(offset, offset + 100));
+    assert(matches.every(match => match.snippet?.ranges.length === 1));
   }
+  const excerpts = 'nested/excerpts.txt';
+  await writeFile(join(repo, excerpts), [
+    '🙂 Cafe\u0301 accent', '👩‍💻 developer', 'ΟΣ Greek context',
+    `${'a'.repeat(9000)} LONG_ASCII_MARKER`,
+    `${'é'.repeat(95)}👩‍💻${'é'.repeat(4200)} UNICODE_ONLY_MARKER`,
+    'CONTROL_MARKER\u001bhidden', 'many match-range match-range match-range match-range match-range match-range match-range match-range match-range',
+  ].join('\r\n'));
+  const resultAt = async (query: string, line: number) => {
+    const result = (await searchProjectContents(repo, query)).matches.find(hit => hit.path === excerpts && hit.line === line);
+    assert(result);
+    return result;
+  };
+  const {snippet: accent} = await resultAt('CAFÉ accent', 1);
+  assert.equal(accent?.text, '🙂 Cafe\u0301 accent');
+  assert.deepEqual(accent?.ranges, [[5, 18]]);
+  assert.deepEqual((await resultAt('👩', 2)).snippet?.ranges, []);
+  assert.deepEqual((await resultAt('👩‍💻', 2)).snippet?.ranges, [[0, 11]]);
+  assert.deepEqual((await resultAt('ος', 3)).snippet?.ranges, []);
+  const {snippet: tail} = await resultAt('LONG_ASCII_MARKER', 4);
+  assert(tail?.leadingEllipsis && !tail.trailingEllipsis);
+  assert.equal(tail.text.slice(tail.ranges[0]?.[0], tail.ranges[0]?.[1]), 'LONG_ASCII_MARKER');
+  const {snippet: unicode} = await resultAt('UNICODE_ONLY_MARKER', 5);
+  assert.equal(unicode?.text, 'é'.repeat(95));
+  assert(unicode.trailingEllipsis);
+  assert.deepEqual(unicode.ranges, []);
+  assert.equal((await resultAt('CONTROL_MARKER', 6)).snippet, undefined);
+  assert.equal((await resultAt('match-range', 7)).snippet?.ranges.length, 8);
   const namedPath = 'nested/Cafe\u0301-ReadMe.md';
   await writeFile(join(repo, namedPath), 'case-sensitive path fixture');
   const [returnedPath] = (await searchProjectFiles(repo, 'café-readme')).paths;
@@ -103,7 +134,7 @@ try {
   const ignoredRoot = join(repo, 'ignored-project'); await mkdir(ignoredRoot);
   await writeFile(join(ignoredRoot, 'keyboard-alpha.txt'), 'searchable content');
   assert.deepEqual((await searchProjectFiles(ignoredRoot, 'keyboard')).paths, ['keyboard-alpha.txt']);
-  assert.deepEqual((await searchProjectContents(ignoredRoot, 'searchable')).matches, [{path: 'keyboard-alpha.txt', line: 1}]);
+  assert.deepEqual((await searchProjectContents(ignoredRoot, 'searchable')).matches.map(({path, line}) => ({path, line})), [{path: 'keyboard-alpha.txt', line: 1}]);
   assert(!(await searchProjectFiles(repo, 'keyboard')).paths.length);
   const plain = join(dir, 'plain'); await mkdir(plain); await mkdir(join(plain, 'node_modules'));
   await writeFile(join(plain, 'yes.txt'), 'x'); await writeFile(join(plain, 'node_modules', 'no.txt'), 'x');

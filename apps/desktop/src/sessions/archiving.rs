@@ -25,6 +25,7 @@ struct InboxArchive {
 
 enum ArchiveAction {
     Ordinary,
+    RestoreInbox,
     OfferUndo {
         window: AnyWindowHandle,
         viewed: Option<u64>,
@@ -194,6 +195,17 @@ impl HiveApp {
         self.change_session_archive(session, archived, ArchiveAction::Ordinary, cx);
     }
 
+    pub(crate) fn restore_inbox_session(&mut self, session: Session, cx: &mut Context<Self>) {
+        if session.archived
+            && self
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.id == session.workspace_id)
+        {
+            self.change_session_archive(session, false, ArchiveAction::RestoreInbox, cx);
+        }
+    }
+
     fn archive_with_undo(
         &mut self,
         session: Session,
@@ -246,6 +258,10 @@ impl HiveApp {
         if let ArchiveAction::Undo { version, .. } = &action {
             params["undo"] = json!({"workspaceId":workspace,"version":version});
         }
+        let restore_inbox = matches!(&action, ArchiveAction::RestoreInbox);
+        if restore_inbox {
+            params["restoreWorkspaceId"] = json!(workspace);
+        }
         let inbox_window = match &action {
             ArchiveAction::OfferUndo {
                 window,
@@ -274,6 +290,9 @@ impl HiveApp {
                 this.session_archive_loading.remove(&id);
                 match result {
                     Err(error) => {
+                        if restore_inbox {
+                            this.show_inbox_restore_error(&workspace, &id, &error, cx);
+                        }
                         if let Some(window) = inbox_window {
                             let message = if error.contains("ARCHIVE_INBOX_STALE") {
                                 tr(INBOX_ARCHIVE_STALE).to_owned()
@@ -298,6 +317,14 @@ impl HiveApp {
                             || saved.session.workspace_id != workspace
                             || saved.session.archived != archived =>
                     {
+                        if restore_inbox {
+                            this.show_inbox_restore_error(
+                                &workspace,
+                                &id,
+                                tr(INBOX_ARCHIVE_STALE),
+                                cx,
+                            );
+                        }
                         this.error = Some("归档响应中的会话身份或状态不匹配，请刷新核对。".into())
                     }
                     Ok(saved) => {
@@ -347,7 +374,7 @@ impl HiveApp {
         cx: &mut Context<Self>,
     ) {
         match action {
-            ArchiveAction::Ordinary => (),
+            ArchiveAction::Ordinary | ArchiveAction::RestoreInbox => (),
             ArchiveAction::OfferUndo {
                 window,
                 viewed,

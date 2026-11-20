@@ -220,6 +220,22 @@ try {
   const unaffected = (await rpc('chat.reference.resolve', {sessionId: matching.id, workspaceId})).result;
   assert.equal(unaffected.id, matching.id);
   assert.equal(Boolean(unaffected.archived), false);
+  const query = {query: '', archived: true, navigationOnly: true, limit: 2, offset: 0};
+  const completed = (await rpc('chat.search', query)).result;
+  assert.equal(completed.matches.length, 2);
+  const nextCompleted = (await rpc('chat.search', {...query, offset: 2})).result;
+  assert.ok(nextCompleted.matches.every((hit: any) =>
+    !completed.matches.some((old: any) => old.session.id === hit.session.id)));
+  assert.ok((await rpc('chat.search', {...query, memberId: 'reviewer'})).error);
+  assert.ok((await rpc('chat.search', {...query, limit: 101})).error);
+  assert.ok((await rpc('chat.search', {...query, query: 'search transcript'})).error);
+  assert.match((await rpc('chat.archive', {sessionId: selected.id, archived: false,
+    restoreWorkspaceId: workspaceId})).error.message, /ARCHIVE_INBOX_STALE/);
+  const restore = await rpc('chat.archive', {sessionId: selected.id, archived: false,
+    restoreWorkspaceId: other.result.id});
+  assert.equal(restore.result.session.id, selected.id);
+  assert.equal(restore.result.session.workspaceId, other.result.id);
+  assert.equal(restore.result.session.archived, false);
   assert.ok(notifications.every((event) => event.type === 'session_navigation'));
   assert.equal((await rpc('shutdown')).result.ok, true);
   await exited;

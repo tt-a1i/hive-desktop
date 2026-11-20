@@ -541,8 +541,17 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'chat.search': {
       if (params.navigationOnly !== undefined && typeof params.navigationOnly !== 'boolean')
         throw new TypeError('navigationOnly must be boolean');
+      const limit = params.limit;
+      const memberId = params.memberId === undefined ? undefined : text(params, 'memberId');
+      if ((limit !== undefined || memberId !== undefined)
+        && (params.archived !== true || params.navigationOnly !== true || params.query !== ''))
+        throw new TypeError('Scoped archive paging requires an empty archived navigation query');
+      if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100))
+        throw new TypeError('Invalid archive page size');
+      if (memberId !== undefined) text(params, 'workspaceId');
       return runSearch(requestId, async signal => {
-        const page = await chats.search(params.query, params.archived, params.offset, params.workspaceId, signal);
+        const page = await chats.search(params.query, params.archived, params.offset, params.workspaceId, signal,
+          {...(limit !== undefined && {limit}), ...(memberId !== undefined && {memberId})});
         if (!params.navigationOnly) return page;
         return {...page, matches: page.matches.map(hit => ({...hit, session: navigationSearchSession(hit.session)}))};
       });
@@ -633,7 +642,8 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       }
       const result = await chats.changeArchive(text(params, 'sessionId'), params.archived,
         undo && {workspaceId: text(undo, 'workspaceId'), version: viewRevision(undo.version)},
-        inbox && {workspaceId: text(inbox, 'workspaceId'), replyRevision: inbox.replyRevision as number});
+        inbox && {workspaceId: text(inbox, 'workspaceId'), replyRevision: inbox.replyRevision as number},
+        params.restoreWorkspaceId === undefined ? undefined : text(params, 'restoreWorkspaceId'));
       return { ...result, sessions: chats.list(result.session.workspaceId) };
     }
     case 'chat.rename': return chats.rename(text(params, 'sessionId'), params.title);

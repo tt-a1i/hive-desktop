@@ -62,6 +62,7 @@ pub struct GeneralSettings {
     pub default_open_target: OpenTarget,
     pub project_sort_order: ProjectSortOrder,
     pub pin_active_sessions_top: bool,
+    pub fold_working_sessions: bool,
     pub session_time_format: SessionTimeFormat,
     pub busy_send_mode: BusySendMode,
     pub confirm_archive_session: bool,
@@ -76,6 +77,7 @@ impl Default for GeneralSettings {
             default_open_target: OpenTarget::default(),
             project_sort_order: ProjectSortOrder::default(),
             pin_active_sessions_top: false,
+            fold_working_sessions: true,
             session_time_format: SessionTimeFormat::default(),
             busy_send_mode: BusySendMode::default(),
             confirm_archive_session: false,
@@ -276,11 +278,20 @@ mod tests {
     fn roundtrip_and_malformed_file_protection() {
         let root = tempfile::tempdir().unwrap();
         assert_eq!(load(root.path()).unwrap(), GeneralSettings::default());
+        fs::write(
+            root.path().join(FILE),
+            r#"{"pin_active_sessions_top":true}"#,
+        )
+        .unwrap();
+        let previous = load(root.path()).unwrap();
+        assert!(previous.pin_active_sessions_top);
+        assert!(previous.fold_working_sessions);
 
         let custom = GeneralSettings {
             default_open_target: OpenTarget::Cursor,
             project_sort_order: ProjectSortOrder::RecentActivity,
             pin_active_sessions_top: true,
+            fold_working_sessions: false,
             session_time_format: SessionTimeFormat::Clock24h,
             busy_send_mode: BusySendMode::SteerWhenSupported,
             confirm_archive_session: true,

@@ -151,8 +151,36 @@ try {
   await writeFile(file, JSON.stringify(stored));
   assert.throws(() => new ChatIndex(join(state, 'chats')));
   await writeFile(file, before);
+  const coldIndex = new ChatIndex(join(state, 'chats'));
+  const archiveMemberId = 'same-reviewer-id';
+  for (const workspaceId of [alpha.id, beta.id]) {
+    coldIndex.save({
+      id: `archived-reviewer-${workspaceId}`, workspaceId, backend: 'codex',
+      title: 'Same archived review', sessionFile: null, updatedAt: 1, archived: true,
+      agentId: archiveMemberId, originAgentId: archiveMemberId, identityState: 'known',
+    });
+  }
   runtime = await createDesktopRuntime(state, (event) => events.push(event));
-  assert.equal((await runtime.chats.search('', true)).total, 108);
+  assert.equal((await runtime.chats.search('', true)).total, 110);
+  const completedRequest = runtime.hive.request.bind(runtime.hive);
+  const completedLookups: string[] = [];
+  runtime.hive.request = (method, path, body) => {
+    if (path.endsWith('/team')) completedLookups.push(path);
+    return completedRequest(method, path, body);
+  };
+  try {
+    const allProjects = await runtime.chats.search('', true, 0, undefined, undefined, {limit: 20});
+    assert.equal(allProjects.matches.length, 20);
+    assert.ok(allProjects.matches.every(hit => hit.session.workspaceId === alpha.id));
+    assert.deepEqual(completedLookups, [], 'Unshown projects and custom titles need no roster lookup');
+    const member = await runtime.chats.search('', true, 0, alpha.id, undefined, {limit: 20, memberId: archiveMemberId});
+    assert.equal(member.total, 1);
+    assert.deepEqual(member.matches.map(hit => hit.session.id), [`archived-reviewer-${alpha.id}`]);
+    assert.deepEqual(completedLookups, [`/api/ui/workspaces/${alpha.id}/team`]);
+    assert.equal(requests, 0, 'Listing completed conversations cannot launch a model');
+  } finally {
+    runtime.hive.request = completedRequest;
+  }
 
   // A live but idle structured session may archive without stopping or rebinding.
   const liveWorkspace = await workspace('Live');

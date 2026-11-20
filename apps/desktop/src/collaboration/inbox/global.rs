@@ -1,14 +1,19 @@
 #[path = "badge.rs"]
 mod badge;
+#[path = "completed.rs"]
+mod completed;
 #[path = "intro.rs"]
 mod intro;
 #[path = "view_prefs.rs"]
 mod view_prefs;
 
-use self::badge::BadgeItem;
 pub(in crate::collaboration) use self::badge::InboxBadge;
 use self::intro::{IntroMode, IntroProgress};
 use self::view_prefs::{MemberFilter, ViewPreferences};
+use self::{
+    badge::BadgeItem,
+    completed::{Completed, Scope as CompletedScope},
+};
 use super::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
@@ -22,7 +27,7 @@ use crate::{
     focus_scroll::Reveal,
     language::{localize_owned_error, tr},
     palette::Color,
-    protocol::{Member, Session, Workspace},
+    protocol::{Member, Session, SessionHit, Workspace},
     transport::Runtime,
 };
 use gpui_kit::{
@@ -71,6 +76,7 @@ struct GlobalInbox {
     app: WeakEntity<HiveApp>,
     connection: u64,
     archive_revision: u64,
+    completed: Completed,
     projects: HashMap<String, ProjectInbox>,
     preferences: ViewPreferences,
     placement: RowPlacement,
@@ -209,6 +215,18 @@ impl HiveApp {
                 return;
             }
             inbox.archive_revision = inbox.archive_revision.wrapping_add(1);
+            if inbox
+                .completed
+                .scope
+                .as_ref()
+                .is_some_and(|scope| scope.contains(session))
+            {
+                inbox.completed.rows.retain(|hit| {
+                    hit.session.workspace_id != session.workspace_id || hit.session.id != session.id
+                });
+                inbox.completed.invalidate();
+                cx.notify();
+            }
             let Some(current) = inbox
                 .projects
                 .get_mut(&session.workspace_id)
@@ -235,6 +253,28 @@ impl HiveApp {
             }
             cx.notify();
         });
+    }
+
+    pub(crate) fn show_inbox_restore_error(
+        &self,
+        workspace: &str,
+        id: &str,
+        error: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(dialog) = &self.collaboration.inbox_badge.dialog {
+            let error = if error.contains("ARCHIVE_INBOX_STALE") {
+                tr("收件箱中的会话已变化，请刷新后重试。").to_owned()
+            } else {
+                localize_owned_error(error)
+            };
+            let _ = dialog.update(cx, |inbox, cx| {
+                if inbox.completed.has(workspace, id).is_some() {
+                    inbox.completed.restore_error = Some(error);
+                    cx.notify();
+                }
+            });
+        }
     }
 
     pub(crate) fn mark_global_inbox_workspaces_loaded(&mut self) {
@@ -319,6 +359,7 @@ impl HiveApp {
                         this.clear_filter_position();
                     }
                 }
+                this.sync_completed(cx);
                 cx.notify();
             })
             .detach();
@@ -326,6 +367,7 @@ impl HiveApp {
                 app: parent.downgrade(),
                 connection,
                 archive_revision: 0,
+                completed: Completed::default(),
                 projects: HashMap::new(),
                 preferences: saved.preferences,
                 placement: RowPlacement::default(),
@@ -425,6 +467,145 @@ impl HiveApp {
 }
 
 impl GlobalInbox {
+    fn completed_scope(&self, cx: &App) -> Option<CompletedScope> {
+        if !self.completed.expanded
+            || self.dismissed
+            || self.intro.is_some()
+            || self.reviewing_new.is_some()
+        {
+            return None;
+        }
+        let binding = self.app.upgrade()?;
+        let app = binding.read(cx);
+        if app.closing || app.connection_generation != self.connection {
+            return None;
+        }
+        let workspaces = app.global_inbox_workspace_list()?;
+        let project = self.preferences.values.project_filter.as_ref();
+        let member = self.preferences.values.member_filter.as_ref();
+        if let (Some(project), Some(member)) = (project, member)
+            && project != &member.workspace_id
+        {
+            return None;
+        }
+        let workspace = project
+            .or(member.map(|member| &member.workspace_id))
+            .cloned();
+        let visible: std::collections::BTreeSet<_> = workspaces
+            .iter()
+            .filter(|project| {
+                app.workspace_removing.as_ref() != Some(&project.id)
+                    && workspace.as_ref().is_none_or(|id| id == &project.id)
+            })
+            .map(|project| project.id.clone())
+            .collect();
+        Some(CompletedScope {
+            connection: self.connection,
+            workspace,
+            member: member.map(|member| member.member_id.clone()),
+            workspaces: visible,
+        })
+    }
+
+    fn sync_completed(&mut self, cx: &mut Context<Self>) {
+        self.completed.change_scope(self.completed_scope(cx));
+        if self
+            .completed
+            .scope
+            .as_ref()
+            .is_some_and(|scope| scope.workspaces.is_empty())
+        {
+            self.completed.refresh = false;
+        }
+        if self.completed.refresh {
+            self.load_completed(0, cx);
+        }
+    }
+
+    fn toggle_completed(&mut self, cx: &mut Context<Self>) {
+        self.completed.expanded = !self.completed.expanded;
+        self.sync_completed(cx);
+        cx.notify();
+    }
+
+    fn load_completed(&mut self, offset: usize, cx: &mut Context<Self>) {
+        if self.completed.task.is_some()
+            || (self.completed.requested_offset() != Some(offset)
+                && !(offset == 0 && self.completed.refresh))
+        {
+            return;
+        }
+        let Some(scope) = self.completed.scope.clone() else {
+            return;
+        };
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let Some(runtime) = app.read(cx).runtime.clone() else {
+            return;
+        };
+        let generation = self.completed.generation;
+        self.completed.refresh = false;
+        self.completed.task = Some(cx.spawn(async move |this, cx| {
+            if offset == 0 {
+                smol::Timer::after(Duration::from_millis(150)).await;
+            }
+            let result = completed::read_page(&runtime, &scope, offset).await;
+            let _ = this.update(cx, |inbox, cx| {
+                if inbox.completed_scope(cx).as_ref() == Some(&scope)
+                    && inbox.completed.apply(generation, offset, result)
+                {
+                    cx.notify();
+                }
+            });
+        }));
+        cx.notify();
+    }
+
+    fn completed_hit(&self, workspace: &str, id: &str, cx: &App) -> Option<SessionHit> {
+        let scope = self.completed_scope(cx)?;
+        let hit = self.completed.has(workspace, id)?;
+        (self.completed.scope.as_ref() == Some(&scope) && scope.contains(&hit.session))
+            .then(|| hit.clone())
+    }
+
+    fn restore_completed(
+        &mut self,
+        workspace: &str,
+        id: &str,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(hit) = self.completed_hit(workspace, id, cx) else {
+            return;
+        };
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        self.completed.restore_error = None;
+        app.update(cx, |app, cx| app.restore_inbox_session(hit.session, cx));
+        cx.notify();
+    }
+
+    fn open_completed(
+        &mut self,
+        workspace: &str,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(hit) = self.completed_hit(workspace, id, cx) else {
+            return;
+        };
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        if app.update(cx, |app, cx| app.navigate_to_search_hit(hit, window, cx)) {
+            self.dismiss(cx);
+            window.close_dialog(cx);
+        }
+    }
+
     fn request_archive(
         &self,
         archive: &ArchiveInboxSession,
@@ -485,6 +666,7 @@ impl GlobalInbox {
         self.reviewing_new = Some(NewItemsReview {
             previous_position: self.reading_position().or(pending),
         });
+        self.sync_completed(cx);
         self.placement.clear();
         self.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
@@ -495,6 +677,7 @@ impl GlobalInbox {
             return;
         };
         self.restore_position = review.previous_position;
+        self.sync_completed(cx);
         self.placement.clear();
         self.scroll.set_offset(point(px(0.), px(0.)));
         cx.notify();
@@ -509,6 +692,7 @@ impl GlobalInbox {
             .reading_position()
             .or_else(|| self.restore_position.take());
         self.intro = Some(IntroMode::Replay);
+        self.sync_completed(cx);
         let focus = self.intro_focus.clone();
         window.on_next_frame(move |window, cx| focus.focus(window, cx));
         cx.notify();
@@ -536,6 +720,7 @@ impl GlobalInbox {
         let Some(mode) = self.intro.take() else {
             return false;
         };
+        self.sync_completed(cx);
         if matches!(mode, IntroMode::FirstUse) {
             let app = self.app.upgrade();
             let root = app
@@ -590,6 +775,7 @@ impl GlobalInbox {
             return;
         }
         self.dismissed = true;
+        self.completed.change_scope(None);
         self.undo.clear();
         self.undo_review_item = None;
         self.archive_undo = None;
@@ -632,6 +818,7 @@ impl GlobalInbox {
         }
         self.preferences.select_project(project);
         self.clear_filter_position();
+        self.sync_completed(cx);
         cx.notify();
     }
 
@@ -671,6 +858,7 @@ impl GlobalInbox {
         self.preferences.values.member_filter = member;
         self.preferences.save_changed();
         self.clear_filter_position();
+        self.sync_completed(cx);
         cx.notify();
     }
 
@@ -968,6 +1156,7 @@ impl GlobalInbox {
         });
         if selected_member_removed {
             self.clear_filter_position();
+            self.sync_completed(cx);
         }
         cx.notify();
     }
@@ -1763,6 +1952,14 @@ impl Render for GlobalInbox {
                 .into_any_element(),
             ));
             items.extend(sections.snoozed.into_iter().filter_map(&mut render_row));
+        }
+        if !reviewing {
+            items.extend(
+                self.completed
+                    .elements(app, &self.scroll, cx)
+                    .into_iter()
+                    .map(|element| (None, element)),
+            );
         }
         let (ids, elements): (Vec<_>, Vec<_>) = items.into_iter().unzip();
         let candidates: Vec<_> = ids

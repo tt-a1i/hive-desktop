@@ -10,6 +10,11 @@ const exec = promisify(execFile);
 const PAGE_SIZE = 100;
 const PREVIEW_LIMIT = 1024 * 1024;
 const CONTENT_SEARCH_LIMIT = 64 * 1024 * 1024;
+const SNIPPET_BYTES = 192;
+const SNIPPET_CONTEXT_BYTES = 16;
+const SNIPPET_RANGE_LIMIT = 8;
+const UNICODE_MAPPING_LIMIT = 4096;
+const graphemes = new Intl.Segmenter('und', {granularity: 'grapheme'});
 const EXCLUDED = new Set(['.git', 'node_modules', 'vendor', 'target', 'dist', 'build', '.next', '.venv', 'venv', '__pycache__']);
 
 function inside(root: string, path: string): boolean {
@@ -105,6 +110,98 @@ function searchText(value: string, caseSensitive: boolean): string {
   return caseSensitive ? normalized : normalized.toLowerCase();
 }
 
+type SearchSnippet = {
+  text: string;
+  ranges: [number, number][];
+  leadingEllipsis: boolean;
+  trailingEllipsis: boolean;
+};
+
+function snippetRanges(
+  searchable: string, needle: string, start: number, end: number,
+  sourceByte: (offset: number) => number | undefined,
+): SearchSnippet['ranges'] {
+  const ranges: SearchSnippet['ranges'] = [];
+  const base = sourceByte(start)!;
+  let match = searchable.indexOf(needle, start);
+  while (match !== -1 && match + needle.length <= end && ranges.length < SNIPPET_RANGE_LIMIT) {
+    const a = sourceByte(match);
+    const b = sourceByte(match + needle.length);
+    if (a !== undefined && b !== undefined && a < b) ranges.push([a - base, b - base]);
+    match = searchable.indexOf(needle, match + needle.length);
+  }
+  return ranges;
+}
+
+function snippetWindowStart(matchByte: number, matchBytes: number): number {
+  const context = Math.min(SNIPPET_CONTEXT_BYTES, Math.max(0, SNIPPET_BYTES - matchBytes));
+  return Math.max(0, matchByte - context);
+}
+
+function lineSnippet(
+  line: string, searchable: string, needle: string, firstMatch: number, caseSensitive: boolean,
+): SearchSnippet | undefined {
+  const source = line.endsWith('\r') ? line.slice(0, -1) : line;
+  const result = (start: number, end: number, ranges: SearchSnippet['ranges']): SearchSnippet | undefined => {
+    const text = source.slice(start, end);
+    // The excerpt is a native, single-line label. Skip undisplayable controls;
+    // the file and its exact line remain available to open.
+    if (!text || /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u2028\u2029]/u.test(text)) return undefined;
+    return {text, ranges, leadingEllipsis: start > 0, trailingEllipsis: end < source.length};
+  };
+  if (/^[\t\x20-\x7e]*$/.test(source)) {
+    const start = Math.min(source.length, snippetWindowStart(firstMatch, needle.length));
+    const end = Math.min(source.length, start + SNIPPET_BYTES);
+    return result(start, end, snippetRanges(searchable, needle, start, end, offset => offset));
+  }
+
+  if (source.length <= UNICODE_MAPPING_LIMIT) {
+    const boundaries = [{source: 0, normalized: 0, bytes: 0}];
+    const normalizedParts: string[] = [];
+    for (const {segment, index} of graphemes.segment(source)) {
+      const normalized = searchText(segment, caseSensitive);
+      const previous = boundaries[boundaries.length - 1]!;
+      normalizedParts.push(normalized);
+      boundaries.push({
+        source: index + segment.length,
+        normalized: previous.normalized + normalized.length,
+        bytes: previous.bytes + Buffer.byteLength(segment),
+      });
+    }
+    const foldedLine = line === source ? searchable : searchable.slice(0, -1);
+    // Contextual case folds can differ from independently folded graphemes.
+    // Use offsets only after proving that both transformations agree.
+    if (normalizedParts.join('') === foldedLine) {
+      const byMatch = new Map(boundaries.map(boundary => [boundary.normalized, boundary.bytes]));
+      const firstByte = byMatch.get(firstMatch) ?? 0;
+      const lastByte = byMatch.get(firstMatch + needle.length) ?? firstByte;
+      const wantedStart = snippetWindowStart(firstByte, lastByte - firstByte);
+      const start = boundaries.find(boundary => boundary.bytes >= wantedStart)!;
+      let end = start;
+      for (const boundary of boundaries) {
+        if (boundary.bytes > start.bytes + SNIPPET_BYTES) break;
+        if (boundary.bytes >= start.bytes) end = boundary;
+      }
+      return result(start.source, end.source, snippetRanges(foldedLine, needle,
+        start.normalized, end.normalized, offset => byMatch.get(offset)));
+    }
+  }
+
+  // Bound both folding work and output for a long Unicode line. The last
+  // grapheme of a clipped prefix could be partial, so leave it out.
+  const prefix = source.slice(0, SNIPPET_BYTES + 2).replace(/[\uD800-\uDBFF]$/, '');
+  let bytes = 0;
+  let end = 0;
+  for (const {segment, index} of graphemes.segment(prefix)) {
+    const next = index + segment.length;
+    if (next === prefix.length && prefix.length < source.length) break;
+    bytes += Buffer.byteLength(segment);
+    if (bytes > SNIPPET_BYTES) break;
+    end = next;
+  }
+  return result(0, end, []);
+}
+
 /** Search is uncached; each request observes the current file list and ignore rules. */
 export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false): Promise<{ paths: string[]; total: number }> {
   validateSearch(query, offset);
@@ -155,7 +252,7 @@ export async function searchProjectContents(projectRoot: string, query: string, 
   if (!needle) return {matches: [], total: 0, limited: false};
   const candidates = await gitFiles(root, signal) ?? await walk(root, '', signal);
   const paths = [...new Set(candidates.map(path => path.split(sep).join('/')))].sort();
-  const matches: {path: string; line: number}[] = [];
+  const matches: {path: string; line: number; snippet?: SearchSnippet}[] = [];
   let scanned = 0;
   let total = 0;
   let limited = false;
@@ -185,9 +282,17 @@ export async function searchProjectContents(projectRoot: string, query: string, 
     for (let start = 0, line = 1; start < text.length; line++) {
       const newline = text.indexOf('\n', start);
       const end = newline === -1 ? text.length : newline;
-      if (end > start && searchText(text.slice(start, end), caseSensitive).includes(needle)) {
-        if (total >= offset && matches.length < PAGE_SIZE) matches.push({path, line});
-        total += 1;
+      if (end > start) {
+        const raw = text.slice(start, end);
+        const searchable = searchText(raw, caseSensitive);
+        const firstMatch = searchable.indexOf(needle);
+        if (firstMatch !== -1) {
+          if (total >= offset && matches.length < PAGE_SIZE) {
+            const snippet = lineSnippet(raw, searchable, needle, firstMatch, caseSensitive);
+            matches.push({path, line, ...(snippet ? {snippet} : {})});
+          }
+          total += 1;
+        }
       }
       start = end + 1;
     }

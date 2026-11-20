@@ -1207,13 +1207,18 @@ export class Chats implements StructuredSessionPort {
       throw error;
     }
   }
-  async search(query: unknown, archived: unknown = false, offset: unknown = 0, workspaceId?: unknown, signal?: AbortSignal) {
+  async search(query: unknown, archived: unknown = false, offset: unknown = 0, workspaceId?: unknown, signal?: AbortSignal,
+    page: {limit?: number; memberId?: string} = {}) {
     signal?.throwIfAborted();
     if (workspaceId !== undefined && (typeof workspaceId !== 'string' || !workspaceId.trim())) throw new TypeError('workspaceId must be a nonempty string');
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
     if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new TypeError('Search offset must be a nonnegative integer');
     if (typeof query !== 'string' || Array.from(query).length > 200) {
       throw new TypeError('搜索内容需为 200 个字符以内的文本。');
+    }
+    if (page.limit !== undefined || page.memberId !== undefined) {
+      return this.archivedNavigationPage(workspaceId as string | undefined, page.memberId,
+        offset, page.limit ?? 100, signal);
     }
     const terms = foldSearchText(query.trim()).split(/\s+/u).filter(Boolean);
     const groups = await this.navigationEntries(false, archived, workspaceId as string | undefined);
@@ -1328,6 +1333,50 @@ export class Chats implements StructuredSessionPort {
       return result;
     });
   }
+  private async archivedNavigationPage(workspaceId: string | undefined, memberId: string | undefined,
+    offset: number, limit: number, signal?: AbortSignal) {
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
+    signal?.throwIfAborted();
+    const available = new Map(workspaces.filter(workspace => !this.removing.has(workspace.id)
+      && (workspaceId === undefined || workspace.id === workspaceId)).map(workspace => [workspace.id, workspace]));
+    const exactMember = (session: ChatRecord) => memberId === undefined
+      || (session.identityState === 'known' ? session.originAgentId ?? session.agentId : session.agentId) === memberId;
+    const archived = () => this.index.all().flatMap(session => {
+      const workspace = available.get(session.workspaceId);
+      return workspace && !this.removing.has(workspace.id) && session.archived && exactMember(session)
+        ? [{workspace, session}] : [];
+    })
+      .sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
+    const candidates = archived();
+    const items = candidates.slice(offset, offset + limit);
+    const versions = new Map(items.map(({session}) => [session.id, this.index.snapshotVersion(session.id)]));
+    // Only the workspaces represented on this page need display-name lookups.
+    const projects = [...new Set(items.filter(({session}) => !session.customTitle && session.agentId)
+      .map(({workspace}) => workspace.id))];
+    const names = new Map(await Promise.all(projects.map(async id => {
+      const members = await this.hive.request('GET', `/api/ui/workspaces/${encodeURIComponent(id)}/team`) as {id: string; name: string}[];
+      return [id, new Map(members.map(member => [member.id, member.name]))] as const;
+    })));
+    signal?.throwIfAborted();
+    const latest = archived();
+    const latestItems = latest.slice(offset, offset + limit);
+    if (items.length !== latestItems.length || latestItems.some(({session}, index) => {
+      return items[index]?.session.id !== session.id || versions.get(session.id) !== this.index.snapshotVersion(session.id);
+    })) {
+      throw new Error('收件箱中的会话已变化，请刷新后重试。');
+    }
+    return {
+      matches: items.map(({workspace, session}) => this.navigationEntry(workspace, session, names.get(workspace.id))),
+      total: latest.length, incompleteHistory: [], incompleteHistoryCount: 0,
+    };
+  }
+
+  private navigationEntry(workspace: WorkspaceSummary, session: ChatRecord, memberNames?: ReadonlyMap<string, string>) {
+    return {session, workspaceName: workspace.name, workspacePath: workspace.path,
+      title: !session.customTitle && session.agentId ? memberNames?.get(session.agentId) ?? session.title : session.title};
+  }
+
   private async navigationEntries(onlyPinned: boolean, archived = false, workspaceId?: string) {
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
@@ -1341,12 +1390,7 @@ export class Chats implements StructuredSessionPort {
     // Resolve all rows from one local index state after the metadata reads.
     return candidates.map((workspace, index) => {
       if (this.removing.has(workspace.id)) return [];
-      return records(workspace.id).map(session => ({
-        session,
-        workspaceName: workspace.name,
-        workspacePath: workspace.path,
-        title: !session.customTitle && session.agentId ? memberNames[index]?.get(session.agentId) ?? session.title : session.title,
-      }));
+      return records(workspace.id).map(session => this.navigationEntry(workspace, session, memberNames[index]));
     });
   }
   async pinned() {
@@ -1384,10 +1428,11 @@ export class Chats implements StructuredSessionPort {
     return (await this.changeArchive(id, archived)).session;
   }
   async changeArchive(id: string, archived: unknown, undo?: {workspaceId: string; version: number},
-    inbox?: {workspaceId: string; replyRevision: number}) {
+    inbox?: {workspaceId: string; replyRevision: number}, restoreWorkspace?: string) {
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
     if (undo && archived) throw new TypeError('Only restoring an archived conversation can use an undo receipt');
     if (inbox && (!archived || undo)) throw new TypeError('An inbox archive must archive a conversation');
+    if (restoreWorkspace && (archived || undo || inbox)) throw new TypeError('An inbox restore must restore a conversation');
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaceId = this.index.get(id).workspaceId;
     return this.withWorkspace(workspaceId, async () => {
@@ -1395,6 +1440,9 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       const current = this.index.get(id);
       const currentVersion = this.index.snapshotVersion(id);
+      if (restoreWorkspace && (current.workspaceId !== restoreWorkspace || !current.archived)) {
+        throw new SessionIdentityError('ARCHIVE_INBOX_STALE', '收件箱中的会话已变化，请刷新后重试。');
+      }
       if (inbox && (current.workspaceId !== inbox.workspaceId || current.archived
         || (current.inboxReply?.revision ?? 0) !== inbox.replyRevision)) {
         throw new SessionIdentityError('ARCHIVE_INBOX_STALE', '收件箱中的会话已变化，请刷新后重试。');
