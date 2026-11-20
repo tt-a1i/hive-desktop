@@ -97,6 +97,25 @@ impl ViewPreferences {
         self.save_changed();
     }
 
+    pub(super) fn has_filters(&self) -> bool {
+        self.values.project_filter.is_some()
+            || self.values.member_filter.is_some()
+            || self.values.backend_filter.is_some()
+            || self.values.activity_filter.is_some()
+    }
+
+    pub(super) fn clear_filters(&mut self) -> bool {
+        if !self.has_filters() {
+            return false;
+        }
+        self.values.project_filter = None;
+        self.values.member_filter = None;
+        self.values.backend_filter = None;
+        self.values.activity_filter = None;
+        self.save_changed();
+        true
+    }
+
     pub(super) fn forget_missing_member(&mut self, workspace: &str, members: &[Member]) -> bool {
         if self.values.member_filter.as_ref().is_some_and(|member| {
             member.workspace_id == workspace
@@ -185,6 +204,36 @@ mod tests {
         assert!(!reopened.values.show_waiting);
         assert!(!reopened.values.show_snoozed);
         assert!(!second.path().join(FILE).exists());
+    }
+
+    #[test]
+    fn clearing_all_inbox_filters_saves_only_filter_defaults() {
+        let root = tempfile::tempdir().unwrap();
+        let mut view = ViewPreferences::default();
+        view.restore_root(Some(root.path()));
+        assert!(!view.clear_filters());
+        assert!(!root.path().join(FILE).exists());
+
+        view.values.project_filter = Some("beacon".into());
+        view.values.member_filter = Some(MemberFilter {
+            workspace_id: "beacon".into(),
+            member_id: "reviewer".into(),
+        });
+        view.values.backend_filter = Some(Backend::Codex);
+        view.values.activity_filter = Some(ActivityRange::OneDay);
+        view.values.show_waiting = true;
+        view.values.show_snoozed = true;
+        view.save_changed();
+
+        assert!(view.clear_filters());
+        assert!(!view.has_filters());
+        let saved = load(root.path()).unwrap();
+        assert!(saved.project_filter.is_none());
+        assert!(saved.member_filter.is_none());
+        assert!(saved.backend_filter.is_none());
+        assert!(saved.activity_filter.is_none());
+        assert!(saved.show_waiting);
+        assert!(saved.show_snoozed);
     }
 
     #[test]

@@ -16,6 +16,8 @@ const SNIPPET_BYTES = 192;
 const SNIPPET_CONTEXT_BYTES = 16;
 const SNIPPET_RANGE_LIMIT = 8;
 const UNICODE_MAPPING_LIMIT = 4096;
+const PATH_REGEX_BATCH_SIZE = 256;
+const PATH_REGEX_BATCH_UNITS = 128 * 1024;
 const graphemes = new Intl.Segmenter('und', {granularity: 'grapheme'});
 const EXCLUDED = new Set(['.git', 'node_modules', 'vendor', 'target', 'dist', 'build', '.next', '.venv', 'venv', '__pycache__']);
 
@@ -236,17 +238,30 @@ function lineSnippet(
 }
 
 /** Search is uncached; each request observes the current file list and ignore rules. */
-export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false): Promise<{ paths: string[]; total: number }> {
+export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false, regex = false): Promise<{ paths: string[]; total: number }> {
   validateSearch(query, offset);
   const root = await rootDirectory(projectRoot);
+  const worker = regex && query ? await startProjectRegexSearch(query, caseSensitive, undefined, 0, signal) : undefined;
+  try {
+    return await searchProjectFilePaths(root, query, offset, worker?.signal ?? signal, caseSensitive, worker);
+  } catch (error) {
+    worker?.signal.throwIfAborted();
+    throw error;
+  } finally {
+    await worker?.close();
+  }
+}
+
+async function searchProjectFilePaths(
+  root: string, query: string, offset: number, signal: AbortSignal | undefined, caseSensitive: boolean,
+  worker: Awaited<ReturnType<typeof startProjectRegexSearch>> | undefined,
+) {
   const candidates = await gitFiles(root, signal) ?? await walk(root, '', signal);
+  const paths = eligibleProjectPaths(candidates, signal);
   const matches: string[] = [];
-  const needle = searchText(query, caseSensitive);
-  for (const candidate of new Set(candidates)) {
+  const listed = worker ? regexProjectPaths(paths, worker) : literalProjectPaths(paths, query, caseSensitive);
+  for await (const path of listed) {
     signal?.throwIfAborted();
-    const path = candidate.split(sep).join('/');
-    // Normalize only for matching. The listed path is also used to open the file.
-    if (!validRelative(path) || !searchText(path, caseSensitive).includes(needle)) continue;
     try {
       if (await regularCandidate(root, path)) matches.push(path);
     } catch (error) {
@@ -254,8 +269,42 @@ export async function searchProjectFiles(projectRoot: string, query: string, off
       if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
     }
   }
+  signal?.throwIfAborted();
   matches.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
   return { paths: matches.slice(offset, offset + PAGE_SIZE), total: matches.length };
+}
+
+function* eligibleProjectPaths(candidates: string[], signal: AbortSignal | undefined) {
+  for (const candidate of new Set(candidates)) {
+    signal?.throwIfAborted();
+    const path = candidate.split(sep).join('/');
+    if (validRelative(path)) yield path;
+  }
+}
+
+function* literalProjectPaths(paths: Iterable<string>, query: string, caseSensitive: boolean) {
+  const needle = searchText(query, caseSensitive);
+  for (const path of paths) {
+    // Normalize only for matching. The listed path is also used to open the file.
+    if (searchText(path, caseSensitive).includes(needle)) yield path;
+  }
+}
+
+async function* regexProjectPaths(paths: Iterable<string>, worker: Awaited<ReturnType<typeof startProjectRegexSearch>>) {
+  let batch: string[] = [];
+  let units = 0;
+  for (const path of paths) {
+    // An individual entry this long cannot be opened on supported platforms.
+    if (path.length > PATH_REGEX_BATCH_UNITS) continue;
+    if (batch.length === PATH_REGEX_BATCH_SIZE || units + path.length > PATH_REGEX_BATCH_UNITS) {
+      for (const index of await worker.matchPaths(batch)) yield batch[index]!;
+      batch = [];
+      units = 0;
+    }
+    batch.push(path);
+    units += path.length;
+  }
+  if (batch.length) for (const index of await worker.matchPaths(batch)) yield batch[index]!;
 }
 
 export async function listProjectDirectory(projectRoot: string, directory: string, offset = 0) {

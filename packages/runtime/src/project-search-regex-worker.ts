@@ -5,7 +5,9 @@ export type RegexLine = {line: number; start: number; end: number; anchor: numbe
 export type RegexScan = {total: number; lines: RegexLine[]};
 
 type Configuration = {query: string; caseSensitive: boolean; wordClass?: string; rangeLimit: number};
-type ScanRequest = {text: string; offset: number; limit: number};
+type ScanRequest = {kind: 'scan'; text: string; offset: number; limit: number};
+export type RegexRequest = ScanRequest | {kind: 'matchPaths'; paths: readonly string[]};
+export type RegexResult = ({kind: 'scanned'} & RegexScan) | {kind: 'matchedPaths'; indices: number[]};
 const port = parentPort!;
 const {query, caseSensitive, wordClass, rangeLimit} = workerData as Configuration;
 const flags = caseSensitive ? 'gu' : 'giu';
@@ -47,6 +49,15 @@ function scan(pattern: RegExp, {text, offset, limit}: ScanRequest): RegexScan {
   return {total, lines};
 }
 
+function matchPaths(pattern: RegExp, paths: readonly string[]): RegexResult {
+  const indices: number[] = [];
+  for (const [index, path] of paths.entries()) {
+    pattern.lastIndex = 0;
+    if (pattern.test(path)) indices.push(index);
+  }
+  return {kind: 'matchedPaths', indices};
+}
+
 try {
   // Validate the user expression before combining it with our static word
   // assertions. Both compilation and execution stay in this worker.
@@ -54,9 +65,11 @@ try {
   const pattern = wordClass
     ? new RegExp(`(?<!${wordClass})(?:${query})(?!${wordClass})`, flags)
     : userPattern;
-  port.on('message', (request: ScanRequest) => {
+  port.on('message', (request: RegexRequest) => {
     try {
-      port.postMessage({kind: 'scanned', ...scan(pattern, request)});
+      const result: RegexResult = request.kind === 'scan'
+        ? {kind: 'scanned', ...scan(pattern, request)} : matchPaths(pattern, request.paths);
+      port.postMessage(result);
     } catch {
       port.postMessage({kind: 'failed'});
     }

@@ -1,5 +1,5 @@
 import { Worker } from 'node:worker_threads';
-import type { RegexScan } from './project-search-regex-worker.js';
+import type { RegexRequest, RegexResult, RegexScan } from './project-search-regex-worker.js';
 
 export const REGEX_INVALID = 'Invalid regular expression.';
 export const REGEX_TIMEOUT = 'Regular expression search timed out.';
@@ -8,8 +8,8 @@ const COMPILE_MS = 1000;
 const FILE_MS = 300;
 const TOTAL_MS = 4000;
 
-type WorkerReply = {kind: 'ready' | 'invalid' | 'failed'} | ({kind: 'scanned'} & RegexScan);
-type Slot = {resolve: (result: RegexScan) => void; reject: (reason: unknown) => void; timer: NodeJS.Timeout};
+type WorkerReply = {kind: 'ready' | 'invalid' | 'failed'} | RegexResult;
+type Slot = {resolve: (result: RegexResult) => void; reject: (reason: unknown) => void; timer: NodeJS.Timeout};
 
 let live: ProjectRegexSearch | undefined;
 let latest = 0;
@@ -84,11 +84,11 @@ class ProjectRegexSearch {
           void this.close(new Error(REGEX_INVALID));
         } else if (reply.kind === 'failed') {
           void this.close(new Error(REGEX_UNAVAILABLE));
-        } else if (reply.kind === 'scanned' && this.#pending) {
+        } else if ((reply.kind === 'scanned' || reply.kind === 'matchedPaths') && this.#pending) {
           const pending = this.#pending;
           this.#pending = undefined;
           clearTimeout(pending.timer);
-          pending.resolve({total: reply.total, lines: reply.lines});
+          pending.resolve(reply);
         }
       });
       const unavailable = () => { void this.close(new Error(REGEX_UNAVAILABLE)); };
@@ -98,13 +98,25 @@ class ProjectRegexSearch {
   }
 
   async scan(text: string, offset: number, limit: number): Promise<RegexScan> {
+    const result = await this.#request({kind: 'scan', text, offset, limit});
+    if (result.kind !== 'scanned') throw new Error(REGEX_UNAVAILABLE);
+    return result;
+  }
+
+  async matchPaths(paths: readonly string[]): Promise<number[]> {
+    const result = await this.#request({kind: 'matchPaths', paths});
+    if (result.kind !== 'matchedPaths') throw new Error(REGEX_UNAVAILABLE);
+    return result.indices;
+  }
+
+  async #request(request: RegexRequest): Promise<RegexResult> {
     this.signal.throwIfAborted();
     if (this.#pending) throw new Error(REGEX_UNAVAILABLE);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { void this.close(new Error(REGEX_TIMEOUT)); }, this.#fileBudgetMs);
       this.#pending = {resolve, reject, timer};
       try {
-        this.#worker.postMessage({text, offset, limit});
+        this.#worker.postMessage(request);
       } catch {
         void this.close(new Error(REGEX_UNAVAILABLE));
       }

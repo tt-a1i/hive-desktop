@@ -24,6 +24,44 @@ struct ScratchConversation {
     session: Session,
 }
 
+struct FreshDraftAfterSend {
+    source: Session,
+    window: AnyWindowHandle,
+    narrow: bool,
+    worktree_request: Option<String>,
+}
+
+pub(crate) struct FreshWorktreeDraftRetry {
+    source: Session,
+    request: String,
+}
+
+fn matches_fresh_draft(source: &Session, request: Option<&str>, draft: &Session) -> bool {
+    if draft.id == source.id || draft.workspace_id != source.workspace_id
+        || draft.backend != source.backend || draft.profile != source.profile
+        || draft.identity_state.as_deref() != Some("new") || draft.agent_id.is_some()
+        || draft.origin_agent_id.is_some() || draft.scratch || draft.archived
+        || draft.worktree_released
+    {
+        return false;
+    }
+    match (source.execution.as_ref(), request, draft.execution.as_ref()) {
+        (None, None, None) => true,
+        (Some(original), Some(request), Some(execution)) => {
+            draft.id == request
+                && original.kind == "worktree"
+                && original.owner_session_id.is_none()
+                && execution.kind == "worktree"
+                && execution.owner_session_id.is_none()
+                && std::path::Path::new(&execution.path).is_absolute()
+                && execution.path != original.path
+                && !execution.branch.is_empty()
+                && execution.branch != original.branch
+        }
+        _ => false,
+    }
+}
+
 pub(crate) enum NativeSessionPanel {
     Models,
     Commands,
@@ -643,9 +681,53 @@ impl HiveApp {
         narrow: bool,
         cx: &mut Context<Self>,
     ) {
+        let worktree_request = source.execution.as_ref().map(|_| uuid::Uuid::new_v4().to_string());
+        self.create_after_send(source.clone(), window, narrow, worktree_request, cx);
+    }
+
+    pub(crate) fn can_retry_fresh_worktree_draft(&self) -> bool {
+        self.can_start_new_conversation()
+            && self.viewing_conversation()
+            && self.conversation_ready
+            && self.fresh_worktree_draft_retry.as_ref().is_some_and(|retry| {
+                self.workspace.as_ref() == Some(&retry.source.workspace_id)
+                    && self.session.as_ref().is_some_and(|current| {
+                        current.id == retry.source.id
+                            && current.workspace_id == retry.source.workspace_id
+                            && current.execution == retry.source.execution
+                            && current.profile == retry.source.profile
+                            && current.backend == retry.source.backend
+                            && current.can_start_fresh_worktree_draft
+                    })
+            })
+    }
+
+    pub(crate) fn retry_fresh_worktree_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_retry_fresh_worktree_draft() || window.has_active_dialog(cx) {
+            return;
+        }
+        if let Some(retry) = self.fresh_worktree_draft_retry.as_ref() {
+            self.create_after_send(
+                retry.source.clone(),
+                window.window_handle(),
+                window.viewport_size().width < px(820.),
+                Some(retry.request.clone()),
+                cx,
+            );
+        }
+    }
+
+    fn create_after_send(
+        &mut self,
+        source: Session,
+        window: AnyWindowHandle,
+        narrow: bool,
+        worktree_request: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         self.create_new_session_with_open(
             Some(source.workspace_id.clone()), source.backend.wire(), source.profile.clone(),
-            None, Some((source.id.clone(), window, narrow)), cx,
+            None, Some(FreshDraftAfterSend { source, window, narrow, worktree_request }), cx,
         );
     }
 
@@ -655,7 +737,7 @@ impl HiveApp {
         backend: &'static str,
         profile: Option<crate::agent_profiles::ProfileRef>,
         window: Option<&Window>,
-        fresh_after: Option<(String, AnyWindowHandle, bool)>,
+        fresh_after: Option<FreshDraftAfterSend>,
         cx: &mut Context<Self>,
     ) {
         use crate::app::ErrorNotice;
@@ -693,20 +775,33 @@ impl HiveApp {
         let welcome = self.showing_welcome_guide;
         let narrow = fresh_after.as_ref().map_or_else(
             || window.is_some_and(|window| window.viewport_size().width < px(820.)),
-            |(_, _, narrow)| *narrow,
+            |target| target.narrow,
         );
         let hide_terminal = window.is_some();
         self.new_session_creation = Some(connection);
-        let (method, mut params) = if let Some(project) = &project {
-            ("chat.createRecord", json!({"workspaceId": project, "backend": backend}))
+        let fresh_worktree = fresh_after.as_ref().and_then(|target| {
+            target.worktree_request.as_ref().map(|request| (&target.source, request))
+        });
+        let (method, params) = if let Some((source, request)) = fresh_worktree {
+            ("chat.createFreshWorktreeDraftRecord", json!({
+                "workspaceId": source.workspace_id, "sourceSessionId": source.id, "requestId": request,
+            }))
         } else {
-            ("chat.createScratchRecord", json!({"requestId": scratch_id, "backend": backend}))
+            let (method, mut params) = if let Some(project) = &project {
+                ("chat.createRecord", json!({"workspaceId": project, "backend": backend}))
+            } else {
+                ("chat.createScratchRecord", json!({"requestId": scratch_id, "backend": backend}))
+            };
+            if let Some(reference) = &profile {
+                params["profile"] = json!(reference);
+            }
+            if fresh_after.is_some() {
+                params["deferFirstConnection"] = json!(true);
+            }
+            (method, params)
         };
-        if let Some(reference) = &profile {
-            params["profile"] = json!(reference);
-        }
         if fresh_after.is_some() {
-            params["deferFirstConnection"] = json!(true);
+            self.error = None;
         }
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -734,10 +829,8 @@ impl HiveApp {
                             || expected != Some(session.workspace_id.as_str())
                             || session.backend.wire() != backend
                             || profile.as_ref().is_some_and(|reference| session.profile.as_ref() != Some(reference))
-                            || fresh_after.as_ref().is_some_and(|(source, _, _)| {
-                                &session.id == source || session.identity_state.as_deref() != Some("new")
-                                    || session.agent_id.is_some() || session.origin_agent_id.is_some()
-                                    || session.execution.is_some() || session.scratch
+                            || fresh_after.as_ref().is_some_and(|target| {
+                                !matches_fresh_draft(&target.source, target.worktree_request.as_deref(), &session)
                             })
                             || scratch_id.as_ref().is_some_and(|id| id != &session.id || !session.scratch)
                         {
@@ -760,12 +853,28 @@ impl HiveApp {
                         Ok(session)
                     });
 
-                let fresh_origin_current = fresh_after.as_ref().is_none_or(|(source, window, _)| {
-                    this.session.as_ref().is_some_and(|session| &session.id == source)
-                        && !this.inflight_inputs.contains_key(source)
+                let fresh_origin_current = fresh_after.as_ref().is_none_or(|target| {
+                    this.session.as_ref().is_some_and(|session| {
+                        session.id == target.source.id && session.execution == target.source.execution
+                    })
+                        && !this.inflight_inputs.contains_key(&target.source.id)
                         && this.viewing_conversation()
-                        && window.update(cx, |_, window, cx| !window.has_active_dialog(cx)).unwrap_or(false)
+                        && target.window.update(cx, |_, window, cx| !window.has_active_dialog(cx)).unwrap_or(false)
                 });
+                if let Some(target) = fresh_after.as_ref()
+                    && let Some(request) = target.worktree_request.as_ref()
+                {
+                    if result.is_err() {
+                        this.fresh_worktree_draft_retry = Some(FreshWorktreeDraftRetry {
+                            source: target.source.clone(),
+                            request: request.clone(),
+                        });
+                    } else if this.fresh_worktree_draft_retry.as_ref().is_some_and(|retry| {
+                        retry.source.id == target.source.id && &retry.request == request
+                    }) {
+                        this.fresh_worktree_draft_retry = None;
+                    }
+                }
                 match result {
                     Ok(session) if fresh_origin_current
                         && this.open_request == open_request
@@ -804,7 +913,12 @@ impl HiveApp {
                     }
                     Err(error) if fresh_origin_current && this.open_request == open_request => {
                         this.error = Some(if fresh_after.is_some() {
-                            ErrorNotice::Context("消息已发送，但未能打开新草稿", Box::new(error), "请从侧边栏手动打开新会话")
+                            let guidance = if fresh_after.as_ref().is_some_and(|target| target.worktree_request.is_some()) {
+                                "重试只会准备新的工作树草稿。"
+                            } else {
+                                "请从侧边栏手动打开新会话"
+                            };
+                            ErrorNotice::Context("消息已发送，但未能打开新草稿", Box::new(error), guidance)
                         } else {
                             error
                         });
@@ -1513,5 +1627,36 @@ impl HiveApp {
             return;
         };
         self.navigate_to_session(target, window, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Session, matches_fresh_draft};
+    use serde_json::json;
+
+    #[test]
+    fn background_draft_response_cannot_reuse_the_source_worktree() {
+        let path = std::env::temp_dir();
+        let source = json!({
+            "id": "source", "title": "Source", "workspaceId": "project", "backend": "codex",
+            "profile": {"id": "profile", "revision": 3},
+            "execution": {"kind": "worktree", "path": path.join("original"), "branch": "original"},
+        });
+        let mut draft = source.clone();
+        draft["id"] = json!("request");
+        draft["identityState"] = json!("new");
+        let source = serde_json::from_value::<Session>(source).unwrap();
+        let matches = |value: serde_json::Value| {
+            let target = serde_json::from_value::<Session>(value).unwrap();
+            matches_fresh_draft(&source, Some("request"), &target)
+        };
+        assert!(!matches(draft.clone()));
+        draft["execution"]["path"] = json!(path.join("separate"));
+        assert!(!matches(draft.clone()));
+        draft["execution"]["branch"] = json!("separate");
+        assert!(matches(draft.clone()));
+        draft["execution"]["ownerSessionId"] = json!("source");
+        assert!(!matches(draft));
     }
 }

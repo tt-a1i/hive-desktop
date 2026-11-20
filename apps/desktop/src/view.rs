@@ -959,6 +959,18 @@ impl HiveApp {
                 let notice = tr("此会话已解除共用工作树，历史和草稿仍可查看。");
                 surface.child(div().id("released-worktree-status").role(Role::Status).aria_label(notice).px_1().text_xs().text_color(Color::Secondary.get(cx)).child(notice))
             })
+            .when(self.can_retry_fresh_worktree_draft(), |surface| {
+                surface.child(
+                    h_flex().child(
+                        Button::new("retry-fresh-worktree-draft")
+                            .outline()
+                            .compact()
+                            .small()
+                            .label(tr("重试打开新工作树草稿"))
+                            .on_click(cx.listener(|this, _, window, cx| this.retry_fresh_worktree_draft(window, cx))),
+                    ),
+                )
+            })
             .when_some(self.current_history_access(), |surface, access| {
                 surface
                     .when_some(access.handoff_snapshot.as_ref(), |surface, snapshot| surface.child(crate::session_handoff::handoff_origin(snapshot, access.handoff_delivery.as_ref(), cx)))

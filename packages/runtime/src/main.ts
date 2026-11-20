@@ -3,7 +3,7 @@ import { parseStructuredLaunch } from './structured-launch.js';
 import { isAgentDriver, validateAgentProfileLaunch, validateAgentProfileRef, type UpdateAgentProfile } from './agent-profiles.js';
 import type { HandoffInput,HandoffApplyInput } from './session-handoffs.js';
 import { HandoffError } from './handoff-operation-journal.js';
-import { SessionIdentityError, type ChatRecord } from './chat-index.js';
+import { SessionIdentityError, worktreeDraftAvailability, type ChatRecord } from './chat-index.js';
 import { HistoryOperationError } from './history-operation-journal.js';
 import { CodeCheckpointError } from './code-checkpoints.js';
 import { WorktreeInitializationError } from './project-worktree-initialization.js';
@@ -117,6 +117,7 @@ function navigationSearchSession(session: ChatRecord, includeInboxActivity = fal
     backend, execution, scratch, profile, worktreeReleased} = session;
   return {id, title, customTitle, pinned, pinRank, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
     backend, execution, scratch, profile, worktreeReleased,
+    ...worktreeDraftAvailability(session),
     ...(includeInboxActivity && session.inboxReply?.receivedAt !== undefined
       && {inboxReply: {revision: session.inboxReply.revision, receivedAt: session.inboxReply.receivedAt}})};
 }
@@ -541,7 +542,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'git.pr.create': return chats.gitPrApply(text(params, 'workspaceId'), 'create', params);
     case 'git.pr.update': return chats.gitPrApply(text(params, 'workspaceId'), 'update', params);
     case 'project.files.list': return chats.projectFilesList(text(params, 'workspaceId'), params.directory, params.offset, params.sessionId);
-    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive));
+    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.regex));
     case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.wholeWord, params.regex));
     case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.resolveOpen': return chats.projectFilesResolveOpen(text(params, 'workspaceId'), params.relativePath, params.sessionId);
@@ -619,13 +620,16 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
       return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend, params.memberId === undefined ? undefined : text(params, 'memberId'), optionalProfile(params).profile);
     }
-    case 'chat.createInWorktreeRecord': {
+    case 'chat.createInWorktreeRecord':
+    case 'chat.createFreshWorktreeDraftRecord': {
       exact(params, ['workspaceId', 'sourceSessionId', 'requestId']);
       const requestId = text(params, 'requestId').toLowerCase();
       if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(requestId)) {
         throw new TypeError('A UUIDv4 request identity is required');
       }
-      return chats.createInWorktreeRecord(text(params, 'workspaceId'), text(params, 'sourceSessionId'), requestId);
+      const workspace = text(params, 'workspaceId'), source = text(params, 'sourceSessionId');
+      return method === 'chat.createFreshWorktreeDraftRecord' ? chats.createFreshWorktreeDraftRecord(workspace, source, requestId)
+        : chats.createInWorktreeRecord(workspace, source, requestId);
     }
     case 'chat.createScratchRecord': {
       exact(params, ['backend', 'profile', 'requestId']);

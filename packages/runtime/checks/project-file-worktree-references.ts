@@ -100,6 +100,12 @@ try {
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, a.id)).paths, ['only-one.txt']);
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, b.id)).paths, ['only-two.txt']);
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-')).paths, []);
+  const nameExpression = '^only-(?:one|two)\\.txt$';
+  for (const [sessionId, paths] of [[undefined, []], [a.id, ['only-one.txt']], [b.id, ['only-two.txt']]] as const) {
+    assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, nameExpression, 0, sessionId, undefined, false, true)).paths, paths);
+  }
+  await assert.rejects(runtime.chats.projectFilesSearch(otherWs.id, nameExpression, 0, a.id, undefined, false, true));
+  await assert.rejects(runtime.chats.projectFilesSearch(ws.id, nameExpression, 0, a.id, undefined, false, 'true'), /Invalid project file search/);
   const main = await runtime.chats.projectFilesAttach(ws.id, name);
   await assert.rejects(runtime.chats.projectFilesAttach(ws.id, name, a.id, bPreview.sha256), /文件在预览后已更改/);
   const aRef = await runtime.chats.projectFilesAttach(ws.id, name, a.id, aPreview.sha256);

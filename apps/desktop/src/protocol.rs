@@ -78,6 +78,8 @@ pub struct Session {
     #[serde(default)]
     pub worktree_released: bool,
     #[serde(default)]
+    pub can_start_fresh_worktree_draft: bool,
+    #[serde(default)]
     pub execution_path: Option<String>,
     #[serde(default)]
     pub scratch: bool,

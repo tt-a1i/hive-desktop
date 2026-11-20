@@ -38,6 +38,8 @@ export interface WorktreeCreation {
   prReview?: GithubPrReviewSeed;
   forkOperationId?: string;
   handoffOperationId?: string;
+  /** Source conversation retained for idempotent successor creation. */
+  freshDraftSourceSessionId?: string;
 }
 type RemovalIntent = {headOid: string; repositoryIdentity: string};
 type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation; forkPublished?: boolean; handoffPublished?: boolean; removal?: RemovalIntent; removed?: true };
@@ -53,6 +55,8 @@ function validateIntentCreation(intent: Intent): void {
     || !intent.removal || typeof intent.removal.headOid !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(intent.removal.headOid)
     || typeof intent.removal.repositoryIdentity !== 'string' || !/^\d+:\d+$/.test(intent.removal.repositoryIdentity)))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Pending worktree removal record is invalid');
+  if (intent.creation?.freshDraftSourceSessionId && intent.creation.freshDraftSourceSessionId === intent.record?.chatId)
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'A fresh worktree cannot be its own source');
   validateCreation(intent?.creation);
 }
 function validateCreation(creation: WorktreeCreation | undefined): void {
@@ -69,6 +73,10 @@ function validateCreation(creation: WorktreeCreation | undefined): void {
   if (creation.prReview !== undefined && !isGithubPrReviewSeed(creation.prReview)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid PR review provenance');
   if (creation.forkOperationId !== undefined && !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(creation.forkOperationId)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fork operation identity');
   if (creation.handoffOperationId !== undefined && (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(creation.handoffOperationId) || creation.forkOperationId !== undefined)) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid handoff operation identity');
+  if (creation.freshDraftSourceSessionId !== undefined && (typeof creation.freshDraftSourceSessionId !== 'string'
+    || !chatIdValid(creation.freshDraftSourceSessionId) || creation.identityState !== 'new' || !creation.profile
+    || creation.prReview || creation.forkOperationId || creation.handoffOperationId))
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fresh worktree draft provenance');
   if (creation.version === 2) validateInitializationPlan(creation.setup);
   else if (creation.setup !== undefined) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Legacy intent cannot carry setup');
 }
@@ -166,6 +174,8 @@ function ownerDir(dataRoot: string, chatId: string): string {
 /** Explicit checkout: Git may invoke the user's configured checkout filters or hooks. */
 export async function createManagedWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation?: WorktreeCreation; startOid?: string; expectedCommonDir?: string }): Promise<ManagedWorktree> {
   if (input.creation?.forkOperationId || input.creation?.handoffOperationId) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Snapshot worktrees require their dedicated creation path');
+  if (input.creation?.freshDraftSourceSessionId && (!input.startOid || !input.expectedCommonDir || input.branch !== undefined))
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'A fresh worktree draft requires its original base and an independent branch');
   return createWorktree(input, input.startOid);
 }
 export async function createForkWorktree(input: { projectRoot: string; dataRoot: string; chatId: string; branch?: string; creation: WorktreeCreation; operationId: string; baseOid: string }): Promise<ManagedWorktree> {

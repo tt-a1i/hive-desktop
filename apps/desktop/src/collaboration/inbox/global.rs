@@ -98,6 +98,8 @@ struct GlobalInbox {
     intro_save_failed: bool,
     intro_focus: FocusHandle,
     help_focus: FocusHandle,
+    project_filter_focus: FocusHandle,
+    clear_filters_focus: FocusHandle,
     dismissed: bool,
     scroll: ScrollHandle,
 }
@@ -401,6 +403,8 @@ impl HiveApp {
                 intro_save_failed,
                 intro_focus: cx.focus_handle(),
                 help_focus: cx.focus_handle(),
+                project_filter_focus: cx.focus_handle(),
+                clear_filters_focus: cx.focus_handle(),
                 dismissed: false,
                 scroll: ScrollHandle::new(),
             }
@@ -418,7 +422,7 @@ impl HiveApp {
                 .title(tr("跨项目收件箱"))
                 .w(width)
                 .on_ok(move |_, window, cx| {
-                    let _ = confirm.update(cx, |inbox, cx| inbox.confirm_intro(window, cx));
+                    let _ = confirm.update(cx, |inbox, cx| inbox.confirm(window, cx));
                     false
                 })
                 .on_cancel(move |_, window, cx| {
@@ -762,7 +766,7 @@ impl GlobalInbox {
         cx.notify();
     }
 
-    fn confirm_intro(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // The dialog consumes Enter as Confirm before buttons receive the key.
         if self.intro.is_some() && self.intro_focus.is_focused(window) {
             self.finish_intro(window, cx);
@@ -770,6 +774,8 @@ impl GlobalInbox {
             self.replay_intro(window, cx);
         } else if self.intro.is_none() && self.archive_undo_focus.is_focused(window) {
             self.undo_archive(window, cx);
+        } else if self.clear_filters_focus.is_focused(window) {
+            self.clear_filters(window, cx);
         }
     }
 
@@ -1054,6 +1060,21 @@ impl GlobalInbox {
                         )
                     })
             })
+    }
+
+    fn clear_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.intro.is_some()
+            || self.reviewing_new.is_some()
+            || !self.is_current(self.connection, cx)
+            || !self.preferences.clear_filters()
+        {
+            return;
+        }
+        self.clear_filter_position();
+        self.sync_completed(cx);
+        let focus = self.project_filter_focus.clone();
+        window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        cx.notify();
     }
 
     fn clear_filter_position(&mut self) {
@@ -1770,6 +1791,7 @@ impl Render for GlobalInbox {
                 let inbox = cx.weak_entity();
                 controls = controls.child(
                     Button::new("global-inbox-project-filter")
+                        .track_focus(&self.project_filter_focus)
                         .outline()
                         .compact()
                         .xsmall()
@@ -1864,6 +1886,19 @@ impl Render for GlobalInbox {
             if ready {
                 controls = controls.child(self.backend_filter_button(selected_backend, cx));
                 controls = controls.child(self.activity_filter_button(selected_activity, cx));
+                if self.preferences.has_filters() {
+                    controls = controls.child(
+                        Button::new("global-inbox-clear-filters")
+                            .ghost()
+                            .compact()
+                            .xsmall()
+                            .label(tr("清除筛选"))
+                            .track_focus(&self.clear_filters_focus)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.clear_filters(window, cx)),
+                            ),
+                    );
+                }
             }
             if has_snoozed {
                 controls = controls.child(

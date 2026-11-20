@@ -40,6 +40,8 @@ fn accepts_background_send(value: &Value, source: &Session) -> bool {
             acknowledged.id == source.id
                 && acknowledged.workspace_id == source.workspace_id
                 && acknowledged.profile == source.profile
+                && acknowledged.execution == source.execution
+                && !acknowledged.worktree_released
         })
 }
 
@@ -1142,6 +1144,8 @@ mod tests {
             ("workspaceId", json!("different-project")),
             ("backend", json!("claude")),
             ("profile", json!({"id": "configured-profile", "revision": 3})),
+            ("execution", json!({"kind": "worktree", "path": "/unexpected", "branch": "test"})),
+            ("worktreeReleased", json!(true)),
         ] {
             let mut reply = accepted.clone();
             reply["session"][field] = wrong;

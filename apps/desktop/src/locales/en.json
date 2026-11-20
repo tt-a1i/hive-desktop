@@ -2767,5 +2767,9 @@
   "从空闲会话发送消息，然后打开一个新草稿": "Send from an idle conversation and open a fresh draft",
   "未能确认原会话已接收消息": "Could not confirm that the original conversation accepted the message",
   "消息已发送，但未能打开新草稿": "Message sent. Could not open a fresh draft",
+  "重试打开新工作树草稿": "Retry opening the new worktree draft",
+  "重试只会准备新的工作树草稿。": "Retry to prepare the new worktree draft.",
+  "请从当前项目的普通独立工作树会话开始新草稿。": "Start a new draft from a regular conversation in its own worktree in this project.",
+  "这个新工作树草稿请求已用于其他会话。": "This new worktree draft request already belongs to a different conversation.",
   "请从侧边栏手动打开新会话": "Start a new conversation from the sidebar."
 }

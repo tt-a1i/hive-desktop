@@ -27,6 +27,7 @@ export interface ChatRecord {
   deferFirstConnection?: true;
   draftCopy?: string;
   worktreeReuse?: {sourceSessionId: string; ownerFingerprint: string};
+  freshDraftSourceSessionId?: string;
   handoff?: {operationId:string;snapshotId:string;snapshotHash:string;sourceSessionId:string};
   profile?: AgentProfileRef;
   legacyConfiguration?: true;
@@ -157,6 +158,8 @@ export class ChatIndex {
     const existing = this.peek(record.id);
     if (existing?.worktreeReleased !== record.worktreeReleased)
       throw new SessionIdentityError('WORKTREE_REUSE_CONFLICT', '共享工作树的解除状态不能通过会话保存更改。');
+    if (existing && existing.freshDraftSourceSessionId !== record.freshDraftSourceSessionId || !validFreshWorktreeDraft(record))
+      throw new SessionIdentityError('WORKTREE_FRESH_DRAFT_CONFLICT', '这个新工作树草稿请求已用于其他会话。');
     if (existing && existing.draftCopy !== record.draftCopy)
       throw new SessionIdentityError('DRAFT_COPY_CONFLICT', '该草稿复制请求已用于其他会话。');
     if (existing && (!isDeepStrictEqual(existing.worktreeReuse, record.worktreeReuse)
@@ -331,15 +334,36 @@ function validWorktreeReuse(record: Record<string, unknown> | ChatRecord): boole
     && !record.scratch && !record.nativeImport && !record.lineage && !record.handoff && !record.prReview;
 }
 
+function validFreshWorktreeDraft(record: Record<string, unknown> | ChatRecord): boolean {
+  const source = record.freshDraftSourceSessionId;
+  const execution = record.execution as ChatExecution | undefined;
+  return source === undefined || (typeof source === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(source)
+    && source !== record.id && execution?.kind === 'worktree' && !execution.ownerSessionId
+    && !!record.profile && !record.scratch && !record.nativeImport && !record.handoff && !record.lineage && !record.prReview);
+}
+
 export function assertWorktreeUse(record: ChatRecord): void {
   if (record.worktreeReleased)
     throw new SessionIdentityError('WORKTREE_RELEASED', '此会话已解除共用工作树，历史和草稿仍可查看。');
 }
 
+export function canStartFreshWorktreeDraft(record: ChatRecord): boolean {
+  const lead = `${record.workspaceId}:orchestrator`;
+  return record.execution?.kind === 'worktree' && !record.execution.ownerSessionId
+    && !record.archived && !!record.profile && (record.identityState === 'new' || record.identityState === 'known')
+    && !record.scratch && !record.nativeImport && !record.handoff && !record.lineage && !record.prReview
+    && !record.rewound && !record.rewindOperationId && !record.worktreeReleased
+    && (!record.originAgentId || record.originAgentId === lead) && (!record.agentId || record.agentId === lead);
+}
+
+export function worktreeDraftAvailability(record: ChatRecord): {canStartFreshWorktreeDraft?: true} {
+  return canStartFreshWorktreeDraft(record) ? {canStartFreshWorktreeDraft: true} : {};
+}
+
 function isChatRecord(value: unknown): value is ChatRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
-  if (record.deferFirstConnection !== undefined && record.deferFirstConnection !== true) return false;
+  if (record.deferFirstConnection !== undefined && record.deferFirstConnection !== true || !validFreshWorktreeDraft(record)) return false;
   if (record.draftCopy !== undefined && (typeof record.draftCopy !== 'string' || !/^[a-f0-9]{64}$/.test(record.draftCopy))) return false;
   if (record.handoff !== undefined) {
     const h = record.handoff as Record<string,unknown>;

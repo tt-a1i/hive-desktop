@@ -282,8 +282,24 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - 编译后的运行时搜索 45,000 个小文件，4 秒返回超时，同一后台进程随即响应下一次请求。专项覆盖取消、Unicode 高亮、CRLF 空行及工作树范围。收件箱专项覆盖回复时间跨重启保留、同一截止时间翻页，以及旧分页凭证与新截止时间不匹配时拒绝续页。
 - 265 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建和 Windows x64 MSVC 交叉检查通过。运行时归档包含已编译的正则 Worker。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十二批
+
+本轮从 Hive Desktop `4019128` 开始。参考 T3 Code `0702c6f`、Cindy `e035080`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **在独立工作树发送后开始新草稿。** 普通独立工作树会话可使用「发送并开始新草稿」。原消息被接收后，Hive 从原工作树记录的基点建立新目录和分支，使用同一后端与配置。新草稿在发送自己的第一条消息前保持被动。准备失败时可以重试同一个草稿请求。 [T3 Code 后台发送](https://github.com/pingdotgg/t3code/blob/0702c6fdcabd70ca6c5a765bc744a24989979540/docs/user/thread-sidebar.md#L49-L54)
+- **一次清除收件箱筛选。** 跨项目收件箱有筛选生效时显示「清除筛选」，一次清空项目、成员、Agent 后端和最近活跃时间。已处理展开时加载全部范围的第一页，焦点回到项目筛选。 [Cindy 收件箱筛选重置](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L19-L24)
+- **文件名搜索支持正则。** 搜索 `^src/.*\.test\.ts$` 可限制目录和文件扩展名。文件名与正文共用 `.*` 和大小写开关，搜索仍以当前项目或独立工作树为范围。 [Beluga 名称匹配整个相对路径](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/src/core/workspace-files.ts#L377-L387)
+
+- macOS 按 `Cmd+Option+Enter` 将原消息发送给本地模拟 Codex 对端一次。原项目根目录已提交 B，原工作树已提交 C 并留有未提交文件。新草稿的 Git HEAD 和文件状态仍与最初的 A 一致，分支和目录都独立，Agent 保持被动。输入新草稿后退出，重启恢复同一条草稿。证据在 `.artifacts/fresh-independent-qa`。
+- macOS 模拟新工作树已创建但首个成功回包丢失。从界面重试时使用同一个请求标识，打开已创建的草稿。索引仅有一条目标记录，原提示词在模拟对端只出现一次。证据在 `.artifacts/fresh-retry-qa`。
+- 运行时使用真实 Git 验证新草稿从原始基点创建。请求并发重试只创建一份。模拟工作树已创建但首次索引写入失败，冷启动后用同一请求恢复原分支与目录。也覆盖源目录缺失、已存在目标的重试与延迟启动 Agent。证据在 `.artifacts/batch22-fresh-worktree.log`。
+- macOS 从四项同时筛选的状态进入新事项并返回，原筛选保留。先拦住已处理第 2 页的回包，再清除筛选。已处理区保持展开、草稿仍在，只发起了全部范围的首屏查询。释放旧回包后结果保持在全部范围。重启后四项仍为全部。证据在 `.artifacts/reset-filters-qa`。
+- macOS 在文件名模式搜索 `^src/.*\.test\.ts$`，到第 2 页打开编号为 103 的文件并读到项目目录中的标记。切换到独立工作树时查询保留并回到第一页。输入 `[` 可从无障碍树读到明确的语法错误。也复验了从结果区用键盘打开文件。证据在 `.artifacts/regex-filename-qa`。
+- 文件名运行时专项覆盖路径分页、大小写、原始 Unicode、带空格和换行的相对路径、无效正则、取消以及工作树隔离。编译后的 JSONL 接口独立验证了翻页和取消。
+- 267 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建、工作树及初始化、Git 远端、项目文件专项和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **在独立工作树提交后立即打开下一草稿。** Hive 已有「发送并新建草稿」快捷键，独立工作树会话尚不能使用。用原工作树提交过修改的场景验收，下一草稿从原始基点获得自己的工作树和分支，能立即编辑。 [T3 Code 后台发送](https://github.com/pingdotgg/t3code/blob/ad4d0f0659b0b147591724999b0e2f1d59d4b42e/docs/user/thread-sidebar.md#L49-L54)
-- **一次清除收件箱筛选。** 目前需要分别重置四个菜单。将四项清空后回到全部范围的第一页，保持各区段的展开状态和草稿。延迟一个旧范围回包来验证列表始终显示当前范围。 [Cindy 收件箱筛选重置](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L19-L24)
-- **文件名搜索支持正则。** 在文件名模式输入 `^src/.*\.test\.ts$`，用项目和独立工作树里的同名文件复验路径范围、切换、翻页和键盘打开。 [Beluga 名称匹配整个相对路径](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/src/core/workspace-files.ts#L377-L387)
+- **新草稿保留已选模型。** 目前后台发送的新草稿保留后端和固定配置，源会话手动选定的模型没有写入新草稿。用默认模型和手动选择不一致的配置验收，检查切换、重启后显示、首次实际发送使用的模型，以及跨后端或模型失效时的处理。 [T3 Code 新对话的模型选择](https://github.com/pingdotgg/t3code/blob/0702c6fdcabd70ca6c5a765bc744a24989979540/docs/user/thread-sidebar.md#L6-L13)
+- **窄窗收件箱集中显示筛选。** 现有控件在窗口变窄、项目或成员较长时换行，会压缩待办区域。用两个同名项目、四项组合筛选和 640 像素宽的窗口验收，确认单个入口会显示有效条件数，键盘能查看、修改和清除条件。 [Cindy 筛选摘要](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/apps/desktop/src/renderer/features/cc-agent/sidebar/SidebarFilterPopover.tsx#L545-L565)
+- **调整文件列表和预览的上下高度。** 当前停靠面板和窄窗弹层都使用固定比例。在打开 400 行文件和大量目录项后，拖动或用键盘调整分隔条，验证记住比例，以及文件、搜索词和预览位置仍可恢复。 [Beluga 文件区垂直分隔条](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L393-L405)

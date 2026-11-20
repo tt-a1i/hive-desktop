@@ -171,6 +171,53 @@ try {
  assert.equal(queue.busy, false); assert.equal(events, eventsBefore);
  assert.equal(await stat(marker).then(() => true, () => false), false, 'backend must not start');
  await rename(a.path + '.moved', a.path);
+ const freshBase = git('rev-parse', 'HEAD');
+ const freshSource = await runtime.chats.createRecord(project.id, 'codex', {isolation: 'worktree'});
+ const sourcePath = freshSource.execution!.path;
+ await writeFile(join(repo, 'project-advance.txt'), 'project-only commit');
+ git('add', 'project-advance.txt'); git('commit', '-m', 'Project advanced');
+ await writeFile(join(sourcePath, 'source-commit.txt'), 'source-only commit');
+ git('-C', sourcePath, 'add', 'source-commit.txt'); git('-C', sourcePath, 'commit', '-m', 'Source advanced');
+ await writeFile(join(sourcePath, 'same.txt'), 'source dirty change');
+ await writeFile(join(sourcePath, 'source-untracked.txt'), 'source untracked change');
+ const createFresh = (id: string, source = freshSource.id) => runtime!.chats.createFreshWorktreeDraftRecord(project.id, source, id);
+ await assert.rejects(createFresh(randomUUID(), legacy.id), {code: 'WORKTREE_FRESH_DRAFT_UNSUPPORTED'});
+ await assert.rejects(createFresh(randomUUID(), shared.id), {code: 'WORKTREE_FRESH_DRAFT_UNSUPPORTED'});
+ assert.equal(runtime.chats.list(project.id).find(record => record.id === freshSource.id)?.canStartFreshWorktreeDraft, true);
+ assert.equal(runtime.chats.list(project.id).find(record => record.id === shared.id)?.canStartFreshWorktreeDraft, undefined);
+ const freshId = randomUUID();
+ const [freshDraft, repeated] = await Promise.all([createFresh(freshId), createFresh(freshId)]);
+ assert.deepEqual(repeated, freshDraft);
+ assert.equal(freshDraft.id, freshId);
+ assert.deepEqual(freshDraft.profile, freshSource.profile);
+ assert.equal(freshDraft.backend, freshSource.backend);
+ assert.equal(freshDraft.canStartFreshWorktreeDraft, true);
+ assert.notEqual(freshDraft.executionPath, sourcePath);
+ assert.notEqual(freshDraft.execution?.branch, freshSource.execution?.branch);
+ assert.equal(freshDraft.execution?.ownerSessionId, undefined);
+ assert.equal(git('-C', freshDraft.executionPath, 'rev-parse', 'HEAD'), freshBase);
+ assert.equal(git('-C', freshDraft.executionPath, 'status', '--porcelain'), '');
+ assert.equal(await readFile(join(freshDraft.executionPath, 'same.txt'), 'utf8'), 'base');
+ assert.equal(await readFile(join(sourcePath, 'same.txt'), 'utf8'), 'source dirty change');
+ for (const file of ['project-advance.txt', 'source-commit.txt', 'source-untracked.txt'])
+  await assert.rejects(stat(join(freshDraft.executionPath, file)), {code: 'ENOENT'});
+ await assert.rejects(createFresh(freshId, two.id), {code: 'WORKTREE_FRESH_DRAFT_CONFLICT'});
+ await rename(sourcePath, sourcePath + '.moved');
+ try {
+  await assert.rejects(createFresh(randomUUID()), {code: 'IDENTITY_MISMATCH'});
+  assert.deepEqual(await createFresh(freshId), freshDraft);
+ } finally { await rename(sourcePath + '.moved', sourcePath); }
+ const passiveFresh = await runtime.chats.open(freshId);
+ assert.ok('passive' in passiveFresh && passiveFresh.passive && !passiveFresh.readOnly);
+ assert.equal(passiveFresh.agentId, undefined);
+ assert.equal(passiveFresh.codexThreadId, undefined);
+ assert.deepEqual(passiveFresh.history, []);
+ const freshRecoveryId = randomUUID();
+ const draftIndexPath = join(data, 'chats', 'index.json');
+ await rename(draftIndexPath, draftIndexPath + '.held'); await mkdir(draftIndexPath);
+ try { await assert.rejects(createFresh(freshRecoveryId), /工作树已保留/); }
+ finally { await rm(draftIndexPath, {recursive: true}); await rename(draftIndexPath + '.held', draftIndexPath); }
+ assert.equal((await runtime.chats.pendingWorktrees(project.id)).pending.some(item => item.sessionId === freshRecoveryId), true);
  const releaseBorrower = (id: string, owner = one.id) => runtime!.chats.releaseWorktreeUse(project.id, id, owner,
   () => runtime!.terminal.hasActiveSessionShell(project.id, id));
  await assert.rejects(releaseBorrower(shared.id, two.id), {code: 'WORKTREE_SOURCE_INVALID'});
@@ -232,6 +279,14 @@ try {
  const claudeIndex = new ChatIndex(join(data, 'chats'));
  claudeIndex.save({...claudeIndex.get(claudeBorrower.id), identityState: 'known', nativeclaudeSessionId: nativeId, originAgentId: `${project.id}:orchestrator`});
  runtime = await createDesktopRuntime(data, () => { events++; }, {executableEnvironment: {HIVE_CODEX_COMMAND: backend, HIVE_CLAUDE_COMMAND: backend}});
+ assert.deepEqual(await createFresh(freshId), freshDraft);
+ const recoveredFresh = await createFresh(freshRecoveryId);
+ assert.equal(recoveredFresh.id, freshRecoveryId);
+ assert.equal(git('-C', recoveredFresh.executionPath, 'rev-parse', 'HEAD'), freshBase);
+ const recoveredOpen = await runtime.chats.open(freshRecoveryId);
+ assert.ok('passive' in recoveredOpen && recoveredOpen.passive);
+ assert.equal(recoveredOpen.codexThreadId, undefined);
+ assert.equal(await stat(marker).then(() => true, () => false), false, 'fresh worktree drafts stay offline across recovery');
  assert.deepEqual(await releaseBorrower(shared.id), releasedShared);
  await assert.rejects(runtime.chats.previewWorktreeRemoval(project.id, claudeOwner.id, async () => false), {code:'WORKTREE_SHARED'});
  const claudeRelease = await releaseBorrower(claudeBorrower.id, claudeOwner.id);

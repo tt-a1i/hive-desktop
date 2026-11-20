@@ -186,6 +186,37 @@ try {
   await assert.rejects(supersededWorker.scan('a', 0, 1), {name: 'AbortError'});
   assert.equal((await latestWorker.scan('a', 0, 1)).total, 1);
   await latestWorker.close();
+  const names = join(regexRoot, 'names');
+  await mkdir(names);
+  execFileSync('git', ['init', '-q', names]);
+  await mkdir(join(names, 'other'));
+  await mkdir(join(names, 'src'));
+  const numberedPaths = Array.from({length: 263}, (_, index) => `src/file-${String(index).padStart(3, '0')}.test.ts`);
+  await Promise.all(numberedPaths.map(path => writeFile(join(names, path), path)));
+  for (const path of ['src/Upper.TEST.TS', 'other/file-000.test.ts', 'src/marker .txt', 'src/marker.txt', 'src/🙂Unicode.ts', 'src/ignored.test.ts']) {
+    await writeFile(join(names, path), path);
+  }
+  await writeFile(join(names, '.gitignore'), 'src/ignored.test.ts\n');
+  if (process.platform !== 'win32') {
+    await symlink(join(names, 'other/file-000.test.ts'), join(names, 'src/link.test.ts'));
+    await writeFile(join(names, 'src', 'line\nbreak.ts'), 'raw line break in a file path');
+  }
+  const namePattern = '^src/.*\\.test\\.ts$';
+  const nameRegex = (query: string, offset = 0, caseSensitive = false, signal?: AbortSignal) =>
+    searchProjectFiles(names, query, offset, signal, caseSensitive, true);
+  const expectedNames = ['src/Upper.TEST.TS', ...numberedPaths];
+  for (const offset of [0, 100, 200, 300]) {
+    assert.deepEqual(await nameRegex(namePattern, offset), {paths: expectedNames.slice(offset, offset + 100), total: expectedNames.length});
+  }
+  assert.deepEqual(await nameRegex(namePattern, 200, true), {paths: numberedPaths.slice(200), total: numberedPaths.length});
+  assert.deepEqual(await searchProjectFiles(names, namePattern), {paths: [], total: 0});
+  assert.deepEqual((await nameRegex('^src/marker ')).paths, ['src/marker .txt']);
+  assert.deepEqual((await nameRegex('(?=src/\\u{1F642})')).paths, ['src/🙂Unicode.ts']);
+  if (process.platform !== 'win32') {
+    assert.deepEqual((await nameRegex('^src/line\\nbreak\\.ts$')).paths, ['src/line\nbreak.ts']);
+  }
+  await assert.rejects(nameRegex('['), {message: REGEX_INVALID});
+  await assert.rejects(nameRegex(namePattern, 0, false, AbortSignal.abort()), {name: 'AbortError'});
   const namedPath = 'nested/Cafe\u0301-ReadMe.md';
   await writeFile(join(repo, namedPath), 'case-sensitive path fixture');
   const [returnedPath] = (await searchProjectFiles(repo, 'café-readme')).paths;

@@ -48,7 +48,7 @@ impl HiveApp {
             && !self.command_picker.open
             && !self.conversation_is_read_only()
             && !source.scratch
-            && source.execution.is_none()
+            && (source.execution.is_none() || source.can_start_fresh_worktree_draft)
             && !source.archived
             && source.profile.is_some()
             && source.display_agent_id().is_none_or(|agent| agent == lead)
