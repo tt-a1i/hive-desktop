@@ -285,6 +285,45 @@ impl Preview {
     fn loaded(&self) -> bool {
         self.text.is_some() || self.image.is_some()
     }
+
+    fn reading_position(&self) -> Option<PreviewReadingPosition> {
+        Some(PreviewReadingPosition {
+            page: self.text.as_ref()?.page,
+            source_scroll: self.scroll.offset(),
+            markdown: self
+                .markdown
+                .as_ref()
+                .map(|markdown| (markdown.mode, markdown.scroll_offset())),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PreviewReadingPosition {
+    page: usize,
+    source_scroll: Point<Pixels>,
+    markdown: Option<(FilePreviewMode, Point<Pixels>)>,
+}
+
+impl PreviewReadingPosition {
+    fn restore_page(self, text: &mut TextPages) {
+        text.show(self.page.min(text.count() - 1));
+    }
+}
+
+#[derive(Clone)]
+struct RememberedPreview {
+    owner: EntityId,
+    tree: TreeScope,
+    selection: Match,
+    directory: Option<String>,
+    reading: Option<PreviewReadingPosition>,
+}
+
+impl RememberedPreview {
+    fn in_tree(&self, tree: &TreeScope) -> bool {
+        self.tree == *tree && self.directory.is_some()
+    }
 }
 
 enum PreparedPreview {
@@ -295,6 +334,12 @@ enum PreparedPreview {
 struct MarkdownNavigation {
     execution_directory: String,
     fragment: Option<String>,
+}
+
+enum PreviewRead {
+    Open(Option<MarkdownNavigation>),
+    Restore(RememberedPreview),
+    Tree,
 }
 
 struct FilePathRequest {
@@ -399,6 +444,7 @@ struct MarkdownPreview {
     document: Option<Entity<TextViewState>>,
     headings: Arc<OnceLock<MarkdownHeadings>>,
     scroll: ScrollHandle,
+    pending_scroll: Cell<Option<Point<Pixels>>>,
 }
 
 impl MarkdownPreview {
@@ -408,6 +454,7 @@ impl MarkdownPreview {
             document: None,
             headings: Arc::default(),
             scroll: ScrollHandle::new(),
+            pending_scroll: Cell::new(None),
         };
         preview.switch(mode, text, cx);
         preview
@@ -422,6 +469,12 @@ impl MarkdownPreview {
 
     fn active(&self) -> bool {
         self.mode == FilePreviewMode::Markdown
+    }
+
+    fn scroll_offset(&self) -> Point<Pixels> {
+        self.pending_scroll
+            .get()
+            .unwrap_or_else(|| self.scroll.offset())
     }
 
     fn reveal_initial_heading(&self, fragment: String, cx: &mut App) {
@@ -472,6 +525,12 @@ impl MarkdownPreview {
         cx: &App,
     ) -> Stateful<Div> {
         let document = self.document.as_ref().expect("active Markdown document");
+        let document_read = document.read(cx).rendered_text();
+        if !document_read.source().is_empty()
+            && let Some(offset) = self.pending_scroll.take()
+        {
+            self.scroll.set_offset(offset);
+        }
         let heading_document = document.downgrade();
         let headings = self.headings.clone();
         let scroll = self.scroll.clone();
@@ -479,7 +538,7 @@ impl MarkdownPreview {
             .id(id)
             .min_w_0()
             .role(Role::Label)
-            .aria_value(document.read(cx).rendered_text().as_str().to_owned())
+            .aria_value(document_read.as_str().to_owned())
             .child(
                 TextView::new(document)
                     .selectable(true)
@@ -902,6 +961,7 @@ pub(crate) struct FileTreeExpansions {
     paths: HashMap<TreeScope, HashSet<String>>,
     // The dock and the Files dialog share search choices in this window.
     search_flags: SearchFlags,
+    last_preview: Option<RememberedPreview>,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -912,6 +972,19 @@ struct SearchFlags {
 }
 
 impl FileTreeExpansions {
+    fn restore_preview(&mut self, tree: &TreeScope, owner: EntityId) -> Option<RememberedPreview> {
+        let saved = self
+            .last_preview
+            .as_mut()
+            .filter(|saved| saved.in_tree(tree))?;
+        saved.owner = owner;
+        Some(saved.clone())
+    }
+
+    fn forget_preview(&mut self, tree: &TreeScope) {
+        self.last_preview.take_if(|saved| saved.tree == *tree);
+    }
+
     fn toggle(&mut self, scope: TreeScope, path: String) -> bool {
         let paths = self.paths.entry(scope.clone()).or_default();
         if paths.remove(&path) {
@@ -1173,6 +1246,20 @@ impl HiveApp {
             && dock_width(None, self.project_file_dock_space(window)).is_some()
     }
 
+    pub(crate) fn project_files_workspace_focus(
+        &self,
+        cx: &App,
+    ) -> Option<(FocusHandle, FocusHandle)> {
+        let scope = self.project_file_scope()?;
+        let browser = self.project_file_dock.as_ref()?.read(cx);
+        (!browser.dismissed && browser.scope.as_ref() == Some(&scope)).then(|| {
+            (
+                browser.root_focus.clone(),
+                browser.query.read(cx).focus_handle(cx),
+            )
+        })
+    }
+
     pub(crate) fn project_file_browser_button(
         &self,
         id: &'static str,
@@ -1247,6 +1334,9 @@ impl HiveApp {
             cx.notify();
             return;
         }
+        if let Some(browser) = &self.project_file_dock {
+            browser.update(cx, |browser, cx| browser.set_scope(None, None, cx));
+        }
         let revealing = reveal.is_some();
         let app = cx.weak_entity();
         let expansions = self.project_file_tree_expansions.clone();
@@ -1295,7 +1385,7 @@ impl HiveApp {
                 if let Some(parent) = app.upgrade() {
                     cx.observe(&parent, |this: &mut FileBrowser, _, cx| {
                         if !this.dismissed && !this.current(cx) {
-                            this.dismiss();
+                            this.dismiss(cx);
                         }
                         cx.notify();
                     })
@@ -1375,7 +1465,7 @@ impl HiveApp {
                 .w(width)
                 .on_ok(|_, _, _| false)
                 .on_close(move |_, _, cx| {
-                    let _ = dismiss.update(cx, |this, _| this.dismiss());
+                    let _ = dismiss.update(cx, |this, cx| this.dismiss(cx));
                 })
                 .child(dialog_browser.clone())
         });
@@ -1406,7 +1496,7 @@ impl HiveApp {
             if browser.read(cx).root_focus.contains_focused(window, cx) {
                 self.input.read(cx).focus_handle(cx).focus(window, cx);
             }
-            browser.update(cx, |browser, _| browser.dismiss());
+            browser.update(cx, |browser, cx| browser.dismiss(cx));
             cx.notify();
         }
     }
@@ -1500,17 +1590,22 @@ impl HiveApp {
 
     pub(crate) fn project_file_pane(
         &mut self,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let browser = self.project_file_dock.clone()?;
-        if !self.can_dock_project_files(window) || self.workspace.is_none() {
-            return None;
-        }
+        let previous = browser.read(cx).scope.clone();
         let scope = self.project_file_scope();
-        if browser.read(cx).scope != scope {
+        let visible = self.can_dock_project_files(window)
+            && self.workspace.is_some()
+            && !(previous.is_none() && window.has_active_dialog(cx));
+        let next = scope.filter(|scope| visible || previous.as_ref() == Some(scope));
+        if previous != next {
             let runtime = self.runtime.clone();
-            browser.update(cx, |browser, cx| browser.set_scope(scope, runtime, cx));
+            browser.update(cx, |browser, cx| browser.set_scope(next, runtime, cx));
+        }
+        if !visible {
+            return None;
         }
         let space = self.project_file_dock_space(window);
         let width = dock_width(self.project_file_dock_width, space)?;
@@ -1584,9 +1679,10 @@ impl FileBrowser {
                 .is_some_and(|app| self.scope == app.read(cx).project_file_scope())
     }
 
-    fn dismiss(&mut self) {
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
         self.dismissed = true;
         self.search_task = None;
+        self.save_preview_position(cx);
         self.clear_preview();
         self.reset_git_status();
     }
@@ -1597,6 +1693,64 @@ impl FileBrowser {
         self.preview_task = None;
         self.tree_preview = None;
         self.preview = None;
+    }
+
+    fn remember_preview_selection(&self, cx: &mut Context<Self>) {
+        let (Some(scope), Some(preview)) = (&self.scope, &self.preview) else {
+            return;
+        };
+        let directory = preview
+            .execution_directory
+            .clone()
+            .or_else(|| scope.tree.source.directory().map(str::to_owned));
+        let saved = RememberedPreview {
+            owner: cx.entity_id(),
+            tree: scope.tree.clone(),
+            selection: preview.selection.clone(),
+            directory,
+            reading: preview.reading_position(),
+        };
+        self.expansions
+            .update(cx, |state, _| state.last_preview = Some(saved));
+    }
+
+    fn save_preview_position(&self, cx: &mut Context<Self>) {
+        let preview = match &self.tree_preview {
+            Some(TreePreview::Reading { previous }) => previous.as_ref(),
+            _ => self.preview.as_ref(),
+        };
+        let (Some(scope), Some(preview)) = (&self.scope, preview) else {
+            return;
+        };
+        let owner = cx.entity_id();
+        self.expansions.update(cx, |state, _| {
+            if let Some(saved) = &mut state.last_preview
+                && saved.owner == owner
+                && saved.tree == scope.tree
+                && saved.selection == preview.selection
+            {
+                if let Some(directory) = &preview.execution_directory {
+                    saved.directory = Some(directory.clone());
+                }
+                if let Some(reading) = preview.reading_position() {
+                    saved.reading = Some(reading);
+                }
+            }
+        });
+    }
+
+    fn restore_compact_preview(&mut self, cx: &mut Context<Self>) {
+        if self.preview.is_some() || self.reveal.is_some() || !self.current(cx) {
+            return;
+        }
+        let scope = self.scope.as_ref().expect("current file scope");
+        let owner = cx.entity_id();
+        let saved = self
+            .expansions
+            .update(cx, |state, _| state.restore_preview(&scope.tree, owner));
+        if let Some(saved) = saved {
+            self.read_preview(saved.selection.clone(), PreviewRead::Restore(saved), cx);
+        }
     }
 
     fn has_compact_preview(&self) -> bool {
@@ -1617,6 +1771,9 @@ impl FileBrowser {
         {
             return false;
         }
+        let tree = &self.scope.as_ref().expect("current file scope").tree;
+        self.expansions
+            .update(cx, |state, _| state.forget_preview(tree));
         self.clear_preview();
         let query = self.query.read(cx);
         let focus = if query.value().trim().is_empty() {
@@ -1643,6 +1800,7 @@ impl FileBrowser {
         runtime: Option<Arc<Runtime>>,
         cx: &mut Context<Self>,
     ) {
+        self.save_preview_position(cx);
         if self.scope != scope {
             self.reset_git_status();
         }
@@ -1672,6 +1830,7 @@ impl FileBrowser {
                     if this.scope_generation == generation {
                         this.load_directory(String::new(), cx);
                         this.load_search(false, cx);
+                        this.restore_compact_preview(cx);
                         if matches!(this.git_status, TreeGitStatus::Idle) {
                             this.load_git_status(cx);
                         }
@@ -2285,7 +2444,9 @@ impl FileBrowser {
             {
                 // Keep an already started read, but make it an explicit choice so
                 // moving focus does not undo it.
-                self.tree_preview = None;
+                if matches!(self.tree_preview.take(), Some(TreePreview::Reading { .. })) {
+                    self.remember_preview_selection(cx);
+                }
                 return;
             }
             self.activate_tree_item(item, cx);
@@ -2374,7 +2535,7 @@ impl FileBrowser {
                 preview
             });
         self.tree_preview = Some(TreePreview::Reading { previous });
-        self.read_preview(Match { path, line: None }, None, cx);
+        self.read_preview(Match { path, line: None }, PreviewRead::Tree, cx);
     }
 
     fn selected_tree_file(&self) -> Option<&str> {
@@ -2436,7 +2597,7 @@ impl FileBrowser {
 
     fn select(&mut self, selection: Match, cx: &mut Context<Self>) {
         self.cancel_tree_preview(cx);
-        self.read_preview(selection, None, cx);
+        self.read_preview(selection, PreviewRead::Open(None), cx);
     }
 
     fn open_markdown_link(
@@ -2461,21 +2622,16 @@ impl FileBrowser {
         self.cancel_tree_preview(cx);
         self.read_preview(
             Match { path, line: None },
-            Some(MarkdownNavigation {
+            PreviewRead::Open(Some(MarkdownNavigation {
                 execution_directory,
                 fragment: fragment.map(str::to_owned),
-            }),
+            })),
             cx,
         );
         true
     }
 
-    fn read_preview(
-        &mut self,
-        selection: Match,
-        navigation: Option<MarkdownNavigation>,
-        cx: &mut Context<Self>,
-    ) {
+    fn read_preview(&mut self, selection: Match, request: PreviewRead, cx: &mut Context<Self>) {
         if !self.current(cx) {
             return;
         }
@@ -2483,7 +2639,11 @@ impl FileBrowser {
         self.reveal_missing = None;
         let scope = self.scope.as_ref().expect("current file scope");
         let allow_image = selection.line.is_none();
-        let expected_directory = navigation.as_ref().map(|link| &link.execution_directory);
+        let expected_directory = match &request {
+            PreviewRead::Open(Some(link)) => Some(link.execution_directory.as_str()),
+            PreviewRead::Restore(saved) => saved.directory.as_deref(),
+            _ => None,
+        };
         let params = scope.params(json!({
             "relativePath":selection.path,
             "allowImage":allow_image,
@@ -2506,6 +2666,9 @@ impl FileBrowser {
             path_request: None,
             path_status: None,
         });
+        if matches!(request, PreviewRead::Open(_)) {
+            self.remember_preview_selection(cx);
+        }
         let generation = self.scope_generation;
         let preview_generation = self.preview_generation;
         self.preview_task = Some(cx.spawn(async move |this, cx| {
@@ -2549,7 +2712,8 @@ impl FileBrowser {
                 {
                     return;
                 }
-                if matches!(this.tree_preview, Some(TreePreview::Reading { .. })) {
+                let tree_read = matches!(this.tree_preview, Some(TreePreview::Reading { .. }));
+                if tree_read {
                     if this.selected_tree_file()
                         != this
                             .preview
@@ -2564,21 +2728,34 @@ impl FileBrowser {
                 let Some(preview) = this.preview.as_mut() else {
                     return;
                 };
+                let (reading, fragment) = match request {
+                    PreviewRead::Restore(saved) => (saved.reading, None),
+                    PreviewRead::Open(Some(link)) => (None, link.fragment),
+                    _ => (None, None),
+                };
                 preview.loading = false;
                 match result {
                     Ok((PreparedPreview::Text(mut text), sha256, execution_directory)) => {
                         if let Some(line) = preview.selection.line {
                             text.show_line(line);
                         }
+                        if let Some(reading) = reading {
+                            reading.restore_page(&mut text);
+                            preview.scroll.set_offset(reading.source_scroll);
+                        }
                         if is_markdown_file(&preview.selection.path)
                             && supports_markdown_preview(&text.full)
                         {
-                            let markdown = MarkdownPreview::new(
-                                initial_markdown_mode(&preview.selection),
-                                &text,
-                                cx,
+                            let saved_markdown = reading.and_then(|reading| reading.markdown);
+                            let mode = saved_markdown.map_or_else(
+                                || initial_markdown_mode(&preview.selection),
+                                |(mode, _)| mode,
                             );
-                            if let Some(fragment) = navigation.and_then(|link| link.fragment) {
+                            let markdown = MarkdownPreview::new(mode, &text, cx);
+                            if let Some((_, offset)) = saved_markdown {
+                                markdown.pending_scroll.set(Some(offset));
+                            }
+                            if let Some(fragment) = fragment {
                                 markdown.reveal_initial_heading(fragment, cx);
                             }
                             preview.markdown = Some(markdown);
@@ -2587,10 +2764,16 @@ impl FileBrowser {
                         preview.sha256 = sha256;
                         preview.execution_directory = execution_directory;
                     }
-                    Ok((PreparedPreview::Image(image), _, _)) => {
+                    Ok((PreparedPreview::Image(image), _, execution_directory)) => {
                         preview.image = Some(ImageViewport::new(image, cx));
+                        preview.execution_directory = execution_directory;
                     }
                     Err(error) => preview.error = Some(error),
+                }
+                if tree_read {
+                    this.remember_preview_selection(cx);
+                } else {
+                    this.save_preview_position(cx);
                 }
                 cx.notify();
             });
@@ -2921,7 +3104,7 @@ impl FileBrowser {
         }
         if !self.docked {
             window.close_dialog(cx);
-            self.dismiss();
+            self.dismiss(cx);
         }
         let target = target.clone();
         let app = self.app.clone();
@@ -3411,7 +3594,7 @@ impl FileBrowser {
                     return;
                 }
                 window.close_dialog(cx);
-                browser.update(cx, |browser, _| browser.dismiss());
+                browser.update(cx, |browser, cx| browser.dismiss(cx));
             }
             let _ = app.update(cx, |app, cx| {
                 if app.project_file_scope() == scope {
@@ -5179,6 +5362,90 @@ mod tests {
                 .paths
                 .contains_key(&key("w", Some(&other_unknown)))
         );
+    }
+
+    #[test]
+    fn compact_preview_restores_only_the_latest_file_in_its_exact_tree() {
+        let tree = |workspace: &str, directory: &str| TreeScope {
+            workspace: workspace.into(),
+            source: TreeSource::Directory(directory.into()),
+        };
+        let a = tree("project", "/tree/a");
+        let b = tree("project", "/tree/b");
+        let different_project = tree("other-project", "/tree/a");
+        let selection = Match {
+            path: "docs/notes.md".into(),
+            line: Some(350),
+        };
+        let owner = gpui_kit::EntityId::from(1);
+        let next_owner = gpui_kit::EntityId::from(2);
+        let mut state = FileTreeExpansions {
+            last_preview: Some(super::RememberedPreview {
+                owner,
+                tree: a.clone(),
+                selection: selection.clone(),
+                directory: Some("/tree/a".into()),
+                reading: None,
+            }),
+            ..Default::default()
+        };
+        assert!(state.restore_preview(&b, next_owner).is_none());
+        assert!(
+            state
+                .restore_preview(&different_project, next_owner)
+                .is_none()
+        );
+        state.forget_preview(&b);
+        let saved = state.restore_preview(&a, next_owner).unwrap();
+        assert_eq!(saved.owner, next_owner);
+        assert_eq!(saved.directory.as_deref(), Some("/tree/a"));
+        assert!(saved.selection == selection);
+
+        state.last_preview = Some(super::RememberedPreview {
+            tree: b.clone(),
+            directory: Some("/tree/b".into()),
+            ..saved
+        });
+        assert!(state.restore_preview(&a, owner).is_none());
+        state.forget_preview(&b);
+        assert!(state.restore_preview(&b, owner).is_none());
+    }
+
+    #[test]
+    fn compact_preview_restores_paging_from_fresh_text_and_clamps_if_it_shrinks() {
+        let text = |lines, marker| {
+            let bytes = (1..=lines)
+                .map(|line| format!("{marker} {line}\n"))
+                .collect::<String>();
+            TextPages::new(bytes.into())
+        };
+        let mut original = text(800, "old");
+        original.show_line(350);
+        assert_eq!(original.first_line, 350);
+        let hit = super::PreviewReadingPosition {
+            page: original.page,
+            source_scroll: gpui_kit::point(px(0.), px(-12.)),
+            markdown: None,
+        };
+        let mut refreshed = text(800, "new");
+        refreshed.show_line(350);
+        hit.restore_page(&mut refreshed);
+        assert!(refreshed.visible.starts_with("new 350\n"));
+
+        assert!(original.show(original.page + 1));
+        let later_page = super::PreviewReadingPosition {
+            page: original.page,
+            ..hit
+        };
+        later_page.restore_page(&mut refreshed);
+        assert_eq!(refreshed.first_line, original.first_line);
+        assert!(refreshed.visible.starts_with("new "));
+
+        let mut shorter = text(300, "short");
+        shorter.show_line(350);
+        later_page.restore_page(&mut shorter);
+        assert_eq!(shorter.page, shorter.count() - 1);
+        assert!(shorter.visible.ends_with("short 300\n"));
     }
 
     #[test]

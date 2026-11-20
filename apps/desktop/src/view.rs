@@ -2,6 +2,7 @@ use crate::app::HiveApp;
 use crate::chrome;
 use crate::language::{english, tr};
 use crate::palette::Color;
+use crate::workspace_focus::Area;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::prelude::FluentBuilder;
@@ -725,6 +726,8 @@ impl HiveApp {
         };
         let chat_width = cx.global::<crate::appearance::Appearance>().chat_width_px();
         v_flex()
+            .track_focus(self.workspace_focus.region(Area::Composer))
+            .tab_stop(false)
             .relative()
             .w_full()
             .min_w_0()
@@ -1396,6 +1399,9 @@ impl Render for HiveApp {
 
         v_flex()
             .id("workspace-root")
+            .key_context("HiveWorkspace")
+            .track_focus(&self.workspace_focus.root)
+            .tab_stop(false)
             .aria_hidden(preferences)
             .size_full()
             .bg(Color::Surface.get(cx))
@@ -2168,6 +2174,8 @@ impl Render for HiveApp {
                                                     col.child(
                                                         v_flex()
                                                             .id("terminal-bottom-drawer")
+                                                            .track_focus(self.workspace_focus.region(Area::Terminal))
+                                                            .tab_stop(false)
                                                             .relative()
                                                             .w_full()
                                                             .h(px(self.terminal_drawer_height))
@@ -2203,6 +2211,11 @@ impl Render for HiveApp {
                                             row.child(
                                                 v_flex()
                                                     .id("git-right-drawer")
+                                                    .track_focus(self.workspace_focus.region(Area::Git))
+                                                    .tab_stop(false)
+                                                    .role(accesskit::Role::Region)
+                                                    .aria_label(tr("打开 Git 工作区"))
+                                                    .focus(|style| style.border_color(Color::Accent.get(cx)))
                                                     .relative()
                                                     .w(px(self.git_drawer_width))
                                                     .h_full()

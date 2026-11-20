@@ -532,8 +532,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 从工作树 A 的紧凑预览和 B 的展开预览点击相同的带空格链接。每次都只读取当前工作树的目标一次，并滚到各自不同位置的 `Linux` 标题。展开预览跟随后将目标显示在文件面板。缺失标题打开目标文件顶部。另将 A 的读回包延迟 7 秒，切换 B 并打开其源文件，A 回包没有触发滚动，随后 B 仍能打开自己的章节。证据在 `.artifacts/batch38-markdown-native`。
 - 326 项桌面 Rust 测试和 9 项终端 Rust 测试通过，1 项桌面测试原有忽略。TypeScript、终端运行时、文件运行时及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十九批
+
+本轮从 Hive Desktop `604d3aa` 开始。参考 T3 Code `d984b71`、Cindy `1db8327`、Beluga `eed1b7e`。Hive 上游 `main` 为 `18861b8`。
+
+- **收件箱可查看正在运行的顶层工作流。** 打开项目或跨项目收件箱，展开「等待 Agent」可进入具体运行和日志。每个项目最多读取 20 个运行中的记录。运行成功后从该区移除，失败或中断后原运行进入「需要关注」。新事项沿用原失败提醒规则。 [Cindy 收件箱运行中规则](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/docs/product-rules/task-inbox.md#L29-L46)
+- **用键盘在工作区可见区域间切换焦点。** 普通聊天页面用 F6 和 Shift+F6 双向循环。命令面板也能聚焦上一个或下一个区域。已隐藏的区域跳过，弹窗保留焦点。 [T3 Code 焦点切换](https://github.com/pingdotgg/t3code/blob/d984b71385910bd575d4ed10ae6c0d1caf48f008/docs/user/keyboard-focus.md#L13-L21)
+- **切回工作树时恢复文件预览。** 同一个窗口记住上次打开的紧凑预览。返回匹配的工作区和工作树后重新读取文件，并恢复之前的位置和显示方式。手动关闭预览后，切回工作树仍保持关闭。 [Beluga 按工作区显示预览](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/layout/panel/FilesTab.tsx#L181-L198)
+
+- macOS 项目和跨项目收件箱显示运行中的根记录。跨项目列表可分别打开 Atlas、Beacon 同名运行的原日志，子运行保持在工作流历史。Atlas 完成后刷新原详情，再返回时记录从列表移除。Beacon 失败后，同一运行 ID 进入「需要关注」并触发新提示。证据在 `.artifacts/batch39-inbox-native`。
+- macOS 通过 F6 和 Shift+F6 在输入框、历史、侧栏及文件查询间双向切换。回到输入框后从原光标位置继续输入，文件查询仍保留。关闭文件面板后按键跳过它，在展开的文件预览中按 F6 仍停在弹窗。终端 F6 路由由快捷键和终端专项覆盖。证据在 `.artifacts/batch39-files-native`。
+- macOS 打开工作树 A 的同名文件并读到第 2 页。切到 B 后在磁盘修改 A，返回 A 时收到一次精确到 A 工作树的重新读取请求，预览恢复第 2 页并显示新内容。在 B 打开新预览会替换此前记录。点 X 后切走再回来，预览保持关闭。另在 A 发出读取后切到 B，A 的延迟回包没有打开旧预览。证据在 `.artifacts/batch39-files-native`。
+- 运行时专项用真实顶层和子工作流核对独立上限、工作区范围、静默完成和同 ID 失败。332 项桌面 Rust 测试、9 项终端 Rust 测试通过，1 项桌面测试原有忽略。TypeScript、桌面运行时、文件运行时和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **在两个收件箱里查看正在运行的工作流。** 现在要进各项目工作流页才能看运行中记录。验收「等待 Agent」折叠区只显示顶层运行，能打开准确日志，成功后静默移除，失败后原运行转入「需要关注」并提示。 [Cindy 收件箱运行中规则](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/docs/product-rules/task-inbox.md#L29-L46)
-- **用键盘在侧栏、聊天、输入框和可见面板之间切换焦点。** 现在应先离开输入框才能查看部分常用区域。验收在已打开的文件面板与输入框间往返，保留查询和原光标，跳过隐藏区域，弹窗保留自己的焦点，终端继续收到已有的 F6 输入。 [T3 Code 焦点切换](https://github.com/pingdotgg/t3code/blob/b985057d3f0ae8d368d73f98585aeb639daffbed/docs/user/keyboard-focus.md#L13-L25)
-- **切回原工作树时恢复上次打开的紧凑预览。** 目前从 A 切到 B 再回来要重新打开文件。验收两个工作树的同名文件各自准确，返回后重新读取 A 并恢复原阅读位置，显式关闭的预览不会重开。 [Beluga 按工作区显示预览](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/layout/panel/FilesTab.tsx#L181-L198)
+- **在欢迎页指明 Codex 登录的下一步。** 已安装但没有凭据时，当前「配置」打开的是程序输入框。验收从欢迎页聚焦账号检查，未登录时可复制正确引用路径的登录命令，返回欢迎页后能重新检查。使用隔离认证目录和路径带空格的模拟程序。 [T3 Code 欢迎页](https://github.com/pingdotgg/t3code/blob/d984b71385910bd575d4ed10ae6c0d1caf48f008/docs/user/welcome-page.md#L23-L46)
+- **在跨项目收件箱筛选工作流记录。** 工作流占满列表时，当前只能逐个项目查问题和回复。验收开关随筛选保存，启用后隐藏工作流行及对应计数，保留回复、提问和「新事项」里的新失败。 [Cindy 隐藏自动化任务筛选](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/cc-agent/sidebar/SidebarFilterPopover.tsx#L891-L898)
+- **为展开的 Markdown 阅读器生成目录。** 阅读没有手写目录的长文时，目前只能滚动或查找。验收用键盘选中第二个同名标题和中文子标题，准确定位且无需再次读取文件。 [Beluga 生成目录](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/Outline.tsx#L56-L84)

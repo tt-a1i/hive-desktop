@@ -571,6 +571,11 @@ impl HiveApp {
         Some(
             v_flex()
                 .id("split-peek-right-drawer")
+                .track_focus(self.workspace_focus.region(crate::workspace_focus::Area::SplitPeek))
+                .tab_stop(false)
+                .role(accesskit::Role::Region)
+                .aria_label(tr("分屏对照"))
+                .focus(|style| style.border_color(Color::Accent.get(cx)))
                 .w(px(400.))
                 .h_full()
                 .flex_shrink_0()

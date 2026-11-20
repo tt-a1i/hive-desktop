@@ -219,8 +219,14 @@ impl<'a> InboxSections<'a> {
             let Some((current, row)) = latest.remove(id) else {
                 continue;
             };
+            // Surface the same run under Attention as soon as it needs the user.
+            let settled_workflow = *previous == Section::Waiting
+                && matches!(
+                    row.1.target,
+                    super::Destination::WorkflowRun { running: false, .. }
+                );
             if *previous != current
-                && (current == Section::Snoozed || *previous == Section::Snoozed)
+                && (settled_workflow || current == Section::Snoozed || *previous == Section::Snoozed)
                 && !(*previous == Section::Snoozed && expired.contains_key(id))
             {
                 moved.push((current, row));

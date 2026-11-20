@@ -14,7 +14,11 @@ use std::{
 
 gpui_kit::actions!(
     hive_desktop,
-    [NewSessionInCurrentProject, PromptStash, SendAndStartDraft, IncreaseReasoningEffort, DecreaseReasoningEffort]
+    [
+        NewSessionInCurrentProject, PromptStash, SendAndStartDraft, IncreaseReasoningEffort,
+        DecreaseReasoningEffort, FocusNextWorkspaceArea, FocusPreviousWorkspaceArea,
+        FocusNextFromTerminal, FocusPreviousFromTerminal
+    ]
 );
 
 pub(crate) const FILE: &str = "desktop-keybindings.json";
@@ -55,6 +59,8 @@ pub(crate) enum Target {
     Find,
     PreviousSession,
     NextSession,
+    FocusNextWorkspaceArea,
+    FocusPreviousWorkspaceArea,
     ToggleSidebar,
     ToggleTerminal,
     OpenGitWorkspace,
@@ -68,7 +74,7 @@ pub(crate) enum Target {
     Preferences,
 }
 
-const TARGETS: [Target; 18] = [
+const TARGETS: [Target; 20] = [
     Target::NewSession,
     Target::NewSessionCurrentProject,
     Target::Search,
@@ -76,6 +82,8 @@ const TARGETS: [Target; 18] = [
     Target::Find,
     Target::PreviousSession,
     Target::NextSession,
+    Target::FocusNextWorkspaceArea,
+    Target::FocusPreviousWorkspaceArea,
     Target::ToggleSidebar,
     Target::ToggleTerminal,
     Target::OpenGitWorkspace,
@@ -99,6 +107,8 @@ impl Target {
             Self::Find => 3,
             Self::PreviousSession => 4,
             Self::NextSession => 5,
+            Self::FocusNextWorkspaceArea => 18,
+            Self::FocusPreviousWorkspaceArea => 19,
             Self::ToggleSidebar => 6,
             Self::ToggleTerminal => 7,
             Self::OpenGitWorkspace => 8,
@@ -122,7 +132,9 @@ impl Target {
             | Self::Find
             | Self::PreviousSession
             | Self::NextSession => TargetGroup::Navigation,
-            Self::ToggleSidebar
+            Self::FocusNextWorkspaceArea
+            | Self::FocusPreviousWorkspaceArea
+            | Self::ToggleSidebar
             | Self::ToggleTerminal
             | Self::OpenGitWorkspace
             | Self::SearchProjectFiles => TargetGroup::Workspace,
@@ -145,6 +157,8 @@ impl Target {
             Self::Find => tr("查找会话内容"),
             Self::PreviousSession => tr("上一个会话"),
             Self::NextSession => tr("下一个会话"),
+            Self::FocusNextWorkspaceArea => tr("聚焦下一个工作区区域"),
+            Self::FocusPreviousWorkspaceArea => tr("聚焦上一个工作区区域"),
             Self::ToggleSidebar => tr("切换侧边栏"),
             Self::ToggleTerminal => tr("切换终端面板"),
             Self::OpenGitWorkspace => tr("打开 Git 工作区"),
@@ -168,6 +182,8 @@ impl Target {
             Self::Find => tr("在当前对话消息中搜索内容"),
             Self::PreviousSession => tr("按侧边栏顺序切换到上一条会话"),
             Self::NextSession => tr("按侧边栏顺序切换到下一条会话"),
+            Self::FocusNextWorkspaceArea => tr("将焦点移到下一个可见工作区区域"),
+            Self::FocusPreviousWorkspaceArea => tr("将焦点移到上一个可见工作区区域"),
             Self::ToggleSidebar => tr("展开或收起左侧工作区与会话导航栏"),
             Self::ToggleTerminal => tr("打开或收起当前工作区的终端面板"),
             Self::OpenGitWorkspace => tr("查看当前工作区 Git 状态与 diff"),
@@ -191,6 +207,8 @@ impl Target {
             Self::Find => "shortcut-find",
             Self::PreviousSession => "shortcut-previous-session",
             Self::NextSession => "shortcut-next-session",
+            Self::FocusNextWorkspaceArea => "shortcut-focus-next-workspace-area",
+            Self::FocusPreviousWorkspaceArea => "shortcut-focus-previous-workspace-area",
             Self::ToggleSidebar => "shortcut-toggle-sidebar",
             Self::ToggleTerminal => "shortcut-toggle-terminal",
             Self::OpenGitWorkspace => "shortcut-open-git",
@@ -223,6 +241,8 @@ impl Target {
             (Self::PreviousSession, false) => "ctrl-;",
             (Self::NextSession, true) => "cmd-'",
             (Self::NextSession, false) => "ctrl-'",
+            (Self::FocusNextWorkspaceArea, _) => "f6",
+            (Self::FocusPreviousWorkspaceArea, _) => "shift-f6",
             (Self::ToggleSidebar, true) => "cmd-b",
             (Self::ToggleSidebar, false) => "ctrl-b",
             (Self::ToggleTerminal, true) => "cmd-`",
@@ -249,11 +269,18 @@ impl Target {
     }
 
     fn context(self) -> Option<std::rc::Rc<KeyBindingContextPredicate>> {
-        self.composer_only().then(|| {
-            KeyBindingContextPredicate::parse("HiveComposer")
-                .expect("valid composer shortcut context")
-                .into()
-        })
+        let predicate = if self.composer_only() {
+            "HiveComposer"
+        } else if self.workspace_focus() {
+            "!HiveTerminal"
+        } else {
+            return None;
+        };
+        Some(KeyBindingContextPredicate::parse(predicate).expect("valid shortcut context").into())
+    }
+
+    fn workspace_focus(self) -> bool {
+        matches!(self, Self::FocusNextWorkspaceArea | Self::FocusPreviousWorkspaceArea)
     }
 
     fn composer_only(self) -> bool {
@@ -272,6 +299,8 @@ impl Target {
             Self::Find => Box::new(crate::OpenConversationFind),
             Self::PreviousSession => Box::new(crate::SelectPreviousSession),
             Self::NextSession => Box::new(crate::SelectNextSession),
+            Self::FocusNextWorkspaceArea => Box::new(FocusNextWorkspaceArea),
+            Self::FocusPreviousWorkspaceArea => Box::new(FocusPreviousWorkspaceArea),
             Self::ToggleSidebar => Box::new(crate::ToggleSidebar),
             Self::ToggleTerminal => Box::new(crate::ToggleWorkspaceTerminal),
             Self::OpenGitWorkspace => Box::new(crate::OpenGitWorkspaceShortcut),
@@ -296,6 +325,8 @@ pub(crate) struct Bindings {
     pub preferences: Option<String>,
     pub new_session: Option<String>,
     pub new_session_current_project: Option<String>,
+    pub focus_next_workspace_area: Option<String>,
+    pub focus_previous_workspace_area: Option<String>,
     pub toggle_sidebar: Option<String>,
     pub toggle_terminal: Option<String>,
     pub open_git_workspace: Option<String>,
@@ -329,6 +360,10 @@ struct StoredBindings {
     new_session: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
     new_session_current_project: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some_present")]
+    focus_next_workspace_area: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some_present")]
+    focus_previous_workspace_area: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
     toggle_sidebar: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
@@ -370,6 +405,8 @@ impl StoredBindings {
             (Target::Preferences, Some(self.preferences)),
             (Target::NewSession, self.new_session),
             (Target::NewSessionCurrentProject, self.new_session_current_project),
+            (Target::FocusNextWorkspaceArea, self.focus_next_workspace_area),
+            (Target::FocusPreviousWorkspaceArea, self.focus_previous_workspace_area),
             (Target::ToggleSidebar, self.toggle_sidebar),
             (Target::ToggleTerminal, self.toggle_terminal),
             (Target::OpenGitWorkspace, self.open_git_workspace),
@@ -432,6 +469,8 @@ impl Bindings {
             preferences: Target::Preferences.default(os).map(str::to_owned),
             new_session: Target::NewSession.default(os).map(str::to_owned),
             new_session_current_project: Target::NewSessionCurrentProject.default(os).map(str::to_owned),
+            focus_next_workspace_area: Target::FocusNextWorkspaceArea.default(os).map(str::to_owned),
+            focus_previous_workspace_area: Target::FocusPreviousWorkspaceArea.default(os).map(str::to_owned),
             toggle_sidebar: Target::ToggleSidebar.default(os).map(str::to_owned),
             toggle_terminal: Target::ToggleTerminal.default(os).map(str::to_owned),
             open_git_workspace: Target::OpenGitWorkspace.default(os).map(str::to_owned),
@@ -456,6 +495,8 @@ impl Bindings {
             Target::Find => &self.find,
             Target::PreviousSession => &self.previous_session,
             Target::NextSession => &self.next_session,
+            Target::FocusNextWorkspaceArea => &self.focus_next_workspace_area,
+            Target::FocusPreviousWorkspaceArea => &self.focus_previous_workspace_area,
             Target::ToggleSidebar => &self.toggle_sidebar,
             Target::ToggleTerminal => &self.toggle_terminal,
             Target::OpenGitWorkspace => &self.open_git_workspace,
@@ -479,6 +520,8 @@ impl Bindings {
             Target::Find => &mut self.find,
             Target::PreviousSession => &mut self.previous_session,
             Target::NextSession => &mut self.next_session,
+            Target::FocusNextWorkspaceArea => &mut self.focus_next_workspace_area,
+            Target::FocusPreviousWorkspaceArea => &mut self.focus_previous_workspace_area,
             Target::ToggleSidebar => &mut self.toggle_sidebar,
             Target::ToggleTerminal => &mut self.toggle_terminal,
             Target::OpenGitWorkspace => &mut self.open_git_workspace,
@@ -545,6 +588,12 @@ fn validate_chord_inner(
         return Ok(key);
     }
     let m = key.modifiers;
+    if target.is_some_and(Target::workspace_focus)
+        && key.key == "f6"
+        && (m == Modifiers::none() || m == Modifiers::shift())
+    {
+        return Ok(key);
+    }
     if (os == OperatingSystem::Mac && (!m.platform || m.control))
         || (os != OperatingSystem::Mac && (!m.control || m.platform || m.alt))
         || m.function
@@ -643,7 +692,7 @@ fn save(root: &Path, bindings: &Bindings, os: OperatingSystem) -> io::Result<()>
 
 pub(crate) fn startup_bindings(cx: &App) -> Vec<KeyBinding> {
     let os = cx.platform_info().os;
-    TARGETS
+    let mut bindings: Vec<_> = TARGETS
         .into_iter()
         .filter_map(|target| {
             let chord = target.default(os)?;
@@ -652,17 +701,34 @@ pub(crate) fn startup_bindings(cx: &App) -> Vec<KeyBinding> {
                     .expect("valid default Hive shortcut"),
             )
         })
-        .collect()
+        .collect();
+    let (next, previous) = if os == OperatingSystem::Mac {
+        ("cmd-f6", "cmd-shift-f6")
+    } else {
+        ("ctrl-f6", "ctrl-shift-f6")
+    };
+    let context = KeyBindingContextPredicate::parse("HiveTerminal").expect("valid terminal context");
+    for (chord, action) in [
+        (next, Box::new(FocusNextFromTerminal) as Box<dyn Action>),
+        (previous, Box::new(FocusPreviousFromTerminal)),
+    ] {
+        bindings.push(
+            KeyBinding::load(chord, action, Some(context.clone().into()), false, None, cx)
+                .expect("valid terminal focus shortcut"),
+        );
+    }
+    bindings
 }
 
-fn managed_composer_binding(binding: &KeyBinding) -> bool {
+fn managed_scoped_binding(binding: &KeyBinding) -> bool {
     TARGETS.into_iter().any(|target| {
-        target.composer_only() && target.action().name() == binding.action().name()
+        (target.composer_only() || target.workspace_focus())
+            && target.action().name() == binding.action().name()
     })
 }
 
 fn protected_binding(binding: &KeyBinding) -> bool {
-    if managed_composer_binding(binding) {
+    if managed_scoped_binding(binding) {
         return false;
     }
     binding.predicate().is_some() || !TARGETS
@@ -739,7 +805,7 @@ fn replace_bindings(keymap: &mut Keymap, changes: BindingChanges) {
         return;
     }
     keymap.retain_bindings(|binding| {
-        (binding.predicate().is_some() && !managed_composer_binding(binding))
+        (binding.predicate().is_some() && !managed_scoped_binding(binding))
             || !changes.iter().any(|(action, _)| *action == binding.action().name())
     });
     keymap.add_bindings(changes.into_iter().filter_map(|(_, binding)| binding));

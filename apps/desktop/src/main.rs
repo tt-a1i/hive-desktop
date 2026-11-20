@@ -75,6 +75,7 @@ mod transport;
 mod ui_preview;
 mod usage;
 mod view;
+mod workspace_focus;
 mod workspace_actions;
 mod welcome;
 

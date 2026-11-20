@@ -43,6 +43,7 @@ interface InboxQuestion { workspaceId: string; dispatchId: string; messageId: st
 type ActionableMessageSource = {listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[]};
 interface InboxDispatchInput { dispatchId: string; sequence: number | null; createdAt: number | null }
 interface InboxWorkflowRun { id: string; name: string | null; finishedAt: number; status?: 'failed' | 'interrupted' }
+interface InboxRunningWorkflowRun { id: string; name: string | null; startedAt: number }
 interface InboxActionableRow {
     kind: 'question_waiting_answer' | 'message_delivery_pending';
     dispatch_id: string;
@@ -74,7 +75,8 @@ const INBOX_PREVIEW_LIMIT = 96;
 const INBOX_MESSAGE_SAMPLE = 384;
 const INBOX_WORKFLOW_LIMIT = 20;
 const INBOX_WORKFLOW_ID_LIMIT = 64;
-const INBOX_WORKFLOW_PROJECTION = `id, substr(name, 1, ${INBOX_MESSAGE_SAMPLE}) AS name, finished_at AS finishedAt`;
+const INBOX_WORKFLOW_NAME = `substr(name, 1, ${INBOX_MESSAGE_SAMPLE}) AS name`;
+const INBOX_WORKFLOW_PROJECTION = `id, ${INBOX_WORKFLOW_NAME}, finished_at AS finishedAt`;
 const INBOX_WORKFLOW_SCOPE = `
     FROM workflow_runs
     WHERE workspace_id = ? AND parent_run_id IS NULL AND finished_at > 0
@@ -228,7 +230,9 @@ export function withInboxDispatchBackends(
 export interface SavedScriptContext {scriptRunId: string; cwd: string; command: string; sessionId?: string}
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
-    inboxWorkflowFailures(workspaceId: string, includeInterrupted?: boolean): {workspaceId: string; runs: InboxWorkflowRun[]; limited: boolean};
+    inboxWorkflowFailures(workspaceId: string, includeInterrupted?: boolean, includeRunning?: boolean): {
+        workspaceId: string; runs: InboxWorkflowRun[]; limited: boolean; runningRuns?: InboxRunningWorkflowRun[];
+    };
     inboxWorkflowRunsById(workspaceId: string, ids: unknown): {workspaceId: string; runs: InboxWorkflowRun[]};
     inboxWorkflowFailureBadge(workspaceIds: readonly string[], includeInterrupted?: boolean): {workspaceId: string; runIds: string[]}[];
     inboxDispatchMessage(workspaceId: string, dispatchId: string, messageId: string): ReturnType<typeof serializeDispatchMessage> | null;
@@ -344,18 +348,33 @@ export async function createHiveHost({
         (db.prepare('SELECT COALESCE(MAX(rowid), 0) AS cursor FROM dispatch_messages').get() as {cursor: number}).cursor;
 	return {
 		port: runtime.port,
-        inboxWorkflowFailures(workspaceId, includeInterrupted = false) {
+        inboxWorkflowFailures(workspaceId, includeInterrupted = false, includeRunning = false) {
             if (closing) throw new Error('Hive host is closed');
             if (!workspaceScope().has(workspaceId)) throw new Error('Unknown Inbox workspace');
-            // Order by settlement time. A long-running workflow can
-            // finish after newer runs. Nested runs stay in Workflows.
-            const records = readInboxStore().prepare(`
-                SELECT ${INBOX_WORKFLOW_PROJECTION} ${includeInterrupted ? ', status' : ''}
-                ${INBOX_WORKFLOW_SCOPE}
-                ORDER BY finished_at DESC, rowid DESC LIMIT ?
-            `).all(workspaceId, Number(includeInterrupted), INBOX_WORKFLOW_LIMIT + 1) as InboxWorkflowRun[];
-            return {workspaceId, runs: records.slice(0, INBOX_WORKFLOW_LIMIT)
-                .map(run => ({...run, name: inboxLinePreview(run.name)})), limited: records.length > INBOX_WORKFLOW_LIMIT};
+            const db = readInboxStore();
+            const readFailures = () => {
+                // A long-running workflow can finish after newer runs.
+                const records = db.prepare(`
+                    SELECT ${INBOX_WORKFLOW_PROJECTION} ${includeInterrupted ? ', status' : ''}
+                    ${INBOX_WORKFLOW_SCOPE}
+                    ORDER BY finished_at DESC, rowid DESC LIMIT ?
+                `).all(workspaceId, Number(includeInterrupted), INBOX_WORKFLOW_LIMIT + 1) as InboxWorkflowRun[];
+                return {workspaceId, runs: records.slice(0, INBOX_WORKFLOW_LIMIT)
+                    .map(run => ({...run, name: inboxLinePreview(run.name)})), limited: records.length > INBOX_WORKFLOW_LIMIT};
+            };
+            if (!includeRunning) return readFailures();
+            // Both sections describe a single point in the run's lifecycle.
+            return db.transaction(() => {
+                const failures = readFailures();
+                const runningRuns = db.prepare(`
+                    SELECT id, ${INBOX_WORKFLOW_NAME}, started_at AS startedAt
+                    FROM workflow_runs
+                    WHERE workspace_id = ? AND parent_run_id IS NULL
+                      AND status = 'running' AND finished_at IS NULL AND started_at > 0
+                    ORDER BY started_at DESC, rowid DESC LIMIT ?
+                `).all(workspaceId, INBOX_WORKFLOW_LIMIT) as InboxRunningWorkflowRun[];
+                return {...failures, runningRuns: runningRuns.map(run => ({...run, name: inboxLinePreview(run.name)}))};
+            })();
         },
         inboxWorkflowRunsById(workspaceId, ids) {
             if (closing) throw new Error('Hive host is closed');

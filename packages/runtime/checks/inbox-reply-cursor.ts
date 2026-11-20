@@ -513,7 +513,7 @@ try {
   assert.deepEqual(await readFailures(foreign.id), foreignFailures);
   console.log('INBOX_WORKFLOW_BADGE_OK: compact capped identities for both workspaces, verified empty versus omitted, no writes');
 
-  type Run = {id: string; workspace_id: string; script_path: string; status: string; finished_at: number | null; parent_run_id: string | null};
+  type Run = {id: string; workspace_id: string; script_path: string; status: string; started_at: number; finished_at: number | null; parent_run_id: string | null};
   const readRun = async (id: string) => (await wire!.request<{run: Run}>('hive.request', {
     method: 'GET', path: `/api/workflows/runs/${id}`,
   })).run;
@@ -523,9 +523,14 @@ try {
   const listRuns = async () => (await wire!.request<{runs: Run[]}>('hive.request', {
     method: 'GET', path: `/api/workspaces/${workflowWorkspace.id}/workflows/runs`,
   })).runs;
-  const readAttention = (workspaceId: string) => wire!.request<{
+  type AttentionRuns = {
     workspaceId: string; runs: {id: string; name: string | null; finishedAt: number; status: string}[]; limited: boolean;
-  }>('inbox.workflowFailures', {workspaceId, includeInterrupted: true});
+  };
+  const readAttention = (workspaceId: string) =>
+    wire!.request<AttentionRuns>('inbox.workflowFailures', {workspaceId, includeInterrupted: true});
+  const readOpenInbox = (workspaceId: string) => wire!.request<AttentionRuns & {
+    runningRuns: {id: string; name: string | null; startedAt: number}[];
+  }>('inbox.workflowFailures', {workspaceId, includeInterrupted: true, includeRunning: true});
   const readAttentionBadge = (workspaceIds: string[]) => wire!.request<{
     workspaceId: string; runIds: string[];
   }[]>('inbox.workflowFailureBadge', {workspaceIds, includeInterrupted: true});
@@ -533,7 +538,9 @@ try {
     workspaceId: string; runs: {id: string; name: string | null; finishedAt: number; status: string}[];
   }>('inbox.workflowRunsById', {workspaceId, runIds});
   await assert.rejects(wire.request('inbox.workflowFailures', {workspaceId: workflowWorkspace.id, includeInterrupted: 'yes'}));
+  await assert.rejects(wire.request('inbox.workflowFailures', {workspaceId: workflowWorkspace.id, includeRunning: 'yes'}));
   await assert.rejects(wire.request('inbox.workflowFailureBadge', {workspaceIds: [workflowWorkspace.id], includeInterrupted: 1}));
+  await assert.rejects(wire.request('inbox.workflowFailureBadge', {workspaceIds: [workflowWorkspace.id], includeRunning: true}));
   await wire.request('hive.request', {
     method: 'PUT', path: '/api/settings/workflow-feature', body: {enabled: true},
   });
@@ -570,7 +577,47 @@ try {
   assert.equal(child.finished_at, null);
   const originalLogs = await readLogs(parent.id);
   assert.ok(originalLogs.some(log => log.message === parentLog));
-  assert.deepEqual((await readAttention(workflowWorkspace.id)).runs.map(run => run.id), failures.runs.map(run => run.id));
+  const attention = await readAttention(workflowWorkspace.id);
+  assert.deepEqual(attention.runs.map(run => run.id), failures.runs.map(run => run.id));
+  assert.deepEqual(await readOpenInbox(workflowWorkspace.id), {
+    ...attention,
+    runningRuns: [{id: parent.id, name: runName, startedAt: parent.started_at}],
+  });
+  assert.deepEqual(await readExactRuns(workflowWorkspace.id, [parent.id, child.id]), {workspaceId: workflowWorkspace.id, runs: []});
+  assert.deepEqual(await readAttentionBadge([workflowWorkspace.id]), [
+    {workspaceId: workflowWorkspace.id, runIds: failures.runs.map(run => run.id)},
+  ]);
+
+  const runningDb = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'));
+  const otherRunningIds = Array.from({length: 22}, () => randomUUID());
+  const settledFailure = otherRunningIds.at(-1)!;
+  const settledQuietly = otherRunningIds.at(-2)!;
+  try {
+    const insert = runningDb.prepare(`INSERT INTO workflow_runs
+      (id, workspace_id, script_path, name, status, started_at, created_at, parent_run_id)
+      VALUES (?, ?, 'fixture-workflow', ?, 'running', ?, ?, ?)`);
+    otherRunningIds.forEach((id, index) => {
+      insert.run(id, without.id, runName, workflowTime + index, workflowTime + index, null);
+    });
+    insert.run(randomUUID(), without.id, 'Child', workflowTime + 100, workflowTime + 100, settledFailure);
+    const otherInbox = await readOpenInbox(without.id);
+    assert.equal(otherInbox.limited, false);
+    assert.deepEqual(otherInbox.runs, []);
+    assert.deepEqual(otherInbox.runningRuns.map(run => run.id), otherRunningIds.slice(2).reverse());
+    assert.deepEqual(await readAttentionBadge([without.id]), [{workspaceId: without.id, runIds: []}]);
+
+    const settle = runningDb.prepare('UPDATE workflow_runs SET status = ?, finished_at = ? WHERE id = ?');
+    const finishedAt = Date.now();
+    settle.run('completed', finishedAt, settledQuietly);
+    settle.run('failed', finishedAt, settledFailure);
+    const settled = await readOpenInbox(without.id);
+    assert.deepEqual(settled.runningRuns.map(run => run.id), otherRunningIds.slice(0, -2).reverse());
+    assert.deepEqual(settled.runs, [{id: settledFailure, name: runName, finishedAt, status: 'failed'}]);
+    assert.deepEqual(await readAttentionBadge([without.id]), [{workspaceId: without.id, runIds: [settledFailure]}]);
+    runningDb.prepare("UPDATE workflow_runs SET status = 'completed', finished_at = ? WHERE status = 'running' AND workspace_id = ?")
+      .run(finishedAt, without.id);
+  } finally { runningDb.close(); }
+  console.log('INBOX_WORKFLOW_RUNNING_OK: exact top-level live workflow and original log, workspace and child isolation, independent caps, no running badge, quiet completion and same-ID failure');
   await wire.crash();
   // Inspect the closed database before the replacement process applies its startup sweep.
   const crashedDb = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'), {readOnly: true});
@@ -598,10 +645,11 @@ try {
   assert.deepEqual(interrupted.runs[0], {id: parent.id, name: runName, finishedAt: restored.finished_at, status: 'interrupted'});
   assert.ok(interrupted.runs.slice(1).every(run => run.status === 'failed'));
   assert.deepEqual(interrupted.runs.map(run => run.id), expectedIds);
+  assert.deepEqual(await readOpenInbox(workflowWorkspace.id), {...interrupted, runningRuns: []});
   assert.deepEqual(await readAttentionBadge([workflowWorkspace.id, foreign.id, without.id, randomUUID()]), [
     {workspaceId: workflowWorkspace.id, runIds: expectedIds},
     {workspaceId: foreign.id, runIds: foreignFailures.runs.map(run => run.id)},
-    {workspaceId: without.id, runIds: []},
+    {workspaceId: without.id, runIds: [settledFailure]},
   ]);
   assert.deepEqual(await readFailures(workflowWorkspace.id), failures);
   assert.deepEqual(await compactWorkflowFailures([workflowWorkspace.id]), [

@@ -62,10 +62,12 @@ impl BadgeItem {
                     session: session.id.clone(),
                 })
             }
-            Destination::WorkflowRun(run) if entry.priority == Priority::NeedsUser => {
+            Destination::WorkflowRun { id, running: false }
+                if entry.priority == Priority::NeedsUser =>
+            {
                 Some(Self::WorkflowRun {
                     workspace: workspace.into(),
-                    run: run.clone(),
+                    run: id.clone(),
                 })
             }
             _ => None,

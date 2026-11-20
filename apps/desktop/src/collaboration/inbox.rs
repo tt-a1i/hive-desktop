@@ -15,6 +15,7 @@ use crate::{
     transport::Runtime,
 };
 use gpui_kit::{
+    assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
         dialog::Confirm,
@@ -48,6 +49,7 @@ pub(super) struct Inbox {
     workflow_runs: Option<WorkflowRuns>,
     workflow_runs_error: bool,
     reminders: Reminders,
+    show_waiting: bool,
     show_snoozed: bool,
     section_depth: SectionDepth,
     return_position: Option<ProjectInboxPosition>,
@@ -115,6 +117,16 @@ struct WorkflowRuns {
     workspace_id: String,
     runs: Vec<WorkflowRun>,
     limited: bool,
+    #[serde(default)]
+    running_runs: Vec<RunningWorkflowRun>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunningWorkflowRun {
+    id: String,
+    name: Option<String>,
+    started_at: u64,
 }
 
 const RECENT_WORKFLOW_LIMIT: usize = 20;
@@ -131,45 +143,76 @@ fn valid_workflow_runs(runs: &[WorkflowRun], valid_id: impl Fn(&str) -> bool) ->
     let mut seen = HashSet::new();
     runs.iter().all(|run| {
         run.finished_at > 0
-            && run.id.len() == 36
-            && uuid::Uuid::try_parse(&run.id).is_ok()
+            && valid_workflow_id(&run.id)
             && seen.insert(&run.id)
             && valid_id(&run.id)
     })
 }
 
+fn valid_workflow_id(id: &str) -> bool {
+    id.len() == 36 && uuid::Uuid::try_parse(id).is_ok()
+}
+
 impl WorkflowRuns {
     fn verified(&self, workspace: &str) -> bool {
+        let mut ids: HashSet<_> = self.runs.iter().map(|run| &run.id).collect();
         self.workspace_id == workspace
             && self.runs.len() <= RECENT_WORKFLOW_LIMIT
             && valid_workflow_runs(&self.runs, |_| true)
+            && self.running_runs.len() <= RECENT_WORKFLOW_LIMIT
+            && self.running_runs.iter().all(|run| {
+                run.started_at > 0 && valid_workflow_id(&run.id) && ids.insert(&run.id)
+            })
     }
 
     fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
         let mut suffixes = BTreeMap::new();
-        for run in &self.runs {
-            *suffixes.entry(short_uuid(&run.id)).or_insert(0) += 1;
+        let ids = self.runs
+            .iter()
+            .map(|run| &run.id)
+            .chain(self.running_runs.iter().map(|run| &run.id));
+        for id in ids {
+            *suffixes.entry(short_uuid(id)).or_insert(0) += 1;
         }
-        self.runs.iter().map(move |run| {
-            let short = short_uuid(&run.id);
-            run.entry(if suffixes[short] > 1 { &run.id } else { short })
+        let mut settled = self.runs.iter();
+        let mut running = self.running_runs.iter();
+        std::iter::from_fn(move || {
+            let use_short = |id: &str| suffixes[short_uuid(id)] == 1;
+            settled
+                .next()
+                .map(|run| run.entry(use_short(&run.id)))
+                .or_else(|| running.next().map(|run| run.entry(use_short(&run.id))))
         })
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        self.runs.iter().any(|run| run.id == id)
+            || self.running_runs.iter().any(|run| run.id == id)
     }
 }
 
+fn workflow_subject(name: Option<&str>, id: &str, use_short: bool) -> String {
+    name.map_or_else(
+        || id.to_owned(),
+        |name| {
+            let label = if use_short { short_uuid(id) } else { id };
+            format!("{name} · {label}")
+        },
+    )
+}
+
 impl WorkflowRun {
-    fn entry(&self, id_label: &str) -> Entry {
-        let subject = self.name.as_ref().map_or_else(
-            || self.id.clone(),
-            |name| format!("{name} · {id_label}"),
-        );
+    fn entry(&self, use_short: bool) -> Entry {
         Entry {
             label: match self.status {
                 WorkflowRunStatus::Failed => "工作流运行失败",
                 WorkflowRunStatus::Interrupted => "工作流运行中断",
             },
-            subject,
-            target: Destination::WorkflowRun(self.id.clone()),
+            subject: workflow_subject(self.name.as_deref(), &self.id, use_short),
+            target: Destination::WorkflowRun {
+                id: self.id.clone(),
+                running: false,
+            },
             dispatch_backend: None,
             related_members: [None, None],
             snooze_key: Some(workflow_run_key(&self.id)),
@@ -177,6 +220,26 @@ impl WorkflowRun {
             priority: Priority::NeedsUser,
             updated_at: self.finished_at,
             activity_at: self.finished_at,
+        }
+    }
+}
+
+impl RunningWorkflowRun {
+    fn entry(&self, use_short: bool) -> Entry {
+        Entry {
+            label: "工作流运行中",
+            subject: workflow_subject(self.name.as_deref(), &self.id, use_short),
+            target: Destination::WorkflowRun {
+                id: self.id.clone(),
+                running: true,
+            },
+            dispatch_backend: None,
+            related_members: [None, None],
+            snooze_key: None,
+            wake: None,
+            priority: Priority::Active,
+            updated_at: self.started_at,
+            activity_at: self.started_at,
         }
     }
 }
@@ -216,7 +279,7 @@ async fn read_workflow_runs(
     let value = runtime
         .request(
             "inbox.workflowFailures",
-            json!({"workspaceId": workspace, "includeInterrupted": true}),
+            json!({"workspaceId": workspace, "includeInterrupted": true, "includeRunning": true}),
         )
         .await
         .ok()?;
@@ -786,7 +849,7 @@ enum Destination {
     Dispatch(String),
     DispatchMessage { dispatch: String, message: String },
     Member(String),
-    WorkflowRun(String),
+    WorkflowRun { id: String, running: bool },
 }
 
 impl Destination {
@@ -795,7 +858,7 @@ impl Destination {
             Self::Session(_) => "打开会话",
             Self::Dispatch(_) | Self::DispatchMessage { .. } => "派单详情",
             Self::Member(_) => "团队成员",
-            Self::WorkflowRun(_) => "工作流",
+            Self::WorkflowRun { .. } => "工作流",
         }
     }
 
@@ -805,7 +868,7 @@ impl Destination {
             Self::Dispatch(id) => format!("dispatch:{id}"),
             Self::DispatchMessage { message, .. } => format!("message:{message}"),
             Self::Member(id) => format!("member:{id}"),
-            Self::WorkflowRun(id) => workflow_run_key(id),
+            Self::WorkflowRun { id, .. } => workflow_run_key(id),
         }
     }
 }
@@ -907,7 +970,7 @@ impl Entry {
             Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
                 self.dispatch_backend == Some(backend)
             }
-            Destination::Member(_) | Destination::WorkflowRun(_) => false,
+            Destination::Member(_) | Destination::WorkflowRun { .. } => false,
         })
     }
 
@@ -1655,6 +1718,7 @@ impl HiveApp {
                 .then(|| inbox.reminders.snoozed_until(entry, now))
                 .flatten()
         });
+        let show_waiting = current && inbox.show_waiting;
         let show_snoozed = current && inbox.show_snoozed;
         let has_snoozed = !sections.snoozed.is_empty();
         let has_items = !sections.attention.is_empty()
@@ -1670,7 +1734,8 @@ impl HiveApp {
             .clone()
             .filter(|_| current && !inbox.loading);
         if let Some(position) = &restore
-            && let Some((section, index)) = sections.position(&position.row, true, show_snoozed)
+            && let Some((section, index)) =
+                sections.position(&position.row, show_waiting, show_snoozed)
         {
             depth.include_row(section, index);
         }
@@ -1692,6 +1757,9 @@ impl HiveApp {
             }
             let count = items.len();
             rows.push(ProjectInboxItem::Heading(section, count));
+            if section == Section::Waiting && !show_waiting {
+                continue;
+            }
             rows.extend(
                 items
                     .into_iter()
@@ -1851,6 +1919,27 @@ impl HiveApp {
                 row_list.children(rows.into_iter().enumerate().map(|(index, row)| {
                     let (workspace, entry) = match row {
                         ProjectInboxItem::Row(row) => row,
+                        ProjectInboxItem::Heading(Section::Waiting, count) => {
+                            let scope = workspace.to_owned();
+                            return Reveal::new(
+                                Section::Waiting.heading_id(),
+                                scroll,
+                                waiting_toggle_button(show_waiting, count).on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        if this.workspace.as_deref() == Some(&scope)
+                                            && this.collaboration.inbox.workspace.as_deref()
+                                                == Some(&scope)
+                                        {
+                                            let inbox = &mut this.collaboration.inbox;
+                                            inbox.show_waiting = !inbox.show_waiting;
+                                            inbox.return_position = None;
+                                            cx.notify();
+                                        }
+                                    },
+                                )),
+                            )
+                            .into_any_element();
+                        }
                         ProjectInboxItem::Heading(section, count) => {
                             return global::section_title(
                                 section.heading_id(),
@@ -1991,18 +2080,18 @@ impl HiveApp {
                                     window,
                                     cx,
                                 ),
-                                Destination::WorkflowRun(id) => {
+                                Destination::WorkflowRun { id, running } => {
                                     let inbox = &this.collaboration.inbox;
                                     if this.workspace_removing.as_deref() == Some(&workspace)
                                         || !inbox.workflow_runs.as_ref().is_some_and(|runs| {
                                             runs.workspace_id == workspace
-                                                && runs.runs.iter().any(|run| run.id == *id)
+                                                && runs.contains(id)
                                         })
                                     {
                                         return;
                                     }
                                     this.collaboration.inbox.return_position = Some(position);
-                                    this.open_inbox_workflow(id.clone(), window, cx);
+                                    this.open_inbox_workflow(id.clone(), *running, window, cx);
                                 }
                             }
                         }),
@@ -2166,6 +2255,21 @@ fn toggle_button(show_snoozed: bool) -> Button {
         } else {
             tr("显示已暂缓事项")
         })
+}
+
+fn waiting_toggle_button(expanded: bool, count: usize) -> Button {
+    let (icon, action) = if expanded {
+        (Glyph::ChevronDown, tr("收起等待 Agent 的事项"))
+    } else {
+        (Glyph::ChevronRight, tr("展开等待 Agent 的事项"))
+    };
+    Button::new("toggle-waiting-inbox")
+        .ghost()
+        .compact()
+        .xsmall()
+        .icon(icon)
+        .label(format!("{} ({count})", tr("等待 Agent")))
+        .accessibility_label(format!("{action} ({count})"))
 }
 
 fn inbox_status(text: impl Into<SharedString>, cx: &App) -> AnyElement {

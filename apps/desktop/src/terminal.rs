@@ -291,6 +291,11 @@ impl HiveApp {
         let view = self.terminal.view.clone();
         crate::appearance::sync_terminal(&view, cx);
     }
+    pub(crate) fn workspace_terminal_focus(&self, cx: &App) -> Option<FocusHandle> {
+        self.can_type_in_terminal()
+            .then(|| self.terminal.view.read(cx).focus_handle().clone())
+    }
+
     fn can_type_in_terminal(&self) -> bool {
         self.connected
             && self.terminal.visible

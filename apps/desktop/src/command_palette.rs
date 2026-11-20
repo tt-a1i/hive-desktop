@@ -27,6 +27,7 @@ enum PaletteAction {
         source_revision: u64,
     },
     CopyDraft { project: String, source_revision: u64 },
+    FocusWorkspaceArea { forward: bool },
     ToggleSidebar,
     ToggleTerminal,
     OpenGit,
@@ -240,6 +241,22 @@ impl HiveApp {
             icon: Glyph::Link,
             action: PaletteAction::OpenConversationReference,
         });
+        if self.viewing_conversation() && !self.showing_welcome_guide {
+            use crate::keybindings::Target;
+            for (target, forward) in [
+                (Target::FocusNextWorkspaceArea, true),
+                (Target::FocusPreviousWorkspaceArea, false),
+            ] {
+                items.push(PaletteItem {
+                    group: "操作",
+                    title: target.label().to_owned(),
+                    subtitle: Some(target.description().to_owned()),
+                    keywords: "focus workspace area panel keyboard f6 焦点 工作区 区域".into(),
+                    icon: Glyph::Columns2,
+                    action: PaletteAction::FocusWorkspaceArea { forward },
+                });
+            }
+        }
         items.push(PaletteItem {
             group: "操作",
             title: tr("打开或收起侧栏").to_owned(),
@@ -394,6 +411,9 @@ impl CommandPalette {
                 }
                 PaletteAction::CopyDraft { project, source_revision } => {
                     this.begin_draft_copy(project, source_revision, window, cx);
+                }
+                PaletteAction::FocusWorkspaceArea { forward } => {
+                    this.focus_workspace_area(forward, window, cx);
                 }
                 PaletteAction::ToggleSidebar => {
                     this.sidebar_open = !this.sidebar_open;

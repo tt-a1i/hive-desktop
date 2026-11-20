@@ -499,3 +499,61 @@ fn layout_failure_is_separate_from_unresolved_read_and_save_errors() {
         assert!(matches!(&state.notice, Some(Notice::Read(_)) | Some(Notice::Save(_))));
     }
 }
+
+#[test]
+fn workspace_focus_defaults_are_scoped_away_from_terminal_input() {
+    use super::{FocusNextFromTerminal, FocusNextWorkspaceArea, FocusPreviousWorkspaceArea};
+    use gpui_kit::KeyContext;
+
+    let keymap = Keymap::new(vec![
+        KeyBinding::new("f6", FocusNextWorkspaceArea, Some("!HiveTerminal")),
+        KeyBinding::new("shift-f6", FocusPreviousWorkspaceArea, Some("!HiveTerminal")),
+        KeyBinding::new("cmd-f6", FocusNextFromTerminal, Some("HiveTerminal")),
+    ]);
+    let workspace = KeyContext::parse("HiveWorkspace").unwrap();
+    let sidebar = [workspace.clone()];
+    let composer = [
+        workspace.clone(),
+        KeyContext::parse("HiveConversation").unwrap(),
+        KeyContext::parse("HiveComposer").unwrap(),
+        KeyContext::parse("Textarea").unwrap(),
+    ];
+    let terminal = [
+        workspace,
+        KeyContext::parse("HiveConversation").unwrap(),
+        KeyContext::parse("HiveTerminal").unwrap(),
+    ];
+    let forward = Keystroke::parse("f6").unwrap();
+    let backward = Keystroke::parse("shift-f6").unwrap();
+    let modified = Keystroke::parse("cmd-f6").unwrap();
+
+    for key in [forward, backward] {
+        for inside_workspace in [&sidebar[..], &composer[..]] {
+            assert_eq!(
+                keymap
+                    .bindings_for_input(std::slice::from_ref(&key), inside_workspace)
+                    .0
+                    .len(),
+                1
+            );
+        }
+        assert!(keymap.bindings_for_input(&[key], &terminal).0.is_empty());
+    }
+    assert_eq!(keymap.bindings_for_input(&[modified], &terminal).0.len(), 1);
+}
+
+#[test]
+fn existing_shortcut_files_get_workspace_focus_defaults_and_keep_disabled_overrides() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    for os in [OperatingSystem::Mac, OperatingSystem::Windows] {
+        fs::write(&path, r#"{"version":1,"bindings":{"search":null,"find":null,"preferences":null}}"#).unwrap();
+        let mut bindings = load(root.path(), os, identity).unwrap();
+        assert_eq!(bindings.get(Target::FocusNextWorkspaceArea).as_deref(), Some("f6"));
+        assert_eq!(bindings.get(Target::FocusPreviousWorkspaceArea).as_deref(), Some("shift-f6"));
+        assert!(Target::Search.validate("f6", os).is_err());
+        bindings.set(Target::FocusNextWorkspaceArea, None);
+        save(root.path(), &bindings, os).unwrap();
+        assert_eq!(load(root.path(), os, identity).unwrap(), bindings);
+    }
+}

@@ -25,7 +25,7 @@ use super::{
     OPEN_INBOX_MEMBER_FAILED, Reminders, SNOOZE_CHANGED, WorkflowRuns, activity_matches,
     inbox_open_button, inbox_row, inbox_status, is_snoozed, read_action_center,
     read_workflow_runs, session_inbox_activity, show_more_button, toggle_button,
-    verify_inbox_member,
+    verify_inbox_member, waiting_toggle_button,
 };
 use crate::{
     app::HiveApp,
@@ -636,8 +636,14 @@ impl HiveApp {
                 self.navigate_to_session(session.clone(), window, cx);
             }
             Destination::Session(_) | Destination::Member(_) => {}
-            Destination::WorkflowRun(run) => {
-                self.open_global_inbox_workflow(workspace.to_owned(), run.clone(), window, cx);
+            Destination::WorkflowRun { id, running } => {
+                self.open_global_inbox_workflow(
+                    workspace.to_owned(),
+                    id.clone(),
+                    *running,
+                    window,
+                    cx,
+                );
             }
             Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
                 // Open the actual workspace first. The dispatch detail then
@@ -2464,7 +2470,7 @@ impl Render for GlobalInbox {
                         );
                         return;
                     }
-                    if matches!(target, Destination::WorkflowRun(_)) {
+                    if matches!(target, Destination::WorkflowRun { .. }) {
                         this.dismiss_for_workflow(cx);
                     } else {
                         this.dismiss(cx);
@@ -2622,23 +2628,12 @@ impl Render for GlobalInbox {
         if !sections.waiting.is_empty() || section_counts[Section::Waiting as usize] > 0 {
             let section = Section::Waiting;
             let count = section_counts[section as usize];
-            let (icon, action) = if self.preferences.values.show_waiting {
-                (Glyph::ChevronDown, tr("收起等待 Agent 的事项"))
-            } else {
-                (Glyph::ChevronRight, tr("展开等待 Agent 的事项"))
-            };
             items.push((
                 None,
                 Reveal::new(
                     "global-inbox-waiting",
                     &self.scroll,
-                    Button::new("toggle-waiting-inbox")
-                        .ghost()
-                        .compact()
-                        .xsmall()
-                        .icon(icon)
-                        .label(format!("{} ({count})", tr("等待 Agent")))
-                        .accessibility_label(format!("{action} ({count})"))
+                    waiting_toggle_button(self.preferences.values.show_waiting, count)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.preferences.values.show_waiting =
                                 !this.preferences.values.show_waiting;
@@ -2917,6 +2912,65 @@ mod tests {
     }
 
     #[test]
+    fn running_workflow_becomes_attention_and_new_without_changing_the_row_identity() {
+        use super::{Reminders, RowPlacement};
+        use crate::collaboration::inbox::Snoozes;
+
+        let root = tempfile::tempdir().unwrap();
+        let workspace = "12345678-1234-1234-1234-123456789000";
+        let run = "12345678-1234-1234-1234-123456789001";
+        let mut items = HashSet::new();
+        let reminders = Reminders {
+            saved: Some(Snoozes::load(root.path(), workspace).unwrap()),
+            ..Reminders::default()
+        };
+        let sections = |snapshot: &WorkflowRuns| {
+            InboxSections::from_rows(
+                snapshot.entries().map(|entry| (workspace, entry)).collect(),
+                |_, entry| reminders.snoozed_until(entry, 20),
+            )
+        };
+        let running: WorkflowRuns = serde_json::from_value(json!({
+            "workspaceId": workspace, "limited": false, "runs": [],
+            "runningRuns": [{"id": run, "name": "Daily audit", "startedAt": 10}],
+        }))
+        .unwrap();
+        assert!(running.verified(workspace));
+        let waiting = sections(&running);
+        assert!(waiting.attention.is_empty());
+        assert!(waiting.snoozed.is_empty());
+        let entry = &waiting.waiting[0].1;
+        assert_eq!(entry.label, "工作流运行中");
+        assert!(entry.snooze_key.is_none());
+        assert!(entry.wake.is_none());
+        assert!(BadgeItem::from_entry(workspace, entry, true).is_none());
+        let id = RowId::for_entry(workspace, entry);
+        update_workflow_new_items(&mut items, &running, &reminders, 20);
+        assert!(items.is_empty());
+
+        let mut placement = RowPlacement::default();
+        placement.arrange(waiting, None, true, false);
+        let failed: WorkflowRuns = serde_json::from_value(json!({
+            "workspaceId": workspace, "limited": false, "runningRuns": [],
+            "runs": [{"id": run, "name": "Daily audit", "finishedAt": 20, "status": "failed"}],
+        }))
+        .unwrap();
+        let attention = placement.arrange(sections(&failed), Some(&id), true, false);
+        assert!(attention.waiting.is_empty());
+        let entry = &attention.attention[0].1;
+        assert_eq!(id, RowId::for_entry(workspace, entry));
+        assert!(entry.snooze_key.is_some());
+        update_workflow_new_items(&mut items, &failed, &reminders, 20);
+        assert_eq!(
+            items,
+            HashSet::from([BadgeItem::WorkflowRun {
+                workspace: workspace.into(),
+                run: run.into(),
+            }])
+        );
+    }
+
+    #[test]
     fn reopening_new_items_suppresses_only_the_seen_run_and_keeps_both_attention_rows() {
         use crate::collaboration::inbox::Snoozes;
 
@@ -2952,7 +3006,7 @@ mod tests {
             snapshot
                 .entries()
                 .filter_map(|entry| match entry.target {
-                    super::Destination::WorkflowRun(run) => Some(run),
+                    super::Destination::WorkflowRun { id, .. } => Some(id),
                     _ => None,
                 })
                 .collect::<Vec<_>>(),

@@ -36,8 +36,14 @@ pub struct Workflows {
 }
 
 enum InboxWorkflowOrigin {
-    Project,
-    Global { workspace: String, sidebar_open: bool },
+    Project {
+        running: bool,
+    },
+    Global {
+        workspace: String,
+        sidebar_open: bool,
+        running: bool,
+    },
 }
 pub enum WorkflowError { Refresh(String), Action(String), Unconfirmed }
 impl WorkflowError {
@@ -97,24 +103,43 @@ struct Snapshot {
 
 type RunDetails = (Run, Vec<Dispatch>, Vec<Log>);
 
-fn run_matches(run: &Run, workspace: &str, id: &str, inbox: bool) -> bool {
-    run.id == id
-        && run.workspace_id == workspace
-        && (!inbox
-            || matches!(run.status.as_str(), "failed" | "interrupted")
-                && run.parent_run_id.is_none()
-                && run.finished_at.is_some_and(|time| time > 0))
+#[derive(Clone, Copy, PartialEq)]
+enum RunReadScope {
+    History,
+    InboxAttention,
+    InboxRunning,
+}
+
+fn run_matches(run: &Run, workspace: &str, id: &str, scope: RunReadScope) -> bool {
+    if run.id != id || run.workspace_id != workspace {
+        return false;
+    }
+    if scope == RunReadScope::History {
+        return true;
+    }
+    if run.parent_run_id.is_some() {
+        return false;
+    }
+    let finished = run.finished_at.is_some_and(|time| time > 0);
+    match run.status.as_str() {
+        "failed" | "interrupted" => finished,
+        "completed" | "stopped" => scope == RunReadScope::InboxRunning && finished,
+        "running" => {
+            scope == RunReadScope::InboxRunning && run.started_at > 0 && run.finished_at.is_none()
+        }
+        _ => false,
+    }
 }
 
 async fn read_run_details(
     runtime: &crate::transport::Runtime,
     workspace: &str,
     id: &str,
-    inbox: bool,
+    scope: RunReadScope,
 ) -> Result<RunDetails, String> {
     let path = format!("/api/workflows/runs/{id}");
     let RunDetail { run } = read(runtime, path.clone()).await?;
-    if !run_matches(&run, workspace, id, inbox) {
+    if !run_matches(&run, workspace, id, scope) {
         return Err(tr("无法打开工作流运行").into());
     }
     let (dispatches, logs) = smol::future::zip(
@@ -171,20 +196,26 @@ impl HiveApp {
     pub(crate) fn open_inbox_workflow(
         &mut self,
         id: String,
+        running: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_workflow_inbox_detail(id, InboxWorkflowOrigin::Project, window, cx);
+        self.open_workflow_inbox_detail(id, InboxWorkflowOrigin::Project { running }, window, cx);
     }
 
     pub(crate) fn open_global_inbox_workflow(
         &mut self,
         workspace: String,
         id: String,
+        running: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let origin = InboxWorkflowOrigin::Global { workspace, sidebar_open: self.sidebar_open };
+        let origin = InboxWorkflowOrigin::Global {
+            workspace,
+            sidebar_open: self.sidebar_open,
+            running,
+        };
         self.open_workflow_inbox_detail(id, origin, window, cx);
     }
 
@@ -252,15 +283,25 @@ impl HiveApp {
         state.generation += 1;
         let generation = state.generation;
         let selected = state.selected.clone();
-        let inbox = state.inbox_origin.is_some();
+        let scope = match &state.inbox_origin {
+            Some(
+                InboxWorkflowOrigin::Project { running }
+                | InboxWorkflowOrigin::Global { running, .. },
+            ) => if *running {
+                RunReadScope::InboxRunning
+            } else {
+                RunReadScope::InboxAttention
+            },
+            None => RunReadScope::History,
+        };
         let connection = self.connection_generation;
         cx.spawn(async move |this, cx| {
             let result: Result<(Option<Snapshot>, Option<RunDetails>), String> = async {
-                if inbox {
+                if scope != RunReadScope::History {
                     let id = selected.as_deref().ok_or(tr("无法打开工作流运行"))?;
                     return Ok((
                         None,
-                        Some(read_run_details(&runtime, &workspace, id, true).await?),
+                        Some(read_run_details(&runtime, &workspace, id, scope).await?),
                     ));
                 }
                 let runs: Runs = read(
@@ -278,7 +319,7 @@ impl HiveApp {
                 let policy: Policy =
                     read(&runtime, "/api/settings/workflow-cli-policy".into()).await?;
                 let detail = if let Some(id) = selected {
-                    Some(read_run_details(&runtime, &workspace, &id, false).await?)
+                    Some(read_run_details(&runtime, &workspace, &id, scope).await?)
                 } else {
                     None
                 };
@@ -390,7 +431,7 @@ impl HiveApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{Run, run_matches};
+    use super::{Run, RunReadScope, run_matches};
     use serde_json::json;
 
     #[test]
@@ -401,21 +442,35 @@ mod tests {
             "finished_at": 20, "agent_count": 0, "args": null, "result": null,
         }))
         .unwrap();
-        assert!(run_matches(&run, "atlas", "selected", true));
+        let attention = RunReadScope::InboxAttention;
+        let running = RunReadScope::InboxRunning;
+        assert!(run_matches(&run, "atlas", "selected", attention));
         run.status = "interrupted".into();
-        assert!(run_matches(&run, "atlas", "selected", true));
-        assert!(!run_matches(&run, "beacon", "selected", true));
-        assert!(!run_matches(&run, "atlas", "different", true));
+        assert!(run_matches(&run, "atlas", "selected", attention));
+        assert!(!run_matches(&run, "beacon", "selected", attention));
+        assert!(!run_matches(&run, "atlas", "different", attention));
         run.parent_run_id = Some("outer".into());
-        assert!(!run_matches(&run, "atlas", "selected", true));
-        assert!(run_matches(&run, "atlas", "selected", false));
+        assert!(!run_matches(&run, "atlas", "selected", attention));
+        assert!(run_matches(&run, "atlas", "selected", RunReadScope::History));
         run.parent_run_id = None;
         run.finished_at = None;
-        assert!(!run_matches(&run, "atlas", "selected", true));
-        run.finished_at = Some(20);
+        assert!(!run_matches(&run, "atlas", "selected", attention));
+        assert!(!run_matches(&run, "atlas", "selected", running));
         for status in ["completed", "stopped", "running"] {
             run.status = status.into();
-            assert!(!run_matches(&run, "atlas", "selected", true));
+            assert!(!run_matches(&run, "atlas", "selected", attention));
+        }
+        assert!(run_matches(&run, "atlas", "selected", running));
+        assert!(!run_matches(&run, "beacon", "selected", running));
+        assert!(!run_matches(&run, "atlas", "different", running));
+        run.parent_run_id = Some("outer".into());
+        assert!(!run_matches(&run, "atlas", "selected", running));
+        run.parent_run_id = None;
+        run.finished_at = Some(20);
+        assert!(!run_matches(&run, "atlas", "selected", running));
+        for status in ["completed", "stopped", "failed", "interrupted"] {
+            run.status = status.into();
+            assert!(run_matches(&run, "atlas", "selected", running));
         }
     }
 }

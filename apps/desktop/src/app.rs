@@ -185,6 +185,7 @@ pub struct HiveApp {
     pub git_drawer_drag: Option<(f32, f32)>,
     pub terminal_drawer_height: f32,
     pub terminal_drawer_drag: Option<(f32, f32)>,
+    pub(crate) workspace_focus: crate::workspace_focus::WorkspaceFocus,
     pub(crate) git_workspace: Option<Entity<crate::git_workspace::GitWorkspace>>,
     pub input: Entity<TextareaState>,
     pub(crate) prompt_history: crate::prompt_history::PromptHistory,
@@ -478,6 +479,26 @@ impl HiveApp {
             },
             window,
         );
+        Self::register_guarded_action::<crate::keybindings::FocusNextWorkspaceArea>(
+            cx,
+            |this, window, cx| this.focus_workspace_area(true, window, cx),
+            window,
+        );
+        Self::register_guarded_action::<crate::keybindings::FocusPreviousWorkspaceArea>(
+            cx,
+            |this, window, cx| this.focus_workspace_area(false, window, cx),
+            window,
+        );
+        Self::register_guarded_action::<crate::keybindings::FocusNextFromTerminal>(
+            cx,
+            |this, window, cx| this.focus_workspace_area(true, window, cx),
+            window,
+        );
+        Self::register_guarded_action::<crate::keybindings::FocusPreviousFromTerminal>(
+            cx,
+            |this, window, cx| this.focus_workspace_area(false, window, cx),
+            window,
+        );
         Self::register_guarded_action::<crate::ToggleSidebar>(
             cx,
             |this, _window, cx| {
@@ -738,6 +759,7 @@ impl HiveApp {
             git_drawer_drag: None,
             terminal_drawer_height: 240.,
             terminal_drawer_drag: None,
+            workspace_focus: crate::workspace_focus::WorkspaceFocus::new(window, cx),
             git_workspace: None,
             interface_locale: None,
             add_workspace_open: false,

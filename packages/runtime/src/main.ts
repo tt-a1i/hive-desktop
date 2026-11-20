@@ -455,12 +455,18 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'inbox.workflowFailures':
     case 'inbox.workflowFailureBadge': {
       const detailed = method === 'inbox.workflowFailures';
-      exact(params, [detailed ? 'workspaceId' : 'workspaceIds', 'includeInterrupted']);
+      exact(params, detailed ? ['workspaceId', 'includeInterrupted', 'includeRunning'] : ['workspaceIds', 'includeInterrupted']);
       const {includeInterrupted} = params;
       if (includeInterrupted !== undefined && typeof includeInterrupted !== 'boolean') {
         throw new Error('includeInterrupted must be a boolean');
       }
-      if (detailed) return hive.inboxWorkflowFailures(text(params, 'workspaceId'), includeInterrupted);
+      if (detailed) {
+        const {includeRunning} = params;
+        if (includeRunning !== undefined && typeof includeRunning !== 'boolean') {
+          throw new Error('includeRunning must be a boolean');
+        }
+        return hive.inboxWorkflowFailures(text(params, 'workspaceId'), includeInterrupted, includeRunning);
+      }
       const ids = params.workspaceIds;
       if (!Array.isArray(ids) || ids.length > 32 || !ids.every(id => typeof id === 'string' && id.length <= 64)) {
         throw new Error('Expected up to 32 inbox workspace identities');

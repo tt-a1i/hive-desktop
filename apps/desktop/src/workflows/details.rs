@@ -134,7 +134,7 @@ impl HiveApp {
                                         .text_color(run_badge_fg),
                                     ),
                             )
-                            .when(run.status == "running", |row| {
+                            .when(run.status == "running" && self.workflows.inbox_origin.is_none(), |row| {
                                 row.child(
                                     Button::new("workflow-stop")
                                         .danger()

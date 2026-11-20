@@ -471,6 +471,35 @@ impl HiveApp {
                     });
                 }
             })
+            .id("conversation-history")
+            .track_focus(self.workspace_focus.region(crate::workspace_focus::Area::History))
+            .tab_stop(false)
+            .role(accesskit::Role::Region)
+            .aria_label(crate::language::tr("会话历史"))
+            .border_b_1()
+            .border_color(gpui_kit::transparent_black())
+            .focus(|style| style.border_color(crate::palette::Color::Accent.get(cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if !this.workspace_focus.region(crate::workspace_focus::Area::History).is_focused(window)
+                    || event.keystroke.modifiers != Modifiers::none()
+                {
+                    return;
+                }
+                let state = &this.conversation_list.state;
+                let page = (window.viewport_size().height * 0.5).max(px(40.));
+                match event.keystroke.key.as_str() {
+                    "up" => state.scroll_by(-px(40.)),
+                    "down" => state.scroll_by(px(40.)),
+                    "pageup" => state.scroll_by(-page),
+                    "pagedown" => state.scroll_by(page),
+                    "home" => state.scroll_to(ListOffset { item_ix: 0, offset_in_item: px(0.) }),
+                    "end" => state.scroll_to_end(),
+                    _ => return,
+                }
+                this.schedule_reading_position_save(cx);
+                cx.notify();
+                cx.stop_propagation();
+            }))
             .relative()
             .flex()
             .flex_1()

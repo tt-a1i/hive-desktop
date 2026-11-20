@@ -48,7 +48,7 @@ impl HiveApp {
 
         let topbar_back = if let Some(origin) = &state.inbox_origin {
             let sidebar_open = match origin {
-                super::InboxWorkflowOrigin::Project => None,
+                super::InboxWorkflowOrigin::Project { .. } => None,
                 super::InboxWorkflowOrigin::Global { sidebar_open, .. } => Some(*sidebar_open),
             };
             Button::new("workflow-return-to-inbox")

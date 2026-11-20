@@ -819,6 +819,8 @@ impl HiveApp {
         let show_working_project = self.workspaces.len() > 1 && selected_filter.is_none();
 
         v_flex()
+            .track_focus(self.workspace_focus.region(crate::workspace_focus::Area::Sidebar))
+            .tab_stop(false)
             .relative()
             .when(narrow, |view| view.flex_1().min_w_0())
             .when(!narrow, |view| {
