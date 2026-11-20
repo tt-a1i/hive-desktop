@@ -4,7 +4,7 @@ import { mkdtemp, realpath, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DispatchMessageRecord } from "@tt-a1i/hive/dist/src/shared/team-collaboration.js";
-import { createHiveHost, HiveHttpError, withInboxMessageSenders } from "../src/hive-host.js";
+import { createHiveHost, HiveHttpError, withInboxDispatchBackends, withInboxMessageSenders } from "../src/hive-host.js";
 
 const olderQuestion = {kind: 'question_waiting_answer', message_id: 'older-question', dispatch_id: 'first-dispatch'};
 const snapshot = {
@@ -26,6 +26,22 @@ assert.deepEqual(withInboxMessageSenders(snapshot, 'workspace-a', source), {
 	attention: [{...olderQuestion, message_sender_id: 'worker'}, ...snapshot.attention.slice(1)],
 });
 assert.equal(withInboxMessageSenders(snapshot, 'workspace-b', source), snapshot);
+const dispatchId = '123e4567-e89b-12d3-a456-426614174000';
+const unattributed = '123e4567-e89b-12d3-a456-426614174001';
+const backendSnapshot = {...snapshot, attention: [
+	{...olderQuestion, dispatch_id: dispatchId, message_sender_id: 'worker'},
+	{kind: 'message_delivery_pending', dispatch_id: dispatchId},
+	{kind: 'dispatch_waiting_report', dispatch_id: unattributed, dispatch_backend: 'pi'},
+	{kind: 'stopped_with_queue', worker_id: 'worker', dispatch_backend: 'pi'},
+]};
+const lookups: [string, string][] = [];
+assert.deepEqual(withInboxDispatchBackends(backendSnapshot, 'workspace-a', (workspace, id) => {
+	lookups.push([workspace, id]);
+	return id === dispatchId ? 'codex' : undefined;
+}), {...backendSnapshot, attention: backendSnapshot.attention.map((row, index) => ({
+	...row, dispatch_backend: index < 2 ? 'codex' : null,
+}))});
+assert.deepEqual(lookups, [['workspace-a', dispatchId], ['workspace-a', unattributed]]);
 
 const root = await mkdtemp(join(tmpdir(), "hive-desktop-host-check-"));
 const previousDataDir = process.env.HIVE_DATA_DIR;

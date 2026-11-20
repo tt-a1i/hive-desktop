@@ -226,6 +226,15 @@ try {
   const nextCompleted = (await rpc('chat.search', {...query, offset: 2})).result;
   assert.ok(nextCompleted.matches.every((hit: any) =>
     !completed.matches.some((old: any) => old.session.id === hit.session.id)));
+  assert.ok(!completed.matches.some((hit: any) => hit.session.id === ids[1]));
+  const codexPage = (await rpc('chat.search', {...query, backend: 'codex', workspaceId, limit: 1})).result;
+  assert.equal(codexPage.total, 1);
+  assert.deepEqual(codexPage.matches.map((hit: any) => [hit.session.id, hit.session.backend]), [[ids[1], 'codex']]);
+  assert.equal((await rpc('chat.search', {...query, backend: 'codex', workspaceId: other.result.id})).result.total, 0);
+  const externalPi = (await rpc('chat.search', {...query, backend: 'pi-rpc'})).result;
+  assert.deepEqual(externalPi.matches.map((hit: any) => hit.session.id), [ids[2]]);
+  assert.ok((await rpc('chat.search', {...query, backend: 'external-pi'})).error);
+  assert.ok((await rpc('chat.search', {...query, backend: 'pi', navigationOnly: false})).error);
   assert.ok((await rpc('chat.search', {...query, memberId: 'reviewer'})).error);
   assert.ok((await rpc('chat.search', {...query, limit: 101})).error);
   assert.ok((await rpc('chat.search', {...query, query: 'search transcript'})).error);

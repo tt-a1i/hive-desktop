@@ -131,7 +131,7 @@ pub struct IncompleteHistory {
     pub title: String,
     pub message: String,
 }
-#[derive(Clone, Copy, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
     #[default]

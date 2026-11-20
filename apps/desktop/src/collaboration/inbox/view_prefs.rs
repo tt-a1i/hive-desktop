@@ -1,4 +1,4 @@
-use crate::protocol::{Member, Workspace};
+use crate::protocol::{Backend, Member, Workspace};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -22,6 +22,7 @@ pub(super) struct MemberFilter {
 pub(super) struct InboxViewPreferences {
     pub(super) project_filter: Option<String>,
     pub(super) member_filter: Option<MemberFilter>,
+    pub(super) backend_filter: Option<Backend>,
     pub(super) show_waiting: bool,
     pub(super) show_snoozed: bool,
 }
@@ -140,7 +141,7 @@ fn save(root: &Path, values: &InboxViewPreferences) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FILE, MemberFilter, SAVE_FAILED, ViewPreferences, load};
+    use super::{Backend, FILE, MemberFilter, SAVE_FAILED, ViewPreferences, load};
     use crate::protocol::Workspace;
 
     fn workspace(id: &str) -> Workspace {
@@ -158,6 +159,7 @@ mod tests {
         let mut view = ViewPreferences::default();
         view.restore_root(Some(first.path()));
         view.values.project_filter = Some("selected".into());
+        view.values.backend_filter = Some(Backend::PiRpc);
         view.values.show_waiting = true;
         view.values.show_snoozed = true;
         view.save_changed();
@@ -166,10 +168,12 @@ mod tests {
         reopened.restore_root(Some(first.path()));
         assert!(!reopened.forget_unavailable(Some(&[workspace("other"), workspace("selected")])));
         assert_eq!(reopened.values.project_filter.as_deref(), Some("selected"));
+        assert_eq!(reopened.values.backend_filter, Some(Backend::PiRpc));
         assert!(reopened.values.show_waiting);
         assert!(reopened.values.show_snoozed);
         assert!(reopened.restore_root(Some(second.path())));
         assert!(reopened.values.project_filter.is_none());
+        assert!(reopened.values.backend_filter.is_none());
         assert!(!reopened.values.show_waiting);
         assert!(!reopened.values.show_snoozed);
         assert!(!second.path().join(FILE).exists());

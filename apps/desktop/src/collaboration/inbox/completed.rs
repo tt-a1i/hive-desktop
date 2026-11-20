@@ -4,7 +4,7 @@ use crate::{
     focus_scroll::Reveal,
     language::{localize_owned_error, tr},
     palette::Color,
-    protocol::{Session, SessionHit},
+    protocol::{Backend, Session, SessionHit},
     sessions::search::Page,
     transport::Runtime,
 };
@@ -27,6 +27,7 @@ pub(super) struct Scope {
     pub(super) connection: u64,
     pub(super) workspace: Option<String>,
     pub(super) member: Option<String>,
+    pub(super) backend: Option<Backend>,
     pub(super) workspaces: BTreeSet<String>,
 }
 
@@ -41,6 +42,9 @@ impl Scope {
                 .member
                 .as_deref()
                 .is_none_or(|id| session.display_agent_id() == Some(id))
+            && self
+                .backend
+                .is_none_or(|backend| session.backend == backend)
     }
 }
 
@@ -55,6 +59,9 @@ pub(super) async fn read_page(
     }
     if let Some(member) = &scope.member {
         params["memberId"] = json!(member);
+    }
+    if let Some(backend) = scope.backend {
+        params["backend"] = json!(backend.wire());
     }
     let value = runtime.search(params).await?;
     let mut page: Page = serde_json::from_value(value).map_err(|error| error.to_string())?;
@@ -339,18 +346,24 @@ mod tests {
             connection: 4,
             workspace: Some(workspace.to_owned()),
             member: Some("reviewer".into()),
+            backend: None,
             workspaces: BTreeSet::from([workspace.to_owned()]),
         };
         let mut completed = Completed::default();
         completed.change_scope(Some(scope("atlas")));
         let old = completed.generation;
-        completed.change_scope(Some(scope("beacon")));
+        let mut beacon_scope = scope("beacon");
+        beacon_scope.backend = Some(crate::protocol::Backend::Pi);
+        completed.change_scope(Some(beacon_scope.clone()));
         let generation = completed.generation;
         let beacon = hit("beacon", "first", "reviewer");
         let atlas = hit("atlas", "first", "reviewer");
-        assert!(scope("beacon").contains(&beacon.session));
-        assert!(!scope("beacon").contains(&atlas.session));
-        assert!(!scope("beacon").contains(&hit("beacon", "other", "wrong").session));
+        assert!(beacon_scope.contains(&beacon.session));
+        assert!(!beacon_scope.contains(&atlas.session));
+        assert!(!beacon_scope.contains(&hit("beacon", "other", "wrong").session));
+        let mut wrong_backend = beacon.session.clone();
+        wrong_backend.backend = crate::protocol::Backend::PiRpc;
+        assert!(!beacon_scope.contains(&wrong_backend));
         let page = |matches, total| {
             Ok(Page {
                 matches,

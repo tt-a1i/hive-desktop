@@ -5,10 +5,12 @@ mod search;
 mod session_row;
 mod width;
 mod working;
+pub(crate) use search::SidebarSearch;
 pub(crate) use width::SidebarPreferences;
 mod settings;
 use crate::app::HiveApp;
 use crate::palette::{self, Color};
+use crate::protocol::Session;
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::{
     component::{
@@ -20,6 +22,84 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use std::collections::HashSet;
+
+fn step_visible_session<'a>(
+    rows: impl IntoIterator<Item = &'a Session>,
+    current: Option<&str>,
+    delta: isize,
+) -> Option<&'a Session> {
+    let mut seen = HashSet::new();
+    let visible: Vec<_> = rows
+        .into_iter()
+        .filter(|row| seen.insert(row.id.as_str()))
+        .collect();
+    match visible
+        .iter()
+        .position(|row| current == Some(row.id.as_str()))
+    {
+        Some(index) if visible.len() > 1 => {
+            let next = (index as isize + delta).rem_euclid(visible.len() as isize) as usize;
+            Some(visible[next])
+        }
+        Some(_) => None,
+        None if delta < 0 => visible.last().copied(),
+        None => visible.first().copied(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_visible_session;
+    use crate::protocol::Session;
+
+    fn row(id: &str, workspace: &str) -> Session {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "workspaceId": workspace, "title": "Same title",
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn sidebar_step_uses_visible_ids_and_keeps_the_first_appearance() {
+        let alpha_pin = row("alpha-pin", "alpha");
+        let beta_pin = row("beta-pin", "beta");
+        let alpha_ordinary = row("alpha-ordinary", "alpha");
+        let alpha_working = row("alpha-working", "alpha");
+        let visible = [
+            &alpha_pin,
+            &beta_pin,
+            &alpha_ordinary,
+            &alpha_pin,
+            &alpha_working,
+        ];
+        let next = |rows: &[&Session], current, delta| {
+            step_visible_session(rows.iter().copied(), current, delta).map(|row| row.id.clone())
+        };
+
+        for (current, delta, expected) in [
+            (Some("alpha-pin"), 1, "beta-pin"),
+            (Some("alpha-ordinary"), 1, "alpha-working"),
+            (Some("alpha-working"), 1, "alpha-pin"),
+            (Some("beta-pin"), -1, "alpha-pin"),
+            (None, 1, "alpha-pin"),
+            (None, -1, "alpha-working"),
+        ] {
+            assert_eq!(next(&visible, current, delta).as_deref(), Some(expected));
+        }
+        let collapsed_pins = [&alpha_ordinary, &alpha_pin];
+        assert_eq!(
+            next(&collapsed_pins, Some("beta-pin"), 1).as_deref(),
+            Some("alpha-ordinary")
+        );
+        assert_eq!(
+            next(&collapsed_pins, Some("alpha-ordinary"), 1).as_deref(),
+            Some("alpha-pin")
+        );
+        assert_eq!(next(&[&alpha_pin], Some("alpha-pin"), 1), None);
+        assert_eq!(next(&[], None, 1), None);
+    }
+}
 
 impl HiveApp {
     pub(crate) fn has_active_team_context(&self) -> bool {
@@ -413,7 +493,6 @@ impl HiveApp {
 
     fn render_filter_navigation(
         &self,
-        filter_ws: Entity<Option<String>>,
         selected_filter: Option<String>,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -442,7 +521,6 @@ impl HiveApp {
             .selected(filter_active)
             .dropdown_menu(move |mut menu, window, cx| {
                 if workspaces.len() > 1 {
-                    let all_state = filter_ws.clone();
                     let weak_all = weak.clone();
                     let is_all = selected_filter.is_none();
                     menu = menu.item(
@@ -450,11 +528,8 @@ impl HiveApp {
                             .icon(if is_all { Glyph::Check } else { Glyph::Layers })
                             .checked(is_all)
                             .on_click(move |_, _, cx| {
-                                all_state.update(cx, |state, cx| {
-                                    *state = None;
-                                    cx.notify();
-                                });
                                 let _ = weak_all.update(cx, |this, cx| {
+                                    this.sidebar_workspace_filter = None;
                                     let missing: Vec<String> = this
                                         .workspaces
                                         .iter()
@@ -468,13 +543,13 @@ impl HiveApp {
                                     for id in missing {
                                         this.toggle_project(id, cx);
                                     }
+                                    cx.notify();
                                 });
                             }),
                     );
                     for ws in &workspaces {
                         let ws_id = ws.id.clone();
                         let ws_id_click = ws_id.clone();
-                        let ws_state = filter_ws.clone();
                         let weak_ws = weak.clone();
                         let is_checked = selected_filter.as_deref() == Some(ws_id.as_str());
                         menu = menu.item(
@@ -486,12 +561,10 @@ impl HiveApp {
                                 })
                                 .checked(is_checked)
                                 .on_click(move |_, _, cx| {
-                                    ws_state.update(cx, |state, cx| {
-                                        *state = Some(ws_id_click.clone());
-                                        cx.notify();
-                                    });
                                     let _ = weak_ws.update(cx, |this, cx| {
+                                        this.sidebar_workspace_filter = Some(ws_id_click.clone());
                                         this.select_workspace(ws_id_click.clone(), cx);
+                                        cx.notify();
                                     });
                                 }),
                         );
@@ -558,6 +631,99 @@ impl HiveApp {
             })
     }
 
+    fn sidebar_filtered_workspace(&self) -> Option<&str> {
+        self.sidebar_workspace_filter
+            .as_deref()
+            .filter(|id| self.workspaces.iter().any(|workspace| workspace.id == *id))
+    }
+
+    fn sidebar_conversation_sections(&self, cx: &App) -> working::SidebarSessions<'_> {
+        let selected_filter = self.sidebar_filtered_workspace();
+        // Collect flat unarchived sessions across workspaces (or filtered to a workspace).
+        let mut flat_sessions: Vec<&Session> = Vec::new();
+        let mut seen_ids = HashSet::new();
+        let general = crate::general::current(cx);
+        for workspace in self.sorted_projects(cx) {
+            if selected_filter.is_some_and(|filter| filter != workspace.id) {
+                continue;
+            }
+            let items: Option<&[Session]> =
+                if Some(&workspace.id) == self.workspace.as_ref() && !self.sessions.is_empty() {
+                    Some(self.sessions.as_slice())
+                } else {
+                    self.project_sessions.get(&workspace.id).map(Vec::as_slice)
+                };
+            if let Some(items) = items {
+                for session in items {
+                    if !session.archived
+                        && !self.removed_sessions.contains(&session.id)
+                        && seen_ids.insert(session.id.as_str())
+                    {
+                        flat_sessions.push(session);
+                    }
+                }
+            }
+        }
+        if self.workspaces.len() > 1
+            && selected_filter.is_none()
+            && general.project_sort_order == crate::general::ProjectSortOrder::RecentActivity
+        {
+            flat_sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        }
+        if general.pin_active_sessions_top {
+            let mut active = Vec::new();
+            let mut inactive = Vec::new();
+            for session in flat_sessions {
+                if self.is_session_active(&session.id) {
+                    active.push(session);
+                } else {
+                    inactive.push(session);
+                }
+            }
+            active.extend(inactive);
+            flat_sessions = active;
+        }
+
+        self.sidebar_session_sections(flat_sessions, general.fold_working_sessions)
+    }
+
+    pub(crate) fn sidebar_session_step(&self, delta: isize, cx: &App) -> Option<Session> {
+        // Search owns its own selection and body-match open action. When the
+        // whole sidebar is hidden, its normal ordering still works by keyboard.
+        if self.sidebar_open && self.sidebar_search.read(cx).active(cx) {
+            return None;
+        }
+        let mut rows: Vec<_> = self
+            .visible_pinned_navigation_hits()
+            .map(|hit| &hit.session)
+            .collect();
+        if !self.projects_collapsed {
+            let sections = self.sidebar_conversation_sections(cx);
+            rows.extend(sections.regular);
+            rows.extend(
+                sections
+                    .working
+                    .iter()
+                    .flat_map(|project| self.visible_working_sessions(project)),
+            );
+        }
+        let available = rows.into_iter().filter(|session| {
+            !session.archived
+                && !self.removed_sessions.contains(&session.id)
+                && self.workspace_removing.as_deref() != Some(session.workspace_id.as_str())
+                && self
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.id == session.workspace_id)
+        });
+        step_visible_session(
+            available,
+            self.session.as_ref().map(|session| session.id.as_str()),
+            delta,
+        )
+        .cloned()
+    }
+
     pub fn render_navigation(
         &self,
         narrow: bool,
@@ -566,27 +732,13 @@ impl HiveApp {
     ) -> impl IntoElement {
         let terminal_enabled =
             self.connected && self.workspace.is_some() && self.workspace_writes_allowed();
-        let filter_ws_state = window.use_keyed_state(
-            SharedString::from("sidebar-workspace-filter"),
-            cx,
-            |_, _| None::<String>,
-        );
-        let selected_filter = filter_ws_state
-            .read(cx)
-            .as_ref()
-            .filter(|id| self.workspaces.iter().any(|ws| &ws.id == *id))
-            .cloned();
-        let weak = cx.weak_entity();
-        let search = window.use_keyed_state(
-            SharedString::from("sidebar-inline-search"),
-            cx,
-            |window, cx| search::SidebarSearch::new(weak, window, cx),
-        );
+        let selected_filter = self.sidebar_filtered_workspace();
+        let search = self.sidebar_search.clone();
         search.update(cx, |search, cx| {
             search.sync(
                 self.runtime.clone().filter(|_| self.connected),
                 self.connection_generation,
-                selected_filter.clone(),
+                selected_filter.map(str::to_owned),
                 window,
                 cx,
             )
@@ -638,69 +790,20 @@ impl HiveApp {
             }
         }
 
-        // Collect flat unarchived sessions across workspaces (or filtered to a workspace).
-        let mut flat_sessions: Vec<&crate::protocol::Session> = Vec::new();
-        let mut seen_ids = std::collections::HashSet::new();
-        let general = crate::general::current(cx);
-        for workspace in self.sorted_projects(cx) {
-            if selected_filter
-                .as_ref()
-                .is_some_and(|filter| filter != &workspace.id)
-            {
-                continue;
-            }
-            let items: Option<&[crate::protocol::Session]> =
-                if Some(&workspace.id) == self.workspace.as_ref() && !self.sessions.is_empty() {
-                    Some(self.sessions.as_slice())
-                } else {
-                    self.project_sessions.get(&workspace.id).map(Vec::as_slice)
-                };
-            if let Some(items) = items {
-                for session in items {
-                    if !session.archived
-                        && !self.removed_sessions.contains(&session.id)
-                        && seen_ids.insert(session.id.as_str())
-                    {
-                        flat_sessions.push(session);
-                    }
-                }
-            }
-        }
-        if self.workspaces.len() > 1
-            && selected_filter.is_none()
-            && general.project_sort_order == crate::general::ProjectSortOrder::RecentActivity
-        {
-            flat_sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        }
-        if general.pin_active_sessions_top {
-            let mut active = Vec::new();
-            let mut inactive = Vec::new();
-            for session in flat_sessions {
-                if self.is_session_active(&session.id) {
-                    active.push(session);
-                } else {
-                    inactive.push(session);
-                }
-            }
-            active.extend(inactive);
-            flat_sessions = active;
-        }
-
+        let sessions = self.sidebar_conversation_sections(cx);
+        let session_count = sessions.len();
         let active_workspace = self
             .workspace
             .as_ref()
             .and_then(|id| self.workspaces.iter().find(|ws| &ws.id == id))
             .or_else(|| self.workspaces.first());
-        let filtered_workspace = selected_filter
-            .as_ref()
-            .and_then(|id| self.workspaces.iter().find(|ws| &ws.id == id));
+        let filtered_workspace =
+            selected_filter.and_then(|id| self.workspaces.iter().find(|ws| ws.id == id));
         let new_thread_workspace = filtered_workspace.or(active_workspace);
         let in_new_thread =
             self.workspace.is_some() && self.session.is_none() && self.viewing_conversation();
         let show_new_thread_row =
-            new_thread_workspace.is_some() && (in_new_thread || flat_sessions.is_empty());
-        let session_count = flat_sessions.len();
-        let sessions = self.sidebar_session_sections(flat_sessions, general.fold_working_sessions);
+            new_thread_workspace.is_some() && (in_new_thread || session_count == 0);
         let show_working_project = self.workspaces.len() > 1 && selected_filter.is_none();
 
         v_flex()
@@ -753,11 +856,7 @@ impl HiveApp {
                                 ),
                         ),
                     )
-                    .child(self.render_filter_navigation(
-                        filter_ws_state.clone(),
-                        selected_filter.clone(),
-                        cx,
-                    ))
+                    .child(self.render_filter_navigation(selected_filter.map(str::to_owned), cx))
                     .child(
                         Button::new("toggle-add-workspace")
                             .custom(palette::quiet_icon_variant(cx))
@@ -882,7 +981,6 @@ impl HiveApp {
                             )
                         })
                         .when_some(filtered_workspace, |section, ws| {
-                            let clear_filter = filter_ws_state.clone();
                             section.child(
                                 h_flex().w_full().px_1().pb_1p5().child(
                                     Button::new("clear-workspace-filter")
@@ -912,11 +1010,9 @@ impl HiveApp {
                                                         .text_color(Color::Muted.get(cx)),
                                                 ),
                                         )
-                                        .on_click(cx.listener(move |_, _, _, cx| {
-                                            clear_filter.update(cx, |state, cx| {
-                                                *state = None;
-                                                cx.notify();
-                                            });
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.sidebar_workspace_filter = None;
+                                            cx.notify();
                                         })),
                                 ),
                             )

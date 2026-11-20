@@ -27,7 +27,7 @@ use crate::{
     focus_scroll::Reveal,
     language::{localize_owned_error, tr},
     palette::Color,
-    protocol::{Member, Session, SessionHit, Workspace},
+    protocol::{Backend, Member, Session, SessionHit, Workspace},
     transport::Runtime,
 };
 use gpui_kit::{
@@ -503,6 +503,7 @@ impl GlobalInbox {
             connection: self.connection,
             workspace,
             member: member.map(|member| member.member_id.clone()),
+            backend: self.preferences.values.backend_filter,
             workspaces: visible,
         })
     }
@@ -860,6 +861,62 @@ impl GlobalInbox {
         self.clear_filter_position();
         self.sync_completed(cx);
         cx.notify();
+    }
+
+    fn select_backend(&mut self, backend: Option<Backend>, cx: &mut Context<Self>) {
+        if !self.is_current(self.connection, cx)
+            || self.reviewing_new.is_some()
+            || self.preferences.values.backend_filter == backend
+        {
+            return;
+        }
+        self.preferences.values.backend_filter = backend;
+        self.preferences.save_changed();
+        self.clear_filter_position();
+        self.sync_completed(cx);
+        cx.notify();
+    }
+
+    fn backend_filter_button(
+        &self,
+        current: Option<Backend>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let title = current.map_or_else(|| tr("全部后端"), |backend| tr(backend.label()));
+        let label = format!("{} · {title}", tr("按后端筛选收件箱"));
+        let inbox = cx.weak_entity();
+        Button::new("global-inbox-backend-filter")
+            .outline()
+            .compact()
+            .xsmall()
+            .dropdown_caret(true)
+            .label(title)
+            .tooltip(label.clone())
+            .accessibility_label(label)
+            .dropdown_menu(move |menu, _, _| {
+                [
+                    None,
+                    Some(Backend::Pi),
+                    Some(Backend::PiRpc),
+                    Some(Backend::Codex),
+                    Some(Backend::Claude),
+                    Some(Backend::Acp),
+                ]
+                .into_iter()
+                .fold(menu, |menu, backend| {
+                    let inbox = inbox.clone();
+                    let title =
+                        backend.map_or_else(|| tr("全部后端"), |backend| tr(backend.label()));
+                    menu.item(
+                        PopupMenuItem::new(title)
+                            .checked(current == backend)
+                            .on_click(move |_, _, cx| {
+                                let _ =
+                                    inbox.update(cx, |this, cx| this.select_backend(backend, cx));
+                            }),
+                    )
+                })
+            })
     }
 
     fn clear_filter_position(&mut self) {
@@ -1390,6 +1447,11 @@ impl Render for GlobalInbox {
             .member_filter
             .as_ref()
             .filter(|_| !reviewing);
+        let selected_backend = self
+            .preferences
+            .values
+            .backend_filter
+            .filter(|_| !reviewing);
         let selected_title = selected_project(&app.workspaces, None, selected)
             .map(|project| display_project(project, &app.workspaces));
         let available: Vec<_> = app
@@ -1427,6 +1489,7 @@ impl Render for GlobalInbox {
                         .into_iter()
                         .filter(|entry| {
                             matches_member(&workspace.id, entry, selected_member)
+                                && entry.matches_backend(selected_backend)
                                 && (!reviewing
                                     || project
                                         .badge_item(app, &workspace.id, entry, now)
@@ -1625,6 +1688,9 @@ impl Render for GlobalInbox {
                             }),
                     );
                 }
+            }
+            if ready {
+                controls = controls.child(self.backend_filter_button(selected_backend, cx));
             }
             if has_snoozed {
                 controls = controls.child(
@@ -2095,7 +2161,7 @@ mod tests {
     };
     use crate::collaboration::inbox::Priority;
     use crate::collaboration::inbox::placement::SnoozedUntil;
-    use crate::protocol::{Member, Workspace};
+    use crate::protocol::{Backend, Member, Session, Workspace};
     use gpui_kit::{Bounds, point, px, size};
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -2185,6 +2251,58 @@ mod tests {
     }
 
     #[test]
+    fn inbox_backend_uses_exact_session_or_dispatch_and_keeps_unattributed_rows_in_all() {
+        let snapshot: ActionCenter = serde_json::from_value(json!({
+            "workspace_id": "right", "generated_at": 10, "recent_dispatch_messages": [],
+            "attention": [
+                {"kind": "question_waiting_answer", "worker_id": "reviewer", "message_id": "with-origin",
+                    "dispatch_id": "123e4567-e89b-12d3-a456-426614174000", "dispatch_backend": "codex"},
+                {"kind": "dispatch_waiting_report", "worker_id": "reviewer",
+                    "dispatch_id": "123e4567-e89b-12d3-a456-426614174001"},
+                {"kind": "stopped_with_queue", "worker_id": "reviewer"}
+            ]
+        })).unwrap();
+        let rows = snapshot.entries(str::to_owned);
+        assert_eq!(rows.len(), 3);
+        let member = MemberFilter {
+            workspace_id: "right".into(),
+            member_id: "reviewer".into(),
+        };
+        assert!(rows.iter().all(|row| matches_member("right", row, Some(&member)) && row.matches_backend(None)));
+        assert!(rows[0].matches_backend(Some(Backend::Codex)));
+        assert!(
+            rows[1..]
+                .iter()
+                .all(|row| !row.matches_backend(Some(Backend::Codex)))
+        );
+        assert!(
+            rows.iter()
+                .all(|row| !row.matches_backend(Some(Backend::Pi)))
+        );
+
+        let mut session: Session = serde_json::from_value(json!({
+            "id": "codex", "workspaceId": "right", "title": "Same title", "updatedAt": 0, "backend": "codex"
+        })).unwrap();
+        let mut entry = Entry {
+            label: "未读会话",
+            subject: session.title.clone(),
+            target: Destination::Session(session.clone()),
+            dispatch_backend: None,
+            related_members: [Some("reviewer".into()), None],
+            snooze_key: None,
+            wake: None,
+            priority: Priority::Unread,
+            updated_at: 0,
+        };
+        assert!(entry.matches_backend(Some(Backend::Codex)));
+        session.id = "pi".into();
+        session.backend = Backend::Pi;
+        entry.target = Destination::Session(session);
+        assert!(!entry.matches_backend(Some(Backend::Codex)));
+        assert!(entry.matches_backend(Some(Backend::Pi)));
+    }
+
+    #[test]
     fn review_rows_stay_visible_after_acknowledgement_and_drop_when_resolved() {
         let item = BadgeItem::Question {
             workspace: "atlas".into(),
@@ -2221,6 +2339,7 @@ mod tests {
             label: "",
             subject: "question".into(),
             target: Destination::Dispatch("dispatch".into()),
+            dispatch_backend: None,
             related_members: [None, None],
             snooze_key: Some("message:question".into()),
             wake: None,
@@ -2272,6 +2391,7 @@ mod tests {
                         label,
                         subject: label.into(),
                         target: Destination::Member(label.into()),
+                        dispatch_backend: None,
                         related_members: [None, None],
                         snooze_key: None,
                         wake: None,

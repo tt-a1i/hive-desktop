@@ -1,4 +1,5 @@
 use super::{FileError, Target};
+mod content_results;
 mod search_snippet;
 use crate::{
     app::HiveApp,
@@ -12,6 +13,7 @@ use crate::{
     text_reading::{self, TextPages},
     transport::Runtime,
 };
+use content_results::{ContentResults, Pick as ContentPick, Row as ContentRow};
 use gpui_kit::{
     assets::IconName as Glyph,
     base::InteractiveElementExt as _,
@@ -152,7 +154,7 @@ impl FileReveal {
     }
 }
 
-#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct Match {
     path: String,
     line: Option<usize>,
@@ -839,6 +841,7 @@ pub(crate) struct FileBrowser {
     browser_focus: FocusHandle,
     resize_focus: FocusHandle,
     tree_focus: FocusHandle,
+    content_results_focus: FocusHandle,
     tree_selected: Option<TreeItem>,
     reveal: Option<FileReveal>,
     reveal_missing: Option<String>,
@@ -847,6 +850,7 @@ pub(crate) struct FileBrowser {
     search: SearchPage,
     search_offset: usize,
     search_selected: usize,
+    content_results: ContentResults,
     search_loading: bool,
     search_error: Option<FileError>,
     search_generation: u64,
@@ -1056,6 +1060,7 @@ impl HiveApp {
                 browser_focus: cx.focus_handle(),
                 resize_focus: cx.focus_handle(),
                 tree_focus,
+                content_results_focus: cx.focus_handle().tab_stop(true),
                 tree_selected: None,
                 reveal: None,
                 reveal_missing: None,
@@ -1064,6 +1069,7 @@ impl HiveApp {
                 search: SearchPage::default(),
                 search_offset: 0,
                 search_selected: 0,
+                content_results: ContentResults::default(),
                 search_loading: false,
                 search_error: None,
                 search_generation: 0,
@@ -1342,6 +1348,7 @@ impl FileBrowser {
         self.search = SearchPage::default();
         self.search_offset = 0;
         self.search_selected = 0;
+        self.content_results.set_query(None);
         self.search_loading = false;
         self.search_error = None;
         self.search_scroll = ScrollHandle::new();
@@ -1588,6 +1595,10 @@ impl FileBrowser {
         self.search_scroll = ScrollHandle::new();
         cx.notify();
         let query = self.query.read(cx).value().trim().to_owned();
+        self.content_results.set_query(
+            (self.contents && !query.is_empty())
+                .then(|| (self.scope_generation, self.case_sensitive, query.clone())),
+        );
         if query.is_empty() || !self.current(cx) {
             return;
         }
@@ -1632,6 +1643,10 @@ impl FileBrowser {
                             return;
                         }
                         this.search = page;
+                        if contents {
+                            this.content_results.reconcile(&this.search.matches);
+                            this.scroll_to_content_cursor();
+                        }
                     }
                     Err(error) => this.search_error = Some(FileError::Request(error)),
                 }
@@ -1679,7 +1694,9 @@ impl FileBrowser {
             self.move_tree_cursor(delta, window, cx);
             return;
         }
-        if !self.search.matches.is_empty() {
+        if self.contents {
+            self.move_content_cursor(delta, true, cx);
+        } else if !self.search.matches.is_empty() {
             self.search_selected = self
                 .search_selected
                 .saturating_add_signed(delta)
@@ -1692,9 +1709,94 @@ impl FileBrowser {
     fn open_search_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.search_composing(window, cx) {
             cx.propagate();
+        } else if self.contents {
+            if let Some(ContentPick::Hit(hit)) = self.content_results.cursor.clone() {
+                if self.content_results.hit_visible(&self.search.matches, &hit) {
+                    self.select(hit, cx);
+                }
+            }
         } else if let Some(hit) = self.search.matches.get(self.search_selected) {
             self.select(hit.selection.clone(), cx);
         }
+    }
+
+    fn move_content_cursor(&mut self, delta: isize, hits_only: bool, cx: &mut Context<Self>) {
+        if let Some(index) =
+            self.content_results
+                .move_cursor(&self.search.matches, delta, hits_only)
+        {
+            self.search_scroll.scroll_to_item(index);
+            cx.notify();
+        }
+    }
+
+    fn scroll_to_content_cursor(&self) {
+        if let Some(cursor) = &self.content_results.cursor
+            && let Some(index) =
+                ContentResults::position(&self.content_results.rows(&self.search.matches), cursor)
+        {
+            self.search_scroll.scroll_to_item(index);
+        }
+    }
+
+    fn toggle_content_group(&mut self, path: &str, expand: Option<bool>, cx: &mut Context<Self>) {
+        if !self.contents
+            || !self.current(cx)
+            || !self
+                .search
+                .matches
+                .iter()
+                .any(|hit| hit.selection.path == path)
+        {
+            return;
+        }
+        self.content_results.toggle(path, expand);
+        self.scroll_to_content_cursor();
+        cx.notify();
+    }
+
+    fn content_results_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control
+            || modifiers.platform
+            || modifiers.alt
+            || modifiers.shift
+            || !self.current(cx)
+            || !self.content_results_focus.is_focused(window)
+        {
+            return;
+        }
+        match event.keystroke.key.as_str() {
+            "down" => self.move_content_cursor(1, false, cx),
+            "up" => self.move_content_cursor(-1, false, cx),
+            "left" => {
+                if let Some(cursor) = self.content_results.cursor.clone() {
+                    self.toggle_content_group(cursor.path(), Some(false), cx);
+                }
+            }
+            "right" => {
+                if let Some(ContentPick::File(path)) = self.content_results.cursor.clone() {
+                    self.toggle_content_group(&path, Some(true), cx);
+                }
+            }
+            "enter" => match self.content_results.cursor.clone() {
+                Some(ContentPick::File(path)) => self.toggle_content_group(&path, None, cx),
+                Some(ContentPick::Hit(hit))
+                    if self.content_results.hit_visible(&self.search.matches, &hit) =>
+                {
+                    self.select(hit, cx)
+                }
+                _ => {}
+            },
+            "escape" => self.query.read(cx).focus_handle(cx).focus(window, cx),
+            _ => return,
+        }
+        cx.stop_propagation();
     }
 
     fn move_tree_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
@@ -2604,15 +2706,17 @@ impl FileBrowser {
         true
     }
 
-    fn file_row(
-        &self,
-        result: &SearchHit,
-        label: String,
-        active: usize,
-        cx: &Context<Self>,
-    ) -> Button {
+    fn file_row(&self, result: &SearchHit, active: usize, cx: &Context<Self>) -> Button {
         let hit = result.selection.clone();
+        let label = hit
+            .line
+            .map_or_else(|| hit.path.clone(), |line| format!("{}:{line}", hit.path));
         let generation = self.search_generation;
+        let selected = if self.contents {
+            matches!(&self.content_results.cursor, Some(ContentPick::Hit(pick)) if *pick == hit)
+        } else {
+            active == self.search_selected
+        };
         let row = Button::new(SharedString::from(format!(
             "browser-file-{}-{:?}",
             hit.path, hit.line
@@ -2622,10 +2726,11 @@ impl FileBrowser {
         .w_full()
         .min_w_0()
         .justify_start()
-        .selected(active == self.search_selected)
+        .selected(selected)
+        .tab_stop(!self.contents)
         .icon(Glyph::FileText)
         .accessibility_label(label.clone())
-        .on_click(cx.listener(move |this, _, _, cx| {
+        .on_click(cx.listener(move |this, _, window, cx| {
             if this.search_generation == generation
                 && this
                     .search
@@ -2633,7 +2738,15 @@ impl FileBrowser {
                     .get(active)
                     .is_some_and(|row| row.selection == hit)
             {
-                this.search_selected = active;
+                if this.contents {
+                    if !this.content_results.hit_visible(&this.search.matches, &hit) {
+                        return;
+                    }
+                    this.content_results.cursor = Some(ContentPick::Hit(hit.clone()));
+                    this.content_results_focus.focus(window, cx);
+                } else {
+                    this.search_selected = active;
+                }
                 this.select(hit.clone(), cx);
             }
         }));
@@ -2664,6 +2777,67 @@ impl FileBrowser {
                         ),
                 ),
         )
+    }
+
+    fn content_group_row(
+        &self,
+        path: &str,
+        count: usize,
+        expanded: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let selected =
+            matches!(&self.content_results.cursor, Some(ContentPick::File(pick)) if pick == path);
+        let generation = self.search_generation;
+        let path = path.to_owned();
+        div()
+            .id(SharedString::from(format!("browser-content-group-{path}")))
+            .role(Role::TreeItem)
+            .aria_label(path.clone())
+            .aria_level(1)
+            .aria_expanded(expanded)
+            .aria_selected(selected)
+            .when(selected, |row| row.aria_active_descendant())
+            .child(
+                Button::new("toggle-content-group")
+                    .ghost()
+                    .compact()
+                    .small()
+                    .w_full()
+                    .min_w_0()
+                    .justify_start()
+                    .tab_stop(false)
+                    .selected(selected)
+                    .icon(if expanded {
+                        Glyph::ChevronDown
+                    } else {
+                        Glyph::ChevronRight
+                    })
+                    .accessibility_label(path.clone())
+                    .tooltip(format!("{path}\n{}: {count}", tr("本页命中数")))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .child(path.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(count.to_string()),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if this.search_generation == generation {
+                            this.content_results_focus.focus(window, cx);
+                            this.toggle_content_group(&path, None, cx);
+                        }
+                    })),
+            )
+            .into_any_element()
     }
 
     fn tree_rows(&self, cx: &App) -> Vec<TreeRow<'_>> {
@@ -2907,18 +3081,29 @@ impl FileBrowser {
                     .into_any_element(),
             ];
         }
+        if self.contents {
+            return self.content_results.rows(&self.search.matches).into_iter().map(|row| {
+                match row {
+                    ContentRow::File { path, count, expanded } => self.content_group_row(path, count, expanded, cx),
+                    ContentRow::Hit(index, hit) => {
+                        let selected = matches!(&self.content_results.cursor, Some(ContentPick::Hit(pick)) if *pick == hit.selection);
+                        div().id(SharedString::from(format!("browser-content-hit-{}-{:?}", hit.selection.path, hit.selection.line)))
+                            .role(Role::TreeItem)
+                            .aria_level(2)
+                            .aria_selected(selected)
+                            .when(selected, |row| row.aria_active_descendant())
+                            .pl(px(12.))
+                            .child(self.file_row(hit, index, cx))
+                            .into_any_element()
+                    }
+                }
+            }).collect();
+        }
         self.search
             .matches
             .iter()
             .enumerate()
-            .map(|(index, hit)| {
-                let hit_path = &hit.selection.path;
-                let label = hit
-                    .selection
-                    .line
-                    .map_or_else(|| hit_path.clone(), |line| format!("{hit_path}:{line}"));
-                self.file_row(hit, label, index, cx).into_any_element()
-            })
+            .map(|(index, hit)| self.file_row(hit, index, cx).into_any_element())
             .collect()
     }
 
@@ -3446,7 +3631,11 @@ impl Render for FileBrowser {
             .child(
                 v_flex()
                     .id("browser-list")
-                    .role(if searching { Role::List } else { Role::Tree })
+                    .role(if searching && !self.contents {
+                        Role::List
+                    } else {
+                        Role::Tree
+                    })
                     .aria_label(name)
                     .when(self.docked, |list| list.flex_1().min_h_0())
                     .when(!self.docked, |list| list.h(list_height))
@@ -3454,6 +3643,14 @@ impl Render for FileBrowser {
                     .overflow_y_scroll()
                     .track_scroll(scroll)
                     .vertical_scrollbar(scroll)
+                    .when(searching && self.contents, |list| {
+                        list.track_focus(&self.content_results_focus)
+                            .focus(|style| style.border_color(Color::Secondary.get(cx)))
+                            .border_1()
+                            .border_color(gpui::transparent_black())
+                            .rounded_md()
+                            .capture_key_down(cx.listener(Self::content_results_key))
+                    })
                     .when(!searching, |list| {
                         list.key_context("HiveProjectFileTree")
                             .track_focus(&self.tree_focus)

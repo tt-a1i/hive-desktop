@@ -72,6 +72,10 @@ try {
   await first.close(); runtime = await createDesktopRuntime(state, () => {});
   const cold = await runtime.chats.resolveArtifact(workspace.id, {dispatchId, sourceAgentId: worker.id, path: 'same.txt'});
   assert.equal(cold.path, join(rootA, 'same.txt')); assert.equal(cold.root, rootA); assert.equal(cold.sourceSessionId, a.id);
+  const current = await runtime.chats.createRecord(workspace.id, 'codex');
+  internals(runtime.chats).index.bind(current.id, worker.id);
+  assert.equal(runtime.chats.inboxDispatchBackend(workspace.id, dispatchId), 'pi');
+  assert.equal(runtime.chats.inboxDispatchBackend(workspace.id, 'unknown-dispatch'), undefined);
   assert.equal((await runtime.chats.resolveArtifact(workspace.id, {sourceSessionId: b.id, path: 'same.txt'})).path, join(rootB, 'same.txt'));
   assert.equal((await runtime.chats.resolveArtifact(workspace.id, {sourceSessionId: a.id, path: join(rootA, 'same.txt')})).path, cold.path);
   await assert.rejects(runtime.chats.resolveArtifact(workspace.id, {dispatchId, sourceAgentId: 'wrong', path: 'same.txt'}), /ARTIFACT_SOURCE_MISMATCH/);
@@ -82,6 +86,7 @@ try {
   await assert.rejects(runtime.chats.resolveArtifact(workspace.id, {sourceSessionId: a.id, path: 'same.txt', root: rootB}), /ARTIFACT_INVALID_REQUEST/);
   const otherRoot = join(directory, 'other'); await mkdir(otherRoot);
   const other = await runtime.hive.request('POST', '/api/workspaces', {path: otherRoot, name: 'Other', autostart_orchestrator: false}) as {id: string};
+  assert.equal(runtime.chats.inboxDispatchBackend(other.id, dispatchId), undefined);
   await assert.rejects(runtime.chats.resolveArtifact(other.id, {sourceSessionId: a.id, path: 'same.txt'}), /ARTIFACT_SOURCE_MISMATCH/);
   await symlink(join(repo, 'same.txt'), join(rootA, 'escape.txt'));
   await assert.rejects(runtime.chats.resolveArtifact(workspace.id, {dispatchId, path: 'escape.txt'}), /ARTIFACT_OUTSIDE_SOURCE/);

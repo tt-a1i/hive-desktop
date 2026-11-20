@@ -27,7 +27,7 @@ impl SearchFailure {
         }
     }
 }
-pub(super) struct SidebarSearch {
+pub(crate) struct SidebarSearch {
     pub query: Entity<InputState>,
     locale: Option<crate::language::Locale>,
     app: WeakEntity<HiveApp>,

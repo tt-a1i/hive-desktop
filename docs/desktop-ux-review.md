@@ -240,8 +240,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在正文结果中读取到同一文件第 3、350 行含表情和分解重音字符的不同原文，点击打开第 350 行。长行尾部的命中带省略号，切到工作树后打开该工作树的第 620 行。独立的分页样例也打开了第 103 行。证据取自原生无障碍树和实际预览，见 `.artifacts/search-snippet-qa`。
 - 257 项桌面 Rust 测试通过，1 项原有忽略。TypeScript、Windows x64 MSVC 交叉检查、归档分页协议、项目及工作树文件搜索专项均通过。130 条长行的专项核对了分解重音字符的高亮范围和分页，首屏 100 条响应约 16 KB。Windows 原生交互待实机复验。
 
+## 2026-11-21 第十九批
+
+本轮从 Hive Desktop `f9026a1` 开始。参考 T3 Code `338352d`、Cindy `e035080`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **用快捷键在当前侧栏范围内切换。** 上一条、下一条会话按当前项目筛选、可见区段和顺序切换。展开的全局置顶仍可跨项目，相同会话只遍历一次。侧栏正在显示搜索结果时，用方向键和回车从结果中打开。 [T3 Code 的可见会话顺序](https://github.com/pingdotgg/t3code/blob/338352dee2f43079482e054e8229a2ba055641d9/apps/web/src/components/Sidebar.tsx#L533-L561)
+- **按 Agent 后端筛选跨项目收件箱。** 后端和项目、成员可以组合。待处理与已处理都应用所选范围，已处理在分页前筛选。派单以原执行会话归类，缺少可信来源仍可在全部后端查看。「新事项」暂时跨筛选范围，返回后恢复原选择。设置保存在本机。 [Cindy 组合筛选](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L19-L23)
+- **按文件折叠正文命中。** 文件头显示完整相对路径及本页命中数。可以点击文件头，也可以聚焦结果列表，用左右键折叠或展开。上下键遍历可见行。已打开的预览保持原位置。同一查询的折叠可跨页沿用，换查询或工作树时重置。 [Beluga 文件分组与键盘操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L135-L165)
+
+- macOS 筛到 Alpha 后用下一条会话快捷键依次访问可见的全局置顶和 Alpha 普通会话。同名会话按标识打开，重复项只访问一次。收起全局置顶后只循环 Alpha 的三条会话。内联搜索有查询时按同一快捷键未打开其他会话，原草稿保留。证据在 `.artifacts/visible-navigation-qa`。
+- macOS 跨项目收件箱显示两条同名的 Pi 和 Codex 未读。切到 Codex 后只剩准确的未读会话，并保留来源为 Codex 的 Atlas 派单。缺少来源的 Beacon 派单在全部后端可见。已处理的 Codex 归档排在 23 条更新的 Pi 归档之后，仍出现在筛选首屏。按成员和后端组合时请求包含工作区、成员和后端标识，重启保持选择。证据在 `.artifacts/backend-inbox-qa`。
+- macOS 折叠 `one/same.txt` 时预览仍停在第 3 行。翻到第二页仍折叠，另一个目录的 `two/same.txt` 独立展开。原生结果区用右键展开、左键折叠，搜索框用方向键和回车打开 `two/same.txt` 的第 3 行。切换到独立工作树后恢复默认展开并显示该工作树的原文。证据在 `.artifacts/grouped-search-qa`。
+- 261 项桌面 Rust 测试通过，1 项原有忽略。TypeScript、Windows x64 MSVC 交叉检查、归档分页、派单来源和工作树文件搜索专项均通过。派单来源检查在冷启动和成员从 Pi 换到 Codex 后，仍确认旧派单归原 Pi 会话。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **让上一条、下一条会话遵循侧栏筛选。** 两个项目各有普通会话和置顶时筛到 Alpha，验证不会跳到侧栏不可见的 Beta 普通会话。切回全部项目后继续跨项目切换。 [T3 Code 的可见会话顺序](https://github.com/pingdotgg/t3code/blob/6cbda0cd0aa982b7cbf22d9790bd74e68b2d3dbe/apps/web/src/components/Sidebar.tsx#L533-L561)
-- **按 Agent 后端筛选跨项目收件箱。** 用两项目的同名 Pi 和 Codex 会话验收，检查待处理和已处理同时遵循项目、成员与后端筛选，重启后恢复所选范围。 [Cindy 组合筛选](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L19-L23)
-- **在正文搜索里按文件折叠命中。** 多个文件都有多条命中时，通过鼠标或键盘折叠一个文件。移动选择只经过可见行，切换查询和工作树后打开准确内容。 [Beluga 文件分组与键盘操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L135-L165)
+- **在当前独立工作树开启新会话。** 从已有会话的分支工具栏打开一条新会话。用根目录和独立工作树各写入不同标记，核对新会话只在所选工作树执行，旧会话草稿、历史和工作树归属保留。 [T3 Code 在现有工作树新建](https://github.com/pingdotgg/t3code/blob/338352dee2f43079482e054e8229a2ba055641d9/docs/user/thread-sidebar.md#L8-L13)
+- **恢复已处理会话时留在列表原位置。** 从第 2 页恢复中间一条，再核对紧邻条目、已加载的下一页条件和当前草稿。切换筛选时仍应从新范围首屏读取。 [Cindy 恢复后的列表补位](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L57-L63)
+- **正文搜索支持整词匹配。** 用 `error`、`errors`、`error_code`、标点和重音字符检验匹配边界。切换时保留查询，回到第一页，仍能打开准确的行。 [Beluga 整词筛选](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L114-L125)

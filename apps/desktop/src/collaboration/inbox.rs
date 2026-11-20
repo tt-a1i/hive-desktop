@@ -11,7 +11,7 @@ use crate::{
     focus_scroll::Reveal,
     language::{localize_owned_error, tr},
     palette::Color,
-    protocol::{Member, MemberDesktopActivity, Session},
+    protocol::{Backend, Member, MemberDesktopActivity, Session},
     transport::Runtime,
 };
 use gpui_kit::{
@@ -358,6 +358,7 @@ struct Attention {
     worker_id: Option<String>,
     worker_name: Option<String>,
     message_sender_id: Option<String>,
+    dispatch_backend: Option<Backend>,
     submitted_at: Option<u64>,
 }
 
@@ -397,6 +398,7 @@ struct Entry {
     label: &'static str,
     subject: String,
     target: Destination,
+    dispatch_backend: Option<Backend>,
     related_members: [Option<String>; 2],
     snooze_key: Option<String>,
     wake: Option<Wake>,
@@ -461,6 +463,14 @@ impl ArchiveInboxSession {
 }
 
 impl Entry {
+    fn matches_backend(&self, selected: Option<Backend>) -> bool {
+        selected.is_none_or(|backend| match &self.target {
+            Destination::Session(session) => session.backend == backend,
+            Destination::Dispatch(_) => self.dispatch_backend == Some(backend),
+            Destination::Member(_) => false,
+        })
+    }
+
     fn unread_reply_revision(&self) -> Option<u64> {
         match self.wake {
             Some(Wake::UnreadReply { revision }) => Some(revision),
@@ -629,6 +639,7 @@ impl Attention {
             label,
             subject,
             target,
+            dispatch_backend: self.dispatch_backend,
             related_members: [
                 self.worker_id.clone(),
                 self.message_sender_id
@@ -875,6 +886,7 @@ impl HiveApp {
             label,
             subject,
             target: Destination::Session(session.clone()),
+            dispatch_backend: None,
             related_members: [session.display_agent_id().map(str::to_owned), None],
             snooze_key,
             wake,
@@ -1592,6 +1604,7 @@ mod tests {
             label: UNREAD_CONVERSATION,
             subject: "Same title".into(),
             target: Destination::Session(session("beacon", "beacon-chat")),
+            dispatch_backend: None,
             related_members: [None, None],
             snooze_key: None,
             wake: Some(Wake::UnreadReply { revision: 0 }),
@@ -1694,6 +1707,7 @@ mod tests {
             label: "",
             subject: "".into(),
             target: Destination::Dispatch("dispatch".into()),
+            dispatch_backend: None,
             related_members: [None, None],
             snooze_key: Some("message:question".into()),
             wake: wake(7),
@@ -1717,6 +1731,7 @@ mod tests {
             label: "",
             subject: id.into(),
             target: Destination::Dispatch(id.into()),
+            dispatch_backend: None,
             related_members: [None, None],
             snooze_key: None,
             wake: None,

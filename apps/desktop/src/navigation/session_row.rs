@@ -516,6 +516,15 @@ impl HiveApp {
             .children(pin_targets)
     }
 
+    pub(super) fn visible_pinned_navigation_hits(
+        &self,
+    ) -> impl Iterator<Item = &crate::protocol::SessionHit> {
+        self.pinned_sessions
+            .records
+            .iter()
+            .filter(|_| !self.pinned_sessions.collapsed)
+    }
+
     pub(super) fn render_pinned_navigation(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let state = &self.pinned_sessions;
         let pin_order = self.pin_order_snapshot();
@@ -644,7 +653,7 @@ impl HiveApp {
                                         )),
                                 )
                             })
-                            .children(state.records.iter().map(|hit| {
+                            .children(self.visible_pinned_navigation_hits().map(|hit| {
                                 let project =
                                     self.workspace_display_name(&hit.session.workspace_id);
                                 self.render_session_row(

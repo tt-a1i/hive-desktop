@@ -276,6 +276,7 @@ mod tests {
                 label: "",
                 subject: target.into(),
                 target: Destination::Dispatch(target.into()),
+                dispatch_backend: None,
                 related_members: [None, None],
                 snooze_key: Some("message:same-key-in-two-projects".into()),
                 wake: None,

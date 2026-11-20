@@ -497,6 +497,20 @@ export class Chats implements StructuredSessionPort {
       return {session: this.publicSession(record, directory), sourceSessionId: record.id, sourceAgentId: source.sourceAgentId};
     });
   }
+  inboxDispatchBackend(workspaceId: string, dispatchId: string): ChatBackend | undefined {
+    try {
+      const source = this.dispatchOrigins.get(workspaceId, dispatchId);
+      if (!source) return undefined;
+      const record = this.index.peek(source.sourceSessionId);
+      if (record?.workspaceId === workspaceId
+        && (!record.originAgentId || record.originAgentId === source.sourceAgentId)
+        && (!record.agentId || record.agentId === source.sourceAgentId)) return record.backend;
+    } catch (error) {
+      if (!(error instanceof DispatchOriginError)) throw error;
+      // Missing or unreadable optional provenance must not hide actionable work.
+    }
+    return undefined;
+  }
   private async withGitOperation<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const release = this.executionMutations?.begin('git');
@@ -1208,7 +1222,7 @@ export class Chats implements StructuredSessionPort {
     }
   }
   async search(query: unknown, archived: unknown = false, offset: unknown = 0, workspaceId?: unknown, signal?: AbortSignal,
-    page: {limit?: number; memberId?: string} = {}) {
+    page: {limit?: number; memberId?: string; backend?: ChatBackend} = {}) {
     signal?.throwIfAborted();
     if (workspaceId !== undefined && (typeof workspaceId !== 'string' || !workspaceId.trim())) throw new TypeError('workspaceId must be a nonempty string');
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
@@ -1216,8 +1230,8 @@ export class Chats implements StructuredSessionPort {
     if (typeof query !== 'string' || Array.from(query).length > 200) {
       throw new TypeError('搜索内容需为 200 个字符以内的文本。');
     }
-    if (page.limit !== undefined || page.memberId !== undefined) {
-      return this.archivedNavigationPage(workspaceId as string | undefined, page.memberId,
+    if (page.limit !== undefined || page.memberId !== undefined || page.backend !== undefined) {
+      return this.archivedNavigationPage(workspaceId as string | undefined, page.memberId, page.backend,
         offset, page.limit ?? 100, signal);
     }
     const terms = foldSearchText(query.trim()).split(/\s+/u).filter(Boolean);
@@ -1334,7 +1348,7 @@ export class Chats implements StructuredSessionPort {
     });
   }
   private async archivedNavigationPage(workspaceId: string | undefined, memberId: string | undefined,
-    offset: number, limit: number, signal?: AbortSignal) {
+    backend: ChatBackend | undefined, offset: number, limit: number, signal?: AbortSignal) {
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
     signal?.throwIfAborted();
@@ -1345,6 +1359,7 @@ export class Chats implements StructuredSessionPort {
     const archived = () => this.index.all().flatMap(session => {
       const workspace = available.get(session.workspaceId);
       return workspace && !this.removing.has(workspace.id) && session.archived && exactMember(session)
+        && (backend === undefined || session.backend === backend)
         ? [{workspace, session}] : [];
     })
       .sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));

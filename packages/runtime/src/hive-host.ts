@@ -9,6 +9,7 @@ import type { DispatchMessageRecord } from "@tt-a1i/hive/dist/src/shared/team-co
 import { getDefaultRoleDescription } from '@tt-a1i/hive/dist/src/server/role-templates.js';
 import { resolveWorkspaceUiLanguage } from '@tt-a1i/hive/dist/src/server/workspace-ui-language.js';
 import type { HiveAgentRuntimeFactory } from "./hive-runtime-contract.js";
+import type { ChatBackend } from './chat-index.js';
 export interface DesktopMemberInput { name: string; role: import('./hive-runtime-contract.js').WorkerRole; description?: string }
 
 export class HiveHttpError extends Error {
@@ -51,6 +52,24 @@ export function withInboxMessageSenders(
         return message && message.dispatchId === row.dispatch_id
             ? {...row, message_sender_id: message.fromAgentId}
             : row;
+    })};
+}
+
+export function withInboxDispatchBackends(
+    result: unknown, workspaceId: string, lookup: (workspaceId: string, dispatchId: string) => ChatBackend | undefined,
+): unknown {
+    if (!result || typeof result !== 'object' || !('workspace_id' in result) || result.workspace_id !== workspaceId
+        || !('attention' in result) || !Array.isArray(result.attention)) return result;
+    const backends = new Map<string, ChatBackend | undefined>();
+    return {...result, attention: result.attention.map(row => {
+        if (!row || typeof row !== 'object') return row;
+        const id = row.dispatch_id;
+        const attributed = (row.kind === 'question_waiting_answer' || row.kind === 'message_delivery_pending'
+            || row.kind === 'dispatch_waiting_report')
+            && typeof id === 'string' && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id);
+        if (!attributed) return {...row, dispatch_backend: null};
+        if (!backends.has(id)) backends.set(id, lookup(workspaceId, id));
+        return {...row, dispatch_backend: backends.get(id) ?? null};
     })};
 }
 

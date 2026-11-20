@@ -164,6 +164,8 @@ pub struct HiveApp {
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
     pub(crate) sidebar: crate::navigation::SidebarPreferences,
+    pub(crate) sidebar_workspace_filter: Option<String>,
+    pub(crate) sidebar_search: Entity<crate::navigation::SidebarSearch>,
     pub composer_can_submit: bool,
     pub composer_submit_on_enter: bool,
     pub composer_has_text: bool,
@@ -683,12 +685,17 @@ impl HiveApp {
                 _ => {}
             },
         );
+        let sidebar_owner = cx.weak_entity();
+        let sidebar_search =
+            cx.new(|cx| crate::navigation::SidebarSearch::new(sidebar_owner, window, cx));
         let scripts_owner = cx.weak_entity();
         let mut app = Self {
             conversation_sources: Vec::new(),
             navigation: NavigationSelection::default(),
             sidebar_open: window.viewport_size().width >= px(820.),
             sidebar: crate::navigation::SidebarPreferences::default(),
+            sidebar_workspace_filter: None,
+            sidebar_search,
             connected: false,
             interactions: crate::interactions::Interactions::default(),
             terminal: crate::terminal::WorkspaceTerminal::new(cx),

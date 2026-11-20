@@ -23,6 +23,17 @@ pub(crate) struct SidebarSessions<'a> {
     pub(crate) working: Vec<WorkingProject<'a>>,
 }
 
+impl SidebarSessions<'_> {
+    pub(super) fn len(&self) -> usize {
+        self.regular.len()
+            + self
+                .working
+                .iter()
+                .map(|project| project.sessions.len())
+                .sum::<usize>()
+    }
+}
+
 pub(crate) struct WorkingProject<'a> {
     pub(crate) id: &'a str,
     sessions: Vec<&'a Session>,

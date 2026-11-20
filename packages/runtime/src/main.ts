@@ -17,7 +17,7 @@ import { createInterface } from 'node:readline';
 import { mkdirSync } from 'node:fs';
 import { CodexInteractionError } from './agents/codex-interactions.js';
 import { WorkspaceRemovalError } from './workspace-removal.js';
-import { HiveHttpError } from './hive-host.js';
+import { HiveHttpError, withInboxDispatchBackends } from './hive-host.js';
 import { createDesktopRuntime } from './desktop-runtime.js';
 import { structuredCommand } from './structured-runtime.js';
 import { desktopDataDir } from './paths.js';
@@ -418,7 +418,14 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return chats.promoteScratchProject(text(params, 'workspaceId'), text(params, 'sessionId'), text(params, 'name'), runtime.requestHive);
     }
     case 'workspace.scratch.links': exact(params, []); return chats.listScratchProjectLinks();
-    case 'hive.request': return runtime.requestHive(text(params, 'method'), text(params, 'path'), params.body);
+    case 'hive.request': {
+      const method = text(params, 'method');
+      const path = text(params, 'path');
+      const result = await runtime.requestHive(method, path, params.body);
+      const inbox = method === 'GET' && /^\/api\/ui\/workspaces\/([^/?#]+)\/action-center$/.exec(path);
+      return inbox ? withInboxDispatchBackends(result, decodeURIComponent(inbox[1]!),
+        (workspaceId, dispatchId) => chats.inboxDispatchBackend(workspaceId, dispatchId)) : result;
+    }
     case 'inbox.actionableQuestions': {
       const ids = params.workspaceIds;
       if (!Array.isArray(ids) || ids.length > 32 || !ids.every(id => typeof id === 'string' && id.length <= 64)) {
@@ -543,7 +550,9 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         throw new TypeError('navigationOnly must be boolean');
       const limit = params.limit;
       const memberId = params.memberId === undefined ? undefined : text(params, 'memberId');
-      if ((limit !== undefined || memberId !== undefined)
+      const backend = params.backend;
+      if (backend !== undefined && !isAgentDriver(backend)) throw new TypeError('Unsupported chat backend');
+      if ((limit !== undefined || memberId !== undefined || backend !== undefined)
         && (params.archived !== true || params.navigationOnly !== true || params.query !== ''))
         throw new TypeError('Scoped archive paging requires an empty archived navigation query');
       if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100))
@@ -551,7 +560,8 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       if (memberId !== undefined) text(params, 'workspaceId');
       return runSearch(requestId, async signal => {
         const page = await chats.search(params.query, params.archived, params.offset, params.workspaceId, signal,
-          {...(limit !== undefined && {limit}), ...(memberId !== undefined && {memberId})});
+          {...(limit !== undefined && {limit}), ...(memberId !== undefined && {memberId}),
+            ...(backend !== undefined && {backend})});
         if (!params.navigationOnly) return page;
         return {...page, matches: page.matches.map(hit => ({...hit, session: navigationSearchSession(hit.session)}))};
       });
