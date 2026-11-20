@@ -21,6 +21,7 @@ mod file_save;
 mod focus_scroll;
 mod conversation_list;
 mod drafts;
+mod draft_copy;
 mod diagnostics;
 mod desktop_update;
 mod failures;

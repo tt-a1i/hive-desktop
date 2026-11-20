@@ -1,4 +1,4 @@
-import { ProjectCopyChangedError, QuestionAttachmentCopyError } from './image-attachments.js';
+import { attachmentIds, ProjectCopyChangedError, QuestionAttachmentCopyError } from './image-attachments.js';
 import { parseStructuredLaunch } from './structured-launch.js';
 import { isAgentDriver, validateAgentProfileLaunch, validateAgentProfileRef, type UpdateAgentProfile } from './agent-profiles.js';
 import type { HandoffInput,HandoffApplyInput } from './session-handoffs.js';
@@ -573,6 +573,19 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       }
       return chats.createScratchRecord(params.backend, optionalProfile(params).profile, requestId,
         () => scratchWorkspace(dataDir, runtime.requestHive));
+    }
+    case 'chat.copyDraftRecord': {
+      exact(params, ['requestId', 'workspaceId', 'sourceSessionId', 'targetWorkspaceId', 'backend', 'profile', 'attachmentIds']);
+      if (!isAgentDriver(params.backend)) throw new TypeError('Unsupported chat backend');
+      const requestId = text(params, 'requestId').toLowerCase();
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(requestId)) {
+        throw new TypeError('A UUIDv4 request identity is required');
+      }
+      if (!Array.isArray(params.attachmentIds)) throw new TypeError('attachmentIds is required');
+      return chats.copyDraftRecord({requestId, workspaceId: text(params, 'workspaceId'),
+        ...(params.sourceSessionId !== undefined && {sourceSessionId: text(params, 'sourceSessionId')}),
+        targetWorkspaceId: text(params, 'targetWorkspaceId'), backend: params.backend, ...optionalProfile(params),
+        attachmentIds: attachmentIds(params.attachmentIds)});
     }
     case 'chat.createRecord':
     case 'chat.create': {

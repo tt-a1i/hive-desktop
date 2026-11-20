@@ -4,7 +4,7 @@ import { readPackageVersion } from "@tt-a1i/hive/dist/src/server/package-version
 import { createVersionService } from "@tt-a1i/hive/dist/src/server/version-service.js";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
 import { HttpError } from "@tt-a1i/hive/dist/src/server/http-errors.js";
-import type { WorkspaceUploadRecord } from "@tt-a1i/hive/dist/src/server/workspace-upload-store.js";
+import type { DesktopDraftCopyReceipt, DesktopDraftUploadCopy, WorkspaceUploadRecord } from "@tt-a1i/hive/dist/src/server/workspace-upload-store.js";
 import type { DispatchMessageRecord } from "@tt-a1i/hive/dist/src/shared/team-collaboration.js";
 import { getDefaultRoleDescription } from '@tt-a1i/hive/dist/src/server/role-templates.js';
 import { resolveWorkspaceUiLanguage } from '@tt-a1i/hive/dist/src/server/workspace-ui-language.js';
@@ -50,6 +50,9 @@ export interface HiveHost {
     configureAgentLaunch: import("./hive-runtime-contract.js").HiveAgentRuntime["configureAgentLaunch"];
     createMember(workspaceId: string, input: DesktopMemberInput, launch: string | import('./hive-runtime-contract.js').AgentLaunchConfigInput): { id: string };
     saveDesktopUpload(workspaceId: string, originalName: string, mimeType: string, data: Buffer): Promise<WorkspaceUploadRecord>;
+    getDesktopDraftCopy(id: string): DesktopDraftCopyReceipt | undefined;
+    reserveDesktopDraftCopy(id: string, receipt: DesktopDraftCopyReceipt): void;
+    saveDesktopDraftUploads(id: string, receipt: DesktopDraftCopyReceipt, copies: AsyncIterable<DesktopDraftUploadCopy>, signal: AbortSignal): Promise<DesktopDraftCopyReceipt>;
     locateUpload(workspaceId:string,id:string):Promise<HiveUploadLocation | undefined>;
     readUpload(workspaceId: string, id: string): Promise<HiveUpload | null>;
     getNavigation(): string | null;
@@ -200,6 +203,18 @@ export async function createHiveHost({
                 if (error instanceof HttpError) throw new HiveHttpError(error.statusCode, {error: error.message});
                 throw error;
             }
+        },
+        getDesktopDraftCopy(id) {
+            if (closing) throw new Error("Hive host is closed");
+            return runtime.store.getDesktopDraftCopy(id);
+        },
+        reserveDesktopDraftCopy(id, receipt) {
+            if (closing) throw new Error("Hive host is closed");
+            runtime.store.reserveDesktopDraftCopy(id, receipt);
+        },
+        saveDesktopDraftUploads(id, receipt, copies, signal) {
+            if (closing) throw new Error("Hive host is closed");
+            return runtime.store.saveDesktopDraftUploads(id, receipt, copies, signal);
         },
         locateUpload: (workspaceId,id) => {
             if (closing) throw new Error("Hive host is closed");

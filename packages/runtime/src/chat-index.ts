@@ -23,6 +23,7 @@ export class SessionIdentityError extends Error {
 
 export interface ChatRecord {
   backend: ChatBackend;
+  draftCopy?: string;
   handoff?: {operationId:string;snapshotId:string;snapshotHash:string;sourceSessionId:string};
   profile?: AgentProfileRef;
   legacyConfiguration?: true;
@@ -123,6 +124,8 @@ export class ChatIndex {
   }
   save(record: ChatRecord): void {
     const existing = this.peek(record.id);
+    if (existing && existing.draftCopy !== record.draftCopy)
+      throw new SessionIdentityError('DRAFT_COPY_CONFLICT', '该草稿复制请求已用于其他会话。');
     if (existing && (existing.scratch !== record.scratch || existing.scratch && existing.workspaceId !== record.workspaceId))
       throw new SessionIdentityError('SCRATCH_IDENTITY_CONFLICT', 'A Scratch conversation’s directory ownership cannot be changed.');
     if (record.scratch !== undefined && !isScratchRecord(record))
@@ -208,6 +211,7 @@ function isScratchRecord(record: Record<string, unknown> | ChatRecord): boolean 
 function isChatRecord(value: unknown): value is ChatRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
+  if (record.draftCopy !== undefined && (typeof record.draftCopy !== 'string' || !/^[a-f0-9]{64}$/.test(record.draftCopy))) return false;
   if (record.handoff !== undefined) {
     const h = record.handoff as Record<string,unknown>;
     if (!h || typeof h !== 'object' || !['operationId','snapshotId','snapshotHash','sourceSessionId'].every(key=>typeof h[key]==='string' && !!h[key])) return false;

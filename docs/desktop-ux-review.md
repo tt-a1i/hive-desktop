@@ -110,8 +110,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - 复测最初对照 Maka 发现的旧消息定位问题。对 10,000 条消息请求最近一页和第 50 条附近，各返回 120 条。定位页保留向前和向后游标。现有分页专项还验证了两向完整遍历。证据在 `.artifacts/competitive-ux/eighth/old-history-anchor.json` 和 `history-window.log`。 [Maka Rust 分支的游标查询](https://github.com/apache/maka/blob/871e747340088c98d69584eb8bdd5b9b3df84bd3/plugins/agent/state/src/session_history/source_tree/queries.rs#L83-L104)
 - 209 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 交叉类型检查、TypeScript 检查、Scratch 和历史分页专项通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第九批
+
+本轮从 Hive Desktop `e8380e0` 开始。参考默认分支为 T3 Code `c813e7d`、Cindy `4e41737`、Beluga `45a484b`，Hive 上游为 `18861b8`。
+
+- **将未发送的草稿复制到另一个项目。** 在编辑区的项目菜单选择目标，文字和附件进入目标项目的一条新对话，原草稿与目标项目的已有草稿都保留。项目文件引用按原附件的字节复制为普通文件。复制本身不发送消息。回包中断后可以恢复同一条复制。 [T3 Code 草稿换项目](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L25-L33)
+- **当场撤销收件箱里的暂缓操作。** 工作区和跨项目收件箱在暂缓、改期或取消暂缓后提供八秒撤销入口。撤销恢复同一派单的原唤回时间。如果该派单已收到新输入或已有更新的操作，保留新状态。 [T3 Code 操作撤销](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L65-L69) · [Cindy 收件箱行操作](https://github.com/makecindy/cindy/blob/4e4173743fc2c3cee83d0c4ae2f3aae79a4f2df4/docs/product-rules/task-inbox.md#L59-L63)
+- **在文件面板阅读 Markdown。** 通过文件树或路径打开时默认显示排版。正文搜索从准确的源码行打开。紧凑和展开的预览都能在排版和源码之间切换，保留源码阅读位置。文件超过 64 KiB 或 1,000 行，或连续非空行超过 8 KiB 时，显示源码。预览禁用嵌入图片，点击 HTTP(S) 链接可用系统浏览器打开。 [Beluga Markdown 预览](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L97-L118)
+
+- macOS 从 Alpha 的空会话复制带文字、普通文件和项目文件快照的草稿。回包延迟四秒时仍留在 Alpha，回复后打开准确的 Beta 新会话。返回后原草稿与附件仍在，Beta 的既有草稿也保留。另一次在后台完成后、回包前退出，重开时恢复同一个会话 ID 和附件 ID，前台仍留在 Alpha。两次复制均从实际附件存储逐字节核对。证据在 `.artifacts/draft-copy-qa`。
+- macOS 跨项目收件箱实测暂缓后撤销，原问题恢复可见。取消暂缓后撤销，原提醒文件的字节一致。再次取消暂缓后，在该派单加入新问题，立即撤销会提示状态已变化，保留新问题。证据在 `.artifacts/inbox-undo-qa`。
+- macOS 打开包含标题和代码块的 Markdown，正文搜索跳到第 350 行。在展开阅读中切换排版与源码，关闭后保留原查询和命中。在 900 像素窄窗打开同名文件，排版和源码都来自所选工作树。另用单段接近 19 KiB 的样例复验，打开时直接进入源码。链接目标由单元测试覆盖，实际浏览器跳转未单独实测。证据在 `.artifacts/markdown-reader-qa`。
+- 217 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、运行时构建和文件、图片、项目文件引用、Scratch 与工作区移除专项均通过。复制专项覆盖逐字节复制、并发重试、会话写入失败后的冷启动恢复，以及无 Agent 调用。运行时证据在 `.artifacts/draft-copy-runtime`。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **把未发送的草稿带到另一个项目。** 从一个项目的空对话写入草稿和附件，再切换目标。核对文本与附件一起到达，来源草稿在目标读取失败时仍能恢复，两个项目原有草稿都有清楚的归属。 [T3 Code 草稿换项目](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L25-L33)
-- **让收件箱的暂缓操作能当场撤销。** 暂缓或取消暂缓后，从同一窗口撤销并恢复原唤回时间。用两条并发变化的事项核对，后来到的回复仍按原规则唤回。 [T3 Code 操作撤销](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L65-L69) · [Cindy 收件箱行操作](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L59-L64)
-- **在文件面板阅读 Markdown 并随时看源码。** 用带标题、代码块、链接及搜索命中的 README 走一遍紧凑和展开预览。切回源码时保持原文件、搜索行和范围。 [Beluga Markdown 预览](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L97-L118)
+- **把文件直接拖到侧栏的一条对话。** 从桌面把文件拖到另一项目的会话行，核对它打开准确的接收会话并在草稿中挂载附件。用同名文件和已有草稿检查来源、目标、顺序和数量限制。 [T3 Code 拖附件到对话](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L72-L75)
+- **按唤回时间查看暂缓事项。** 两个收件箱的暂缓列表把最近到期的提醒排在前面，最后显示无限期提醒。用优先级与时间顺序相反的两个项目复验，随后改期、撤销并验证自动唤回。 [Cindy 暂缓排序](https://github.com/makecindy/cindy/blob/4e4173743fc2c3cee83d0c4ae2f3aae79a4f2df4/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L124-L128)
+- **用方向键连续预览文件。** 在文件树移动选中项，停下后显示当前文件，Return 可立即打开。用连续按键、项目与工作树同名文件、切出文件树验证及时取消旧读取。 [Beluga 键盘预览](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L270-L283)

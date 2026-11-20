@@ -183,6 +183,8 @@ impl HiveApp {
                                 .map(|item| (item.id.clone(), item.name.clone()))
                                 .collect();
                             let weak = cx.entity().downgrade();
+                            let can_copy_draft = self.can_copy_draft(cx);
+                            let retry_copies = self.pending_draft_copy_targets();
                             Button::new("composer-project-folder")
                                 .custom(crate::palette::quiet_icon_variant(cx))
                                 .compact()
@@ -222,6 +224,28 @@ impl HiveApp {
                                         ),
                                 )
                                 .dropdown_menu(move |mut menu, _, _| {
+                                    if can_copy_draft {
+                                        let owner = weak.clone();
+                                        menu = menu.item(PopupMenuItem::new(tr("复制草稿到项目…")).on_click(
+                                            move |_, window, cx| {
+                                                let owner = owner.clone();
+                                                window.defer(cx, move |window, cx| {
+                                                    let _ = owner.update(cx, |app, cx| app.open_draft_copy_picker(window, cx));
+                                                });
+                                            },
+                                        ));
+                                    }
+                                    for (id, project) in &retry_copies {
+                                        let owner = weak.clone();
+                                        let id = id.clone();
+                                        let title = format!("{} · {project}", tr("重试复制草稿"));
+                                        menu = menu.item(PopupMenuItem::new(title).on_click(
+                                            move |_, window, cx| {
+                                                let _ = owner.update(cx, |app, cx| app.run_draft_copy(id.clone(), Some(window), cx));
+                                            },
+                                        ));
+                                    }
+                                    if can_copy_draft || !retry_copies.is_empty() { menu = menu.separator(); }
                                     let weak_new = weak.clone();
                                     let new_ws = ws_id.clone();
                                     menu = menu.item(

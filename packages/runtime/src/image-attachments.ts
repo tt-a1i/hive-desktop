@@ -1,4 +1,5 @@
 import { WORKSPACE_UPLOAD_MAX_BYTES } from '@tt-a1i/hive/dist/src/server/upload-limits.js';
+import type { DesktopDraftCopyReceipt, DesktopDraftUploadCopy } from '@tt-a1i/hive/dist/src/server/workspace-upload-store.js';
 import { open, stat } from 'node:fs/promises';
 import { createReadStream, type BigIntStats } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -108,6 +109,57 @@ async function verifyProjectCopy(filePath: string, size: number, reference: Proj
 }
 export class ChatAttachments {
   constructor(private readonly hive: HiveHost, private readonly references?: ProjectFileReferences) {}
+  async *copyDraftUploads(workspaceId: string, sourceIds: readonly string[], targetIds: readonly string[]): AsyncGenerator<DesktopDraftUploadCopy> {
+    for (const [index, id] of sourceIds.entries()) {
+      const changed = () => new Error('无法读取要复制的草稿附件，请检查附件后重试。');
+      let copy: DesktopDraftUploadCopy;
+      try {
+        const upload = await this.hive.locateUpload(workspaceId, id);
+        if (!upload || !isAbsolute(upload.localPath)) throw changed();
+        const {originalName, mimeType, sizeBytes} = upload.record;
+        const projectFile = await this.projectReference(workspaceId, id);
+        const sha256 = projectFile?.sha256 ?? upload.sourceSha256;
+        if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || sizeBytes > WORKSPACE_UPLOAD_MAX_BYTES
+          || !(upload.sourceDigestVersion === 0 && upload.sourceSha256 === null
+            || upload.sourceDigestVersion === 1 && /^[a-f0-9]{64}$/.test(upload.sourceSha256 ?? ''))
+          || projectFile && upload.sourceSha256 && projectFile.sha256 !== upload.sourceSha256) throw changed();
+        const file = await open(upload.localPath, 'r');
+        try {
+          const before = await file.stat({bigint: true});
+          if (!before.isFile() || before.size !== BigInt(sizeBytes)) throw changed();
+          const data = Buffer.alloc(sizeBytes);
+          let read = 0;
+          while (read < sizeBytes) {
+            const {bytesRead} = await file.read(data, read, sizeBytes - read, null);
+            if (!bytesRead) throw changed();
+            read += bytesRead;
+          }
+          if (!sameCopy(before, await file.stat({bigint: true})) || sha256 && createHash('sha256').update(data).digest('hex') !== sha256)
+            throw changed();
+          if (['image/png','image/jpeg','image/gif','image/webp'].includes(mimeType))
+            promptImages([{type: 'image', mimeType, data: data.toString('base64')}]);
+          copy = { id: targetIds[index]!, originalName, mimeType, data };
+        } finally { await file.close(); }
+      } catch { throw changed(); }
+      yield copy;
+    }
+  }
+  async copiedDraftAttachments(receipt: DesktopDraftCopyReceipt): Promise<ChatAttachment[]> {
+    if (!receipt.uploads) throw new Error('草稿附件尚未复制完成，请重试。');
+    const attachments = [];
+    for (const {id, originalName, mimeType, sizeBytes, sha256} of receipt.uploads) {
+      const changed = () => new Error('复制后的草稿附件不可用，请检查目标项目后重试。');
+      try {
+        const upload = await this.hive.locateUpload(receipt.workspaceId, id);
+        if (!upload || upload.sourceDigestVersion !== 1 || upload.sourceSha256 !== sha256
+          || upload.record.originalName !== originalName || upload.record.mimeType !== mimeType
+          || upload.record.sizeBytes !== sizeBytes) throw changed();
+        await verifyCopy(upload.localPath, sizeBytes, sha256, changed);
+      } catch { throw changed(); }
+      attachments.push(this.ref(receipt.workspaceId, id, originalName, mimeType, sizeBytes));
+    }
+    return attachments;
+  }
   async addClipboard(workspaceId: string, value: unknown): Promise<StagedAttachment> {
     const image = promptImages([value])[0]!;
     return this.store(

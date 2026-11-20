@@ -24,6 +24,9 @@ declare module "@tt-a1i/hive/dist/src/cli/hive.js" {
           setAppState(key: string, value: string): void };
         saveWorkspaceUpload(input: import("@tt-a1i/hive/dist/src/server/workspace-upload-store.js").SaveWorkspaceUploadInput):
           Promise<import("@tt-a1i/hive/dist/src/server/workspace-upload-store.js").WorkspaceUploadRecord>;
+        getDesktopDraftCopy: import('./hive-host.js').HiveHost['getDesktopDraftCopy'];
+        reserveDesktopDraftCopy: import('./hive-host.js').HiveHost['reserveDesktopDraftCopy'];
+        saveDesktopDraftUploads: import('./hive-host.js').HiveHost['saveDesktopDraftUploads'];
         locateWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUploadLocation|undefined>;
         readWorkspaceUpload(workspaceId:string,id:string):Promise<import("./hive-host.js").HiveUpload|null>;
         findReportPresentation(workspaceId: string, agentId: string, dispatchId: string, payload: string): unknown;

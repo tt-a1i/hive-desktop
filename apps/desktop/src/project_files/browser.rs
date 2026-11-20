@@ -19,6 +19,7 @@ use gpui_kit::{
         input::{Input, InputEvent, InputState},
         resizable::{HandleEdge, resize_handle},
         scroll::ScrollableElement,
+        text::{TextView, TextViewState},
         *,
     },
     prelude::FluentBuilder,
@@ -36,6 +37,9 @@ use std::{
 };
 
 const PAGE_SIZE: usize = 100;
+const MARKDOWN_MAX_BYTES: usize = 64 * 1024;
+const MARKDOWN_MAX_BLOCK_BYTES: usize = 8 * 1024;
+const MARKDOWN_MAX_LINES: usize = 1000;
 const DOCK_WIDTH: f32 = 320.;
 const CHAT_MIN_WIDTH: f32 = 600.;
 const DOCK_WIDTH_STEP: f32 = 24.;
@@ -165,6 +169,7 @@ struct Preview {
     selection: Match,
     loading: bool,
     text: Option<TextPages>,
+    markdown: Option<MarkdownPreview>,
     error: Option<FileError>,
     scroll: ScrollHandle,
     editor_task: Option<Task<()>>,
@@ -183,12 +188,180 @@ struct ExpandedFilePreview {
     app: WeakEntity<HiveApp>,
     scope: Scope,
     scope_generation: u64,
+    preview_generation: u64,
     selection: Match,
     text: TextPages,
+    markdown: Option<MarkdownPreview>,
+    markdown_start_offset: Option<Point<Pixels>>,
     scroll: ScrollHandle,
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
     dismissed: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FilePreviewMode {
+    Source,
+    Markdown,
+}
+
+struct MarkdownPreview {
+    mode: FilePreviewMode,
+    document: Option<Entity<TextViewState>>,
+    scroll: ScrollHandle,
+}
+
+impl MarkdownPreview {
+    fn new(mode: FilePreviewMode, text: &TextPages, cx: &mut App) -> Self {
+        let mut preview = Self {
+            mode: FilePreviewMode::Source,
+            document: None,
+            scroll: ScrollHandle::new(),
+        };
+        preview.switch(mode, text, cx);
+        preview
+    }
+
+    fn switch(&mut self, mode: FilePreviewMode, text: &TextPages, cx: &mut App) {
+        if mode == FilePreviewMode::Markdown && self.document.is_none() {
+            self.document = Some(cx.new(|cx| TextViewState::markdown(&text.full, cx)));
+        }
+        self.mode = mode;
+    }
+
+    fn active(&self) -> bool {
+        self.mode == FilePreviewMode::Markdown
+    }
+
+    fn render(&self, id: &'static str, cx: &App) -> Stateful<Div> {
+        let document = self.document.as_ref().expect("active Markdown document");
+        div()
+            .id(id)
+            .min_w_0()
+            .role(Role::Label)
+            .aria_value(document.read(cx).rendered_text().as_str().to_owned())
+            .child(
+                TextView::new(document)
+                    .selectable(true)
+                    // Block all document images, including HTML and data URLs.
+                    // A terminal result also avoids GPUI's pending-image redraw timer.
+                    .image_source(|_| {
+                        ImageSource::Custom(Arc::new(|_, _| {
+                            Some(Err(ImageCacheError::Asset(
+                                "Project Markdown images are disabled".into(),
+                            )))
+                        }))
+                    })
+                    .on_link_click(|destination, event, _, cx| {
+                        let activate = match event {
+                            ClickEvent::Mouse(click) => {
+                                matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
+                            }
+                            ClickEvent::Keyboard(_) => true,
+                            ClickEvent::Touch(click) => !click.long_press,
+                        };
+                        if activate && let Some(url) = external_markdown_url(destination) {
+                            cx.open_url(url.as_str());
+                        }
+                    }),
+            )
+    }
+}
+
+fn is_markdown_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+        })
+}
+
+fn supports_markdown_preview(text: &str) -> bool {
+    if text.is_empty() || text.len() > MARKDOWN_MAX_BYTES {
+        return false;
+    }
+    let bytes = text.as_bytes();
+    // CommonMark treats LF, CRLF and CR as physical line endings.
+    let endings = bytes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, byte)| {
+            (*byte == b'\n' || *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
+                .then_some(index)
+        })
+        .chain(std::iter::once(bytes.len()));
+    let mut line_start = 0;
+    let mut block_start = 0;
+    for (line, line_end) in endings.enumerate() {
+        if line_start == bytes.len() {
+            break;
+        }
+        if line >= MARKDOWN_MAX_LINES {
+            return false;
+        }
+        // A paragraph with only soft line breaks can be shaped as a single run.
+        if bytes[line_start..line_end]
+            .iter()
+            .all(u8::is_ascii_whitespace)
+        {
+            block_start = line_end + 1;
+        } else if line_end - block_start > MARKDOWN_MAX_BLOCK_BYTES {
+            return false;
+        }
+        line_start = line_end + 1;
+    }
+    true
+}
+
+fn initial_markdown_mode(selection: &Match) -> FilePreviewMode {
+    if selection.line.is_some() {
+        FilePreviewMode::Source
+    } else {
+        FilePreviewMode::Markdown
+    }
+}
+
+fn external_markdown_url(destination: &str) -> Option<url::Url> {
+    let url = url::Url::parse(destination).ok()?;
+    (matches!(url.scheme(), "http" | "https") && url.has_host()).then_some(url)
+}
+
+fn markdown_mode_controls<T: 'static>(
+    current: FilePreviewMode,
+    set_mode: fn(&mut T, FilePreviewMode, &mut Context<T>),
+    cx: &Context<T>,
+) -> impl IntoElement {
+    h_flex().gap_1().children(
+        [
+            (
+                "show-markdown-preview",
+                tr("预览"),
+                FilePreviewMode::Markdown,
+            ),
+            ("show-markdown-source", tr("源码"), FilePreviewMode::Source),
+        ]
+        .into_iter()
+        .map(|(id, label, mode)| {
+            Button::new(id)
+                .ghost()
+                .small()
+                .label(label)
+                .selected(mode == current)
+                .on_click(cx.listener(move |this, _, _, cx| set_mode(this, mode, cx)))
+        }),
+    )
+}
+
+fn markdown_limit_notice(cx: &App) -> Stateful<Div> {
+    let notice = tr("此 Markdown 超出排版预览限制，正在显示源码。");
+    div()
+        .id("markdown-preview-limit")
+        .role(Role::Status)
+        .aria_label(notice)
+        .text_xs()
+        .text_color(Color::Muted.get(cx))
+        .child(notice)
 }
 
 fn is_expand_preview_chord(keystroke: &Keystroke, mac: bool) -> bool {
@@ -1390,12 +1563,14 @@ impl FileBrowser {
             selection,
             loading: true,
             text: None,
+            markdown: None,
             error: None,
             scroll: ScrollHandle::new(),
             editor_task: None,
             editor_error: None,
         });
         let generation = self.scope_generation;
+        let preview_generation = self.preview_generation;
         self.preview_task = Some(cx.spawn(async move |this, cx| {
             let result = runtime
                 .request("project.files.preview", params)
@@ -1407,7 +1582,10 @@ impl FileBrowser {
                         .ok_or_else(|| tr("读取失败").to_owned())
                 });
             let _ = this.update(cx, |this, cx| {
-                if this.scope_generation != generation || !this.current(cx) {
+                if this.scope_generation != generation
+                    || this.preview_generation != preview_generation
+                    || !this.current(cx)
+                {
                     return;
                 }
                 let Some(preview) = this.preview.as_mut() else {
@@ -1418,6 +1596,15 @@ impl FileBrowser {
                     Ok(mut text) => {
                         if let Some(line) = preview.selection.line {
                             text.show_line(line);
+                        }
+                        if is_markdown_file(&preview.selection.path)
+                            && supports_markdown_preview(&text.full)
+                        {
+                            preview.markdown = Some(MarkdownPreview::new(
+                                initial_markdown_mode(&preview.selection),
+                                &text,
+                                cx,
+                            ));
                         }
                         preview.text = Some(text);
                     }
@@ -1443,13 +1630,59 @@ impl FileBrowser {
     }
 
     fn preview_page(&mut self, step: isize, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            return;
+        }
         let Some(preview) = &mut self.preview else {
             return;
         };
+        if preview
+            .markdown
+            .as_ref()
+            .is_some_and(MarkdownPreview::active)
+        {
+            return;
+        }
         let Some(text) = &mut preview.text else {
             return;
         };
         if step_preview(text, &mut preview.scroll, step) {
+            cx.notify();
+        }
+    }
+
+    fn set_preview_mode(&mut self, mode: FilePreviewMode, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            return;
+        }
+        if let Some(Preview {
+            markdown: Some(markdown),
+            text: Some(text),
+            ..
+        }) = &mut self.preview
+        {
+            markdown.switch(mode, text, cx);
+            cx.notify();
+        }
+    }
+
+    fn jump_to_preview_hit(&mut self, cx: &mut Context<Self>) {
+        if !self.current(cx) {
+            return;
+        }
+        if let Some(Preview {
+            selection: Match {
+                line: Some(line), ..
+            },
+            markdown: Some(markdown),
+            text: Some(text),
+            scroll,
+            ..
+        }) = &mut self.preview
+        {
+            markdown.switch(FilePreviewMode::Source, text, cx);
+            text.show_line(*line);
+            *scroll = ScrollHandle::new();
             cx.notify();
         }
     }
@@ -1635,6 +1868,16 @@ impl FileBrowser {
         let scroll = ScrollHandle::new();
         scroll.set_offset(preview.scroll.offset());
         let scope_generation = self.scope_generation;
+        let preview_generation = self.preview_generation;
+        let markdown_start_offset = preview
+            .markdown
+            .as_ref()
+            .map(|preview| preview.scroll.offset())
+            .filter(|offset| offset.y != px(0.));
+        let markdown = preview
+            .markdown
+            .as_ref()
+            .map(|preview| MarkdownPreview::new(preview.mode, &text, cx));
         let return_focus = window
             .focused(cx)
             .filter(|_| self.browser_focus.contains_focused(window, cx));
@@ -1648,8 +1891,11 @@ impl FileBrowser {
                 app,
                 scope,
                 scope_generation,
+                preview_generation,
                 selection,
                 text,
+                markdown,
+                markdown_start_offset,
                 scroll,
                 focus: cx.focus_handle(),
                 return_focus,
@@ -2033,39 +2279,79 @@ impl FileBrowser {
         let Some(text) = &preview.text else {
             return panel;
         };
+        let rendered = preview
+            .markdown
+            .as_ref()
+            .filter(|markdown| markdown.active());
+        let scroll = rendered.map_or(&preview.scroll, |markdown| &markdown.scroll);
+        let show_jump = preview.markdown.is_some() && preview.selection.line.is_some();
+        let show_pages = rendered.is_none() && text.count() > 1;
         panel
-            .child(
-                text_reading::region("browser-preview".into(), path, &preview.scroll, height, cx)
-                    .when(self.docked, |region| region.flex_1().min_h_0())
-                    .child(preview_text("browser-text-preview", text, cx)),
+            .when_some(preview.markdown.as_ref(), |panel, markdown| {
+                panel.child(markdown_mode_controls(
+                    markdown.mode,
+                    Self::set_preview_mode,
+                    cx,
+                ))
+            })
+            .when(
+                preview.markdown.is_none() && is_markdown_file(&path) && !text.full.is_empty(),
+                |panel| panel.child(markdown_limit_notice(cx)),
             )
-            .when(text.count() > 1, |panel| {
+            .child(
+                text_reading::region("browser-preview".into(), path, scroll, height, cx)
+                    .when(self.docked, |region| region.flex_1().min_h_0())
+                    .child(rendered.map_or_else(
+                        || preview_text("browser-text-preview", text, cx),
+                        |markdown| markdown.render("browser-markdown-preview", cx),
+                    )),
+            )
+            .when(show_jump || show_pages, |panel| {
                 panel.child(
                     h_flex()
                         .items_center()
                         .justify_end()
+                        .flex_wrap()
                         .gap_2()
-                        .child(
-                            Button::new("browser-preview-before")
-                                .ghost()
-                                .small()
-                                .label(tr("上一页"))
-                                .disabled(text.page == 0)
-                                .on_click(cx.listener(|this, _, _, cx| this.preview_page(-1, cx))),
-                        )
-                        .child(div().text_xs().child(format!(
-                            "{} / {}",
-                            text.page + 1,
-                            text.count()
-                        )))
-                        .child(
-                            Button::new("browser-preview-after")
-                                .ghost()
-                                .small()
-                                .label(tr("下一页"))
-                                .disabled(text.page + 1 >= text.count())
-                                .on_click(cx.listener(|this, _, _, cx| this.preview_page(1, cx))),
-                        ),
+                        .when(show_jump, |actions| {
+                            actions.child(
+                                Button::new("browser-preview-jump-to-match")
+                                    .ghost()
+                                    .small()
+                                    .label(tr("跳到搜索命中行"))
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.jump_to_preview_hit(cx)),
+                                    ),
+                            )
+                        })
+                        .when(show_pages, |actions| {
+                            actions
+                                .child(
+                                    Button::new("browser-preview-before")
+                                        .ghost()
+                                        .small()
+                                        .label(tr("上一页"))
+                                        .disabled(text.page == 0)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.preview_page(-1, cx)),
+                                        ),
+                                )
+                                .child(div().text_xs().child(format!(
+                                    "{} / {}",
+                                    text.page + 1,
+                                    text.count()
+                                )))
+                                .child(
+                                    Button::new("browser-preview-after")
+                                        .ghost()
+                                        .small()
+                                        .label(tr("下一页"))
+                                        .disabled(text.page + 1 >= text.count())
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.preview_page(1, cx)),
+                                        ),
+                                )
+                        }),
                 )
             })
     }
@@ -2077,6 +2363,7 @@ impl ExpandedFilePreview {
             && self.browser.upgrade().is_some_and(|browser| {
                 let browser = browser.read(cx);
                 browser.scope_generation == self.scope_generation
+                    && browser.preview_generation == self.preview_generation
                     && browser.scope.as_ref() == Some(&self.scope)
                     && browser.current(cx)
                     && browser.preview.as_ref().is_some_and(|preview| {
@@ -2133,7 +2420,19 @@ impl ExpandedFilePreview {
     }
 
     fn page(&mut self, step: isize, cx: &mut Context<Self>) {
-        if self.current(cx) && step_preview(&mut self.text, &mut self.scroll, step) {
+        if self.current(cx)
+            && !self.markdown.as_ref().is_some_and(MarkdownPreview::active)
+            && step_preview(&mut self.text, &mut self.scroll, step)
+        {
+            cx.notify();
+        }
+    }
+
+    fn set_mode(&mut self, mode: FilePreviewMode, cx: &mut Context<Self>) {
+        if self.current(cx)
+            && let Some(markdown) = &mut self.markdown
+        {
+            markdown.switch(mode, &self.text, cx);
             cx.notify();
         }
     }
@@ -2165,7 +2464,27 @@ impl Render for ExpandedFilePreview {
             || self.selection.path.clone(),
             |line| format!("{}:{line}", self.selection.path),
         );
-        let height = (window.viewport_size().height - px(194.)).max(px(112.));
+        let markdown_limited = self.markdown.is_none()
+            && is_markdown_file(&self.selection.path)
+            && !self.text.full.is_empty();
+        let header = if self.markdown.is_some() || markdown_limited {
+            px(226.)
+        } else {
+            px(194.)
+        };
+        let height = (window.viewport_size().height - header).max(px(112.));
+        let rendered = self.markdown.as_ref().filter(|markdown| markdown.active());
+        // Wait for the background parser so the empty first layout cannot
+        // clamp the inherited scroll position to zero.
+        if self.markdown_start_offset.is_some()
+            && let Some(markdown) = rendered
+            && let Some(document) = &markdown.document
+            && !document.read(cx).rendered_text().source().is_empty()
+            && let Some(offset) = self.markdown_start_offset.take()
+        {
+            markdown.scroll.set_offset(offset);
+        }
+        let scroll = rendered.map_or(&self.scroll, |markdown| &markdown.scroll);
         let browser = self.browser.upgrade().expect("current file browser");
         let editor_menu =
             browser
@@ -2193,10 +2512,19 @@ impl Render for ExpandedFilePreview {
         .when_some(editor_error, |view, error| {
             view.child(editor_open_error(error, cx))
         })
+        .when_some(self.markdown.as_ref(), |view, markdown| {
+            view.child(markdown_mode_controls(markdown.mode, Self::set_mode, cx))
+        })
+        .when(markdown_limited, |view| {
+            view.child(markdown_limit_notice(cx))
+        })
         .child(
-            text_reading::region("file-reader".into(), path, &self.scroll, height, cx)
+            text_reading::region("file-reader".into(), path, scroll, height, cx)
                 .track_focus(&self.focus)
-                .child(preview_text("file-reader-text", &self.text, cx)),
+                .child(rendered.map_or_else(
+                    || preview_text("file-reader-text", &self.text, cx),
+                    |markdown| markdown.render("file-reader-markdown", cx),
+                )),
         )
         .child(
             h_flex()
@@ -2212,6 +2540,9 @@ impl Render for ExpandedFilePreview {
                             .label(tr("跳到搜索命中行"))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if this.current(cx) {
+                                    if let Some(markdown) = &mut this.markdown {
+                                        markdown.switch(FilePreviewMode::Source, &this.text, cx);
+                                    }
                                     this.text.show_line(line);
                                     this.scroll = ScrollHandle::new();
                                     cx.notify();
@@ -2219,7 +2550,7 @@ impl Render for ExpandedFilePreview {
                             })),
                     )
                 })
-                .when(self.text.count() > 1, |actions| {
+                .when(rendered.is_none() && self.text.count() > 1, |actions| {
                     actions
                         .child(
                             Button::new("file-reader-previous-page")
@@ -2550,9 +2881,11 @@ impl Render for FileBrowser {
 mod tests {
     use super::{
         Directory, DirectoryEntry, EditorOpenIdentity, FILE_TREE_STATUS_LIMIT, FileError,
-        FileReveal, FileTreeExpansions, Match, RevealStep, Scope, TextPages, TreeRow, TreeScope,
-        TreeSource, dock_width, is_expand_preview_chord, json, px, step_preview,
-        unrequested_expansions, visible_tree,
+        FilePreviewMode, FileReveal, FileTreeExpansions, MARKDOWN_MAX_BLOCK_BYTES,
+        MARKDOWN_MAX_BYTES, MARKDOWN_MAX_LINES, Match, RevealStep, Scope, TextPages, TreeRow,
+        TreeScope, TreeSource, dock_width, external_markdown_url, initial_markdown_mode,
+        is_expand_preview_chord, is_markdown_file, json, px, step_preview,
+        supports_markdown_preview, unrequested_expansions, visible_tree,
     };
     use gpui_kit::{Keystroke, Modifiers, ScrollHandle, point};
     use std::collections::{HashMap, HashSet};
@@ -2690,6 +3023,79 @@ mod tests {
         };
         assert!(worktree != reopened);
         assert!(worktree != project);
+    }
+
+    #[test]
+    fn markdown_preview_keeps_content_hits_in_source_and_limits_full_documents() {
+        assert!(is_markdown_file("docs/README.MD"));
+        assert!(is_markdown_file("docs/example.markdown"));
+        assert!(!is_markdown_file("docs/README.md.txt"));
+
+        let mut selection = Match {
+            path: "docs/README.md".into(),
+            line: None,
+        };
+        assert!(initial_markdown_mode(&selection) == FilePreviewMode::Markdown);
+        selection.line = Some(350);
+        assert!(initial_markdown_mode(&selection) == FilePreviewMode::Source);
+
+        assert!(!supports_markdown_preview(""));
+        let mut at_size = format!("{}\n\n", "a".repeat(4094)).repeat(MARKDOWN_MAX_BYTES / 4096);
+        assert!(supports_markdown_preview(&at_size));
+        at_size.push('a');
+        assert!(!supports_markdown_preview(&at_size));
+        assert!(supports_markdown_preview(&"a\n".repeat(MARKDOWN_MAX_LINES)));
+        assert!(supports_markdown_preview(
+            &"a\r\n".repeat(MARKDOWN_MAX_LINES)
+        ));
+        assert!(!supports_markdown_preview(
+            &"a\r".repeat(MARKDOWN_MAX_LINES + 1)
+        ));
+        assert!(!supports_markdown_preview(&format!(
+            "{}b",
+            "a\n".repeat(MARKDOWN_MAX_LINES)
+        )));
+        assert!(!supports_markdown_preview(
+            &"a\n".repeat(MARKDOWN_MAX_LINES + 1)
+        ));
+    }
+
+    #[test]
+    fn markdown_preview_bounds_the_size_of_each_run_of_nonblank_lines() {
+        let long_line = "a".repeat(MARKDOWN_MAX_BLOCK_BYTES);
+        assert!(supports_markdown_preview(&long_line));
+        assert!(!supports_markdown_preview(&format!("{long_line}a")));
+        let soft_wrapped = "one sentence followed by a soft break\n".repeat(300);
+        assert!(!supports_markdown_preview(&soft_wrapped));
+        for line_break in ["\n", "\r\n", "\r"] {
+            let short_paragraphs = format!("a sentence{line_break} \t{line_break}").repeat(350);
+            assert!(supports_markdown_preview(&short_paragraphs));
+        }
+    }
+
+    #[test]
+    fn markdown_links_allow_only_absolute_web_destinations() {
+        assert_eq!(
+            external_markdown_url("https://example.com/readme#details")
+                .unwrap()
+                .as_str(),
+            "https://example.com/readme#details"
+        );
+        assert!(external_markdown_url("http://localhost:8080/").is_some());
+        for destination in [
+            "#details",
+            "./other.md",
+            "//example.com/readme",
+            "file:///tmp/readme.md",
+            "data:text/plain,hello",
+            "mailto:example@example.com",
+            "hive://open",
+        ] {
+            assert!(
+                external_markdown_url(destination).is_none(),
+                "{destination}"
+            );
+        }
     }
 
     #[test]

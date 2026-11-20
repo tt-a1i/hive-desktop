@@ -19,8 +19,8 @@ struct Draft {
     attachments: Vec<crate::attachments::AttachmentRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     task: Option<crate::collaboration::SavedTaskDraft>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    fork_imported: Option<String>,
+    #[serde(default, rename = "fork_imported", skip_serializing_if = "Option::is_none")]
+    imported_from: Option<String>,
 }
 
 impl Draft {
@@ -83,7 +83,7 @@ impl DraftStore {
                     failed: Vec::new(),
                     attachments: Vec::new(),
                     task: None,
-                    fork_imported: self.saved.get(key).and_then(|d| d.fork_imported.clone()),
+                    imported_from: self.saved.get(key).and_then(|d| d.imported_from.clone()),
                 },
             );
         }
@@ -96,7 +96,7 @@ impl DraftStore {
                     failed: Vec::new(),
                     attachments: Vec::new(),
                     task: None,
-                    fork_imported: None,
+                    imported_from: None,
                 })
                 .failed
                 .clone_from(messages);
@@ -109,7 +109,7 @@ impl DraftStore {
                     failed: Vec::new(),
                     attachments: Vec::new(),
                     task: None,
-                    fork_imported: None,
+                    imported_from: None,
                 })
                 .attachments
                 .clone_from(items);
@@ -124,12 +124,12 @@ impl DraftStore {
                     failed: Vec::new(),
                     attachments: Vec::new(),
                     task: Some(task.clone()),
-                    fork_imported: None,
+                    imported_from: None,
                 },
             );
         }
         for (key, saved) in &self.saved {
-            if saved.fork_imported.is_some() {
+            if saved.imported_from.is_some() {
                 next.entry(key.clone())
                     .or_insert_with(|| Draft {
                         key: key.clone(),
@@ -137,9 +137,9 @@ impl DraftStore {
                         failed: vec![],
                         attachments: vec![],
                         task: None,
-                        fork_imported: saved.fork_imported.clone(),
+                        imported_from: saved.imported_from.clone(),
                     })
-                    .fork_imported = saved.fork_imported.clone();
+                    .imported_from = saved.imported_from.clone();
             }
         }
         for (key, draft) in &next {
@@ -169,9 +169,12 @@ impl DraftStore {
         Ok(())
     }
     pub(crate) fn fork_imported(&self, key: &str, operation: &str) -> bool {
+        self.already_imported(key, operation)
+    }
+    pub(crate) fn already_imported(&self, key: &str, operation: &str) -> bool {
         self.saved
             .get(key)
-            .is_some_and(|d| d.fork_imported.as_deref() == Some(operation))
+            .is_some_and(|d| d.imported_from.as_deref() == Some(operation))
     }
     pub(crate) fn mark_existing_fork(&mut self, key: &str, operation: &str) -> io::Result<()> {
         let mut draft = self
@@ -179,7 +182,7 @@ impl DraftStore {
             .get(key)
             .cloned()
             .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "Draft missing"))?;
-        draft.fork_imported = Some(operation.to_owned());
+        draft.imported_from = Some(operation.to_owned());
         let mut tmp = NamedTempFile::new_in(&self.dir)?;
         serde_json::to_writer(tmp.as_file_mut(), &draft)?;
         tmp.as_file().sync_all()?;
@@ -188,6 +191,15 @@ impl DraftStore {
         Ok(())
     }
     pub(crate) fn import_fork(
+        &mut self,
+        key: &str,
+        operation: &str,
+        text: String,
+        attachments: Vec<crate::attachments::AttachmentRef>,
+    ) -> io::Result<()> {
+        self.import_once(key, operation, text, attachments)
+    }
+    pub(crate) fn import_once(
         &mut self,
         key: &str,
         operation: &str,
@@ -206,13 +218,15 @@ impl DraftStore {
             failed: vec![],
             attachments,
             task: None,
-            fork_imported: Some(operation.to_owned()),
+            imported_from: Some(operation.to_owned()),
         };
         let path = self.dir.join(draft.filename()?);
         let mut tmp = NamedTempFile::new_in(&self.dir)?;
         serde_json::to_writer(tmp.as_file_mut(), &draft)?;
         tmp.as_file().sync_all()?;
         tmp.persist_noclobber(path)?;
+        #[cfg(unix)]
+        fs::File::open(&self.dir)?.sync_all()?;
         self.saved.insert(key.to_owned(), draft);
         Ok(())
     }

@@ -25,6 +25,7 @@ enum PaletteAction {
         backend: &'static str,
         source_revision: u64,
     },
+    CopyDraft { project: String, source_revision: u64 },
     ToggleSidebar,
     ToggleTerminal,
     OpenGit,
@@ -53,14 +54,23 @@ struct CommandPalette {
     items: Vec<PaletteItem>,
     selected: usize,
     scroll: ScrollHandle,
-    project_picker: bool,
+    kind: PaletteKind,
 }
 
-fn palette_labels(project_picker: bool) -> (&'static str, &'static str) {
-    if project_picker {
-        (tr("选择新会话的项目"), tr("按名称或路径搜索项目"))
-    } else {
-        (tr("快捷命令面板"), tr("输入命令、会话、项目或设置项…"))
+#[derive(Clone, Copy, PartialEq)]
+enum PaletteKind {
+    Commands,
+    NewConversation,
+    DraftCopy,
+}
+
+impl PaletteKind {
+    fn labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Commands => (tr("快捷命令面板"), tr("输入命令、会话、项目或设置项…")),
+            Self::NewConversation => (tr("选择新会话的项目"), tr("按名称或路径搜索项目")),
+            Self::DraftCopy => (tr("复制草稿到项目"), tr("按名称或路径搜索项目")),
+        }
     }
 }
 
@@ -137,7 +147,26 @@ impl HiveApp {
             icon: Glyph::SquarePen,
             action: PaletteAction::CreateConversation { project: None, backend, source_revision },
         });
-        self.open_palette(items, true, window, cx);
+        self.open_palette(items, PaletteKind::NewConversation, window, cx);
+    }
+
+    pub(crate) fn open_draft_copy_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_copy_draft(cx) || window.has_active_dialog(cx) {
+            return;
+        }
+        let source_revision = self.open_request;
+        let items = self.sorted_projects(cx).into_iter().filter(|project| {
+            self.workspace.as_ref() != Some(&project.id)
+                && self.workspace_removing.as_ref() != Some(&project.id)
+        }).map(|project| PaletteItem {
+            group: "项目",
+            title: project.name.clone(),
+            subtitle: Some(project.path.clone()),
+            keywords: String::new(),
+            icon: Glyph::FolderOpen,
+            action: PaletteAction::CopyDraft { project: project.id.clone(), source_revision },
+        }).collect();
+        self.open_palette(items, PaletteKind::DraftCopy, window, cx);
     }
 
     pub(crate) fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -145,17 +174,17 @@ impl HiveApp {
             return;
         }
         let items = self.build_command_palette_items(cx);
-        self.open_palette(items, false, window, cx);
+        self.open_palette(items, PaletteKind::Commands, window, cx);
     }
 
     fn open_palette(
         &mut self,
         items: Vec<PaletteItem>,
-        project_picker: bool,
+        kind: PaletteKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (title, placeholder) = palette_labels(project_picker);
+        let (title, placeholder) = kind.labels();
         let app = cx.weak_entity();
         let palette_view = cx.new(|cx: &mut Context<CommandPalette>| {
             let query = cx.new(|cx| {
@@ -175,7 +204,7 @@ impl HiveApp {
                 items,
                 selected: 0,
                 scroll: ScrollHandle::new(),
-                project_picker,
+                kind,
             }
         });
         let focus = palette_view.read(cx).query.read(cx).focus_handle(cx);
@@ -353,6 +382,9 @@ impl CommandPalette {
                         this.create_new_session(project, backend, None, Some(window), cx);
                     }
                 }
+                PaletteAction::CopyDraft { project, source_revision } => {
+                    this.begin_draft_copy(project, source_revision, window, cx);
+                }
                 PaletteAction::ToggleSidebar => {
                     this.sidebar_open = !this.sidebar_open;
                     cx.notify();
@@ -466,10 +498,10 @@ impl Render for CommandPalette {
         v_flex()
             .w_full()
             .gap_2p5()
-            .when(!self.project_picker, |view| view.on_key_down(cx.listener(Self::on_key_down)))
+            .when(self.kind == PaletteKind::Commands, |view| view.on_key_down(cx.listener(Self::on_key_down)))
             .child(
                 div()
-                    .when(self.project_picker, |view| {
+                    .when(self.kind != PaletteKind::Commands, |view| {
                         view.capture_action(cx.listener(|this, action: &Enter, window, cx| {
                             if !action.secondary && !action.shift && !this.has_marked_text(window, cx) {
                                 cx.stop_propagation();
@@ -483,7 +515,7 @@ impl Render for CommandPalette {
                         .capture_action(cx.listener(|this, _: &MoveUp, window, cx| this.select_project_row(false, window, cx)))
                     })
                     .child(Input::new(&self.query)
-                        .aria_label(palette_labels(self.project_picker).1)
+                        .aria_label(self.kind.labels().1)
                         .cleanable(true)
                         .prefix(Icon::new(Glyph::Search).size(px(14.)).text_color(Color::Muted.get(cx)))),
             )
@@ -506,7 +538,7 @@ impl Render for CommandPalette {
                                         .text_center()
                                         .text_xs()
                                         .text_color(Color::Muted.get(cx))
-                                        .child(if self.project_picker { tr("没有匹配的项目") } else { tr("没有匹配的命令、会话或设置项") }),
+                                        .child(if self.kind != PaletteKind::Commands { tr("没有匹配的项目") } else { tr("没有匹配的命令、会话或设置项") }),
                                 )
                             })
                             .children(filtered.into_iter().enumerate().map(|(ix, item)| {

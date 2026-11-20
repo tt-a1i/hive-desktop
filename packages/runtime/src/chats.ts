@@ -119,6 +119,21 @@ function extractToolTarget(args: unknown): string | undefined {
 
 type AcpHistoryReceipt = {file: string; state: Pick<AcpHistory['state'], 'sessionId' | 'deliveries'>};
 
+interface DraftCopyRequest {
+  requestId: string;
+  workspaceId: string;
+  sourceSessionId?: string;
+  targetWorkspaceId: string;
+  backend: ChatBackend;
+  profile?: AgentProfileRef;
+  attachmentIds: string[];
+}
+
+function draftUploadId(requestId: string, index: number): string {
+  const hash = createHash('sha256').update(`desktop-draft-copy:${requestId}:${index}`).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
 interface LiveChat {
   handle: PiSessionHandle; queue: DeliveryQueue; aborted: boolean;
   executionPath: string;
@@ -310,6 +325,7 @@ export class Chats implements StructuredSessionPort {
   private readonly removing = new Set<string>();
   private readonly workspaceRemovals = new Set<Promise<unknown>>();
   private readonly gitOperations = new Set<Promise<unknown>>();
+  private readonly draftCopyOperations = new Map<string, {fingerprint: string; operation: ReturnType<Chats['copyDraftLocked']>}>();
 
   constructor(private readonly hive: HiveHost, private readonly dataDir: string, private readonly emit: (event: ChatEvent) => void,
     private readonly runtime: HiveAgentRuntime, private readonly settings: DesktopSettings, private readonly agentModels: AgentModels,
@@ -2323,6 +2339,86 @@ export class Chats implements StructuredSessionPort {
       return this.saveNewRecord(workspace, {id: randomUUID(), workspaceId, backend, profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new'}, options);
     });
   }
+  copyDraftRecord(request: DraftCopyRequest) {
+    const {requestId, workspaceId, sourceSessionId, targetWorkspaceId, backend, profile, attachmentIds} = request;
+    if (workspaceId === targetWorkspaceId) throw new Error('请选择另一个项目来复制草稿。');
+    const fingerprint = createHash('sha256').update(JSON.stringify([
+      workspaceId, sourceSessionId ?? null, targetWorkspaceId, backend, profile?.id ?? null, profile?.revision ?? null, attachmentIds,
+    ])).digest('hex');
+    this.closeAbort.signal.throwIfAborted();
+    this.assertWorkspaceAvailable(targetWorkspaceId);
+    const active = this.draftCopyOperations.get(requestId);
+    if (active) {
+      if (active.fingerprint !== fingerprint) throw new Error('该草稿复制请求已用于其他会话。');
+      return active.operation;
+    }
+    const prior = this.hive.getDesktopDraftCopy(requestId);
+    if (prior && (prior.fingerprint !== fingerprint || prior.workspaceId !== targetWorkspaceId))
+      throw new Error('该草稿复制请求已用于其他会话。');
+    // Once the destination uploads are durable, a retry no longer depends on the source.
+    if (!prior?.uploads) this.assertWorkspaceAvailable(workspaceId);
+    const operation = this.copyDraftLocked(request, fingerprint, !!prior?.uploads)
+      .finally(() => this.draftCopyOperations.delete(requestId));
+    this.draftCopyOperations.set(requestId, {fingerprint, operation});
+    return operation;
+  }
+
+  private async copyDraftLocked(request: DraftCopyRequest, fingerprint: string, committedUploads: boolean) {
+    const {requestId, workspaceId, sourceSessionId, targetWorkspaceId, backend, profile, attachmentIds} = request;
+    const workspaceIds = committedUploads ? [targetWorkspaceId] : [workspaceId, targetWorkspaceId].sort();
+    const copy = async () => {
+      const signal = this.closeAbort.signal;
+      signal.throwIfAborted();
+      this.assertWorkspaceAvailable(targetWorkspaceId);
+      let receipt = this.hive.getDesktopDraftCopy(requestId);
+      const existing = this.index.peek(requestId);
+      if (receipt && (receipt.fingerprint !== fingerprint || receipt.workspaceId !== targetWorkspaceId)
+        || existing && (existing.draftCopy !== fingerprint || existing.workspaceId !== targetWorkspaceId
+          || existing.backend !== backend || !receipt?.uploads || !isDeepStrictEqual(existing.profile, receipt.profile))) {
+        throw new Error('该草稿复制请求已用于其他会话。');
+      }
+      const target = await this.workspace(targetWorkspaceId);
+      if (!receipt?.uploads) {
+        this.assertWorkspaceAvailable(workspaceId);
+        await this.workspace(workspaceId);
+        if (sourceSessionId) this.assertDraftCopySource(workspaceId, sourceSessionId);
+        const selected = await this.selectedProfile(backend, receipt?.profile ?? profile);
+        this.assertWorkspaceAvailable(workspaceId);
+        this.assertWorkspaceAvailable(targetWorkspaceId);
+        signal.throwIfAborted();
+        if (!receipt) {
+          receipt = {workspaceId: targetWorkspaceId, fingerprint, profile: selected.ref};
+          this.hive.reserveDesktopDraftCopy(requestId, receipt);
+        }
+        const targetIds = attachmentIds.map((_, index) => draftUploadId(requestId, index));
+        receipt = await this.hive.saveDesktopDraftUploads(requestId, receipt,
+          this.attachments.copyDraftUploads(workspaceId, attachmentIds, targetIds), signal);
+      }
+      const attachments = await this.attachments.copiedDraftAttachments(receipt);
+      this.assertWorkspaceAvailable(targetWorkspaceId);
+      signal.throwIfAborted();
+      const record = existing ?? await this.saveNewRecord(target, {
+        id: requestId, workspaceId: targetWorkspaceId, backend, profile: receipt.profile, draftCopy: fingerprint,
+        title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new',
+      }, {});
+      return {session: this.publicSession(record, await this.executionPath(record, target)), attachments};
+    };
+    return this.withWorkspace(workspaceIds[0]!, () => workspaceIds.length === 1 ? copy() : this.withWorkspace(workspaceIds[1]!, copy));
+  }
+
+  private assertDraftCopySource(workspaceId: string, sessionId: string): void {
+    const record = this.index.peek(sessionId);
+    const queue = this.live.get(sessionId)?.queue;
+    // Loading an empty editor may allocate a vendor's native ID, but does not
+    // bind the session. Prompt admission always establishes its immutable origin.
+    if (!record || record.workspaceId !== workspaceId || record.identityState !== 'new'
+      || record.agentId || record.originAgentId || record.archived || record.nativeImport || record.handoff
+      || record.lineage || record.prReview || record.rewound || record.rewindOperationId || record.lastDeliveryFailure
+      || queue?.busy || queue?.pendingCount || DeliveryQueue.persistedCount(this.queueDir, sessionId)) {
+      throw new Error('只能复制尚未发送消息的会话草稿。');
+    }
+  }
+
   async createScratchRecord(backend: ChatBackend, profile: AgentProfileRef | undefined, requestId: string,
     ensureWorkspace: () => Promise<WorkspaceSummary>) {
     this.closeAbort.signal.throwIfAborted();

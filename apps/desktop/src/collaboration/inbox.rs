@@ -1,6 +1,7 @@
 mod global;
 mod schedule;
 mod snoozes;
+mod undo;
 pub(super) use global::{GlobalInboxView, InboxBadge};
 
 use super::read_dispatch;
@@ -28,6 +29,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io,
 };
+use undo::{UNDO_CHANGED, UndoChange, UndoSlot, VerifiedUndo, expire_later};
 
 #[derive(Default)]
 pub(super) struct Inbox {
@@ -39,12 +41,14 @@ pub(super) struct Inbox {
     error: Option<String>,
     reminders: Reminders,
     show_snoozed: bool,
+    undo: UndoSlot,
 }
 
 impl Inbox {
     pub(super) fn invalidate(&mut self) {
         self.generation += 1;
         self.loading = false;
+        self.undo.clear();
     }
 }
 
@@ -57,6 +61,7 @@ struct Reminders {
 
 const SNOOZE_CHANGED: &str = "收件箱事项已变更，请关闭后重新选择。";
 
+#[derive(Clone)]
 struct SnoozeEdit {
     workspace: String,
     key: String,
@@ -104,22 +109,51 @@ impl Reminders {
         root: &std::path::Path,
         edit: &SnoozeEdit,
         delay: Option<Delay>,
-    ) -> Result<(), &'static str> {
-        if self.saved.is_none() {
-            return Err("无法读取已暂缓事项");
-        }
+    ) -> Result<Option<UndoChange>, &'static str> {
         let now = now_ms();
         let next = delay
             .map(|delay| delay.reminder(now, &edit.wake))
             .transpose()?;
-        match Snoozes::edit(
+        self.write(root, edit, edit.previous.as_ref(), next.clone(), now)?;
+        Ok((edit.previous != next).then(|| UndoChange {
+            edit: edit.clone(),
+            after: next,
+        }))
+    }
+
+    fn restore(&mut self, root: &std::path::Path, change: &UndoChange) -> Result<(), &'static str> {
+        let now = now_ms();
+        if !change.valid_at(now) {
+            return Err("原暂缓时间已过，无法撤销该变更。");
+        }
+        self.write(
             root,
-            &edit.workspace,
-            &edit.key,
-            edit.previous.as_ref(),
-            next,
+            &change.edit,
+            change.after.as_ref(),
+            change.edit.previous.clone(),
             now,
-        ) {
+        )
+        .map_err(|error| {
+            if error == SNOOZE_CHANGED {
+                UNDO_CHANGED
+            } else {
+                error
+            }
+        })
+    }
+
+    fn write(
+        &mut self,
+        root: &std::path::Path,
+        edit: &SnoozeEdit,
+        expected: Option<&Reminder>,
+        next: Option<Reminder>,
+        now: u64,
+    ) -> Result<(), &'static str> {
+        if self.saved.is_none() {
+            return Err("无法读取已暂缓事项");
+        }
+        match Snoozes::edit(root, &edit.workspace, &edit.key, expected, next, now) {
             Ok((saved, applied)) => {
                 self.saved = Some(saved);
                 self.write_error = None;
@@ -750,10 +784,68 @@ impl HiveApp {
                         let root = this.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
                         let result = this.collaboration.inbox.reminders.set(root, edit, delay);
                         cx.notify();
-                        result
+                        if let Some(change) = result? {
+                            let generation = this.collaboration.inbox.undo.offer(change);
+                            expire_later(cx, generation, |app| &mut app.collaboration.inbox.undo);
+                        }
+                        Ok(())
                     },
                 )
             }))
+            .when_some(
+                current
+                    .then(|| inbox.undo.render(cx, Self::undo_workspace_snooze))
+                    .flatten(),
+                |panel, undo| panel.child(undo),
+            )
+    }
+
+    fn undo_workspace_snooze(&mut self, cx: &mut Context<Self>) {
+        let Some(runtime) = self
+            .runtime
+            .clone()
+            .filter(|_| self.connected && !self.closing)
+        else {
+            return;
+        };
+        let Some((generation, change)) = self.collaboration.inbox.undo.claim() else {
+            return;
+        };
+        let connection = self.connection_generation;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let verified = VerifiedUndo::read(&runtime, &change).await;
+            let _ = this.update(cx, |this, cx| {
+                let workspace = change.edit.workspace.as_str();
+                if !this.connected
+                    || this.closing
+                    || !this.collaboration.visible
+                    || this.connection_generation != connection
+                    || this.workspace.as_deref() != Some(workspace)
+                    || this.workspace_removing.as_deref() == Some(workspace)
+                    || !this.collaboration.inbox.undo.is_checking(generation)
+                {
+                    return;
+                }
+                let result = (|| {
+                    if !verified?.matches(&change.edit, this)
+                        || !this
+                            .scoped_entries(workspace)
+                            .iter()
+                            .any(|entry| change.edit.matches(entry))
+                    {
+                        return Err(UNDO_CHANGED);
+                    }
+                    let root = this.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
+                    this.collaboration.inbox.reminders.restore(root, &change)
+                })();
+                let generation = this.collaboration.inbox.undo.finish(result);
+                expire_later(cx, generation, |app| &mut app.collaboration.inbox.undo);
+                this.refresh_collaboration_inbox(cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -1025,8 +1117,70 @@ fn inbox_row<T: 'static>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Attention, Destination, Entry, Priority, SnoozeEdit, Wake, sort_entries};
+    use super::{
+        Attention, Delay, Destination, Entry, Priority, Reminders, SnoozeEdit, Snoozes, Wake,
+        now_ms, sort_entries,
+    };
     use serde_json::json;
+
+    #[test]
+    fn undo_restores_the_exact_reminder_in_all_three_directions() {
+        let root = tempfile::tempdir().unwrap();
+        let project = uuid::Uuid::new_v4().to_string();
+        let key = "message:question";
+        let now = now_ms();
+        let wake = Some(Wake::Dispatch {
+            id: "dispatch".into(),
+            sequence: Some(7),
+            observed_at: 0,
+        });
+        let mut reminders = Reminders {
+            saved: Some(Snoozes::load(root.path(), &project).unwrap()),
+            ..Reminders::default()
+        };
+        let edit = |previous| SnoozeEdit {
+            workspace: project.clone(),
+            key: key.into(),
+            wake: wake.clone(),
+            previous,
+        };
+        let read = || {
+            Snoozes::load(root.path(), &project)
+                .unwrap()
+                .active_reminder(key, now)
+        };
+        let original = Delay::Until(now + 500_001);
+        let change = reminders
+            .set(root.path(), &edit(None), Some(original))
+            .unwrap()
+            .unwrap();
+        let saved = original.reminder(now, &wake).unwrap();
+        assert_eq!(read(), Some(saved.clone()));
+        reminders.restore(root.path(), &change).unwrap();
+        assert_eq!(read(), None);
+
+        reminders
+            .set(root.path(), &edit(None), Some(original))
+            .unwrap();
+        let change = reminders
+            .set(root.path(), &edit(Some(saved.clone())), None)
+            .unwrap()
+            .unwrap();
+        reminders.restore(root.path(), &change).unwrap();
+        assert_eq!(read(), Some(saved.clone()));
+
+        let change = reminders
+            .set(
+                root.path(),
+                &edit(Some(saved.clone())),
+                Some(Delay::Until(now + 900_000)),
+            )
+            .unwrap()
+            .unwrap();
+        reminders.restore(root.path(), &change).unwrap();
+        assert_eq!(read(), Some(saved));
+        assert!(reminders.restore(root.path(), &change).is_err());
+    }
 
     #[test]
     fn reschedule_rejects_new_wake_signals_on_the_same_row() {

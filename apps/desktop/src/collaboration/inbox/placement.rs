@@ -8,6 +8,13 @@ pub(super) struct RowId {
 }
 
 impl RowId {
+    pub(super) fn from_key(workspace: &str, item: String) -> Self {
+        Self {
+            workspace: workspace.to_owned(),
+            item,
+        }
+    }
+
     pub(super) fn for_entry(workspace: &str, entry: &Entry) -> Self {
         Self {
             workspace: workspace.to_owned(),

@@ -7,6 +7,7 @@ use self::badge::BadgeItem;
 pub(in crate::collaboration) use self::badge::InboxBadge;
 use self::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
+use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
     ActionCenter, Destination, Entry, InboxRowInteraction, Reminders, SNOOZE_CHANGED, inbox_row,
     inbox_status, is_snoozed, read_action_center, toggle_button,
@@ -73,6 +74,8 @@ struct GlobalInbox {
     restore_position: Option<ReadingPosition>,
     new_items: HashSet<BadgeItem>,
     reviewing_new: Option<NewItemsReview>,
+    undo: UndoSlot,
+    undo_review_item: Option<BadgeItem>,
     dismissed: bool,
     scroll: ScrollHandle,
 }
@@ -117,7 +120,7 @@ async fn read_project(runtime: &Runtime, workspace: &str) -> ProjectRead {
     }
 }
 
-async fn read_list<T: DeserializeOwned>(
+pub(super) async fn read_list<T: DeserializeOwned>(
     runtime: &Runtime,
     method: &'static str,
     workspace: &str,
@@ -180,6 +183,8 @@ impl HiveApp {
                 restore_position: saved.reading_position,
                 new_items,
                 reviewing_new: None,
+                undo: UndoSlot::default(),
+                undo_review_item: None,
                 dismissed: false,
                 scroll: ScrollHandle::new(),
             }
@@ -272,6 +277,10 @@ impl GlobalInbox {
     }
 
     fn reading_position(&self) -> Option<ReadingPosition> {
+        self.reading_position_without(None)
+    }
+
+    fn reading_position_without(&self, excluded: Option<&RowId>) -> Option<ReadingPosition> {
         let offset = self.scroll.offset().y;
         if offset >= px(0.) {
             return None;
@@ -285,6 +294,9 @@ impl GlobalInbox {
             .take_while(|(index, _)| *index <= last_visible)
             .find_map(|(index, row)| {
                 let row = row.as_ref()?;
+                if Some(row) == excluded {
+                    return None;
+                }
                 let bounds = self.scroll.bounds_for_item(index)?;
                 Some(ReadingPosition {
                     row: row.clone(),
@@ -298,6 +310,8 @@ impl GlobalInbox {
             return;
         }
         self.dismissed = true;
+        self.undo.clear();
+        self.undo_review_item = None;
         let saved = GlobalInboxView {
             project_filter: self.project_filter.clone(),
             show_waiting: self.show_waiting,
@@ -356,6 +370,8 @@ impl GlobalInbox {
                         this.projects.clear();
                         this.placement.clear();
                         this.new_items.clear();
+                        this.undo.clear();
+                        this.undo_review_item = None;
                     }
                     this.projects
                         .retain(|id, _| app.workspaces.iter().any(|project| project.id == *id));
@@ -408,6 +424,75 @@ impl GlobalInbox {
                     && app.connected
                     && !app.closing
             })
+    }
+
+    fn undo_snooze(&mut self, cx: &mut Context<Self>) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let connection = self.connection;
+        if !self.is_current(connection, cx) {
+            return;
+        }
+        let Some(runtime) = app.read(cx).runtime.clone() else {
+            return;
+        };
+        let Some((generation, change)) = self.undo.claim() else {
+            return;
+        };
+        let review_item = self.undo_review_item.take();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let verified = VerifiedUndo::read(&runtime, &change).await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.is_current(connection, cx) || !this.undo.is_checking(generation) {
+                    return;
+                }
+                let Some(app) = this.app.upgrade() else {
+                    return;
+                };
+                let state = app.read(cx);
+                let workspace = change.edit.workspace.clone();
+                let moved_row = RowId::from_key(&workspace, change.edit.key.clone());
+                let reading = this.reading_position_without(Some(&moved_row));
+                let result = (|| {
+                    if state.workspace_removing.as_ref() == Some(&workspace)
+                        || !state
+                            .workspaces
+                            .iter()
+                            .any(|project| project.id == workspace)
+                        || !verified?.matches(&change.edit, state)
+                    {
+                        return Err(UNDO_CHANGED);
+                    }
+                    let project = this.projects.get_mut(&workspace).ok_or(UNDO_CHANGED)?;
+                    if !project
+                        .entries(state)
+                        .iter()
+                        .any(|entry| change.edit.matches(entry))
+                    {
+                        return Err(UNDO_CHANGED);
+                    }
+                    let root = state.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
+                    project.reminders.restore(root, &change)
+                })();
+                if result.is_ok() {
+                    if let Some(item) = review_item {
+                        this.new_items.insert(item);
+                    }
+                    if let Some(reading) = reading {
+                        this.restore_position = Some(reading);
+                    }
+                    if state.workspace.as_ref() == Some(&workspace) && state.collaboration.visible {
+                        app.update(cx, |app, cx| app.refresh_collaboration_inbox(cx));
+                    }
+                }
+                let generation = this.undo.finish(result);
+                expire_later(cx, generation, |inbox| &mut inbox.undo);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn apply(
@@ -904,13 +989,20 @@ impl Render for GlobalInbox {
                     let state = app.read(cx);
                     if !state.workspaces.iter().any(|item| item.id == workspace)
                         || state.workspace_removing.as_deref() == Some(workspace)
-                        || !project
-                            .entries(state)
-                            .iter()
-                            .any(|entry| edit.matches(entry))
                     {
                         return Err(SNOOZE_CHANGED);
                     }
+                    let entries = project.entries(state);
+                    let entry = entries
+                        .iter()
+                        .find(|entry| edit.matches(entry))
+                        .ok_or(SNOOZE_CHANGED)?;
+                    let review_item = this
+                        .reviewing_new
+                        .is_some()
+                        .then(|| project.badge_item(state, workspace, entry, now_ms()))
+                        .flatten()
+                        .filter(|item| this.new_items.contains(item));
                     let root = state.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
                     let result = project.reminders.set(root, edit, delay);
                     if result.is_ok()
@@ -920,7 +1012,12 @@ impl Render for GlobalInbox {
                         app.update(cx, |app, cx| app.refresh_collaboration_inbox(cx));
                     }
                     cx.notify();
-                    result
+                    if let Some(change) = result? {
+                        let generation = this.undo.offer(change);
+                        this.undo_review_item = review_item;
+                        expire_later(cx, generation, |inbox| &mut inbox.undo);
+                    }
+                    Ok(())
                 },
             );
             Some((Some(layout_id), row))
@@ -1057,6 +1154,9 @@ impl Render for GlobalInbox {
             .children(elements)
             .on_scroll(cx.listener(|this, _, _, _| this.restore_position = None));
         body.child(list)
+            .when_some(self.undo.render(cx, Self::undo_snooze), |body, undo| {
+                body.child(undo)
+            })
     }
 }
 

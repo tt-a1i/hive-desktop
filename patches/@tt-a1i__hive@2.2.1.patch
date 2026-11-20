@@ -896,7 +896,7 @@ index 389129f122892581215028f0cc8bfabd21a8ad3b..433439b07a6d293cb99fdc78c030597b
          openByWorker.set(dispatch.toAgentId, list);
      }
 diff --git a/dist/src/server/runtime-store-contract.d.ts b/dist/src/server/runtime-store-contract.d.ts
-index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a92b951e59bbaa8309126e89285a12c37dec7e78 100644
+index 531749345d132f9a9f93f4f5ad10c8f48e368acd..2834d21c6109ef8d96c1746cd0a78cadc70ab40d 100644
 --- a/dist/src/server/runtime-store-contract.d.ts
 +++ b/dist/src/server/runtime-store-contract.d.ts
 @@ -55,6 +55,7 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
@@ -935,8 +935,13 @@ index 531749345d132f9a9f93f4f5ad10c8f48e368acd..a92b951e59bbaa8309126e89285a12c3
      runWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflow: (input: RunWorkflowInput) => Promise<WorkflowRunRecord>;
      startWorkflowInline: (input: RunInlineWorkflowInput) => Promise<WorkflowRunRecord>;
-@@ -152,6 +160,12 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+@@ -150,8 +158,17 @@ export interface RuntimeStore extends DispatchMessageOperations, ControllerMetho
+         ts: number;
+         message: string;
      }>;
++    getDesktopDraftCopy: ReturnType<typeof import('./workspace-upload-store.js').createWorkspaceUploadStore>['getDesktopDraftCopy'];
++    reserveDesktopDraftCopy: ReturnType<typeof import('./workspace-upload-store.js').createWorkspaceUploadStore>['reserveDesktopDraftCopy'];
++    saveDesktopDraftUploads: ReturnType<typeof import('./workspace-upload-store.js').createWorkspaceUploadStore>['saveDesktopDraftUploads'];
      saveWorkspaceUpload: (input: SaveWorkspaceUploadInput) => Promise<WorkspaceUploadRecord>;
      listWorkspaceUploads: (workspaceId: string, limit?: number) => WorkspaceUploadRecord[];
 +    locateWorkspaceUpload: (workspaceId: string, uploadId: string) => Promise<{
@@ -1221,7 +1226,7 @@ index c5cbf640b7babd2deabd2700c830ff88624123b7..221b61d060cfe842f23d3182c6e3b1a9
                  return `\nResult (workflow return value):\n${escapeHiveEnvelopeText(truncated)}`;
              })();
 diff --git a/dist/src/server/runtime-store.js b/dist/src/server/runtime-store.js
-index 9b36020983e2e585aa03922183b8d12631f59ed7..bfecea738a11083deaf0128033944e2dd4524803 100644
+index 9b36020983e2e585aa03922183b8d12631f59ed7..0f97503c000edde49a4a00201b56e0196f0d600b 100644
 --- a/dist/src/server/runtime-store.js
 +++ b/dist/src/server/runtime-store.js
 @@ -1,3 +1,5 @@
@@ -1349,8 +1354,13 @@ index 9b36020983e2e585aa03922183b8d12631f59ed7..bfecea738a11083deaf0128033944e2d
          runWorkflow: (input) => getWorkflowRuntime().runner.runWorkflow(input),
          startWorkflow: (input) => getWorkflowRuntime().runner.startWorkflow(input),
          startWorkflowInline: (input) => getWorkflowRuntime().runner.startWorkflowInline(input),
-@@ -155,6 +204,7 @@ export const createRuntimeStore = (options = {}) => {
+@@ -153,8 +202,12 @@ export const createRuntimeStore = (options = {}) => {
+             ts: row.ts,
+             message: row.message,
          })),
++        getDesktopDraftCopy: services.workspaceUploadStore.getDesktopDraftCopy,
++        reserveDesktopDraftCopy: services.workspaceUploadStore.reserveDesktopDraftCopy,
++        saveDesktopDraftUploads: services.workspaceUploadStore.saveDesktopDraftUploads,
          saveWorkspaceUpload: (input) => services.workspaceUploadStore.saveUpload(input),
          listWorkspaceUploads: (workspaceId, limit) => services.workspaceUploadStore.listUploads(workspaceId, limit),
 +        locateWorkspaceUpload: (workspaceId, uploadId) => services.workspaceUploadStore.locateUpload(workspaceId, uploadId),
@@ -2342,7 +2352,7 @@ index 60ac07aa67821d497055334ab427774fc4eafd96..3b1e5665161fd64782d063f329131644
          })();
      };
 diff --git a/dist/src/server/workspace-upload-store.d.ts b/dist/src/server/workspace-upload-store.d.ts
-index f1bbab564e2124953bd376ccf33ff56ccf251337..6ba4d99481acca290db80a2315cac3e6bcfa75c7 100644
+index f1bbab564e2124953bd376ccf33ff56ccf251337..c01e1aeb7d49344fa4fa65895174979c32e9aa29 100644
 --- a/dist/src/server/workspace-upload-store.d.ts
 +++ b/dist/src/server/workspace-upload-store.d.ts
 @@ -5,6 +5,7 @@ export interface SaveWorkspaceUploadInput {
@@ -2353,8 +2363,32 @@ index f1bbab564e2124953bd376ccf33ff56ccf251337..6ba4d99481acca290db80a2315cac3e6
  }
  export interface WorkspaceUploadRecord {
      id: string;
-@@ -24,6 +25,12 @@ export interface StagedWorkspaceUploadsDelete {
+@@ -15,6 +16,18 @@ export interface WorkspaceUploadRecord {
+     sizeBytes: number;
+     createdAt: number;
+ }
++export interface DesktopDraftUploadCopy {
++    id: string;
++    originalName: string;
++    mimeType: string;
++    data: Buffer;
++}
++export interface DesktopDraftCopyReceipt {
++    workspaceId: string;
++    fingerprint: string;
++    profile: { id: string; revision: number };
++    uploads?: Array<Pick<WorkspaceUploadRecord, 'id' | 'originalName' | 'mimeType' | 'sizeBytes'> & { sha256: string }>;
++}
+ export interface StagedWorkspaceUploadsDelete {
+     /** Permanently remove the staged blobs once the transaction has committed. */
+     commit: () => void;
+@@ -22,8 +35,17 @@ export interface StagedWorkspaceUploadsDelete {
+     rollback: () => void;
+ }
  export declare const createWorkspaceUploadStore: (db: Database, uploadsDir: string) => {
++    getDesktopDraftCopy(id: string): DesktopDraftCopyReceipt | undefined;
++    reserveDesktopDraftCopy(id: string, receipt: DesktopDraftCopyReceipt): void;
++    saveDesktopDraftUploads(id: string, receipt: DesktopDraftCopyReceipt, copies: AsyncIterable<DesktopDraftUploadCopy>, signal: AbortSignal): Promise<DesktopDraftCopyReceipt>;
      saveUpload(input: SaveWorkspaceUploadInput): Promise<WorkspaceUploadRecord>;
      listUploads(workspaceId: string, limit?: number): WorkspaceUploadRecord[];
 +    locateUpload(workspaceId: string, uploadId: string): Promise<{
@@ -2367,7 +2401,7 @@ index f1bbab564e2124953bd376ccf33ff56ccf251337..6ba4d99481acca290db80a2315cac3e6
          data: Buffer;
          record: WorkspaceUploadRecord;
 diff --git a/dist/src/server/workspace-upload-store.js b/dist/src/server/workspace-upload-store.js
-index c78f060119ae87a3a803dfa4b6828b4b9fb88137..f6d16d224b69dcc64aaa8fbee91bb230ec72af92 100644
+index c78f060119ae87a3a803dfa4b6828b4b9fb88137..c5fa68592b033efe88e27352f499f5b27564f276 100644
 --- a/dist/src/server/workspace-upload-store.js
 +++ b/dist/src/server/workspace-upload-store.js
 @@ -1,6 +1,6 @@
@@ -2375,11 +2409,58 @@ index c78f060119ae87a3a803dfa4b6828b4b9fb88137..f6d16d224b69dcc64aaa8fbee91bb230
 +import { createHash, randomUUID } from 'node:crypto';
  import { readdirSync, renameSync, rmdirSync, unlinkSync } from 'node:fs';
 -import { mkdir, readFile, writeFile } from 'node:fs/promises';
-+import { mkdir, open, readFile, stat } from 'node:fs/promises';
++import { link, lstat, mkdir, open, readFile, stat } from 'node:fs/promises';
  import { basename, dirname, extname, join, resolve, sep } from 'node:path';
  import { HttpError } from './http-errors.js';
  const DEFAULT_UPLOAD_NAME = 'upload';
-@@ -182,13 +182,13 @@ const stageFilesForDelete = (uploadsDir, rows) => {
+@@ -81,6 +81,46 @@ const readRowDataStrict = async (uploadsDir, row) => {
+         throw new HttpError(500, 'Upload file could not be read');
+     }
+ };
++// Stage blobs before publishing their rows. If interrupted after linking the
++// final name, the same operation can adopt only the exact previously staged bytes.
++const stageDraftBlob = async (path, data, sha256) => {
++    await mkdir(dirname(path), { recursive: true });
++    const temporary = `${path}.draft-copy-stage`;
++    removeFile(temporary);
++    const file = await open(temporary, 'wx', 0o600);
++    try {
++        try {
++            await file.writeFile(data);
++            await file.sync();
++        }
++        finally {
++            await file.close();
++        }
++        try {
++            await link(temporary, path);
++        }
++        catch (error) {
++            if (error?.code !== 'EEXIST')
++                throw error;
++            const info = await lstat(path);
++            if (!info.isFile() || info.size !== data.length
++                || createHash('sha256').update(await readFile(path)).digest('hex') !== sha256)
++                throw error;
++        }
++    }
++    finally {
++        removeFile(temporary);
++    }
++    if (process.platform !== 'win32') {
++        const directory = await open(dirname(path), 'r');
++        try {
++            await directory.sync();
++        }
++        finally {
++            await directory.close();
++        }
++    }
++};
+ const pruneWorkspaceUploadDir = (uploadsDir, workspaceId) => {
+     try {
+         rmdirSync(resolveStoragePath(uploadsDir, workspaceId));
+@@ -182,13 +222,13 @@ const stageFilesForDelete = (uploadsDir, rows) => {
  export const createWorkspaceUploadStore = (db, uploadsDir) => {
      const insertUpload = db.prepare(`INSERT INTO workspace_uploads (
         id, workspace_id, remote_device_id, original_name, mime_type, size_bytes, storage_key,
@@ -2396,7 +2477,81 @@ index c78f060119ae87a3a803dfa4b6828b4b9fb88137..f6d16d224b69dcc64aaa8fbee91bb230
         FROM workspace_uploads
        WHERE workspace_id = ? AND id = ?`);
      const listUploads = db.prepare(`SELECT id, workspace_id, remote_device_id, original_name, mime_type, size_bytes, storage_key,
-@@ -222,20 +222,33 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+@@ -202,8 +242,73 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+        FROM workspace_uploads
+       WHERE workspace_id = ?`);
+     const deleteWorkspaceRows = db.prepare('DELETE FROM workspace_uploads WHERE workspace_id = ?');
++    // Local receipts are private to the embedded host. The general app-state
++    // HTTP setter must not grant callers the ability to forge copy ownership.
++    db.exec(`CREATE TABLE IF NOT EXISTS desktop_draft_copies (
++        id TEXT PRIMARY KEY,
++        workspace_id TEXT NOT NULL,
++        receipt TEXT NOT NULL
++    )`);
++    const readCopy = db.prepare('SELECT receipt FROM desktop_draft_copies WHERE id = ?');
++    const reserveCopy = db.prepare('INSERT INTO desktop_draft_copies (id, workspace_id, receipt) VALUES (?, ?, ?)');
++    const publishCopy = db.prepare('UPDATE desktop_draft_copies SET receipt = ? WHERE id = ? AND receipt = ?');
++    const deleteWorkspaceDraftCopies = db.prepare('DELETE FROM desktop_draft_copies WHERE workspace_id = ?');
++    const getDesktopDraftCopy = id => {
++        const value = readCopy.get(id)?.receipt;
++        return value ? JSON.parse(value) : undefined;
++    };
++    const saveDraftRows = db.transaction((id, previous, receipt, rows) => {
++        const now = Date.now();
++        for (const row of rows) {
++            if (insertUpload.run(row.id, receipt.workspaceId, null, row.originalName, row.mimeType, row.sizeBytes,
++                row.storageKey, now, 1, row.sha256, receipt.workspaceId).changes !== 1)
++                throw new HttpError(404, 'Workspace not found');
++        }
++        if (publishCopy.run(JSON.stringify(receipt), id, previous).changes !== 1)
++            throw new HttpError(409, 'Draft copy receipt changed');
++    });
+     sweepStagedUploadFiles(db, uploadsDir);
+     return {
++        getDesktopDraftCopy,
++        reserveDesktopDraftCopy(id, receipt) {
++            if (!workspaceExists.get(receipt.workspaceId))
++                throw new HttpError(404, 'Workspace not found');
++            reserveCopy.run(id, receipt.workspaceId, JSON.stringify(receipt));
++        },
++        async saveDesktopDraftUploads(id, receipt, copies, signal) {
++            const previous = readCopy.get(id)?.receipt;
++            if (previous !== JSON.stringify(receipt) || receipt.uploads)
++                throw new HttpError(409, 'Draft copy receipt changed');
++            const rows = [];
++            const stagedPaths = [];
++            try {
++                for await (const copy of copies) {
++                    signal.throwIfAborted();
++                    const originalName = sanitizeOriginalName(copy.originalName);
++                    const mimeType = sanitizeMimeType(copy.mimeType);
++                    const storageKey = createStorageKey(receipt.workspaceId, `draft-${copy.id}`, originalName);
++                    if (getUpload.get(receipt.workspaceId, copy.id))
++                        throw new HttpError(409, 'Draft copy upload identity already exists');
++                    const sha256 = createHash('sha256').update(copy.data).digest('hex');
++                    const path = resolveStoragePath(uploadsDir, storageKey);
++                    await stageDraftBlob(path, copy.data, sha256);
++                    stagedPaths.push(path);
++                    rows.push({ id: copy.id, originalName, mimeType,
++                        sizeBytes: copy.data.length, storageKey, sha256 });
++                }
++                signal.throwIfAborted();
++                if (!workspaceExists.get(receipt.workspaceId))
++                    throw new HttpError(404, 'Workspace not found');
++                const result = { ...receipt, uploads: rows.map(({ id, originalName, mimeType, sizeBytes, sha256 }) => ({ id, originalName, mimeType, sizeBytes, sha256 })) };
++                saveDraftRows(id, previous, result, rows);
++                return result;
++            }
++            catch (error) {
++                for (const path of stagedPaths)
++                    removeFile(path);
++                throw error;
++            }
++        },
+         async saveUpload(input) {
+             if (!workspaceExists.get(input.workspaceId)) {
+                 throw new HttpError(404, 'Workspace not found');
+@@ -222,20 +327,33 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
                  size_bytes: input.data.byteLength,
                  storage_key: storageKey,
                  created_at: now,
@@ -2432,7 +2587,7 @@ index c78f060119ae87a3a803dfa4b6828b4b9fb88137..f6d16d224b69dcc64aaa8fbee91bb230
                  if (result.changes !== 1) {
                      removeFile(storagePath);
                      throw new HttpError(404, 'Workspace not found');
-@@ -255,6 +268,23 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+@@ -255,6 +373,23 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
              const safeLimit = Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), 100) : 50;
              return listUploads.all(workspaceId, safeLimit).map(mapRow);
          },
@@ -2456,3 +2611,26 @@ index c78f060119ae87a3a803dfa4b6828b4b9fb88137..f6d16d224b69dcc64aaa8fbee91bb230
          async readUpload(workspaceId, uploadId) {
              const row = getUpload.get(workspaceId, uploadId);
              if (!row)
+@@ -277,6 +412,7 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+             const staged = stageFilesForDelete(uploadsDir, rows);
+             try {
+                 deleteWorkspaceRows.run(workspaceId);
++                deleteWorkspaceDraftCopies.run(workspaceId);
+             }
+             catch (error) {
+                 restoreStagedFiles(staged);
+@@ -286,6 +422,14 @@ export const createWorkspaceUploadStore = (db, uploadsDir) => {
+                 commit: () => {
+                     for (const item of staged)
+                         removeFile(item.stagedPath);
++                    const directory = resolveStoragePath(uploadsDir, workspaceId);
++                    try {
++                        for (const file of readdirSync(directory)) {
++                            if (/^draft-[0-9a-f-]{36}(?:\.[A-Za-z0-9_-]{1,15})?(?:\.draft-copy-stage)?$/.test(file))
++                                removeFile(join(directory, file));
++                        }
++                    }
++                    catch { /* Workspace upload directory may be absent. */ }
+                     pruneWorkspaceUploadDir(uploadsDir, workspaceId);
+                 },
+                 rollback: () => restoreStagedFiles(staged),
