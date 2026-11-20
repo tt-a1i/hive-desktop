@@ -219,6 +219,21 @@ impl HiveApp {
                                 .on_click(cx.listener(|this, _, _, cx| this.resume(cx))),
                         )
                     })
+                    .when(self.session.is_some() && !running && !can_resume, |actions| {
+                        actions.child(
+                            Button::new("send-and-start-draft")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact().xsmall().h(px(28.)).w(px(28.)).rounded_lg()
+                                .icon(Glyph::SquarePen)
+                                .tooltip(crate::keybindings::hint(
+                                    crate::keybindings::Target::SendAndStartDraft,
+                                    "发送并开始新草稿", cx,
+                                ))
+                                .accessibility_label(tr("发送并开始新草稿"))
+                                .disabled(!can_send || !self.can_send_and_start_draft(cx))
+                                .on_click(cx.listener(|this, _, window, cx| this.send_and_start_draft(window, cx))),
+                        )
+                    })
                     .when(!can_resume, |actions| {
                         let busy_mode = crate::general::current(cx).busy_send_mode;
                         let blocked_while_running = running

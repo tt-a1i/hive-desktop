@@ -8,7 +8,7 @@ mod view_prefs;
 use self::badge::BadgeItem;
 pub(in crate::collaboration) use self::badge::InboxBadge;
 use self::intro::{IntroMode, IntroProgress};
-use self::view_prefs::ViewPreferences;
+use self::view_prefs::{MemberFilter, ViewPreferences};
 use super::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
@@ -218,7 +218,7 @@ impl HiveApp {
                         .preferences
                         .forget_unavailable(app.global_inbox_workspace_list());
                     if root_changed || project_removed {
-                        this.clear_project_position();
+                        this.clear_filter_position();
                     }
                 }
                 cx.notify();
@@ -467,13 +467,51 @@ impl GlobalInbox {
         {
             return;
         }
-        self.preferences.values.project_filter = project;
-        self.preferences.save_changed();
-        self.clear_project_position();
+        self.preferences.select_project(project);
+        self.clear_filter_position();
         cx.notify();
     }
 
-    fn clear_project_position(&mut self) {
+    fn select_member(&mut self, member: Option<MemberFilter>, cx: &mut Context<Self>) {
+        let Some(parent) = self.app.upgrade() else {
+            return;
+        };
+        let app = parent.read(cx);
+        if !self.is_current(self.connection, cx)
+            || app.global_inbox_workspace_list().is_none()
+            || self.preferences.values.member_filter == member
+            || member.as_ref().is_some_and(|member| {
+                self.preferences
+                    .values
+                    .project_filter
+                    .as_ref()
+                    .is_some_and(|project| project != &member.workspace_id)
+                    || selected_project(
+                        &app.workspaces,
+                        app.workspace_removing.as_deref(),
+                        Some(&member.workspace_id),
+                    )
+                    .is_none()
+                    || self
+                        .projects
+                        .get(&member.workspace_id)
+                        .is_none_or(|project| {
+                            !project
+                                .members
+                                .iter()
+                                .any(|item| item.id == member.member_id)
+                        })
+            })
+        {
+            return;
+        }
+        self.preferences.values.member_filter = member;
+        self.preferences.save_changed();
+        self.clear_filter_position();
+        cx.notify();
+    }
+
+    fn clear_filter_position(&mut self) {
         self.restore_position = None;
         if let Some(review) = self.reviewing_new.as_mut() {
             review.previous_position = None;
@@ -652,10 +690,17 @@ impl GlobalInbox {
             Ok(sessions) => project.sessions = sessions,
             Err(error) => errors.push(error),
         }
-        match result.members {
-            Ok(members) => project.members = members,
-            Err(error) => errors.push(error),
-        }
+        let selected_member_removed = match result.members {
+            Ok(members) => {
+                let removed = self.preferences.forget_missing_member(workspace, &members);
+                project.members = members;
+                removed
+            }
+            Err(error) => {
+                errors.push(error);
+                false
+            }
+        };
         if let Some(root) = &app.data_dir {
             let interactions = app.inbox_interactions(&project.sessions, &project.members);
             project
@@ -679,6 +724,9 @@ impl GlobalInbox {
                 eligible,
                 &app.collaboration.inbox_badge,
             );
+        }
+        if selected_member_removed {
+            self.clear_filter_position();
         }
         cx.notify();
     }
@@ -755,6 +803,57 @@ fn selected_project<'a>(
     workspaces.iter().find(|project| project.id == id)
 }
 
+fn member_choices(
+    workspaces: &[Workspace],
+    selected_project: Option<&str>,
+    removing: Option<&str>,
+    projects: &HashMap<String, ProjectInbox>,
+) -> Vec<(MemberFilter, String)> {
+    let mut choices = Vec::new();
+    for workspace in workspaces.iter().filter(|workspace| {
+        removing != Some(&workspace.id)
+            && selected_project.is_none_or(|selected| selected == workspace.id)
+    }) {
+        let Some(project) = projects.get(&workspace.id) else {
+            continue;
+        };
+        let title = display_project(workspace, workspaces);
+        let mut names = HashMap::new();
+        for member in &project.members {
+            *names.entry(&member.name).or_insert(0) += 1;
+        }
+        choices.extend(project.members.iter().map(|member| {
+            let label = if names[&member.name] > 1 {
+                format!("{} · {title} · {}", member.name, member.id)
+            } else {
+                format!("{} · {title}", member.name)
+            };
+            (
+                MemberFilter {
+                    workspace_id: workspace.id.clone(),
+                    member_id: member.id.clone(),
+                },
+                label,
+            )
+        }));
+    }
+    choices.sort_by(|(a, label_a), (b, label_b)| {
+        (label_a, &a.workspace_id, &a.member_id).cmp(&(label_b, &b.workspace_id, &b.member_id))
+    });
+    choices
+}
+
+fn matches_member(workspace: &str, entry: &Entry, selected: Option<&MemberFilter>) -> bool {
+    selected.is_none_or(|member| {
+        member.workspace_id == workspace
+            && entry
+                .related_members
+                .iter()
+                .flatten()
+                .any(|id| *id == member.member_id)
+    })
+}
+
 fn section_title(id: &'static str, title: &str, count: usize, cx: &App) -> impl IntoElement {
     div()
         .id(id)
@@ -809,6 +908,12 @@ impl Render for GlobalInbox {
             .project_filter
             .as_deref()
             .filter(|_| !reviewing);
+        let selected_member = self
+            .preferences
+            .values
+            .member_filter
+            .as_ref()
+            .filter(|_| !reviewing);
         let selected_title = selected_project(&app.workspaces, None, selected)
             .map(|project| display_project(project, &app.workspaces));
         let available: Vec<_> = app
@@ -826,7 +931,10 @@ impl Render for GlobalInbox {
         }
         let projects: Vec<_> = available
             .iter()
-            .filter(|project| selected.is_none_or(|selected| project.id == selected))
+            .filter(|project| {
+                selected.is_none_or(|selected| project.id == selected)
+                    && selected_member.is_none_or(|member| project.id == member.workspace_id)
+            })
             .collect();
         let now = now_ms();
         let rows: Vec<_> = if ready {
@@ -842,10 +950,11 @@ impl Render for GlobalInbox {
                         .entries(app)
                         .into_iter()
                         .filter(|entry| {
-                            !reviewing
-                                || project
-                                    .badge_item(app, &workspace.id, entry, now)
-                                    .is_some_and(|item| self.new_items.contains(&item))
+                            matches_member(&workspace.id, entry, selected_member)
+                                && (!reviewing
+                                    || project
+                                        .badge_item(app, &workspace.id, entry, now)
+                                        .is_some_and(|item| self.new_items.contains(&item)))
                         })
                         .map(|entry| (workspace.id.as_str(), entry))
                 })
@@ -877,6 +986,8 @@ impl Render for GlobalInbox {
                 "暂无新事项需要关注。"
             } else if has_snoozed {
                 "此范围内的协作事项均已暂缓。"
+            } else if selected_member.is_some() {
+                "此成员暂无需要关注的协作事项。"
             } else if selected_title.is_some() {
                 "此项目暂无需要关注的协作事项。"
             } else {
@@ -977,6 +1088,66 @@ impl Render for GlobalInbox {
                             })
                         }),
                 );
+                let current = self.preferences.values.member_filter.clone();
+                let members = member_choices(
+                    &app.workspaces,
+                    self.preferences.values.project_filter.as_deref(),
+                    app.workspace_removing.as_deref(),
+                    &self.projects,
+                );
+                if !members.is_empty() || current.is_some() {
+                    let all = tr("全部成员");
+                    let title = current.as_ref().map_or_else(
+                        || all.to_owned(),
+                        |current| {
+                            members
+                                .iter()
+                                .find(|(member, _)| member == current)
+                                .map(|(_, label)| label.clone())
+                                .unwrap_or_else(|| tr("已选成员").to_owned())
+                        },
+                    );
+                    let label = format!("{} · {title}", tr("按成员筛选收件箱"));
+                    let choices: Vec<_> = std::iter::once((None, all.to_owned()))
+                        .chain(
+                            members
+                                .into_iter()
+                                .map(|(member, label)| (Some(member), label)),
+                        )
+                        .collect();
+                    let inbox = cx.weak_entity();
+                    controls = controls.child(
+                        Button::new("global-inbox-member-filter")
+                            .outline()
+                            .compact()
+                            .xsmall()
+                            .dropdown_caret(true)
+                            .max_w(px(260.))
+                            .label(title)
+                            .tooltip(label.clone())
+                            .accessibility_label(label)
+                            .dropdown_menu(move |menu, window, _| {
+                                let menu = menu
+                                    .scrollable(true)
+                                    .max_h((window.viewport_size().height - px(200.)).max(px(120.)))
+                                    .max_w((window.viewport_size().width - px(48.)).min(px(600.)));
+                                choices.iter().fold(menu, |menu, (member, title)| {
+                                    let checked = current == *member;
+                                    let member = member.clone();
+                                    let inbox = inbox.clone();
+                                    menu.item(
+                                        PopupMenuItem::new(title.clone())
+                                            .checked(checked)
+                                            .on_click(move |_, _, cx| {
+                                                let _ = inbox.update(cx, |this, cx| {
+                                                    this.select_member(member.clone(), cx);
+                                                });
+                                            }),
+                                    )
+                                })
+                            }),
+                    );
+                }
             }
             if has_snoozed {
                 controls = controls.child(
@@ -1337,15 +1508,16 @@ impl Render for GlobalInbox {
 #[cfg(test)]
 mod tests {
     use super::{
-        ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxSections, ReadingPosition,
-        RowId, display_project, row_is_visible, selected_project, update_new_items,
+        ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxSections, MemberFilter,
+        ProjectInbox, ReadingPosition, RowId, display_project, matches_member, member_choices,
+        row_is_visible, selected_project, update_new_items,
     };
     use crate::collaboration::inbox::Priority;
     use crate::collaboration::inbox::placement::SnoozedUntil;
-    use crate::protocol::Workspace;
+    use crate::protocol::{Member, Workspace};
     use gpui_kit::{Bounds, point, px, size};
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     fn workspace(id: &str, path: &str) -> Workspace {
         Workspace {
@@ -1377,6 +1549,58 @@ mod tests {
         assert!(selected_project(&projects, Some("left"), Some("left")).is_none());
         assert!(selected_project(&projects, None, Some("right")).is_none());
         assert!(selected_project(&projects, None, None).is_none());
+    }
+
+    #[test]
+    fn same_named_members_show_project_context_and_match_exact_messages() {
+        let workspaces = [
+            workspace("left", "/projects/left/app"),
+            workspace("right", "/projects/right/app"),
+        ];
+        let make_project = || ProjectInbox {
+            members: vec![
+                serde_json::from_value::<Member>(json!({
+                    "id": "reviewer", "name": "Reviewer", "role": "reviewer",
+                    "status": "stopped", "pending_task_count": 0,
+                }))
+                .unwrap(),
+            ],
+            ..ProjectInbox::default()
+        };
+        let projects = HashMap::from([
+            ("left".into(), make_project()),
+            ("right".into(), make_project()),
+        ]);
+        let choices = member_choices(&workspaces, None, None, &projects);
+        assert_eq!(choices[0].1, "Reviewer · /projects/left/app");
+        assert_eq!(choices[1].1, "Reviewer · /projects/right/app");
+        assert_eq!(
+            member_choices(&workspaces, Some("right"), None, &projects),
+            vec![choices[1].clone()]
+        );
+        let snapshot: ActionCenter = serde_json::from_value(json!({
+            "workspace_id": "right", "generated_at": 10, "recent_dispatch_messages": [],
+            "attention": [{
+                "kind": "question_waiting_answer", "worker_id": "orchestrator",
+                "message_sender_id": "reviewer", "message_id": "older-than-preview",
+                "dispatch_id": "123e4567-e89b-12d3-a456-426614174000"
+            }]
+        }))
+        .unwrap();
+        let row = &snapshot.entries(str::to_owned)[0];
+        assert!(matches_member("right", row, Some(&choices[1].0)));
+        assert!(!matches_member("right", row, Some(&choices[0].0)));
+        assert!(!matches_member(
+            "right",
+            row,
+            Some(&MemberFilter {
+                workspace_id: "right".into(),
+                member_id: "different-member".into(),
+            })
+        ));
+        assert!(
+            matches!(row.target, Destination::Dispatch(ref id) if id == "123e4567-e89b-12d3-a456-426614174000")
+        );
     }
 
     #[test]
@@ -1416,6 +1640,7 @@ mod tests {
             label: "",
             subject: "question".into(),
             target: Destination::Dispatch("dispatch".into()),
+            related_members: [None, None],
             snooze_key: Some("message:question".into()),
             wake: None,
             priority: Priority::NeedsUser,
@@ -1466,6 +1691,7 @@ mod tests {
                         label,
                         subject: label.into(),
                         target: Destination::Member(label.into()),
+                        related_members: [None, None],
                         snooze_key: None,
                         wake: None,
                         priority,

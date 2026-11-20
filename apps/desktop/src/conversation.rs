@@ -1,10 +1,10 @@
 use crate::{
-    app::{DeliveryCard, HiveApp, Message, ToolOutputWindow, ToolPresentation},
+    app::{DeliveryCard, ErrorNotice, HiveApp, Message, ToolOutputWindow, ToolPresentation},
     composer::SendIntent,
     general::BusySendMode,
     protocol::*,
 };
-use gpui_kit::*;
+use gpui_kit::{component::WindowExt, *};
 use serde_json::{Value, json};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -33,6 +33,16 @@ fn unresolved_tool_calls(ids: &[String], history: &[Value]) -> HashSet<String> {
     pending.into_iter().map(str::to_owned).collect()
 }
 
+fn accepts_background_send(value: &Value, source: &Session) -> bool {
+    value["accepted"].as_bool() == Some(true)
+        && value["session"]["backend"].as_str() == Some(source.backend.wire())
+        && serde_json::from_value::<Session>(value["session"].clone()).is_ok_and(|acknowledged| {
+            acknowledged.id == source.id
+                && acknowledged.workspace_id == source.workspace_id
+                && acknowledged.profile == source.profile
+        })
+}
+
 impl HiveApp {
     pub(crate) fn clear_conversation_messages(&mut self, cx: &mut Context<Self>) {
         self.message_indices = Default::default();
@@ -47,9 +57,18 @@ impl HiveApp {
         if self.conversation_is_read_only() || !self.conversation_ready || !self.workspace_writes_allowed() {
             return;
         }
-        let Some(id) = self.session.as_ref().map(|s| s.id.clone()) else {
+        let Some(source) = self.session.as_ref() else {
             return;
         };
+        let fresh_draft = if matches!(intent, SendIntent::AndStartDraft) {
+            if window.has_active_dialog(cx) || !self.can_send_and_start_draft(cx) {
+                return;
+            }
+            Some(source.clone())
+        } else {
+            None
+        };
+        let id = source.id.clone();
         self.showing_welcome_guide = false;
         let text = self.input.read(cx).value().to_string();
         if self.current_history_access().is_some_and(|a| a.handoff_blocked()) { self.error = Some("接续状态需要先刷新核验。".into()); cx.notify(); return; }
@@ -96,10 +115,27 @@ impl HiveApp {
         let window = window.window_handle();
         let connection = self.connection_generation;
         let open_request = self.open_request;
+        let mut prompt = json!({
+            "sessionId": id, "text": text,
+            "attachmentIds": refs.iter().map(|item| &item.id).collect::<Vec<_>>(),
+        });
+        if fresh_draft.is_some() {
+            prompt["requireIdle"] = json!(true);
+        } else {
+            prompt["busyMode"] = json!(busy_mode);
+        }
         cx.spawn(async move |this, cx| {
             let result = runtime
-                .request("chat.prompt", json!({"sessionId":id,"text":text,"attachmentIds":refs.iter().map(|item|&item.id).collect::<Vec<_>>(),"busyMode":busy_mode}))
-                .await;
+                .request("chat.prompt", prompt)
+                .await
+                .map_err(ErrorNotice::from)
+                .and_then(|value| {
+                    if fresh_draft.as_ref().is_some_and(|source| !accepts_background_send(&value, source)) {
+                        Err(ErrorNotice::Message("未能确认原会话已接收消息"))
+                    } else {
+                        Ok(value)
+                    }
+                });
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != connection {
                     return;
@@ -121,8 +157,11 @@ impl HiveApp {
                             this.history_navigation.access.handoff_delivery = Some(json!({"status":"unknown"}));
                         }
                         if !was_busy { this.busy.remove(&id); }
-                        if this.session.as_ref().is_some_and(|s| s.id == id)
-                            && this.input.read(cx).value().is_empty()
+                        let showing_source = this.session.as_ref().is_some_and(|s| s.id == id);
+                        let source_owns_editor = showing_source && (fresh_draft.is_none()
+                            || this.draft_owner == this.draft_target
+                                && this.draft_target.as_deref() == Some(attachment_key.as_str()));
+                        if source_owns_editor && this.input.read(cx).value().is_empty()
                         {
                             let input = this.input.clone();
                             if window
@@ -138,8 +177,7 @@ impl HiveApp {
                                     .or_default()
                                     .push(text.clone());
                             }
-                        } else if !this.session.as_ref().is_some_and(|s| s.id == id)
-                            && !this.drafts.contains_key(&format!("session:{id}"))
+                        } else if !source_owns_editor && !this.drafts.contains_key(&attachment_key)
                         {
                             this.drafts.insert(format!("session:{id}"), text.clone());
                         } else {
@@ -149,7 +187,7 @@ impl HiveApp {
                                 .push(text.clone());
                         }
                         this.schedule_draft_save(cx);
-                        this.error = Some(error.into());
+                        this.error = Some(error);
                         if refresh_handoff {
                             this.refresh_handoff_target_state(id.clone(), cx);
                         }
@@ -179,7 +217,18 @@ impl HiveApp {
                                 if this.session.as_ref().is_some_and(|item| item.id == id) {
                                     this.session = Some(session);
                                 }
-                                if reopen_after_activation {
+                                if let Some(source) = &fresh_draft
+                                    && showing_source && this.open_request == open_request
+                                    && this.workspace.as_ref() == Some(&source.workspace_id)
+                                    && this.viewing_conversation() && this.can_start_new_conversation()
+                                {
+                                    let width = window.update(cx, |_, window, cx| {
+                                        (!window.has_active_dialog(cx)).then(|| window.viewport_size().width)
+                                    }).ok().flatten();
+                                    if let Some(width) = width {
+                                        this.create_fresh_draft_after_send(source, window, width < px(820.), cx);
+                                    }
+                                } else if reopen_after_activation {
                                     this.show_session(id.clone(), cx);
                                 }
                             }
@@ -1061,8 +1110,34 @@ pub(crate) fn history_tool_output(id: &str, message: &Value) -> (String, Vec<Too
 
 #[cfg(test)]
 mod tests {
-    use super::{message_text, unresolved_tool_calls};
+    use super::{Session, accepts_background_send, message_text, unresolved_tool_calls};
     use serde_json::json;
+
+    #[test]
+    fn fresh_draft_requires_positive_acknowledgement_from_the_exact_source() {
+        let saved = json!({
+            "id": "original", "workspaceId": "project", "title": "New chat", "updatedAt": 1,
+            "backend": "codex", "profile": {"id": "configured-profile", "revision": 2},
+        });
+        let source: Session = serde_json::from_value(saved.clone()).unwrap();
+        let accepted = json!({"accepted": true, "session": saved});
+        assert!(accepts_background_send(&accepted, &source));
+        for (field, wrong) in [
+            ("id", json!("different-chat")),
+            ("workspaceId", json!("different-project")),
+            ("backend", json!("claude")),
+            ("profile", json!({"id": "configured-profile", "revision": 3})),
+        ] {
+            let mut reply = accepted.clone();
+            reply["session"][field] = wrong;
+            assert!(!accepts_background_send(&reply, &source), "{field} mismatch");
+        }
+        for missing in [json!({}), json!(false), json!("true"), json!(null)] {
+            let mut reply = accepted.clone();
+            reply["accepted"] = missing;
+            assert!(!accepts_background_send(&reply, &source));
+        }
+    }
 
     #[test]
     fn text_blocks_keep_separators_without_doubling_a_large_buffer() {

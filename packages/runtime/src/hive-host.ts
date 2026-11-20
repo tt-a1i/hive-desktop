@@ -34,6 +34,26 @@ export interface HiveUploadLocation {
 
 export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled'; text: string }
 interface InboxQuestion { workspaceId: string; dispatchId: string; messageId: string }
+type ActionableMessageSource = {listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[]};
+
+export function withInboxMessageSenders(
+    result: unknown, workspaceId: string, store: ActionableMessageSource,
+): unknown {
+    if (!result || typeof result !== 'object' || !('workspace_id' in result) || result.workspace_id !== workspaceId
+        || !('attention' in result) || !Array.isArray(result.attention)) return result;
+    const messages = new Map(store.listActionableDispatchMessages(workspaceId)
+        .filter(message => message.workspaceId === workspaceId)
+        .map(message => [message.id, message]));
+    return {...result, attention: result.attention.map(row => {
+        if ((row?.kind !== 'question_waiting_answer' && row?.kind !== 'message_delivery_pending')
+            || typeof row.message_id !== 'string') return row;
+        const message = messages.get(row.message_id);
+        return message && message.dispatchId === row.dispatch_id
+            ? {...row, message_sender_id: message.fromAgentId}
+            : row;
+    })};
+}
+
 export interface SavedScriptContext {scriptRunId: string; cwd: string; command: string; sessionId?: string}
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
@@ -138,9 +158,8 @@ export async function createHiveHost({
 		port: runtime.port,
         inboxQuestions(workspaceIds) {
             if (closing) throw new Error('Hive host is closed');
-            const store = runtime.store as typeof runtime.store & {
+            const store = runtime.store as typeof runtime.store & ActionableMessageSource & {
                 listWorkspaces(): Array<{ id: string }>;
-                listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[];
             };
             const workspaces = new Set(store.listWorkspaces().map(workspace => workspace.id));
             return [...new Set(workspaceIds)].filter(workspaceId => workspaces.has(workspaceId)).flatMap(workspaceId =>
@@ -264,6 +283,12 @@ export async function createHiveHost({
 						? JSON.parse(text)
 						: text;
 			if (!response.ok) throw new HiveHttpError(response.status, result);
+			// The preview is capped. Attach sender identity to every current
+			// attention message without another runtime request or more text.
+			const inbox = method === "GET" && /^\/api\/ui\/workspaces\/([^/]+)\/action-center$/.exec(url.pathname);
+			if (inbox) {
+				return withInboxMessageSenders(result, decodeURIComponent(inbox[1]!), runtime.store as typeof runtime.store & ActionableMessageSource);
+			}
 			return result;
 		},
 		openTerminalSocket(runId, channel, clientId, cols, rows) {

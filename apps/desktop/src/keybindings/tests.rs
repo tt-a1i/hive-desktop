@@ -211,6 +211,30 @@ fn prompt_stash_only_dispatches_in_composer_and_can_be_unbound() {
 }
 
 #[test]
+fn send_and_start_draft_has_its_own_rebindable_composer_chord() {
+    use gpui_kit::{Action, KeyContext};
+    let target = Target::SendAndStartDraft;
+    for os in [OperatingSystem::Mac, OperatingSystem::Windows] {
+        let chord = target.default(os);
+        assert!(target.validate(chord, os).is_ok());
+        assert!(Target::NewSession.validate(chord, os).is_err());
+        let map = Keymap::new(vec![KeyBinding::new(
+            chord, super::SendAndStartDraft, Some("HiveComposer"),
+        )]);
+        let key = [Keystroke::parse_with_os(chord, os).unwrap()];
+        let ordinary_send = [Keystroke::parse_with_os(
+            if os == OperatingSystem::Mac { "cmd-enter" } else { "ctrl-enter" }, os,
+        ).unwrap()];
+        let composer = [KeyContext::parse("HiveComposer").unwrap(), KeyContext::parse("Input").unwrap()];
+        let terminal = [KeyContext::parse("HiveTerminal").unwrap(), KeyContext::parse("Input").unwrap()];
+        assert_eq!(target.context().unwrap().depth_of(&composer), Some(1));
+        assert_eq!(map.bindings_for_input(&key, &composer).0[0].action().name(), super::SendAndStartDraft.name());
+        assert!(map.bindings_for_input(&key, &terminal).0.is_empty());
+        assert!(map.bindings_for_input(&ordinary_send, &composer).0.is_empty());
+    }
+}
+
+#[test]
 fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
     let root = tempfile::tempdir().unwrap();
     let legacy = r#"{"version":1,"bindings":{"search":"cmd-shift-j","find":null,"preferences":"cmd-,"}}"#;

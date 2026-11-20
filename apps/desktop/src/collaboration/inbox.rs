@@ -312,6 +312,7 @@ struct Attention {
     message_id: Option<String>,
     worker_id: Option<String>,
     worker_name: Option<String>,
+    message_sender_id: Option<String>,
     submitted_at: Option<u64>,
 }
 
@@ -351,6 +352,7 @@ struct Entry {
     label: &'static str,
     subject: String,
     target: Destination,
+    related_members: [Option<String>; 2],
     snooze_key: Option<String>,
     wake: Option<Wake>,
     priority: Priority,
@@ -440,6 +442,12 @@ impl Attention {
             label,
             subject,
             target,
+            related_members: [
+                self.worker_id.clone(),
+                self.message_sender_id
+                    .clone()
+                    .or_else(|| message.map(|message| message.from_agent_id.clone())),
+            ],
             snooze_key,
             wake,
             priority,
@@ -604,6 +612,7 @@ impl HiveApp {
             label,
             subject,
             target: Destination::Session(session.clone()),
+            related_members: [session.display_agent_id().map(str::to_owned), None],
             snooze_key: exact_ids.map(|_| format!("session:{}", session.id)),
             wake: exact_ids.map(|ids| Wake::Session {
                 interaction_ids: ids.clone(),
@@ -1216,6 +1225,7 @@ mod tests {
             label: "",
             subject: "".into(),
             target: Destination::Dispatch("dispatch".into()),
+            related_members: [None, None],
             snooze_key: Some("message:question".into()),
             wake: wake(7),
             priority: Priority::NeedsUser,
@@ -1238,6 +1248,7 @@ mod tests {
             label: "",
             subject: id.into(),
             target: Destination::Dispatch(id.into()),
+            related_members: [None, None],
             snooze_key: None,
             wake: None,
             priority,

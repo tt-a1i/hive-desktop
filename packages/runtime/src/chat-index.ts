@@ -23,6 +23,7 @@ export class SessionIdentityError extends Error {
 
 export interface ChatRecord {
   backend: ChatBackend;
+  deferFirstConnection?: true;
   draftCopy?: string;
   handoff?: {operationId:string;snapshotId:string;snapshotHash:string;sourceSessionId:string};
   profile?: AgentProfileRef;
@@ -112,7 +113,8 @@ export class ChatIndex {
     const original = this.get(id);
     if (original.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its history is read-only; create a new conversation to continue.');
     if (original.originAgentId && original.originAgentId !== agentId) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'A historical conversation cannot be rebound to a different agent.');
-    const bound: ChatRecord = { ...original, agentId, originAgentId: original.originAgentId ?? agentId, identityState: 'known' };
+    const {deferFirstConnection, ...session} = original;
+    const bound: ChatRecord = { ...session, agentId, originAgentId: original.originAgentId ?? agentId, identityState: 'known' };
     const next = this.records.map(record => {
       if (record.id === id) return bound;
       if (record.workspaceId !== bound.workspaceId || record.agentId !== agentId) return record;
@@ -211,6 +213,7 @@ function isScratchRecord(record: Record<string, unknown> | ChatRecord): boolean 
 function isChatRecord(value: unknown): value is ChatRecord {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
+  if (record.deferFirstConnection !== undefined && record.deferFirstConnection !== true) return false;
   if (record.draftCopy !== undefined && (typeof record.draftCopy !== 'string' || !/^[a-f0-9]{64}$/.test(record.draftCopy))) return false;
   if (record.handoff !== undefined) {
     const h = record.handoff as Record<string,unknown>;

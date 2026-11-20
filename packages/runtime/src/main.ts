@@ -594,14 +594,15 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     }
     case 'chat.createRecord':
     case 'chat.create': {
-      exact(params, ['workspaceId', 'backend', 'profile', 'isolation', 'branch', 'skipSetup', 'expectedSetupRevision']);
+      exact(params, ['workspaceId', 'backend', 'profile', 'isolation', 'branch', 'skipSetup', 'expectedSetupRevision', ...(method === 'chat.createRecord' ? ['deferFirstConnection'] : [])]);
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
       if (params.isolation !== undefined && params.isolation !== 'worktree') throw new Error('Unsupported session isolation');
       if (params.branch !== undefined && (params.isolation !== 'worktree' || typeof params.branch !== 'string')) throw new Error('A branch is only valid for a new worktree session');
       const workspace = text(params, 'workspaceId');
       if (params.expectedSetupRevision !== undefined && typeof params.expectedSetupRevision !== 'string') throw new Error('Invalid setup revision');
       if (params.skipSetup !== undefined && typeof params.skipSetup !== 'boolean') throw new Error('Invalid setup selection');
-      const options = {...optionalProfile(params), ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}), ...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch})};
+      if (params.deferFirstConnection !== undefined && typeof params.deferFirstConnection !== 'boolean') throw new TypeError('deferFirstConnection must be a boolean');
+      const options = {...optionalProfile(params), ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}), ...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch}), ...(params.deferFirstConnection === true && {deferFirstConnection: true})};
       return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend, options) : chats.create(workspace, params.backend, options);
     }
     case 'chat.pin': {
@@ -721,7 +722,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     }
     case 'chat.prompt': {
       if (typeof params.text !== 'string') throw new TypeError('text must be a string');
-      return chats.prompt(text(params, 'sessionId'), params.text, params.attachmentIds, params.busyMode);
+      return chats.prompt(text(params, 'sessionId'), params.text, params.attachmentIds, params.busyMode, params.requireIdle);
     }
     case 'chat.queue.edit': {
       if (typeof params.text !== 'string') throw new TypeError('Queue text must be a string');

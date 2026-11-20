@@ -17,6 +17,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
+        menu::{DropdownMenu, PopupMenuItem},
         resizable::{HandleEdge, resize_handle},
         scroll::ScrollableElement,
         text::{TextView, TextViewState},
@@ -176,13 +177,29 @@ struct Preview {
     scroll: ScrollHandle,
     editor_task: Option<Task<()>>,
     editor_error: Option<String>,
-    reveal_task: Option<FileManagerReveal>,
-    reveal_error: bool,
+    path_request: Option<FilePathRequest>,
+    path_status: Option<FilePathStatus>,
 }
 
-struct FileManagerReveal {
+struct FilePathRequest {
     reader: Option<WeakEntity<ExpandedFilePreview>>,
+    request_id: Rc<()>,
     _task: Task<()>,
+}
+
+#[derive(Clone, Copy)]
+enum FilePathAction {
+    Reveal,
+    CopyAbsolute,
+    CopyRelative,
+}
+
+#[derive(Clone, Copy)]
+enum FilePathStatus {
+    RevealFailed,
+    CopyFailed,
+    AbsoluteCopied,
+    RelativeCopied,
 }
 
 enum TreePreview {
@@ -195,6 +212,13 @@ struct PreviewIdentity {
     scope: Scope,
     preview_generation: u64,
     selection: Match,
+}
+
+impl PreviewIdentity {
+    fn file_params(&self) -> Value {
+        self.scope
+            .params(json!({"relativePath":self.selection.path}))
+    }
 }
 
 struct PreviewAttachment {
@@ -444,13 +468,31 @@ fn editor_open_error(error: &str, cx: &App) -> Stateful<Div> {
         ))
 }
 
-fn file_manager_reveal_error(cx: &App) -> Stateful<Div> {
+fn file_path_status(status: FilePathStatus, cx: &App) -> Stateful<Div> {
+    let (message, color, id) = match status {
+        FilePathStatus::RevealFailed => (
+            "无法在文件管理器中显示此文件。",
+            Color::Error,
+            "project-file-manager-reveal-error",
+        ),
+        FilePathStatus::CopyFailed => (
+            "无法复制此文件的绝对路径。",
+            Color::Error,
+            "project-file-copy-path-error",
+        ),
+        FilePathStatus::AbsoluteCopied => {
+            ("已复制绝对路径", Color::Muted, "project-file-copied-path")
+        }
+        FilePathStatus::RelativeCopied => {
+            ("已复制相对路径", Color::Muted, "project-file-copied-path")
+        }
+    };
     div()
-        .id("project-file-manager-reveal-error")
+        .id(id)
         .role(Role::Status)
         .text_xs()
-        .text_color(Color::Error.get(cx))
-        .child(tr("无法在文件管理器中显示此文件。"))
+        .text_color(color.get(cx))
+        .child(tr(message))
 }
 
 #[derive(Default)]
@@ -1522,7 +1564,7 @@ impl FileBrowser {
             None => selectable.first(),
         };
         if let Some((index, item)) = next.and_then(|(index, row)| Some((*index, row.item()?))) {
-            self.cancel_reveal_after_tree_selection(&item);
+            self.cancel_path_request_after_tree_selection(&item);
             self.tree_selected = Some(item);
             self.tree_scroll.scroll_to_item(index);
             cx.notify();
@@ -1536,19 +1578,19 @@ impl FileBrowser {
             .iter()
             .position(|row| row.matches_item(&item));
         if let Some(index) = index {
-            self.cancel_reveal_after_tree_selection(&item);
+            self.cancel_path_request_after_tree_selection(&item);
             self.tree_selected = Some(item);
             self.tree_scroll.scroll_to_item(index);
             cx.notify();
         }
     }
 
-    fn cancel_reveal_after_tree_selection(&mut self, item: &TreeItem) {
+    fn cancel_path_request_after_tree_selection(&mut self, item: &TreeItem) {
         if self.tree_selected.as_ref() != Some(item)
             && let Some(preview) = &mut self.preview
             && !matches!(item, TreeItem::Entry(path) if *path == preview.selection.path)
         {
-            preview.reveal_task = None;
+            preview.path_request = None;
         }
     }
 
@@ -1660,7 +1702,7 @@ impl FileBrowser {
             .filter(|preview| !preview.loading)
             .map(|mut preview| {
                 preview.editor_task = None;
-                preview.reveal_task = None;
+                preview.path_request = None;
                 preview
             });
         self.tree_preview = Some(TreePreview::Reading { previous });
@@ -1749,8 +1791,8 @@ impl FileBrowser {
             scroll: ScrollHandle::new(),
             editor_task: None,
             editor_error: None,
-            reveal_task: None,
-            reveal_error: false,
+            path_request: None,
+            path_status: None,
         });
         let generation = self.scope_generation;
         let preview_generation = self.preview_generation;
@@ -1909,7 +1951,7 @@ impl FileBrowser {
         })
     }
 
-    fn reveal_identity(&self) -> Option<PreviewIdentity> {
+    fn file_path_identity(&self) -> Option<PreviewIdentity> {
         if self.preview.as_ref()?.loading {
             return None;
         }
@@ -1922,8 +1964,8 @@ impl FileBrowser {
         reader: Option<WeakEntity<ExpandedFilePreview>>,
         cx: &App,
     ) -> Option<Button> {
-        let identity = self.reveal_identity()?;
-        let busy = self.preview.as_ref()?.reveal_task.is_some();
+        let identity = self.file_path_identity()?;
+        let busy = self.preview.as_ref()?.path_request.is_some();
         let label = tr("在文件管理器中显示");
         Some(
             Button::new("reveal-project-file-in-manager")
@@ -1937,34 +1979,94 @@ impl FileBrowser {
                 .disabled(busy)
                 .on_click(move |_, _, cx| {
                     let _ = browser.update(cx, |browser, cx| {
-                        browser.reveal_in_file_manager(identity.clone(), reader.clone(), cx);
+                        browser.run_file_path_action(
+                            FilePathAction::Reveal,
+                            identity.clone(),
+                            reader.clone(),
+                            cx,
+                        );
                     });
                 }),
         )
     }
 
-    fn reveal_in_file_manager(
+    fn copy_path_menu(
+        &self,
+        browser: WeakEntity<Self>,
+        reader: Option<WeakEntity<ExpandedFilePreview>>,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let identity = self.file_path_identity()?;
+        let busy = self.preview.as_ref()?.path_request.is_some();
+        let label = tr("复制路径");
+        Some(
+            Button::new("copy-project-file-path")
+                .custom(palette::quiet_icon_variant(cx))
+                .compact()
+                .xsmall()
+                .size(px(24.))
+                .icon(Glyph::Copy)
+                .accessibility_label(label)
+                .tooltip(label)
+                .disabled(busy)
+                .dropdown_menu(move |menu, _, _| {
+                    [
+                        ("复制相对路径", FilePathAction::CopyRelative),
+                        ("复制绝对路径", FilePathAction::CopyAbsolute),
+                    ]
+                    .into_iter()
+                    .fold(menu, |menu, (label, action)| {
+                        let browser = browser.clone();
+                        let reader = reader.clone();
+                        let identity = identity.clone();
+                        menu.item(PopupMenuItem::new(tr(label)).on_click(move |_, _, cx| {
+                            let _ = browser.update(cx, |browser, cx| {
+                                browser.run_file_path_action(
+                                    action,
+                                    identity.clone(),
+                                    reader.clone(),
+                                    cx,
+                                );
+                            });
+                        }))
+                    })
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn run_file_path_action(
         &mut self,
+        action: FilePathAction,
         identity: PreviewIdentity,
         reader: Option<WeakEntity<ExpandedFilePreview>>,
         cx: &mut Context<Self>,
     ) {
         if !self.current(cx)
-            || self.reveal_identity().as_ref() != Some(&identity)
+            || self.file_path_identity().as_ref() != Some(&identity)
             || !ExpandedFilePreview::request_active(reader.as_ref(), cx)
         {
             return;
         }
         let preview = self.preview.as_mut().expect("current file selection");
-        if preview.reveal_task.is_some() {
+        if preview.path_request.is_some() {
             return;
         }
-        preview.reveal_error = false;
+        if matches!(action, FilePathAction::CopyRelative) {
+            cx.write_to_clipboard(ClipboardItem::new_string(identity.selection.path));
+            preview.path_status = Some(FilePathStatus::RelativeCopied);
+            cx.notify();
+            return;
+        }
+
+        preview.path_status = None;
         let runtime = self.runtime.clone().expect("current file runtime");
         let path = identity.selection.path.clone();
         let directory = identity.scope.tree.source.directory().map(PathBuf::from);
-        let params = identity.scope.params(json!({"relativePath": path}));
+        let params = identity.file_params();
         let request_reader = reader.clone();
+        let active_id = Rc::new(());
+        let request_id = active_id.clone();
         let task = cx.spawn(async move |this, cx| {
             let result = async {
                 let response = runtime.request("project.files.resolveOpen", params).await?;
@@ -1974,22 +2076,50 @@ impl FileBrowser {
             }
             .await;
             let _ = this.update(cx, |this, cx| {
-                if !this.current(cx) || this.reveal_identity().as_ref() != Some(&identity) {
+                if !this.current(cx) || this.file_path_identity().as_ref() != Some(&identity) {
                     return;
                 }
                 let preview = this.preview.as_mut().expect("current file selection");
-                preview.reveal_task = None;
+                if !preview
+                    .path_request
+                    .as_ref()
+                    .is_some_and(|pending| Rc::ptr_eq(&request_id, &pending.request_id))
+                {
+                    return;
+                }
+                preview.path_request = None;
                 if ExpandedFilePreview::request_active(reader.as_ref(), cx) {
-                    match result {
-                        Ok(path) => cx.reveal_path(&path),
-                        Err(_) => preview.reveal_error = true,
-                    }
+                    preview.path_status = match action {
+                        FilePathAction::Reveal => match result {
+                            Ok(path) => {
+                                cx.reveal_path(&path);
+                                None
+                            }
+                            Err(_) => Some(FilePathStatus::RevealFailed),
+                        },
+                        FilePathAction::CopyAbsolute => Some(
+                            match result
+                                .ok()
+                                .and_then(|path| path.into_os_string().into_string().ok())
+                            {
+                                Some(path) => {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(path));
+                                    FilePathStatus::AbsoluteCopied
+                                }
+                                None => FilePathStatus::CopyFailed,
+                            },
+                        ),
+                        FilePathAction::CopyRelative => {
+                            unreachable!("relative copy does not resolve on disk")
+                        }
+                    };
                 }
                 cx.notify();
             });
         });
-        preview.reveal_task = Some(FileManagerReveal {
+        preview.path_request = Some(FilePathRequest {
             reader: request_reader,
+            request_id: active_id,
             _task: task,
         });
         cx.notify();
@@ -2152,7 +2282,7 @@ impl FileBrowser {
         let runtime = self.runtime.clone().expect("current file runtime");
         let path = identity.selection.path.clone();
         let directory = identity.scope.tree.source.directory().map(PathBuf::from);
-        let params = identity.scope.params(json!({"relativePath":path}));
+        let params = identity.file_params();
         preview.editor_task = Some(cx.spawn(async move |this, cx| {
             let response = runtime
                 .request("project.files.resolveOpen", params)
@@ -2659,14 +2789,15 @@ impl FileBrowser {
                         })
                         .children(self.attach_button(cx))
                         .children(self.reveal_in_file_manager_button(cx.weak_entity(), None, cx))
+                        .children(self.copy_path_menu(cx.weak_entity(), None, cx))
                         .children(self.editor_menu(cx.weak_entity(), None, cx)),
                 ),
         );
         if let Some(error) = &preview.editor_error {
             panel = panel.child(editor_open_error(error, cx));
         }
-        if preview.reveal_error {
-            panel = panel.child(file_manager_reveal_error(cx));
+        if let Some(status) = preview.path_status {
+            panel = panel.child(file_path_status(status, cx));
         }
         if preview.loading {
             return panel.child(
@@ -2804,7 +2935,7 @@ impl ExpandedFilePreview {
                         .unwrap_or(false);
                     if accepted {
                         this.dismissed = true;
-                        this.cancel_file_manager_reveal(cx);
+                        this.cancel_path_request(cx);
                     }
                 })),
         )
@@ -2818,19 +2949,19 @@ impl ExpandedFilePreview {
         })
     }
 
-    fn cancel_file_manager_reveal(&self, cx: &mut Context<Self>) {
+    fn cancel_path_request(&self, cx: &mut Context<Self>) {
         let reader = cx.weak_entity();
         let browser = self.browser.clone();
         cx.defer(move |cx| {
             let _ = browser.update(cx, |browser, cx| {
                 if let Some(preview) = &mut browser.preview
                     && preview
-                        .reveal_task
+                        .path_request
                         .as_ref()
                         .and_then(|request| request.reader.as_ref())
                         == Some(&reader)
                 {
-                    preview.reveal_task = None;
+                    preview.path_request = None;
                     cx.notify();
                 }
             });
@@ -2843,7 +2974,7 @@ impl ExpandedFilePreview {
         }
         let current = self.current(cx);
         self.dismissed = true;
-        self.cancel_file_manager_reveal(cx);
+        self.cancel_path_request(cx);
         if let Some(browser) = self.browser.upgrade() {
             let browser = browser.read(cx);
             let docked = browser.docked;
@@ -2954,16 +3085,20 @@ impl Render for ExpandedFilePreview {
             cx,
         );
         let attach = self.attach_button(browser.read(cx), cx);
+        let copy_path =
+            browser
+                .read(cx)
+                .copy_path_menu(self.browser.clone(), Some(cx.weak_entity()), cx);
         let editor_error = browser
             .read(cx)
             .preview
             .as_ref()
             .and_then(|preview| preview.editor_error.as_deref());
-        let reveal_error = browser
+        let path_status = browser
             .read(cx)
             .preview
             .as_ref()
-            .is_some_and(|preview| preview.reveal_error);
+            .and_then(|preview| preview.path_status);
         view.child(
             h_flex()
                 .items_center()
@@ -2976,6 +3111,7 @@ impl Render for ExpandedFilePreview {
                         .gap_2()
                         .children(attach)
                         .children(reveal)
+                        .children(copy_path)
                         .children(editor_menu)
                         .child(back),
                 ),
@@ -2983,8 +3119,8 @@ impl Render for ExpandedFilePreview {
         .when_some(editor_error, |view, error| {
             view.child(editor_open_error(error, cx))
         })
-        .when(reveal_error, |view| {
-            view.child(file_manager_reveal_error(cx))
+        .when_some(path_status, |view, status| {
+            view.child(file_path_status(status, cx))
         })
         .when_some(self.markdown.as_ref(), |view, markdown| {
             view.child(markdown_mode_controls(markdown.mode, Self::set_mode, cx))
@@ -3499,6 +3635,34 @@ mod tests {
         assert_eq!(
             TreeItem::LoadMore("docs".into()).file_path(&directories),
             None
+        );
+    }
+
+    #[test]
+    fn resolved_file_path_uses_the_worktree_and_omits_the_search_line() {
+        let preview = PreviewIdentity {
+            scope: Scope {
+                tree: TreeScope {
+                    workspace: "project".into(),
+                    source: TreeSource::Directory("/worktree".into()),
+                },
+                session: Some("worktree-session".into()),
+                connection: 1,
+                open_request: 2,
+            },
+            preview_generation: 3,
+            selection: Match {
+                path: "docs/with spaces.md".into(),
+                line: Some(42),
+            },
+        };
+        assert_eq!(
+            preview.file_params(),
+            json!({
+                "workspaceId":"project",
+                "sessionId":"worktree-session",
+                "relativePath":"docs/with spaces.md"
+            })
         );
     }
 

@@ -170,8 +170,11 @@ try {
   await open(a, 5);
   const executionPeer = (await lastRequest('thread/resume', 'thread-a'))!;
   await hold('thread-a', 'turn');
-  await rpc('chat.prompt', { sessionId: a, text: 'Keep the running turn while browsing another conversation.' });
+  const accepted = await rpc('chat.prompt', { sessionId: a, text: 'Keep the running turn while browsing another conversation.', requireIdle: true });
+  assert.equal(accepted.session.id, a);
+  assert.equal(accepted.accepted, true);
   await waitFor('first native turn', () => lastRequest('turn/start', 'thread-a'));
+  await assert.rejects(rpc('chat.prompt', { sessionId: a, text: 'Do not queue this shortcut while busy.', requireIdle: true }), /conversation became busy/);
   await rpc('chat.prompt', { sessionId: a, text: 'Preserve this queued delivery.' });
   const busy = await rpc('chat.open', {
     sessionId: a, viewRevision: 6, historyLimit: 1,
@@ -199,16 +202,25 @@ try {
   assert.deepEqual(previous.historyMessageIds, busy.historyMessageIds);
   assert.deepEqual(previous.history, busy.history);
   await assert.rejects(rpc('chat.historyPage', {...nextParams, beforeIndex: 0}), /either a before or an after/);
-  await open(b, 7);
+  const draft = await rpc('chat.createRecord', {workspaceId: workspace.id, backend: 'codex', profile: accepted.session.profile, deferFirstConnection: true});
+  const draftPeers = await peers();
+  const draftView = await rpc('chat.open', {sessionId: draft.id, viewRevision: 7, historyLimit: 1});
+  assert.equal(draftView.savedHistoryPassive, true);
+  assert.equal(draftView.readOnly, false);
+  assert.deepEqual(draftView.history, []);
+  await assert.rejects(rpc('chat.prompt', {sessionId: draft.id, text: 'Do not move the running Agent into the draft.'}), /\[SESSION_ORIGIN_BUSY\]/);
+  assert.deepEqual(await peers(), draftPeers, 'Opening the draft cannot start a second Agent');
+  assert.equal(alive(executionPeer.pid), true, 'The original turn keeps running in the background');
+  await open(b, 8);
   await assert.rejects(rpc('chat.historyPage', nextParams), /Stale desktop conversation view/);
   const activeB = (await lastRequest('thread/resume', 'thread-b'))!;
-  await clear(8);
+  await clear(9);
   await waitFor('reaping B without affecting A', () => !alive(activeB.pid));
   assert.equal(alive(executionPeer.pid), true);
   await release('thread-a', 'turn');
   await waitFor('both queued deliveries on the original process', async () =>
     (await requests()).filter(row => row.method === 'turn/start' && row.pid === executionPeer.pid).length === 2);
-  let revision = 8;
+  let revision = 9;
   const settled = await waitFor('completed delivery queue', async () => {
     const state = await open(a, ++revision);
     return !state.busy && state.pending === 0 && state;
@@ -272,7 +284,23 @@ try {
   const started = await peers();
   await runtime.close();
   assert.ok(started.every(pid => !alive(pid)), 'Shutdown reaps every owned process');
-  console.log('CODEX_DESKTOP_VIEW_OK: stale selections, saved history and image bytes, durable queue, model settings, Hive and legacy ownership');
+  runtime = startRuntime();
+  await runtime.rpc('initialize');
+  const reopenedDraft = await runtime.rpc('chat.open', {sessionId: draft.id, viewRevision: 1, historyLimit: 1});
+  assert.equal(reopenedDraft.savedHistoryPassive, true);
+  assert.deepEqual(reopenedDraft.history, []);
+  assert.deepEqual(await peers(), started, 'A blank draft stays disconnected after restart');
+  const draftText = 'First explicit input for the new draft.';
+  const draftMessage = await runtime.rpc('chat.prompt', {sessionId: draft.id, text: draftText, requireIdle: true});
+  assert.equal(draftMessage.session.id, draft.id);
+  assert.equal(draftMessage.session.deferFirstConnection, undefined);
+  const draftTurn = await waitFor('first explicit draft delivery', async () => (await requests()).find(row =>
+    row.method === 'turn/start' && row.input?.some(item => item.text?.split('\n', 1)[0] === draftText)));
+  assert.notEqual(draftTurn.threadId, 'thread-a');
+  const openedDraft = await runtime.rpc('chat.open', {sessionId: draft.id, viewRevision: 2, historyLimit: 1});
+  assert.equal(openedDraft.codexThreadId, draftTurn.threadId);
+  await runtime.close();
+  console.log('CODEX_DESKTOP_VIEW_OK: stale selections, saved history and image bytes, durable queue, detached draft and cold reopen, model settings, Hive and legacy ownership');
 } finally {
   await runtime.terminate();
   await rm(directory, { recursive: true, force: true });

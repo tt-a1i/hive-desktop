@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-gpui_kit::actions!(hive_desktop, [NewSessionInCurrentProject, PromptStash]);
+gpui_kit::actions!(hive_desktop, [NewSessionInCurrentProject, PromptStash, SendAndStartDraft]);
 
 pub(crate) const FILE: &str = "desktop-keybindings.json";
 const CHORD_CONFLICT: &str = "快捷键与另一个操作冲突，请选择不同的组合键。";
@@ -59,10 +59,11 @@ pub(crate) enum Target {
     ChooseModel,
     ToggleMode,
     PromptStash,
+    SendAndStartDraft,
     Preferences,
 }
 
-const TARGETS: [Target; 15] = [
+const TARGETS: [Target; 16] = [
     Target::NewSession,
     Target::NewSessionCurrentProject,
     Target::Search,
@@ -78,6 +79,7 @@ const TARGETS: [Target; 15] = [
     Target::ToggleMode,
     Target::Preferences,
     Target::PromptStash,
+    Target::SendAndStartDraft,
 ];
 
 impl Target {
@@ -98,6 +100,7 @@ impl Target {
             Self::ToggleMode => 11,
             Self::Preferences => 12,
             Self::PromptStash => 14,
+            Self::SendAndStartDraft => 15,
         }
     }
 
@@ -114,7 +117,7 @@ impl Target {
             | Self::ToggleTerminal
             | Self::OpenGitWorkspace
             | Self::SearchProjectFiles => TargetGroup::Workspace,
-            Self::ChooseModel | Self::ToggleMode | Self::PromptStash => TargetGroup::Conversation,
+            Self::ChooseModel | Self::ToggleMode | Self::PromptStash | Self::SendAndStartDraft => TargetGroup::Conversation,
             Self::Preferences => TargetGroup::App,
         }
     }
@@ -135,6 +138,7 @@ impl Target {
             Self::ChooseModel => tr("选择模型"),
             Self::ToggleMode => tr("切换会话模式"),
             Self::PromptStash => tr("草稿暂存"),
+            Self::SendAndStartDraft => tr("发送并开始新草稿"),
             Self::Preferences => tr("打开设置"),
         }
     }
@@ -155,6 +159,7 @@ impl Target {
             Self::ChooseModel => tr("展开或关闭当前会话的模型选择器"),
             Self::ToggleMode => tr("在当前 Agent 支持的会话模式间切换"),
             Self::PromptStash => tr("暂存当前草稿，或从空输入框恢复"),
+            Self::SendAndStartDraft => tr("从空闲会话发送消息，然后打开一个新草稿"),
             Self::Preferences => tr("打开应用设置面板"),
         }
     }
@@ -175,6 +180,7 @@ impl Target {
             Self::ChooseModel => "shortcut-choose-model",
             Self::ToggleMode => "shortcut-toggle-mode",
             Self::PromptStash => "shortcut-prompt-stash",
+            Self::SendAndStartDraft => "shortcut-send-and-start-draft",
             Self::Preferences => "shortcut-preferences",
         }
     }
@@ -210,17 +216,19 @@ impl Target {
             (Self::ToggleMode, false) => "ctrl-/",
             (Self::PromptStash, true) => "cmd-s",
             (Self::PromptStash, false) => "ctrl-s",
+            (Self::SendAndStartDraft, true) => "alt-cmd-enter",
+            (Self::SendAndStartDraft, false) => "ctrl-alt-enter",
             (Self::Preferences, true) => "cmd-,",
             (Self::Preferences, false) => "ctrl-,",
         }
     }
 
     fn validate(self, chord: &str, os: OperatingSystem) -> Result<Keystroke, &'static str> {
-        validate_chord_inner(chord, os, self == Self::PromptStash)
+        validate_chord_inner(chord, os, Some(self))
     }
 
     fn context(self) -> Option<std::rc::Rc<KeyBindingContextPredicate>> {
-        (self == Self::PromptStash).then(|| {
+        matches!(self, Self::PromptStash | Self::SendAndStartDraft).then(|| {
             KeyBindingContextPredicate::parse("HiveComposer")
                 .expect("valid composer shortcut context")
                 .into()
@@ -243,6 +251,7 @@ impl Target {
             Self::ChooseModel => Box::new(crate::OpenModelPicker),
             Self::ToggleMode => Box::new(crate::ToggleSessionMode),
             Self::PromptStash => Box::new(PromptStash),
+            Self::SendAndStartDraft => Box::new(SendAndStartDraft),
             Self::Preferences => Box::new(crate::OpenPreferences),
         }
     }
@@ -264,6 +273,7 @@ pub(crate) struct Bindings {
     pub choose_model: Option<String>,
     pub toggle_mode: Option<String>,
     pub prompt_stash: Option<String>,
+    pub send_and_start_draft: Option<String>,
     pub previous_session: Option<String>,
     pub next_session: Option<String>,
 }
@@ -302,6 +312,8 @@ struct StoredBindings {
     #[serde(default, deserialize_with = "some_present")]
     prompt_stash: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
+    send_and_start_draft: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some_present")]
     previous_session: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
     next_session: Option<Option<String>>,
@@ -329,6 +341,7 @@ impl StoredBindings {
             (Target::ChooseModel, self.choose_model),
             (Target::ToggleMode, self.toggle_mode),
             (Target::PromptStash, self.prompt_stash),
+            (Target::SendAndStartDraft, self.send_and_start_draft),
             (Target::PreviousSession, self.previous_session),
             (Target::NextSession, self.next_session),
         ] {
@@ -385,6 +398,7 @@ impl Bindings {
             choose_model: Some(Target::ChooseModel.default(os).to_owned()),
             toggle_mode: Some(Target::ToggleMode.default(os).to_owned()),
             prompt_stash: Some(Target::PromptStash.default(os).to_owned()),
+            send_and_start_draft: Some(Target::SendAndStartDraft.default(os).to_owned()),
             previous_session: Some(Target::PreviousSession.default(os).to_owned()),
             next_session: Some(Target::NextSession.default(os).to_owned()),
         }
@@ -406,6 +420,7 @@ impl Bindings {
             Target::ChooseModel => &self.choose_model,
             Target::ToggleMode => &self.toggle_mode,
             Target::PromptStash => &self.prompt_stash,
+            Target::SendAndStartDraft => &self.send_and_start_draft,
             Target::Preferences => &self.preferences,
         }
     }
@@ -426,6 +441,7 @@ impl Bindings {
             Target::ChooseModel => &mut self.choose_model,
             Target::ToggleMode => &mut self.toggle_mode,
             Target::PromptStash => &mut self.prompt_stash,
+            Target::SendAndStartDraft => &mut self.send_and_start_draft,
             Target::Preferences => &mut self.preferences,
         };
         *slot = value;
@@ -460,13 +476,13 @@ impl Bindings {
 
 #[cfg(test)]
 fn validate_chord(value: &str, os: OperatingSystem) -> Result<Keystroke, &'static str> {
-    validate_chord_inner(value, os, false)
+    validate_chord_inner(value, os, None)
 }
 
 fn validate_chord_inner(
     value: &str,
     os: OperatingSystem,
-    composer_stash: bool,
+    target: Option<Target>,
 ) -> Result<Keystroke, &'static str> {
     if value.is_empty()
         || value.len() > 80
@@ -476,6 +492,11 @@ fn validate_chord_inner(
         return Err("请录制一个带修饰键的组合键，不支持连续按键。");
     }
     let key = Keystroke::parse_with_os(value, os).map_err(|_| "快捷键格式无效，请重新录制。")?;
+    if target == Some(Target::SendAndStartDraft)
+        && key.unparse(os) == Target::SendAndStartDraft.default(os)
+    {
+        return Ok(key);
+    }
     let m = key.modifiers;
     if (os == OperatingSystem::Mac && (!m.platform || m.control))
         || (os != OperatingSystem::Mac && (!m.control || m.platform || m.alt))
@@ -495,7 +516,7 @@ fn validate_chord_inner(
         || dock
         || (!m.shift && matches!(key.key.as_str(), "m" | "o"))
         || (!m.shift && key.key == "s"
-            && !(composer_stash && key.unparse(os) == Target::PromptStash.default(os)))
+            && !(target == Some(Target::PromptStash) && key.unparse(os) == Target::PromptStash.default(os)))
         || matches!(
             key.key.as_str(),
             "a" | "c" | "i" | "u" | "v" | "x" | "z" | "y" | "q" | "w" | "h"
@@ -584,8 +605,14 @@ pub(crate) fn startup_bindings(cx: &App) -> Vec<KeyBinding> {
         .collect()
 }
 
+fn managed_composer_binding(binding: &KeyBinding) -> bool {
+    [Target::PromptStash, Target::SendAndStartDraft]
+        .into_iter()
+        .any(|target| target.action().name() == binding.action().name())
+}
+
 fn protected_binding(binding: &KeyBinding) -> bool {
-    if binding.action().name() == Target::PromptStash.action().name() {
+    if managed_composer_binding(binding) {
         return false;
     }
     binding.predicate().is_some() || !TARGETS
@@ -662,8 +689,7 @@ fn replace_bindings(keymap: &mut Keymap, changes: BindingChanges) {
         return;
     }
     keymap.retain_bindings(|binding| {
-        (binding.predicate().is_some()
-            && binding.action().name() != Target::PromptStash.action().name())
+        (binding.predicate().is_some() && !managed_composer_binding(binding))
             || !changes.iter().any(|(action, _)| *action == binding.action().name())
     });
     keymap.add_bindings(changes.into_iter().filter_map(|(_, binding)| binding));

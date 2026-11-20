@@ -258,6 +258,7 @@ mod tests {
                 label: "",
                 subject: target.into(),
                 target: Destination::Dispatch(target.into()),
+                related_members: [None, None],
                 snooze_key: Some("message:same-key-in-two-projects".into()),
                 wake: None,
                 priority,

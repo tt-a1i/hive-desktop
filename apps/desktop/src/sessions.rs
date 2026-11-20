@@ -5,7 +5,7 @@ pub(crate) mod reading_position;
 pub(crate) use pinning::PinnedSessions;
 pub(crate) mod search;
 use crate::{app::HiveApp, history_navigation::HistoryDirection, protocol::*};
-use gpui_kit::*;
+use gpui_kit::{component::WindowExt, *};
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -633,6 +633,31 @@ impl HiveApp {
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) {
+        self.create_new_session_with_open(project, backend, profile, window, None, cx);
+    }
+
+    pub(crate) fn create_fresh_draft_after_send(
+        &mut self,
+        source: &Session,
+        window: AnyWindowHandle,
+        narrow: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_new_session_with_open(
+            Some(source.workspace_id.clone()), source.backend.wire(), source.profile.clone(),
+            None, Some((source.id.clone(), window, narrow)), cx,
+        );
+    }
+
+    fn create_new_session_with_open(
+        &mut self,
+        project: Option<String>,
+        backend: &'static str,
+        profile: Option<crate::agent_profiles::ProfileRef>,
+        window: Option<&Window>,
+        fresh_after: Option<(String, AnyWindowHandle, bool)>,
+        cx: &mut Context<Self>,
+    ) {
         use crate::app::ErrorNotice;
 
         if !self.connected
@@ -666,7 +691,10 @@ impl HiveApp {
         let connection = self.connection_generation;
         let open_request = self.open_request;
         let welcome = self.showing_welcome_guide;
-        let narrow = window.is_some_and(|window| window.viewport_size().width < px(820.));
+        let narrow = fresh_after.as_ref().map_or_else(
+            || window.is_some_and(|window| window.viewport_size().width < px(820.)),
+            |(_, _, narrow)| *narrow,
+        );
         let hide_terminal = window.is_some();
         self.new_session_creation = Some(connection);
         let (method, mut params) = if let Some(project) = &project {
@@ -676,6 +704,9 @@ impl HiveApp {
         };
         if let Some(reference) = &profile {
             params["profile"] = json!(reference);
+        }
+        if fresh_after.is_some() {
+            params["deferFirstConnection"] = json!(true);
         }
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -703,6 +734,11 @@ impl HiveApp {
                             || expected != Some(session.workspace_id.as_str())
                             || session.backend.wire() != backend
                             || profile.as_ref().is_some_and(|reference| session.profile.as_ref() != Some(reference))
+                            || fresh_after.as_ref().is_some_and(|(source, _, _)| {
+                                &session.id == source || session.identity_state.as_deref() != Some("new")
+                                    || session.agent_id.is_some() || session.origin_agent_id.is_some()
+                                    || session.execution.is_some() || session.scratch
+                            })
                             || scratch_id.as_ref().is_some_and(|id| id != &session.id || !session.scratch)
                         {
                             return Err(ErrorNotice::Message("创建会话返回的会话身份不匹配"));
@@ -724,8 +760,15 @@ impl HiveApp {
                         Ok(session)
                     });
 
+                let fresh_origin_current = fresh_after.as_ref().is_none_or(|(source, window, _)| {
+                    this.session.as_ref().is_some_and(|session| &session.id == source)
+                        && !this.inflight_inputs.contains_key(source)
+                        && this.viewing_conversation()
+                        && window.update(cx, |_, window, cx| !window.has_active_dialog(cx)).unwrap_or(false)
+                });
                 match result {
-                    Ok(session) if this.open_request == open_request
+                    Ok(session) if fresh_origin_current
+                        && this.open_request == open_request
                         && this.showing_welcome_guide == welcome
                         && this.connected
                         && !this.closing
@@ -759,7 +802,13 @@ impl HiveApp {
                     Ok(session) => {
                         this.refresh_project_sessions(session.workspace_id, cx);
                     }
-                    Err(error) if this.open_request == open_request => this.error = Some(error),
+                    Err(error) if fresh_origin_current && this.open_request == open_request => {
+                        this.error = Some(if fresh_after.is_some() {
+                            ErrorNotice::Context("消息已发送，但未能打开新草稿", Box::new(error), "请从侧边栏手动打开新会话")
+                        } else {
+                            error
+                        });
+                    }
                     Err(_) => (),
                 }
                 cx.notify();

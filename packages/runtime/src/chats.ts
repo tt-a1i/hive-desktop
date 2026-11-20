@@ -2339,7 +2339,7 @@ export class Chats implements StructuredSessionPort {
     }
     return record;
   }
-  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
+  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string; deferFirstConnection?: boolean} = {}) {
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
@@ -2347,7 +2347,10 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
       const selected = await this.selectedProfile(backend, options.profile);
-      return this.saveNewRecord(workspace, {id: randomUUID(), workspaceId, backend, profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new'}, options);
+      return this.saveNewRecord(workspace, {
+        id: randomUUID(), workspaceId, backend, profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new',
+        ...(options.deferFirstConnection && {deferFirstConnection: true as const}),
+      }, options);
     });
   }
   copyDraftRecord(request: DraftCopyRequest) {
@@ -2609,6 +2612,25 @@ export class Chats implements StructuredSessionPort {
     return DeliveryQueue.persistedCount(this.queueDir, id) === 0;
   }
 
+  private isUnstartedDraft(record: ChatRecord): boolean {
+    return record.deferFirstConnection === true && record.identityState === 'new' && !record.archived
+      && !record.agentId && !record.originAgentId && !record.sessionFile && !record.nativeImport
+      && !record.handoff && !record.lineage && !record.piSessionId && !record.externalPiSessionId
+      && !record.codexThreadId && !record.nativeclaudeSessionId && !record.acpSessionId
+      && this.canBrowseSavedHistory(record);
+  }
+
+  private async browseUnstartedDraft(record: ChatRecord) {
+    if (!this.isUnstartedDraft(record)) return;
+    const current = await this.runnableIdentity(record);
+    await this.executionDirectory(current.workspaceId, current.id);
+    if (!this.isUnstartedDraft(this.index.get(current.id))) return;
+    const {readOnly, identityError, ...snapshot} = await this.readOnlySnapshot(current,
+      new SessionIdentityError('UNSTARTED_DRAFT', 'The next draft has not connected to an Agent'), {includeHistory: false});
+    if (!this.isUnstartedDraft(this.index.get(current.id))) return;
+    return {...snapshot, readOnly: false, passive: true, savedHistoryPassive: true};
+  }
+
   private async browseSavedHistory(record: ChatRecord, historyOptions: HistoryWindowOptions) {
     const {backend, sessionFile, piSessionId, externalPiSessionId, codexThreadId, nativeclaudeSessionId} = record;
     const hasIdentity = backend === 'codex' ? !!codexThreadId : backend === 'claude' ? !!nativeclaudeSessionId
@@ -2677,6 +2699,8 @@ export class Chats implements StructuredSessionPort {
       return {...snapshot, readOnly:false, passive:true, ...(desktopHistory === 'saved' && {savedHistoryPassive:true})};
     }
     if (desktopHistory === 'saved' && historyOptions) {
+      const draft = await this.browseUnstartedDraft(record);
+      if (draft) return draft;
       const saved = await this.browseSavedHistory(record, historyOptions);
       if (saved) return saved;
     }
@@ -2924,10 +2948,12 @@ export class Chats implements StructuredSessionPort {
       await this.hive.request('POST', `/api/workspaces/${record.workspaceId}/agents/${encodeURIComponent(agentId)}/start`);
     } finally { if (forUserInput) this.startingForInput.delete(id); }
   }
-  async prompt(id: string, text: string, idsInput?: unknown, busyMode?: unknown) {
+  async prompt(id: string, text: string, idsInput?: unknown, busyMode?: unknown, requireIdle?: unknown) {
     if (busyMode !== undefined && busyMode !== 'queue' && busyMode !== 'steer') {
       throw new TypeError('Invalid busyMode');
     }
+    if (requireIdle !== undefined && typeof requireIdle !== 'boolean') throw new TypeError('Invalid requireIdle');
+    if (requireIdle && busyMode !== undefined) throw new TypeError('requireIdle cannot be combined with busyMode');
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     const desktopSavedHistory = this.desktopSavedHistory?.id === id;
     const before=this.index.get(id);
@@ -2941,6 +2967,14 @@ export class Chats implements StructuredSessionPort {
     if (!text.trim() && !ids.length) throw new Error('Message cannot be empty');
     const inputText = encodeImageInput(text, ids);
     return this.withWorkspace(this.index.get(id).workspaceId, async () => {
+      const assertIdle = () => {
+        const live = this.live.get(id);
+        if (live?.queue.busy || live?.queue.pendingCount || live?.handle.interactions?.().length
+          || (!live && DeliveryQueue.persistedCount(this.queueDir, id))) {
+          throw new Error('The conversation became busy before the message could be sent and a new draft opened.');
+        }
+      };
+      if (requireIdle) assertIdle();
       this.handoffStarting.add(id);
       try{
       await this.activationAvailable(id);
@@ -2968,6 +3002,7 @@ export class Chats implements StructuredSessionPort {
         if (keepPaused) this.keepingPaused.delete(id);
       }
       const chat = await this.require(id);
+      if (requireIdle) assertIdle();
       if (!keepPaused && !chat.queue.pendingCount) chat.queue.resume();
       const record = this.index.get(id);
       this.index.save({ ...record, title: !record.customTitle && record.title === '新会话' ? Array.from(text.trim()).slice(0, 60).join('') || '附件消息' : record.title, updatedAt: Date.now() });

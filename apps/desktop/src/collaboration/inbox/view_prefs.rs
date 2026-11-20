@@ -1,4 +1,4 @@
-use crate::protocol::Workspace;
+use crate::protocol::{Member, Workspace};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -10,10 +10,18 @@ const FILE: &str = "desktop-inbox-view.json";
 const READ_FAILED: &str = "无法读取收件箱视图偏好";
 const SAVE_FAILED: &str = "无法保存收件箱视图偏好";
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct MemberFilter {
+    pub(super) workspace_id: String,
+    pub(super) member_id: String,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(super) struct InboxViewPreferences {
     pub(super) project_filter: Option<String>,
+    pub(super) member_filter: Option<MemberFilter>,
     pub(super) show_waiting: bool,
     pub(super) show_snoozed: bool,
 }
@@ -50,13 +58,48 @@ impl ViewPreferences {
         let Some(workspaces) = workspaces else {
             return false;
         };
-        if self
+        let project_removed = self
             .values
             .project_filter
             .as_ref()
-            .is_some_and(|id| !workspaces.iter().any(|project| &project.id == id))
-        {
+            .is_some_and(|id| !workspaces.iter().any(|project| &project.id == id));
+        let member_removed = self.values.member_filter.as_ref().is_some_and(|member| {
+            !workspaces
+                .iter()
+                .any(|project| project.id == member.workspace_id)
+        });
+        if project_removed {
             self.values.project_filter = None;
+        }
+        if member_removed {
+            self.values.member_filter = None;
+        }
+        if project_removed || member_removed {
+            self.save_changed();
+        }
+        project_removed || member_removed
+    }
+
+    pub(super) fn select_project(&mut self, project: Option<String>) {
+        if let Some(project) = &project
+            && self
+                .values
+                .member_filter
+                .as_ref()
+                .is_some_and(|member| &member.workspace_id != project)
+        {
+            self.values.member_filter = None;
+        }
+        self.values.project_filter = project;
+        self.save_changed();
+    }
+
+    pub(super) fn forget_missing_member(&mut self, workspace: &str, members: &[Member]) -> bool {
+        if self.values.member_filter.as_ref().is_some_and(|member| {
+            member.workspace_id == workspace
+                && !members.iter().any(|item| item.id == member.member_id)
+        }) {
+            self.values.member_filter = None;
             self.save_changed();
             return true;
         }
@@ -97,7 +140,7 @@ fn save(root: &Path, values: &InboxViewPreferences) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FILE, SAVE_FAILED, ViewPreferences, load};
+    use super::{FILE, MemberFilter, SAVE_FAILED, ViewPreferences, load};
     use crate::protocol::Workspace;
 
     fn workspace(id: &str) -> Workspace {
@@ -138,11 +181,16 @@ mod tests {
         let mut view = ViewPreferences::default();
         view.restore_root(Some(root.path()));
         view.values.project_filter = Some("missing".into());
+        view.values.member_filter = Some(MemberFilter {
+            workspace_id: "missing".into(),
+            member_id: "worker".into(),
+        });
         view.values.show_waiting = true;
         view.values.show_snoozed = true;
         view.save_changed();
 
         assert!(!view.forget_unavailable(None));
+        assert!(load(root.path()).unwrap().member_filter.is_some());
         assert_eq!(
             load(root.path()).unwrap().project_filter.as_deref(),
             Some("missing")
@@ -150,8 +198,41 @@ mod tests {
         assert!(view.forget_unavailable(Some(&[])));
         let saved = load(root.path()).unwrap();
         assert!(saved.project_filter.is_none());
+        assert!(saved.member_filter.is_none());
         assert!(saved.show_waiting);
         assert!(saved.show_snoozed);
+    }
+
+    #[test]
+    fn inbox_preferences_keep_an_exact_member_until_their_project_or_roster_excludes_it() {
+        let root = tempfile::tempdir().unwrap();
+        let mut view = ViewPreferences::default();
+        view.restore_root(Some(root.path()));
+        let member = MemberFilter {
+            workspace_id: "left".into(),
+            member_id: "worker".into(),
+        };
+        view.values.member_filter = Some(member.clone());
+        view.select_project(Some("left".into()));
+        let mut reopened = ViewPreferences::default();
+        reopened.restore_root(Some(root.path()));
+        assert_eq!(reopened.values.member_filter.as_ref(), Some(&member));
+        assert!(!reopened.forget_missing_member("right", &[]));
+        assert_eq!(reopened.values.member_filter.as_ref(), Some(&member));
+        assert!(reopened.forget_missing_member("left", &[]));
+        assert!(load(root.path()).unwrap().member_filter.is_none());
+        assert_eq!(
+            load(root.path()).unwrap().project_filter.as_deref(),
+            Some("left")
+        );
+
+        view.values.member_filter = Some(member.clone());
+        view.select_project(None);
+        assert_eq!(view.values.member_filter.as_ref(), Some(&member));
+        view.select_project(Some("right".into()));
+        let saved = load(root.path()).unwrap();
+        assert!(saved.member_filter.is_none());
+        assert_eq!(saved.project_filter.as_deref(), Some("right"));
     }
 
     #[test]

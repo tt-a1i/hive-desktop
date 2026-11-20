@@ -903,6 +903,11 @@ impl HiveApp {
                                             this.prompt_stash_shortcut(window, cx);
                                         },
                                     ))
+                                    .capture_action(cx.listener(
+                                        |this, _: &crate::keybindings::SendAndStartDraft, window, cx| {
+                                            this.send_and_start_draft(window, cx);
+                                        },
+                                    ))
                                     .capture_action(cx.listener(Self::composer_enter))
                                     .capture_action(cx.listener(Self::command_up))
                                     .capture_action(cx.listener(Self::command_down))
