@@ -165,7 +165,7 @@ impl Editor {
         } // key-repeat latch
         let target = recording.target;
         let os = cx.platform_info().os;
-        let validation = validate_chord(&key.unparse(os), os).and_then(|candidate| {
+        let validation = target.validate(&key.unparse(os), os).and_then(|candidate| {
             let mut draft = cx.global::<Preferences>().draft.clone();
             draft.set(target, Some(candidate.unparse(os)));
             let normalized = draft.normalized(os)?;

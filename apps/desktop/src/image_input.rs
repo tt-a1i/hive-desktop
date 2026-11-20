@@ -6,7 +6,11 @@ use std::{io::Cursor, path::PathBuf};
 
 pub(crate) enum ImageSource {
     File(PathBuf),
-    ProjectFile { relative_path: String, session_id: Option<String> },
+    ProjectFile {
+        relative_path: String,
+        session_id: Option<String>,
+        expected_sha256: Option<String>,
+    },
     Clipboard(Image),
 }
 
@@ -20,10 +24,13 @@ impl ImageSource {
     pub fn prepare(self) -> Result<(&'static str, Value), PrepareError> {
         match self {
             Self::File(path) => Ok(("chat.attachments.add", json!({"path":path}))),
-            Self::ProjectFile { relative_path, session_id } => {
+            Self::ProjectFile { relative_path, session_id, expected_sha256 } => {
                 let mut params = json!({"relativePath":relative_path});
                 if let Some(session_id) = session_id {
                     params["sessionId"] = json!(session_id);
+                }
+                if let Some(expected_sha256) = expected_sha256 {
+                    params["expectedSha256"] = json!(expected_sha256);
                 }
                 Ok(("project.files.attach", params))
             }
@@ -101,13 +108,27 @@ mod tests {
     use gpui_kit::{Image, ImageFormat};
     use std::io::Cursor;
     #[test]
-    fn project_file_attachment_pins_the_picker_session_and_omits_an_absent_session() {
+    fn project_file_attachment_pins_optional_session_and_preview_digest() {
         let path = "docs/shared.txt";
-        for (session_id, expected) in [
-            (Some("worktree-a".into()), serde_json::json!({"relativePath":path,"sessionId":"worktree-a"})),
-            (None, serde_json::json!({"relativePath":path})),
+        let sha256 = "a".repeat(64);
+        for (session_id, expected_sha256, expected) in [
+            (
+                Some("worktree-a".into()),
+                Some(sha256.clone()),
+                serde_json::json!({"relativePath":path,"sessionId":"worktree-a","expectedSha256":sha256}),
+            ),
+            (
+                Some("worktree-a".into()),
+                None,
+                serde_json::json!({"relativePath":path,"sessionId":"worktree-a"}),
+            ),
+            (None, None, serde_json::json!({"relativePath":path})),
         ] {
-            let source = ImageSource::ProjectFile { relative_path: path.into(), session_id };
+            let source = ImageSource::ProjectFile {
+                relative_path: path.into(),
+                session_id,
+                expected_sha256,
+            };
             assert_eq!(source.prepare().unwrap(), ("project.files.attach", expected));
         }
     }

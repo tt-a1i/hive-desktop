@@ -1,4 +1,4 @@
-use super::FileError;
+use super::{FileError, Target};
 use crate::{
     app::HiveApp,
     git_workspace::{
@@ -170,6 +170,7 @@ struct Preview {
     selection: Match,
     loading: bool,
     text: Option<TextPages>,
+    sha256: Option<String>,
     markdown: Option<MarkdownPreview>,
     error: Option<FileError>,
     scroll: ScrollHandle,
@@ -183,10 +184,16 @@ enum TreePreview {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct EditorOpenIdentity {
+struct PreviewIdentity {
     scope: Scope,
     preview_generation: u64,
     selection: Match,
+}
+
+struct PreviewAttachment {
+    identity: PreviewIdentity,
+    target: Target,
+    sha256: String,
 }
 
 struct ExpandedFilePreview {
@@ -847,10 +854,10 @@ impl HiveApp {
             if !docked {
                 if let Some(parent) = app.upgrade() {
                     cx.observe(&parent, |this: &mut FileBrowser, _, cx| {
-                        if !this.current(cx) {
+                        if !this.dismissed && !this.current(cx) {
                             this.dismiss();
-                            cx.notify();
                         }
+                        cx.notify();
                     })
                     .detach();
                 }
@@ -1708,6 +1715,7 @@ impl FileBrowser {
             selection,
             loading: true,
             text: None,
+            sha256: None,
             markdown: None,
             error: None,
             scroll: ScrollHandle::new(),
@@ -1721,10 +1729,19 @@ impl FileBrowser {
                 .request("project.files.preview", params)
                 .await
                 .and_then(|value| {
-                    value["text"]
+                    let text = value["text"]
                         .as_str()
-                        .map(|text| TextPages::new(text.to_owned().into()))
-                        .ok_or_else(|| tr("读取失败").to_owned())
+                        .ok_or_else(|| tr("读取失败").to_owned())?;
+                    let sha256 = value["sha256"].as_str().filter(|digest| {
+                        digest.len() == 64
+                            && digest
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    });
+                    Ok((
+                        TextPages::new(text.to_owned().into()),
+                        sha256.map(str::to_owned),
+                    ))
                 });
             let _ = this.update(cx, |this, cx| {
                 if this.scope_generation != generation
@@ -1750,7 +1767,7 @@ impl FileBrowser {
                 };
                 preview.loading = false;
                 match result {
-                    Ok(mut text) => {
+                    Ok((mut text, sha256)) => {
                         if let Some(line) = preview.selection.line {
                             text.show_line(line);
                         }
@@ -1764,6 +1781,7 @@ impl FileBrowser {
                             ));
                         }
                         preview.text = Some(text);
+                        preview.sha256 = sha256;
                     }
                     Err(error) => {
                         preview.error = Some(match error.as_str() {
@@ -1844,14 +1862,125 @@ impl FileBrowser {
         }
     }
 
-    fn editor_identity(&self) -> Option<EditorOpenIdentity> {
+    fn preview_identity(&self) -> Option<PreviewIdentity> {
         let preview = self.preview.as_ref()?;
-        preview.text.as_ref()?;
-        Some(EditorOpenIdentity {
+        if preview.loading || preview.error.is_some() || preview.text.is_none() {
+            return None;
+        }
+        Some(PreviewIdentity {
             scope: self.scope.clone()?,
             preview_generation: self.preview_generation,
             selection: preview.selection.clone(),
         })
+    }
+
+    fn attach_target(&self, cx: &App) -> Option<PreviewAttachment> {
+        if !self.current(cx) {
+            return None;
+        }
+        let identity = self.preview_identity()?;
+        let sha256 = self.preview.as_ref()?.sha256.clone()?;
+        let app = self.app.upgrade()?;
+        let target = Target::capture(app.read(cx))?;
+        (identity.scope.tree.workspace == target.workspace
+            && identity.scope.session == target.session)
+            .then_some(PreviewAttachment {
+                identity,
+                target,
+                sha256,
+            })
+    }
+
+    fn accepts_attachment(app: &HiveApp, target: &Target) -> bool {
+        target.current(app)
+            && app.viewing_conversation()
+            && (app.session.is_none() || app.conversation_ready)
+            && app.can_reference_project_file()
+    }
+
+    fn can_attach_preview(&self, target: &Target, cx: &App) -> bool {
+        self.app
+            .upgrade()
+            .is_some_and(|app| Self::accepts_attachment(app.read(cx), target))
+    }
+
+    fn attach_preview(
+        &mut self,
+        attachment: &PreviewAttachment,
+        expanded: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let PreviewAttachment {
+            identity,
+            target,
+            sha256,
+        } = attachment;
+        if !self.current(cx) || self.preview_identity().as_ref() != Some(identity) {
+            return false;
+        }
+        let accepted = self
+            .app
+            .update(cx, |app, cx| {
+                if !Self::accepts_attachment(app, target)
+                    || !app.reference_project_file(
+                        target,
+                        identity.selection.path.clone(),
+                        Some(sha256.clone()),
+                        cx,
+                    )
+                {
+                    return false;
+                }
+                if window.viewport_size().width < px(820.) {
+                    app.sidebar_open = false;
+                    cx.notify();
+                }
+                true
+            })
+            .unwrap_or(false);
+        if !accepted {
+            return false;
+        }
+
+        if expanded {
+            window.close_dialog(cx);
+        }
+        if !self.docked {
+            window.close_dialog(cx);
+            self.dismiss();
+        }
+        let target = target.clone();
+        let app = self.app.clone();
+        window.on_next_frame(move |window, cx| {
+            if !window.has_active_dialog(cx)
+                && let Some(app) = app.upgrade()
+            {
+                let app = app.read(cx);
+                if target.current(app) && app.viewing_conversation() {
+                    app.input.read(cx).focus_handle(cx).focus(window, cx);
+                }
+            }
+        });
+        true
+    }
+
+    fn attach_button(&self, cx: &Context<Self>) -> Option<Button> {
+        let attachment = self.attach_target(cx)?;
+        Some(
+            Button::new("browser-attach-to-draft")
+                .custom(palette::quiet_icon_variant(cx))
+                .compact()
+                .xsmall()
+                .size(px(24.))
+                .icon(Glyph::Paperclip)
+                .accessibility_label(tr("添加到草稿"))
+                .tooltip(tr("添加到草稿"))
+                .disabled(!self.can_attach_preview(&attachment.target, cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.attach_preview(&attachment, false, window, cx);
+                })),
+        )
     }
 
     fn editor_menu(
@@ -1860,7 +1989,7 @@ impl FileBrowser {
         reader: Option<WeakEntity<ExpandedFilePreview>>,
         cx: &App,
     ) -> Option<AnyElement> {
-        let identity = self.editor_identity()?;
+        let identity = self.preview_identity()?;
         let busy = self.preview.as_ref()?.editor_task.is_some();
         open_targets::file_editor_menu(
             busy,
@@ -1873,13 +2002,13 @@ impl FileBrowser {
         )
     }
 
-    fn editor_request_current(&self, identity: &EditorOpenIdentity, cx: &App) -> bool {
-        self.current(cx) && self.editor_identity().as_ref() == Some(identity)
+    fn editor_request_current(&self, identity: &PreviewIdentity, cx: &App) -> bool {
+        self.current(cx) && self.preview_identity().as_ref() == Some(identity)
     }
 
     fn open_in_editor(
         &mut self,
-        identity: EditorOpenIdentity,
+        identity: PreviewIdentity,
         reader: Option<WeakEntity<ExpandedFilePreview>>,
         target: OpenTarget,
         cx: &mut Context<Self>,
@@ -2408,6 +2537,7 @@ impl FileBrowser {
                                     })),
                             )
                         })
+                        .children(self.attach_button(cx))
                         .children(self.editor_menu(cx.weak_entity(), None, cx)),
                 ),
         );
@@ -2529,6 +2659,32 @@ impl ExpandedFilePreview {
             })
     }
 
+    fn attach_button(&self, browser: &FileBrowser, cx: &Context<Self>) -> Option<Button> {
+        let attachment = browser.attach_target(cx)?;
+        Some(
+            Button::new("file-reader-attach-to-draft")
+                .outline()
+                .small()
+                .icon(Glyph::Paperclip)
+                .label(tr("添加到草稿"))
+                .disabled(!browser.can_attach_preview(&attachment.target, cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if !this.current(cx) {
+                        return;
+                    }
+                    let accepted = this
+                        .browser
+                        .update(cx, |browser, cx| {
+                            browser.attach_preview(&attachment, true, window, cx)
+                        })
+                        .unwrap_or(false);
+                    if accepted {
+                        this.dismissed = true;
+                    }
+                })),
+        )
+    }
+
     fn editor_request_active(reader: Option<&WeakEntity<Self>>, cx: &App) -> bool {
         reader.is_none_or(|reader| {
             reader
@@ -2647,6 +2803,7 @@ impl Render for ExpandedFilePreview {
             browser
                 .read(cx)
                 .editor_menu(self.browser.clone(), Some(cx.weak_entity()), cx);
+        let attach = self.attach_button(browser.read(cx), cx);
         let editor_error = browser
             .read(cx)
             .preview
@@ -2662,6 +2819,7 @@ impl Render for ExpandedFilePreview {
                     h_flex()
                         .items_center()
                         .gap_2()
+                        .children(attach)
                         .children(editor_menu)
                         .child(back),
                 ),
@@ -3039,10 +3197,10 @@ impl Render for FileBrowser {
 #[cfg(test)]
 mod tests {
     use super::{
-        Directory, DirectoryEntry, EditorOpenIdentity, FILE_TREE_STATUS_LIMIT, FileError,
-        FilePreviewMode, FileReveal, FileTreeExpansions, MARKDOWN_MAX_BLOCK_BYTES,
-        MARKDOWN_MAX_BYTES, MARKDOWN_MAX_LINES, Match, RevealStep, Scope, TextPages, TreeItem,
-        TreeRow, TreeScope, TreeSource, dock_width, external_markdown_url, initial_markdown_mode,
+        Directory, DirectoryEntry, FILE_TREE_STATUS_LIMIT, FileError, FilePreviewMode, FileReveal,
+        FileTreeExpansions, MARKDOWN_MAX_BLOCK_BYTES, MARKDOWN_MAX_BYTES, MARKDOWN_MAX_LINES,
+        Match, PreviewIdentity, RevealStep, Scope, TextPages, TreeItem, TreeRow, TreeScope,
+        TreeSource, dock_width, external_markdown_url, initial_markdown_mode,
         is_expand_preview_chord, is_markdown_file, json, px, step_preview,
         supports_markdown_preview, unrequested_expansions, visible_tree,
     };
@@ -3323,7 +3481,7 @@ mod tests {
 
     #[test]
     fn pending_editor_open_cannot_follow_a_reopened_file_or_changed_scope() {
-        let requested = EditorOpenIdentity {
+        let requested = PreviewIdentity {
             scope: Scope {
                 tree: TreeScope {
                     workspace: "workspace".into(),
@@ -3341,32 +3499,32 @@ mod tests {
         };
         assert!(requested == requested.clone());
         for changed in [
-            EditorOpenIdentity {
+            PreviewIdentity {
                 preview_generation: 4,
                 ..requested.clone()
             },
-            EditorOpenIdentity {
+            PreviewIdentity {
                 scope: Scope {
                     session: Some("other-session".into()),
                     ..requested.scope.clone()
                 },
                 ..requested.clone()
             },
-            EditorOpenIdentity {
+            PreviewIdentity {
                 scope: Scope {
                     connection: 4,
                     ..requested.scope.clone()
                 },
                 ..requested.clone()
             },
-            EditorOpenIdentity {
+            PreviewIdentity {
                 scope: Scope {
                     open_request: 4,
                     ..requested.scope.clone()
                 },
                 ..requested.clone()
             },
-            EditorOpenIdentity {
+            PreviewIdentity {
                 selection: Match {
                     path: requested.selection.path.clone(),
                     line: None,

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -54,7 +55,9 @@ try {
   assert.deepEqual(nextContentPage.matches, Array.from({length: 5}, (_, i) => ({
     path: `nested/file-${i + 100}.txt`, line: 1,
   })));
-  assert.deepEqual(await previewProjectFile(repo, 'nested/unicode.txt'), {text: 'first line\nCafe\u0301 MATCH\n'});
+  const preview = await previewProjectFile(repo, 'nested/unicode.txt');
+  assert.equal(preview.text, 'first line\nCafe\u0301 MATCH\n');
+  assert.equal(preview.sha256, createHash('sha256').update(preview.text).digest('hex'));
   assert.equal((await searchProjectContents(repo, 'private unlisted phrase')).total, 0);
   await assert.rejects(searchProjectContents(repo, 'match', 0, AbortSignal.abort()), {name: 'AbortError'});
   await assert.rejects(listProjectDirectory(repo, '../'));

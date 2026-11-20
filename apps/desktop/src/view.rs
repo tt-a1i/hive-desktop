@@ -897,6 +897,12 @@ impl HiveApp {
                                 "composer-input-reveal",
                                 &self.composer_scroll,
                                 div()
+                                    .key_context("HiveComposer")
+                                    .capture_action(cx.listener(
+                                        |this, _: &crate::keybindings::PromptStash, window, cx| {
+                                            this.prompt_stash_shortcut(window, cx);
+                                        },
+                                    ))
                                     .capture_action(cx.listener(Self::composer_enter))
                                     .capture_action(cx.listener(Self::command_up))
                                     .capture_action(cx.listener(Self::command_down))

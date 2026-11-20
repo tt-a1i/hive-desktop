@@ -127,7 +127,8 @@ impl HiveApp {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_project_file_picker(window, cx)
                             })),
-                    ),
+                    )
+                    .child(self.render_prompt_stash_button(cx)),
             )
             .child(
                 h_flex()

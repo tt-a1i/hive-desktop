@@ -91,7 +91,15 @@ try {
   const regular = await runtime.ok('chat.attachments.add', {workspaceId, path: regularPath});
   const image = await runtime.ok('chat.attachments.clipboard', {workspaceId,
     image: {type: 'image', mimeType: 'image/png', data: png}});
-  const snapshot = await runtime.ok('project.files.attach', {workspaceId, relativePath: 'snapshot.txt', sessionId: sourceSession.id});
+  const previewParams = {workspaceId, relativePath: 'snapshot.txt', sessionId: sourceSession.id};
+  const sourceUploads = db.prepare('SELECT count(*) AS count FROM workspace_uploads WHERE workspace_id = ?');
+  const countBeforePreview = sourceUploads.get(workspaceId);
+  const wrongDigest = await runtime.rpc('project.files.attach', {...previewParams, expectedSha256: '0'.repeat(64)});
+  assert.match(wrongDigest.error?.message ?? '', /文件在预览后已更改/);
+  assert.deepEqual(sourceUploads.get(workspaceId), countBeforePreview);
+  const preview = await runtime.ok('project.files.preview', previewParams);
+  const snapshot = await runtime.ok('project.files.attach', {...previewParams, expectedSha256: preview.sha256});
+  assert.equal(snapshot.attachment.projectFile?.sha256, preview.sha256);
   const [regularId, imageId, snapshotId] = [regular, image, snapshot].map(item => item.attachment.id);
   assert.equal(snapshot.attachment.projectFile.sourceSessionId, sourceSession.id);
   await unlink(regularPath);

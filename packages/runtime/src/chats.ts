@@ -1161,13 +1161,19 @@ export class Chats implements StructuredSessionPort {
     if (await this.executionDirectory(workspaceId, sessionId) !== root) throw new Error('Session execution directory changed while locating the file');
     return result;
   }
-  async projectFilesAttach(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
+  async projectFilesAttach(workspaceId: string, relativePath: unknown, sessionId?: unknown, expectedSha256?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
     if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
+    if (expectedSha256 !== undefined && (typeof expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(expectedSha256))) {
+      throw new TypeError('Invalid project file preview digest');
+    }
     const directory = await this.executionDirectory(workspaceId, sessionId);
     const snapshot = await readProjectFile(directory, relativePath);
     if (await this.executionDirectory(workspaceId, sessionId) !== directory) throw new Error('Session execution directory changed during attachment');
     this.assertWorkspaceAvailable(workspaceId);
+    if (expectedSha256 !== undefined && snapshot.sha256 !== expectedSha256) {
+      throw new Error('文件在预览后已更改，请重新读取后再添加。');
+    }
     return this.attachments.addProjectFile(workspaceId, { relativePath: snapshot.relativePath, sha256: snapshot.sha256, ...(typeof sessionId === 'string' ? {sourceSessionId: sessionId} : {}) }, snapshot.bytes);
   }
   async projectFileStatus(workspaceId: string, id: string) {

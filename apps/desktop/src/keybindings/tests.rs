@@ -194,6 +194,23 @@ fn component_shortcuts_are_protected_from_new_global_chords() {
 }
 
 #[test]
+fn prompt_stash_only_dispatches_in_composer_and_can_be_unbound() {
+    use gpui_kit::{Action, KeyContext};
+    let shortcut = super::PromptStash;
+    let original = KeyBinding::new("ctrl-s", shortcut, Some("HiveComposer"));
+    let mut keymap = Keymap::new(vec![original]);
+    let key = [Keystroke::parse("ctrl-s").unwrap()];
+    let composer = [KeyContext::parse("HiveComposer").unwrap(), KeyContext::parse("Input").unwrap()];
+    let terminal = [KeyContext::parse("HiveTerminal").unwrap(), KeyContext::parse("Input").unwrap()];
+    assert_eq!(Target::PromptStash.context().unwrap().depth_of(&composer), Some(1));
+    assert_eq!(keymap.bindings_for_input(&key, &composer).0.len(), 1);
+    assert!(keymap.bindings_for_input(&key, &terminal).0.is_empty());
+    assert!(keymap.bindings_for_input(&key, &[]).0.is_empty());
+    super::replace_bindings(&mut keymap, vec![(super::PromptStash.name(), None)]);
+    assert!(keymap.bindings_for_input(&key, &composer).0.is_empty());
+}
+
+#[test]
 fn legacy_three_key_file_migrates_new_targets_and_preserves_explicit_null() {
     let root = tempfile::tempdir().unwrap();
     let legacy = r#"{"version":1,"bindings":{"search":"cmd-shift-j","find":null,"preferences":"cmd-,"}}"#;

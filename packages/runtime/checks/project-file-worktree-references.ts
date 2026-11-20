@@ -33,9 +33,11 @@ try {
   assert.equal((await readFile(unicodeRef.filePath!)).toString(), 'Unicode path in the first worktree');
   await writeFile(join(aDir, name), 'one'); await writeFile(join(bDir, name), 'two');
   await writeFile(join(aDir, 'only-one.txt'), 'x'); await writeFile(join(bDir, 'only-two.txt'), 'x');
-  assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name), {text: 'main'});
-  assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name, a.id), {text: 'one'});
-  assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name, b.id), {text: 'two'});
+  const mainPreview = await runtime.chats.projectFilesPreview(ws.id, name);
+  const aPreview = await runtime.chats.projectFilesPreview(ws.id, name, a.id);
+  const bPreview = await runtime.chats.projectFilesPreview(ws.id, name, b.id);
+  assert.deepEqual([mainPreview.text, aPreview.text, bPreview.text], ['main', 'one', 'two']);
+  assert.equal(new Set([mainPreview.sha256, aPreview.sha256, bPreview.sha256]).size, 3);
   for (const [sessionId, directory, expected] of [[undefined, project, 'main'], [a.id, aDir, 'one'], [b.id, bDir, 'two']] as const) {
     const file = await runtime.chats.projectFilesResolveOpen(ws.id, name, sessionId);
     assert.deepEqual(file, {root: await realpath(directory), path: await realpath(join(directory, name))});
@@ -63,10 +65,12 @@ try {
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, b.id)).paths, ['only-two.txt']);
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-')).paths, []);
   const main = await runtime.chats.projectFilesAttach(ws.id, name);
-  const aRef = await runtime.chats.projectFilesAttach(ws.id, name, a.id);
+  await assert.rejects(runtime.chats.projectFilesAttach(ws.id, name, a.id, bPreview.sha256), /文件在预览后已更改/);
+  const aRef = await runtime.chats.projectFilesAttach(ws.id, name, a.id, aPreview.sha256);
   const bRef = await runtime.chats.projectFilesAttach(ws.id, name, b.id);
   assert.equal(main.attachment.projectFile?.sourceSessionId, undefined);
   assert.equal(aRef.attachment.projectFile?.sourceSessionId, a.id);
+  assert.equal(aRef.attachment.projectFile?.sha256, aPreview.sha256);
   assert.equal(bRef.attachment.projectFile?.sourceSessionId, b.id);
   assert.equal((await readFile(main.filePath!)).toString(), 'main');
   assert.equal((await readFile(aRef.filePath!)).toString(), 'one');
@@ -74,6 +78,10 @@ try {
   await assert.rejects(runtime.chats.projectFilesAttach(otherWs.id, name, a.id));
   await assert.rejects(runtime.chats.attachments.get(otherWs.id, [aRef.attachment.id]));
   await writeFile(join(aDir, name), 'changed'); await unlink(join(bDir, name));
+  await assert.rejects(runtime.chats.projectFilesAttach(ws.id, name, a.id, aPreview.sha256), /文件在预览后已更改/);
+  const refreshed = await runtime.chats.projectFilesPreview(ws.id, name, a.id);
+  const changedRef = await runtime.chats.projectFilesAttach(ws.id, name, a.id, refreshed.sha256);
+  assert.equal(await readFile(changedRef.filePath!, 'utf8'), 'changed');
   await assert.rejects(runtime.chats.projectFilesResolveOpen(ws.id, name, b.id));
   assert.deepEqual(await runtime.chats.projectFileStatus(ws.id, aRef.attachment.id), {state: 'changed'});
   assert.deepEqual(await runtime.chats.projectFileStatus(ws.id, bRef.attachment.id), {state: 'missing'});

@@ -277,6 +277,14 @@ impl HiveApp {
         };
         self.drafts.retain(|key, _| !removed_key(key));
         self.attachments.drafts.retain(|key, _| !removed_key(key));
+        if let Some(store) = self.draft_store.as_mut()
+            && let Err(error) = store.remove_workspace_stashes(removed_key)
+        {
+            self.error = Some(crate::app::ErrorNotice::Detail(
+                "无法移除工作区的暂存草稿",
+                error.to_string(),
+            ));
+        }
         self.prune_draft_attachments(cx);
         if self.draft_owner.as_deref().is_some_and(removed_key) {
             self.draft_owner = None;

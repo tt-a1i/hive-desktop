@@ -3,7 +3,7 @@ pub(crate) use editor::Editor;
 
 use crate::language::tr;
 use gpui_kit::{
-    Action, App, Global, KeyBinding, KeybindingKeystroke, Keymap, Keystroke, Modifiers,
+    Action, App, Global, KeyBinding, KeyBindingContextPredicate, KeybindingKeystroke, Keymap, Keystroke, Modifiers,
     OperatingSystem, component::kbd::Kbd,
 };
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-gpui_kit::actions!(hive_desktop, [NewSessionInCurrentProject]);
+gpui_kit::actions!(hive_desktop, [NewSessionInCurrentProject, PromptStash]);
 
 pub(crate) const FILE: &str = "desktop-keybindings.json";
 const CHORD_CONFLICT: &str = "快捷键与另一个操作冲突，请选择不同的组合键。";
@@ -58,10 +58,11 @@ pub(crate) enum Target {
     SearchProjectFiles,
     ChooseModel,
     ToggleMode,
+    PromptStash,
     Preferences,
 }
 
-const TARGETS: [Target; 14] = [
+const TARGETS: [Target; 15] = [
     Target::NewSession,
     Target::NewSessionCurrentProject,
     Target::Search,
@@ -76,6 +77,7 @@ const TARGETS: [Target; 14] = [
     Target::ChooseModel,
     Target::ToggleMode,
     Target::Preferences,
+    Target::PromptStash,
 ];
 
 impl Target {
@@ -95,6 +97,7 @@ impl Target {
             Self::ChooseModel => 10,
             Self::ToggleMode => 11,
             Self::Preferences => 12,
+            Self::PromptStash => 14,
         }
     }
 
@@ -111,7 +114,7 @@ impl Target {
             | Self::ToggleTerminal
             | Self::OpenGitWorkspace
             | Self::SearchProjectFiles => TargetGroup::Workspace,
-            Self::ChooseModel | Self::ToggleMode => TargetGroup::Conversation,
+            Self::ChooseModel | Self::ToggleMode | Self::PromptStash => TargetGroup::Conversation,
             Self::Preferences => TargetGroup::App,
         }
     }
@@ -131,6 +134,7 @@ impl Target {
             Self::SearchProjectFiles => tr("搜索项目文件"),
             Self::ChooseModel => tr("选择模型"),
             Self::ToggleMode => tr("切换会话模式"),
+            Self::PromptStash => tr("草稿暂存"),
             Self::Preferences => tr("打开设置"),
         }
     }
@@ -150,6 +154,7 @@ impl Target {
             Self::SearchProjectFiles => tr("打开文件选择器并插入工作区文件引用"),
             Self::ChooseModel => tr("展开或关闭当前会话的模型选择器"),
             Self::ToggleMode => tr("在当前 Agent 支持的会话模式间切换"),
+            Self::PromptStash => tr("暂存当前草稿，或从空输入框恢复"),
             Self::Preferences => tr("打开应用设置面板"),
         }
     }
@@ -169,6 +174,7 @@ impl Target {
             Self::SearchProjectFiles => "shortcut-project-files",
             Self::ChooseModel => "shortcut-choose-model",
             Self::ToggleMode => "shortcut-toggle-mode",
+            Self::PromptStash => "shortcut-prompt-stash",
             Self::Preferences => "shortcut-preferences",
         }
     }
@@ -202,9 +208,23 @@ impl Target {
             (Self::ChooseModel, false) => "ctrl-shift-m",
             (Self::ToggleMode, true) => "cmd-/",
             (Self::ToggleMode, false) => "ctrl-/",
+            (Self::PromptStash, true) => "cmd-s",
+            (Self::PromptStash, false) => "ctrl-s",
             (Self::Preferences, true) => "cmd-,",
             (Self::Preferences, false) => "ctrl-,",
         }
+    }
+
+    fn validate(self, chord: &str, os: OperatingSystem) -> Result<Keystroke, &'static str> {
+        validate_chord_inner(chord, os, self == Self::PromptStash)
+    }
+
+    fn context(self) -> Option<std::rc::Rc<KeyBindingContextPredicate>> {
+        (self == Self::PromptStash).then(|| {
+            KeyBindingContextPredicate::parse("HiveComposer")
+                .expect("valid composer shortcut context")
+                .into()
+        })
     }
 
     fn action(self) -> Box<dyn Action> {
@@ -222,6 +242,7 @@ impl Target {
             Self::SearchProjectFiles => Box::new(crate::OpenProjectFilePicker),
             Self::ChooseModel => Box::new(crate::OpenModelPicker),
             Self::ToggleMode => Box::new(crate::ToggleSessionMode),
+            Self::PromptStash => Box::new(PromptStash),
             Self::Preferences => Box::new(crate::OpenPreferences),
         }
     }
@@ -242,6 +263,7 @@ pub(crate) struct Bindings {
     pub search_project_files: Option<String>,
     pub choose_model: Option<String>,
     pub toggle_mode: Option<String>,
+    pub prompt_stash: Option<String>,
     pub previous_session: Option<String>,
     pub next_session: Option<String>,
 }
@@ -278,6 +300,8 @@ struct StoredBindings {
     #[serde(default, deserialize_with = "some_present")]
     toggle_mode: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
+    prompt_stash: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some_present")]
     previous_session: Option<Option<String>>,
     #[serde(default, deserialize_with = "some_present")]
     next_session: Option<Option<String>>,
@@ -304,6 +328,7 @@ impl StoredBindings {
             (Target::SearchProjectFiles, self.search_project_files),
             (Target::ChooseModel, self.choose_model),
             (Target::ToggleMode, self.toggle_mode),
+            (Target::PromptStash, self.prompt_stash),
             (Target::PreviousSession, self.previous_session),
             (Target::NextSession, self.next_session),
         ] {
@@ -322,7 +347,7 @@ impl StoredBindings {
                 if let Some(raw) = bindings.get(target)
                     && (raw == target.default(os)) == use_default
                 {
-                    let chord = dispatch_key(validate_chord(raw, os)?);
+                    let chord = dispatch_key(target.validate(raw, os)?);
                     if claimed.contains(&chord) {
                         bindings.set(target, None);
                     } else {
@@ -333,7 +358,7 @@ impl StoredBindings {
         }
         // Newly introduced defaults yield to saved bindings on the same key.
         for target in missing {
-            let chord = validate_chord(target.default(os), os)?;
+            let chord = target.validate(target.default(os), os)?;
             let effective = dispatch_key(chord.clone());
             if !claimed.contains(&effective) {
                 claimed.push(effective);
@@ -359,6 +384,7 @@ impl Bindings {
             search_project_files: Some(Target::SearchProjectFiles.default(os).to_owned()),
             choose_model: Some(Target::ChooseModel.default(os).to_owned()),
             toggle_mode: Some(Target::ToggleMode.default(os).to_owned()),
+            prompt_stash: Some(Target::PromptStash.default(os).to_owned()),
             previous_session: Some(Target::PreviousSession.default(os).to_owned()),
             next_session: Some(Target::NextSession.default(os).to_owned()),
         }
@@ -379,6 +405,7 @@ impl Bindings {
             Target::SearchProjectFiles => &self.search_project_files,
             Target::ChooseModel => &self.choose_model,
             Target::ToggleMode => &self.toggle_mode,
+            Target::PromptStash => &self.prompt_stash,
             Target::Preferences => &self.preferences,
         }
     }
@@ -398,6 +425,7 @@ impl Bindings {
             Target::SearchProjectFiles => &mut self.search_project_files,
             Target::ChooseModel => &mut self.choose_model,
             Target::ToggleMode => &mut self.toggle_mode,
+            Target::PromptStash => &mut self.prompt_stash,
             Target::Preferences => &mut self.preferences,
         };
         *slot = value;
@@ -408,7 +436,7 @@ impl Bindings {
         let mut seen: Vec<Keystroke> = Vec::with_capacity(TARGETS.len());
         for target in TARGETS {
             if let Some(raw) = self.get(target) {
-                let key = validate_chord(raw, os)?;
+                let key = target.validate(raw, os)?;
                 if seen.contains(&key) {
                     return Err(CHORD_CONFLICT);
                 }
@@ -430,7 +458,16 @@ impl Bindings {
     }
 }
 
+#[cfg(test)]
 fn validate_chord(value: &str, os: OperatingSystem) -> Result<Keystroke, &'static str> {
+    validate_chord_inner(value, os, false)
+}
+
+fn validate_chord_inner(
+    value: &str,
+    os: OperatingSystem,
+    composer_stash: bool,
+) -> Result<Keystroke, &'static str> {
     if value.is_empty()
         || value.len() > 80
         || value.split_whitespace().count() != 1
@@ -456,7 +493,9 @@ fn validate_chord(value: &str, os: OperatingSystem) -> Result<Keystroke, &'stati
         || screenshot
         || screenshot_symbol
         || dock
-        || (!m.shift && matches!(key.key.as_str(), "m" | "o" | "s"))
+        || (!m.shift && matches!(key.key.as_str(), "m" | "o"))
+        || (!m.shift && key.key == "s"
+            && !(composer_stash && key.unparse(os) == Target::PromptStash.default(os)))
         || matches!(
             key.key.as_str(),
             "a" | "c" | "i" | "u" | "v" | "x" | "z" | "y" | "q" | "w" | "h"
@@ -539,13 +578,16 @@ pub(crate) fn startup_bindings(cx: &App) -> Vec<KeyBinding> {
     TARGETS
         .into_iter()
         .map(|target| {
-            KeyBinding::load(target.default(os), target.action(), None, false, None, cx)
+            KeyBinding::load(target.default(os), target.action(), target.context(), false, None, cx)
                 .expect("valid default Hive shortcut")
         })
         .collect()
 }
 
 fn protected_binding(binding: &KeyBinding) -> bool {
+    if binding.action().name() == Target::PromptStash.action().name() {
+        return false;
+    }
     binding.predicate().is_some() || !TARGETS
         .into_iter()
         .any(|target| target.action().name() == binding.action().name())
@@ -566,7 +608,7 @@ fn check_conflicts(
     let mut claimed = Vec::with_capacity(TARGETS.len());
     for target in TARGETS {
         if let Some(chord) = bindings.get(target) {
-            let key = dispatch_key(validate_chord(chord, os)?);
+            let key = dispatch_key(target.validate(chord, os)?);
             if claimed.contains(&key) {
                 return Err(CHORD_CONFLICT);
             }
@@ -608,7 +650,7 @@ fn live_delta(prev: &Bindings, next: &Bindings, cx: &App) -> Result<(Bindings, B
             continue;
         }
         let binding = normalized.get(target).as_ref()
-            .map(|chord| KeyBinding::load(chord, target.action(), None, false, None, cx))
+            .map(|chord| KeyBinding::load(chord, target.action(), target.context(), false, None, cx))
             .transpose().map_err(|error| error.to_string())?;
         delta.push((target.action().name(), binding));
     }
@@ -620,7 +662,8 @@ fn replace_bindings(keymap: &mut Keymap, changes: BindingChanges) {
         return;
     }
     keymap.retain_bindings(|binding| {
-        binding.predicate().is_some()
+        (binding.predicate().is_some()
+            && binding.action().name() != Target::PromptStash.action().name())
             || !changes.iter().any(|(action, _)| *action == binding.action().name())
     });
     keymap.add_bindings(changes.into_iter().filter_map(|(_, binding)| binding));
@@ -629,7 +672,7 @@ fn replace_bindings(keymap: &mut Keymap, changes: BindingChanges) {
 fn full_delta(bindings: &Bindings, cx: &App) -> Result<BindingChanges, String> {
     TARGETS.into_iter().map(|target| {
         let binding = bindings.get(target).as_ref()
-            .map(|chord| KeyBinding::load(chord, target.action(), None, false, None, cx))
+            .map(|chord| KeyBinding::load(chord, target.action(), target.context(), false, None, cx))
             .transpose().map_err(|error| error.to_string())?;
         Ok((target.action().name(), binding))
     }).collect()

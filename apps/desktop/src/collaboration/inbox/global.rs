@@ -1,8 +1,11 @@
 #[path = "badge.rs"]
 mod badge;
+#[path = "intro.rs"]
+mod intro;
 
 use self::badge::BadgeItem;
 pub(in crate::collaboration) use self::badge::InboxBadge;
+use self::intro::{IntroMode, IntroProgress};
 use super::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
@@ -41,6 +44,7 @@ pub(in crate::collaboration) struct GlobalInboxView {
     show_waiting: bool,
     show_snoozed: bool,
     reading_position: Option<ReadingPosition>,
+    intro_progress: IntroProgress,
 }
 
 #[derive(Clone)]
@@ -74,6 +78,11 @@ struct GlobalInbox {
     reviewing_new: Option<NewItemsReview>,
     undo: UndoSlot,
     undo_review_item: Option<BadgeItem>,
+    intro: Option<IntroMode>,
+    intro_progress: IntroProgress,
+    intro_save_failed: bool,
+    intro_focus: FocusHandle,
+    help_focus: FocusHandle,
     dismissed: bool,
     scroll: ScrollHandle,
 }
@@ -164,10 +173,26 @@ impl HiveApp {
         }
         let parent = cx.entity();
         let connection = self.connection_generation;
-        let saved = self.collaboration.inbox_view.clone();
+        let mut saved = self.collaboration.inbox_view.clone();
+        let root = self.data_dir.as_deref();
+        let intro_save_failed = saved.intro_progress.save_pending(root).is_err();
+        let intro = saved
+            .intro_progress
+            .should_show(root)
+            .then_some(IntroMode::FirstUse);
         let new_items = self.unseen_global_inbox_items().collect();
         let inbox = cx.new(move |cx: &mut Context<GlobalInbox>| {
-            cx.observe(&parent, |_, _, cx| cx.notify()).detach();
+            cx.observe(&parent, |this, parent, cx| {
+                if this
+                    .intro_progress
+                    .save_pending(parent.read(cx).data_dir.as_deref())
+                    .is_err()
+                {
+                    this.intro_save_failed = true;
+                }
+                cx.notify();
+            })
+            .detach();
             GlobalInbox {
                 app: parent.downgrade(),
                 connection,
@@ -183,6 +208,11 @@ impl HiveApp {
                 reviewing_new: None,
                 undo: UndoSlot::default(),
                 undo_review_item: None,
+                intro,
+                intro_progress: saved.intro_progress,
+                intro_save_failed,
+                intro_focus: cx.focus_handle(),
+                help_focus: cx.focus_handle(),
                 dismissed: false,
                 scroll: ScrollHandle::new(),
             }
@@ -190,18 +220,32 @@ impl HiveApp {
         self.collaboration.inbox_badge.dialog = Some(inbox.downgrade());
         cx.notify();
         inbox.update(cx, |inbox, cx| inbox.poll(cx));
+        let intro_focus = intro.map(|_| inbox.read(cx).intro_focus.clone());
         let width = (window.viewport_size().width - px(36.)).min(px(740.));
         window.open_dialog(cx, move |dialog, _, _| {
             let dismiss = inbox.downgrade();
+            let cancel = inbox.downgrade();
+            let confirm = inbox.downgrade();
             dialog
                 .title(tr("跨项目收件箱"))
                 .w(width)
-                .on_ok(|_, _, _| false)
+                .on_ok(move |_, window, cx| {
+                    let _ = confirm.update(cx, |inbox, cx| inbox.confirm_intro(window, cx));
+                    false
+                })
+                .on_cancel(move |_, window, cx| {
+                    cancel
+                        .update(cx, |inbox, cx| !inbox.finish_intro(window, cx))
+                        .unwrap_or(true)
+                })
                 .on_close(move |_, _, cx| {
                     let _ = dismiss.update(cx, |inbox, cx| inbox.dismiss(cx));
                 })
                 .child(inbox.clone())
         });
+        if let Some(focus) = intro_focus {
+            window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        }
     }
 
     fn open_global_destination(
@@ -278,6 +322,53 @@ impl GlobalInbox {
         self.reading_position_without(None)
     }
 
+    fn replay_intro(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_position = self
+            .reading_position()
+            .or_else(|| self.restore_position.take());
+        self.intro = Some(IntroMode::Replay);
+        let focus = self.intro_focus.clone();
+        window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        cx.notify();
+    }
+
+    fn confirm_intro(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The dialog consumes Enter as Confirm before buttons receive the key.
+        if self.intro.is_some() && self.intro_focus.is_focused(window) {
+            self.finish_intro(window, cx);
+        } else if self.intro.is_none() && self.help_focus.is_focused(window) {
+            self.replay_intro(window, cx);
+        }
+    }
+
+    fn finish_intro(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(mode) = self.intro.take() else {
+            return false;
+        };
+        if matches!(mode, IntroMode::FirstUse) {
+            let app = self.app.upgrade();
+            let root = app
+                .as_ref()
+                .and_then(|app| app.read(cx).data_dir.as_deref());
+            self.intro_save_failed = self.intro_progress.acknowledge(root).is_err();
+        }
+        let focus = self.help_focus.clone();
+        window.on_next_frame(move |window, cx| focus.focus(window, cx));
+        cx.notify();
+        true
+    }
+
+    fn help_button(&self, cx: &Context<Self>) -> Button {
+        Button::new("global-inbox-help")
+            .ghost()
+            .compact()
+            .xsmall()
+            .icon(Glyph::Info)
+            .label(tr("收件箱帮助"))
+            .track_focus(&self.help_focus)
+            .on_click(cx.listener(|this, _, window, cx| this.replay_intro(window, cx)))
+    }
+
     fn reading_position_without(&self, excluded: Option<&RowId>) -> Option<ReadingPosition> {
         let offset = self.scroll.offset().y;
         if offset >= px(0.) {
@@ -320,6 +411,7 @@ impl GlobalInbox {
                 self.reading_position()
                     .or_else(|| self.restore_position.clone())
             },
+            intro_progress: self.intro_progress.clone(),
         };
         if let Some(app) = self.app.upgrade() {
             app.update(cx, |app, cx| {
@@ -657,6 +749,15 @@ fn update_new_items(
 impl Render for GlobalInbox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut body = v_flex().gap_2().min_w_0();
+        if self.intro.is_some() {
+            return body.child(intro::guide(
+                &self.intro_focus,
+                cx.listener(|this, _, window, cx| {
+                    this.finish_intro(window, cx);
+                }),
+                cx,
+            ));
+        }
         let Some(parent) = self.app.upgrade() else {
             return body;
         };
@@ -771,15 +872,21 @@ impl Render for GlobalInbox {
         let app = parent.read(cx);
         if reviewing {
             body = body.child(
-                Button::new("global-inbox-back-from-new")
-                    .ghost()
-                    .compact()
-                    .small()
-                    .icon(Glyph::ArrowLeft)
-                    .label(tr("返回收件箱"))
-                    .on_click(cx.listener(|this, _, _, cx| this.return_to_inbox(cx))),
+                h_flex()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        Button::new("global-inbox-back-from-new")
+                            .ghost()
+                            .compact()
+                            .small()
+                            .icon(Glyph::ArrowLeft)
+                            .label(tr("返回收件箱"))
+                            .on_click(cx.listener(|this, _, _, cx| this.return_to_inbox(cx))),
+                    )
+                    .child(self.help_button(cx)),
             );
-        } else if available.len() > 1 || has_snoozed || !self.new_items.is_empty() {
+        } else {
             let mut controls = h_flex()
                 .items_center()
                 .justify_between()
@@ -852,7 +959,19 @@ impl Render for GlobalInbox {
                         .on_click(cx.listener(|this, _, _, cx| this.review_new_items(cx))),
                 );
             }
-            body = body.child(controls);
+            body = body.child(controls.child(self.help_button(cx)));
+        }
+        if self.intro_save_failed {
+            let message = tr("无法保存收件箱引导状态");
+            body = body.child(
+                div()
+                    .id("inbox-guide-persistence-error")
+                    .role(Role::Alert)
+                    .aria_label(message)
+                    .text_sm()
+                    .text_color(Color::Error.get(cx))
+                    .child(message),
+            );
         }
         body = body.when_some(status, |body, status| {
             body.child(inbox_status(tr(status), cx))

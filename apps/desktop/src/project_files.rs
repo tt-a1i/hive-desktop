@@ -52,6 +52,16 @@ struct Target {
     open_request: u64,
 }
 impl Target {
+    fn capture(app: &HiveApp) -> Option<Self> {
+        Some(Self {
+            workspace: app.workspace.clone()?,
+            session: app.session.as_ref().map(|session| session.id.clone()),
+            draft: app.draft_target.clone()?,
+            connection: app.connection_generation,
+            open_request: app.open_request,
+        })
+    }
+
     fn current(&self, app: &HiveApp) -> bool {
         app.connected
             && !app.closing
@@ -86,6 +96,7 @@ impl HiveApp {
             && self.workspace.is_some()
             && self.draft_target.is_some()
             && self.workspace_writes_allowed()
+            && !self.conversation_is_read_only()
             && !self
                 .session
                 .as_ref()
@@ -93,23 +104,33 @@ impl HiveApp {
             && self.attachments.ready(self.draft_target.as_ref())
             && self.attachments.refs(self.draft_target.as_ref()).len() < 10
     }
+    fn reference_project_file(
+        &mut self,
+        target: &Target,
+        path: String,
+        expected_sha256: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !target.current(self) || !self.can_reference_project_file() {
+            return false;
+        }
+        self.import_image_sources(
+            vec![ImageSource::ProjectFile {
+                relative_path: path,
+                session_id: target.session.clone(),
+                expected_sha256,
+            }],
+            cx,
+        );
+        true
+    }
+
     pub(crate) fn open_project_file_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_reference_project_file() || window.has_active_dialog(cx) {
             return;
         }
-        let (Some(workspace), Some(draft), Some(runtime)) = (
-            self.workspace.clone(),
-            self.draft_target.clone(),
-            self.runtime.clone(),
-        ) else {
+        let (Some(target), Some(runtime)) = (Target::capture(self), self.runtime.clone()) else {
             return;
-        };
-        let target = Target {
-            workspace,
-            draft,
-            session: self.session.as_ref().map(|session| session.id.clone()),
-            connection: self.connection_generation,
-            open_request: self.open_request,
         };
         let session = self.session.as_ref().filter(|session| session.workspace_id == target.workspace);
         let source_directory = if let Some(session) = session.filter(|session| session.scratch) {
@@ -247,19 +268,7 @@ impl FilePicker {
         }
         let accepted = self
             .app
-            .update(cx, |app, cx| {
-                if !self.target.current(app) || !app.can_reference_project_file() {
-                    return false;
-                }
-                app.import_image_sources(
-                    vec![ImageSource::ProjectFile {
-                        relative_path: path,
-                        session_id: self.target.session.clone(),
-                    }],
-                    cx,
-                );
-                true
-            })
+            .update(cx, |app, cx| app.reference_project_file(&self.target, path, None, cx))
             .unwrap_or(false);
         if accepted {
             let composer_focus = self

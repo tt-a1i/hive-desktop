@@ -186,7 +186,7 @@ export async function searchProjectContents(projectRoot: string, query: string, 
 export async function previewProjectFile(projectRoot: string, relativePath: string) {
   const root = await rootDirectory(projectRoot);
   const bytes = await readProjectBytes(root, relativePath, PREVIEW_LIMIT, true);
-  return {text: decodeProjectText(bytes)};
+  return {text: decodeProjectText(bytes), sha256: createHash('sha256').update(bytes).digest('hex')};
 }
 
 function decodeProjectText(bytes: Buffer): string {
