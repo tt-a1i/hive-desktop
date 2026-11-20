@@ -82,8 +82,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在 Beacon 项目收件箱滚动到较早的事项，关闭期间向 Atlas 加入新问题。查看新事项时能打开准确的 Atlas 派单，返回时恢复 Beacon 筛选，原事项按钮的垂直坐标相同。证据在 `.artifacts/inbox-review-qa/receipt.md`。
 - 197 项桌面 Rust 测试通过，1 项原有忽略。运行时构建、TypeScript 检查、Scratch 和会话终端专项回归、Windows x64 MSVC 交叉类型检查均通过。macOS 实窗使用隔离测试数据和受控协议对端。Windows 原生交互待复验。
 
+## 2026-11-21 第七批
+
+本轮从 Hive Desktop `d45caa7` 开始。参考默认分支为 T3 Code `c813e7d`、Cindy `79d93b1`、Beluga `45a484b`，Hive 上游为 `18861b8`。
+
+- **把 Scratch 文件夹添加为项目。** 从拥有独立目录的会话菜单添加并命名，Hive 在原路径登记项目。项目入口可以打开原会话，原来的 Agent 身份、历史、附件和协作账本仍归原工作区。回包中断后可用同一入口核对结果。移除项目保留原会话和磁盘文件，仍有链接时不能移除 Scratch 工作区。 [T3 Code 转为项目](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L43-L47)
+- **在编辑器打开正在预览的文件。** 紧凑或展开预览都能通过图标和名称选择已安装的编辑器。Hive 核对当前会话目录和选中文件，再把准确的绝对路径交给编辑器。请求期间切换选中项或工作树会取消这次打开。 [Beluga 预览行操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L104-L113)
+- **将事项暂缓到指定日期和时间。** 工作区收件箱和跨项目收件箱共用日期与时间选择器。保存前显示本地唤回时间和时区偏移，新输入可以提前唤回。明天同一时间按日历计算，提示因夏令时而不存在的本地钟点。 [Cindy 暂缓规则](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L75-L89)
+
+- macOS 在两段 Scratch 对话中选择 Alpha，输入项目名称并用 Return 确认，只提交一次请求。项目路径与 Alpha 原执行目录一致，能从项目打开原会话。重启后两段对话仍各有原来的原生会话 ID、历史和文件。运行时同时验证回包丢失后恢复、附件血缘和删除保护。证据在 `.artifacts/scratch-promote-qa` 和 `.artifacts/competitive-ux/seventh/scratch-promotion.log`。
+- macOS 从项目、工作树 A 的紧凑预览和工作树 B 的展开预览选择 Zed。操作系统确认 Zed 实际读取了三处带中文、空格和 `&` 的同名文件。菜单有对应 Zed 的无障碍名称。运行时专项另验证缺失文件和符号链接会被拒绝。证据在 `.artifacts/editor-open-qa/receipt.md`。
+- macOS 收件箱先取消自定义暂缓，确认没有写入。将 Beacon 问题改为当地 11:37 后保存，磁盘记录与所选时刻一致。冷启动后仍在暂缓区，新问题到来时原事项提前恢复。从等待 Agent 区段将 Atlas 的事项暂缓到 15:42，保存的时间与辅助技术读到的日期、时间和时区一致。证据在 `.artifacts/inbox-custom-qa`。
+- 203 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 通过交叉类型检查，Windows 原生交互待复验。TypeScript 检查、运行时构建、项目文件和工作树引用、Scratch 创建和转项目、工作区删除专项通过。
+
 ## 接下来优先检查
 
-- **把值得继续的 Scratch 工作整理成项目。** 用已经写出文件的 Scratch 会话验证原地提升为项目的规划，保留 Agent 所用的目录、源会话和附件来源。评估项目身份迁移过程中已有任务、历史和重试语义。 [T3 Code 转为项目](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/docs/user/thread-sidebar.md#L34-L38)
-- **从文件预览按实际路径打开外部编辑器。** 在同一项目的多个工作树打开同名文件，验证编辑器收到当前执行目录下的准确文件。当前「打开方式」主要作用于项目目录，文件预览缺少这个入口。 [Beluga 预览行操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L104-L113)
-- **把协作事项暂缓到指定日期和时间。** 当前菜单提供简单间隔和无限期。检查日历快捷项、自定义时间的显示与保存是否一致，以及重启和新输入提前唤回。 [Cindy 暂缓规则](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L75-L89)
+- **多个项目时从全局快捷键选择新对话的归属。** 同时打开两个项目，用新建快捷键选择另一个项目，确认选择前保留草稿，取消后还在原会话。随后检查在当前项目直接新建和未发送草稿改项目的交互。 [T3 Code 新对话](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L8-L13) · [在项目间切换草稿](https://github.com/pingdotgg/t3code/blob/c813e7db513aa165863d83f230f0989e3ca845eb/docs/user/thread-sidebar.md#L25-L33)
+- **查看已暂缓事项的唤回时间。** 在一个列表放入到期、未来和无限期事项，检查能否从列表直接区分，也能否重新指定时间。根据本地作息补充今晚、明早、下周一等日历快捷项。 [Cindy 暂缓规则](https://github.com/makecindy/cindy/blob/79d93b160b97f7617f02a8821bfde976fa02f4b5/docs/product-rules/task-inbox.md#L75-L89)
+- **从文件预览用键盘展开和返回。** 复验停靠面板与窄窗弹层。展开时保留正文命中，返回时恢复原控件焦点，快捷键在聊天输入或搜索字段内继续执行原操作。 [Beluga 预览快捷键](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L110-L113)

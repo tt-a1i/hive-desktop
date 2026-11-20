@@ -413,6 +413,11 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         throw error;
       }
     }
+    case 'workspace.scratch.promote': {
+      exact(params, ['workspaceId', 'sessionId', 'name']);
+      return chats.promoteScratchProject(text(params, 'workspaceId'), text(params, 'sessionId'), text(params, 'name'), runtime.requestHive);
+    }
+    case 'workspace.scratch.links': exact(params, []); return chats.listScratchProjectLinks();
     case 'hive.request': return runtime.requestHive(text(params, 'method'), text(params, 'path'), params.body);
     case 'inbox.actionableQuestions': {
       const ids = params.workspaceIds;
@@ -517,6 +522,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal));
     case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal));
     case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId);
+    case 'project.files.resolveOpen': return chats.projectFilesResolveOpen(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));
     case 'chat.search': {

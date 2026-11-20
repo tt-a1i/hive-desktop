@@ -72,12 +72,13 @@ impl RenderOnce for AccessibleSessionMenu {
         }
         let menu = button
             .0
-            .dropdown_menu(move |menu, _, _| {
+            .dropdown_menu(move |menu, _, cx| {
                 HiveApp::session_menu_items(
                     menu,
                     self.session.clone(),
                     self.archive_blocked,
                     self.app.clone(),
+                    cx,
                 )
             })
             .on_open_change(move |open, window, cx| {
@@ -117,11 +118,17 @@ impl HiveApp {
         session: crate::protocol::Session,
         archive_blocked: bool,
         app: WeakEntity<Self>,
+        cx: &App,
     ) -> PopupMenu {
         let archive_session = session.clone();
         let archive_app = app.clone();
         let worktree_session = session.clone();
         let worktree_app = app.clone();
+        let scratch_session = session.clone();
+        let scratch_app = app.clone();
+        let linked = app
+            .upgrade()
+            .is_some_and(|app| app.read(cx).scratch_project_target(&session).is_some());
         menu.item(
             PopupMenuItem::new(if session.pinned {
                 tr("取消置顶")
@@ -164,6 +171,16 @@ impl HiveApp {
                     }),
             ),
         )
+        .when(scratch_session.scratch, |menu| {
+            menu.item(PopupMenuItem::new(tr(if linked { "打开 Scratch 项目" } else { "将 Scratch 文件夹添加为项目…" }))
+                .on_click(move |_, window, cx| {
+                    let app = scratch_app.clone();
+                    let session = scratch_session.clone();
+                    window.defer(cx, move |window, cx| {
+                        let _ = app.update(cx, |this, cx| this.show_scratch_project(session, window, cx));
+                    });
+                }))
+        })
     }
 
     fn session_activity(&self, id: &str) -> Option<&'static str> {

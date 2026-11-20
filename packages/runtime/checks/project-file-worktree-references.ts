@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDesktopRuntime } from '../src/desktop-runtime.js';
@@ -36,6 +36,24 @@ try {
   assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name), {text: 'main'});
   assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name, a.id), {text: 'one'});
   assert.deepEqual(await runtime.chats.projectFilesPreview(ws.id, name, b.id), {text: 'two'});
+  for (const [sessionId, directory, expected] of [[undefined, project, 'main'], [a.id, aDir, 'one'], [b.id, bDir, 'two']] as const) {
+    const file = await runtime.chats.projectFilesResolveOpen(ws.id, name, sessionId);
+    assert.deepEqual(file, {root: await realpath(directory), path: await realpath(join(directory, name))});
+    assert.equal(await readFile(file.path, 'utf8'), expected);
+  }
+  const punctuation = '文件 with spaces & ; %.txt';
+  await writeFile(join(aDir, punctuation), 'literal editor path');
+  assert.equal((await runtime.chats.projectFilesResolveOpen(ws.id, punctuation, a.id)).path, await realpath(join(aDir, punctuation)));
+  await assert.rejects(runtime.chats.projectFilesResolveOpen(otherWs.id, name, a.id));
+  for (const path of ['../' + name, 'missing.txt', 'other\\file', '.git']) {
+    await assert.rejects(runtime.chats.projectFilesResolveOpen(ws.id, path, a.id));
+  }
+  if (process.platform !== 'win32') {
+    await symlink(join(aDir, name), join(aDir, 'same-root-link.txt'));
+    await symlink(join(bDir, name), join(aDir, 'other-root-link.txt'));
+    await assert.rejects(runtime.chats.projectFilesResolveOpen(ws.id, 'same-root-link.txt', a.id));
+    await assert.rejects(runtime.chats.projectFilesResolveOpen(ws.id, 'other-root-link.txt', a.id));
+  }
   assert((await runtime.chats.projectFilesList(ws.id, '', 0, a.id)).entries.some(entry => entry.path === 'only-one.txt'));
   assert(!(await runtime.chats.projectFilesList(ws.id, '', 0, b.id)).entries.some(entry => entry.path === 'only-one.txt'));
   assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, 'one', 0, a.id)).matches, [{path: name, line: 1}]);
@@ -56,6 +74,7 @@ try {
   await assert.rejects(runtime.chats.projectFilesAttach(otherWs.id, name, a.id));
   await assert.rejects(runtime.chats.attachments.get(otherWs.id, [aRef.attachment.id]));
   await writeFile(join(aDir, name), 'changed'); await unlink(join(bDir, name));
+  await assert.rejects(runtime.chats.projectFilesResolveOpen(ws.id, name, b.id));
   assert.deepEqual(await runtime.chats.projectFileStatus(ws.id, aRef.attachment.id), {state: 'changed'});
   assert.deepEqual(await runtime.chats.projectFileStatus(ws.id, bRef.attachment.id), {state: 'missing'});
   assert.deepEqual(await runtime.chats.projectFileStatus(ws.id, main.attachment.id), {state: 'unchanged'});

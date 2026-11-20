@@ -10,23 +10,23 @@ use std::{
 
 #[derive(Clone, Copy)]
 pub(super) enum Delay {
-    Minutes(u64),
+    Until(u64),
     Indefinite,
 }
 
 impl Delay {
-    pub(super) const OPTIONS: [(&str, Self); 4] = [
-        ("15 分钟", Self::Minutes(15)),
-        ("1 小时", Self::Minutes(60)),
-        ("明天此时", Self::Minutes(24 * 60)),
-        ("无限期", Self::Indefinite),
-    ];
-
-    pub(super) fn expires_at(self, now: u64) -> Option<u64> {
+    pub(super) fn reminder(self, now: u64, wake: &Option<Wake>) -> Result<Reminder, &'static str> {
         match self {
-            Self::Minutes(minutes) => Some(now.saturating_add(minutes * 60_000)),
-            Self::Indefinite => None,
+            Self::Until(until) if until <= now => return Err("所选暂缓时间已过，请重新选择。"),
+            _ => {}
         }
+        Ok(Reminder {
+            expires_at: match self {
+                Self::Until(until) => Some(until),
+                Self::Indefinite => None,
+            },
+            wake: wake.clone(),
+        })
     }
 }
 
@@ -340,18 +340,17 @@ mod tests {
     fn timed_reminders_reopen_until_the_exact_deadline_and_expiry_is_durable() {
         let root = tempfile::tempdir().unwrap();
         let key = "message:old";
-        let until = Delay::Minutes(15).expires_at(500).unwrap();
+        let until = 15 * 60_000 + 500;
         Snoozes::set(
             root.path(),
             WORKSPACE,
             key,
-            Some(Reminder {
-                expires_at: Some(until),
-                wake: None,
-            }),
+            Some(Delay::Until(until).reminder(500, &None).unwrap()),
         )
         .unwrap();
         let saved = Snoozes::load(root.path(), WORKSPACE).unwrap();
+        assert_eq!(saved.reminders[key].expires_at, Some(until));
+        assert!(Delay::Until(until).reminder(until, &None).is_err());
         assert!(saved.active(key, until - 1));
         assert!(!saved.active(key, until));
         saved
@@ -382,14 +381,18 @@ mod tests {
                 root.path(),
                 WORKSPACE,
                 key,
-                Some(Reminder {
-                    expires_at: None,
-                    wake: Some(Wake::Dispatch {
-                        id: DISPATCH.to_owned(),
-                        sequence,
-                        observed_at: 200,
-                    }),
-                }),
+                Some(
+                    Delay::Until(20_000)
+                        .reminder(
+                            400,
+                            &Some(Wake::Dispatch {
+                                id: DISPATCH.to_owned(),
+                                sequence,
+                                observed_at: 200,
+                            }),
+                        )
+                        .unwrap(),
+                ),
             )
             .unwrap();
             let same = snapshot(&[message(WORKSPACE, DISPATCH, "old", 7, 100)]);

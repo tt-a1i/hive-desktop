@@ -153,6 +153,7 @@ impl HiveApp {
             |this, value, cx| match serde_json::from_value::<Vec<Workspace>>(value) {
                 Ok(workspaces) => {
                     this.workspaces = workspaces;
+                    this.refresh_scratch_projects(cx);
                     this.maybe_open_first_run_welcome(cx);
                     if let Err(error) = crate::desktop_update::report_startup() {
                         eprintln!("Could not report updated desktop startup: {error}");

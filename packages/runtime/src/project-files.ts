@@ -32,6 +32,16 @@ export async function resolveProjectFile(projectRoot: string, relativePath: stri
   return resolveFileInRoot(await rootDirectory(projectRoot), relativePath);
 }
 
+export async function resolveProjectFileForEditor(projectRoot: string, relativePath: string) {
+  if (relativePath.includes('\\')) throw new TypeError('Invalid project file path');
+  const root = await rootDirectory(projectRoot);
+  const path = await resolveFileInRoot(root, relativePath);
+  if (path !== resolve(root, relativePath)) {
+    throw new Error('File is outside project or not a regular file');
+  }
+  return {root, path};
+}
+
 async function resolveFileInRoot(root: string, relativePath: string): Promise<string> {
   if (typeof relativePath !== 'string' || !validRelative(relativePath)) throw new TypeError('Invalid project file path');
   const path = resolve(root, relativePath);

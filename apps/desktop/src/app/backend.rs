@@ -214,6 +214,7 @@ impl HiveApp {
         self.member_catalog_loading = false;
         self.member_stopping = None;
         self.workspace_removing = None;
+        self.scratch_projects = Default::default();
         self.session_name_loading = false;
         self.session_pin_loading.clear();
         self.session_archive_loading.clear();

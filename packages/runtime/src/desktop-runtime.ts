@@ -114,6 +114,8 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       return chats.removeWorkspace(workspaceId, async () => {await scriptRuns.stopWorkspace(workspaceId); await terminal.detachWorkspace(workspaceId);});
     },
     requestHive: (method: string, path: string, body?: unknown) => {
+      const workspaceDeletion = method.toUpperCase() === 'DELETE' && /^\/api\/workspaces\/([^/?#]+)\/?(?:[?#]|$)/.exec(path);
+      if (workspaceDeletion) return chats.removeHiveWorkspaceDirectly(decodeURIComponent(workspaceDeletion[1]!), () => hive.request(method, path, body));
       if (method.toUpperCase() === 'POST' && path === '/api/workspaces') {
         const release = executionMutations.begin('');
         return hive.request(method, path, body).finally(release);
@@ -131,6 +133,7 @@ export async function createDesktopRuntime(dataDir: string, emit: (event: ChatEv
       // Chats still rejects new starts and its abort signal is already canceled.
       await Promise.all([chats.history?.close(),chats.handoffs?.close()]);
       await chats.drainGitOperations();
+      await chats.drainScratchProjects();
       initialization.close();
       const scripts = await Promise.allSettled([scriptRuns.close()]);
       const stage1 = await Promise.allSettled([settings.close(), piModels.close(), piAuth.close(), piVault.close(), terminal.close(), agentModels.close()]);

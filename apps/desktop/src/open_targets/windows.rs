@@ -361,9 +361,25 @@ pub(super) fn open(target: OpenTarget, app: &Path, folder: &Path) -> Result<(), 
         .map_err(|error| error.to_string())
 }
 
+pub(super) fn file_command(app: &Path, file: &Path) -> Result<Command, String> {
+    let mut command = Command::new(app);
+    command.arg(file);
+    Ok(command)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passes_exact_file_as_one_editor_argument() {
+        let app = Path::new(r"C:\Program Files\Microsoft VS Code\Code.exe");
+        let file = Path::new(r"C:\Worktree\同名 & ; %TEMP%.cmd");
+        let command = file_command(app, file).unwrap();
+        assert_eq!(command.get_program(), app.as_os_str());
+        assert_eq!(command.get_args().collect::<Vec<_>>(), [file.as_os_str()]);
+        assert!(command.get_current_dir().is_none());
+    }
 
     #[test]
     fn windows_terminal_starts_in_the_folder_without_parsing_its_name() {

@@ -23,7 +23,7 @@ import { ProjectFileReferences } from './project-file-references.js';
 import { DispatchExecutionOrigins, DispatchOriginError } from './dispatch-execution-origins.js';
 import { artifactSourceRequest, ArtifactSourceError, resolveArtifactFile, type ArtifactSourceRequest, type ResolvedArtifact } from './artifact-files.js';
 import { savedHtmlPathPreview, snapshotHtmlArtifact } from './html-artifacts.js';
-import { listProjectDirectory, previewProjectFile, searchProjectContents, searchProjectFiles, readProjectFile } from './project-files.js';
+import { listProjectDirectory, previewProjectFile, searchProjectContents, searchProjectFiles, readProjectFile, resolveProjectFileForEditor } from './project-files.js';
 import { ChatAttachments, attachmentIds, encodeImageInput, decodeImageInput } from './image-attachments.js';
 import { promptImages } from './prompt-images.js';
 import { isDeliveryPresentation, restoreHistoricalReport } from './delivery-presentation.js';
@@ -42,6 +42,7 @@ import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
 import { ChatIndex, SessionIdentityError, declaredExecutionPath, type ChatRecord, type ChatBackend } from './chat-index.js';
 import { createScratchConversation, isScratchWorkspace, validateScratchConversation } from './scratch-workspace.js';
+import { ScratchProjectLinks, type ScratchProjectRequest } from './scratch-project-links.js';
 import { externalPiBranch, externalPiMessage, piHistoryMessageId, readPiTranscript, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
 import { PiHistoryPages } from './agents/pi-history-pages.js';
 import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
@@ -301,11 +302,13 @@ export class Chats implements StructuredSessionPort {
   private readonly sessionDir: string;
   private readonly queueDir: string;
   private readonly dispatchOrigins: DispatchExecutionOrigins;
+  private readonly scratchProjects: ScratchProjectLinks;
   private readonly closeAbort = new AbortController();
   private closing = false;
   private disposing = false;
   private readonly mutatingQueues = new Set<string>();
   private readonly removing = new Set<string>();
+  private readonly workspaceRemovals = new Set<Promise<unknown>>();
   private readonly gitOperations = new Set<Promise<unknown>>();
 
   constructor(private readonly hive: HiveHost, private readonly dataDir: string, private readonly emit: (event: ChatEvent) => void,
@@ -317,6 +320,7 @@ export class Chats implements StructuredSessionPort {
     this.sessionDir = join(directory, 'pi');
     this.queueDir = join(directory, 'deliveries');
     this.dispatchOrigins = new DispatchExecutionOrigins(join(directory, 'dispatch-execution-origins'));
+    this.scratchProjects = new ScratchProjectLinks(dataDir);
     mkdirSync(this.sessionDir, { recursive: true });
     this.index = new ChatIndex(directory);
     this.handoffDeliveries=new HandoffDeliveries(dataDir);
@@ -1133,6 +1137,13 @@ export class Chats implements StructuredSessionPort {
     const preview = await previewProjectFile(root, relativePath);
     if (await this.executionDirectory(workspaceId, sessionId) !== root) throw new Error('Session execution directory changed during preview');
     return preview;
+  }
+  async projectFilesResolveOpen(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
+    if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
+    const root = await this.executionDirectory(workspaceId, sessionId);
+    const result = await resolveProjectFileForEditor(root, relativePath);
+    if (await this.executionDirectory(workspaceId, sessionId) !== root) throw new Error('Session execution directory changed while locating the file');
+    return result;
   }
   async projectFilesAttach(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
     this.assertWorkspaceAvailable(workspaceId);
@@ -2342,6 +2353,89 @@ export class Chats implements StructuredSessionPort {
     });
     return {workspace, session};
   }
+
+  private hasScratchSource = (workspaceId: string, sessionId: string) => {
+    const session = this.index.peek(sessionId);
+    return session?.scratch === true && session.workspaceId === workspaceId;
+  };
+
+  async promoteScratchProject(workspaceId: string, sessionId: string, name: string, request: ScratchProjectRequest) {
+    const title = name.trim();
+    if (!title || [...title].length > 128 || /[\x00-\x1f\x7f]/.test(title)) throw new TypeError('项目名称不能为空，最多 128 个字符，且不能包含控制字符。');
+    this.closeAbort.signal.throwIfAborted();
+    this.assertWorkspaceAvailable(workspaceId);
+    return this.withWorkspace(workspaceId, () => this.scratchProjects.serialize(async () => {
+      this.closeAbort.signal.throwIfAborted();
+      this.assertWorkspaceAvailable(workspaceId);
+      const record = this.index.get(sessionId);
+      if (record.workspaceId !== workspaceId || !record.scratch) throw new Error('只能将拥有独立目录的 Scratch 会话添加为项目。');
+      const source = await this.workspace(workspaceId);
+      const resolvePath = async () => {
+        try { return await this.executionPath(record, source); }
+        catch (error) {
+          if (error instanceof SessionIdentityError && error.code === 'SCRATCH_FOLDER_UNAVAILABLE')
+            throw new Error('Scratch 会话目录不存在或已被替换。', {cause: error});
+          throw error;
+        }
+      };
+      const path = await resolvePath();
+      this.closeAbort.signal.throwIfAborted();
+      return this.scratchProjects.promote({sourceWorkspaceId: workspaceId, sourceSessionId: sessionId, path}, title, request, async () => {
+        if (await resolvePath() !== path) throw new Error('添加项目期间，Scratch 会话目录发生了变化。');
+      }, id => this.assertWorkspaceAvailable(id));
+    }));
+  }
+
+  listScratchProjectLinks() {
+    this.closeAbort.signal.throwIfAborted();
+    return this.scratchProjects.serialize(async () => {
+      this.closeAbort.signal.throwIfAborted();
+      const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
+      return {links: await this.scratchProjects.list(workspaces, this.hasScratchSource, async promotion => {
+        const source = workspaces.find(item => item.id === promotion.sourceWorkspaceId)!;
+        try { return await validateScratchConversation(this.dataDir, source, promotion.sourceSessionId) === promotion.path; }
+        catch { return false; }
+      })};
+    });
+  }
+
+  async drainScratchProjects() {
+    await Promise.allSettled(this.workspaceRemovals);
+    await this.scratchProjects.idle();
+  }
+
+  private async trackWorkspaceRemoval<T>(workspaceId: string, remove: () => Promise<T>): Promise<T> {
+    if (typeof workspaceId !== 'string' || !workspaceId.trim()) throw new Error('workspaceId is required');
+    if (this.closing) throw new Error('Chat runtime is closing');
+    this.assertWorkspaceAvailable(workspaceId);
+    this.removing.add(workspaceId);
+    const task = Promise.resolve().then(remove);
+    this.workspaceRemovals.add(task);
+    try { return await task; }
+    finally {
+      this.workspaceRemovals.delete(task);
+      this.removing.delete(workspaceId);
+    }
+  }
+
+  private async assertScratchSourceRemovable(workspace: WorkspaceSummary) {
+    if (!await isScratchWorkspace(this.dataDir, workspace.path)) return;
+    const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
+    if (await this.scratchProjects.hasTarget(workspace.id, workspaces, this.hasScratchSource)) {
+      throw new WorkspaceRemovalError('WORKSPACE_REMOVAL_BLOCKED', 'Scratch 仍有会话链接到项目。请先移除这些项目。',
+        {workspaceId: workspace.id, workspaceRemoved: false, removedSessionIds: [], stage: 'prepare', localIndexCleaned: false});
+    }
+  }
+
+  removeHiveWorkspaceDirectly(workspaceId: string, remove: () => Promise<unknown>) {
+    return this.trackWorkspaceRemoval(workspaceId, () => this.scratchProjects.serialize(async () => {
+      const workspace = await this.workspace(workspaceId);
+      await this.assertScratchSourceRemovable(workspace);
+      const result = await remove();
+      await this.scratchProjects.forget(workspaceId, workspace.path);
+      return result;
+    }));
+  }
   /** Create only: never binds, stops or starts the Worker's currently selected conversation. */
   async createMemberWorktree(workspaceId: string, memberId: string, options: {profile?: AgentProfileRef; branch?: string; backend?: ChatBackend; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
     return this.withWorkspace(workspaceId, async () => {
@@ -3477,16 +3571,17 @@ export class Chats implements StructuredSessionPort {
       }finally{if(canRestore)this.handoffStarting.delete(id);}
     });
   }
-  async removeWorkspace(workspaceId: string, drainWorkspaceTerminals: () => Promise<void>): Promise<{ ok: true; removedSessionIds: string[] }> {
-    if (typeof workspaceId !== 'string' || !workspaceId.trim()) throw new Error('workspaceId is required');
-    if (this.closing) throw new Error('Chat runtime is closing');
-    this.assertWorkspaceAvailable(workspaceId);
-    this.removing.add(workspaceId);
+  removeWorkspace(workspaceId: string, drainWorkspaceTerminals: () => Promise<void>): Promise<{ ok: true; removedSessionIds: string[] }> {
+    return this.trackWorkspaceRemoval(workspaceId, () => this.removeWorkspaceWithLinks(workspaceId, drainWorkspaceTerminals));
+  }
+
+  private async removeWorkspaceWithLinks(workspaceId: string, drainWorkspaceTerminals: () => Promise<void>): Promise<{ ok: true; removedSessionIds: string[] }> {
     const progress: { stage: WorkspaceRemovalStage; deleted: boolean } = { stage: 'prepare', deleted: false };
     let sessionIds: string[] = [];
     try {
       return await this.hive.withWorkspaceWorkflowIdle(workspaceId, () => this.agentModels.withWorkspaceRemoval(workspaceId, () => this.withWorkspace(workspaceId, async () => {
-        await this.workspace(workspaceId);
+        const workspace = await this.workspace(workspaceId);
+        await this.scratchProjects.serialize(() => this.assertScratchSourceRemovable(workspace));
         await drainWorkspaceTerminals();
         const path = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
         const records = this.index.list(workspaceId);
@@ -3514,11 +3609,15 @@ export class Chats implements StructuredSessionPort {
         const errors = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
         if (errors.length) throw new AggregateError(errors, '工作区会话清理失败。');
         await removeClaudeHistoryCache(this.dataDir, workspaceId);
-        progress.stage = 'delete';
-        await this.hive.request('DELETE', path);
-        progress.deleted = true; progress.stage = 'index';
-        this.index.removeWorkspace(workspaceId);
-        for (const id of sessionIds) this.sequences.delete(id);
+        await this.scratchProjects.serialize(async () => {
+          await this.assertScratchSourceRemovable(workspace);
+          progress.stage = 'delete';
+          await this.hive.request('DELETE', path);
+          progress.deleted = true; progress.stage = 'index';
+          this.index.removeWorkspace(workspaceId);
+          for (const id of sessionIds) this.sequences.delete(id);
+          await this.scratchProjects.forget(workspaceId, workspace.path);
+        });
         // Native transcripts and physical delivery spools are retained; removed chats are no longer navigable.
         return { ok: true as const, removedSessionIds: sessionIds };
       })));
@@ -3542,7 +3641,7 @@ export class Chats implements StructuredSessionPort {
         : `工作区尚未移除，部分会话可能已停止；原有会话记录和待投递数据保留：${detail}`;
       throw new WorkspaceRemovalError(workspaceRemoved === true ? 'WORKSPACE_REMOVAL_PARTIAL' : 'WORKSPACE_REMOVAL_FAILED', message,
         { workspaceId, workspaceRemoved, removedSessionIds: workspaceRemoved === true ? sessionIds : [], stage: progress.stage, localIndexCleaned: false }, { cause: error });
-    } finally { this.removing.delete(workspaceId); }
+    }
   }
   private failLive(id: string, chat: LiveChat, error: Error, notify = true): void {
     if (chat.cleanup) return;

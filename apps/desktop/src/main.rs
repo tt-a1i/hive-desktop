@@ -46,6 +46,7 @@ mod reasoning_picker;
 mod mode_picker;
 mod roles;
 mod runtime_location;
+mod scratch_project;
 mod sessions;
 mod session_execution;
 mod session_history;

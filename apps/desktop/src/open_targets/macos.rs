@@ -5,7 +5,7 @@ use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 fn bundles(target: OpenTarget) -> &'static [&'static str] {
@@ -187,9 +187,34 @@ pub(super) fn open(target: OpenTarget, app: &Path, folder: &Path) -> Result<(), 
     }
 }
 
+pub(super) fn file_command(app: &Path, file: &Path) -> Result<Command, String> {
+    let mut command = Command::new("/usr/bin/open");
+    command
+        .arg("-a")
+        .arg(app)
+        .arg("--")
+        .arg(file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    Ok(command)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passes_exact_file_as_one_launch_services_argument() {
+        let app = Path::new("/Applications/Visual Studio Code.app");
+        let file = Path::new("/tmp/Project & ; 空格/-- demo.sh");
+        let command = file_command(app, file).unwrap();
+        assert_eq!(command.get_program(), "/usr/bin/open");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            ["-a", app.to_str().unwrap(), "--", file.to_str().unwrap()]
+        );
+    }
 
     #[test]
     fn system_targets_have_application_icons() {

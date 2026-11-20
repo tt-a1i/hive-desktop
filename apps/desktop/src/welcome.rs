@@ -591,6 +591,21 @@ impl HiveApp {
                                             .into_any_element()
                                     }),
                             )
+                            .when_some(active_project.as_ref().filter(|workspace| self.has_scratch_project_origin(&workspace.id)), |hero, workspace| {
+                                let workspace = workspace.id.clone();
+                                hero.child(Button::new("hero-scratch-origin")
+                                    .custom(crate::palette::quiet_icon_variant(cx))
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(26.))
+                                    .px_2()
+                                    .rounded_md()
+                                    .label(tr("打开原 Scratch 会话"))
+                                    .disabled(!self.connected || self.closing || !self.workspace_writes_allowed())
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_scratch_project_origin(workspace.clone(), window, cx);
+                                    })))
+                            })
                             .child(if active_project.is_some() {
                                 Button::new("welcome-switch-project")
                                     .custom(crate::palette::quiet_icon_variant(cx))

@@ -6,6 +6,7 @@ use crate::{
         file_tree::{ChangeMark, FileTreeChanges},
     },
     language::tr,
+    open_targets::{self, OpenTarget, ResolvedEditorFile},
     palette::{self, Color},
     text_reading::{self, TextPages},
     transport::Runtime,
@@ -28,6 +29,7 @@ use serde_json::{Value, json};
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -165,6 +167,15 @@ struct Preview {
     text: Option<TextPages>,
     error: Option<FileError>,
     scroll: ScrollHandle,
+    editor_task: Option<Task<()>>,
+    editor_error: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct EditorOpenIdentity {
+    scope: Scope,
+    preview_generation: u64,
+    selection: Match,
 }
 
 struct ExpandedFilePreview {
@@ -175,6 +186,7 @@ struct ExpandedFilePreview {
     text: TextPages,
     scroll: ScrollHandle,
     focus: FocusHandle,
+    dismissed: bool,
 }
 
 fn preview_text(id: &'static str, text: &TextPages, cx: &App) -> Stateful<Div> {
@@ -203,6 +215,19 @@ fn step_preview(text: &mut TextPages, scroll: &mut ScrollHandle, step: isize) ->
         *scroll = ScrollHandle::new();
     }
     changed
+}
+
+fn editor_open_error(error: &str, cx: &App) -> Stateful<Div> {
+    div()
+        .id("project-file-editor-error")
+        .role(Role::Status)
+        .text_xs()
+        .text_color(Color::Error.get(cx))
+        .child(format!(
+            "{}: {}",
+            tr("无法在编辑器中打开文件"),
+            crate::language::localize_owned_error(error)
+        ))
 }
 
 #[derive(Default)]
@@ -425,6 +450,7 @@ pub(crate) struct FileBrowser {
     search_error: Option<FileError>,
     search_task: Option<Task<()>>,
     preview: Option<Preview>,
+    preview_generation: u64,
     preview_task: Option<Task<()>>,
     expanded_preview: Option<WeakEntity<ExpandedFilePreview>>,
     git_generation: u64,
@@ -619,6 +645,7 @@ impl HiveApp {
                 search_error: None,
                 search_task: None,
                 preview: None,
+                preview_generation: 0,
                 preview_task: None,
                 expanded_preview: None,
                 git_generation: 0,
@@ -1335,12 +1362,15 @@ impl FileBrowser {
         let scope = self.scope.as_ref().expect("current file scope");
         let params = scope.params(json!({"relativePath":selection.path}));
         let runtime = self.runtime.clone().expect("current file runtime");
+        self.preview_generation += 1;
         self.preview = Some(Preview {
             selection,
             loading: true,
             text: None,
             error: None,
             scroll: ScrollHandle::new(),
+            editor_task: None,
+            editor_error: None,
         });
         let generation = self.scope_generation;
         self.preview_task = Some(cx.spawn(async move |this, cx| {
@@ -1401,6 +1431,131 @@ impl FileBrowser {
         }
     }
 
+    fn editor_identity(&self) -> Option<EditorOpenIdentity> {
+        let preview = self.preview.as_ref()?;
+        preview.text.as_ref()?;
+        Some(EditorOpenIdentity {
+            scope: self.scope.clone()?,
+            preview_generation: self.preview_generation,
+            selection: preview.selection.clone(),
+        })
+    }
+
+    fn editor_menu(
+        &self,
+        browser: WeakEntity<Self>,
+        reader: Option<WeakEntity<ExpandedFilePreview>>,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let identity = self.editor_identity()?;
+        let busy = self.preview.as_ref()?.editor_task.is_some();
+        open_targets::file_editor_menu(
+            busy,
+            move |target, cx| {
+                let _ = browser.update(cx, |browser, cx| {
+                    browser.open_in_editor(identity.clone(), reader.clone(), target, cx);
+                });
+            },
+            cx,
+        )
+    }
+
+    fn editor_request_current(&self, identity: &EditorOpenIdentity, cx: &App) -> bool {
+        self.current(cx) && self.editor_identity().as_ref() == Some(identity)
+    }
+
+    fn open_in_editor(
+        &mut self,
+        identity: EditorOpenIdentity,
+        reader: Option<WeakEntity<ExpandedFilePreview>>,
+        target: OpenTarget,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.editor_request_current(&identity, cx)
+            || !ExpandedFilePreview::editor_request_active(reader.as_ref(), cx)
+        {
+            return;
+        }
+        let preview = self.preview.as_mut().expect("current preview");
+        if preview.editor_task.is_some() {
+            return;
+        }
+        preview.editor_error = None;
+        let Some(application) = open_targets::editor_path(target, cx) else {
+            preview.editor_error = Some(tr("目标应用未安装").to_owned());
+            cx.notify();
+            return;
+        };
+        let runtime = self.runtime.clone().expect("current file runtime");
+        let path = identity.selection.path.clone();
+        let directory = identity.scope.tree.source.directory().map(PathBuf::from);
+        let params = identity.scope.params(json!({"relativePath":path}));
+        preview.editor_task = Some(cx.spawn(async move |this, cx| {
+            let response = runtime
+                .request("project.files.resolveOpen", params)
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<ResolvedEditorFile>(value)
+                        .map_err(|error| error.to_string())
+                });
+            let command = match response {
+                Ok(file) => {
+                    smol::unblock(move || {
+                        open_targets::prepare_editor_file(
+                            &application,
+                            file,
+                            directory.as_deref(),
+                            &path,
+                        )
+                    })
+                    .await
+                }
+                Err(error) => Err(error),
+            };
+            let launch = this
+                .update(cx, |this, cx| {
+                    if !this.editor_request_current(&identity, cx) {
+                        return None;
+                    }
+                    if !ExpandedFilePreview::editor_request_active(reader.as_ref(), cx) {
+                        this.editor_finished(Ok(()), cx);
+                        return None;
+                    }
+                    match command.and_then(open_targets::start_editor_file) {
+                        Ok(Some(child)) => Some(child),
+                        result => {
+                            this.editor_finished(result.map(|_| ()), cx);
+                            None
+                        }
+                    }
+                })
+                .ok()
+                .flatten();
+            if let Some(child) = launch {
+                let result = smol::unblock(move || open_targets::finish_editor_file(child)).await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.editor_request_current(&identity, cx) {
+                        let result =
+                            if ExpandedFilePreview::editor_request_active(reader.as_ref(), cx) {
+                                result
+                            } else {
+                                Ok(())
+                            };
+                        this.editor_finished(result, cx);
+                    }
+                });
+            }
+        }));
+        cx.notify();
+    }
+
+    fn editor_finished(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+        let preview = self.preview.as_mut().expect("current preview");
+        preview.editor_task = None;
+        preview.editor_error = result.err();
+        cx.notify();
+    }
+
     fn expand_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.current(cx)
             || self
@@ -1441,16 +1596,22 @@ impl FileBrowser {
                 text,
                 scroll,
                 focus: cx.focus_handle(),
+                dismissed: false,
             }
         });
         self.expanded_preview = Some(reader.downgrade());
         let focus = reader.read(cx).focus.clone();
+        let reader_owner = reader.downgrade();
         // Keep the Files dialog mounted below the expanded reader in narrow windows.
         window.open_dialog(cx, move |dialog, window, _| {
+            let reader_owner = reader_owner.clone();
             dialog
                 .title(tr("文件预览"))
                 .w((window.viewport_size().width - px(48.)).min(px(1120.)))
                 .on_ok(|_, _, _| false)
+                .on_close(move |_, _, cx| {
+                    let _ = reader_owner.update(cx, |reader, _| reader.dismissed = true);
+                })
                 .child(reader.clone())
         });
         let dialog_focus = window.focused(cx);
@@ -1783,9 +1944,13 @@ impl FileBrowser {
                                         this.expand_preview(window, cx)
                                     })),
                             )
-                        }),
+                        })
+                        .children(self.editor_menu(cx.weak_entity(), None, cx)),
                 ),
         );
+        if let Some(error) = &preview.editor_error {
+            panel = panel.child(editor_open_error(error, cx));
+        }
         if preview.loading {
             return panel.child(
                 div()
@@ -1848,14 +2013,23 @@ impl FileBrowser {
 
 impl ExpandedFilePreview {
     fn current(&self, cx: &App) -> bool {
-        self.browser.upgrade().is_some_and(|browser| {
-            let browser = browser.read(cx);
-            browser.scope_generation == self.scope_generation
-                && browser.scope.as_ref() == Some(&self.scope)
-                && browser.current(cx)
-                && browser.preview.as_ref().is_some_and(|preview| {
-                    preview.selection == self.selection && preview.text.is_some()
-                })
+        !self.dismissed
+            && self.browser.upgrade().is_some_and(|browser| {
+                let browser = browser.read(cx);
+                browser.scope_generation == self.scope_generation
+                    && browser.scope.as_ref() == Some(&self.scope)
+                    && browser.current(cx)
+                    && browser.preview.as_ref().is_some_and(|preview| {
+                        preview.selection == self.selection && preview.text.is_some()
+                    })
+            })
+    }
+
+    fn editor_request_active(reader: Option<&WeakEntity<Self>>, cx: &App) -> bool {
+        reader.is_none_or(|reader| {
+            reader
+                .upgrade()
+                .is_some_and(|reader| !reader.read(cx).dismissed)
         })
     }
 
@@ -1872,7 +2046,10 @@ impl Render for ExpandedFilePreview {
             .outline()
             .small()
             .label(tr("返回文件"))
-            .on_click(|_, window, cx| window.close_dialog(cx));
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.dismissed = true;
+                window.close_dialog(cx);
+            }));
         let view = v_flex().w_full().min_w_0().gap_3();
         if !self.current(cx) {
             return view
@@ -1889,14 +2066,33 @@ impl Render for ExpandedFilePreview {
             |line| format!("{}:{line}", self.selection.path),
         );
         let height = (window.viewport_size().height - px(194.)).max(px(112.));
+        let browser = self.browser.upgrade().expect("current file browser");
+        let editor_menu =
+            browser
+                .read(cx)
+                .editor_menu(self.browser.clone(), Some(cx.weak_entity()), cx);
+        let editor_error = browser
+            .read(cx)
+            .preview
+            .as_ref()
+            .and_then(|preview| preview.editor_error.as_deref());
         view.child(
             h_flex()
                 .items_center()
                 .justify_between()
                 .gap_2()
                 .child(text_reading::selectable_text("file-reader-source", path.clone()).text_sm())
-                .child(back),
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .children(editor_menu)
+                        .child(back),
+                ),
         )
+        .when_some(editor_error, |view, error| {
+            view.child(editor_open_error(error, cx))
+        })
         .child(
             text_reading::region("file-reader".into(), path, &self.scroll, height, cx)
                 .track_focus(&self.focus)
@@ -2249,9 +2445,9 @@ impl Render for FileBrowser {
 #[cfg(test)]
 mod tests {
     use super::{
-        Directory, DirectoryEntry, FILE_TREE_STATUS_LIMIT, FileError, FileReveal,
-        FileTreeExpansions, RevealStep, Scope, TextPages, TreeRow, TreeScope, TreeSource,
-        dock_width, json, px, step_preview, unrequested_expansions, visible_tree,
+        Directory, DirectoryEntry, EditorOpenIdentity, FILE_TREE_STATUS_LIMIT, FileError,
+        FileReveal, FileTreeExpansions, Match, RevealStep, Scope, TextPages, TreeRow, TreeScope,
+        TreeSource, dock_width, json, px, step_preview, unrequested_expansions, visible_tree,
     };
     use gpui_kit::{ScrollHandle, point};
     use std::collections::{HashMap, HashSet};
@@ -2380,6 +2576,63 @@ mod tests {
         expanded.show_line(350);
         assert_eq!(expanded.page, preview_page);
         assert_eq!(expanded.visible, preview.visible);
+    }
+
+    #[test]
+    fn pending_editor_open_cannot_follow_a_reopened_file_or_changed_scope() {
+        let requested = EditorOpenIdentity {
+            scope: Scope {
+                tree: TreeScope {
+                    workspace: "workspace".into(),
+                    source: TreeSource::Directory("/worktree".into()),
+                },
+                session: Some("worktree-session".into()),
+                connection: 1,
+                open_request: 2,
+            },
+            preview_generation: 3,
+            selection: Match {
+                path: "docs/note.txt".into(),
+                line: Some(350),
+            },
+        };
+        assert!(requested == requested.clone());
+        for changed in [
+            EditorOpenIdentity {
+                preview_generation: 4,
+                ..requested.clone()
+            },
+            EditorOpenIdentity {
+                scope: Scope {
+                    session: Some("other-session".into()),
+                    ..requested.scope.clone()
+                },
+                ..requested.clone()
+            },
+            EditorOpenIdentity {
+                scope: Scope {
+                    connection: 4,
+                    ..requested.scope.clone()
+                },
+                ..requested.clone()
+            },
+            EditorOpenIdentity {
+                scope: Scope {
+                    open_request: 4,
+                    ..requested.scope.clone()
+                },
+                ..requested.clone()
+            },
+            EditorOpenIdentity {
+                selection: Match {
+                    path: requested.selection.path.clone(),
+                    line: None,
+                },
+                ..requested.clone()
+            },
+        ] {
+            assert!(requested != changed);
+        }
     }
 
     #[test]

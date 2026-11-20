@@ -253,7 +253,7 @@ impl HiveApp {
                                     window.on_next_frame(move |window, cx| focus.focus(window, cx));
                                 }
                             }))
-                            .dropdown_menu(move |menu, _, _| {
+                            .dropdown_menu(move |menu, _, cx| {
                                 let rename = rename.clone();
                                 let rename_id = rename_id.clone();
                                 let menu = menu
@@ -275,6 +275,7 @@ impl HiveApp {
                                     session.clone(),
                                     archive_blocked,
                                     weak.clone(),
+                                    cx,
                                 )
                             }),
                     ),

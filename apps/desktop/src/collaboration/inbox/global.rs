@@ -6,7 +6,7 @@ mod placement;
 use self::badge::BadgeItem;
 pub(in crate::collaboration) use self::badge::InboxBadge;
 use self::placement::{InboxSections, RowId, RowPlacement};
-use super::snoozes::{Reminder, now_ms};
+use super::snoozes::now_ms;
 use super::{
     ActionCenter, Destination, Entry, InboxRowInteraction, Reminders, inbox_row, inbox_status,
     is_snoozed, read_action_center, same_wake_target, toggle_button,
@@ -892,13 +892,13 @@ impl Render for GlobalInbox {
                 Some(interaction),
                 move |this, workspace, key, delay, wake, cx| {
                     if !this.is_current(connection, cx) {
-                        return;
+                        return Err("收件箱事项已变更，请关闭后重新选择。");
                     }
                     let Some(app) = this.app.upgrade() else {
-                        return;
+                        return Err("收件箱事项已变更，请关闭后重新选择。");
                     };
                     let Some(project) = this.projects.get_mut(workspace) else {
-                        return;
+                        return Err("收件箱事项已变更，请关闭后重新选择。");
                     };
                     let state = app.read(cx);
                     if !state.workspaces.iter().any(|item| item.id == workspace)
@@ -908,25 +908,21 @@ impl Render for GlobalInbox {
                                 && (delay.is_none() || same_wake_target(&entry.wake, wake))
                         })
                     {
-                        return;
+                        return Err("收件箱事项已变更，请关闭后重新选择。");
                     }
-                    if let Some(root) = &state.data_dir {
-                        project.reminders.set(
-                            root,
-                            workspace,
-                            key,
-                            delay.map(|delay| Reminder {
-                                expires_at: delay.expires_at(now_ms()),
-                                wake: wake.clone(),
-                            }),
-                        );
-                        if state.workspace.as_deref() == Some(workspace)
-                            && state.collaboration.visible
-                        {
-                            app.update(cx, |app, cx| app.refresh_collaboration_inbox(cx));
-                        }
-                        cx.notify();
+                    let root = state.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
+                    let reminder = delay
+                        .map(|delay| delay.reminder(now_ms(), wake))
+                        .transpose()?;
+                    let result = project.reminders.set(root, workspace, key, reminder);
+                    if result.is_ok()
+                        && state.workspace.as_deref() == Some(workspace)
+                        && state.collaboration.visible
+                    {
+                        app.update(cx, |app, cx| app.refresh_collaboration_inbox(cx));
                     }
+                    cx.notify();
+                    result
                 },
             );
             Some((Some(layout_id), row))

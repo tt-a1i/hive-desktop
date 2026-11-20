@@ -423,6 +423,10 @@ impl HiveApp {
         let workspaces: Vec<crate::protocol::Workspace> =
             self.sorted_projects(cx).into_iter().cloned().collect();
         let active_workspace = self.workspace.clone();
+        let scratch_origin = active_workspace
+            .as_ref()
+            .filter(|workspace| self.has_scratch_project_origin(workspace))
+            .cloned();
         let connected = self.connected;
         let selected = [self.workflows.visible, self.memory.visible];
         let filter_active = selected_filter.is_some() || selected.into_iter().any(|active| active);
@@ -525,6 +529,18 @@ impl HiveApp {
                 }
                 if let Some(ws_id) = active_workspace.clone() {
                     menu = menu.separator();
+                    if let Some(workspace) = scratch_origin.clone() {
+                        let owner = weak.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(tr("打开原 Scratch 会话")).on_click(
+                                move |_, window, cx| {
+                                    let _ = owner.update(cx, |this, cx| {
+                                        this.open_scratch_project_origin(workspace.clone(), window, cx);
+                                    });
+                                },
+                            ),
+                        );
+                    }
                     let owner = weak.clone();
                     menu = menu.submenu(tr("打开方式"), window, cx, move |menu, _, cx| {
                         crate::open_targets::workspace_menu(menu, owner.clone(), ws_id.clone(), None, cx)

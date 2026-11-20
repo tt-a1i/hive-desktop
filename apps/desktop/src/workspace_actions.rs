@@ -243,6 +243,7 @@ impl HiveApp {
                         this.forget_removed_workspace(&id, &session_ids, window, cx);
                         this.status = "工作区已移除".into();
                     }
+                    this.refresh_scratch_projects(cx);
                     this.refresh_pinned_sessions(cx);
                     this.error = error;
                     cx.notify();

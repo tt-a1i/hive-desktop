@@ -2,6 +2,7 @@ use crate::app::{ErrorNotice, HiveApp};
 use crate::language::tr;
 use gpui_kit::{
     assets::IconName as Glyph,
+    base::actions::Cancel,
     component::{
         button::{Button, ButtonVariants},
         menu::{DropdownMenu, PopupMenu, PopupMenuItem},
@@ -12,6 +13,8 @@ use gpui_kit::{
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    process::{Child, Command},
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -227,6 +230,181 @@ pub(crate) fn refresh(cx: &mut App) {
 
 fn installed(cx: &App) -> &[InstalledApp] {
     &cx.global::<InstalledApps>().apps
+}
+
+pub(crate) fn editor_path(target: OpenTarget, cx: &App) -> Option<PathBuf> {
+    installed(cx)
+        .iter()
+        .find(|app| app.target == target && EDITORS.contains(&target))
+        .map(|app| app.path.clone())
+}
+
+pub(crate) fn file_editor_menu(
+    busy: bool,
+    launch: impl Fn(OpenTarget, &mut App) + 'static,
+    cx: &App,
+) -> Option<AnyElement> {
+    if !installed(cx)
+        .iter()
+        .any(|app| EDITORS.contains(&app.target))
+    {
+        return None;
+    }
+    let launch = Rc::new(launch);
+    Some(
+        Button::new("open-project-file-in-editor")
+            .custom(crate::palette::quiet_icon_variant(cx))
+            .compact()
+            .xsmall()
+            .size(px(24.))
+            .icon(Glyph::ExternalLink)
+            .tooltip(tr("在编辑器中打开"))
+            .accessibility_label(tr("在编辑器中打开"))
+            .disabled(busy)
+            .dropdown_menu(move |mut menu, _, cx| {
+                for app in installed(cx)
+                    .iter()
+                    .filter(|app| EDITORS.contains(&app.target))
+                {
+                    let launch = launch.clone();
+                    let ax_launch = launch.clone();
+                    let editor = app.clone();
+                    let target = app.target;
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, _| {
+                            let ax_launch = ax_launch.clone();
+                            h_flex()
+                                .id("installed-editor")
+                                .role(Role::Button)
+                                .aria_label(editor.target.label())
+                                .on_a11y_action(AccessibleAction::Click, move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    ax_launch(target, cx);
+                                    window.dispatch_action(Box::new(Cancel), cx);
+                                })
+                                .flex_1()
+                                .items_center()
+                                .gap_2()
+                                .child(editor.icon(px(18.)))
+                                .child(editor.target.label())
+                        })
+                        .on_click(move |_, _, cx| launch(target, cx)),
+                    );
+                }
+                menu
+            })
+            .into_any_element(),
+    )
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ResolvedEditorFile {
+    root: PathBuf,
+    path: PathBuf,
+}
+
+impl ResolvedEditorFile {
+    fn validate(&self, scope_directory: Option<&Path>, relative: &str) -> Result<(), String> {
+        let invalid = || tr("文件已更改、不可访问或不属于当前目录。").to_owned();
+        if relative.contains('\\')
+            || cfg!(target_os = "windows") && relative.contains(':')
+            || relative
+                .split('/')
+                .any(|part| matches!(part, "" | "." | ".." | ".git"))
+            || !self.root.is_absolute()
+            || !self.path.is_absolute()
+            || self.path.strip_prefix(&self.root).ok() != Some(Path::new(relative))
+        {
+            return Err(invalid());
+        }
+        let canonical_root = self.root.canonicalize().map_err(|_| invalid())?;
+        let expected = relative
+            .split('/')
+            .fold(canonical_root.clone(), |path, name| path.join(name));
+        if !std::fs::symlink_metadata(&self.root).is_ok_and(|entry| entry.is_dir())
+            || !std::fs::symlink_metadata(&self.path).is_ok_and(|entry| entry.is_file())
+            || scope_directory
+                .is_some_and(|scope| scope.canonicalize().ok().as_ref() != Some(&canonical_root))
+            || self.path.canonicalize().ok().as_ref() != Some(&expected)
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::ResolvedEditorFile;
+    use std::fs;
+
+    #[test]
+    fn validates_only_the_exact_regular_file_in_the_returned_scope() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("project");
+        let other = sandbox.path().join("worktree");
+        for directory in [&root, &other] {
+            fs::create_dir_all(directory.join("docs")).unwrap();
+            fs::write(directory.join("docs/文件 & ; %.txt"), "scope test").unwrap();
+        }
+        let relative = "docs/文件 & ; %.txt";
+        let resolved = ResolvedEditorFile {
+            root: root.clone(),
+            path: root.join(relative),
+        };
+        assert!(resolved.validate(Some(&root), relative).is_ok());
+        assert!(resolved.validate(Some(&other), relative).is_err());
+        assert!(
+            resolved
+                .validate(Some(&root), "docs/same-name.txt")
+                .is_err()
+        );
+        let directory = ResolvedEditorFile {
+            root: root.clone(),
+            path: root.join("docs"),
+        };
+        assert!(directory.validate(Some(&root), "docs").is_err());
+        fs::remove_file(&resolved.path).unwrap();
+        assert!(resolved.validate(Some(&root), relative).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(other.join(relative), &resolved.path).unwrap();
+            assert!(resolved.validate(Some(&root), relative).is_err());
+        }
+    }
+}
+
+pub(crate) fn prepare_editor_file(
+    app: &Path,
+    file: ResolvedEditorFile,
+    scope_directory: Option<&Path>,
+    relative: &str,
+) -> Result<Command, String> {
+    file.validate(scope_directory, relative)?;
+    if !app.is_absolute() || !app.exists() {
+        return Err(tr("目标应用未安装").to_owned());
+    }
+    platform::file_command(app, &file.path)
+}
+
+pub(crate) fn start_editor_file(mut command: Command) -> Result<Option<Child>, String> {
+    let child = command.spawn().map_err(|error| error.to_string())?;
+    Ok(cfg!(target_os = "macos").then_some(child))
+}
+
+pub(crate) fn finish_editor_file(child: Child) -> Result<(), String> {
+    let result = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
+    if result.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&result.stderr);
+    if detail.trim().is_empty() {
+        Err(result.status.to_string())
+    } else {
+        Err(detail.trim().to_owned())
+    }
 }
 
 fn open(target: OpenTarget, path: &Path, application: Option<InstalledApp>) -> Result<(), String> {

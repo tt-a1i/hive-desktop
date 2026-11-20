@@ -1,4 +1,5 @@
 mod global;
+mod schedule;
 mod snoozes;
 pub(super) use global::{GlobalInboxView, InboxBadge};
 
@@ -89,16 +90,20 @@ impl Reminders {
         workspace: &str,
         key: &str,
         reminder: Option<Reminder>,
-    ) {
+    ) -> Result<(), &'static str> {
         if self.saved.is_none() {
-            return;
+            return Err("无法读取已暂缓事项");
         }
         match Snoozes::set(root, workspace, key, reminder) {
             Ok(saved) => {
                 self.saved = Some(saved);
                 self.write_error = None;
+                Ok(())
             }
-            Err(error) => self.write_error = Some(error),
+            Err(error) => {
+                self.write_error = Some(error);
+                Err("无法保存已暂缓事项")
+            }
         }
     }
 
@@ -695,27 +700,30 @@ impl HiveApp {
                     cx,
                     None,
                     |this, workspace, key, delay, wake, cx| {
-                        if this.workspace.as_deref() != Some(workspace)
+                        if !this.connected
+                            || this.closing
+                            || this.workspace.as_deref() != Some(workspace)
+                            || this.workspace_removing.as_deref() == Some(workspace)
                             || this.collaboration.inbox.workspace.as_deref() != Some(workspace)
+                            || this.collaboration.inbox.connection != this.connection_generation
                             || !this.scoped_entries(workspace).iter().any(|entry| {
                                 entry.snooze_key.as_deref() == Some(key)
                                     && (delay.is_none() || same_wake_target(&entry.wake, wake))
                             })
                         {
-                            return;
+                            return Err("收件箱事项已变更，请关闭后重新选择。");
                         }
-                        if let Some(root) = &this.data_dir {
-                            this.collaboration.inbox.reminders.set(
-                                root,
-                                workspace,
-                                key,
-                                delay.map(|delay| Reminder {
-                                    expires_at: delay.expires_at(now_ms()),
-                                    wake: wake.clone(),
-                                }),
-                            );
-                            cx.notify();
-                        }
+                        let root = this.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
+                        let reminder = delay
+                            .map(|delay| delay.reminder(now_ms(), wake))
+                            .transpose()?;
+                        let result = this
+                            .collaboration
+                            .inbox
+                            .reminders
+                            .set(root, workspace, key, reminder);
+                        cx.notify();
+                        result
                     },
                 )
             }))
@@ -798,7 +806,15 @@ fn inbox_row<T: 'static>(
     scroll: &ScrollHandle,
     cx: &Context<T>,
     interaction: Option<InboxRowInteraction>,
-    on_snooze: impl Fn(&mut T, &str, &str, Option<Delay>, &Option<Wake>, &mut Context<T>) + 'static,
+    on_snooze: impl Fn(
+        &mut T,
+        &str,
+        &str,
+        Option<Delay>,
+        &Option<Wake>,
+        &mut Context<T>,
+    ) -> Result<(), &'static str>
+    + 'static,
 ) -> AnyElement {
     let label = tr(entry.label);
     let action = tr(entry.target.action());
@@ -878,27 +894,53 @@ fn inbox_row<T: 'static>(
                         }
                         let on_snooze = std::rc::Rc::new(on_snooze);
                         let menu = snooze_button.dropdown_menu(move |menu, _, _| {
-                            Delay::OPTIONS.iter().fold(menu, |menu, (title, delay)| {
-                                let entity = entity.clone();
-                                let on_snooze = on_snooze.clone();
-                                let workspace = workspace.clone();
-                                let key = key.clone();
-                                let wake = entry.wake.clone();
-                                menu.item(PopupMenuItem::new(tr(title)).on_click(
-                                    move |_, _, cx| {
-                                        let _ = entity.update(cx, |this, cx| {
-                                            on_snooze(
-                                                this,
-                                                &workspace,
-                                                &key,
-                                                Some(*delay),
-                                                &wake,
-                                                cx,
-                                            )
-                                        });
+                            let entity = entity.clone();
+                            let on_snooze = on_snooze.clone();
+                            let workspace = workspace.clone();
+                            let key = key.clone();
+                            let wake = entry.wake.clone();
+                            let save = std::rc::Rc::new(move |delay, cx: &mut App| {
+                                entity
+                                    .update(cx, |this, cx| {
+                                        on_snooze(this, &workspace, &key, Some(delay), &wake, cx)
+                                    })
+                                    .unwrap_or(Err("收件箱事项已变更，请关闭后重新选择。"))
+                            });
+                            let menu = schedule::presets().into_iter().fold(
+                                menu,
+                                |menu, (title, deadline)| {
+                                    let save = save.clone();
+                                    let label = format!(
+                                        "{} · {}",
+                                        tr(title),
+                                        deadline.map_or_else(
+                                            || tr("本地时间不可用").to_owned(),
+                                            |at| at.label()
+                                        )
+                                    );
+                                    menu.item(
+                                        PopupMenuItem::new(label)
+                                            .disabled(deadline.is_none())
+                                            .on_click(move |_, _, cx| {
+                                                if let Some(at) = deadline {
+                                                    let _ = save(at.delay(), cx);
+                                                }
+                                            }),
+                                    )
+                                },
+                            );
+                            let indefinite = save.clone();
+                            menu.item(PopupMenuItem::new(tr("无限期")).on_click(move |_, _, cx| {
+                                let _ = indefinite(Delay::Indefinite, cx);
+                            }))
+                            .separator()
+                            .item(
+                                PopupMenuItem::new(tr("自定义日期和时间…")).on_click(
+                                    move |_, window, cx| {
+                                        schedule::open_custom_snooze(save.clone(), window, cx);
                                     },
-                                ))
-                            })
+                                ),
+                            )
                         });
                         buttons.child(menu.when_some(interaction.as_ref(), |menu, interaction| {
                             let observe_menu = interaction.snooze_menu.clone();
