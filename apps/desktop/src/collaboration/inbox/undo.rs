@@ -198,7 +198,7 @@ impl VerifiedUndo {
                 }
                 Ok(Self::Dispatch)
             }
-            Some(Wake::Session { .. }) => {
+            Some(Wake::Session { .. } | Wake::UnreadReply { .. }) => {
                 let (sessions, members) = smol::future::zip(
                     read_list(runtime, "chat.list", &edit.workspace),
                     read_list(runtime, "team.members", &edit.workspace),
@@ -217,7 +217,13 @@ impl VerifiedUndo {
         match self {
             Self::Dispatch => true,
             Self::Session { sessions, members } => {
-                let Some(id) = edit.key.strip_prefix("session:") else {
+                let deferred_unread = matches!(edit.wake, Some(Wake::UnreadReply { .. }));
+                let prefix = if deferred_unread {
+                    "unread-session:"
+                } else {
+                    "session:"
+                };
+                let Some(id) = edit.key.strip_prefix(prefix) else {
                     return false;
                 };
                 let Some(session) = sessions
@@ -227,7 +233,7 @@ impl VerifiedUndo {
                     return false;
                 };
                 let interactions = app.inbox_interactions(std::slice::from_ref(session), members);
-                app.inbox_session_entry(session, members, &interactions, false)
+                app.inbox_session_entry(session, members, &interactions, false, deferred_unread)
                     .is_some_and(|entry| edit.matches(&entry))
             }
         }

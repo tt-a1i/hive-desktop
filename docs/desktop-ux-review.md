@@ -188,8 +188,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 折叠全部 Git 目录后，按键没有读取旧 Diff。重启后仍使用分组。在工作树 A 折叠夹在中间的顶层目录，方向键和回车在 `api/settings.ts` 与 `ui/settings.ts` 间往返，两个 Diff 来自 A。通过文件面板再进入折叠目录的 Diff 时也展开准确目录。项目和工作树的 Git 索引保持原样。证据在 `.artifacts/grouped-diff-qa`。
 - 243 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、TypeScript 检查、会话归档与精确回滚、Git 工作树读操作与索引操作协议回归通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第十五批
+
+本轮从 Hive Desktop `7df4c8b` 开始。参考默认分支为 T3 Code `e668e61`、Cindy `9602463`、Beluga `45a484b`，Hive 上游为 `18861b8`。
+
+- **从会话菜单丢弃草稿。** 清除所选会话的未发送文字和附件，五秒内可以撤销。撤销核对准确的会话和该次丢弃，保留后来写入的新草稿。历史、已暂存的其他草稿及发送失败的记录继续保存。 [T3 Code 草稿撤销](https://github.com/pingdotgg/t3code/blob/e668e6141faef533509e1d38d0f984bb38431d3f/docs/user/thread-sidebar.md#L65-L70)
+- **暂缓普通未读会话。** 项目与跨项目收件箱沿用已有暂缓时间和撤销。保存的会话标识和回复版本跨重启有效。同一会话有新的可见回复或暂缓到期时，事项回到收件箱，直到打开或标为已读。 [Cindy 暂缓会话](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L84-L93)
+- **在 Git 改动里查看当前文件。** 「当前文件」按选中的项目或工作树重新读取，通过原有文件预览显示文本和 Markdown。切回 Diff 保留文件及暂存比较范围。已删除文件仍可查看 Diff。 [Beluga 文件与改动切换](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ChangesTab.tsx#L234-L254)
+
+- macOS 在同名会话中丢弃 Alpha 的草稿并撤销，找回 Alpha 原文和准确上传的附件，Beta 的草稿仍在。重新丢弃后键入新文字，旧撤销保留新草稿；超时后撤销入口消失。证据在 `.artifacts/discard-draft-qa`。
+- macOS 暂缓 Beacon 的未读会话一小时，冷启动和 Atlas 的新回复都保留暂缓；Beacon 的下一条回复将其唤回，待答复协作问题一直可见。Atlas 的项目收件箱另验证了暂缓和撤销，以及冷启动处理已到期的测试提醒。到期事项先以未读显示，标为已读后移除，待汇报派单仍在。证据在 `.artifacts/snooze-unread-qa`。
+- macOS 从暂存 Diff 切到「当前文件」，看到同一路径更新后的 Markdown 内容，切回仍显示原暂存比较。外部修改后再次切入可读取更新的内容。独立工作树的同名文件显示工作树独有标题，选中删除文件后回到 Diff。核对了项目和两个工作树的暂存内容。证据在 `.artifacts/git-current-file-qa`。
+- 247 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、TypeScript 检查、受控 ACP 回复游标冷恢复、会话归档和项目文件工作树专项通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **从侧栏丢弃未发送的草稿，并能撤销。** 当前可以暂存草稿，也可以手动清空编辑区。用两个同名会话和已上传附件验证：恢复只找回被丢弃的文字和附件，保存的历史、协作记录及另一个会话的草稿保持原样。 [T3 Code 草稿撤销](https://github.com/pingdotgg/t3code/blob/e668e6141faef533509e1d38d0f984bb38431d3f/docs/user/thread-sidebar.md#L65-L70)
-- **暂缓普通未读会话。** 目前普通未读会话可以打开或标为已读。用两个项目同名会话验证暂缓时间在重启后保留，另一项目的回复不会唤回它，该会话下一条回复到达时会重新出现在收件箱。 [Cindy 暂缓会话](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L84-L93)
-- **在 Git 改动里切换到当前文件内容。** 目前可以从 Diff 定位文件树，再从树里打开预览。用项目根目录和独立工作树的同名 Markdown 文件验证：切换后读到所选工作树的当前内容，返回 Diff 仍指向同一文件与比较范围。 [Beluga 文件与改动切换](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ChangesTab.tsx#L234-L254)
+- **手动排列置顶会话。** 当前按最近活动排。用两个项目的同名置顶会话验证移动到指定位置，随后读取新回复、冷启动和归档撤销都应保留用户排好的顺序。 [T3 Code 手动排列](https://github.com/pingdotgg/t3code/blob/e668e6141faef533509e1d38d0f984bb38431d3f/docs/user/thread-sidebar.md#L98-L105)
+- **本地计时唤回到期的暂缓事项。** 用两个不同到期时间的事项验证：后台回包延迟时，到期事项仍回到列表，另一条保持暂缓。 [Cindy 到期处理](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L140-L146)
+- **显示文件中的每一条正文命中。** Hive 当前只返回每个文件的首个匹配行。用同一个文件第 3、350、620 行的命中和跨页结果验证：每项打开对应行，切换工作树时按它的内容重新搜索。 [Beluga 正文命中](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L192-L225)

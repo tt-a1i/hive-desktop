@@ -244,7 +244,7 @@ struct ExpandedFilePreview {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum FilePreviewMode {
+pub(crate) enum FilePreviewMode {
     Source,
     Markdown,
 }
@@ -453,6 +453,105 @@ fn step_preview(text: &mut TextPages, scroll: &mut ScrollHandle, step: isize) ->
         *scroll = ScrollHandle::new();
     }
     changed
+}
+
+pub(crate) struct ProjectFilePreviewText {
+    text: TextPages,
+    markdown: Option<MarkdownPreview>,
+    markdown_limited: bool,
+    scroll: ScrollHandle,
+}
+
+impl ProjectFilePreviewText {
+    pub(crate) fn new(path: &str, text: TextPages, cx: &mut App) -> Self {
+        let markdown_file = !text.full.is_empty() && is_markdown_file(path);
+        let markdown = (markdown_file && supports_markdown_preview(&text.full))
+            .then(|| MarkdownPreview::new(FilePreviewMode::Markdown, &text, cx));
+        Self {
+            text,
+            markdown_limited: markdown_file && markdown.is_none(),
+            markdown,
+            scroll: ScrollHandle::new(),
+        }
+    }
+
+    pub(crate) fn set_mode(&mut self, mode: FilePreviewMode, cx: &mut App) {
+        if let Some(markdown) = &mut self.markdown {
+            markdown.switch(mode, &self.text, cx);
+        }
+    }
+
+    pub(crate) fn has_text(&self, text: &TextPages) -> bool {
+        self.text.full == text.full
+    }
+
+    pub(crate) fn step(&mut self, delta: isize) -> bool {
+        !self.markdown.as_ref().is_some_and(MarkdownPreview::active)
+            && step_preview(&mut self.text, &mut self.scroll, delta)
+    }
+
+    pub(crate) fn view<T: 'static>(
+        &self,
+        path: &str,
+        height: Pixels,
+        set_mode: fn(&mut T, FilePreviewMode, &mut Context<T>),
+        step: fn(&mut T, isize, &mut Context<T>),
+        cx: &Context<T>,
+    ) -> impl IntoElement {
+        let rendered = self.markdown.as_ref().filter(|markdown| markdown.active());
+        let scroll = rendered.map_or(&self.scroll, |markdown| &markdown.scroll);
+        v_flex()
+            .min_w_0()
+            .gap_2()
+            .when_some(self.markdown.as_ref(), |view, markdown| {
+                view.child(markdown_mode_controls(markdown.mode, set_mode, cx))
+            })
+            .when(self.markdown_limited, |view| {
+                view.child(markdown_limit_notice(cx))
+            })
+            .child(
+                text_reading::region(
+                    "git-current-file".into(),
+                    path.to_owned(),
+                    scroll,
+                    height,
+                    cx,
+                )
+                .child(rendered.map_or_else(
+                    || preview_text("git-current-source", &self.text, cx),
+                    |markdown| markdown.render("git-current-markdown", cx),
+                )),
+            )
+            .when(rendered.is_none() && self.text.count() > 1, |view| {
+                view.child(
+                    h_flex()
+                        .justify_end()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Button::new("git-current-prev")
+                                .ghost()
+                                .small()
+                                .label(tr("上一页"))
+                                .disabled(self.text.page == 0)
+                                .on_click(cx.listener(move |this, _, _, cx| step(this, -1, cx))),
+                        )
+                        .child(div().text_xs().child(format!(
+                            "{} / {}",
+                            self.text.page + 1,
+                            self.text.count()
+                        )))
+                        .child(
+                            Button::new("git-current-next")
+                                .ghost()
+                                .small()
+                                .label(tr("下一页"))
+                                .disabled(self.text.page + 1 >= self.text.count())
+                                .on_click(cx.listener(move |this, _, _, cx| step(this, 1, cx))),
+                        ),
+                )
+            })
+    }
 }
 
 fn editor_open_error(error: &str, cx: &App) -> Stateful<Div> {
@@ -1855,20 +1954,7 @@ impl FileBrowser {
                         preview.text = Some(text);
                         preview.sha256 = sha256;
                     }
-                    Err(error) => {
-                        preview.error = Some(match error.as_str() {
-                            "Project file exceeds preview limit" => FileError::Owned(
-                                "文件超过 1 MiB，暂不在窗口中预览；可在文件管理器中查看。",
-                            ),
-                            "Project file is not text" => {
-                                FileError::Owned("文件包含二进制内容，无法作为文本预览。")
-                            }
-                            "Project file is not UTF-8 text" => {
-                                FileError::Owned("文件不是 UTF-8 文本，暂不支持此编码的预览。")
-                            }
-                            _ => FileError::Request(error),
-                        });
-                    }
+                    Err(error) => preview.error = Some(FileError::preview(error)),
                 }
                 cx.notify();
             });

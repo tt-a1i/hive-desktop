@@ -619,7 +619,12 @@ impl GlobalInbox {
         {
             return;
         }
-        if app.update(cx, |app, cx| mark.clear(app, cx)) {
+        if let Ok(saved) = app.update(cx, |app, cx| mark.clear(app, cx)) {
+            if let Some(saved) = saved
+                && let Some(project) = self.projects.get_mut(&mark.workspace)
+            {
+                project.reminders.saved = Some(saved);
+            }
             self.new_items.remove(&BadgeItem::UnreadSession {
                 workspace: mark.workspace.clone(),
                 session: mark.session.clone(),
@@ -664,6 +669,7 @@ impl GlobalInbox {
                             .iter()
                             .any(|project| project.id == workspace)
                         || !verified?.matches(&change.edit, state)
+                        || !change.edit.reply_is_current(state)
                     {
                         return Err(UNDO_CHANGED);
                     }
@@ -740,9 +746,13 @@ impl GlobalInbox {
         };
         if let Some(root) = &app.data_dir {
             let interactions = app.inbox_interactions(&project.sessions, &project.members);
-            project
-                .reminders
-                .reconcile(root, workspace, snapshot.as_ref(), &interactions);
+            project.reminders.reconcile(
+                root,
+                workspace,
+                snapshot.as_ref(),
+                &interactions,
+                &project.sessions,
+            );
         }
         if let Some(snapshot) = snapshot {
             project.action_center = Some(snapshot);
@@ -762,6 +772,13 @@ impl GlobalInbox {
                 &app.collaboration.inbox_badge,
             );
         }
+        if let Some(saved) = &project.reminders.saved {
+            parent.update(cx, |app, _| {
+                app.collaboration
+                    .inbox_badge
+                    .remember_unread_reminders(workspace, saved)
+            });
+        }
         if selected_member_removed {
             self.clear_filter_position();
         }
@@ -780,7 +797,13 @@ impl ProjectInbox {
         if is_snoozed(entry, &self.reminders, now) {
             return None;
         }
-        let item = BadgeItem::from_entry(workspace, entry, app)?;
+        let unread = match &entry.target {
+            Destination::Session(session) => {
+                app.unread.contains(&session.id) || self.reminders.tracks_unread(session)
+            }
+            _ => false,
+        };
+        let item = BadgeItem::from_entry(workspace, entry, unread)?;
         (!matches!(item, BadgeItem::Question { .. }) || self.reminders.saved.is_some())
             .then_some(item)
     }
@@ -791,7 +814,13 @@ impl ProjectInbox {
             .sessions
             .iter()
             .filter_map(|session| {
-                app.inbox_session_entry(session, &self.members, &interactions, true)
+                app.inbox_session_entry(
+                    session,
+                    &self.members,
+                    &interactions,
+                    true,
+                    self.reminders.tracks_unread(session),
+                )
             })
             .collect();
         if let Some(snapshot) = &self.action_center {
@@ -1301,7 +1330,7 @@ impl Render for GlobalInbox {
                 };
                 candidates.insert(row_id.clone(), (item, revision));
             }
-            let mark_read = MarkInboxRead::for_entry(app, id, &entry).map(|mark| {
+            let mark_read = MarkInboxRead::for_entry(app, id, &entry, reminders).map(|mark| {
                 let row = row_id.clone();
                 Button::new("mark-inbox-session-read").on_click(cx.listener(
                     move |this, _, _, cx| {
@@ -1384,6 +1413,7 @@ impl Render for GlobalInbox {
                     let state = app.read(cx);
                     if !state.workspaces.iter().any(|item| item.id == workspace)
                         || state.workspace_removing.as_deref() == Some(workspace)
+                        || !edit.reply_is_current(state)
                     {
                         return Err(SNOOZE_CHANGED);
                     }
@@ -1400,11 +1430,26 @@ impl Render for GlobalInbox {
                         .filter(|item| this.new_items.contains(item));
                     let root = state.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
                     let result = project.reminders.set(root, edit, delay);
-                    if result.is_ok()
-                        && state.workspace.as_deref() == Some(workspace)
-                        && state.collaboration.visible
-                    {
-                        app.update(cx, |app, cx| app.refresh_collaboration_inbox(cx));
+                    let refresh_scoped = state.workspace.as_deref() == Some(workspace)
+                        && state.collaboration.visible;
+                    if result.is_ok() {
+                        app.update(cx, |app, cx| {
+                            if let Some(saved) = &project.reminders.saved {
+                                app.collaboration
+                                    .inbox_badge
+                                    .remember_unread_reminders(workspace, saved);
+                                if delay.is_some()
+                                    && let Some(session) = edit.key.strip_prefix("unread-session:")
+                                {
+                                    app.collaboration
+                                        .inbox_badge
+                                        .forget_unread(workspace, session);
+                                }
+                            }
+                            if refresh_scoped {
+                                app.refresh_collaboration_inbox(cx);
+                            }
+                        });
                     }
                     cx.notify();
                     if let Some(change) = result? {
@@ -1537,16 +1582,24 @@ impl Render for GlobalInbox {
                                 if app.connection_generation != connection {
                                     return;
                                 }
-                                let current = visible.into_iter().filter_map(|(item, revision)| {
-                                    if let BadgeItem::UnreadSession { session, .. } = &item
-                                        && (!app.unread.contains(session)
-                                            || app.background_sequences.get(session).copied()
-                                                != revision)
-                                    {
-                                        return None;
-                                    }
-                                    Some(item)
-                                });
+                                let current: Vec<_> = visible
+                                    .into_iter()
+                                    .filter_map(|(item, revision)| {
+                                        if let BadgeItem::UnreadSession { workspace, session } =
+                                            &item
+                                            && ((!app.unread.contains(session)
+                                                && !app
+                                                    .collaboration
+                                                    .inbox_badge
+                                                    .tracks_unread(workspace, session))
+                                                || app.background_sequences.get(session).copied()
+                                                    != revision)
+                                        {
+                                            return None;
+                                        }
+                                        Some(item)
+                                    })
+                                    .collect();
                                 if app.collaboration.inbox_badge.acknowledge(current) {
                                     cx.notify();
                                 }

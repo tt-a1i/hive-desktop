@@ -126,6 +126,12 @@ impl HiveApp {
         let worktree_app = app.clone();
         let scratch_session = session.clone();
         let scratch_app = app.clone();
+        let discard_session = session.clone();
+        let discard_app = app.clone();
+        let discard_connection = app.upgrade().and_then(|app| {
+            let app = app.read(cx);
+            app.can_discard_session_draft(&session, cx).then_some(app.connection_generation)
+        });
         let reference = crate::conversation_reference::ConversationReference::for_session(&session);
         let linked = app
             .upgrade()
@@ -165,6 +171,13 @@ impl HiveApp {
         .when_some(reference, |menu, reference| {
             menu.item(PopupMenuItem::new(tr("复制会话引用")).on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(reference.clipboard_text()));
+            }))
+        })
+        .when_some(discard_connection, |menu, connection| {
+            menu.item(PopupMenuItem::new(tr("丢弃草稿")).on_click(move |_, window, cx| {
+                let _ = discard_app.update(cx, |this, cx| {
+                    this.discard_session_draft(discard_session.clone(), connection, window, cx);
+                });
             }))
         })
         .when(

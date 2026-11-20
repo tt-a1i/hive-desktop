@@ -40,6 +40,16 @@ pub struct Workspace {
     pub path: String,
 }
 #[derive(Clone, Deserialize)]
+pub struct InboxReply {
+    pub revision: u64,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxReplyEvent {
+    pub workspace_id: String,
+    pub revision: u64,
+}
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     pub id: String,
@@ -52,6 +62,7 @@ pub struct Session {
     pub archived: bool,
     #[serde(default)]
     pub updated_at: i64,
+    pub inbox_reply: Option<InboxReply>,
     pub workspace_id: String,
     pub agent_id: Option<String>,
     pub origin_agent_id: Option<String>,
@@ -68,6 +79,10 @@ pub struct Session {
     pub profile: Option<ProfileRef>,
 }
 impl Session {
+    pub(crate) fn inbox_reply_revision(&self) -> u64 {
+        self.inbox_reply.as_ref().map_or(0, |reply| reply.revision)
+    }
+
     /// Presentation only: original identity is never a live run or token credential.
     pub(crate) fn display_agent_id(&self) -> Option<&str> {
         self.origin_agent_id
@@ -672,6 +687,7 @@ pub enum PiEvent {
         sequence: u64,
         message_id: String,
         message: Value,
+        inbox_reply: Option<InboxReplyEvent>,
     },
     #[serde(rename_all = "camelCase")]
     ToolStart {

@@ -14,6 +14,8 @@ use std::{
 };
 use tempfile::NamedTempFile;
 
+mod discard;
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Draft {
     key: String,
@@ -64,6 +66,7 @@ impl Draft {
 pub(crate) struct DraftStore {
     dir: PathBuf,
     saved: HashMap<String, Draft>,
+    discarded: HashMap<String, discard::PendingDiscard>,
 }
 
 impl DraftStore {
@@ -85,7 +88,7 @@ impl DraftStore {
             }
             saved.insert(draft.key.clone(), draft);
         }
-        Ok(Self { dir, saved })
+        Ok(Self { dir, saved, discarded: HashMap::new() })
     }
 
     fn save(
@@ -231,7 +234,7 @@ impl DraftStore {
 
         // Publication is the commit point. Update the active editor only once
         // this file contains both the new stash and the new active draft.
-        self.publish_stash_draft(draft)?;
+        self.publish_draft(draft)?;
         Ok((text, attachments))
     }
 
@@ -247,12 +250,12 @@ impl DraftStore {
             .collect();
         for mut draft in affected {
             draft.stash.clear();
-            self.publish_stash_draft(draft)?;
+            self.publish_draft(draft)?;
         }
         Ok(())
     }
 
-    fn publish_stash_draft(&mut self, draft: Draft) -> io::Result<()> {
+    fn publish_draft(&mut self, draft: Draft) -> io::Result<()> {
         let mut tmp = NamedTempFile::new_in(&self.dir)?;
         serde_json::to_writer(tmp.as_file_mut(), &draft)?;
         tmp.as_file().sync_all()?;
@@ -262,7 +265,7 @@ impl DraftStore {
         // cause the editor to keep the old value and save it over this one.
         #[cfg(unix)]
         if let Err(error) = fs::File::open(&self.dir).and_then(|file| file.sync_all()) {
-            eprintln!("[hive-desktop] Could not sync prompt stash directory: {error}");
+            eprintln!("[hive-desktop] Could not sync composer draft directory: {error}");
         }
         Ok(())
     }

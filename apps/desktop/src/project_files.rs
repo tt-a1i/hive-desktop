@@ -23,14 +23,25 @@ use std::{sync::Arc, time::Duration};
 
 mod browser;
 
-pub(crate) use browser::{FileBrowser, FileTreeExpansions};
+pub(crate) use browser::{FileBrowser, FilePreviewMode, FileTreeExpansions, ProjectFilePreviewText};
 
-enum FileError {
+pub(crate) enum FileError {
     Owned(&'static str),
     Request(String),
 }
 impl FileError {
-    fn text(&self) -> String {
+    pub(crate) fn preview(error: String) -> Self {
+        match error.as_str() {
+            "Project file exceeds preview limit" => Self::Owned(
+                "文件超过 1 MiB，暂不在窗口中预览；可在文件管理器中查看。",
+            ),
+            "Project file is not text" => Self::Owned("文件包含二进制内容，无法作为文本预览。"),
+            "Project file is not UTF-8 text" => Self::Owned("文件不是 UTF-8 文本，暂不支持此编码的预览。"),
+            _ => Self::Request(error),
+        }
+    }
+
+    pub(crate) fn text(&self) -> String {
         match self {
             Self::Owned(message) => tr(message).to_owned(),
             Self::Request(error) => crate::language::localize_owned_error(error),

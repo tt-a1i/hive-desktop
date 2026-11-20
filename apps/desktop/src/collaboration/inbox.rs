@@ -26,7 +26,7 @@ use gpui_kit::{
 use placement::{InboxSections, SnoozedUntil};
 use serde::Deserialize;
 use serde_json::json;
-use snoozes::{Delay, Reminder, Snoozes, Wake, now_ms};
+use snoozes::{Delay, Reminder, Snoozes, Wake, now_ms, unread_session_key};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     io,
@@ -75,6 +75,18 @@ impl SnoozeEdit {
     fn matches(&self, entry: &Entry) -> bool {
         entry.snooze_key.as_ref() == Some(&self.key) && same_wake_target(&entry.wake, &self.wake)
     }
+
+    fn reply_is_current(&self, app: &HiveApp) -> bool {
+        match (&self.wake, self.key.strip_prefix("unread-session:")) {
+            (Some(Wake::UnreadReply { revision }), Some(session)) => {
+                app.collaboration
+                    .inbox_badge
+                    .reply_revision(&self.workspace, session)
+                    <= *revision
+            }
+            _ => true,
+        }
+    }
 }
 
 impl Reminders {
@@ -84,11 +96,17 @@ impl Reminders {
         workspace: &str,
         snapshot: Option<&ActionCenter>,
         interactions: &BTreeMap<String, BTreeSet<String>>,
+        sessions: &[Session],
     ) {
         match Snoozes::load(root, workspace) {
             Ok(saved) => {
                 self.read_error = None;
-                match saved.reconcile(root, now_ms(), snapshot, interactions) {
+                let replies = sessions
+                    .iter()
+                    .filter(|session| session.workspace_id == workspace && !session.archived)
+                    .map(|session| (session.id.clone(), session.inbox_reply_revision()))
+                    .collect();
+                match saved.reconcile(root, now_ms(), snapshot, interactions, &replies) {
                     Ok(saved) => {
                         self.saved = Some(saved);
                         self.write_error = None;
@@ -169,9 +187,23 @@ impl Reminders {
     }
 
     fn active_reminder(&self, entry: &Entry, now: u64) -> Option<Reminder> {
-        self.saved
+        let reminder = self
+            .saved
             .as_ref()?
-            .active_reminder(entry.snooze_key.as_deref()?, now)
+            .active_reminder(entry.snooze_key.as_deref()?, now)?;
+        if let (Some(current), Some(Wake::UnreadReply { revision })) =
+            (entry.unread_reply_revision(), &reminder.wake)
+            && current > *revision
+        {
+            return None;
+        }
+        Some(reminder)
+    }
+
+    fn tracks_unread(&self, session: &Session) -> bool {
+        self.saved
+            .as_ref()
+            .is_some_and(|saved| saved.tracks_unread(&session.id))
     }
 
     fn snoozed_until(&self, entry: &Entry, now: u64) -> Option<SnoozedUntil> {
@@ -362,6 +394,13 @@ struct Entry {
 const UNREAD_CONVERSATION: &str = "未读会话";
 
 impl Entry {
+    fn unread_reply_revision(&self) -> Option<u64> {
+        match self.wake {
+            Some(Wake::UnreadReply { revision }) => Some(revision),
+            _ => None,
+        }
+    }
+
     fn plain_unread_session(&self, workspace: &str) -> Option<&Session> {
         match &self.target {
             Destination::Session(session)
@@ -378,34 +417,61 @@ struct MarkInboxRead {
     workspace: String,
     session: String,
     sequence: Option<u64>,
+    reply_revision: u64,
+    deferred: bool,
 }
 
 impl MarkInboxRead {
-    fn for_entry(app: &HiveApp, workspace: &str, entry: &Entry) -> Option<Self> {
+    fn for_entry(
+        app: &HiveApp,
+        workspace: &str,
+        entry: &Entry,
+        reminders: &Reminders,
+    ) -> Option<Self> {
         let session = entry.plain_unread_session(workspace)?;
         Some(Self {
             workspace: workspace.to_owned(),
             session: session.id.clone(),
             sequence: app.background_sequences.get(&session.id).copied(),
+            reply_revision: entry.unread_reply_revision()?,
+            deferred: reminders.tracks_unread(session),
         })
     }
 
     fn matches(&self, entry: &Entry) -> bool {
         entry
             .plain_unread_session(&self.workspace)
-            .is_some_and(|session| session.id == self.session)
+            .is_some_and(|session| {
+                session.id == self.session
+                    && entry.unread_reply_revision() == Some(self.reply_revision)
+            })
     }
 
-    fn clear(&self, app: &mut HiveApp, cx: &mut Context<HiveApp>) -> bool {
+    fn clear(&self, app: &mut HiveApp, cx: &mut Context<HiveApp>) -> Result<Option<Snoozes>, ()> {
         let sequence = app.background_sequences.get(&self.session).copied();
-        if !self.consume(&mut app.unread, sequence) {
-            return false;
+        if self.sequence != sequence
+            || app
+                .collaboration
+                .inbox_badge
+                .reply_revision(&self.workspace, &self.session)
+                > self.reply_revision
+        {
+            return Err(());
         }
+        if !self.deferred && !app.unread.contains(&self.session) {
+            return Err(());
+        }
+        let saved = if self.deferred {
+            app.clear_inbox_unread_reminder(&self.workspace, &self.session, cx)?
+        } else {
+            None
+        };
+        self.consume(&mut app.unread, sequence);
         app.collaboration
             .inbox_badge
             .forget_unread(&self.workspace, &self.session);
         cx.notify();
-        true
+        Ok(saved)
     }
 
     fn consume(&self, unread: &mut HashSet<String>, sequence: Option<u64>) -> bool {
@@ -514,6 +580,54 @@ impl Attention {
 }
 
 impl HiveApp {
+    pub(crate) fn note_live_inbox_reply(&mut self, workspace: &str, session: &str, revision: u64) {
+        self.collaboration
+            .inbox_badge
+            .note_reply(workspace, session, revision);
+    }
+
+    fn clear_inbox_unread_reminder(
+        &mut self,
+        workspace: &str,
+        session: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<Option<Snoozes>, ()> {
+        let Some(root) = &self.data_dir else {
+            return Ok(None);
+        };
+        let saved = Snoozes::clear_unread(root, workspace, session).map_err(|error| {
+            self.error = Some(ErrorNotice::Detail("无法保存已暂缓事项", error.to_string()));
+            cx.notify();
+        })?;
+        if self.collaboration.inbox.workspace.as_deref() == Some(workspace) {
+            self.collaboration.inbox.reminders.saved = Some(saved.clone());
+        }
+        self.collaboration
+            .inbox_badge
+            .remember_unread_reminders(workspace, &saved);
+        Ok(Some(saved))
+    }
+
+    fn current_inbox_reply_revision(&self, session: &Session) -> u64 {
+        session.inbox_reply_revision().max(
+            self.collaboration
+                .inbox_badge
+                .reply_revision(&session.workspace_id, &session.id),
+        )
+    }
+
+    pub(crate) fn read_inbox_chat(&mut self, session: &Session, cx: &mut Context<Self>) {
+        if self.current_inbox_reply_revision(session) == session.inbox_reply_revision()
+            && self
+                .clear_inbox_unread_reminder(&session.workspace_id, &session.id, cx)
+                .is_ok()
+        {
+            self.collaboration
+                .inbox_badge
+                .forget_unread(&session.workspace_id, &session.id);
+        }
+    }
+
     pub(super) fn refresh_collaboration_inbox(&mut self, cx: &mut Context<Self>) {
         let (Some(workspace), Some(runtime)) = (self.workspace.clone(), self.runtime.clone())
         else {
@@ -560,9 +674,18 @@ impl HiveApp {
                     }
                 };
                 if let Some(root) = &this.data_dir {
-                    inbox
-                        .reminders
-                        .reconcile(root, &workspace, snapshot.as_ref(), &interactions);
+                    inbox.reminders.reconcile(
+                        root,
+                        &workspace,
+                        snapshot.as_ref(),
+                        &interactions,
+                        &this.sessions,
+                    );
+                    if let Some(saved) = &inbox.reminders.saved {
+                        this.collaboration
+                            .inbox_badge
+                            .remember_unread_reminders(&workspace, saved);
+                    }
                 }
                 if let Some(snapshot) = snapshot {
                     inbox.action_center = Some(snapshot);
@@ -623,6 +746,7 @@ impl HiveApp {
         members: &[Member],
         interactions: &BTreeMap<String, BTreeSet<String>>,
         include_active: bool,
+        deferred_unread: bool,
     ) -> Option<Entry> {
         if session.archived || self.removed_sessions.contains(&session.id) {
             return None;
@@ -638,7 +762,7 @@ impl HiveApp {
             ("投递失败", Priority::NeedsUser)
         } else if activity.is_some_and(|activity| activity.pending_report_count > 0) {
             ("待处理的汇报", Priority::Unread)
-        } else if self.unread.contains(&session.id) {
+        } else if self.unread.contains(&session.id) || deferred_unread {
             (UNREAD_CONVERSATION, Priority::Unread)
         } else if include_active
             && (self.busy.contains(&session.id)
@@ -662,15 +786,30 @@ impl HiveApp {
                 subject.push_str(&format!(" · {}", execution.branch));
             }
         }
+        let (snooze_key, wake) = if let Some(ids) = exact_ids {
+            (
+                Some(format!("session:{}", session.id)),
+                Some(Wake::Session {
+                    interaction_ids: ids.clone(),
+                }),
+            )
+        } else if label == UNREAD_CONVERSATION {
+            (
+                Some(unread_session_key(&session.id)),
+                Some(Wake::UnreadReply {
+                    revision: self.current_inbox_reply_revision(session),
+                }),
+            )
+        } else {
+            (None, None)
+        };
         Some(Entry {
             label,
             subject,
             target: Destination::Session(session.clone()),
             related_members: [session.display_agent_id().map(str::to_owned), None],
-            snooze_key: exact_ids.map(|_| format!("session:{}", session.id)),
-            wake: exact_ids.map(|ids| Wake::Session {
-                interaction_ids: ids.clone(),
-            }),
+            snooze_key,
+            wake,
             priority,
             updated_at: session.updated_at.max(0) as u64,
         })
@@ -688,7 +827,14 @@ impl HiveApp {
                 session.workspace_id == workspace && session.display_agent_id().is_some()
             })
             .filter_map(|session| {
-                self.inbox_session_entry(session, &self.members, &interactions, false)
+                self.inbox_session_entry(
+                    session,
+                    &self.members,
+                    &interactions,
+                    false,
+                    self.collaboration.inbox.workspace.as_deref() == Some(workspace)
+                        && self.collaboration.inbox.reminders.tracks_unread(session),
+                )
             })
             .collect();
         if let Some(snapshot) = self
@@ -714,7 +860,14 @@ impl HiveApp {
                 session.workspace_id == *workspace && session.display_agent_id().is_some()
             })
             .filter_map(|session| {
-                self.inbox_session_entry(session, &self.members, &interactions, false)
+                self.inbox_session_entry(
+                    session,
+                    &self.members,
+                    &interactions,
+                    false,
+                    self.collaboration.inbox.workspace.as_ref() == Some(workspace)
+                        && self.collaboration.inbox.reminders.tracks_unread(session),
+                )
             })
             .filter(|entry| {
                 self.collaboration.inbox.workspace.as_ref() != Some(workspace)
@@ -821,25 +974,29 @@ impl HiveApp {
                 let workspace = workspace.to_owned();
                 let snooze_workspace = workspace.clone();
                 let connection = self.connection_generation;
-                let mark_read = MarkInboxRead::for_entry(self, &workspace, &entry).map(|mark| {
-                    Button::new("mark-inbox-session-read")
-                        .disabled(!self.connected || self.closing)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if this.connected
-                                && !this.closing
-                                && this.connection_generation == connection
-                                && this.workspace.as_deref() == Some(mark.workspace.as_str())
-                                && this.workspace_removing.as_deref()
-                                    != Some(mark.workspace.as_str())
-                                && this
-                                    .scoped_entries(&mark.workspace)
-                                    .iter()
-                                    .any(|entry| mark.matches(entry))
-                            {
-                                mark.clear(this, cx);
-                            }
-                        }))
-                });
+                let mark_read =
+                    MarkInboxRead::for_entry(self, &workspace, &entry, &inbox.reminders).map(
+                        |mark| {
+                            Button::new("mark-inbox-session-read")
+                                .disabled(!self.connected || self.closing)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.connected
+                                        && !this.closing
+                                        && this.connection_generation == connection
+                                        && this.workspace.as_deref()
+                                            == Some(mark.workspace.as_str())
+                                        && this.workspace_removing.as_deref()
+                                            != Some(mark.workspace.as_str())
+                                        && this
+                                            .scoped_entries(&mark.workspace)
+                                            .iter()
+                                            .any(|entry| mark.matches(entry))
+                                    {
+                                        let _ = mark.clear(this, cx);
+                                    }
+                                }))
+                        },
+                    );
                 let target = entry.target.clone();
                 let origin = self.history_link_target();
                 let action = Button::new("open-inbox-item").on_click(cx.listener(
@@ -879,6 +1036,7 @@ impl HiveApp {
                             || this.workspace_removing.as_deref() == Some(workspace)
                             || this.collaboration.inbox.workspace.as_deref() != Some(workspace)
                             || this.collaboration.inbox.connection != this.connection_generation
+                            || !edit.reply_is_current(this)
                             || !this
                                 .scoped_entries(workspace)
                                 .iter()
@@ -888,6 +1046,20 @@ impl HiveApp {
                         }
                         let root = this.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
                         let result = this.collaboration.inbox.reminders.set(root, edit, delay);
+                        if result.is_ok()
+                            && let Some(saved) = &this.collaboration.inbox.reminders.saved
+                        {
+                            this.collaboration
+                                .inbox_badge
+                                .remember_unread_reminders(workspace, saved);
+                            if delay.is_some()
+                                && let Some(session) = edit.key.strip_prefix("unread-session:")
+                            {
+                                this.collaboration
+                                    .inbox_badge
+                                    .forget_unread(workspace, session);
+                            }
+                        }
                         cx.notify();
                         if let Some(change) = result? {
                             let generation = this.collaboration.inbox.undo.offer(change);
@@ -933,7 +1105,8 @@ impl HiveApp {
                     return;
                 }
                 let result = (|| {
-                    if !verified?.matches(&change.edit, this)
+                    if !change.edit.reply_is_current(this)
+                        || !verified?.matches(&change.edit, this)
                         || !this
                             .scoped_entries(workspace)
                             .iter()
@@ -983,11 +1156,7 @@ fn same_wake_target(current: &Option<Wake>, selected: &Option<Wake>) -> bool {
 }
 
 fn is_snoozed(entry: &Entry, reminders: &Reminders, now: u64) -> bool {
-    reminders
-        .saved
-        .as_ref()
-        .zip(entry.snooze_key.as_ref())
-        .is_some_and(|(saved, key)| saved.active(key, now))
+    reminders.active_reminder(entry, now).is_some()
 }
 
 fn toggle_button(show_snoozed: bool) -> Button {
@@ -1247,6 +1416,8 @@ mod tests {
             workspace: "beacon".into(),
             session: "beacon-chat".into(),
             sequence: Some(7),
+            reply_revision: 0,
+            deferred: false,
         };
         let session = |workspace: &str, id: &str| {
             serde_json::from_value(json!({
@@ -1262,11 +1433,14 @@ mod tests {
             target: Destination::Session(session("beacon", "beacon-chat")),
             related_members: [None, None],
             snooze_key: None,
-            wake: None,
+            wake: Some(Wake::UnreadReply { revision: 0 }),
             priority: Priority::Unread,
             updated_at: 0,
         };
         assert!(mark.matches(&entry));
+        entry.wake = Some(Wake::UnreadReply { revision: 1 });
+        assert!(!mark.matches(&entry));
+        entry.wake = Some(Wake::UnreadReply { revision: 0 });
         for label in ["等待你的操作", "投递失败", "待处理的汇报"] {
             entry.label = label;
             assert!(!mark.matches(&entry));

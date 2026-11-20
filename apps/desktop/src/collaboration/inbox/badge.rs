@@ -32,7 +32,7 @@ impl BadgeItem {
         }
     }
 
-    pub(super) fn from_entry(workspace: &str, entry: &Entry, app: &HiveApp) -> Option<Self> {
+    pub(super) fn from_entry(workspace: &str, entry: &Entry, unread: bool) -> Option<Self> {
         match &entry.target {
             Destination::Dispatch(dispatch) if entry.priority == Priority::NeedsUser => {
                 let message = entry.snooze_key.as_deref()?.strip_prefix("message:")?;
@@ -42,9 +42,7 @@ impl BadgeItem {
                     message: message.into(),
                 })
             }
-            Destination::Session(session)
-                if entry.priority == Priority::Unread && app.unread.contains(&session.id) =>
-            {
+            Destination::Session(session) if entry.priority == Priority::Unread && unread => {
                 Some(Self::UnreadSession {
                     workspace: workspace.into(),
                     session: session.id.clone(),
@@ -101,6 +99,8 @@ pub(in crate::collaboration) struct InboxBadge {
     pub(super) dialog: Option<WeakEntity<GlobalInbox>>,
     pending: HashSet<BadgeItem>,
     seen: HashSet<BadgeItem>,
+    unread_reminders: HashMap<String, Snoozes>,
+    live_replies: HashMap<String, HashMap<String, u64>>,
 }
 
 impl InboxBadge {
@@ -139,6 +139,52 @@ impl InboxBadge {
         let before = self.seen.len();
         self.seen.extend(items);
         self.seen.len() != before
+    }
+
+    pub(in crate::collaboration::inbox) fn remember_unread_reminders(
+        &mut self,
+        workspace: &str,
+        saved: &Snoozes,
+    ) {
+        if saved.has_tracked_unread() {
+            self.unread_reminders
+                .insert(workspace.to_owned(), saved.clone());
+        } else {
+            self.unread_reminders.remove(workspace);
+        }
+    }
+
+    pub(super) fn tracks_unread(&self, workspace: &str, session: &str) -> bool {
+        self.unread_reminders
+            .get(workspace)
+            .is_some_and(|saved| saved.tracks_unread(session))
+    }
+
+    pub(in crate::collaboration::inbox) fn note_reply(
+        &mut self,
+        workspace: &str,
+        session: &str,
+        revision: u64,
+    ) {
+        let latest = self
+            .live_replies
+            .entry(workspace.to_owned())
+            .or_default()
+            .entry(session.to_owned())
+            .or_default();
+        *latest = (*latest).max(revision);
+    }
+
+    pub(in crate::collaboration::inbox) fn reply_revision(
+        &self,
+        workspace: &str,
+        session: &str,
+    ) -> u64 {
+        self.live_replies
+            .get(workspace)
+            .and_then(|sessions| sessions.get(session))
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -270,17 +316,36 @@ impl HiveApp {
                     .iter()
                     .chain(self.project_sessions.values().flatten())
                     .filter_map(move |session| {
-                        if !self.unread.contains(&session.id)
+                        let saved = badge.unread_reminders.get(&session.workspace_id);
+                        let deferred = saved.is_some_and(|saved| saved.tracks_unread(&session.id));
+                        if (!self.unread.contains(&session.id) && !deferred)
                             || !active_project(&session.workspace_id)
                         {
                             return None;
                         }
                         let interactions =
                             self.inbox_interactions(std::slice::from_ref(session), &self.members);
-                        self.inbox_session_entry(session, &self.members, &interactions, false)
-                            .and_then(|entry| {
-                                BadgeItem::from_entry(&session.workspace_id, &entry, self)
+                        let entry = self.inbox_session_entry(
+                            session,
+                            &self.members,
+                            &interactions,
+                            false,
+                            deferred,
+                        )?;
+                        if entry.plain_unread_session(&session.workspace_id).is_some()
+                            && saved.is_some_and(|saved| {
+                                saved.hides_unread(
+                                    &session.id,
+                                    session.inbox_reply_revision().max(
+                                        badge.reply_revision(&session.workspace_id, &session.id),
+                                    ),
+                                    now_ms(),
+                                )
                             })
+                        {
+                            return None;
+                        }
+                        BadgeItem::from_entry(&session.workspace_id, &entry, true)
                     }),
             )
             .filter(move |item| active_project(item.workspace()) && !badge.sees(item))
@@ -296,6 +361,7 @@ impl HiveApp {
                     if badge.connection != app.connection_generation {
                         badge.connection = app.connection_generation;
                         badge.pending.clear();
+                        badge.unread_reminders.clear();
                         start = 0;
                     }
                     let active: Vec<_> = app
@@ -307,11 +373,17 @@ impl HiveApp {
                     badge
                         .pending
                         .retain(|item| active.iter().any(|id| id == item.workspace()));
+                    badge.unread_reminders.retain(|id, _| active.contains(id));
+                    badge.live_replies.retain(|id, _| active.contains(id));
+                    let unread_reminders = &badge.unread_reminders;
                     badge.seen.retain(|item| {
                         active.iter().any(|id| id == item.workspace())
                             && match item {
-                                BadgeItem::UnreadSession { session, .. } => {
+                                BadgeItem::UnreadSession { session, workspace } => {
                                     app.unread.contains(session)
+                                        || unread_reminders
+                                            .get(workspace)
+                                            .is_some_and(|saved| saved.tracks_unread(session))
                                 }
                                 _ => true,
                             }
@@ -371,6 +443,13 @@ impl HiveApp {
                             let fresh = result.map(|questions| {
                                 collect_questions(root, &scope, questions, now_ms())
                             });
+                            for workspace in &scope {
+                                if let Ok(saved) = Snoozes::load(root, workspace) {
+                                    app.collaboration
+                                        .inbox_badge
+                                        .remember_unread_reminders(workspace, &saved);
+                                }
+                            }
                             app.collaboration.inbox_badge.replace(&scope, fresh);
                             if before != app.has_new_global_inbox_items(cx) {
                                 cx.notify();

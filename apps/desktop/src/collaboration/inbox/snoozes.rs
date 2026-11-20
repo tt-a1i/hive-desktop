@@ -57,6 +57,13 @@ pub(super) enum Wake {
     Session {
         interaction_ids: BTreeSet<String>,
     },
+    UnreadReply {
+        revision: u64,
+    },
+}
+
+pub(super) fn unread_session_key(session: &str) -> String {
+    format!("unread-session:{session}")
 }
 
 impl Reminder {
@@ -65,7 +72,7 @@ impl Reminder {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Snoozes {
     workspace_id: String,
@@ -73,6 +80,8 @@ pub(super) struct Snoozes {
     keys: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     reminders: BTreeMap<String, Reminder>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    released_unread: BTreeSet<String>,
 }
 
 impl Snoozes {
@@ -105,12 +114,44 @@ impl Snoozes {
             workspace_id: workspace.to_owned(),
             keys: BTreeSet::new(),
             reminders: BTreeMap::new(),
+            released_unread: BTreeSet::new(),
         }
     }
 
     pub(super) fn load(root: &Path, workspace: &str) -> io::Result<Self> {
         Ok(Self::read(&Self::path(root, workspace)?, workspace)?
             .unwrap_or_else(|| Self::empty(workspace)))
+    }
+
+    pub(super) fn tracks_unread(&self, session: &str) -> bool {
+        self.released_unread.contains(session)
+            || self.reminders.contains_key(&unread_session_key(session))
+    }
+
+    pub(super) fn has_tracked_unread(&self) -> bool {
+        !self.released_unread.is_empty()
+            || self
+                .reminders
+                .keys()
+                .any(|key| key.starts_with("unread-session:"))
+    }
+
+    pub(super) fn hides_unread(&self, session: &str, revision: u64, now: u64) -> bool {
+        self.reminders.get(&unread_session_key(session)).is_some_and(|reminder| {
+            !reminder.expired(now)
+                && !matches!(reminder.wake, Some(Wake::UnreadReply {revision: saved}) if revision > saved)
+        })
+    }
+
+    pub(super) fn clear_unread(root: &Path, workspace: &str, session: &str) -> io::Result<Self> {
+        let saved = Self::load(root, workspace)?;
+        if !saved.tracks_unread(session) {
+            return Ok(saved);
+        }
+        Self::update(root, workspace, |saved| {
+            saved.reminders.remove(&unread_session_key(session));
+            saved.released_unread.remove(session);
+        })
     }
 
     pub(super) fn active(&self, key: &str, now: u64) -> bool {
@@ -140,6 +181,13 @@ impl Snoozes {
         let mut applied = false;
         let saved = Self::update(root, workspace, |saved| {
             if saved.active_reminder(key, now).as_ref() == previous {
+                if let Some(session) = key.strip_prefix("unread-session:") {
+                    if next.is_none() {
+                        saved.released_unread.insert(session.to_owned());
+                    } else {
+                        saved.released_unread.remove(session);
+                    }
+                }
                 saved.assign(key, next);
                 applied = true;
             }
@@ -172,10 +220,11 @@ impl Snoozes {
         now: u64,
         snapshot: Option<&ActionCenter>,
         interactions: &BTreeMap<String, BTreeSet<String>>,
+        replies: &BTreeMap<String, u64>,
     ) -> Result<Self, (Self, io::Error)> {
         let snapshot = snapshot.filter(|snapshot| snapshot.workspace_id == self.workspace_id);
         let needs_update = self.reminders.iter().any(|(key, item)| {
-            Self::woke(key, item, now, snapshot, interactions)
+            Self::woke(key, item, now, snapshot, interactions, replies)
                 || item.wake.is_none()
                     && snapshot.is_some_and(|snapshot| snapshot.legacy_wake(key).is_some())
         }) || snapshot.is_some_and(|snapshot| {
@@ -187,9 +236,13 @@ impl Snoozes {
             return Ok(self);
         }
         Self::update(root, &self.workspace_id, |latest| {
-            latest
-                .reminders
-                .retain(|key, item| !Self::woke(key, item, now, snapshot, interactions));
+            latest.reminders.retain(|key, item| {
+                let woke = Self::woke(key, item, now, snapshot, interactions, replies);
+                if woke && let Some(session) = key.strip_prefix("unread-session:") {
+                    latest.released_unread.insert(session.to_owned());
+                }
+                !woke
+            });
             if let Some(snapshot) = snapshot {
                 // Old files stored no baseline. Keep their indefinite state
                 // and start watching for input after the first matching snapshot.
@@ -220,6 +273,7 @@ impl Snoozes {
         now: u64,
         snapshot: Option<&ActionCenter>,
         interactions: &BTreeMap<String, BTreeSet<String>>,
+        replies: &BTreeMap<String, u64>,
     ) -> bool {
         item.expired(now)
             || match &item.wake {
@@ -233,6 +287,10 @@ impl Snoozes {
                     .strip_prefix("session:")
                     .and_then(|id| interactions.get(id))
                     .is_some_and(|current| !current.is_subset(interaction_ids)),
+                Some(Wake::UnreadReply { revision }) => key
+                    .strip_prefix("unread-session:")
+                    .and_then(|id| replies.get(id))
+                    .is_some_and(|current| current > revision),
                 None => false,
             }
     }
@@ -253,8 +311,12 @@ impl Snoozes {
         let mut saved = existing.unwrap_or_else(|| Self::empty(workspace));
         let before_keys = saved.keys.clone();
         let before_reminders = saved.reminders.clone();
+        let before_released = saved.released_unread.clone();
         change(&mut saved);
-        if before_keys != saved.keys || before_reminders != saved.reminders {
+        if before_keys != saved.keys
+            || before_reminders != saved.reminders
+            || before_released != saved.released_unread
+        {
             // Upgrade old indefinite reminders on the first write.
             for key in std::mem::take(&mut saved.keys) {
                 saved.reminders.entry(key).or_default();
@@ -280,6 +342,83 @@ mod tests {
     const WORKSPACE: &str = "a3b2cb99-3959-4adc-a770-b70f9d2a4cb9";
     const OTHER_WORKSPACE: &str = "c7761168-b30c-4020-80bb-23c1c357e111";
     const DISPATCH: &str = "eecc5d9c-4874-4286-8f73-ea6143246780";
+
+    #[test]
+    fn unread_reply_wakes_exact_snooze_across_reopen_without_losing_the_item() {
+        let root = tempfile::tempdir().unwrap();
+        let key = unread_session_key("first");
+        let other = unread_session_key("second");
+        let reminder = Reminder {
+            expires_at: None,
+            wake: Some(Wake::UnreadReply { revision: 7 }),
+        };
+        for workspace in [WORKSPACE, OTHER_WORKSPACE] {
+            Snoozes::set(root.path(), workspace, &key, Some(reminder.clone())).unwrap();
+        }
+        Snoozes::set(root.path(), WORKSPACE, &other, Some(reminder.clone())).unwrap();
+        let reconciling = |replies: BTreeMap<String, u64>| {
+            Snoozes::load(root.path(), WORKSPACE)
+                .unwrap()
+                .reconcile(root.path(), 30, None, &BTreeMap::new(), &replies)
+                .unwrap_or_else(|(_, error)| panic!("{error}"))
+        };
+        let unchanged = reconciling(BTreeMap::from([
+            ("first".into(), 7),
+            ("unrelated".into(), 99),
+        ]));
+        assert!(unchanged.active(&key, 30));
+        assert!(unchanged.active(&other, 30));
+        let woke = reconciling(BTreeMap::from([("first".into(), 8)]));
+        assert!(!woke.active(&key, 30));
+        assert!(woke.active(&other, 30));
+        assert!(
+            Snoozes::load(root.path(), WORKSPACE)
+                .unwrap()
+                .tracks_unread("first")
+        );
+        assert!(
+            Snoozes::load(root.path(), OTHER_WORKSPACE)
+                .unwrap()
+                .active(&key, 30)
+        );
+        Snoozes::clear_unread(root.path(), WORKSPACE, "first").unwrap();
+        assert!(
+            !Snoozes::load(root.path(), WORKSPACE)
+                .unwrap()
+                .tracks_unread("first")
+        );
+    }
+
+    #[test]
+    fn expired_passive_unread_reminder_survives_restart_and_manual_undo() {
+        let root = tempfile::tempdir().unwrap();
+        let key = unread_session_key("first");
+        let reminder = Reminder {
+            expires_at: Some(40),
+            wake: Some(Wake::UnreadReply { revision: 2 }),
+        };
+        Snoozes::set(root.path(), WORKSPACE, &key, Some(reminder.clone())).unwrap();
+        let (_, changed) =
+            Snoozes::edit(root.path(), WORKSPACE, &key, Some(&reminder), None, 20).unwrap();
+        assert!(changed);
+        assert!(
+            Snoozes::load(root.path(), WORKSPACE)
+                .unwrap()
+                .tracks_unread("first")
+        );
+        let (_, restored) =
+            Snoozes::edit(root.path(), WORKSPACE, &key, None, Some(reminder), 22).unwrap();
+        assert!(restored);
+        let reopened = Snoozes::load(root.path(), WORKSPACE).unwrap();
+        assert!(reopened.active(&key, 39));
+        assert!(reopened.tracks_unread("first"));
+        reopened
+            .reconcile(root.path(), 40, None, &BTreeMap::new(), &BTreeMap::new())
+            .unwrap_or_else(|(_, error)| panic!("{error}"));
+        let released = Snoozes::load(root.path(), WORKSPACE).unwrap();
+        assert!(!released.active(&key, 40));
+        assert!(released.tracks_unread("first"));
+    }
 
     fn message(
         workspace: &str,
@@ -341,6 +480,7 @@ mod tests {
             400,
             Some(&snapshot(&[old.clone(), unrelated, already_visible])),
             &interactions,
+            &BTreeMap::new(),
         );
         assert!(
             state
@@ -352,6 +492,7 @@ mod tests {
             400,
             Some(&snapshot(&[old, fresh])),
             &interactions,
+            &BTreeMap::new(),
         );
         assert!(
             !state
@@ -383,7 +524,7 @@ mod tests {
         assert!(saved.active(key, until - 1));
         assert!(!saved.active(key, until));
         saved
-            .reconcile(root.path(), until, None, &BTreeMap::new())
+            .reconcile(root.path(), until, None, &BTreeMap::new(), &BTreeMap::new())
             .unwrap_or_else(|(_, error)| panic!("{error}"));
         let reopened = Snoozes::load(root.path(), WORKSPACE).unwrap();
         assert!(!reopened.active(key, until - 1));
@@ -442,7 +583,13 @@ mod tests {
         let fresh = snapshot(&[message(WORKSPACE, DISPATCH, "fresh", 8, 300)]);
         Snoozes::load(root.path(), WORKSPACE)
             .unwrap()
-            .reconcile(root.path(), 300, Some(&fresh), &BTreeMap::new())
+            .reconcile(
+                root.path(),
+                300,
+                Some(&fresh),
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+            )
             .unwrap_or_else(|(_, error)| panic!("{error}"));
         let next = Delay::Until(30_000).reminder(300, &wake).unwrap();
         let (saved, applied) = Snoozes::edit(
@@ -518,7 +665,13 @@ mod tests {
             let same = snapshot(&[message(WORKSPACE, DISPATCH, "old", 7, 100)]);
             assert!(
                 saved
-                    .reconcile(root.path(), 500, Some(&same), &BTreeMap::new())
+                    .reconcile(
+                        root.path(),
+                        500,
+                        Some(&same),
+                        &BTreeMap::new(),
+                        &BTreeMap::new()
+                    )
                     .unwrap_or_else(|(_, error)| panic!("{error}"))
                     .active(key, 500)
             );
@@ -526,7 +679,13 @@ mod tests {
             assert!(
                 !Snoozes::load(root.path(), WORKSPACE)
                     .unwrap()
-                    .reconcile(root.path(), 500, Some(&newer), &BTreeMap::new())
+                    .reconcile(
+                        root.path(),
+                        500,
+                        Some(&newer),
+                        &BTreeMap::new(),
+                        &BTreeMap::new()
+                    )
                     .unwrap_or_else(|(_, error)| panic!("{error}"))
                     .active(key, 500)
             );
@@ -556,7 +715,7 @@ mod tests {
         ]);
         assert!(
             saved
-                .reconcile(root.path(), 50, None, &interactions)
+                .reconcile(root.path(), 50, None, &interactions, &BTreeMap::new())
                 .unwrap_or_else(|(_, error)| panic!("{error}"))
                 .active(key, 50)
         );
@@ -567,7 +726,7 @@ mod tests {
         assert!(
             !Snoozes::load(root.path(), WORKSPACE)
                 .unwrap()
-                .reconcile(root.path(), 50, None, &interactions)
+                .reconcile(root.path(), 50, None, &interactions, &BTreeMap::new())
                 .unwrap_or_else(|(_, error)| panic!("{error}"))
                 .active(key, 50)
         );

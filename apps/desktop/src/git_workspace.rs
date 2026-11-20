@@ -1,6 +1,7 @@
 pub(crate) mod patch_reader;
 pub(crate) mod file_tree;
 mod change_list;
+mod current_file;
 mod remotes;
 mod review;
 use patch_reader::PatchReader;
@@ -497,6 +498,11 @@ pub(crate) struct GitWorkspace {
     diff_generation: u64,
     reload_diff_on_open: bool,
     body_scroll: ScrollHandle,
+    current_file_body_scroll: ScrollHandle,
+    show_current_file: bool,
+    current_file: Option<current_file::Read>,
+    current_file_task: Option<Task<()>>,
+    current_file_generation: u64,
     files_scroll: ScrollHandle,
     files_focus: FocusHandle,
     changes_grouped: bool,
@@ -587,6 +593,7 @@ impl HiveApp {
                         this.index_generation += 1;
                         this.index_preview = None;
                         this.clear_commit_preview();
+                        this.clear_current_file();
                         if this.index_busy {
                             this.index_refresh_required = true;
                         }
@@ -635,6 +642,11 @@ impl HiveApp {
                 diff_generation: 0,
                 reload_diff_on_open: false,
                 body_scroll: ScrollHandle::new(),
+                current_file_body_scroll: ScrollHandle::new(),
+                show_current_file: false,
+                current_file: None,
+                current_file_task: None,
+                current_file_generation: 0,
                 files_scroll: ScrollHandle::new(),
                 files_focus: cx.focus_handle().tab_index(0).tab_stop(true),
                 changes_grouped: diffs_settings::group_changes_by_folder(cx),
@@ -770,7 +782,9 @@ impl HiveApp {
                         ws.refresh_status(Some(file), cx);
                     } else if ws.status.is_none() && !ws.status_loading {
                         ws.refresh(cx);
-                    } else if ws.reload_diff_on_open {
+                    } else if ws.show_current_file && ws.current_file.is_none() {
+                        ws.load_current_file(cx);
+                    } else if !ws.show_current_file && ws.reload_diff_on_open {
                         ws.load_diff(cx);
                     }
                     if std::mem::take(&mut ws.reload_commit_patch_on_open) {
@@ -794,6 +808,7 @@ impl HiveApp {
         self.git_drawer_open = false;
         if let Some(state) = &self.git_workspace {
             state.update(cx, |ws, cx| {
+                ws.clear_current_file();
                 if !ws.preview_mock && (ws.diff.is_some() || ws.diff_loading || ws.diff_error.is_some()) {
                     ws.reload_diff_on_open = true;
                     ws.clear_file_diff(cx);
@@ -1018,6 +1033,10 @@ impl GitWorkspace {
         self.clear_commit_preview();
         self.status_generation += 1;
         self.reload_diff_on_open = false;
+        if file.is_some() {
+            self.show_current_file = false;
+        }
+        self.clear_current_file();
         let generation = self.status_generation;
         let (offset, limit) = if file.is_some() {
             (0, FILE_TREE_STATUS_LIMIT)
@@ -1110,6 +1129,12 @@ impl GitWorkspace {
                         if file.is_some() {
                             this.scroll_to_selected_change(cx);
                             this.load_diff(cx);
+                        } else if this.show_current_file {
+                            if this.current_file_path().is_some() {
+                                this.load_current_file(cx);
+                            } else {
+                                this.show_current_file = false;
+                            }
                         }
                     }
                     Err(error) => this.status_error = Some(error),
@@ -1293,6 +1318,8 @@ impl GitWorkspace {
 
     fn set_selected_change(&mut self, selected: Option<usize>, load: bool, cx: &mut Context<Self>) {
         self.selected = selected;
+        self.clear_current_file();
+        self.show_current_file &= self.current_file_path().is_some();
         self.index_generation += 1;
         self.index_preview = None;
         self.clear_commit_preview();
@@ -1303,7 +1330,7 @@ impl GitWorkspace {
         self.scroll_to_selected_change(cx);
         cx.notify();
         if load {
-            self.load_diff(cx);
+            self.load_selected_change(cx);
         }
     }
     fn clear_file_diff(&mut self, cx: &mut Context<Self>) {
@@ -1662,7 +1689,7 @@ impl GitWorkspace {
             "enter" if self.selected_change().is_some()
                 && (self.files_focus.is_focused(window) || !self.changes_grouped) =>
             {
-                self.load_diff(cx)
+                self.load_selected_change(cx)
             }
             _ => return,
         }
@@ -3005,7 +3032,9 @@ impl Render for GitWorkspace {
                 .min_w_0()
                 .gap_3()
                 .child(self.render_branch_stash_toolbar(current, cx))
-                .child(self.render_diff_review_and_discard_bar(current, cx))
+                .when(!self.show_current_file, |view| {
+                    view.child(self.render_diff_review_and_discard_bar(current, cx))
+                })
                 .when(!current, |view| {
                     view.child(
                         div()
@@ -3166,7 +3195,7 @@ impl Render for GitWorkspace {
                                             .child(
                                                 crate::focus_scroll::Reveal::new(
                                                     "git-commit-preview-reveal",
-                                                    &self.body_scroll,
+                                                    if self.show_current_file { &self.current_file_body_scroll } else { &self.body_scroll },
                                                     Button::new("git-commit-preview")
                                                     .track_focus(&self.commit_trigger_focus)
                                                     .primary()
@@ -3735,7 +3764,7 @@ impl Render for GitWorkspace {
                                             .min_w_0()
                                             .items_center()
                                             .gap_1p5()
-                                            .child(Icon::new(Glyph::FileDiff).size(px(13.)).text_color(Color::Muted.get(cx)).flex_shrink_0())
+                                            .child(Icon::new(if self.show_current_file { Glyph::FileText } else { Glyph::FileDiff }).size(px(13.)).text_color(Color::Muted.get(cx)).flex_shrink_0())
                                             .child(
                                                 div()
                                                     .min_w_0()
@@ -3752,6 +3781,25 @@ impl Render for GitWorkspace {
                                             ),
                                     )
                                     .child(
+                                        h_flex()
+                                            .gap_0p5()
+                                            .p_0p5()
+                                            .rounded_md()
+                                            .bg(Color::Card.get(cx))
+                                            .border_1()
+                                            .border_color(Color::Divider.get(cx))
+                                            .children([(false, "git-view-diff", "差异视图"), (true, "git-view-current-file", "当前文件")].into_iter().map(|(show, id, label)| {
+                                                Button::new(id)
+                                                    .custom(segment_variant(self.show_current_file == show, cx))
+                                                    .compact().xsmall().h(px(20.)).px_1p5().rounded_sm()
+                                                    .label(tr(label))
+                                                    .selected(self.show_current_file == show)
+                                                    .disabled(!current || self.status_loading || selected_change.is_none()
+                                                        || (show && (self.preview_mock || self.current_file_path().is_none())))
+                                                    .on_click(cx.listener(move |this, _, _, cx| this.set_current_file_view(show, cx)))
+                                            })),
+                                    )
+                                    .when(!self.show_current_file, |header| header.child(
                                         h_flex()
                                             .gap_0p5()
                                             .p_0p5()
@@ -3776,12 +3824,15 @@ impl Render for GitWorkspace {
                                                         this.load_diff(cx);
                                                     }))
                                             })),
-                                    ),
+                                    )),
                             )
-                            .when(self.diff_loading && current, |col| {
+                            .when(self.show_current_file && current, |col| {
+                                col.child(div().p_2().child(self.render_current_file(diff_height, cx)))
+                            })
+                            .when(!self.show_current_file && self.diff_loading && current, |col| {
                                 col.child(div().p_3().text_xs().text_color(Color::Secondary.get(cx)).child(tr("正在读取文件差异…")))
                             })
-                            .when_some(self.diff_error.as_ref(), |col, error| {
+                            .when_some(self.diff_error.as_ref().filter(|_| !self.show_current_file), |col, error| {
                                 col.child(
                                     h_flex()
                                         .p_3()
@@ -3799,7 +3850,7 @@ impl Render for GitWorkspace {
                                         ),
                                 )
                             })
-                            .when_some(self.diff.as_ref().filter(|_| current), |col, diff| {
+                            .when_some(self.diff.as_ref().filter(|_| current && !self.show_current_file), |col, diff| {
                                 let mut metadata = format!(
                                     "{}: {}\n{}: {}\ncomparison={} · content={} · binary={} · complete={}\n{}\n{}\n{}",
                                     tr("项目内路径"),
@@ -4027,6 +4078,7 @@ impl Render for GitWorkspace {
         };
 
         if self.in_drawer {
+            let scroll = if self.show_current_file { &self.current_file_body_scroll } else { &self.body_scroll };
             v_flex()
                 .size_full()
                 .min_w_0()
@@ -4036,15 +4088,15 @@ impl Render for GitWorkspace {
                 .child(
                     div().flex_1().min_h_0().min_w_0().flex().child(Viewport::new(
                         "git-drawer-viewport",
-                        &self.body_scroll,
+                        scroll,
                         v_flex()
                             .id("git-drawer-body")
                             .flex_1()
                             .min_h_0()
                             .min_w_0()
                             .overflow_y_scroll()
-                            .track_scroll(&self.body_scroll)
-                            .vertical_scrollbar(&self.body_scroll)
+                            .track_scroll(scroll)
+                            .vertical_scrollbar(scroll)
                             .p_3()
                             .child(body),
                     )),
@@ -4202,6 +4254,34 @@ mod tests {
     fn changed_file(path: &str, worktree_status: &str) -> Value {
         json!({"path": path, "repositoryPath":format!("project/{path}"), "kind":"ordinary",
             "indexStatus":".", "worktreeStatus":worktree_status})
+    }
+
+    #[test]
+    fn current_file_targets_the_exact_live_worktree_path() {
+        let mut staged_delete = changed_file("api/config.md", ".");
+        staged_delete["indexStatus"] = json!("D");
+        staged_delete["worktreeMode"] = json!("000000");
+        let mut recreated = changed_file("api/config.md", "?");
+        recreated["kind"] = json!("untracked");
+        let mut rename_source = changed_file("old/config.md", "R");
+        rename_source["pathRole"] = json!("rename-source");
+        let mut symlink = changed_file("docs/link.md", "M");
+        symlink["worktreeMode"] = json!("120000");
+        let status = change_status(vec![
+            staged_delete,
+            recreated,
+            changed_file("ui/config.md", "D"),
+            rename_source,
+            symlink,
+            changed_file("new/config.md", "R"),
+        ], 6);
+        let live = |index: usize| super::current_file::live_path(&status, &status.entries[index]);
+        assert_eq!(live(0), Some("api/config.md"));
+        assert_eq!(live(1), Some("api/config.md"));
+        assert_eq!(live(2), None);
+        assert_eq!(live(3), None);
+        assert_eq!(live(4), None);
+        assert_eq!(live(5), Some("new/config.md"));
     }
 
     #[test]

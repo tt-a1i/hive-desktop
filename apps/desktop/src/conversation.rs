@@ -845,6 +845,9 @@ impl HiveApp {
         if self.removed_sessions.contains(event.session_id()) {
             return;
         }
+        if let PiEvent::MessageEnd { session_id, inbox_reply: Some(reply), .. } = &event {
+            self.note_live_inbox_reply(&reply.workspace_id, session_id, reply.revision);
+        }
         // Keep current-session navigation in the same snapshot replay as chat
         // events, so an in-flight open cannot replace newer metadata.
         if self.loading && self.session.as_ref().map(|s| s.id.as_str()) == Some(event.session_id())

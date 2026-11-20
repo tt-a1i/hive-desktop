@@ -145,7 +145,18 @@ interface LiveChat {
 }
 type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: number; pendingReports: DeliveryQueue['pendingReports']; pendingUserInputs: DeliveryQueue['pendingUserInputs']; deliveryFailure?: import('./chat-index.js').DeliveryFailure | undefined; completedReportId?: string; handoffDelivery?: HandoffDelivery };
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
-export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & { sequence: number };
+export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & {
+  sequence: number;
+  inboxReply?: {workspaceId: string; revision: number};
+};
+
+function isVisibleInboxReply(message: unknown): boolean {
+  if (!message || typeof message !== 'object' || !('role' in message) || message.role !== 'assistant'
+    || !('content' in message)) return false;
+  if (typeof message.content === 'string') return !!message.content.trim();
+  return Array.isArray(message.content) && message.content.some(block =>
+    block?.type === 'text' && typeof block.text === 'string' && !!block.text.trim());
+}
 type SessionSnapshotError = SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError | CodexSavedModeError;
 function isSessionSnapshotError(error: unknown): error is SessionSnapshotError {
   return error instanceof SessionIdentityError || error instanceof DispatchOriginError ||
@@ -1419,6 +1430,11 @@ export class Chats implements StructuredSessionPort {
       archived: !!record.archived, pinned: !!record.pinned, updatedAt: record.updatedAt });
   }
   private event(id: string, event: PiEvent | QueueState | NavigationEvent) {
+    let inboxReply: ChatEvent['inboxReply'];
+    if (event.type === 'message_end' && isVisibleInboxReply(event.message)) {
+      try { inboxReply = this.index.noteInboxReply(id, event.messageId); }
+      catch (error) { console.error('Could not record the inbox reply:', error instanceof Error ? error.message : String(error)); }
+    }
     const live = this.live.get(id);
     if (live) {
       live.lastActiveAt = Date.now();
@@ -1436,7 +1452,7 @@ export class Chats implements StructuredSessionPort {
     }
     const sequence = (this.sequences.get(id) ?? 0) + 1;
     this.sequences.set(id, sequence);
-    this.emit({ ...event, sessionId: id, sequence });
+    this.emit({ ...event, sessionId: id, sequence, ...(inboxReply && {inboxReply}) });
   }
   describeMemberActivity(workspaceId: string, memberId: string, hiveStatus?: string): MemberDesktopActivity {
     const all = this.index.list(workspaceId);

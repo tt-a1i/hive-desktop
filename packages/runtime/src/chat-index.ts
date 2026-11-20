@@ -45,6 +45,7 @@ export interface ChatRecord {
   pinned?: boolean;
   archived?: boolean;
   lastDeliveryFailure?: DeliveryFailure;
+  inboxReply?: {revision: number; messageId: string};
   nativeMode?: {backend: 'codex' | 'claude'; mode?: string; permissionMode?: string};
   reasoning?: {provider:string;modelId:string;level:string};
   sessionFile: string | null;
@@ -150,7 +151,20 @@ export class ChatIndex {
     const normalized = normalizeIdentity(existing?.originAgentId
       ? {...record, originAgentId: existing.originAgentId, identityState: 'known'}
       : existing ? {...record, identityState: existing.identityState ?? 'unknown'} : record);
+    // Metadata saves can hold a pre-reply snapshot. Only noteInboxReply owns
+    // this cursor, and a new chat cannot inherit the source chat's cursor.
+    if (existing?.inboxReply) normalized.inboxReply = existing.inboxReply;
+    else delete normalized.inboxReply;
     this.commit([...this.records.filter(item => item.id !== record.id), normalized],record.id);
+  }
+  noteInboxReply(id: string, messageId: string): {workspaceId: string; revision: number} | undefined {
+    const record = this.peek(id);
+    if (!record || !messageId || record.inboxReply?.messageId === messageId) return;
+    const revision = (record.inboxReply?.revision ?? 0) + 1;
+    if (!Number.isSafeInteger(revision)) throw new Error('Inbox reply revision exhausted');
+    const updated = {...record, inboxReply: {revision, messageId}};
+    this.commit(this.records.map(item => item.id === id ? updated : item), id);
+    return {workspaceId: record.workspaceId, revision};
   }
   addImported(records: ChatRecord[]): void {
     const ids = new Set(this.records.map(record => record.id));
@@ -221,6 +235,11 @@ function isChatRecord(value: unknown): value is ChatRecord {
   }
   if (typeof record.id !== 'string' || typeof record.workspaceId !== 'string' || typeof record.title !== 'string'
     || typeof record.updatedAt !== 'number' || (record.sessionFile !== null && typeof record.sessionFile !== 'string')) return false;
+  if (record.inboxReply !== undefined) {
+    const reply = record.inboxReply as ChatRecord['inboxReply'];
+    if (!reply || !Number.isSafeInteger(reply.revision) || reply.revision < 1
+      || typeof reply.messageId !== 'string' || !reply.messageId) return false;
+  }
   if (record.scratch !== undefined && !isScratchRecord(record)) return false;
   if (record.profile !== undefined && (!record.profile || typeof record.profile !== 'object' || typeof (record.profile as Record<string, unknown>).id !== 'string' || !(record.profile as Record<string, unknown>).id || !Number.isSafeInteger((record.profile as Record<string, unknown>).revision) || ((record.profile as Record<string, unknown>).revision as number) < 1)) return false;
   if (record.legacyConfiguration !== undefined && record.legacyConfiguration !== true) return false;
