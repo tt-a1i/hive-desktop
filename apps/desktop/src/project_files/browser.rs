@@ -8,9 +8,11 @@ use crate::{
 };
 use gpui_kit::{
     assets::IconName as Glyph,
+    base::InteractiveElementExt as _,
     component::{
         button::{Button, ButtonVariants},
         input::{Input, InputEvent, InputState},
+        resizable::{HandleEdge, resize_handle},
         scroll::ScrollableElement,
         *,
     },
@@ -19,11 +21,33 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{cell::Cell, collections::HashMap, rc::Rc, sync::Arc, time::Duration};
 
 const PAGE_SIZE: usize = 100;
 const DOCK_WIDTH: f32 = 320.;
 const CHAT_MIN_WIDTH: f32 = 600.;
+const DOCK_WIDTH_STEP: f32 = 24.;
+
+fn dock_width(preferred: Option<Pixels>, available: Pixels) -> Option<Pixels> {
+    let maximum = available - px(CHAT_MIN_WIDTH);
+    (maximum >= px(DOCK_WIDTH)).then(|| {
+        preferred
+            .unwrap_or(px(DOCK_WIDTH))
+            .clamp(px(DOCK_WIDTH), maximum)
+    })
+}
+
+#[derive(Clone)]
+struct ResizeFileDock {
+    width: Pixels,
+    starting_x: Cell<Pixels>,
+}
+
+impl Render for ResizeFileDock {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
 
 #[derive(Deserialize)]
 struct DirectoryEntry {
@@ -133,6 +157,7 @@ pub(crate) struct FileBrowser {
     contents: bool,
     directories: HashMap<String, Directory>,
     root_focus: FocusHandle,
+    resize_focus: FocusHandle,
     tree_focus: FocusHandle,
     tree_selected: Option<TreeItem>,
     tree_scroll: ScrollHandle,
@@ -184,19 +209,24 @@ impl HiveApp {
         })
     }
 
+    fn project_file_dock_space(&self, window: &Window) -> Pixels {
+        let viewport = window.viewport_size().width;
+        viewport
+            - if self.sidebar_open {
+                self.sidebar.resolved(viewport)
+            } else {
+                px(0.)
+            }
+    }
+
     fn can_dock_project_files(&self, window: &Window) -> bool {
         let viewport = window.viewport_size().width;
-        let navigation = if self.sidebar_open {
-            self.sidebar.resolved(viewport)
-        } else {
-            px(0.)
-        };
         self.viewing_conversation()
             && !self.showing_welcome_guide
             && (!self.sidebar_open || viewport >= px(820.))
             && !self.git_drawer_open
             && !(self.split_peek.is_some() && viewport >= px(960.))
-            && viewport - navigation >= px(DOCK_WIDTH + CHAT_MIN_WIDTH)
+            && dock_width(None, self.project_file_dock_space(window)).is_some()
     }
 
     pub(crate) fn project_file_browser_button(
@@ -277,6 +307,7 @@ impl HiveApp {
                 contents: false,
                 directories: HashMap::new(),
                 root_focus: cx.focus_handle(),
+                resize_focus: cx.focus_handle(),
                 tree_focus: cx.focus_handle(),
                 tree_selected: None,
                 tree_scroll: ScrollHandle::new(),
@@ -332,6 +363,93 @@ impl HiveApp {
         }
     }
 
+    fn resize_project_file_dock(
+        &mut self,
+        target: Pixels,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let space = self.project_file_dock_space(window);
+        let width = dock_width(Some(target), space);
+        if width != dock_width(self.project_file_dock_width, space) {
+            self.project_file_dock_width = width;
+            cx.notify();
+        }
+    }
+
+    fn project_file_dock_divider(
+        &self,
+        focus: FocusHandle,
+        width: Pixels,
+        space: Pixels,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let paint_focus = focus.clone();
+        resize_handle("project-file-dock-resize", Axis::Horizontal)
+            .inside(HandleEdge::Leading)
+            .role(Role::Splitter)
+            .aria_label(tr(
+                "调整文件面板宽度，使用左右方向键，双击或按 Home 恢复默认",
+            ))
+            .aria_orientation(accesskit::Orientation::Vertical)
+            .aria_numeric_value(f64::from(f32::from(width)))
+            .aria_min_numeric_value(f64::from(DOCK_WIDTH))
+            .aria_max_numeric_value(f64::from(f32::from(space) - CHAT_MIN_WIDTH))
+            .track_focus(&focus)
+            .tab_stop(true)
+            .with_appearance(Rc::new(move |_, window, cx| {
+                paint_focus.is_focused(window).then(|| {
+                    div()
+                        .h_full()
+                        .w(px(2.))
+                        .flex_none()
+                        .bg(Color::Secondary.get(cx))
+                        .into_any_element()
+                })
+            }))
+            .on_drag(
+                ResizeFileDock {
+                    width,
+                    starting_x: Cell::default(),
+                },
+                |drag, _, window, cx| {
+                    drag.starting_x.set(window.mouse_position().x);
+                    cx.new(|_| drag.clone())
+                },
+            )
+            .on_drag_move(
+                cx.listener(|this, event: &DragMoveEvent<ResizeFileDock>, window, cx| {
+                    let drag = event.drag(cx);
+                    let change = drag.starting_x.get() - event.event.position.x;
+                    this.resize_project_file_dock(drag.width + change, window, cx);
+                }),
+            )
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.alt || modifiers.control || modifiers.platform || modifiers.shift {
+                    return;
+                }
+                match event.keystroke.key.as_str() {
+                    "left" => {
+                        this.resize_project_file_dock(width + px(DOCK_WIDTH_STEP), window, cx)
+                    }
+                    "right" => {
+                        this.resize_project_file_dock(width - px(DOCK_WIDTH_STEP), window, cx)
+                    }
+                    "home" => {
+                        this.project_file_dock_width = None;
+                        cx.notify();
+                    }
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
+            .on_double_click(cx.listener(|this, _, _, cx| {
+                this.project_file_dock_width = None;
+                cx.notify();
+            }))
+    }
+
     pub(crate) fn project_file_pane(
         &mut self,
         window: &Window,
@@ -346,13 +464,18 @@ impl HiveApp {
             let runtime = self.runtime.clone();
             browser.update(cx, |browser, cx| browser.set_scope(scope, runtime, cx));
         }
+        let space = self.project_file_dock_space(window);
+        let width = dock_width(self.project_file_dock_width, space)?;
         let root_focus = browser.read(cx).root_focus.clone();
+        let divider =
+            self.project_file_dock_divider(browser.read(cx).resize_focus.clone(), width, space, cx);
         Some(
             v_flex()
                 .id("project-file-dock")
                 .track_focus(&root_focus)
                 .tab_stop(false)
-                .w(px(DOCK_WIDTH))
+                .relative()
+                .w(width)
                 .h_full()
                 .min_h_0()
                 .flex_shrink_0()
@@ -397,6 +520,7 @@ impl HiveApp {
                         .p_2()
                         .child(browser),
                 )
+                .child(divider)
                 .into_any_element(),
         )
     }
@@ -1339,5 +1463,27 @@ impl Render for FileBrowser {
                 )),
         )
         .child(panels)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dock_width, px};
+
+    #[test]
+    fn file_dock_preserves_chat_space_and_the_existing_dialog_threshold() {
+        assert_eq!(dock_width(None, px(919.)), None);
+        assert_eq!(dock_width(None, px(920.)), Some(px(320.)));
+        assert_eq!(dock_width(Some(px(250.)), px(1200.)), Some(px(320.)));
+        assert_eq!(dock_width(Some(px(700.)), px(1200.)), Some(px(600.)));
+    }
+
+    #[test]
+    fn file_dock_resolves_the_same_preference_as_available_space_changes() {
+        let preferred = Some(px(480.));
+        assert_eq!(dock_width(preferred, px(1200.)), preferred);
+        assert_eq!(dock_width(preferred, px(1000.)), Some(px(400.)));
+        assert_eq!(dock_width(preferred, px(900.)), None);
+        assert_eq!(dock_width(preferred, px(1200.)), preferred);
     }
 }

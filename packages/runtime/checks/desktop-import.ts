@@ -205,7 +205,7 @@ try {
     assert.equal(saved.readOnly, false);
     assert.match(JSON.stringify(saved.history), new RegExp(`Saved ${label} reply`));
   }
-  const tail = await runtime.rpc('chat.open', {sessionId:codex.id, historyLimit:1});
+  const tail = await runtime.rpc('chat.open', {sessionId:codex.id, viewRevision:1, historyLimit:1});
   assert.deepEqual(tail.historyMessageIds, ['recent-assistant']);
   assert.match(JSON.stringify(tail.history), /Recent Codex reply past 8 MiB/);
   assert.equal(tail.historyIncomplete, true);
@@ -215,11 +215,21 @@ try {
     beforeMessageId:tail.historyPage.nextBeforeMessageId, snapshot:tail.historyPage.snapshot, limit:3});
   assert.match(JSON.stringify(older.history), /Existing Codex question/);
   assert.doesNotMatch(JSON.stringify(older.history), /Rolled-back question/);
-  const anchor = await runtime.rpc('chat.open', {sessionId:codex.id, historyLimit:1, historyAroundMessageId:older.historyMessageIds[0]});
+  const search = (query: string, viewRevision = 1) => runtime!.rpc('chat.searchMessages', {sessionId:codex.id, viewRevision, query});
+  const match = await search('  EXISTING CODEX  ');
+  assert.deepEqual(match.matches, [{messageId:older.historyMessageIds[0]}]);
+  assert.equal(match.complete, false);
+  assert.match(match.warning, /preview shows text/);
+  assert.deepEqual((await search('rolled-back question')).matches, []);
+  assert.deepEqual((await search('codex reply')).matches, [{messageId:older.historyMessageIds[1]}, {messageId:'recent-assistant'}]);
+  assert.deepEqual((await search('x'.repeat(250))).matches, [], 'Provider payloads are outside the cold preview');
+  const anchor = await runtime.rpc('chat.open', {sessionId:codex.id, viewRevision:2, historyLimit:1, historyAroundMessageId:match.matches[0].messageId});
   assert.match(JSON.stringify(anchor.history), /Existing Codex question/);
+  await assert.rejects(search('existing codex'), /Stale desktop conversation view/);
   await appendFile(codexPath(codexId), JSON.stringify(codexEvent({type:'agent_message', message:'Native file changed'})) + '\n');
   await assert.rejects(runtime.rpc('chat.historyPage', {sessionId:codex.id, beforeIndex:tail.historyPage.nextBeforeIndex,
     beforeMessageId:tail.historyPage.nextBeforeMessageId, snapshot:tail.historyPage.snapshot, limit:3}), /Saved history changed/);
+  assert.equal((await search('native file changed', 2)).matches.length, 1);
   await writeFile(codexPath(codexId), unchanged.get(codexPath(codexId)));
   for (const path of [codexLaunchLog, claudeLaunchLog, piLaunchLog]) assert.deepEqual(await log(path), []);
   for (const [path, before] of unchanged) assert.deepEqual(await readFile(path), before);

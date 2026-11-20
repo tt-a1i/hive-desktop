@@ -130,7 +130,7 @@ impl HiveApp {
         true
     }
 
-    fn finish_welcome_setup(&mut self, window: &Window, cx: &mut Context<Self>) {
+    pub(super) fn finish_welcome_setup(&mut self, window: &Window, cx: &mut Context<Self>) {
         if self.welcome_busy() || !self.save_welcome_completion(cx) {
             return;
         }

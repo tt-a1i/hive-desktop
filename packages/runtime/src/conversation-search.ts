@@ -13,6 +13,12 @@ import { parseCodexProjection } from './agents/codex-projection.js';
 
 export type ConversationSearchMatch = { messageId: string; snippet: string };
 export type ConversationSearchResult = { matches: ConversationSearchMatch[]; complete: boolean; warning?: string };
+export type ConversationMessageSearchResult = {
+  matches: { messageId: string }[];
+  complete: boolean;
+  warning?: string;
+  limited?: true;
+};
 export type ConversationSearchOptions = {
   signal?: AbortSignal;
   /** Runtime currently processing a turn; some providers emit tool updates outside snapshots. */
@@ -38,16 +44,21 @@ async function fingerprint(paths: string[]): Promise<string> {
     }
   })));
 }
-async function freshRows(paths: string[], load: () => Promise<{ rows: Row[]; complete: boolean }>, signal?: AbortSignal): Promise<{ rows: Row[]; complete: boolean; truncated: boolean; unresolved: boolean }> {
+export async function readFreshConversationHistory<T>(paths: string[], load: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  signal?.throwIfAborted();
   const before = await fingerprint(paths);
   signal?.throwIfAborted();
   const loaded = await load();
   signal?.throwIfAborted();
   if (before !== await fingerprint(paths)) throw new Error('Conversation history changed while being read; retry search');
   signal?.throwIfAborted();
+  return loaded;
+}
+async function freshRows(paths: string[], load: () => Promise<{ rows: Row[]; complete: boolean }>, signal?: AbortSignal): Promise<{ rows: Row[]; complete: boolean; truncated: boolean; unresolved: boolean }> {
+  const loaded = await readFreshConversationHistory(paths, load, signal);
   // Do not cache by stat metadata: same-size rewrites can preserve timestamps.
   // Every search parses the durable source again; raw provider payloads are not retained.
-  const projected = searchableRows(loaded.rows);
+  const projected = await searchableRows(loaded.rows, signal);
   const compact = projected.rows.map(row => ({ id: row.id, message: { role: 'assistant', content: row.text } }));
   return { rows: compact, complete: loaded.complete, truncated: projected.truncated, unresolved: projected.unresolved };
 }
@@ -124,12 +135,22 @@ function codexFallbackOutput(value: Record<string, unknown>): boolean {
 }
 // Search visible fields only. Some Codex normalized tool outputs are fallback
 // JSON of the whole native item, which must not enter the search index.
-function messageText(value: unknown, state: { truncated: boolean }): string {
+function messageText(value: unknown, state: { truncated: boolean }, thread: boolean): string {
   if (!object(value)) return '';
-  const presentation = desktopPresentation(value.presentation);
+  const isDelivery = value.role === 'user' || (value.role === 'custom' && value.customType === 'hive-delivery');
+  const presentation = !thread || isDelivery ? desktopPresentation(value.presentation) : undefined;
   if (value.role === 'custom' && !presentation) return '';
   const parts: string[] = [];
-  if (presentation && typeof presentation.displayText === 'string') parts.push(presentation.displayText);
+  if (presentation && typeof presentation.displayText === 'string') {
+    // The desktop shows an unchanged system envelope only in the raw disclosure.
+    let systemEnvelope: string | undefined;
+    if (thread && presentation.origin === 'system') {
+      if (typeof value.content === 'string') systemEnvelope = value.content;
+      else if (Array.isArray(value.content)) systemEnvelope = value.content.flatMap(block =>
+        object(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : []).join('\n\n');
+    }
+    if (presentation.displayText !== systemEnvelope) parts.push(presentation.displayText);
+  }
   else if (!codexFallbackOutput(value)) {
     const content = value.content;
     if (typeof content === 'string') parts.push(content);
@@ -151,37 +172,88 @@ function messageText(value: unknown, state: { truncated: boolean }): string {
 }
 // Assistant tool calls carry inputs separately from the result rendered by the
 // desktop. Attach those fields to that result's actual ID, not the assistant ID.
-function searchableRows(rows: readonly Row[]): { rows: { id: string; text: string }[]; truncated: boolean; unresolved: boolean } {
+async function searchableRows(rows: readonly Row[], signal?: AbortSignal, thread = false): Promise<{
+  rows: { id: string; text: string }[]; truncated: boolean; unresolved: boolean;
+}> {
   const state = { truncated: false };
   const calls = new Map<string, { name?: string; input?: unknown }>();
-  for (const row of rows) {
+  const results = new Set<string>();
+  for (let i = 0; i < rows.length; i++) {
+    if (i > 0 && i % 1024 === 0) await setImmediate(undefined, {signal});
+    const row = rows[i]!;
     const message = row.message;
+    if (object(message) && message.role === 'toolResult') results.add(desktopMessageId(row.id, message));
     if (!object(message) || message.role !== 'assistant' || !Array.isArray(message.content)) continue;
-    for (const block of message.content) if (object(block) && block.type === 'toolCall' && typeof block.id === 'string') {
+    for (const block of message.content) if (object(block) && block.type === 'toolCall' && typeof block.id === 'string' && (!thread || block.id)) {
       calls.set(block.id, { ...(typeof block.name === 'string' ? {name:block.name} : {}), ...(block.arguments !== undefined ? {input:block.arguments} : {}) });
     }
   }
-  const results = new Set<string>();
-  const projected = rows.map(row => {
+  const projected: { id: string; text: string }[] = [];
+  let unresolved = false;
+  const pending = new Set<string>();
+  const appendUnresolved = (id: string) => {
+    const call = calls.get(id);
+    if (!call || results.has(id) || pending.has(id)) return;
+    pending.add(id);
+    unresolved = true;
+    const text = [call.name ?? '', boundedInput(call.input, state)].filter(Boolean).join('\n');
+    if (text) projected.push({ id, text });
+  };
+  for (let i = 0; i < rows.length; i++) {
+    if (i > 0 && i % 1024 === 0) await setImmediate(undefined, {signal});
+    const row = rows[i]!;
     const message = row.message;
     const id = desktopMessageId(row.id, message);
-    let text = messageText(message, state);
+    let text = messageText(message, state, thread);
     if (object(message) && message.role === 'toolResult') {
-      results.add(id);
       const call = calls.get(id);
       const extra = [call?.name ?? '', message.toolInput == null ? boundedInput(call?.input, state) : ''].filter(Boolean).join('\n');
       if (extra) text = [text, extra].filter(Boolean).join('\n');
     }
-    return {id, text};
-  });
-  let unresolved = false;
-  for (const [id, call] of calls) {
-    if (results.has(id)) continue;
-    unresolved = true;
-    const text = [call.name ?? '', boundedInput(call.input, state)].filter(Boolean).join('\n');
-    if (text) projected.push({ id, text });
+    projected.push({id, text});
+    if (thread && object(message) && message.role === 'assistant' && Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (object(block) && block.type === 'toolCall' && typeof block.id === 'string') appendUnresolved(block.id);
+      }
+    }
   }
+  if (!thread) for (const id of calls.keys()) appendUnresolved(id);
+  signal?.throwIfAborted();
   return { rows: projected, truncated: state.truncated, unresolved };
+}
+
+/** Search the transcript projection used by the current desktop conversation. */
+export async function findConversationMessages(
+  query: string,
+  transcript: NonNullable<ConversationSearchOptions['liveHistory']>,
+  {signal, warning, liveBusy}: {signal: AbortSignal; warning?: string; liveBusy?: boolean},
+): Promise<ConversationMessageSearchResult> {
+  signal.throwIfAborted();
+  const needle = foldSearchText(query.trim());
+  if (!needle) return {matches: [], complete: true};
+  if (transcript.history.length !== transcript.historyMessageIds.length)
+    return {matches: [], complete: false, warning: 'Conversation history has mismatched message IDs'};
+  const rows = transcript.history.map((message, i) => ({id: transcript.historyMessageIds[i]!, message}));
+  if (rows.some(({message}) => object(message) && message.role === 'notice'
+    && object(message.rawBackendItem) && message.rawBackendItem.type === 'hiveProjectionNotice'))
+    warning ??= 'Codex display journal may omit native history';
+  if (transcript.activeMessage) rows.push({id: transcript.activeMessage.messageId, message: transcript.activeMessage.message});
+  const projected = await searchableRows(rows, signal, true);
+  if (projected.truncated) warning ??= 'Some tool inputs exceed the search limit';
+  if (projected.unresolved || liveBusy) warning ??= 'Live or unfinished tool output may be missing from search';
+  const matches: ConversationMessageSearchResult['matches'] = [];
+  const limit = 500;
+  let index = 0;
+  // A repeated ID updates the same rendered row without moving it.
+  const byId = new Map(projected.rows.map(row => [row.id, row.text]));
+  for (const [messageId, text] of byId) {
+    if (++index % 1024 === 0) await setImmediate(undefined, {signal});
+    if (!messageId || !foldSearchText(text).includes(needle)) continue;
+    if (matches.length === limit) return {matches, complete: false, ...(warning && {warning}), limited: true};
+    matches.push({messageId});
+  }
+  signal.throwIfAborted();
+  return {matches, complete: !warning, ...(warning && {warning})};
 }
 const maxSnippetLength = 220;
 
@@ -265,7 +337,7 @@ async function piRows(file: string, backend: 'pi' | 'pi-rpc', expectedId: string
   return rows;
 }
 
-async function codexRows(metadataPath: string, metadata: CodexMetadata, signal?: AbortSignal): Promise<{ rows: Row[]; complete: boolean }> {
+export async function readCodexDisplayRows(metadataPath: string, metadata: CodexMetadata, signal?: AbortSignal, sourceSessionId?: string): Promise<{ rows: Row[]; complete: boolean }> {
   const source = await readFile(`${metadataPath}.display.json`, {encoding: 'utf8', ...(signal && {signal})});
   signal?.throwIfAborted();
   const projection = parseCodexProjection(source);
@@ -281,7 +353,7 @@ async function codexRows(metadataPath: string, metadata: CodexMetadata, signal?:
     // request until the entire native history has been normalized.
     if (index > 0 && index % 2048 === 0) await setImmediate(undefined, {signal});
     const {item, turnId} = entries[index]!;
-    rows.push({ id: item.id, message: normalizeCodexItem(item, deliveryFor(turnId, item.id), sources.get(item.id)) });
+    rows.push({ id: item.id, message: normalizeCodexItem(item, deliveryFor(turnId, item.id), sources.get(item.id) ?? sourceSessionId) });
   }
   return { rows, complete: completeHistory };
 }
@@ -339,7 +411,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
       const loaded = await freshRows([path, `${path}.required`, `${path}.display.json`], () => {
         const metadata = readCodexMetadata(options.codexDirectory, threadId);
         canSearchLive = true;
-        return codexRows(path, metadata, signal);
+        return readCodexDisplayRows(path, metadata, signal);
       }, signal);
       rows = loaded.rows;
       codexSynced = loaded.complete;
@@ -374,7 +446,7 @@ export async function searchConversation(record: ChatRecord, query: string, opti
       rows = [...byId.values()];
     }
   }
-  const projected = searchableRows(rows);
+  const projected = await searchableRows(rows, signal);
   if ((truncated || projected.truncated) && !warning) warning = 'Some tool inputs exceed the search limit';
   if ((unresolved || projected.unresolved || (options.liveBusy && record.backend !== 'codex')) && !warning) warning = 'Live or unfinished tool output may be missing from search';
   return { matches: find(projected.rows, first, rest, options.firstMatchOnly), complete: !warning, ...(warning ? { warning } : {}) };

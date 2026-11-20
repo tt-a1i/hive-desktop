@@ -30,6 +30,7 @@ import { isDeliveryPresentation, restoreHistoricalReport } from './delivery-pres
 import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { createHash,randomUUID } from 'node:crypto';
+import { setImmediate } from 'node:timers/promises';
 import {isDeepStrictEqual} from 'node:util';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -46,10 +47,9 @@ import { piUserInputNote, piUserInputSources } from './agents/pi-user-input.js';
 import { ClaudeProjection } from './agents/claude-projection.js';
 import { claudeHistoryCacheDirectory, openClaudeSavedHistory, removeClaudeHistoryCache } from './agents/claude-history-pages.js';
 import { claudeMetadataPath, readClaudeMetadata } from './agents/claude-metadata.js';
-import { CodexProjection, openSavedCodexProjection } from './agents/codex-projection.js';
+import { openSavedCodexProjection } from './agents/codex-projection.js';
 import { codexMetadataFile, readCodexMetadata } from './agents/codex-metadata.js';
-import { codexDeliveryLookup, normalizeCodexItem } from './agents/codex-history.js';
-import { foldSearchText, searchConversation, type ConversationSearchMatch } from './conversation-search.js';
+import { findConversationMessages, foldSearchText, readCodexDisplayRows, readFreshConversationHistory, searchConversation, type ConversationMessageSearchResult, type ConversationSearchMatch } from './conversation-search.js';
 import { getGitWorkspaceStatus, getGitFileDiff, GitWorkspaceError, type GitDiffOptions } from './git-workspace.js';
 import { previewGitStage, previewGitUnstage, stageGitPaths, unstageGitPaths, previewGitCommit, commitGitIndex, GitMutationError } from './git-mutations.js';
 import { listGitRemotes, previewGitPush, pushGitBranch } from './git-remotes.js';
@@ -1218,6 +1218,61 @@ export class Chats implements StructuredSessionPort {
       ...(bodyMatches.has(hit.session.id) && {bodyMatch: bodyMatches.get(hit.session.id)})})), total: matches.length,
       incompleteHistory: warnings.slice(0, 20), incompleteHistoryCount: warnings.length };
   }
+  async searchMessages(id: string, revision: number, query: unknown, requestSignal: AbortSignal): Promise<ConversationMessageSearchResult> {
+    if (typeof query !== 'string') throw new TypeError('query must be text');
+    const signal = AbortSignal.any([requestSignal, this.closeAbort.signal]);
+    return this.readDesktopView(id, revision, async () => {
+      signal.throwIfAborted();
+      if (!query.trim()) return {matches: [], complete: true};
+      const record = this.index.get(id);
+      this.assertWorkspaceAvailable(record.workspaceId);
+      await this.assertHistoryReady(record);
+      signal.throwIfAborted();
+      const live = this.live.get(id);
+      if (live && !live.failure && !live.cleanup) {
+        const {history, historyMessageIds, activeMessage} = this.snapshot(id, live, true);
+        const warning = record.backend === 'acp' && record.sessionFile ? 'ACP local transcript may differ from native history'
+          : record.backend === 'claude' && record.nativeclaudeSessionId ? 'Claude SDK history completeness cannot be verified' : undefined;
+        const result = await findConversationMessages(query, {history, historyMessageIds, ...(activeMessage && {activeMessage})},
+          {signal, ...(warning && {warning}), liveBusy: live.queue.busy});
+        if (this.live.get(id) !== live || live.failure || live.cleanup) throw new StaleHistorySnapshotError();
+        await this.assertHistoryReady(this.index.get(id));
+        signal.throwIfAborted();
+        return result;
+      }
+
+      const workspace = await this.workspace(record.workspaceId);
+      const paths: string[] = [];
+      if (record.sessionFile && (record.backend === 'pi' || record.backend === 'pi-rpc' || record.backend === 'acp')) paths.push(record.sessionFile);
+      if (record.nativeImport && record.nativeImport.path !== record.sessionFile) paths.push(record.nativeImport.path);
+      if (record.backend === 'codex' && record.codexThreadId) {
+        const metadata = codexMetadataFile(join(this.sessionDir, '..', 'codex'), record.codexThreadId);
+        paths.push(metadata, `${metadata}.required`, `${metadata}.display.json`);
+      } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
+        paths.push(claudeMetadataPath(join(this.sessionDir, '..', 'claude'), record.nativeclaudeSessionId));
+      }
+      const scope = this.historyStorageScope(record, workspace);
+      const result = await readFreshConversationHistory(paths, async () => {
+        const saved = await this.readSavedHistory(record, workspace, undefined, signal);
+        const history = this.decorateSavedHistory(record, saved.history, saved.historyMessageIds);
+        const emptyNewConversation = record.identityState === 'new' && !paths.length
+          && !record.piSessionId && !record.externalPiSessionId && !record.acpSessionId;
+        const warning = saved.historyReadFailed ? 'Some saved conversation history could not be read'
+          : emptyNewConversation ? undefined : saved.historyWarning;
+        return findConversationMessages(query, {...saved, history}, {signal, ...(warning && {warning})});
+      }, signal).catch(() => {
+        signal.throwIfAborted();
+        return {matches: [], complete: false, warning: 'Saved conversation history could not be read consistently; retry search'};
+      });
+      const current = this.index.get(id);
+      this.assertWorkspaceAvailable(current.workspaceId);
+      if (this.live.get(id) !== live || this.opening.has(id) || this.historyStorageScope(current, workspace) !== scope)
+        throw new StaleHistorySnapshotError();
+      await this.assertHistoryReady(current);
+      signal.throwIfAborted();
+      return result;
+    });
+  }
   private async navigationEntries(onlyPinned: boolean, archived = false, workspaceId?: string) {
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
@@ -1627,25 +1682,27 @@ export class Chats implements StructuredSessionPort {
     const env = nativeProfileLaunch(profile).env;
     return {sessionId: record.nativeclaudeSessionId, cwd, env: record.nativeImport ? {...env, CLAUDE_CONFIG_DIR:record.nativeImport.home} : env};
   }
-  private async readProfileClaudeHistory(record: ChatRecord, directory: string) {
+  private async readProfileClaudeHistory(record: ChatRecord, directory: string, signal = this.closeAbort.signal) {
     const {sessionId, cwd, env} = await this.profileClaudeHistoryLocation(record, directory);
     if (record.nativeImport) await this.verifyNativeImport(record, cwd, false);
-    return readClaudeSessionMessages(sessionId, cwd, env, this.closeAbort.signal, record.nativeImport?.path);
+    return readClaudeSessionMessages(sessionId, cwd, env, signal, record.nativeImport?.path);
   }
   /** Project saved messages without opening an Agent or touching its delivery queue. */
-  private async readSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, imageMessageId?: string) {
+  private async readSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, imageMessageId?: string, signal = this.closeAbort.signal) {
     let history: unknown[] = [], historyMessageIds: string[] = [];
     const piUserImageMatches: number[] = [];
     let historyWarning: string | undefined;
+    let historyReadFailed = false;
     let acpTranscript: AcpHistory | undefined;
     const hasDurableSource = record.backend === 'pi' || record.backend === 'pi-rpc' || record.backend === 'acp' ? !!record.sessionFile
       : record.backend === 'codex' ? !!record.codexThreadId : !!record.nativeclaudeSessionId;
     if (!hasDurableSource) historyWarning = 'No durable native history source is recorded for this older conversation; history completeness cannot be verified';
     try {
+      signal.throwIfAborted();
       if (record.nativeImport) await this.verifyNativeImport(record, await this.executionPath(record, workspace), false);
       if (record.backend === 'acp') {
         if (record.sessionFile) {
-          const transcript = await AcpHistory.load(record.sessionFile);
+          const transcript = await AcpHistory.load(record.sessionFile, signal);
           if (!transcript || transcript.state.sessionId !== record.acpSessionId) throw new Error('ACP native session identity does not match its local transcript');
           history = transcript.state.history;
           historyMessageIds = transcript.state.historyIds;
@@ -1657,9 +1714,11 @@ export class Chats implements StructuredSessionPort {
       } else if (record.backend === 'pi' || record.backend === 'pi-rpc') {
         if (record.sessionFile) {
           const nativeId = record.backend === 'pi' ? record.piSessionId : record.externalPiSessionId;
-          const entries = await readPiTranscript(record.sessionFile, nativeId, this.closeAbort.signal);
+          const entries = await readPiTranscript(record.sessionFile, nativeId, signal);
           const branch = externalPiBranch(entries, entries.at(-1)?.id ?? null), sources = piUserInputSources(branch);
-          for (const entry of branch) {
+          for (let i = 0; i < branch.length; i++) {
+            if (i > 0 && i % 1024 === 0) await setImmediate(undefined, {signal});
+            const entry = branch[i]!;
             const note = sources.notes.get(entry.id);
             if (note) { history.push(piUserInputNote(entry, note, record.backend)); historyMessageIds.push(note.deliveryId); }
             const input = sources.users.get(entry.id);
@@ -1675,32 +1734,35 @@ export class Chats implements StructuredSessionPort {
       } else if (record.backend === 'codex' && record.codexThreadId) {
         const directory = join(this.sessionDir, '..', 'codex'), metadata = readCodexMetadata(directory, record.codexThreadId);
         try {
-          const projection = new CodexProjection(directory, record.codexThreadId, { requireSaved: true });
-          const deliveryFor = codexDeliveryLookup(metadata);
-          for (const {item, turnId} of projection.current()) {
-            const source = metadata.inheritedSources?.find(entry => entry.itemId === item.id)?.sourceSessionId ?? record.id;
-            history.push(normalizeCodexItem(item, deliveryFor(turnId, item.id), source));
-            historyMessageIds.push(item.id);
-          }
-          if (!projection.hasCompleteHistory())
+          const {rows, complete} = await readCodexDisplayRows(codexMetadataFile(directory, record.codexThreadId), metadata, signal, record.id);
+          history = rows.map(row => row.message);
+          historyMessageIds = rows.map(row => row.id);
+          if (!complete)
             historyWarning = 'Saved Codex display history may omit native items; no native process was opened to fill the gap';
         } catch (error) {
           if (!record.nativeImport || (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
           const preview = await readImportedCodexHistory(record.nativeImport.path, record.codexThreadId,
-            this.historyStorageScope(record, workspace), this.closeAbort.signal);
+            this.historyStorageScope(record, workspace), signal);
           history = preview.history; historyMessageIds = preview.historyMessageIds;
           historyWarning = importedCodexHistoryWarning;
         }
       } else if (record.backend === 'claude' && record.nativeclaudeSessionId) {
         const metadata = readClaudeMetadata(join(this.sessionDir, '..', 'claude'), record.nativeclaudeSessionId);
         const projection = new ClaudeProjection(() => metadata);
-        const messages = await this.readProfileClaudeHistory(record, record.execution?.path ?? workspace.path);
-        for (const message of messages) projection.put(message);
+        const messages = await this.readProfileClaudeHistory(record, record.execution?.path ?? workspace.path, signal);
+        for (let i = 0; i < messages.length; i++) {
+          if (i > 0 && i % 1024 === 0) await setImmediate(undefined, {signal});
+          projection.put(messages[i]!);
+        }
         const snapshot = projection.snapshot(); history = snapshot.history; historyMessageIds = snapshot.historyMessageIds;
         historyWarning = 'Claude SDK history completeness cannot be verified; no native process was opened';
       }
-    } catch (error) { historyWarning = `Saved history could not be fully read: ${error instanceof Error ? error.message : String(error)}`; }
-    return {history, historyMessageIds, historyWarning, acpTranscript, piUserImageMatches};
+    } catch (error) {
+      signal.throwIfAborted();
+      historyReadFailed = true;
+      historyWarning = `Saved history could not be fully read: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    return {history, historyMessageIds, historyWarning, historyReadFailed, acpTranscript, piUserImageMatches};
   }
 
   private readonly piHistoryPages = new PiHistoryPages();

@@ -11,6 +11,7 @@ use serde_json::json;
 enum ConversationOpen {
     Resume,
     Focus(String),
+    Find(String),
     Latest,
     Connect(NativeSessionPanel),
 }
@@ -889,6 +890,12 @@ impl HiveApp {
         self.show_session_at(id, ConversationOpen::Latest, cx);
     }
 
+    pub(crate) fn open_conversation_find_match(&mut self, message: String, cx: &mut Context<Self>) {
+        if let Some(id) = self.session.as_ref().map(|session| session.id.clone()) {
+            self.show_session_at(id, ConversationOpen::Find(message), cx);
+        }
+    }
+
     pub(crate) fn connect_saved_session(&mut self, panel: NativeSessionPanel, cx: &mut Context<Self>) -> bool {
         if self.loading || !self.connected || self.closing || self.conversation_is_read_only()
             || !self.current_history_access().is_some_and(|access| access.saved_history_passive)
@@ -920,8 +927,11 @@ impl HiveApp {
         self.close_settings();
         self.member_panel = false;
         let opened_around = self.history_navigation.opened_around.clone();
+        let retained_find = matches!(&target, ConversationOpen::Find(_))
+            .then(|| self.conversation_find.take()).flatten();
         self.open_request += 1;
         self.reset_conversation_view(cx);
+        self.conversation_find = retained_find;
         self.unread.remove(&id);
         self.choosing_model = false;
         self.reasoning_picker = Default::default();
@@ -938,7 +948,7 @@ impl HiveApp {
             self.status = "正在打开会话…".into();
         }
         let around_message_id = match &target {
-            ConversationOpen::Focus(id) => Some(id.clone()),
+            ConversationOpen::Focus(id) | ConversationOpen::Find(id) => Some(id.clone()),
             ConversationOpen::Latest => None,
             ConversationOpen::Resume | ConversationOpen::Connect(_) => self.reading_positions.anchor(&request_workspace, &id)
                 .and_then(anchor_message)
@@ -1019,6 +1029,7 @@ impl HiveApp {
                         this.sync_git_workspace(cx);
                         this.event_sequence = open.event_sequence;
                         this.history_page = open.history_page;
+                        let retained_find = this.conversation_find.take();
                         this.restore_conversation_history(open.history_message_ids, open.history, cx);
                         if this.history_page.as_ref().is_some_and(|page| page.has_newer) {
                             this.history_navigation.live_start = Some(this.messages.len());
@@ -1031,7 +1042,9 @@ impl HiveApp {
                             this.agent_event(event, cx);
                         }
                         this.restore_conversation_position(&id, matches!(&target, ConversationOpen::Resume | ConversationOpen::Connect(_)), cx);
+                        this.conversation_find = retained_find;
                         match target {
+                            ConversationOpen::Find(message) => this.finish_conversation_find_jump(&message, cx),
                             ConversationOpen::Focus(message_id) => {
                                 if let Some(message) = this.message_mut(&message_id)
                                     && let Some(failure) = &mut message.failure

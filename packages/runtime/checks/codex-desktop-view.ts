@@ -58,10 +58,10 @@ function startRuntime() {
         reject: error => { clearTimeout(timer); reject(error); } });
       child.stdin.write(JSON.stringify({ id, method, params }) + '\n');
     });
-    if (response.error) throw new Error(response.error.message);
+    if (response.error) throw Object.assign(new Error(response.error.message), {code: response.error.code});
     return response.result;
   }
-  return { rpc,
+  return { rpc, nextRequestId: () => sequence + 1,
     async close() {
       await rpc('shutdown');
       assert.equal((await exited)[0], 0, diagnostics);
@@ -215,6 +215,9 @@ try {
   });
   assert.equal(settled.runId, busy.runId);
   assert.match(JSON.stringify(settled.history), /Preserve this queued delivery/);
+  const liveMatch = await rpc('chat.searchMessages', {sessionId: a, viewRevision: revision, query: 'preserve this queued delivery'});
+  const queuedId = busy.pendingUserInputs.find((item: {text: string}) => item.text === 'Preserve this queued delivery.').deliveryId;
+  assert.ok(liveMatch.matches.some((match: {messageId: string}) => match.messageId === queuedId), 'Live search returns a delivery row ID');
   await clear(++revision);
   assert.equal(alive(executionPeer.pid), true, 'The idle Hive run still owns this process');
 
@@ -245,6 +248,12 @@ try {
   assert.deepEqual((await rpc('chat.mode', {sessionId: b, viewRevision: revision})).options, []);
   assert.deepEqual((await rpc('chat.permissionMode', {sessionId: b, viewRevision: revision})).options, []);
   assert.deepEqual((await rpc('chat.reasoning', {sessionId: b, viewRevision: revision})).levels, []);
+  const query = {sessionId: b, viewRevision: revision, query: 'saved reply for thread-b'};
+  assert.deepEqual((await rpc('chat.searchMessages', query)).matches, [{messageId: historyIds('thread-b')[1]}]);
+  const requestId = runtime.nextRequestId();
+  const cancelled = assert.rejects(rpc('chat.searchMessages', query), {code: 'SEARCH_CANCELLED'});
+  assert.deepEqual(await rpc('chat.search.cancel', {requestId}), {cancelled: true});
+  await cancelled;
   assert.deepEqual(await peers(), peersBeforeSavedBrowse, 'Cold browse and its metadata requests leave the Agent stopped');
   const explicit = await rpc('chat.open', {sessionId: b, viewRevision: ++revision, historyLimit: 1, preferSavedHistory: false});
   assert.equal(explicit.savedHistoryPassive, undefined);

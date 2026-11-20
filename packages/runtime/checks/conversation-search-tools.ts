@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { searchConversation } from '../src/conversation-search.js';
+import { findConversationMessages, searchConversation } from '../src/conversation-search.js';
 import { CodexProjection } from '../src/agents/codex-projection.js';
 import { codexMetadataFile } from '../src/agents/codex-metadata.js';
 import { projectClaudeMessage } from '../src/agents/claude-history.js';
@@ -109,5 +109,29 @@ try {
   assert.match(firstOnly.warning!, /search limit/, 'the result list still warns about later incomplete history');
   const deep:any={}; let node=deep; for(let i=0;i<12;i++) node=node.child={}; node.hidden='too deep';
   assert.equal((await searchConversation(pi,'done',{...opts,liveHistory:{history:[{...huge,toolInput:deep}],historyMessageIds:['large']}})).complete,false);
+
+  const signal = new AbortController().signal;
+  const literal = 'Café  marker';
+  const history = [
+    {role:'user', content:'hidden model input', presentation:{version:1, deliveryId:'delivery', displayText:literal, origin:'user'}},
+    {role:'assistant', content:[{type:'toolCall', id:'pending', name:'Search', arguments:{command:literal}}]},
+    {role:'assistant', content:[{type:'thinking', thinking:literal}, {type:'image', data:'hidden image bytes'}]},
+    {role:'assistant', content:'Café marker'},
+    {role:'assistant', content:literal},
+    {role:'custom', customType:'hive-delivery', content:[{type:'text', text:'hidden system envelope'}],
+      presentation:{version:1, deliveryId:'system-delivery', displayText:'hidden system envelope', origin:'system'}},
+  ];
+  const historyMessageIds = ['native-delivery', 'call-owner', 'thinking', 'single-space', 'active', 'system'];
+  const transcript = {history, historyMessageIds, activeMessage:{messageId:'active', message:{role:'assistant', content:literal.toUpperCase()}}};
+  const thread = await findConversationMessages('  CAFE\u0301  MARKER  ', transcript, {signal});
+  assert.deepEqual(thread.matches, ['delivery', 'pending', 'thinking', 'active'].map(messageId => ({messageId})));
+  assert.equal(thread.complete, false);
+  for (const query of ['hidden model input', 'hidden image bytes', 'hidden system envelope'])
+    assert.deepEqual((await findConversationMessages(query, transcript, {signal})).matches, []);
+  const many = {history: Array.from({length:501}, () => ({role:'user', content:literal})), historyMessageIds: Array.from({length:501}, (_, i) => `row-${i}`)};
+  const capped = await findConversationMessages(literal, many, {signal});
+  assert.deepEqual(capped.matches, many.historyMessageIds.slice(0,500).map(messageId => ({messageId})));
+  assert.equal(capped.limited, true);
+  assert.equal(capped.complete, false);
   console.log('conversation search tool checks passed');
 } finally { await rm(dir,{recursive:true,force:true}); }

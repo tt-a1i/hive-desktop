@@ -13,6 +13,7 @@ use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
+        menu::{DropdownMenu, PopupMenuItem},
         *,
     },
     prelude::FluentBuilder,
@@ -26,6 +27,7 @@ struct GlobalInbox {
     app: WeakEntity<HiveApp>,
     connection: u64,
     projects: HashMap<String, ProjectInbox>,
+    project_filter: Option<String>,
     show_snoozed: bool,
     dismissed: bool,
     scroll: ScrollHandle,
@@ -108,6 +110,7 @@ impl HiveApp {
                 app: parent.downgrade(),
                 connection,
                 projects: HashMap::new(),
+                project_filter: None,
                 show_snoozed: false,
                 dismissed: false,
                 scroll: ScrollHandle::new(),
@@ -175,6 +178,28 @@ impl HiveApp {
 }
 
 impl GlobalInbox {
+    fn select_project(&mut self, project: Option<String>, cx: &mut Context<Self>) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let app = app.read(cx);
+        if self.dismissed
+            || self.project_filter == project
+            || (project.is_some()
+                && selected_project(
+                    &app.workspaces,
+                    app.workspace_removing.as_deref(),
+                    project.as_deref(),
+                )
+                .is_none())
+        {
+            return;
+        }
+        self.project_filter = project;
+        self.scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
     fn poll(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
@@ -333,6 +358,18 @@ fn display_project(workspace: &Workspace, workspaces: &[Workspace]) -> String {
     }
 }
 
+fn selected_project<'a>(
+    workspaces: &'a [Workspace],
+    removing: Option<&str>,
+    selected: Option<&str>,
+) -> Option<&'a Workspace> {
+    let id = selected?;
+    if removing == Some(id) {
+        return None;
+    }
+    workspaces.iter().find(|project| project.id == id)
+}
+
 impl Render for GlobalInbox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut body = v_flex().gap_2().min_w_0();
@@ -341,10 +378,20 @@ impl Render for GlobalInbox {
         };
         let app = parent.read(cx);
         let ready = self.is_current(self.connection, cx);
-        let projects: Vec<_> = app
+        let removing = app.workspace_removing.as_deref();
+        let selected = selected_project(&app.workspaces, removing, self.project_filter.as_deref());
+        if selected.is_none() && self.project_filter.take().is_some() {
+            self.scroll.set_offset(point(px(0.), px(0.)));
+        }
+        let available: Vec<_> = app
             .workspaces
             .iter()
-            .filter(|workspace| app.workspace_removing.as_ref() != Some(&workspace.id))
+            .filter(|workspace| removing != Some(workspace.id.as_str()))
+            .collect();
+        let projects: Vec<_> = available
+            .iter()
+            .copied()
+            .filter(|project| selected.is_none_or(|selected| project.id == selected.id))
             .collect();
         let now = now_ms();
         let mut rows: Vec<_> = if ready {
@@ -380,31 +427,93 @@ impl Render for GlobalInbox {
         {
             Some("正在读取收件箱…")
         } else if rows.is_empty()
-            && self
-                .projects
-                .values()
-                .all(|project| project.errors.is_empty())
+            && projects.iter().all(|workspace| {
+                self.projects
+                    .get(&workspace.id)
+                    .is_none_or(|project| project.errors.is_empty())
+            })
         {
-            Some("暂无需要关注的协作事项")
+            Some(if has_snoozed {
+                "此范围内的协作事项均已暂缓。"
+            } else if selected.is_some() {
+                "此项目暂无需要关注的协作事项。"
+            } else {
+                "暂无需要关注的协作事项"
+            })
         } else {
             None
         };
-        body = body
-            .when(has_snoozed, |body| {
-                body.child(
-                    h_flex()
-                        .justify_end()
-                        .child(toggle_button(self.show_snoozed).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.show_snoozed = !this.show_snoozed;
-                                cx.notify();
-                            },
-                        ))),
-                )
-            })
-            .when_some(status, |body, status| {
-                body.child(inbox_status(tr(status), cx))
-            });
+        if available.len() > 1 || has_snoozed {
+            let mut controls = h_flex()
+                .items_center()
+                .justify_between()
+                .flex_wrap()
+                .gap_2();
+            if available.len() > 1 {
+                let all = tr("全部项目");
+                let title = selected.map_or_else(
+                    || all.to_owned(),
+                    |project| display_project(project, &app.workspaces),
+                );
+                let tooltip = format!("{} · {title}", tr("按项目筛选收件箱"));
+                let choices: Vec<_> = std::iter::once((None, all.to_owned()))
+                    .chain(available.iter().map(|project| {
+                        (
+                            Some(project.id.clone()),
+                            display_project(project, &app.workspaces),
+                        )
+                    }))
+                    .collect();
+                let current = self.project_filter.clone();
+                let inbox = cx.weak_entity();
+                controls = controls.child(
+                    Button::new("global-inbox-project-filter")
+                        .outline()
+                        .compact()
+                        .xsmall()
+                        .icon(Glyph::ListFilter)
+                        .dropdown_caret(true)
+                        .max_w(px(320.))
+                        .label(title)
+                        .tooltip(tooltip.clone())
+                        .accessibility_label(tooltip)
+                        .dropdown_menu(move |menu, window, _| {
+                            let menu = menu
+                                .scrollable(true)
+                                .max_h((window.viewport_size().height - px(200.)).max(px(120.)))
+                                .max_w((window.viewport_size().width - px(48.)).min(px(600.)));
+                            choices.iter().fold(menu, |menu, (id, title)| {
+                                let checked = current == *id;
+                                let id = id.clone();
+                                let inbox = inbox.clone();
+                                menu.item(
+                                    PopupMenuItem::new(title.clone()).checked(checked).on_click(
+                                        move |_, _, cx| {
+                                            let _ = inbox.update(cx, |this, cx| {
+                                                this.select_project(id.clone(), cx);
+                                            });
+                                        },
+                                    ),
+                                )
+                            })
+                        }),
+                );
+            } else {
+                controls = controls.child(div());
+            }
+            if has_snoozed {
+                controls = controls.child(toggle_button(self.show_snoozed).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.show_snoozed = !this.show_snoozed;
+                        cx.notify();
+                    },
+                )));
+            }
+            body = body.child(controls);
+        }
+        body = body.when_some(status, |body, status| {
+            body.child(inbox_status(tr(status), cx))
+        });
 
         let mut list = v_flex()
             .id("global-inbox-list")
@@ -522,5 +631,43 @@ impl Render for GlobalInbox {
             ));
         }
         body.child(list)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_project, selected_project};
+    use crate::protocol::Workspace;
+
+    fn workspace(id: &str, path: &str) -> Workspace {
+        Workspace {
+            id: id.into(),
+            name: "app".into(),
+            path: path.into(),
+        }
+    }
+
+    #[test]
+    fn inbox_project_filter_distinguishes_projects_with_the_same_name() {
+        let projects = [
+            workspace("left", "/projects/left/app"),
+            workspace("right", "/projects/right/app"),
+        ];
+        let selected = selected_project(&projects, None, Some("right")).unwrap();
+        assert_eq!(selected.id, "right");
+        assert_eq!(display_project(selected, &projects), "/projects/right/app");
+        assert_eq!(
+            display_project(&projects[0], &projects),
+            "/projects/left/app"
+        );
+        assert!(selected_project(&projects, None, Some("app")).is_none());
+    }
+
+    #[test]
+    fn inbox_project_filter_falls_back_when_the_selected_project_is_unavailable() {
+        let projects = [workspace("left", "/projects/left/app")];
+        assert!(selected_project(&projects, Some("left"), Some("left")).is_none());
+        assert!(selected_project(&projects, None, Some("right")).is_none());
+        assert!(selected_project(&projects, None, None).is_none());
     }
 }

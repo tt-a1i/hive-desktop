@@ -2,6 +2,8 @@
 
 日期：2026-11-06。
 
+2026-11-21 体验方向更新：持续对照 T3 Code、Cindy 与 Beluga 补齐日常操作细节。当前基线、优先级及每轮验收见[桌面操作体验持续对标](desktop-ux-review.md)。
+
 2026-11-19 范围更新：用户取消语音输入。本地开发分支移除听写入口、系统权限声明和对应打包检查。其他功能及验收范围继续。
 
 2026-11-15 跟进状态：在收尾基准上完成工作树与 `.artifacts` 缓存清理、遗漏修复（`en.json` 全量文案对齐、默认内置/外部 Pi 本地化命名、紧凑 `session-title-menu` 宽度、文本接续首次发送结算/失败后的目标 `chat.open` 自动状态刷新、Windows CI 25 分钟超时与 `replay` 终端冒烟配置）及单账号真实 Native Codex（`codex-cli 0.169.0`）+ 官方 `@agentclientprotocol/codex-acp@2.6.0`（`gpt-6.1-terra` / `openai`）完整协作与冷恢复闭环证据（`run-heBSEm`）。当前 commit 同步交付对应 Mac Release 打包与 5 项离线包内门禁（含 50 项功能检查）验证、更新 `hive-desktop-macos-arm64-candidate.zip` 与 `.artifacts/current-package/receipt.json`，并按用户授权直接替换 `/Applications/Hive Desktop.app`；详细边界见[收尾记录](validation/2026-11-15-round-close.md)。多配置混合协作 `run-VY56qr`、Windows 新一轮 CI 实跑验证、PR [#46](https://github.com/tt-a1i/hive-desktop/pull/46)（保持 Draft）及其余 [#39](https://github.com/tt-a1i/hive-desktop/issues/39) 产品目标保持开放。

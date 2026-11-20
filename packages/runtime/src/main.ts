@@ -520,6 +520,10 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         return {...page, matches: page.matches.map(hit => ({...hit, session: navigationSearchSession(hit.session)}))};
       });
     }
+    case 'chat.searchMessages': {
+      exact(params, ['sessionId', 'viewRevision', 'query']);
+      return runSearch(requestId, signal => chats.searchMessages(text(params, 'sessionId'), viewRevision(params.viewRevision), params.query, signal));
+    }
     case 'chat.search.cancel':
     case 'project.files.search.cancel': {
       exact(params, ['requestId']);
@@ -755,7 +759,7 @@ input.on('line', line => {
         return;
       }
       await writeFrame({ id, error: {
-        code: (method === 'chat.search' || method === 'project.files.search' || method === 'project.files.searchContent') && error instanceof Error && error.name === 'AbortError' ? 'SEARCH_CANCELLED'
+        code: (method === 'chat.search' || method === 'chat.searchMessages' || method === 'project.files.search' || method === 'project.files.searchContent') && error instanceof Error && error.name === 'AbortError' ? 'SEARCH_CANCELLED'
           : error instanceof StaleHistorySnapshotError ? error.code : error instanceof ProjectCopyChangedError ? 'PROJECT_COPY_CHANGED' : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),

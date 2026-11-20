@@ -4,6 +4,8 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 
 ## 当前状态
 
+2026-11-21 持续对照 T3 Code、Cindy 和 Beluga 的实际桌面操作，分批改进首次上手、聊天、协作和文件工作流。每轮差距和验收进展见[桌面操作体验持续对标](docs/desktop-ux-review.md)。
+
 2026-11-19 本地开发与验收继续。macOS 优化包已从原生窗口跑通 Codex 主控与官方 Codex ACP 成员的真实派单、文件汇报和冷恢复。两端用同一个已有账号和各自固定的 GPT-6.1 Terra 配置。Windows 当前版本完成 MSVC 交叉检查，原生窗口的真实模型流程仍待验收。[原生协作验收](docs/validation/2026-11-19-native-acp-collaboration.md)
 
 默认内置 Pi 已接入 1Password 引用，macOS 已验证原生操作及包内回环请求。同一已有账号的两套固定原生 Codex Terra 配置也已通过真实派单、汇报和冷恢复。[1Password 验收](docs/validation/2026-11-19-pi-vault.md) · [配置与 ACP 验收](docs/validation/2026-11-15-agent-profiles-acp.md)
@@ -37,7 +39,7 @@ Hive 桌面客户端，复用 Hive Web 已有的协作能力，为内置 Pi 和�
 - 内置 Pi 和已接入的外部 Agent 均可担任 Orchestrator 或 Worker；选择外部主控时，由该 Agent 直接决策和处理汇报。
 - 首版提供统一聊天界面，包括消息流、工具执行和成员会话；终端作为辅助能力。
 - 接入层允许原生 SDK、原生 RPC 和 ACP 并存，具体后端按实际能力选型。
-- UI/UX 先复刻 T3 Code，主窗口、侧栏、聊天、输入区、菜单、设置与引导均采用同一基准；这取代此前融合 Cindy、Beluga 的安排。Hive 特有的成员和协作功能沿用同套组件与交互。
+- 聊天与首次上手参考 T3 Code，协作待办参考 Cindy，文件操作参考 Beluga。以 Hive 的原生组件实现并用实际流程验收，持续跟踪常用操作的细节差距。
 - 默认进入聊天工作台，团队成员与协作保留固定入口；协作主页、成员管理及全部设置先形成完整可用流程，再持续打磨。2026-11-14 的确认取代早期普通工作区隐藏团队入口的安排，具体实施与验收见 [完整产品计划](docs/product-completeness.md)。
 - 桌面界面使用 Rust、GPUI 与 gpui-kit；macOS 和 Windows 均为首版目标。保留 Node 后台，避免因 UI 选型重写已验证的协作业务。
 - 在本目录独立推进桌面项目，现有 Hive 仓库作为复用来源。

@@ -417,6 +417,9 @@ impl Runtime {
     pub async fn search(&self, params: Value) -> Reply {
         self.cancellable_search("chat.search", "chat.search.cancel", params).await
     }
+    pub(crate) async fn search_conversation_messages(&self, params: Value) -> Reply {
+        self.cancellable_search("chat.searchMessages", "chat.search.cancel", params).await
+    }
     pub(crate) async fn search_project_files(&self, contents: bool, params: Value) -> Reply {
         let method = if contents { "project.files.searchContent" } else { "project.files.search" };
         self.cancellable_search(method, "project.files.search.cancel", params).await

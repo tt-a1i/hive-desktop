@@ -231,6 +231,23 @@ impl HiveApp {
         .detach();
     }
 
+    fn open_imported_welcome_project(
+        &mut self,
+        workspace_id: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.showing_welcome_guide
+            || self.welcome_busy()
+            || self.workspace_removing.is_some()
+            || !self.workspaces.iter().any(|item| item.id == workspace_id)
+        {
+            return;
+        }
+        self.welcome_setup.preferred_workspace = Some(workspace_id.to_owned());
+        self.finish_welcome_setup(window, cx);
+    }
+
     pub(super) fn render_welcome_import(&self, cx: &Context<Self>) -> Div {
         let empty = ProjectImport::default();
         let import = &self.welcome_setup.project_import;
@@ -512,23 +529,58 @@ impl HiveApp {
                             .child(details),
                     )
                     .when_some(result, |row, result| {
+                        let complete = result.complete();
+                        let workspace = result.workspace.as_ref().filter(|_| complete);
                         row.child(
-                            div()
-                                .text_xs()
-                                .text_color(if result.complete() {
-                                    Color::Success.get(cx)
-                                } else {
-                                    Color::Error.get(cx)
-                                })
-                                .child(format!(
-                                    "{} {} · {} {} · {} {}",
-                                    tr("本次导入"),
-                                    result.imported,
-                                    tr("已导入"),
-                                    result.already_imported,
-                                    tr("未导入"),
-                                    result.skipped,
-                                )),
+                            h_flex()
+                                .items_center()
+                                .flex_wrap()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(if complete {
+                                            Color::Success.get(cx)
+                                        } else {
+                                            Color::Error.get(cx)
+                                        })
+                                        .child(format!(
+                                            "{} {} · {} {} · {} {}",
+                                            tr("本次导入"),
+                                            result.imported,
+                                            tr("已导入"),
+                                            result.already_imported,
+                                            tr("未导入"),
+                                            result.skipped,
+                                        )),
+                                )
+                                .when_some(workspace, |details, workspace| {
+                                    let workspace_id = workspace.id.clone();
+                                    details.child(
+                                        Button::new(format!(
+                                            "welcome-open-imported-{}",
+                                            project.id
+                                        ))
+                                        .outline()
+                                        .small()
+                                        .label(tr("打开项目"))
+                                        .accessibility_label(format!(
+                                            "{} · {}",
+                                            tr("打开项目"),
+                                            project.name
+                                        ))
+                                        .disabled(!enabled)
+                                        .on_click(
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.open_imported_welcome_project(
+                                                    &workspace_id,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }),
+                                        ),
+                                    )
+                                }),
                         )
                         .when_some(result.error.as_ref(), |row, error| {
                             row.child(

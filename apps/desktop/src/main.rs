@@ -82,6 +82,8 @@ actions!(
         OpenCommandPalette,
         OpenConversationFind,
         CloseConversationFind,
+        NextConversationMatch,
+        PreviousConversationMatch,
         NextSessionResult,
         PreviousSessionResult,
         NewSessionShortcut,
@@ -151,6 +153,8 @@ fn main() {
             cx.bind_keys(keybindings::startup_bindings(cx));
             cx.bind_keys([
                 KeyBinding::new("escape", CloseConversationFind, Some("HiveConversation")),
+                KeyBinding::new("enter", NextConversationMatch, Some("HiveConversationFind")),
+                KeyBinding::new("shift-enter", PreviousConversationMatch, Some("HiveConversationFind")),
                 KeyBinding::new("down", NextSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("up", PreviousSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("down", NextSessionResult, Some("HiveProjectFileSearch")),
