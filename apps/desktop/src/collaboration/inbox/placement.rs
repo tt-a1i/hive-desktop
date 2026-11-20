@@ -286,6 +286,7 @@ mod tests {
                 wake: None,
                 priority,
                 updated_at,
+                activity_at: updated_at,
             },
         )
     }

@@ -112,11 +112,13 @@ function text(params: Record<string, unknown>, name: string): string {
 function exact(params: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(params).some(key => !allowed.includes(key))) throw new Error('Unexpected request field');
 }
-function navigationSearchSession(session: ChatRecord) {
+function navigationSearchSession(session: ChatRecord, includeInboxActivity = false) {
   const {id, title, customTitle, pinned, pinRank, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
-    backend, execution, scratch, profile} = session;
+    backend, execution, scratch, profile, worktreeReleased} = session;
   return {id, title, customTitle, pinned, pinRank, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
-    backend, execution, scratch, profile};
+    backend, execution, scratch, profile, worktreeReleased,
+    ...(includeInboxActivity && session.inboxReply?.receivedAt !== undefined
+      && {inboxReply: {revision: session.inboxReply.revision, receivedAt: session.inboxReply.receivedAt}})};
 }
 function viewRevision(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1)
@@ -540,7 +542,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'git.pr.update': return chats.gitPrApply(text(params, 'workspaceId'), 'update', params);
     case 'project.files.list': return chats.projectFilesList(text(params, 'workspaceId'), params.directory, params.offset, params.sessionId);
     case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive));
-    case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.wholeWord));
+    case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.wholeWord, params.regex));
     case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.resolveOpen': return chats.projectFilesResolveOpen(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId, params.expectedSha256);
@@ -552,11 +554,15 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       const memberId = params.memberId === undefined ? undefined : text(params, 'memberId');
       const backend = params.backend;
       const archiveSnapshot = params.archiveSnapshot;
+      const activitySinceMs = params.activitySinceMs;
       if (backend !== undefined && !isAgentDriver(backend)) throw new TypeError('Unsupported chat backend');
       if (archiveSnapshot !== undefined
         && (typeof archiveSnapshot !== 'string' || !/^[\da-f]{64}$/.test(archiveSnapshot)))
         throw new TypeError('Invalid archive snapshot');
-      if ((limit !== undefined || memberId !== undefined || backend !== undefined || archiveSnapshot !== undefined)
+      if (activitySinceMs !== undefined
+        && (typeof activitySinceMs !== 'number' || !Number.isSafeInteger(activitySinceMs) || activitySinceMs < 0))
+        throw new TypeError('Invalid inbox activity cutoff');
+      if ((limit !== undefined || memberId !== undefined || backend !== undefined || archiveSnapshot !== undefined || activitySinceMs !== undefined)
         && (params.archived !== true || params.navigationOnly !== true || params.query !== ''))
         throw new TypeError('Scoped archive paging requires an empty archived navigation query');
       if (limit !== undefined && (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 100))
@@ -565,9 +571,11 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return runSearch(requestId, async signal => {
         const page = await chats.search(params.query, params.archived, params.offset, params.workspaceId, signal,
           {...(limit !== undefined && {limit}), ...(memberId !== undefined && {memberId}),
-            ...(backend !== undefined && {backend}), ...(archiveSnapshot !== undefined && {archiveSnapshot})});
+            ...(backend !== undefined && {backend}), ...(archiveSnapshot !== undefined && {archiveSnapshot}),
+            ...(activitySinceMs !== undefined && {activitySinceMs})});
         if (!params.navigationOnly) return page;
-        return {...page, matches: page.matches.map(hit => ({...hit, session: navigationSearchSession(hit.session)}))};
+        return {...page, matches: page.matches.map(hit => ({...hit,
+          session: navigationSearchSession(hit.session, activitySinceMs !== undefined)}))};
       });
     }
     case 'chat.searchMessages': {
@@ -591,6 +599,12 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     }
     case 'chat.execution': return chats.sessionExecution(text(params, 'sessionId'));
     case 'chat.worktrees.pending': return chats.pendingWorktrees(text(params, 'workspaceId'));
+    case 'chat.worktrees.release': {
+      exact(params, ['workspaceId', 'sessionId', 'expectedOwnerSessionId']);
+      const workspaceId = text(params, 'workspaceId'), id = text(params, 'sessionId');
+      return chats.releaseWorktreeUse(workspaceId, id, text(params, 'expectedOwnerSessionId'),
+        () => terminal.hasActiveSessionShell(workspaceId, id));
+    }
     case 'chat.worktrees.removal.preview':
     case 'chat.worktrees.removal.apply': {
       const apply = method === 'chat.worktrees.removal.apply';

@@ -9,7 +9,7 @@ const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
  * Its alternate project directories, worktrees and long-path search remain
  * available through the official reader, without a seekable source here.
  */
-export async function resolveClaudeTranscript(sessionId: string, cwd: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
+export async function resolveClaudeTranscript(sessionId: string, cwd: string, env: NodeJS.ProcessEnv, retainedWorktreeCwd = false): Promise<string | undefined> {
   if (!uuid.test(sessionId) || !isAbsolute(cwd) || env.CLAUDE_CODE_PROJECT_DIR_NAME) return;
   if (process.platform === 'win32' && Object.keys(env).some(key =>
     ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_PROJECT_DIR_NAME', 'USERPROFILE'].includes(key.toUpperCase()) && key !== key.toUpperCase())) return;
@@ -17,7 +17,9 @@ export async function resolveClaudeTranscript(sessionId: string, cwd: string, en
   const config = (env.CLAUDE_CONFIG_DIR ?? join(userHome, '.claude')).normalize('NFC');
   if (!isAbsolute(config)) return;
   try {
-    const realCwd = await realpath(cwd);
+    // A released record keeps the canonical cwd captured by the managed
+    // worktree. History can outlive that directory and must ignore replacements.
+    const realCwd = retainedWorktreeCwd ? cwd : await realpath(cwd);
     const nativeCwd = process.platform === 'darwin' ? realCwd.normalize('NFC') : realCwd;
     const project = nativeCwd.replace(/[^a-zA-Z0-9]/g, '-');
     if (project.length > 200) return;
@@ -34,8 +36,8 @@ export async function resolveClaudeTranscript(sessionId: string, cwd: string, en
 }
 
 /** Check the exact imported input on both sides of SDK reads. Appends keep its identity. */
-export async function claudeTranscriptIdentity(path: string, sessionId: string, cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
-  if (await resolveClaudeTranscript(sessionId, cwd, env) !== path)
+export async function claudeTranscriptIdentity(path: string, sessionId: string, cwd: string, env: NodeJS.ProcessEnv, retainedWorktreeCwd = false): Promise<string> {
+  if (await resolveClaudeTranscript(sessionId, cwd, env, retainedWorktreeCwd) !== path)
     throw new Error('The imported Claude conversation’s original transcript is unavailable');
   const info = await lstat(path, {bigint: true});
   if (!info.isFile() || info.size === 0n)

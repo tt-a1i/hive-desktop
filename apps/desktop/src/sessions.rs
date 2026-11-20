@@ -866,6 +866,8 @@ impl HiveApp {
         self.connected
             && !self.closing
             && !session.archived
+            && !session.worktree_released
+            && !self.worktree_release_loading.contains(&session.id)
             && !self.removed_sessions.contains(&session.id)
             && !self.session_archive_loading.contains(&session.id)
             && self.workspace_removing.as_ref() != Some(&session.workspace_id)

@@ -121,6 +121,8 @@ impl HiveApp {
     fn writable_session_draft(&self, session: &Session, key: &str) -> bool {
         self.connected
             && !self.closing
+            && !session.worktree_released
+            && !self.worktree_release_loading.contains(&session.id)
             && self.draft_store.is_some()
             && !self.removed_sessions.contains(&session.id)
             && !self.inflight_inputs.contains_key(&session.id)

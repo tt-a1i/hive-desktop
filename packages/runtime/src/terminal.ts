@@ -41,6 +41,9 @@ export class Terminals {
     if (!Array.isArray(runs)) throw new Error('Invalid workspace terminal list');
     return runs.some(run => run.agent_id.startsWith(`${workspaceId}:`) && run.agent_id.endsWith(':shell') && ['starting', 'running'].includes(run.status));
   }
+  async hasActiveSessionShell(workspaceId: string, sessionId: string): Promise<boolean> {
+    return (await this.ownedRuns(workspaceId, sessionId)).length > 0;
+  }
   /** Run ownership comes from Hive's live shell registry, independent of source availability. */
   private async ownedRuns(workspaceId: string, sessionId?: string): Promise<ShellRun[]> {
     if (!workspaceId.trim()) throw new Error('workspaceId is required');

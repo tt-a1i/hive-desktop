@@ -267,8 +267,23 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 验证了 `cat`、`scatter cat`、带表情的 `cat`、下划线、CJK 相邻字母及 `C++`。整词与区分大小写一起开启后，`CAT` 只返回大写命中。第二页切换整词回到第一页，原预览保留，命中打开准确的行。证据在 `.artifacts/whole-word-qa`。
 - 263 项 Rust 测试通过，1 项原有忽略。TypeScript、Windows x64 MSVC 交叉检查、工作树、终端、归档分页、Codex 冷启动与历史回退专项通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十一批
+
+本轮从 Hive Desktop `284806e` 开始。参考 T3 Code `ad4d0f0`、Cindy `e035080`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **解除会话对共用工作树的引用。** 从会话菜单确认后，历史、草稿和已保存的附件仍可阅读，草稿可以选择和复制。进行中的会话或仍开着专属终端的会话须先结束使用。所有引用都解除后，原会话可重新检查工作树是否能清理。 [T3 Code 管理已结束工作占用的工作树空间](https://github.com/pingdotgg/t3code/blob/ad4d0f0659b0b147591724999b0e2f1d59d4b42e/docs/user/thread-sidebar.md#L163-L182)
+- **跨项目收件箱按最近活跃时间筛选。** 提供全部时间、最近 1、3、7、30 天，和项目、成员、后端一起使用。已处理先按时间筛选再分页，同一次分页使用同一截止时间。没有活动时间的事项仍可从全部时间和新事项查看。 [Cindy 最近活跃菜单](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/apps/desktop/src/renderer/features/cc-agent/sidebar/SidebarFilterPopover.tsx#L129-L135)
+- **文件正文支持正则搜索。** `.*` 可与大小写和整词匹配一起使用，结果保留原文件行号和高亮。`^$` 可以跳到真实空行。正则在独立 Worker 中处理，切换条件或工作树能取消前一轮，超时后可以继续搜索。 [Beluga 正则筛选](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/src/core/workspace-files.ts#L163-L182)
+
+- macOS 从会话菜单分别解除一个普通会话和一个归档会话的引用。解除第一个后清理仍被阻止。解除第二个后，清理对话框移除了临时工作树，项目目录仍在。重启后从只读输入框复制了原草稿，打字后内容保持，原附件仍可见。证据在 `.artifacts/worktree-release-qa`。
+- 运行时用真实 Git 工作树和终端验证活动引用拒绝解除、最后一个引用解除后才能清理、已保存附件的字节保持，以及物理清理和重启后的 Claude 历史分页与搜索。相同原生会话 ID 但不同原目录的历史会被拒绝。使用了本地夹具，无模型请求。证据在 `.artifacts/batch21-runtime-worktree-release.log`。
+- macOS 在两个同名会话中，最近 1 天保留两小时前刚收到回复的会话，排除两天前的记录。已处理翻过第 20 条时两次请求使用完全相同的截止时间，共返回 24 条。实际组合 Atlas 项目、reviewer 成员、Pi 后端与最近 1 天，重启后仍保留。证据在 `.artifacts/activity-inbox-qa`。
+- macOS 对同一个表达式切换字面和正则搜索，在第 2 页打开原文件第 103 行。输入 `[` 后核对无障碍树中的错误文案，改回有效表达式再切到工作树 A，打开 `item-777` 命中并读到该工作树独有的内容。`^$` 在结果中列出真实空行。证据在 `.artifacts/regex-search-qa`。
+- 编译后的运行时搜索 45,000 个小文件，4 秒返回超时，同一后台进程随即响应下一次请求。专项覆盖取消、Unicode 高亮、CRLF 空行及工作树范围。收件箱专项覆盖回复时间跨重启保留、同一截止时间翻页，以及旧分页凭证与新截止时间不匹配时拒绝续页。
+- 265 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建和 Windows x64 MSVC 交叉检查通过。运行时归档包含已编译的正则 Worker。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **解除会话对共用工作树的引用。** 保留原会话的可读历史，明确解除后可进行的操作。先用两个引用验收，解除其中一个时清理仍受保护，最后一个解除后原所有者可以重新预检。 [T3 Code 任务结束后的工作树清理](https://github.com/pingdotgg/t3code/blob/338352dee2f43079482e054e8229a2ba055641d9/docs/user/thread-sidebar.md#L163-L180)
-- **按最近活跃时间筛选跨项目收件箱。** 用不同日期的两个同名会话和一个缺少活动时间的派单验收，与项目、成员和后端条件组合，复验已处理分页、重启和回到全部时间。 [Cindy 组合筛选](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L19-L23)
-- **正文搜索支持正则表达式。** 验收字面模式原样工作、无效表达式清楚报错、超时或切换工作树后旧查询无法覆盖新结果。有效查询的高亮与打开位置使用原始行。 [Beluga 正则筛选](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/src/core/workspace-files.ts#L163-L182)
+- **在独立工作树提交后立即打开下一草稿。** Hive 已有「发送并新建草稿」快捷键，独立工作树会话尚不能使用。用原工作树提交过修改的场景验收，下一草稿从原始基点获得自己的工作树和分支，能立即编辑。 [T3 Code 后台发送](https://github.com/pingdotgg/t3code/blob/ad4d0f0659b0b147591724999b0e2f1d59d4b42e/docs/user/thread-sidebar.md#L49-L54)
+- **一次清除收件箱筛选。** 目前需要分别重置四个菜单。将四项清空后回到全部范围的第一页，保持各区段的展开状态和草稿。延迟一个旧范围回包来验证列表始终显示当前范围。 [Cindy 收件箱筛选重置](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/docs/product-rules/task-inbox.md#L19-L24)
+- **文件名搜索支持正则。** 在文件名模式输入 `^src/.*\.test\.ts$`，用项目和独立工作树里的同名文件复验路径范围、切换、翻页和键盘打开。 [Beluga 名称匹配整个相对路径](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/src/core/workspace-files.ts#L377-L387)

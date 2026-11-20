@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { listProjectDirectory, previewProjectFile, searchProjectContents, searchProjectFiles, resolveProjectFile, readProjectFile } from '../src/project-files.js';
+import { REGEX_INVALID, REGEX_TIMEOUT, startProjectRegexSearch } from '../src/project-search-regex.js';
 
 const dir = await mkdtemp(join(tmpdir(), 'hive project files '));
 try {
@@ -135,6 +136,56 @@ try {
     assert.deepEqual(result.matches.map(hit => hit.line), lines, query);
   }
   assert.deepEqual((await searchProjectFiles(wholeRoot, 'ord')).paths, [wordPath]);
+  const regexRoot = join(dir, 'regular expressions');
+  await mkdir(regexRoot);
+  const regexPath = 'Regex.txt';
+  await writeFile(join(regexRoot, regexPath), [
+    '🙂 Cafe\u0301 [42]', 'scatter cat cat', 'cat_fox', 'CAT', 'item-12 extra', ...Array(102).fill('item-42'),
+  ].join('\r\n'));
+  const regexSearch = (query: string, offset = 0, caseSensitive = false, wholeWord = false) =>
+    searchProjectContents(regexRoot, query, offset, undefined, caseSensitive, wholeWord, true);
+  const regexFirst = await regexSearch('^item-[0-9]+$');
+  const regexLast = await regexSearch('^item-[0-9]+$', 100);
+  assert.equal(regexFirst.total, 102);
+  assert.equal(regexLast.total, regexFirst.total);
+  assert.deepEqual([...regexFirst.matches, ...regexLast.matches].map(({path, line}) => ({path, line})),
+    Array.from({length: 102}, (_, i) => ({path: regexPath, line: 6 + i})));
+  assert.deepEqual(regexLast.matches[0]?.snippet?.ranges, [[0, 7]]);
+  assert.equal((await searchProjectContents(regexRoot, '^item-[0-9]+$')).total, 0);
+  const rawRegex = (await regexSearch('Cafe\\p{Mark}')).matches[0]?.snippet;
+  assert.equal(rawRegex?.text, '🙂 Cafe\u0301 [42]');
+  assert.deepEqual(rawRegex?.ranges, [[5, 11]]);
+  assert.equal((await regexSearch('Café')).total, 0);
+  const wholeRegex = await regexSearch('c[ae]t', 0, false, true);
+  assert.deepEqual(wholeRegex.matches.map(hit => hit.line), [2, 4]);
+  assert.deepEqual(wholeRegex.matches[0]?.snippet?.ranges, [[8, 11], [12, 15]]);
+  assert.deepEqual((await regexSearch('c[ae]t', 0, true, true)).matches.map(hit => hit.line), [2]);
+  const anchors = await regexSearch('^');
+  assert.equal(anchors.total, 107);
+  assert.equal(anchors.matches[0]?.snippet?.text, '🙂 Cafe\u0301 [42]');
+  assert.deepEqual(anchors.matches[0]?.snippet?.ranges, []);
+  assert.deepEqual((await regexSearch('(?=item)')).matches.slice(0, 2).map(({path, line, snippet}) => ({path, line, ranges: snippet?.ranges})), [
+    {path: regexPath, line: 5, ranges: []}, {path: regexPath, line: 6, ranges: []},
+  ]);
+  assert.deepEqual((await regexSearch('(?=🙂)|Cafe\\p{Mark}')).matches[0]?.snippet?.ranges, [[5, 11]]);
+  assert.deepEqual((await regexSearch('^|[0-9]+|$')).matches[0]?.snippet?.ranges, [[13, 15]]);
+  await writeFile(join(regexRoot, 'blank.txt'), '\r\ntext\r\n\r\n');
+  assert.deepEqual((await regexSearch('^$')).matches, [{path: 'blank.txt', line: 1}, {path: 'blank.txt', line: 3}]);
+  await assert.rejects(regexSearch('['), {message: REGEX_INVALID});
+  const controller = new AbortController();
+  const cancelWorker = await startProjectRegexSearch('.', true, undefined, 8, controller.signal);
+  const cancelledScan = cancelWorker.scan('a\n'.repeat(500_000), 0, 1);
+  controller.abort();
+  await assert.rejects(cancelledScan, {name: 'AbortError'});
+  await cancelWorker.close();
+  const shortBudgetWorker = await startProjectRegexSearch('.', true, undefined, 8, undefined, 1);
+  await assert.rejects(shortBudgetWorker.scan('a\n'.repeat(500_000), 0, 1), {message: REGEX_TIMEOUT});
+  await shortBudgetWorker.close();
+  const supersededWorker = await startProjectRegexSearch('.', true, undefined, 8);
+  const latestWorker = await startProjectRegexSearch('.', true, undefined, 8);
+  await assert.rejects(supersededWorker.scan('a', 0, 1), {name: 'AbortError'});
+  assert.equal((await latestWorker.scan('a', 0, 1)).total, 1);
+  await latestWorker.close();
   const namedPath = 'nested/Cafe\u0301-ReadMe.md';
   await writeFile(join(repo, namedPath), 'case-sensitive path fixture');
   const [returnedPath] = (await searchProjectFiles(repo, 'café-readme')).paths;

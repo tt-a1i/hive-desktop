@@ -687,6 +687,7 @@ pub(crate) struct FileTreeExpansions {
 struct SearchFlags {
     case_sensitive: bool,
     whole_word: bool,
+    regex: bool,
 }
 
 impl FileTreeExpansions {
@@ -876,6 +877,7 @@ impl HiveApp {
         self.connected
             && !self.closing
             && !self.loading
+            && !self.current_worktree_released()
             && self.runtime.is_some()
             && self.workspace.is_some()
     }
@@ -1604,7 +1606,12 @@ impl FileBrowser {
         self.search_loading = false;
         self.search_scroll = ScrollHandle::new();
         cx.notify();
-        let query = self.query.read(cx).value().trim().to_owned();
+        let input = self.query.read(cx).value();
+        let query = if self.contents && self.search_flags.regex && !input.trim().is_empty() {
+            input.to_string()
+        } else {
+            input.trim().to_owned()
+        };
         self.content_results
             .set_query((self.contents && !query.is_empty()).then(|| ContentQuery {
                 scope_generation: self.scope_generation,
@@ -1624,6 +1631,7 @@ impl FileBrowser {
         );
         if contents {
             params["wholeWord"] = json!(self.search_flags.whole_word);
+            params["regex"] = json!(self.search_flags.regex);
         }
         let scope_generation = self.scope_generation;
         let search_generation = self.search_generation;
@@ -1664,7 +1672,18 @@ impl FileBrowser {
                             this.scroll_to_content_cursor();
                         }
                     }
-                    Err(error) => this.search_error = Some(FileError::Request(error)),
+                    Err(error) => {
+                        this.search_error = Some(match error.as_str() {
+                            "Invalid regular expression." => FileError::Owned("无效的正则表达式。"),
+                            "Regular expression search timed out." => {
+                                FileError::Owned("正则搜索超时，请缩小搜索范围或简化表达式。")
+                            }
+                            "Regular expression search is temporarily unavailable." => {
+                                FileError::Owned("正则搜索暂不可用，请重试。")
+                            }
+                            _ => FileError::Request(error),
+                        })
+                    }
                 }
                 cx.notify();
             });
@@ -1698,6 +1717,25 @@ impl FileBrowser {
             self.set_search_flags(
                 SearchFlags {
                     whole_word: !self.search_flags.whole_word,
+                    ..self.search_flags
+                },
+                event,
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn toggle_search_regex(
+        &mut self,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.contents {
+            self.set_search_flags(
+                SearchFlags {
+                    regex: !self.search_flags.regex,
                     ..self.search_flags
                 },
                 event,
@@ -3106,14 +3144,16 @@ impl FileBrowser {
             ];
         }
         if let Some(error) = &self.search_error {
+            let notice = error.text();
             return vec![
                 div()
                     .id("browser-search-error")
                     .p_2()
                     .text_sm()
-                    .role(Role::Status)
+                    .role(Role::Alert)
+                    .aria_label(notice.clone())
                     .text_color(Color::Error.get(cx))
-                    .child(error.text())
+                    .child(notice)
                     .into_any_element(),
                 Button::new("browser-retry-search")
                     .ghost()
@@ -3911,17 +3951,29 @@ impl Render for FileBrowser {
                                 .on_click(cx.listener(Self::toggle_search_case)),
                         )
                         .when(self.contents, |controls| {
-                            controls.child(
-                                Button::new("browser-whole-word")
-                                    .outline()
-                                    .small()
-                                    .label("ab")
-                                    .tooltip(tr("整词匹配"))
-                                    .accessibility_label(tr("整词匹配"))
-                                    .selected(self.search_flags.whole_word)
-                                    .toggled(self.search_flags.whole_word)
-                                    .on_click(cx.listener(Self::toggle_search_whole_word)),
-                            )
+                            controls
+                                .child(
+                                    Button::new("browser-whole-word")
+                                        .outline()
+                                        .small()
+                                        .label("ab")
+                                        .tooltip(tr("整词匹配"))
+                                        .accessibility_label(tr("整词匹配"))
+                                        .selected(self.search_flags.whole_word)
+                                        .toggled(self.search_flags.whole_word)
+                                        .on_click(cx.listener(Self::toggle_search_whole_word)),
+                                )
+                                .child(
+                                    Button::new("browser-search-regex")
+                                        .outline()
+                                        .small()
+                                        .label(".*")
+                                        .tooltip(tr("正则表达式"))
+                                        .accessibility_label(tr("正则表达式"))
+                                        .selected(self.search_flags.regex)
+                                        .toggled(self.search_flags.regex)
+                                        .on_click(cx.listener(Self::toggle_search_regex)),
+                                )
                         }),
                 )
                 .when(

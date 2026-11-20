@@ -40,14 +40,17 @@ pub struct Workspace {
     pub path: String,
 }
 #[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InboxReply {
     pub revision: u64,
+    pub received_at: Option<u64>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InboxReplyEvent {
     pub workspace_id: String,
     pub revision: u64,
+    pub received_at: Option<u64>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +75,8 @@ pub struct Session {
     pub backend: Backend,
     #[serde(default)]
     pub execution: Option<SessionExecution>,
+    #[serde(default)]
+    pub worktree_released: bool,
     #[serde(default)]
     pub execution_path: Option<String>,
     #[serde(default)]

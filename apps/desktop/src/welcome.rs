@@ -113,6 +113,7 @@ impl HiveApp {
             .find(|ws| Some(&ws.id) == self.workspace.as_ref())
             .cloned();
         let execution = self.session.as_ref().and_then(|session| session.execution.as_ref());
+        let worktree_released = self.current_worktree_released();
         let shared_worktree = execution.is_some_and(|execution| execution.owner_session_id.is_some());
         let reusable_worktree = self.shared_worktree_draft_source().map(|source| source.id.clone());
         let can_reuse_worktree = self.can_create_shared_worktree_draft();
@@ -174,7 +175,9 @@ impl HiveApp {
                     .gap_2()
                     .child({
                         if let Some(ws) = active_project.as_ref() {
-                            let folder_label = if shared_worktree {
+                            let folder_label = if worktree_released {
+                                format!("{} · {}", tr("已解除共用工作树"), ws.name)
+                            } else if shared_worktree {
                                 format!("{} · {}", tr("共用工作树"), ws.name)
                             } else if execution.is_some() {
                                 format!("{} · {}", tr("独立工作树"), ws.name)

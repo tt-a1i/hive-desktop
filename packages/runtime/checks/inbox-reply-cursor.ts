@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {mkdir, mkdtemp, readFile, rm} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createInterface} from 'node:readline';
@@ -17,7 +17,7 @@ const peer = fileURLToPath(new URL('./fixtures/acp-runtime-peer.cjs', import.met
 const entry = fileURLToPath(new URL('../dist/main.js', import.meta.url));
 
 function launch() {
-  const events: Array<{type: string; sessionId: string; messageId?: string; message?: {role: string}; inboxReply?: {workspaceId: string; revision: number}}> = [];
+  const events: Array<{type: string; sessionId: string; messageId?: string; message?: {role: string}; inboxReply?: {workspaceId: string; revision: number; receivedAt?: number}}> = [];
   const processHandle = spawn(process.execPath, [entry], {
     env: {...process.env, HIVE_DESKTOP_DATA_DIR: dataDir, PI_CODING_AGENT_DIR: join(root, 'pi'), PI_OFFLINE: '1'},
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -62,6 +62,7 @@ function launch() {
 }
 
 async function reply(wire: ReturnType<typeof launch>, workspaceId: string, sessionId: string, revision: number) {
+  const sentAt = Date.now();
   await wire.request('chat.prompt', {sessionId, text: `Test reply ${revision}`});
   for (let count = 0; count < 120; count++) {
     const event = wire.events.find(event => event.type === 'message_end'
@@ -70,7 +71,9 @@ async function reply(wire: ReturnType<typeof launch>, workspaceId: string, sessi
       assert.equal(event.message?.role, 'assistant');
       assert.equal(event.inboxReply?.workspaceId, workspaceId);
       assert.ok(event.messageId);
-      return {revision, messageId: event.messageId};
+      const receivedAt = event.inboxReply?.receivedAt;
+      assert.ok(receivedAt !== undefined && receivedAt >= sentAt && receivedAt <= Date.now());
+      return {revision, messageId: event.messageId, receivedAt};
     }
     await delay(30);
   }
@@ -124,7 +127,29 @@ try {
   await assert.rejects(wire.request('chat.archive', {sessionId: id, archived: true,
     inbox: {workspaceId: workspace.id, replyRevision: first.revision}}), /ARCHIVE_INBOX_STALE/);
   assert.equal(Boolean((await sessions(wire)).find(chat => chat.id === id)?.archived), false);
-  console.log('INBOX_REPLY_CURSOR_OK: exact finalized ACP replies, passive cold list, rename and later reply');
+
+  await wire.close();
+  wire = undefined;
+  const index = join(dataDir, 'chats', 'index.json');
+  const archived: ChatRecord[] = JSON.parse(await readFile(index, 'utf8'));
+  for (const record of archived) {
+    if (record.id === id || record.id === other.id) {
+      record.updatedAt = first.receivedAt - 2 * 86_400_000;
+      record.archived = true;
+    }
+  }
+  await writeFile(index, JSON.stringify(archived));
+  wire = launch();
+  await wire.request('initialize');
+  const query = {query: '', archived: true, navigationOnly: true, workspaceId: workspace.id,
+    backend: 'acp', limit: 1, activitySinceMs: second.receivedAt};
+  const page = await wire.request<{total: number; matches: {session: ChatRecord}[]}>('chat.search', query);
+  assert.equal(page.total, 1);
+  assert.deepEqual(page.matches.map(({session}) => session.id), [id]);
+  assert.deepEqual(page.matches[0]?.session.inboxReply, {revision: second.revision, receivedAt: second.receivedAt});
+  const afterBoundary = await wire.request<{total: number}>('chat.search', {...query, activitySinceMs: second.receivedAt + 1});
+  assert.equal(afterBoundary.total, 0);
+  console.log('INBOX_REPLY_CURSOR_OK: exact finalized ACP replies, cold activity timestamps and archive filtering at the inclusive boundary');
 } finally {
   await wire?.close();
   await rm(root, {recursive: true, force: true});

@@ -231,8 +231,11 @@ impl HiveApp {
             .then_some(access)
     }
     pub(crate) fn conversation_is_read_only(&self) -> bool {
-        self.current_history_access()
-            .is_some_and(|access| access.read_only)
+        self.current_worktree_released()
+            || self.current_history_access().is_some_and(|access| access.read_only)
+    }
+    pub(crate) fn current_worktree_released(&self) -> bool {
+        self.session.as_ref().is_some_and(|session| session.worktree_released)
     }
     pub(crate) fn reconcile_active_initialization(&mut self, cx: &mut Context<Self>) {
         if self.connected

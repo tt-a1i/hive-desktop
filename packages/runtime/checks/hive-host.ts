@@ -23,7 +23,7 @@ const source = {listActionableDispatchMessages(workspaceId: string) {
 }};
 assert.deepEqual(withInboxMessageSenders(snapshot, 'workspace-a', source), {
 	...snapshot,
-	attention: [{...olderQuestion, message_sender_id: 'worker'}, ...snapshot.attention.slice(1)],
+	attention: [{...olderQuestion, message_sender_id: 'worker', message_created_at: 1}, ...snapshot.attention.slice(1)],
 });
 assert.equal(withInboxMessageSenders(snapshot, 'workspace-b', source), snapshot);
 const dispatchId = '123e4567-e89b-12d3-a456-426614174000';

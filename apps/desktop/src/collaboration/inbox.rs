@@ -358,6 +358,7 @@ struct Attention {
     worker_id: Option<String>,
     worker_name: Option<String>,
     message_sender_id: Option<String>,
+    message_created_at: Option<u64>,
     dispatch_backend: Option<Backend>,
     submitted_at: Option<u64>,
 }
@@ -404,6 +405,21 @@ struct Entry {
     wake: Option<Wake>,
     priority: Priority,
     updated_at: u64,
+    activity_at: u64,
+}
+
+fn session_inbox_activity(session: &Session) -> u64 {
+    (session.updated_at.max(0) as u64).max(
+        session
+            .inbox_reply
+            .as_ref()
+            .and_then(|reply| reply.received_at)
+            .unwrap_or(0),
+    )
+}
+
+fn activity_matches(activity: u64, cutoff: Option<u64>) -> bool {
+    cutoff.is_none_or(|since| activity > 0 && activity >= since)
 }
 
 const UNREAD_CONVERSATION: &str = "未读会话";
@@ -653,15 +669,31 @@ impl Attention {
                 .map(|message| message.created_at)
                 .or(self.submitted_at)
                 .unwrap_or(0),
+            activity_at: self
+                .message_created_at
+                .filter(|time| *time > 0)
+                .or_else(|| {
+                    message
+                        .map(|message| message.created_at)
+                        .filter(|time| *time > 0)
+                })
+                .or(self.submitted_at)
+                .unwrap_or(0),
         })
     }
 }
 
 impl HiveApp {
-    pub(crate) fn note_live_inbox_reply(&mut self, workspace: &str, session: &str, revision: u64) {
+    pub(crate) fn note_live_inbox_reply(
+        &mut self,
+        workspace: &str,
+        session: &str,
+        revision: u64,
+        received_at: Option<u64>,
+    ) {
         self.collaboration
             .inbox_badge
-            .note_reply(workspace, session, revision);
+            .note_reply(workspace, session, revision, received_at);
     }
 
     fn clear_inbox_unread_reminder(
@@ -892,6 +924,12 @@ impl HiveApp {
             wake,
             priority,
             updated_at: session.updated_at.max(0) as u64,
+            activity_at: session_inbox_activity(session).max(
+                self.collaboration
+                    .inbox_badge
+                    .reply_time(&session.workspace_id, &session.id)
+                    .unwrap_or(0),
+            ),
         })
     }
 
@@ -1610,6 +1648,7 @@ mod tests {
             wake: Some(Wake::UnreadReply { revision: 0 }),
             priority: Priority::Unread,
             updated_at: 0,
+            activity_at: 0,
         };
         assert!(mark.matches(&entry));
         entry.wake = Some(Wake::UnreadReply { revision: 1 });
@@ -1713,6 +1752,7 @@ mod tests {
             wake: wake(7),
             priority: Priority::NeedsUser,
             updated_at: 0,
+            activity_at: 0,
         };
         let edit = SnoozeEdit {
             workspace: "project".into(),
@@ -1737,6 +1777,7 @@ mod tests {
             wake: None,
             priority,
             updated_at,
+            activity_at: updated_at,
         };
         let mut rows = [
             ("A", row(Priority::Active, 100, "working")),

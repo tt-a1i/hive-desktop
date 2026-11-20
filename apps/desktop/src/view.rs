@@ -389,6 +389,7 @@ impl HiveApp {
             })
             .when(
                 !message.text.is_empty()
+                    && !self.current_worktree_released()
                     && (message.role == "assistant" || message.explicit_user || delivery),
                 |row| {
                     row.child(
@@ -426,7 +427,7 @@ impl HiveApp {
                 message
                     .native_user_item_id
                     .clone()
-                    .filter(|_| message.role == "user"),
+                    .filter(|_| message.role == "user" && !self.current_worktree_released()),
                 |row, native_id| {
                     let edit_id = native_id.clone();
                     let rewind_id = native_id.clone();
@@ -916,6 +917,7 @@ impl HiveApp {
                                         Textarea::new(&self.input)
                                             .appearance(false)
                                             .bordered(false)
+                                            .readonly(self.current_worktree_released())
                                             .aria_label(tr("聊天消息"))
                                             .on_paste({
                                                 let app = cx.weak_entity();
@@ -953,15 +955,19 @@ impl HiveApp {
             .max_w(px(chat_width))
             .mx_auto()
             .gap_1p5()
+            .when(self.current_worktree_released(), |surface| {
+                let notice = tr("此会话已解除共用工作树，历史和草稿仍可查看。");
+                surface.child(div().id("released-worktree-status").role(Role::Status).aria_label(notice).px_1().text_xs().text_color(Color::Secondary.get(cx)).child(notice))
+            })
             .when_some(self.current_history_access(), |surface, access| {
                 surface
                     .when_some(access.handoff_snapshot.as_ref(), |surface, snapshot| surface.child(crate::session_handoff::handoff_origin(snapshot, access.handoff_delivery.as_ref(), cx)))
-                    .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none(), |surface| {
+                    .when(self.conversation_is_read_only() && !self.current_worktree_released() && self.history_navigation.initialization.is_none(), |surface| {
                         let notice = tr("此历史会话仅供阅读；草稿已保留，不能发送、继续或更改模型。");
                         surface.child(div().id("read-only-conversation-status").role(Role::Status).aria_label(notice).px_1().text_xs().text_color(Color::Secondary.get(cx)).child(notice))
                     })
-                    .when(self.conversation_is_read_only() && self.history_navigation.initialization.is_none() && !self.needs_codex_mode_recovery(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
-                    .when_some(access.identity_error.as_ref().filter(|error| error.code != "PASSIVE_HANDOFF"), |surface, error| {
+                    .when(self.conversation_is_read_only() && !self.current_worktree_released() && self.history_navigation.initialization.is_none() && !self.needs_codex_mode_recovery(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
+                    .when_some(access.identity_error.as_ref().filter(|error| !matches!(error.code.as_str(), "PASSIVE_HANDOFF" | "WORKTREE_RELEASED")), |surface, error| {
                         let notice = format!("{}: {}", error.code, error.message);
                         surface.child(div().id("conversation-identity-error").role(Role::Alert).aria_label(notice.clone()).px_1().text_xs().text_color(Color::Error.get(cx)).child(notice))
                     })
@@ -1782,7 +1788,7 @@ impl Render for HiveApp {
                                                                                         "打开工作区终端"
                                                                                     },
                                                                                 ))
-                                                                                .disabled(!self.connected)
+                                                                                .disabled(!self.connected || self.current_worktree_released())
                                                                                 .on_click(cx.listener(
                                                                                     |this, _, window, cx| {
                                                                                         if this.terminal.visible {
@@ -1816,7 +1822,7 @@ impl Render for HiveApp {
                                                                                 .accessibility_label(tr(
                                                                                     "Git 变更与差异",
                                                                                 ))
-                                                                                .disabled(!self.connected)
+                                                                                .disabled(!self.connected || self.current_worktree_released())
                                                                                 .on_click(cx.listener(
                                                                                     |this, _, window, cx| {
                                                                                         this.toggle_git_workspace(
@@ -1984,9 +1990,11 @@ impl Render for HiveApp {
                                                     div()
                                                         .text_xs()
                                                         .text_color(Color::Muted.get(cx))
-                                                        .child(tr(
-                                                            "已归档 · 发送或收到新消息后自动恢复",
-                                                        )),
+                                                        .child(tr(if session.worktree_released {
+                                                            "已归档"
+                                                        } else {
+                                                            "已归档 · 发送或收到新消息后自动恢复"
+                                                        })),
                                                 )
                                                 .child(
                                                     Button::new("restore-current-session")

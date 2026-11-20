@@ -256,6 +256,7 @@ impl HiveApp {
         if !self.connected
             || self.closing
             || self.loading
+            || self.current_worktree_released()
             || !self.workspace_writes_allowed()
             || self
                 .session
@@ -428,7 +429,7 @@ impl HiveApp {
     }
     pub(crate) fn render_input_attachments(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let refs = self.attachments.refs(self.draft_target.as_ref());
-        let busy = self
+        let busy = self.current_worktree_released() || self
             .session
             .as_ref()
             .is_some_and(|session| self.inflight_inputs.contains_key(&session.id));

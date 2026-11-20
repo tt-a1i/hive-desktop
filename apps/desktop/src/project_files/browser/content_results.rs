@@ -181,7 +181,7 @@ mod tests {
             scope_generation: scope,
             flags: SearchFlags {
                 case_sensitive,
-                whole_word: false,
+                ..SearchFlags::default()
             },
             text: text.to_owned(),
         })
@@ -244,6 +244,16 @@ mod tests {
                 flags: SearchFlags {
                     case_sensitive: true,
                     whole_word: true,
+                    ..SearchFlags::default()
+                },
+                text: "other".to_owned(),
+            }),
+            Some(ContentQuery {
+                scope_generation: 2,
+                flags: SearchFlags {
+                    case_sensitive: true,
+                    whole_word: true,
+                    regex: true,
                 },
                 text: "other".to_owned(),
             }),

@@ -50,7 +50,7 @@ export function withInboxMessageSenders(
             || typeof row.message_id !== 'string') return row;
         const message = messages.get(row.message_id);
         return message && message.dispatchId === row.dispatch_id
-            ? {...row, message_sender_id: message.fromAgentId}
+            ? {...row, message_sender_id: message.fromAgentId, message_created_at: message.createdAt}
             : row;
     })};
 }

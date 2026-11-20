@@ -37,6 +37,8 @@ export interface ChatRecord {
   prReview?: GithubPrReviewSeed;
   forkDraft?: {text:string;attachmentIds:string[];missingAttachments:string[]};
   execution?: ChatExecution;
+  /** The borrowed directory is retained as historical identity only. */
+  worktreeReleased?: true;
   scratch?: true;
   codexThreadId?: string;
   nativeclaudeSessionId?: string;
@@ -48,7 +50,7 @@ export interface ChatRecord {
   pinRank?: number;
   archived?: boolean;
   lastDeliveryFailure?: DeliveryFailure;
-  inboxReply?: {revision: number; messageId: string};
+  inboxReply?: {revision: number; messageId: string; receivedAt?: number};
   nativeMode?: {backend: 'codex' | 'claude'; mode?: string; permissionMode?: string};
   reasoning?: {provider:string;modelId:string;level:string};
   sessionFile: string | null;
@@ -114,7 +116,17 @@ export class ChatIndex {
   }
   peek(id:string):ChatRecord|undefined {const record=this.records.find(record=>record.id===id);return record && recordSnapshot(record);}
   hasWorktreeBorrowers(workspaceId: string, ownerId: string): boolean {
-    return this.records.some(record => record.workspaceId === workspaceId && record.execution?.ownerSessionId === ownerId);
+    return this.records.some(record => record.workspaceId === workspaceId && record.execution?.ownerSessionId === ownerId && !record.worktreeReleased);
+  }
+  releaseWorktreeUse(workspaceId: string, id: string, ownerId: string): ChatRecord {
+    const record = this.get(id);
+    if (record.workspaceId !== workspaceId || !record.worktreeReuse || record.execution?.ownerSessionId !== ownerId)
+      throw new SessionIdentityError('WORKTREE_SOURCE_INVALID', '请选择当前项目中借用此工作树的会话。');
+    if (record.worktreeReleased) return record;
+    if (record.agentId) throw new SessionIdentityError('WORKTREE_IN_USE', '请结束此会话的运行和待处理事项，并关闭其终端后重试。');
+    const next: ChatRecord = {...record, worktreeReleased: true};
+    this.commit(this.records.map(item => item.id === id ? next : item), id);
+    return next;
   }
   get(id: string): ChatRecord {
     const record = this.peek(id);
@@ -127,6 +139,7 @@ export class ChatIndex {
   }
   bind(id: string, agentId: string): ChatRecord {
     const original = this.get(id);
+    assertWorktreeUse(original);
     if (original.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its history is read-only; create a new conversation to continue.');
     if (original.originAgentId && original.originAgentId !== agentId) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'A historical conversation cannot be rebound to a different agent.');
     const {deferFirstConnection, ...session} = original;
@@ -142,6 +155,8 @@ export class ChatIndex {
   }
   save(record: ChatRecord): void {
     const existing = this.peek(record.id);
+    if (existing?.worktreeReleased !== record.worktreeReleased)
+      throw new SessionIdentityError('WORKTREE_REUSE_CONFLICT', '共享工作树的解除状态不能通过会话保存更改。');
     if (existing && existing.draftCopy !== record.draftCopy)
       throw new SessionIdentityError('DRAFT_COPY_CONFLICT', '该草稿复制请求已用于其他会话。');
     if (existing && (!isDeepStrictEqual(existing.worktreeReuse, record.worktreeReuse)
@@ -235,14 +250,16 @@ export class ChatIndex {
       return pinRank === undefined || pinRank === record.pinRank ? record : {...record, pinRank};
     });
   }
-  noteInboxReply(id: string, messageId: string): {workspaceId: string; revision: number} | undefined {
+  noteInboxReply(id: string, messageId: string): {workspaceId: string; revision: number; receivedAt?: number} | undefined {
     const record = this.peek(id);
     if (!record || !messageId || record.inboxReply?.messageId === messageId) return;
     const revision = (record.inboxReply?.revision ?? 0) + 1;
     if (!Number.isSafeInteger(revision)) throw new Error('Inbox reply revision exhausted');
-    const updated = {...record, inboxReply: {revision, messageId}};
+    const receivedAt = Date.now();
+    const receipt = {revision, ...(receivedAt > 0 && {receivedAt})};
+    const updated = {...record, inboxReply: {...receipt, messageId}};
     this.commit(this.records.map(item => item.id === id ? updated : item), id);
-    return {workspaceId: record.workspaceId, revision};
+    return {workspaceId: record.workspaceId, ...receipt};
   }
   addImported(records: ChatRecord[]): void {
     const ids = new Set(this.records.map(record => record.id));
@@ -306,11 +323,17 @@ function isScratchRecord(record: Record<string, unknown> | ChatRecord): boolean 
 function validWorktreeReuse(record: Record<string, unknown> | ChatRecord): boolean {
   const owner = (record.execution as ChatExecution | undefined)?.ownerSessionId;
   const use = record.worktreeReuse as ChatRecord['worktreeReuse'];
+  if (record.worktreeReleased !== undefined && (record.worktreeReleased !== true || !owner || record.agentId)) return false;
   if (owner === undefined && use === undefined) return true;
   return typeof owner === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(owner) && owner !== record.id
     && !!use && typeof use.sourceSessionId === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(use.sourceSessionId)
     && use.sourceSessionId !== record.id && typeof use.ownerFingerprint === 'string' && /^[a-f0-9]{64}$/.test(use.ownerFingerprint)
     && !record.scratch && !record.nativeImport && !record.lineage && !record.handoff && !record.prReview;
+}
+
+export function assertWorktreeUse(record: ChatRecord): void {
+  if (record.worktreeReleased)
+    throw new SessionIdentityError('WORKTREE_RELEASED', '此会话已解除共用工作树，历史和草稿仍可查看。');
 }
 
 function isChatRecord(value: unknown): value is ChatRecord {
@@ -327,7 +350,8 @@ function isChatRecord(value: unknown): value is ChatRecord {
   if (record.inboxReply !== undefined) {
     const reply = record.inboxReply as ChatRecord['inboxReply'];
     if (!reply || !Number.isSafeInteger(reply.revision) || reply.revision < 1
-      || typeof reply.messageId !== 'string' || !reply.messageId) return false;
+      || typeof reply.messageId !== 'string' || !reply.messageId
+      || reply.receivedAt !== undefined && (!Number.isSafeInteger(reply.receivedAt) || reply.receivedAt <= 0)) return false;
   }
   if (record.scratch !== undefined && !isScratchRecord(record)) return false;
   if (record.profile !== undefined && (!record.profile || typeof record.profile !== 'object' || typeof (record.profile as Record<string, unknown>).id !== 'string' || !(record.profile as Record<string, unknown>).id || !Number.isSafeInteger((record.profile as Record<string, unknown>).revision) || ((record.profile as Record<string, unknown>).revision as number) < 1)) return false;

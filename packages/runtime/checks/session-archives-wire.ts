@@ -268,6 +268,20 @@ try {
   const deepRows = [...firstChunk.matches, ...lastChunk.matches];
   assert.equal(firstChunk.total, selectedIds.size + 3);
   assert.equal(new Set(deepRows.map((hit: any) => hit.session.id)).size, firstChunk.total);
+  const cutoff = deepRows[20].session.updatedAt as number;
+  const timeQuery = {...deepQuery, activitySinceMs: cutoff, limit: 10};
+  const timeFirst = (await rpc('chat.search', timeQuery)).result;
+  const timeSecond = (await rpc('chat.search', {...timeQuery, offset: 10,
+    archiveSnapshot: timeFirst.archiveSnapshot})).result;
+  const recentRows = deepRows.filter((hit: any) => hit.session.updatedAt >= cutoff);
+  assert.equal(timeSecond.archiveSnapshot, timeFirst.archiveSnapshot);
+  assert.equal(timeFirst.total, recentRows.length);
+  assert.deepEqual([...timeFirst.matches, ...timeSecond.matches].map((hit: any) => hit.session.id),
+    recentRows.slice(0, 20).map((hit: any) => hit.session.id));
+  assert.equal((await rpc('chat.search', {...timeQuery, offset: 10, activitySinceMs: cutoff + 1,
+    archiveSnapshot: timeFirst.archiveSnapshot})).result.archiveSnapshotChanged, true);
+  assert.ok((await rpc('chat.search', {...timeQuery, activitySinceMs: -1})).error);
+  assert.ok((await rpc('chat.search', {...timeQuery, navigationOnly: false})).error);
   assert.equal((await rpc('chat.archive', {sessionId: firstChunk.matches[26].session.id, archived: false,
     restoreWorkspaceId: workspaceId})).error, undefined);
   const movedBoundary = (await rpc('chat.search', remaining)).result;

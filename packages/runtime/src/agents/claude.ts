@@ -315,18 +315,27 @@ function asError(value: unknown): Error { return value instanceof Error ? value 
 // The SDK history API has no per-call config directory. Run the same official
 // reader in a short-lived Node process with the native child environment, rather
 // than changing the shared host environment or reimplementing transcript parsing.
-export async function readSessionMessages(sessionId: string, cwd: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, expectedTranscriptPath?: string): Promise<SessionMessage[]> {
-  if (!env && !expectedTranscriptPath) return getSessionMessages(sessionId, { dir: cwd });
+export async function readSessionMessages(sessionId: string, cwd: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, expectedTranscriptPath?: string, retainedWorktreeCwd = false): Promise<SessionMessage[]> {
+  if (!env && !expectedTranscriptPath && !retainedWorktreeCwd) return getSessionMessages(sessionId, { dir: cwd });
   const nativeEnv = env ?? process.env;
   signal?.throwIfAborted();
-  const identity = expectedTranscriptPath && await claudeTranscriptIdentity(expectedTranscriptPath, sessionId, cwd, nativeEnv);
-  const script = `import { getSessionMessages } from ${JSON.stringify(import.meta.resolve('@anthropic-ai/claude-agent-sdk'))};
-    const [sessionId, dir] = process.argv.slice(1);
-    process.stdout.write(JSON.stringify(await getSessionMessages(sessionId, { dir })));`;
-  const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script, sessionId, cwd], { env: nativeEnv, ...(signal && { signal }), timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+  const identity = expectedTranscriptPath && await claudeTranscriptIdentity(expectedTranscriptPath, sessionId, cwd, nativeEnv, retainedWorktreeCwd);
+  const script = `import { getSessionInfo, getSessionMessages } from ${JSON.stringify(import.meta.resolve('@anthropic-ai/claude-agent-sdk'))};
+    const [sessionId, dir, retained] = process.argv.slice(1);
+    const options = { dir };
+    const checkSource = async () => {
+      if (retained === 'true' && (await getSessionInfo(sessionId, options))?.cwd?.normalize('NFC') !== dir.normalize('NFC'))
+        throw new Error('Saved Claude history does not belong to the original worktree directory');
+    };
+    await checkSource();
+    const messages = await getSessionMessages(sessionId, options);
+    await checkSource();
+    process.stdout.write(JSON.stringify(messages));`;
+  const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script, sessionId, cwd, String(retainedWorktreeCwd)], { env: nativeEnv, ...(signal && { signal }), timeout: 10_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
   const messages = JSON.parse(stdout) as SessionMessage[];
-  if (expectedTranscriptPath && (identity !== await claudeTranscriptIdentity(expectedTranscriptPath, sessionId, cwd, nativeEnv)
-    || !messages.length || messages.some(message => message.session_id !== sessionId)))
-    throw new Error('The imported Claude conversation’s original transcript changed during history read');
+  if (expectedTranscriptPath && identity !== await claudeTranscriptIdentity(expectedTranscriptPath, sessionId, cwd, nativeEnv, retainedWorktreeCwd)
+    || (expectedTranscriptPath || retainedWorktreeCwd) && (!messages.length || messages.some(message => message.session_id !== sessionId)))
+    throw new Error(retainedWorktreeCwd ? 'The released worktree’s original Claude transcript changed during history read'
+      : 'The imported Claude conversation’s original transcript changed during history read');
   return messages;
 }

@@ -101,6 +101,7 @@ impl HiveApp {
                                 !self.connected
                                     || self.workspace.is_none()
                                     || self.loading
+                                    || self.current_worktree_released()
                                     || self.session.as_ref().is_some_and(|session| {
                                         self.inflight_inputs.contains_key(&session.id)
                                     })

@@ -11,7 +11,7 @@ import { ChatIndex } from '../src/chat-index.js';
 
 const dir = await realpath(await mkdtemp(join(tmpdir(), 'hive-chat-worktree-')));
 const data = join(dir, 'state'), repo = join(dir, 'repo'), other = join(dir, 'other');
-const oldEnv = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PI_OFFLINE: process.env.PI_OFFLINE, HIVE_FIXTURE_ENTERED: process.env.HIVE_FIXTURE_ENTERED, HIVE_FIXTURE_RELEASE: process.env.HIVE_FIXTURE_RELEASE, HIVE_FIXTURE_BACKEND_MARKER: process.env.HIVE_FIXTURE_BACKEND_MARKER };
+const oldEnv = { GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM: process.env.GIT_CONFIG_NOSYSTEM, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR, PI_OFFLINE: process.env.PI_OFFLINE, HIVE_FIXTURE_ENTERED: process.env.HIVE_FIXTURE_ENTERED, HIVE_FIXTURE_RELEASE: process.env.HIVE_FIXTURE_RELEASE, HIVE_FIXTURE_BACKEND_MARKER: process.env.HIVE_FIXTURE_BACKEND_MARKER, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, CLAUDE_CODE_PROJECT_DIR_NAME: process.env.CLAUDE_CODE_PROJECT_DIR_NAME };
 let runtime: Awaited<ReturnType<typeof createDesktopRuntime>> | undefined;
 let events = 0;
 try {
@@ -171,6 +171,95 @@ try {
  assert.equal(queue.busy, false); assert.equal(events, eventsBefore);
  assert.equal(await stat(marker).then(() => true, () => false), false, 'backend must not start');
  await rename(a.path + '.moved', a.path);
+ const releaseBorrower = (id: string, owner = one.id) => runtime!.chats.releaseWorktreeUse(project.id, id, owner,
+  () => runtime!.terminal.hasActiveSessionShell(project.id, id));
+ await assert.rejects(releaseBorrower(shared.id, two.id), {code: 'WORKTREE_SOURCE_INVALID'});
+ await assert.rejects(releaseBorrower(one.id), {code: 'WORKTREE_SOURCE_INVALID'});
+ const exclusive = runtime.executionMutations.acquire(project.id);
+ try { await assert.rejects(releaseBorrower(shared.id), {code: 'WORKTREE_IN_USE'}); }
+ finally { exclusive(); }
+ const pendingBorrower = new DeliveryQueue({directory: join(data, 'chats', 'deliveries'), sessionId: shared.id, startPaused: true,
+  execute: async () => { throw Error('must not execute'); }, completedIds: () => [], onError: e => { throw e; }});
+ await pendingBorrower.enqueue('pending borrower input', true);
+ await assert.rejects(releaseBorrower(shared.id), {code: 'WORKTREE_IN_USE'});
+ pendingBorrower.discardPending(new Set(pendingBorrower.pending.map(item => item.id)));
+ const ownedShell = await runtime.terminal.start(project.id, shared.id);
+ try { await assert.rejects(releaseBorrower(shared.id), {code: 'WORKTREE_IN_USE'}); }
+ finally { await runtime.terminal.stop({workspaceId: project.id, sessionId: shared.id, runId: ownedShell.runId}); }
+ let enterRelease!: () => void;
+ let finishRelease!: () => void;
+ const releaseStarted = new Promise<void>(resolve => { enterRelease = resolve; });
+ const releaseMayFinish = new Promise<void>(resolve => { finishRelease = resolve; });
+ const releaseInFlight = runtime.chats.releaseWorktreeUse(project.id, shared.id, one.id, async () => {
+  enterRelease();
+  await releaseMayFinish;
+  return false;
+ });
+ await releaseStarted;
+ try { await assert.rejects(runtime.chats.applyWorktreeRemoval(project.id, one.id, removalBeforeReuse.version, async () => false), {code: 'WORKTREE_IN_USE'}); }
+ finally { finishRelease(); }
+ const releasedShared = await releaseInFlight;
+ assert.equal(releasedShared.worktreeReleased, true);
+ assert.equal(releasedShared.executionPath, a.path);
+ assert.deepEqual(releasedShared.execution, shared.execution);
+ await assert.rejects(runtime.chats.previewWorktreeRemoval(project.id, one.id, async () => false), {code: 'WORKTREE_SHARED'});
+ await rename(a.path, a.path + '.moved');
+ try { assert.equal((await releaseBorrower(flattened.id)).archived, true); }
+ finally { await rename(a.path + '.moved', a.path); }
+ assert.equal(await readFile(sharedAttachment.filePath!, 'utf8'), 'one');
+ assert.equal((await runtime.chats.attachments.get(project.id, [sharedAttachment.attachment.id]))[0]?.filePath, sharedAttachment.filePath);
+ await assert.rejects(runtime.chats.projectFileStatus(project.id, sharedAttachment.attachment.id), {code: 'WORKTREE_RELEASED'});
+ await assert.rejects(runtime.chats.createInWorktreeRecord(project.id, shared.id, randomUUID()), {code: 'WORKTREE_RELEASED'});
+ assert.deepEqual(await runtime.chats.createInWorktreeRecord(project.id, one.id, requestId), releasedShared);
+ await assert.rejects(runtime.terminal.start(project.id, shared.id), {code: 'WORKTREE_RELEASED'});
+ assert.equal((await runtime.chats.history!.capabilities(project.id, one.id)).rewindCode, true);
+
+ // Restore exact Claude JSONL history after real owner removal and a cold start.
+ const claudeConfig = join(dir, 'claude');
+ process.env.CLAUDE_CONFIG_DIR = claudeConfig;
+ delete process.env.CLAUDE_CODE_PROJECT_DIR_NAME;
+ const claudeOwner = await runtime.chats.createRecord(project.id, 'claude', {isolation: 'worktree'});
+ const claudeBorrower = await runtime.chats.createInWorktreeRecord(project.id, claudeOwner.id, randomUUID());
+ const claudeCwd = claudeOwner.execution!.path;
+ const nativeId = randomUUID();
+ const claudeProject = join(claudeConfig, 'projects', claudeCwd.replace(/[^a-zA-Z0-9]/g, '-'));
+ await mkdir(claudeProject, {recursive: true});
+ const transcript = join(claudeProject, `${nativeId}.jsonl`);
+ await writeFile(transcript, JSON.stringify({type: 'user', uuid: randomUUID(), parentUuid: null,
+  sessionId: nativeId, cwd: claudeCwd, isSidechain: false, timestamp: new Date().toISOString(),
+  message: {role: 'user', content: 'saved released Claude history'}}) + '\n');
+ await runtime.close(); runtime = undefined;
+ const claudeIndex = new ChatIndex(join(data, 'chats'));
+ claudeIndex.save({...claudeIndex.get(claudeBorrower.id), identityState: 'known', nativeclaudeSessionId: nativeId, originAgentId: `${project.id}:orchestrator`});
+ runtime = await createDesktopRuntime(data, () => { events++; }, {executableEnvironment: {HIVE_CODEX_COMMAND: backend, HIVE_CLAUDE_COMMAND: backend}});
+ assert.deepEqual(await releaseBorrower(shared.id), releasedShared);
+ await assert.rejects(runtime.chats.previewWorktreeRemoval(project.id, claudeOwner.id, async () => false), {code:'WORKTREE_SHARED'});
+ const claudeRelease = await releaseBorrower(claudeBorrower.id, claudeOwner.id);
+ const removal = await runtime.chats.previewWorktreeRemoval(project.id, claudeOwner.id, async () => false);
+ await runtime.chats.applyWorktreeRemoval(project.id, claudeOwner.id, removal.version, async () => false);
+ await assert.rejects(stat(claudeCwd), {code: 'ENOENT'});
+ await runtime.close(); runtime = undefined;
+ runtime = await createDesktopRuntime(data, () => { events++; }, {executableEnvironment: {HIVE_CODEX_COMMAND: backend, HIVE_CLAUDE_COMMAND: backend}});
+ assert.deepEqual(await releaseBorrower(claudeBorrower.id, claudeOwner.id), claudeRelease);
+ const history = await runtime.chats.open(claudeBorrower.id);
+ assert.ok('readOnly' in history && history.readOnly && 'identityError' in history);
+ assert.equal(history.identityError?.code, 'WORKTREE_RELEASED');
+ assert.equal(history.executionPath, claudeCwd);
+ assert.match(JSON.stringify(history.history), /saved released Claude history/);
+ const page = await runtime.chats.historyPage(claudeBorrower.id, {limit: 5});
+ assert.deepEqual(page.historyMessageIds, history.historyMessageIds);
+ assert.equal(page.historyPage.totalCount, 1);
+ const view = await runtime.chats.openDesktopView(claudeBorrower.id, 1, true, {limit: 5});
+ assert.deepEqual(view.historyMessageIds, history.historyMessageIds);
+ assert.equal((await runtime.chats.searchMessages(claudeBorrower.id, 1, 'released Claude', new AbortController().signal)).matches.length, 1);
+ const savedTranscript = await readFile(transcript, 'utf8');
+ await writeFile(transcript, savedTranscript.replaceAll(claudeCwd, repo).replace('saved released Claude history', 'wrong Claude history'));
+ try {
+  const mismatched = await runtime.chats.open(claudeBorrower.id);
+  assert.deepEqual(mismatched.history, []);
+  assert.ok('historyIncomplete' in mismatched && mismatched.historyIncomplete);
+ } finally { await writeFile(transcript, savedTranscript); }
+ assert.equal(await stat(marker).then(() => true, () => false), false, 'released history never starts a backend');
  const index = join(data, 'chats', 'index.json');
  await rename(index, index + '.held'); await mkdir(index);
  try { await assert.rejects(runtime.chats.createRecord(project.id, 'codex', {isolation: 'worktree'}), /工作树已保留/); }

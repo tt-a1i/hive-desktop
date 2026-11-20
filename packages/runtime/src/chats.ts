@@ -40,7 +40,7 @@ import { CodexModes, CodexSavedModeError, type CodexModeReplacement } from './ag
 import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
-import { ChatIndex, SessionIdentityError, comparePinnedSessions, declaredExecutionPath, type ChatRecord, type ChatBackend, type PinnedSessionRef } from './chat-index.js';
+import { ChatIndex, SessionIdentityError, assertWorktreeUse, comparePinnedSessions, declaredExecutionPath, type ChatRecord, type ChatBackend, type PinnedSessionRef } from './chat-index.js';
 import { createScratchConversation, isScratchWorkspace, validateScratchConversation } from './scratch-workspace.js';
 import { ScratchProjectLinks, type ScratchProjectRequest } from './scratch-project-links.js';
 import { externalPiBranch, externalPiMessage, piHistoryMessageId, readPiTranscript, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
@@ -147,7 +147,7 @@ type QueueState = { type: 'state'; sessionId: string; busy: boolean; pending: nu
 type NavigationEvent = { type: 'session_navigation'; sessionId: string; archived: boolean; pinned: boolean; updatedAt: number };
 export type ChatEvent = (PiEvent | QueueState | NavigationEvent) & {
   sequence: number;
-  inboxReply?: {workspaceId: string; revision: number};
+  inboxReply?: {workspaceId: string; revision: number; receivedAt?: number};
 };
 
 function isVisibleInboxReply(message: unknown): boolean {
@@ -458,6 +458,7 @@ export class Chats implements StructuredSessionPort {
   private async runnableIdentity(record: ChatRecord, rewindId?: string): Promise<ChatRecord> {
     await this.initializeProfiles();
     record = this.index.get(record.id);
+    assertWorktreeUse(record);
     if (!record.profile) throw new SessionIdentityError('SESSION_PROFILE_UNAVAILABLE', 'The conversation has no fixed profile reference.');
     await this.selectedProfile(record.backend, record.profile);
     const current = this.originIdentity(record);
@@ -479,6 +480,7 @@ export class Chats implements StructuredSessionPort {
       pinned: !!record.pinned, ...(record.pinRank !== undefined && {pinRank: record.pinRank}), archived: !!record.archived, updatedAt: record.updatedAt,
       ...(record.customTitle !== undefined && {customTitle: record.customTitle}), ...(record.agentId && {agentId: record.agentId}),
       ...(record.execution && {execution: {...record.execution}}),
+      ...(record.worktreeReleased && {worktreeReleased: true as const}),
       ...(record.scratch && {scratch: true as const}), executionPath,
       ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.handoff&&{handoff:{...record.handoff}}), identityState: record.identityState ?? 'unknown'};
   }
@@ -616,8 +618,44 @@ export class Chats implements StructuredSessionPort {
     try { return await removal; }
     finally { this.gitOperations.delete(removal); release(); }
   }
+  async releaseWorktreeUse(workspaceId: string, id: string, expectedOwnerSessionId: string, hasShell: () => Promise<boolean>) {
+    this.assertWorkspaceAvailable(workspaceId);
+    this.closeAbort.signal.throwIfAborted();
+    const borrower = () => {
+      const record = this.index.peek(id);
+      if (record?.workspaceId !== workspaceId || !record.worktreeReuse || record.execution?.ownerSessionId !== expectedOwnerSessionId)
+        throw new GitWorktreeError('WORKTREE_SOURCE_INVALID', '请选择当前项目中借用此工作树的会话。');
+      return record;
+    };
+    const source = borrower();
+    if (source.worktreeReleased) return this.publicSession(source, source.execution!.path);
+    const busy = (cause?: unknown) => new GitWorktreeError('WORKTREE_IN_USE',
+      '请结束此会话的运行和待处理事项，并关闭其终端后重试。', {cause});
+    let release: () => void;
+    try { release = this.executionMutations!.acquire(workspaceId); }
+    catch (error) { throw busy(error); }
+    try {
+      return await this.trackGitOperation(() => this.hive.withWorkspaceWorkflowIdle(workspaceId, async () => {
+        this.assertWorkspaceAvailable(workspaceId);
+        const record = borrower();
+        const live = this.live.get(id);
+        if (record.agentId || live?.onExit)
+          throw new GitWorktreeError('WORKTREE_IN_USE', '此会话仍是 Agent 的当前会话，请先切换到另一会话。');
+        if (live?.cleanup || live?.queue.busy || live?.modeChanging
+          || live?.handle.interactions?.().length || (live?.queue.pendingCount ?? DeliveryQueue.persistedCount(this.queueDir, id))
+          || this.opening.has(id) || this.startingForInput.has(id) || this.preparingInteractions.has(id) || this.mutatingQueues.has(id)
+          || await hasShell()) throw busy();
+        if (live) await this.stopLive(id, live);
+        this.closeAbort.signal.throwIfAborted();
+        const result = this.index.releaseWorktreeUse(workspaceId, id, expectedOwnerSessionId);
+        this.navigationChanged(result);
+        return this.publicSession(result, result.execution!.path);
+      }));
+    } finally { release(); }
+  }
   /** Resolve only persisted ownership. A missing worktree never falls back to the team root. */
   private async executionPath(record: ChatRecord, workspace: WorkspaceSummary): Promise<string> {
+    assertWorktreeUse(record);
     await this.assertHistoryReady(record);
     if (record.nativeImport) {
       try {
@@ -635,6 +673,7 @@ export class Chats implements StructuredSessionPort {
   }
 
   private async verifiedWorktree(record: ChatRecord, workspace: WorkspaceSummary): Promise<ManagedWorktree> {
+    assertWorktreeUse(record);
     try {
       const execution = record.execution!;
       const owner = execution.ownerSessionId ? this.index.peek(execution.ownerSessionId) : record;
@@ -1228,10 +1267,10 @@ export class Chats implements StructuredSessionPort {
     const root = await this.executionDirectory(workspaceId, sessionId);
     return listProjectDirectory(root, directory, offset);
   }
-  async projectFilesSearchContent(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal, caseSensitive: unknown = false, wholeWord: unknown = false) {
-    if (typeof query !== 'string' || typeof offset !== 'number' || typeof caseSensitive !== 'boolean' || typeof wholeWord !== 'boolean') throw new TypeError('Invalid project file search');
+  async projectFilesSearchContent(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal, caseSensitive: unknown = false, wholeWord: unknown = false, regex: unknown = false) {
+    if (typeof query !== 'string' || typeof offset !== 'number' || typeof caseSensitive !== 'boolean' || typeof wholeWord !== 'boolean' || typeof regex !== 'boolean') throw new TypeError('Invalid project file search');
     const directory = await this.executionDirectory(workspaceId, sessionId);
-    return searchProjectContents(directory, query, offset, signal, caseSensitive, wholeWord);
+    return searchProjectContents(directory, query, offset, signal, caseSensitive, wholeWord, regex);
   }
   async projectFilesPreview(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
     if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
@@ -1278,7 +1317,7 @@ export class Chats implements StructuredSessionPort {
     }
   }
   async search(query: unknown, archived: unknown = false, offset: unknown = 0, workspaceId?: unknown, signal?: AbortSignal,
-    page: {limit?: number; memberId?: string; backend?: ChatBackend; archiveSnapshot?: string} = {}) {
+    page: {limit?: number; memberId?: string; backend?: ChatBackend; archiveSnapshot?: string; activitySinceMs?: number} = {}) {
     signal?.throwIfAborted();
     if (workspaceId !== undefined && (typeof workspaceId !== 'string' || !workspaceId.trim())) throw new TypeError('workspaceId must be a nonempty string');
     if (typeof archived !== 'boolean') throw new TypeError('Archived state must be a boolean');
@@ -1286,9 +1325,9 @@ export class Chats implements StructuredSessionPort {
     if (typeof query !== 'string' || Array.from(query).length > 200) {
       throw new TypeError('搜索内容需为 200 个字符以内的文本。');
     }
-    if (page.limit !== undefined || page.memberId !== undefined || page.backend !== undefined || page.archiveSnapshot !== undefined) {
+    if (page.limit !== undefined || page.memberId !== undefined || page.backend !== undefined || page.archiveSnapshot !== undefined || page.activitySinceMs !== undefined) {
       return this.archivedNavigationPage(workspaceId as string | undefined, page.memberId, page.backend,
-        offset, page.limit ?? 100, page.archiveSnapshot, signal);
+        offset, page.limit ?? 100, page.archiveSnapshot, page.activitySinceMs, signal);
     }
     const terms = foldSearchText(query.trim()).split(/\s+/u).filter(Boolean);
     const groups = await this.navigationEntries(false, archived, workspaceId as string | undefined);
@@ -1404,7 +1443,8 @@ export class Chats implements StructuredSessionPort {
     });
   }
   private async archivedNavigationPage(workspaceId: string | undefined, memberId: string | undefined,
-    backend: ChatBackend | undefined, offset: number, limit: number, expectedSnapshot: string | undefined, signal?: AbortSignal) {
+    backend: ChatBackend | undefined, offset: number, limit: number, expectedSnapshot: string | undefined,
+    activitySinceMs: number | undefined, signal?: AbortSignal) {
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
     signal?.throwIfAborted();
@@ -1412,19 +1452,24 @@ export class Chats implements StructuredSessionPort {
       && (workspaceId === undefined || workspace.id === workspaceId)).map(workspace => [workspace.id, workspace]));
     const exactMember = (session: ChatRecord) => memberId === undefined
       || (session.identityState === 'known' ? session.originAgentId ?? session.agentId : session.agentId) === memberId;
+    const recent = (session: ChatRecord) => {
+      if (activitySinceMs === undefined) return true;
+      const activity = Math.max(session.updatedAt, session.inboxReply?.receivedAt ?? 0);
+      return activity > 0 && activity >= activitySinceMs;
+    };
     const archived = () => this.index.all().flatMap(session => {
       const workspace = available.get(session.workspaceId);
       return workspace && !this.removing.has(workspace.id) && session.archived && exactMember(session)
-        && (backend === undefined || session.backend === backend)
+        && (backend === undefined || session.backend === backend) && recent(session)
         ? [{workspace, session}] : [];
     })
       .sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
     // Bind continuation to the ordered result rather than to an index-wide
     // mutation, so active conversation saves do not disrupt archive paging.
     const snapshot = (rows: ReturnType<typeof archived>) => createHash('sha256').update(JSON.stringify([
-      workspaceId, memberId, backend, [...available.keys()].sort(),
+      workspaceId, memberId, backend, activitySinceMs, [...available.keys()].sort(),
       rows.map(({session}) => [session.workspaceId, session.id, session.updatedAt, session.title, session.customTitle,
-        session.agentId, session.originAgentId, session.identityState, session.pinned, session.pinRank]),
+        session.agentId, session.originAgentId, session.identityState, session.pinned, session.pinRank, session.inboxReply?.receivedAt]),
     ])).digest('hex');
     const changed = (archiveSnapshot: string, total: number) => ({
       matches: [], total, incompleteHistory: [], incompleteHistoryCount: 0,
@@ -1921,7 +1966,7 @@ export class Chats implements StructuredSessionPort {
   private async readProfileClaudeHistory(record: ChatRecord, directory: string, signal = this.closeAbort.signal) {
     const {sessionId, cwd, env} = await this.profileClaudeHistoryLocation(record, directory);
     if (record.nativeImport) await this.verifyNativeImport(record, cwd, false);
-    return readClaudeSessionMessages(sessionId, cwd, env, signal, record.nativeImport?.path);
+    return readClaudeSessionMessages(sessionId, cwd, env, signal, record.nativeImport?.path, record.worktreeReleased);
   }
   /** Project saved messages without opening an Agent or touching its delivery queue. */
   private async readSavedHistory(record: ChatRecord, workspace: WorkspaceSummary, imageMessageId?: string, signal = this.closeAbort.signal) {
@@ -2079,6 +2124,7 @@ export class Chats implements StructuredSessionPort {
         metadataDirectory: join(this.sessionDir, '..', 'claude'),
         assertCurrent: checkBinding,
         ...(record.nativeImport && {nativePath: record.nativeImport.path}),
+        ...(record.worktreeReleased && {retainedWorktreeCwd: true as const}),
       });
       if (source) return {
         page: checked(source.page),
@@ -2122,7 +2168,7 @@ export class Chats implements StructuredSessionPort {
         allowOfflineQueueEdits?: boolean; includeHistory?: boolean; historyOptions?: HistoryWindowOptions;
         indexedHistory?: NonNullable<Awaited<ReturnType<Chats['indexedSavedHistory']>>>;
       } = {}) {
-    const codexVersion = record.backend==='codex' && isDeepStrictEqual(this.index.peek(record.id),record)
+    const codexVersion = !record.worktreeReleased && record.backend==='codex' && isDeepStrictEqual(this.index.peek(record.id),record)
       ? this.index.snapshotVersion(record.id) : undefined;
     const acpVersion = allowOfflineQueueEdits && this.canEditOfflineAcp(record) ? this.index.snapshotVersion(record.id) : undefined;
     const workspace = await this.workspace(record.workspaceId);
@@ -2175,6 +2221,7 @@ export class Chats implements StructuredSessionPort {
   private async require(id: string, browse = false, explicitDesktopConnect = false): Promise<LiveChat> {
     if (this.closing) throw new Error('Chat runtime is closing');
     const requested=this.index.get(id);
+    assertWorktreeUse(requested);
     if ((requested.scratch || this.isSharedWorktree(requested)) && this.live.has(id))
       await this.executionDirectory(requested.workspaceId, id);
     if (browse && requested.nativeImport && !explicitDesktopConnect && !this.live.has(id))
@@ -2558,7 +2605,7 @@ export class Chats implements StructuredSessionPort {
       if (existing) {
         if (existing.workspaceId !== workspaceId || existing.worktreeReuse?.sourceSessionId !== sourceSessionId)
           throw conflict();
-        return this.publicSession(existing, await this.executionPath(existing, workspace));
+        return this.publicSession(existing, existing.worktreeReleased ? existing.execution!.path : await this.executionPath(existing, workspace));
       }
       const occupied = await lstat(join(this.dataDir, 'worktrees', requestId)).then(() => true, (error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
@@ -2569,6 +2616,7 @@ export class Chats implements StructuredSessionPort {
       const source = this.index.peek(sourceSessionId);
       if (!source?.execution || source.workspaceId !== workspaceId || source.archived || !source.profile)
         throw new GitWorktreeError('WORKTREE_SOURCE_INVALID', '请选择当前项目中可用的独立工作树会话。');
+      assertWorktreeUse(source);
       await this.assertHistoryReady(source);
       const selected = await this.selectedProfile(source.backend, source.profile);
       await this.initialization?.assertReady(workspaceId, source.execution.ownerSessionId ?? source.id);
@@ -2895,6 +2943,7 @@ export class Chats implements StructuredSessionPort {
     const cleanup=this.live.get(id)?.cleanup;
     if(cleanup)await cleanup;
     const record=this.index.get(id);
+    assertWorktreeUse(record);
     if (record.backend === 'acp' && record.acpSessionId && !record.sessionFile && !this.live.has(id))
       throw new SessionIdentityError('ACP_SESSION_IDENTITY_CONFLICT', 'The saved ACP session has no local transcript path');
     if (record.execution && (await readWorktreeIntent(this.dataDir, record.execution.ownerSessionId ?? id).catch(() => undefined))?.removed)
@@ -3077,6 +3126,7 @@ export class Chats implements StructuredSessionPort {
       ...((record.handoff || record.nativeImport || this.isSharedWorktree(record)) && {includeRecentUserInputs: false as const}),
       ...(chat.handle.sessionFile ? { sessionFile: chat.handle.sessionFile } : {}),
       deliver: async (text, options) => {
+        assertWorktreeUse(this.index.get(id));
         let images = promptImages(options?.images);
         let presentation = options?.presentation;
         if (presentation?.origin === 'user') {
@@ -3197,6 +3247,7 @@ export class Chats implements StructuredSessionPort {
     this.assertWorkspaceAvailable(this.index.get(id).workspaceId);
     const desktopSavedHistory = this.desktopSavedHistory?.id === id;
     const before=this.index.get(id);
+    assertWorktreeUse(before);
     if(before.handoff){
       await this.reconcileHandoffOffline(before);
       const state=this.handoffDeliveries.get(id);

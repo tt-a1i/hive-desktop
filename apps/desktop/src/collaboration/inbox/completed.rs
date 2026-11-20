@@ -1,4 +1,5 @@
-use super::{GlobalInbox, RowId, display_project, inbox_status};
+use super::super::{activity_matches, session_inbox_activity};
+use super::{ActivityRange, GlobalInbox, RowId, display_project, inbox_status};
 use crate::{
     app::HiveApp,
     focus_scroll::Reveal,
@@ -17,7 +18,7 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 pub(super) const PAGE_SIZE: usize = 20;
 const MAX_PAGE: usize = 100;
@@ -30,6 +31,7 @@ pub(super) struct Scope {
     pub(super) workspace: Option<String>,
     pub(super) member: Option<String>,
     pub(super) backend: Option<Backend>,
+    pub(super) activity: Option<ActivityRange>,
     pub(super) workspaces: BTreeSet<String>,
 }
 
@@ -60,6 +62,14 @@ pub(super) struct Page {
     archive_snapshot_changed: bool,
 }
 
+impl Page {
+    pub(super) fn has_older_activity(&self, cutoff: u64) -> bool {
+        self.matches
+            .iter()
+            .any(|hit| !activity_matches(session_inbox_activity(&hit.session), Some(cutoff)))
+    }
+}
+
 enum ReadError {
     Changed,
     Failed(String),
@@ -71,6 +81,7 @@ async fn read_page(
     offset: usize,
     limit: usize,
     snapshot: Option<&str>,
+    activity_since: Option<u64>,
 ) -> Result<Page, ReadError> {
     let mut params =
         json!({"query":"", "archived":true, "navigationOnly":true, "offset":offset, "limit":limit});
@@ -86,6 +97,9 @@ async fn read_page(
     if let Some(snapshot) = snapshot {
         params["archiveSnapshot"] = json!(snapshot);
     }
+    if let Some(since) = activity_since {
+        params["activitySinceMs"] = json!(since);
+    }
     let value = runtime.search(params).await.map_err(ReadError::Failed)?;
     let mut page: Page =
         serde_json::from_value(value).map_err(|error| ReadError::Failed(error.to_string()))?;
@@ -99,10 +113,11 @@ async fn read_page(
             .archive_snapshot
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
-        || page
-            .matches
-            .iter()
-            .any(|hit| !hit.session.archived || !scope.contains(&hit.session))
+        || page.matches.iter().any(|hit| {
+            !hit.session.archived
+                || !scope.contains(&hit.session)
+                || !activity_matches(session_inbox_activity(&hit.session), activity_since)
+        })
     {
         return Err(ReadError::Failed(tr(INVALID_PAGE).to_owned()));
     }
@@ -120,9 +135,18 @@ pub(super) async fn read(
     offset: usize,
     limit: usize,
     snapshot: Option<&str>,
+    activity_since: Option<u64>,
 ) -> Result<Page, (usize, String)> {
     let result = async {
-        let mut prefix = read_page(runtime, scope, offset, limit.min(MAX_PAGE), snapshot).await?;
+        let mut prefix = read_page(
+            runtime,
+            scope,
+            offset,
+            limit.min(MAX_PAGE),
+            snapshot,
+            activity_since,
+        )
+        .await?;
         while prefix.matches.len() < limit && offset + prefix.matches.len() < prefix.total {
             let remaining = limit - prefix.matches.len();
             let continuation = read_page(
@@ -131,6 +155,7 @@ pub(super) async fn read(
                 offset + prefix.matches.len(),
                 remaining.min(MAX_PAGE),
                 Some(&prefix.archive_snapshot),
+                activity_since,
             )
             .await?;
             if continuation.total != prefix.total {
@@ -159,6 +184,7 @@ pub(super) struct Completed {
     pub(super) restore_error: Option<String>,
     pub(super) requested_depth: usize,
     pub(super) snapshot: Option<String>,
+    pub(super) activity_since: Option<u64>,
     loading_tail_height: Pixels,
     error: Option<(usize, String)>,
 }
@@ -170,6 +196,7 @@ impl Completed {
             self.rows.clear();
             self.requested_depth = 0;
             self.loading_tail_height = px(0.);
+            self.activity_since = None;
             self.invalidate();
         }
     }
@@ -191,6 +218,25 @@ impl Completed {
             });
         }
         self.invalidate();
+    }
+
+    pub(super) fn refresh_activity(&mut self) {
+        self.invalidate();
+    }
+
+    pub(super) fn clock_moved_back(&self, cutoff: u64) -> bool {
+        self.activity_since.is_some_and(|since| cutoff < since)
+    }
+
+    pub(super) fn activity_needs_refresh(&self, cutoff: u64) -> bool {
+        self.clock_moved_back(cutoff)
+            || self.activity_since.is_some_and(|since| {
+                cutoff > since
+                    && self.rows.iter().any(|hit| {
+                        let activity = session_inbox_activity(&hit.session);
+                        activity >= since && activity < cutoff
+                    })
+            })
     }
 
     pub(super) fn reserve_loading_tail(&mut self, row_extent: Pixels, footer_height: Pixels) {
@@ -221,6 +267,19 @@ impl Completed {
         self.rows
             .iter()
             .find(|hit| hit.session.workspace_id == workspace && hit.session.id == id)
+    }
+
+    pub(super) fn missing_rows(&self, page: &Page) -> HashSet<RowId> {
+        let fresh: HashSet<_> = page
+            .matches
+            .iter()
+            .map(|hit| (&hit.session.workspace_id, &hit.session.id))
+            .collect();
+        self.rows
+            .iter()
+            .filter(|hit| !fresh.contains(&(&hit.session.workspace_id, &hit.session.id)))
+            .map(|hit| RowId::for_completed(&hit.session.workspace_id, &hit.session.id))
+            .collect()
     }
 
     pub(super) fn apply(
@@ -469,6 +528,7 @@ mod tests {
             workspace: Some(workspace.to_owned()),
             member: Some("reviewer".into()),
             backend: None,
+            activity: None,
             workspaces: BTreeSet::from([workspace.to_owned()]),
         };
         let mut completed = Completed::default();
@@ -507,6 +567,7 @@ mod tests {
             workspace: Some("beacon".into()),
             member: None,
             backend: None,
+            activity: None,
             workspaces: BTreeSet::from(["beacon".into()]),
         };
         let rows: Vec<_> = (0..45)

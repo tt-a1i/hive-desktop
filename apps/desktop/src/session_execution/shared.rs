@@ -40,6 +40,7 @@ impl HiveApp {
         self.session.as_ref().filter(|session| {
             self.workspace.as_ref() == Some(&session.workspace_id)
                 && !session.archived
+                && !session.worktree_released
                 && session.profile.is_some()
                 && session.execution.as_ref().is_some_and(|execution| {
                     execution.kind == "worktree" && !execution.path.is_empty()

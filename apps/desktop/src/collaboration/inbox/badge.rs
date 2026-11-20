@@ -94,7 +94,7 @@ pub(in crate::collaboration) struct InboxBadge {
     seen: HashSet<BadgeItem>,
     reminders: HashMap<String, Snoozes>,
     wake: DeadlineWake,
-    live_replies: HashMap<String, HashMap<String, u64>>,
+    live_replies: HashMap<String, HashMap<String, (u64, Option<u64>)>>,
 }
 
 impl InboxBadge {
@@ -197,6 +197,7 @@ impl InboxBadge {
         workspace: &str,
         session: &str,
         revision: u64,
+        received_at: Option<u64>,
     ) {
         let latest = self
             .live_replies
@@ -204,7 +205,9 @@ impl InboxBadge {
             .or_default()
             .entry(session.to_owned())
             .or_default();
-        *latest = (*latest).max(revision);
+        if revision > latest.0 {
+            *latest = (revision, received_at);
+        }
     }
 
     pub(in crate::collaboration::inbox) fn reply_revision(
@@ -215,8 +218,16 @@ impl InboxBadge {
         self.live_replies
             .get(workspace)
             .and_then(|sessions| sessions.get(session))
-            .copied()
+            .map(|reply| reply.0)
             .unwrap_or(0)
+    }
+
+    pub(in crate::collaboration::inbox) fn reply_time(
+        &self,
+        workspace: &str,
+        session: &str,
+    ) -> Option<u64> {
+        self.live_replies.get(workspace)?.get(session)?.1
     }
 }
 

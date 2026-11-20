@@ -181,6 +181,9 @@ impl WorkspaceTerminal {
 }
 impl HiveApp {
     fn desired_terminal_target(&self) -> Option<TerminalTarget> {
+        if self.current_worktree_released() {
+            return None;
+        }
         selected_target(
             self.terminal.mode,
             self.workspace.as_deref(),
@@ -239,6 +242,9 @@ impl HiveApp {
         cx.notify();
     }
     pub fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.current_worktree_released() {
+            return;
+        }
         self.close_workflows();
         self.close_memory();
         self.close_roles();
@@ -345,6 +351,9 @@ impl HiveApp {
     }
     // Idempotent view reconciliation catches workspace switches/removal through every existing caller.
     pub fn sync_terminal_workspace(&mut self, cx: &mut Context<Self>) {
+        if self.current_worktree_released() {
+            self.terminal.visible = false;
+        }
         let visible = self.terminal.visible
             && !self.memory.visible
             && !self.collaboration.visible

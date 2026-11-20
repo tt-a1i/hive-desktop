@@ -858,7 +858,7 @@ impl HiveApp {
             return;
         }
         if let PiEvent::MessageEnd { session_id, inbox_reply: Some(reply), .. } = &event {
-            self.note_live_inbox_reply(&reply.workspace_id, session_id, reply.revision);
+            self.note_live_inbox_reply(&reply.workspace_id, session_id, reply.revision, reply.received_at);
         }
         // Keep current-session navigation in the same snapshot replay as chat
         // events, so an in-flight open cannot replace newer metadata.

@@ -19,6 +19,7 @@ interface ClaudeSavedHistoryOptions {
   env: NodeJS.ProcessEnv;
   /** An imported conversation must continue to resolve to its original path. */
   nativePath?: string;
+  retainedWorktreeCwd?: true;
   snapshot?: string;
   signal?: AbortSignal;
   assertCurrent?: () => void;
@@ -68,10 +69,10 @@ function readIndex<T>(path: string, snapshot: string, read: (db: DatabaseSync, t
   }
 }
 
-async function buildIndex(path: string, snapshot: string, options: ClaudeSavedHistoryOptions, validate: () => Promise<void>): Promise<void> {
+async function buildIndex(path: string, snapshot: string, options: ClaudeSavedHistoryOptions, native: string, validate: () => Promise<void>): Promise<void> {
   const { cacheDirectory, metadataDirectory, sessionId, cwd, env, signal } = options;
   const metadata = readClaudeMetadata(metadataDirectory, sessionId);
-  const messages = await readSessionMessages(sessionId, cwd, env, signal, options.nativePath);
+  const messages = await readSessionMessages(sessionId, cwd, env, signal, options.retainedWorktreeCwd ? native : options.nativePath, options.retainedWorktreeCwd);
   if (!messages.length || messages.some(message => message.session_id !== sessionId))
     throw new Error('Claude SDK did not return history with the expected native session identity');
 
@@ -127,16 +128,17 @@ export async function openClaudeSavedHistory(options: ClaudeSavedHistoryOptions)
     return undefined;
   };
   signal?.throwIfAborted();
-  const native = await resolveClaudeTranscript(sessionId, cwd, env);
+  const native = await resolveClaudeTranscript(sessionId, cwd, env, options.retainedWorktreeCwd);
   if (!native || (options.nativePath && options.nativePath !== native)) return unavailable();
   const metadata = claudeMetadataPath(metadataDirectory, sessionId);
   const sourceVersion = async () => hash([version, scope, native, metadata, env.CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP,
+    ...(options.retainedWorktreeCwd ? ['released-worktree'] : []),
     await savedHistoryFileVersion(native), await savedHistoryFileVersion(metadata, true)]);
   const snapshot = await sourceVersion().catch(() => undefined);
   if (!snapshot || (options.snapshot !== undefined && options.snapshot !== snapshot)) return unavailable();
   const validate = async () => {
     signal?.throwIfAborted();
-    const resolved = await resolveClaudeTranscript(sessionId, cwd, env).catch(() => undefined);
+    const resolved = await resolveClaudeTranscript(sessionId, cwd, env, options.retainedWorktreeCwd).catch(() => undefined);
     if (resolved !== native || await sourceVersion().catch(() => undefined) !== snapshot) throw new StaleHistorySnapshotError();
     signal?.throwIfAborted();
     assertCurrent?.();
@@ -156,7 +158,7 @@ export async function openClaudeSavedHistory(options: ClaudeSavedHistoryOptions)
   if (!await ready()) {
     assertCurrent?.();
     const buildKey = JSON.stringify([path, snapshot]);
-    const build = building.get(buildKey) ?? {directory: cacheDirectory, pending: buildIndex(path, snapshot, options, validate)};
+    const build = building.get(buildKey) ?? {directory: cacheDirectory, pending: buildIndex(path, snapshot, options, native, validate)};
     building.set(buildKey, build);
     try { await build.pending; }
     catch (error) {

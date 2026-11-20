@@ -566,7 +566,7 @@ impl HiveApp {
         let runtime = if preview_mock {
             self.runtime.clone()
         } else {
-            if !self.connected || self.closing {
+            if !self.connected || self.closing || self.current_worktree_released() {
                 return None;
             }
             Some(self.runtime.clone()?)
@@ -717,6 +717,11 @@ impl HiveApp {
     }
 
     pub(crate) fn sync_git_workspace(&mut self, cx: &mut Context<Self>) {
+        if self.current_worktree_released() {
+            self.git_drawer_open = false;
+            self.git_workspace = None;
+            return;
+        }
         let matches = self.git_workspace.as_ref().is_some_and(|entity| {
             let ws = entity.read(cx);
             ws.preview_mock || ws.matches_app(self)
@@ -760,7 +765,7 @@ impl HiveApp {
     }
 
     fn show_git_drawer(&mut self, mut file: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.connected || self.closing || self.workspace.is_none() {
+        if !self.connected || self.closing || self.workspace.is_none() || self.current_worktree_released() {
             return;
         }
         self.git_drawer_open = true;

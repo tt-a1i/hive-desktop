@@ -220,6 +220,7 @@ impl HiveApp {
         self.session_name_loading = false;
         self.session_pin_loading.clear();
         self.session_archive_loading.clear();
+        self.worktree_release_loading.clear();
         self.reasoning_picker = Default::default();
         self.mode_picker = Default::default();
         self.command_picker = Default::default();

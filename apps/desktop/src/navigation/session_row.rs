@@ -125,6 +125,11 @@ impl HiveApp {
         let archive_app = app.clone();
         let worktree_session = session.clone();
         let worktree_app = app.clone();
+        let release_session = session.clone();
+        let release_app = app.clone();
+        let release_available = app.upgrade().is_some_and(|app| {
+            app.read(cx).can_release_shared_worktree(&release_session)
+        });
         let scratch_session = session.clone();
         let scratch_app = app.clone();
         let discard_session = session.clone();
@@ -196,6 +201,21 @@ impl HiveApp {
                     }),
             ),
         )
+        .when(release_session.shared_worktree_owner().is_some(), |menu| {
+            menu.item(
+                PopupMenuItem::new(tr("解除共用工作树…"))
+                    .disabled(!release_available)
+                    .on_click(move |_, window, cx| {
+                        let app = release_app.clone();
+                        let session = release_session.clone();
+                        window.defer(cx, move |window, cx| {
+                            let _ = app.update(cx, |this, cx| {
+                                this.open_worktree_release(session, window, cx);
+                            });
+                        });
+                    }),
+            )
+        })
         .when(scratch_session.scratch, |menu| {
             menu.item(PopupMenuItem::new(tr(if linked { "打开 Scratch 项目" } else { "将 Scratch 文件夹添加为项目…" }))
                 .on_click(move |_, window, cx| {

@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { WORKSPACE_UPLOAD_MAX_BYTES } from '@tt-a1i/hive/dist/src/server/upload-limits.js';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
+import { startProjectRegexSearch } from './project-search-regex.js';
+import type { RegexRange } from './project-search-regex-worker.js';
 
 const exec = promisify(execFile);
 const PAGE_SIZE = 100;
@@ -140,18 +142,25 @@ type SearchSnippet = {
   trailingEllipsis: boolean;
 };
 
-function snippetRanges(
-  searchable: string, needle: string, start: number, end: number,
-  sourceByte: (offset: number) => number | undefined, wholeWord: boolean,
-): SearchSnippet['ranges'] {
+function* literalRanges(searchable: string, needle: string, start: number, end: number, wholeWord: boolean) {
+  let match = nextLiteralMatch(searchable, needle, start, wholeWord);
+  while (match !== -1 && match + needle.length <= end) {
+    const next = match + needle.length;
+    yield [match, next] as RegexRange;
+    match = nextLiteralMatch(searchable, needle, next, wholeWord);
+  }
+}
+
+function snippetRanges(start: number, end: number, sourceByte: (offset: number) => number | undefined,
+  matches: Iterable<RegexRange>): SearchSnippet['ranges'] {
   const ranges: SearchSnippet['ranges'] = [];
   const base = sourceByte(start)!;
-  let match = nextLiteralMatch(searchable, needle, start, wholeWord);
-  while (match !== -1 && match + needle.length <= end && ranges.length < SNIPPET_RANGE_LIMIT) {
+  for (const [match, matchEnd] of matches) {
+    if (match < start || matchEnd > end) continue;
     const a = sourceByte(match);
-    const b = sourceByte(match + needle.length);
+    const b = sourceByte(matchEnd);
     if (a !== undefined && b !== undefined && a < b) ranges.push([a - base, b - base]);
-    match = nextLiteralMatch(searchable, needle, match + needle.length, wholeWord);
+    if (ranges.length >= SNIPPET_RANGE_LIMIT) break;
   }
   return ranges;
 }
@@ -162,7 +171,8 @@ function snippetWindowStart(matchByte: number, matchBytes: number): number {
 }
 
 function lineSnippet(
-  line: string, searchable: string, needle: string, firstMatch: number, caseSensitive: boolean, wholeWord: boolean,
+  line: string, searchable: string, [firstMatch, firstMatchEnd]: RegexRange,
+  normalize: (segment: string) => string, matches: (start: number, end: number) => Iterable<RegexRange>,
 ): SearchSnippet | undefined {
   const source = line.endsWith('\r') ? line.slice(0, -1) : line;
   const result = (start: number, end: number, ranges: SearchSnippet['ranges']): SearchSnippet | undefined => {
@@ -173,16 +183,16 @@ function lineSnippet(
     return {text, ranges, leadingEllipsis: start > 0, trailingEllipsis: end < source.length};
   };
   if (/^[\t\x20-\x7e]*$/.test(source)) {
-    const start = Math.min(source.length, snippetWindowStart(firstMatch, needle.length));
+    const start = Math.min(source.length, snippetWindowStart(firstMatch, firstMatchEnd - firstMatch));
     const end = Math.min(source.length, start + SNIPPET_BYTES);
-    return result(start, end, snippetRanges(searchable, needle, start, end, offset => offset, wholeWord));
+    return result(start, end, snippetRanges(start, end, offset => offset, matches(start, end)));
   }
 
   if (source.length <= UNICODE_MAPPING_LIMIT) {
     const boundaries = [{source: 0, normalized: 0, bytes: 0}];
     const normalizedParts: string[] = [];
     for (const {segment, index} of graphemes.segment(source)) {
-      const normalized = searchText(segment, caseSensitive);
+      const normalized = normalize(segment);
       const previous = boundaries[boundaries.length - 1]!;
       normalizedParts.push(normalized);
       boundaries.push({
@@ -197,7 +207,7 @@ function lineSnippet(
     if (normalizedParts.join('') === foldedLine) {
       const byMatch = new Map(boundaries.map(boundary => [boundary.normalized, boundary.bytes]));
       const firstByte = byMatch.get(firstMatch) ?? 0;
-      const lastByte = byMatch.get(firstMatch + needle.length) ?? firstByte;
+      const lastByte = byMatch.get(firstMatchEnd) ?? firstByte;
       const wantedStart = snippetWindowStart(firstByte, lastByte - firstByte);
       const start = boundaries.find(boundary => boundary.bytes >= wantedStart)!;
       let end = start;
@@ -205,8 +215,8 @@ function lineSnippet(
         if (boundary.bytes > start.bytes + SNIPPET_BYTES) break;
         if (boundary.bytes >= start.bytes) end = boundary;
       }
-      return result(start.source, end.source, snippetRanges(foldedLine, needle,
-        start.normalized, end.normalized, offset => byMatch.get(offset), wholeWord));
+      return result(start.source, end.source, snippetRanges(start.normalized, end.normalized,
+        offset => byMatch.get(offset), matches(start.normalized, end.normalized)));
     }
   }
 
@@ -268,11 +278,28 @@ export async function listProjectDirectory(projectRoot: string, directory: strin
   return {entries: entries.slice(offset, offset + PAGE_SIZE), total: entries.length};
 }
 
-export async function searchProjectContents(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false, wholeWord = false) {
+export async function searchProjectContents(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false, wholeWord = false, regex = false) {
   validateSearch(query, offset);
   const root = await rootDirectory(projectRoot);
-  const needle = searchText(query, caseSensitive);
-  if (!needle) return {matches: [], total: 0, limited: false};
+  if (!query) return {matches: [], total: 0, limited: false};
+  const worker = regex ? await startProjectRegexSearch(query, caseSensitive,
+    wholeWord ? WORD_CHARACTER.source : undefined, SNIPPET_RANGE_LIMIT, signal) : undefined;
+  try {
+    return await searchProjectLines(root, query, offset, worker?.signal ?? signal, caseSensitive, wholeWord, worker);
+  } catch (error) {
+    worker?.signal.throwIfAborted();
+    throw error;
+  } finally {
+    await worker?.close();
+  }
+}
+
+async function searchProjectLines(
+  root: string, query: string, offset: number, signal: AbortSignal | undefined,
+  caseSensitive: boolean, wholeWord: boolean, worker: Awaited<ReturnType<typeof startProjectRegexSearch>> | undefined,
+) {
+  const needle = worker ? '' : searchText(query, caseSensitive);
+  if (!worker && !needle) return {matches: [], total: 0, limited: false};
   const candidates = await gitFiles(root, signal) ?? await walk(root, '', signal);
   const paths = [...new Set(candidates.map(path => path.split(sep).join('/')))].sort();
   const matches: {path: string; line: number; snippet?: SearchSnippet}[] = [];
@@ -301,6 +328,16 @@ export async function searchProjectContents(projectRoot: string, query: string, 
       throw error;
     }
     signal?.throwIfAborted();
+    if (worker) {
+      const page = await worker.scan(text, Math.max(0, offset - total), PAGE_SIZE - matches.length);
+      for (const {line, start, end, anchor, ranges} of page.lines) {
+        const raw = text.slice(start, end);
+        const snippet = lineSnippet(raw, raw, ranges[0] ?? [anchor, anchor], segment => segment, () => ranges);
+        matches.push({path, line, ...(snippet ? {snippet} : {})});
+      }
+      total += page.total;
+      continue;
+    }
     // Walk line boundaries without allocating an array for the entire file.
     for (let start = 0, line = 1; start < text.length; line++) {
       const newline = text.indexOf('\n', start);
@@ -311,7 +348,9 @@ export async function searchProjectContents(projectRoot: string, query: string, 
         const firstMatch = nextLiteralMatch(searchable, needle, 0, wholeWord);
         if (firstMatch !== -1) {
           if (total >= offset && matches.length < PAGE_SIZE) {
-            const snippet = lineSnippet(raw, searchable, needle, firstMatch, caseSensitive, wholeWord);
+            const snippet = lineSnippet(raw, searchable, [firstMatch, firstMatch + needle.length],
+              segment => searchText(segment, caseSensitive),
+              (from, to) => literalRanges(searchable, needle, from, to, wholeWord));
             matches.push({path, line, ...(snippet ? {snippet} : {})});
           }
           total += 1;
@@ -320,6 +359,7 @@ export async function searchProjectContents(projectRoot: string, query: string, 
       start = end + 1;
     }
   }
+  signal?.throwIfAborted();
   return {matches, total, limited};
 }
 

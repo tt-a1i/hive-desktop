@@ -88,6 +88,13 @@ try {
   assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, token, 0, b.id, undefined, true, true)).matches.map(({line}) => line), [1, 3]);
   await assert.rejects(runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, false, 'true'), /Invalid project file search/);
   await assert.rejects(runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, 'true'), /Invalid project file search/);
+  const expression = `^${token} (?:alpha|beta [0-9])$`;
+  for (const [sessionId, lines] of [[undefined, []], [a.id, [2]], [b.id, [1, 3]]] as const) {
+    const result = await runtime.chats.projectFilesSearchContent(ws.id, expression, 0, sessionId, undefined, false, false, true);
+    assert.deepEqual(result.matches.map(({path, line}) => ({path, line})), lines.map(line => ({path: contentName, line})));
+  }
+  await assert.rejects(runtime.chats.projectFilesSearchContent(ws.id, token, 0, a.id, undefined, false, false, 'true'), /Invalid project file search/);
+  await assert.rejects(runtime.chats.projectFilesSearchContent(otherWs.id, expression, 0, a.id, undefined, false, false, true));
   await assert.rejects(runtime.chats.projectFilesSearchContent(otherWs.id, token, 0, a.id));
   await assert.rejects(runtime.chats.projectFilesPreview(otherWs.id, name, a.id));
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, a.id)).paths, ['only-one.txt']);

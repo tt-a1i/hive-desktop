@@ -60,7 +60,7 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.connected || self.closing || window.has_active_dialog(cx) {
+        if !self.connected || self.closing || self.current_worktree_released() || window.has_active_dialog(cx) {
             return;
         }
         let (Some(runtime), Some(session)) = (self.runtime.clone(), self.session.as_ref()) else {

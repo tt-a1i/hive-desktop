@@ -1,3 +1,5 @@
+#[path = "activity.rs"]
+mod activity;
 #[path = "badge.rs"]
 mod badge;
 #[path = "completed.rs"]
@@ -7,6 +9,7 @@ mod intro;
 #[path = "view_prefs.rs"]
 mod view_prefs;
 
+use self::activity::ActivityRange;
 pub(in crate::collaboration) use self::badge::InboxBadge;
 use self::intro::{IntroMode, IntroProgress};
 use self::view_prefs::{MemberFilter, ViewPreferences};
@@ -19,8 +22,8 @@ use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
     ActionCenter, ArchiveInboxSession, Destination, Entry, InboxRowInteraction, MarkInboxRead,
-    Reminders, SNOOZE_CHANGED, inbox_row, inbox_status, is_snoozed, read_action_center,
-    toggle_button,
+    Reminders, SNOOZE_CHANGED, activity_matches, inbox_row, inbox_status, is_snoozed,
+    read_action_center, session_inbox_activity, toggle_button,
 };
 use crate::{
     app::HiveApp,
@@ -517,6 +520,7 @@ impl GlobalInbox {
             workspace,
             member: member.map(|member| member.member_id.clone()),
             backend: self.preferences.values.backend_filter,
+            activity: self.preferences.values.activity_filter,
             workspaces: visible,
         })
     }
@@ -560,6 +564,10 @@ impl GlobalInbox {
         };
         let generation = self.completed.generation;
         let limit = self.completed.request_limit(offset);
+        if offset == 0 {
+            self.completed.activity_since = scope.activity.map(|range| range.cutoff(now_ms()));
+        }
+        let activity_since = self.completed.activity_since;
         let snapshot = if offset == 0 {
             None
         } else {
@@ -570,14 +578,36 @@ impl GlobalInbox {
             if offset == 0 {
                 smol::Timer::after(Duration::from_millis(150)).await;
             }
-            let result =
-                completed::read(&runtime, &scope, offset, limit, snapshot.as_deref()).await;
+            let result = completed::read(
+                &runtime,
+                &scope,
+                offset,
+                limit,
+                snapshot.as_deref(),
+                activity_since,
+            )
+            .await;
             let _ = this.update(cx, |inbox, cx| {
-                if inbox.completed_scope(cx).as_ref() == Some(&scope) {
-                    let reading =
-                        (offset == 0 && result.is_ok() && !inbox.completed.rows.is_empty())
-                            .then(|| inbox.reading_position())
-                            .flatten();
+                if inbox.completed_scope(cx).as_ref() == Some(&scope)
+                    && inbox.completed.generation == generation
+                {
+                    if let (Some(range), Ok(page)) = (scope.activity, &result) {
+                        let current = range.cutoff(now_ms());
+                        if inbox.completed.clock_moved_back(current)
+                            || page.has_older_activity(current)
+                        {
+                            inbox.completed.refresh_activity();
+                            inbox.sync_completed(cx);
+                            return;
+                        }
+                    }
+                    let reading = match &result {
+                        Ok(page) if offset == 0 && !inbox.completed.rows.is_empty() => {
+                            let removed = inbox.completed.missing_rows(page);
+                            inbox.reading_position_matching(|row| !removed.contains(row))
+                        }
+                        _ => None,
+                    };
                     if !inbox.completed.apply(generation, offset, result) {
                         return;
                     }
@@ -594,8 +624,13 @@ impl GlobalInbox {
     fn completed_hit(&self, workspace: &str, id: &str, cx: &App) -> Option<SessionHit> {
         let scope = self.completed_scope(cx)?;
         let hit = self.completed.has(workspace, id)?;
-        (self.completed.scope.as_ref() == Some(&scope) && scope.contains(&hit.session))
-            .then(|| hit.clone())
+        (self.completed.scope.as_ref() == Some(&scope)
+            && scope.contains(&hit.session)
+            && activity_matches(
+                session_inbox_activity(&hit.session),
+                scope.activity.map(|range| range.cutoff(now_ms())),
+            ))
+        .then(|| hit.clone())
     }
 
     fn restore_completed(
@@ -775,6 +810,13 @@ impl GlobalInbox {
     }
 
     fn reading_position_without(&self, excluded: Option<&RowId>) -> Option<ReadingPosition> {
+        self.reading_position_matching(|row| Some(row) != excluded)
+    }
+
+    fn reading_position_matching(
+        &self,
+        mut matches: impl FnMut(&RowId) -> bool,
+    ) -> Option<ReadingPosition> {
         let offset = self.scroll.offset().y;
         if offset >= px(0.) {
             return None;
@@ -788,7 +830,7 @@ impl GlobalInbox {
             .take_while(|(index, _)| *index <= last_visible)
             .find_map(|(index, row)| {
                 let row = row.as_ref()?;
-                if Some(row) == excluded {
+                if !matches(row) {
                     return None;
                 }
                 let bounds = self.scroll.bounds_for_item(index)?;
@@ -971,6 +1013,49 @@ impl GlobalInbox {
             })
     }
 
+    fn activity_filter_button(
+        &self,
+        current: Option<ActivityRange>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let title = tr(ActivityRange::label(current));
+        let label = format!("{} · {title}", tr("按活跃时间筛选收件箱"));
+        let inbox = cx.weak_entity();
+        Button::new("global-inbox-activity-filter")
+            .outline()
+            .compact()
+            .xsmall()
+            .dropdown_caret(true)
+            .label(title)
+            .tooltip(label.clone())
+            .accessibility_label(label)
+            .dropdown_menu(move |menu, _, _| {
+                ActivityRange::OPTIONS
+                    .into_iter()
+                    .fold(menu, |menu, range| {
+                        let inbox = inbox.clone();
+                        menu.item(
+                            PopupMenuItem::new(tr(ActivityRange::label(range)))
+                                .checked(current == range)
+                                .on_click(move |_, _, cx| {
+                                    let _ = inbox.update(cx, |this, cx| {
+                                        if this.is_current(this.connection, cx)
+                                            && this.reviewing_new.is_none()
+                                            && this.preferences.values.activity_filter != range
+                                        {
+                                            this.preferences.values.activity_filter = range;
+                                            this.preferences.save_changed();
+                                            this.clear_filter_position();
+                                            this.sync_completed(cx);
+                                            cx.notify();
+                                        }
+                                    });
+                                }),
+                        )
+                    })
+            })
+    }
+
     fn clear_filter_position(&mut self) {
         self.restore_position = None;
         if let Some(review) = self.reviewing_new.as_mut() {
@@ -982,6 +1067,34 @@ impl GlobalInbox {
     }
 
     fn poll(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                smol::Timer::after(Duration::from_secs(2)).await;
+                let keep_running = this.update(cx, |this, cx| {
+                    if this.dismissed {
+                        return false;
+                    }
+                    if let Some(range) = this.preferences.values.activity_filter
+                        && this.reviewing_new.is_none()
+                        && this.intro.is_none()
+                    {
+                        if this
+                            .completed
+                            .activity_needs_refresh(range.cutoff(now_ms()))
+                        {
+                            this.completed.refresh_activity();
+                            this.sync_completed(cx);
+                        }
+                        cx.notify();
+                    }
+                    true
+                });
+                if !matches!(keep_running, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             loop {
                 let Ok(Some((connection, runtime, workspaces))) = this.update(cx, |this, cx| {
@@ -1504,6 +1617,11 @@ impl Render for GlobalInbox {
             .values
             .backend_filter
             .filter(|_| !reviewing);
+        let selected_activity = self
+            .preferences
+            .values
+            .activity_filter
+            .filter(|_| !reviewing);
         let selected_title = selected_project(&app.workspaces, None, selected)
             .map(|project| display_project(project, &app.workspaces));
         let available: Vec<_> = app
@@ -1527,6 +1645,7 @@ impl Render for GlobalInbox {
             })
             .collect();
         let now = now_ms();
+        let activity_since = selected_activity.map(|range| range.cutoff(now));
         let rows: Vec<_> = if ready {
             projects
                 .iter()
@@ -1542,6 +1661,7 @@ impl Render for GlobalInbox {
                         .filter(|entry| {
                             matches_member(&workspace.id, entry, selected_member)
                                 && entry.matches_backend(selected_backend)
+                                && activity_matches(entry.activity_at, activity_since)
                                 && (!reviewing
                                     || project
                                         .badge_item(app, &workspace.id, entry, now)
@@ -1743,6 +1863,7 @@ impl Render for GlobalInbox {
             }
             if ready {
                 controls = controls.child(self.backend_filter_button(selected_backend, cx));
+                controls = controls.child(self.activity_filter_button(selected_activity, cx));
             }
             if has_snoozed {
                 controls = controls.child(
@@ -2304,14 +2425,19 @@ mod tests {
             "workspace_id": "right", "generated_at": 10, "recent_dispatch_messages": [],
             "attention": [
                 {"kind": "question_waiting_answer", "worker_id": "reviewer", "message_id": "with-origin",
-                    "dispatch_id": "123e4567-e89b-12d3-a456-426614174000", "dispatch_backend": "codex"},
+                    "dispatch_id": "123e4567-e89b-12d3-a456-426614174000", "dispatch_backend": "codex",
+                    "message_created_at": 1200},
                 {"kind": "dispatch_waiting_report", "worker_id": "reviewer",
-                    "dispatch_id": "123e4567-e89b-12d3-a456-426614174001"},
+                    "dispatch_id": "123e4567-e89b-12d3-a456-426614174001", "submitted_at": 300},
                 {"kind": "stopped_with_queue", "worker_id": "reviewer"}
             ]
         })).unwrap();
         let rows = snapshot.entries(str::to_owned);
         assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows.iter().map(|row| row.activity_at).collect::<Vec<_>>(),
+            [1200, 300, 0]
+        );
         let member = MemberFilter {
             workspace_id: "right".into(),
             member_id: "reviewer".into(),
@@ -2329,8 +2455,10 @@ mod tests {
         );
 
         let mut session: Session = serde_json::from_value(json!({
-            "id": "codex", "workspaceId": "right", "title": "Same title", "updatedAt": 0, "backend": "codex"
+            "id": "codex", "workspaceId": "right", "title": "Same title", "updatedAt": 100, "backend": "codex",
+            "inboxReply": {"revision": 1, "receivedAt": 700}
         })).unwrap();
+        assert_eq!(super::session_inbox_activity(&session), 700);
         let mut entry = Entry {
             label: "未读会话",
             subject: session.title.clone(),
@@ -2341,6 +2469,7 @@ mod tests {
             wake: None,
             priority: Priority::Unread,
             updated_at: 0,
+            activity_at: 0,
         };
         assert!(entry.matches_backend(Some(Backend::Codex)));
         session.id = "pi".into();
@@ -2393,6 +2522,7 @@ mod tests {
             wake: None,
             priority: Priority::NeedsUser,
             updated_at: 1,
+            activity_at: 1,
         };
         let anchor = RowId::for_entry("beacon", &entry);
         let atlas = RowId::for_entry("atlas", &entry);
@@ -2445,6 +2575,7 @@ mod tests {
                         wake: None,
                         priority,
                         updated_at,
+                        activity_at: updated_at,
                     },
                 )
             }),
