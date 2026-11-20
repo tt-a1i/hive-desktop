@@ -5,6 +5,7 @@ import { createVersionService } from "@tt-a1i/hive/dist/src/server/version-servi
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
 import { HttpError } from "@tt-a1i/hive/dist/src/server/http-errors.js";
 import type { WorkspaceUploadRecord } from "@tt-a1i/hive/dist/src/server/workspace-upload-store.js";
+import type { DispatchMessageRecord } from "@tt-a1i/hive/dist/src/shared/team-collaboration.js";
 import { getDefaultRoleDescription } from '@tt-a1i/hive/dist/src/server/role-templates.js';
 import { resolveWorkspaceUiLanguage } from '@tt-a1i/hive/dist/src/server/workspace-ui-language.js';
 import type { HiveAgentRuntimeFactory } from "./hive-runtime-contract.js";
@@ -32,9 +33,11 @@ export interface HiveUploadLocation {
 }
 
 export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled'; text: string }
+interface InboxQuestion { workspaceId: string; dispatchId: string; messageId: string }
 export interface SavedScriptContext {scriptRunId: string; cwd: string; command: string; sessionId?: string}
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
+    inboxQuestions(workspaceIds: readonly string[]): InboxQuestion[];
     readonly projectScriptState: import('./project-script-settings.js').ProjectScriptStatePort;
     desktopConversationSwitchState(workspaceId:string,agentId?:string): import('./hive-runtime-contract.js').DesktopConversationSwitchState;
     executionLedgerRevision(): string;
@@ -130,6 +133,19 @@ export async function createHiveHost({
 	let closing: Promise<void> | undefined;
 	return {
 		port: runtime.port,
+        inboxQuestions(workspaceIds) {
+            if (closing) throw new Error('Hive host is closed');
+            const store = runtime.store as typeof runtime.store & {
+                listWorkspaces(): Array<{ id: string }>;
+                listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[];
+            };
+            const workspaces = new Set(store.listWorkspaces().map(workspace => workspace.id));
+            return [...new Set(workspaceIds)].filter(workspaceId => workspaces.has(workspaceId)).flatMap(workspaceId =>
+                // Keep the Action Center's question vs. queued-delivery distinction.
+                store.listActionableDispatchMessages(workspaceId)
+                    .filter(message => message.kind === 'question' && message.deliveryState !== 'queued')
+                    .map(message => ({ workspaceId, dispatchId: message.dispatchId, messageId: message.id })));
+        },
         projectScriptState: {
             read(key, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.readProjectScriptState(key, workspaceId);},
             compareAndSwap(key, expected, next, workspaceId) {if (closing) throw new Error('Hive host is closed'); return runtime.store.settings.compareAndSwapProjectScriptState(key, expected, next, workspaceId);},

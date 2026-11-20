@@ -31,6 +31,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{borrow::Cow, sync::Arc};
 
+const STATUS_PAGE_SIZE: usize = 100;
+pub(crate) const FILE_TREE_STATUS_LIMIT: usize = 500;
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Identity {
@@ -232,6 +235,24 @@ impl Status {
         // Legacy status snapshots have no repository-wide count. Let the
         // read-only backend preflight decide instead of guessing from one page.
         !self.complete || self.repository_staged_total != Some(0)
+    }
+
+    fn select_live_file(&mut self, path: &str) -> Option<usize> {
+        if self.scope != "project" || self.offset != 0 {
+            return None;
+        }
+        let mut matches = self.entries.iter().enumerate().filter(|(_, change)| change.path == path);
+        let (index, change) = matches.next()?;
+        if matches.next().is_some() || change.reveal_path() != Some(path) {
+            return None;
+        }
+        // The file tree reads up to 500 changes. Keep the Git workspace's ordinary page size.
+        self.offset = index / STATUS_PAGE_SIZE * STATUS_PAGE_SIZE;
+        self.limit = STATUS_PAGE_SIZE;
+        self.has_more = self.offset + self.limit < self.total;
+        let end = (self.offset + self.limit).min(self.entries.len());
+        self.entries = self.entries.drain(self.offset..end).collect();
+        Some(index - self.offset)
     }
 }
 
@@ -526,6 +547,7 @@ impl HiveApp {
         &self,
         in_drawer: bool,
         preview_mock: bool,
+        file: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<GitWorkspace>> {
@@ -665,7 +687,7 @@ impl HiveApp {
             if !preview_mock {
                 let pending = cx.weak_entity();
                 cx.defer(move |cx| {
-                    let _ = pending.update(cx, |state, cx| state.refresh(cx));
+                    let _ = pending.update(cx, |state, cx| state.refresh_status(file, cx));
                 });
             }
             state
@@ -690,12 +712,33 @@ impl HiveApp {
     ) -> Option<Entity<GitWorkspace>> {
         self.sync_git_workspace(cx);
         if self.git_workspace.is_none() {
-            self.git_workspace = self.build_git_workspace(true, false, window, cx);
+            self.git_workspace = self.build_git_workspace(true, false, None, window, cx);
         }
         self.git_workspace.clone()
     }
 
     pub(crate) fn open_git_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_git_drawer(None, window, cx);
+    }
+
+    pub(crate) fn open_git_file_diff(
+        &mut self,
+        file: String,
+        docked: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.can_browse_project_files() || window.has_active_dialog(cx) {
+            return;
+        }
+        if docked {
+            self.show_git_drawer(Some(file), window, cx);
+        } else {
+            self.show_git_modal(Some(file), window, cx);
+        }
+    }
+
+    fn show_git_drawer(&mut self, mut file: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         if !self.connected || self.closing || self.workspace.is_none() {
             return;
         }
@@ -703,13 +746,20 @@ impl HiveApp {
         if window.viewport_size().width < px(820.) {
             self.sidebar_open = false;
         }
-        if let Some(state) = self.ensure_git_workspace(window, cx) {
+        self.sync_git_workspace(cx);
+        if self.git_workspace.is_none() {
+            self.git_workspace = self.build_git_workspace(true, false, file.take(), window, cx);
+        } else if let Some(state) = &self.git_workspace {
             // The drawer validates its selection against HiveApp. Wait until
             // the parent is readable again before calling into the drawer.
             let drawer = state.downgrade();
             cx.defer(move |cx| {
                 let _ = drawer.update(cx, |ws, cx| {
-                    if ws.status.is_none() && !ws.status_loading {
+                    if let Some(file) = file {
+                        ws.show_history = false;
+                        ws.show_remotes = false;
+                        ws.refresh_status(Some(file), cx);
+                    } else if ws.status.is_none() && !ws.status_loading {
                         ws.refresh(cx);
                     } else if ws.reload_diff_on_open {
                         ws.load_diff(cx);
@@ -749,10 +799,14 @@ impl HiveApp {
     }
 
     pub(crate) fn open_git_workspace_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_git_modal(None, window, cx);
+    }
+
+    fn show_git_modal(&mut self, file: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         if !self.connected || self.closing || window.has_active_dialog(cx) {
             return;
         }
-        let Some(state) = self.build_git_workspace(false, false, window, cx) else {
+        let Some(state) = self.build_git_workspace(false, false, file, window, cx) else {
             return;
         };
         let width = (window.viewport_size().width - px(40.)).min(px(1000.));
@@ -777,7 +831,7 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(state) = self.build_git_workspace(true, true, window, cx) else {
+        let Some(state) = self.build_git_workspace(true, true, None, window, cx) else {
             return;
         };
         let patch = concat!(
@@ -936,6 +990,10 @@ impl GitWorkspace {
         })
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.refresh_status(None, cx);
+    }
+
+    fn refresh_status(&mut self, file: Option<String>, cx: &mut Context<Self>) {
         if self.preview_mock || self.busy(cx) || !self.current(cx) {
             return;
         }
@@ -951,7 +1009,11 @@ impl GitWorkspace {
         self.status_generation += 1;
         self.reload_diff_on_open = false;
         let generation = self.status_generation;
-        let offset = self.offset;
+        let (offset, limit) = if file.is_some() {
+            (0, FILE_TREE_STATUS_LIMIT)
+        } else {
+            (self.offset, STATUS_PAGE_SIZE)
+        };
         let selected_path = self.selected_change().map(|change| change.path.clone());
         self.status = None;
         self.status_error = None;
@@ -983,7 +1045,7 @@ impl GitWorkspace {
             let result = runtime
                 .request(
                     "git.status",
-                    git_params(json!({"workspaceId":workspace,"offset":offset,"limit":100}), &session),
+                    git_params(json!({"workspaceId":workspace,"offset":offset,"limit":limit}), &session),
                 )
                 .await
                 .map_err(Fault::transport)
@@ -998,22 +1060,39 @@ impl GitWorkspace {
                     return;
                 }
                 match result {
-                    Ok(status) => {
+                    Ok(mut status) => {
+                        if let Some(file) = file.as_ref() {
+                            let Some(index) = status.select_live_file(file) else {
+                                this.offset = 0;
+                                this.status_error = Some(Fault {
+                                    code: "FILE_CHANGE_UNAVAILABLE".to_owned(),
+                                    message: tr("找不到可查看的确切文件改动。请刷新文件面板后重试。").to_owned(),
+                                });
+                                cx.notify();
+                                return;
+                            };
+                            let change = &status.entries[index];
+                            this.comparison = if change.has_staged() && !change.has_unstaged() {
+                                Comparison::Staged
+                            } else {
+                                Comparison::Unstaged
+                            };
+                            this.selected = index;
+                        } else {
+                            this.selected = selected_path.as_ref().and_then(|path| {
+                                status.entries.iter().position(|change| &change.path == path)
+                            }).unwrap_or(0);
+                        }
                         this.offset = status.offset;
-                        this.selected = selected_path
-                            .as_ref()
-                            .and_then(|path| {
-                                status
-                                    .entries
-                                    .iter()
-                                    .position(|change| &change.path == path)
-                            })
-                            .unwrap_or(0);
                         this.status = Some(status);
                         this.index_refresh_required = false;
                         this.index_error = None;
                         if this.index_notice == Some("Git 索引已更改，请刷新状态后再操作。") {
                             this.index_notice = None;
+                        }
+                        if file.is_some() {
+                            this.files_scroll.scroll_to_item(this.selected);
+                            this.load_diff(cx);
                         }
                     }
                     Err(error) => this.status_error = Some(error),
@@ -1103,6 +1182,7 @@ impl GitWorkspace {
         let Some(path) = self.selected_change().map(|change| change.path.clone()) else {
             return;
         };
+        let expected_root = self.status.as_ref().map(|status| status.identity.project_root.clone());
         self.reload_diff_on_open = false;
         self.clear_file_diff(cx);
         let generation = self.diff_generation;
@@ -1128,11 +1208,18 @@ impl GitWorkspace {
                     return;
                 }
                 match result.map_err(Fault::transport).and_then(|value| decode::<FileDiff>(value, "diff")) {
-                    Ok(diff) => {
+                    Ok(diff) if diff.path == path && diff.comparison == comparison
+                        && expected_root.as_ref() == Some(&diff.identity.project_root) => {
                         this.diff = Some(diff);
                         let collapse =
                             crate::diffs_settings::current(cx).collapse_multi_file_diffs;
                         this.sync_diff_state(collapse, cx);
+                    }
+                    Ok(_) => {
+                        this.diff_error = Some(Fault {
+                            code: "INVALID_RESPONSE".to_owned(),
+                            message: tr("返回的 Diff 与所选项目或文件不匹配。").to_owned(),
+                        });
                     }
                     Err(error) => this.diff_error = Some(error),
                 }
@@ -3789,7 +3876,7 @@ impl Render for GitWorkspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{commit_result_label, Change, CommitPatchResponse, CommitPreview, CommitResult, FileDiff, IndexApplyResponse, IndexOperation, IndexPreview, Status, decode, git_params, valid_write_state};
+    use super::{commit_result_label, Change, CommitPatchResponse, CommitPreview, CommitResult, FileDiff, IndexApplyResponse, IndexOperation, IndexPreview, Status, decode, git_params, valid_write_state, FILE_TREE_STATUS_LIMIT};
     #[test]
     fn commit_result_accessible_label_includes_reason_and_warnings() {
         assert_eq!(
@@ -3798,7 +3885,7 @@ mod tests {
         );
         assert_eq!(commit_result_label("Commit created.", &[]), "Commit created.");
     }
-    use serde_json::json;
+    use serde_json::{Value, json};
     fn identity() -> serde_json::Value {
         json!({"projectRoot":"/repo/project","repositoryRoot":"/repo","projectPrefix":"project/","linkedWorktree":true,"branch":null,"headOid":"abc","detached":true,"unborn":false})
     }
@@ -3911,6 +3998,50 @@ mod tests {
         change.worktree_status = ".".into();
         change.worktree_mode = Some("000000".into());
         assert_eq!(change.reveal_path(), None);
+    }
+
+    fn change_status(entries: Vec<Value>, total: usize) -> Status {
+        let mut status = identity();
+        status.as_object_mut().unwrap().extend(json!({
+            "entries": entries, "total": total, "offset": 0, "limit": FILE_TREE_STATUS_LIMIT,
+            "hasMore": total > FILE_TREE_STATUS_LIMIT, "complete": true, "warnings": [],
+            "scope": "project", "submoduleDetails": "not-scanned", "globalConfiguration": "read-only",
+        }).as_object().unwrap().clone());
+        serde_json::from_value(status).unwrap()
+    }
+
+    fn changed_file(path: &str, worktree_status: &str) -> Value {
+        json!({"path": path, "repositoryPath":format!("project/{path}"), "kind":"ordinary",
+            "indexStatus":".", "worktreeStatus":worktree_status})
+    }
+
+    #[test]
+    fn file_tree_diff_selects_the_exact_row_on_a_later_git_page() {
+        let paths = (0..221).map(|i| changed_file(&format!("a/file-{i:03}.txt"), "M")).collect();
+        let mut status = change_status(paths, 221);
+        let selected = status.select_live_file("a/file-132.txt").unwrap();
+        assert_eq!(selected, 32);
+        assert_eq!(status.offset, 100);
+        assert_eq!(status.limit, 100);
+        assert!(status.has_more);
+        assert_eq!(status.entries.len(), 100);
+        assert_eq!(status.entries[selected].path, "a/file-132.txt");
+        assert_eq!(status.entries.first().unwrap().path, "a/file-100.txt");
+        assert_eq!(status.entries.last().unwrap().path, "a/file-199.txt");
+    }
+
+    #[test]
+    fn file_tree_diff_skips_clean_removed_and_ambiguous_paths() {
+        let mut status = change_status(vec![
+            changed_file("docs/note.txt", "M"),
+            changed_file("other/note.txt", "D"),
+            changed_file("ambiguous.txt", "D"),
+            changed_file("ambiguous.txt", "?"),
+        ], 503);
+        assert_eq!(status.select_live_file("clean/note.txt"), None);
+        assert_eq!(status.select_live_file("other/note.txt"), None);
+        assert_eq!(status.select_live_file("ambiguous.txt"), None);
+        assert_eq!(status.select_live_file("docs/note.txt"), Some(0));
     }
     #[test]
     fn git_diff_binary_and_errors_are_not_fabricated_text_patches() {

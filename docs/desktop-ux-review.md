@@ -55,8 +55,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 文件树实窗验证项目目录及工作树 A、B 分别显示各自的新增文件，关闭或展开父目录时仍显示改动提示。工作树 A 的 `note.txt` 显示修改，B 的同名文件不显示修改。编辑和还原 A 的文件后重新读取，修改标记随之出现和消失。证据在 `.artifacts/tree-badges-qa/receipt.md`。
 - 189 项桌面 Rust 测试通过，1 项原有忽略。运行时 Git 读取、工作区绑定和消息队列的 RPC 检查通过。Windows x64 MSVC 通过交叉类型检查。
 
+## 2026-11-21 第五批
+
+本轮从 Hive Desktop `06bb654` 开始。T3 Code `667d8a1`、Cindy `48acd5f`、Beluga `45a484b` 和 Hive 上游 `18861b8` 仍是各自默认分支。
+
+- **从欢迎页开启无项目对话。** 选择 Agent 后可直接开始。Hive 在桌面数据目录内创建或复用可见的 Scratch 工作区，移除工作区时保留目录与文件。同一次启动因回包失败而重试，仍返回同一条会话。已有项目时沿用普通会话入口。 [T3 Code 空状态](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/apps/web/src/components/NoProjectsHero.tsx#L15-L54)
+- **从文件树打开当前工作树的精确 Diff。** 改动标记提供打开入口。Hive 重新读取当前范围的 Git 状态，为目标文件打开所属页，只有暂存改动时进入暂存比较。路径缺失或身份有歧义时显示错误。点击文件行仍可预览。 [Beluga 文件行操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L242-L252)
+- **收件箱关闭时显示新事项。** 用户未查看、未暂缓的待答复协作问题及窗口已知未读会话会点亮入口。后台读取轻量身份摘要，打开收件箱时隐藏提示。用项目筛选查看时，只确认该范围已呈现的事项。 [Cindy 收件箱入口行为](https://github.com/makecindy/cindy/blob/48acd5fff52ffcd9892a8dc9759e8fe5fa31d706/docs/product-rules/task-inbox.md#L3-L6)
+
+- macOS 使用零工作区和受控 External Pi 接通欢迎页。一次创建请求的 ID 与返回和打开的会话一致。发送前没有提交提示。发送后对端在 Scratch 写出测试文件，冷启动恢复了原工作区、会话和对话内容。运行时回归另验了并发重试、工作区回包丢失和移除后保留文件。证据在 `.artifacts/scratch-first-chat-qa/receipt.md`。
+- macOS 在收件箱关闭时向 Atlas 加入新问题，入口显示提示。按保存的 Beacon 项目筛选查看后，Atlas 的提示保留。重开应用并查看全部项目后，关闭收件箱清除了提示。证据在 `.artifacts/inbox-badge-qa/receipt.md`。
+- macOS 从文件树分别打开项目目录和工作树 A、B 的同名 `docs/nested/note.txt`，三个 Diff 各显示本范围的内容。A 从文件浏览弹窗发起，另两个使用停靠面板。在 112 条 Git 改动的工作树中，也能打开第二页的 `page-109.txt`，并自动选择暂存比较。证据在 `.artifacts/tree-to-diff-qa/receipt.md` 和 `paging-receipt.md`。
+- 194 项桌面 Rust 测试通过，1 项原有忽略。TypeScript 类型检查、运行时构建和 Windows x64 MSVC 交叉检查通过。macOS 验收使用独立测试项目和协议对端，未调用模型服务。Windows 原生界面待复验。
+
 ## 接下来优先检查
 
-- **有就绪 Agent 时先开一段没有项目的会话。** 当前空白安装需要先选目录。T3 Code 从欢迎页进入空状态，再通过专用入口创建本机临时目录。用空项目和可用 Agent 验证 Hive 的首次发送、实际执行目录和冷启动恢复，并明确用户文件的保留规则。 [T3 Code 欢迎按钮](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/apps/web/src/components/onboarding/WelcomePage.tsx#L322-L335) · [T3 Code 空状态](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/apps/web/src/components/NoProjectsHero.tsx#L15-L54)
-- **从有改动的文件直接打开 Diff。** 在两个工作树中各改同名文件，从文件树的改动标记打开 Diff，验证选中的是当时的工作树和确切路径。当前可从 Diff 定位到文件树。 [Beluga 文件行操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L242-L252)
-- **收件箱入口提示有新的待处理事项。** 关闭收件箱，向另一项目送入需要用户答复的协作问题。检查入口能否提示新事项，打开后进入正确项目。当前必须先打开收件箱才会刷新列表。 [Cindy 收件箱入口行为](https://github.com/makecindy/cindy/blob/48acd5fff52ffcd9892a8dc9759e8fe5fa31d706/docs/product-rules/task-inbox.md#L3-L6)
+- **多段无项目对话的文件各自保留。** 当前 Scratch 目录由工作区内会话共享。用两段无项目对话生成同名文件，验证各自执行目录、文件浏览和冷恢复。对端和验证夹具已用两个独立测试目录预检，证据在 `.artifacts/scratch-conversations-native`。 [T3 Code 对话目录](https://github.com/pingdotgg/t3code/blob/667d8a120aa72e8c37795c9e391596acb141170b/apps/server/src/project/ManagedProjectFolders.ts#L343-L367)
+- **长文件可离开窄侧栏继续阅读。** 从工作树正文搜索命中某一行，并打开更大的预览，检查路径、行位置和返回文件树时的选中项。当前预览在文件面板中分页。 [Beluga 文件行操作](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L242-L252)
+- **从入口提示更快找到新事项。** 先在长收件箱中保留一个项目和阅读位置，再向另一个项目加入需要答复的问题。新增入口提示已能告知有新事项，继续检查怎样从恢复视图快速找到提示来源。 [Cindy 视图与筛选](https://github.com/makecindy/cindy/blob/48acd5fff52ffcd9892a8dc9759e8fe5fa31d706/docs/product-rules/task-inbox.md#L14-L23)

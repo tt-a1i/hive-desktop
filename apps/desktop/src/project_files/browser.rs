@@ -1,7 +1,10 @@
 use super::FileError;
 use crate::{
     app::HiveApp,
-    git_workspace::file_tree::{ChangeMark, FileTreeChanges},
+    git_workspace::{
+        FILE_TREE_STATUS_LIMIT,
+        file_tree::{ChangeMark, FileTreeChanges},
+    },
     language::tr,
     palette::{self, Color},
     text_reading::{self, TextPages},
@@ -31,7 +34,6 @@ use std::{
 };
 
 const PAGE_SIZE: usize = 100;
-const GIT_STATUS_LIMIT: usize = 500;
 const DOCK_WIDTH: f32 = 320.;
 const CHAT_MIN_WIDTH: f32 = 600.;
 const DOCK_WIDTH_STEP: f32 = 24.;
@@ -184,6 +186,10 @@ fn git_mark_appearance(mark: ChangeMark) -> (&'static str, &'static str, Color) 
         ChangeMark::Modified => ("M", "Git：已修改", Color::Accent),
         ChangeMark::Descendant => ("•", "包含 Git 改动", Color::Accent),
     }
+}
+
+fn mark_allows_file_diff(mark: ChangeMark) -> bool {
+    !matches!(mark, ChangeMark::Deleted | ChangeMark::Descendant)
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -890,7 +896,7 @@ impl FileBrowser {
             return;
         }
         let scope = self.scope.as_ref().expect("current file scope").clone();
-        let params = scope.params(json!({"offset":0,"limit":GIT_STATUS_LIMIT}));
+        let params = scope.params(json!({"offset":0,"limit":FILE_TREE_STATUS_LIMIT}));
         let runtime = self.runtime.clone().expect("current file runtime");
         let generation = self.git_generation;
         self.git_task = Some(cx.spawn(async move |this, cx| {
@@ -1385,18 +1391,63 @@ impl FileBrowser {
         visible_tree(&self.directories, self.expanded_paths(cx))
     }
 
-    fn git_mark(&self, path: &str, directory: bool) -> Option<(&'static str, &'static str, Color)> {
+    fn git_mark(&self, path: &str, directory: bool) -> Option<ChangeMark> {
         match &self.git_status {
-            TreeGitStatus::Ready(changes) => changes.mark(path, directory).map(git_mark_appearance),
+            TreeGitStatus::Ready(changes) => changes.mark(path, directory),
             _ => None,
         }
     }
 
+    fn open_changed_file_diff(
+        &self,
+        path: String,
+        generation: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let browser = cx.weak_entity();
+        window.defer(cx, move |window, cx| {
+            let Some(browser) = browser.upgrade() else {
+                return;
+            };
+            let browser = browser.read(cx);
+            if browser.git_generation != generation
+                || !browser.current(cx)
+                || browser.git_busy(cx)
+                || !browser
+                    .git_mark(&path, false)
+                    .is_some_and(mark_allows_file_diff)
+            {
+                return;
+            }
+            let scope = browser.scope.clone();
+            let docked = browser.docked;
+            let app = browser.app.clone();
+            if !docked {
+                window.close_dialog(cx);
+            }
+            let _ = app.update(cx, |app, cx| {
+                if app.project_file_scope() == scope {
+                    app.open_git_file_diff(path, docked, window, cx);
+                }
+            });
+        });
+    }
+
     fn tree_row(&self, row: &TreeRow<'_>, cx: &Context<Self>) -> AnyElement {
-        let mark = match row {
+        let change = match row {
             TreeRow::Entry(entry, _) => self.git_mark(&entry.path, entry.directory),
             _ => None,
         };
+        let action_path = match row {
+            TreeRow::Entry(entry, _)
+                if !entry.directory && change.is_some_and(mark_allows_file_diff) =>
+            {
+                Some(entry.path.clone())
+            }
+            _ => None,
+        };
+        let mark = change.map(git_mark_appearance);
         let (id, item, label, title, depth, enabled, icon, expanded) = match row {
             TreeRow::Entry(entry, depth) => {
                 let path = entry.path.clone();
@@ -1465,42 +1516,72 @@ impl FileBrowser {
             .when(selected, |row| row.aria_active_descendant())
             .when_some(expanded, |row, expanded| row.aria_expanded(expanded))
             .child(
-                Button::new("activate")
-                    .role(None)
-                    .ghost()
-                    .compact()
-                    .tab_stop(false)
+                h_flex()
                     .w_full()
                     .min_w_0()
-                    .justify_start()
-                    .pl(px(8. + depth.min(12) as f32 * 12.))
-                    .tooltip(mark.map_or(title.clone(), |(_, description, _)| {
-                        format!("{title} · {}", tr(description))
-                    }))
-                    .selected(selected)
-                    .disabled(!enabled)
-                    .when_some(icon, |row, icon| row.icon(icon))
-                    .child(div().min_w_0().truncate().child(label))
-                    .when_some(mark, |button, (marker, _, color)| {
-                        button.child(
-                            div()
-                                .ml_auto()
+                    .items_center()
+                    .child(
+                        Button::new("activate")
+                            .role(None)
+                            .ghost()
+                            .compact()
+                            .tab_stop(false)
+                            .flex_1()
+                            .min_w_0()
+                            .justify_start()
+                            .pl(px(8. + depth.min(12) as f32 * 12.))
+                            .tooltip(mark.map_or(title.clone(), |(_, description, _)| {
+                                format!("{title} · {}", tr(description))
+                            }))
+                            .selected(selected)
+                            .disabled(!enabled)
+                            .when_some(icon, |row, icon| row.icon(icon))
+                            .child(div().min_w_0().truncate().child(label))
+                            .when_some(
+                                mark.filter(|_| action_path.is_none()),
+                                |button, (marker, _, color)| {
+                                    button.child(
+                                        div()
+                                            .ml_auto()
+                                            .flex_shrink_0()
+                                            .text_xs()
+                                            .text_color(color.get(cx))
+                                            .child(marker),
+                                    )
+                                },
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if this.current(cx) {
+                                    this.tree_focus.focus(window, cx);
+                                    this.select_tree_item(item.clone(), cx);
+                                    this.activate_tree_item(item.clone(), cx);
+                                }
+                            })),
+                    )
+                    .when_some(action_path.zip(mark), |row, (path, (marker, _, color))| {
+                        let title = format!("{}: {path}", tr("查看 Diff"));
+                        let generation = self.git_generation;
+                        row.child(
+                            Button::new("show-file-diff")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .size(px(26.))
                                 .flex_shrink_0()
-                                .text_xs()
-                                .text_color(color.get(cx))
-                                .child(marker),
+                                .tooltip(title.clone())
+                                .accessibility_label(title)
+                                .child(div().text_xs().text_color(color.get(cx)).child(marker))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_changed_file_diff(
+                                        path.clone(),
+                                        generation,
+                                        window,
+                                        cx,
+                                    );
+                                })),
                         )
                     }),
             )
-            .when(enabled, |row| {
-                row.on_click(cx.listener(move |this, _, window, cx| {
-                    if this.current(cx) {
-                        this.tree_focus.focus(window, cx);
-                        this.select_tree_item(item.clone(), cx);
-                        this.activate_tree_item(item.clone(), cx);
-                    }
-                }))
-            })
             .into_any_element()
     }
 }
@@ -1962,9 +2043,9 @@ impl Render for FileBrowser {
 #[cfg(test)]
 mod tests {
     use super::{
-        Directory, DirectoryEntry, FileError, FileReveal, FileTreeExpansions, GIT_STATUS_LIMIT,
-        RevealStep, Scope, TreeRow, TreeScope, TreeSource, dock_width, json, px,
-        unrequested_expansions, visible_tree,
+        Directory, DirectoryEntry, FILE_TREE_STATUS_LIMIT, FileError, FileReveal,
+        FileTreeExpansions, RevealStep, Scope, TreeRow, TreeScope, TreeSource, dock_width, json,
+        px, unrequested_expansions, visible_tree,
     };
     use std::collections::{HashMap, HashSet};
 
@@ -2050,7 +2131,7 @@ mod tests {
             session: Some("worktree-session".into()),
             ..project.clone()
         };
-        let scan = || json!({"offset":0,"limit":GIT_STATUS_LIMIT});
+        let scan = || json!({"offset":0,"limit":FILE_TREE_STATUS_LIMIT});
         assert_eq!(
             worktree.params(scan()),
             json!({"offset":0,"limit":500,"workspaceId":"workspace","sessionId":"worktree-session"})

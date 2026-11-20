@@ -17,22 +17,37 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use serde::Deserialize;
+use serde_json::json;
 use std::{
+    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
 };
 
 const COMPLETION_FILE: &str = "desktop-welcome.complete";
 
+type ScratchAttempt = (&'static str, String, u64);
+
 #[derive(Default)]
 pub(crate) struct Setup {
     startup_checked: bool,
     pub(super) preferred_workspace: Option<String>,
     preferred_agent: Option<ProfileRef>,
+    scratch_attempts: HashMap<ScratchAttempt, String>,
     pub(super) project_import: super::projects::ProjectImport,
     pub(crate) adding: bool,
     pub(crate) starting: bool,
     notice: Option<ErrorNotice>,
+}
+
+impl Setup {
+    fn scratch_request_id(&mut self, attempt: &ScratchAttempt) -> String {
+        self.scratch_attempts
+            .entry(attempt.clone())
+            .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+            .clone()
+    }
 }
 
 struct AgentChoice {
@@ -40,6 +55,12 @@ struct AgentChoice {
     backend: &'static str,
     name: String,
     detected: bool,
+}
+
+#[derive(Deserialize)]
+struct ScratchConversation {
+    workspace: Workspace,
+    session: Session,
 }
 
 fn completed(root: &Path) -> io::Result<bool> {
@@ -213,20 +234,22 @@ impl HiveApp {
         }
     }
 
-    fn start_welcome_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn start_welcome_conversation(
+        &mut self,
+        project: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.welcome_busy()
             || !self.connected
             || self.profiles.loading
             || !self.showing_welcome_guide
+            || self.welcome_projects_target().map(|item| item.id.as_str()) != project
+            || !self.welcome_start_target_available(project)
         {
             return;
         }
-        let Some(project) = self.welcome_projects_target().map(|item| item.id.clone()) else {
-            return;
-        };
-        if self.workspace_removing.as_ref() == Some(&project) {
-            return;
-        }
+        let project = project.map(str::to_owned);
         let choices = self.welcome_agents();
         let Some(choice) = self.selected_welcome_agent(&choices) else {
             return;
@@ -236,6 +259,12 @@ impl HiveApp {
         let Some(runtime) = self.runtime.clone() else {
             return;
         };
+        let scratch_attempt = project
+            .is_none()
+            .then(|| (backend, reference.id.clone(), reference.revision));
+        let request_id = scratch_attempt
+            .as_ref()
+            .map(|attempt| self.welcome_setup.scratch_request_id(attempt));
         self.welcome_setup.starting = true;
         self.welcome_setup.notice = None;
         cx.notify();
@@ -243,23 +272,74 @@ impl HiveApp {
         let connection = self.connection_generation;
         let open_request = self.open_request;
         cx.spawn(async move |this, cx| {
-            let result = runtime
-                .request(
-                    "chat.createRecord",
-                    serde_json::json!({
-                        "workspaceId": project, "backend": backend, "profile": reference,
-                    }),
-                )
-                .await
-                .and_then(|value| {
-                    serde_json::from_value::<Session>(value).map_err(|error| error.to_string())
-                });
+            let result = if let Some(project) = &project {
+                runtime
+                    .request(
+                        "chat.createRecord",
+                        json!({"workspaceId": project, "backend": backend, "profile": reference}),
+                    )
+                    .await
+                    .and_then(|value| {
+                        serde_json::from_value::<Session>(value)
+                            .map(|session| (None, session))
+                            .map_err(|error| error.to_string())
+                    })
+            } else {
+                runtime
+                    .request(
+                        "chat.createScratchRecord",
+                        json!({"backend": backend, "profile": reference, "requestId": request_id}),
+                    )
+                    .await
+                    .and_then(|value| {
+                        serde_json::from_value::<ScratchConversation>(value)
+                            .map(|result| (Some(result.workspace), result.session))
+                            .map_err(|error| error.to_string())
+                    })
+            };
             let _ = window.update(cx, |_, window, cx| {
                 let _ = this.update(cx, |this, cx| {
                     if this.connection_generation != connection {
                         return;
                     }
                     this.welcome_setup.starting = false;
+                    let result = result
+                        .map_err(|error| ErrorNotice::Detail("创建会话失败", error))
+                        .and_then(|(workspace, session)| {
+                            let expected_workspace = project
+                                .as_deref()
+                                .or_else(|| workspace.as_ref().map(|item| item.id.as_str()));
+                            if session.id.is_empty()
+                                || request_id.as_ref().is_some_and(|id| id != &session.id)
+                                || expected_workspace != Some(session.workspace_id.as_str())
+                                || session.backend.wire() != backend
+                                || session.profile.as_ref() != Some(&reference)
+                            {
+                                return Err(ErrorNotice::Message("创建会话返回的配置引用不匹配"));
+                            }
+                            if let Some(workspace) = workspace {
+                                let conflicts = this.workspaces.iter().any(|item| {
+                                    (item.id == workspace.id) != (item.path == workspace.path)
+                                });
+                                if workspace.id.is_empty()
+                                    || !Path::new(&workspace.path).is_absolute()
+                                    || conflicts
+                                {
+                                    return Err(ErrorNotice::Message(
+                                        "返回的临时工作区与现有项目冲突",
+                                    ));
+                                }
+                                if !this.workspaces.iter().any(|item| item.id == workspace.id) {
+                                    this.workspaces.push(workspace);
+                                }
+                            }
+                            Ok(session)
+                        });
+                    if result.is_ok()
+                        && let Some(key) = scratch_attempt
+                    {
+                        this.welcome_setup.scratch_attempts.remove(&key);
+                    }
                     if !this.showing_welcome_guide
                         || this.open_request != open_request
                         || this.settings_panel
@@ -269,11 +349,7 @@ impl HiveApp {
                         return;
                     }
                     match result {
-                        Ok(session)
-                            if session.workspace_id == project
-                                && session.backend.wire() == backend
-                                && session.profile.as_ref() == Some(&reference) =>
-                        {
+                        Ok(session) => {
                             if this.navigate_to_session(session, window, cx) {
                                 this.focus_project_input = true;
                                 if !this.save_welcome_completion(cx) {
@@ -283,12 +359,8 @@ impl HiveApp {
                                 this.welcome_setup.notice = Some("无法打开刚创建的会话".into());
                             }
                         }
-                        Ok(_) => {
-                            this.welcome_setup.notice = Some("创建会话返回的配置引用不匹配".into())
-                        }
                         Err(error) => {
-                            this.welcome_setup.notice =
-                                Some(ErrorNotice::Detail("创建会话失败", error))
+                            this.welcome_setup.notice = Some(error);
                         }
                     }
                     cx.notify();
@@ -296,6 +368,12 @@ impl HiveApp {
             });
         })
         .detach();
+    }
+
+    fn welcome_start_target_available(&self, project: Option<&str>) -> bool {
+        self.workspace_removing
+            .as_deref()
+            .is_none_or(|removing| project.is_some_and(|project| project != removing))
     }
 
     pub(crate) fn add_welcome_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -355,10 +433,11 @@ impl HiveApp {
             .selected_welcome_agent(&agents)
             .map(|choice| choice.reference.clone());
         let busy = self.welcome_busy();
+        let project = self.welcome_projects_target().map(|item| item.id.clone());
         let can_start = selected.is_some()
-            && self.welcome_projects_target().is_some()
             && self.connected
             && !self.profiles.loading
+            && self.welcome_start_target_available(project.as_deref())
             && !busy;
         let agent_picker = self.render_welcome_agent_picker(agents, selected.as_ref(), busy, cx);
         let notice = self
@@ -410,7 +489,7 @@ impl HiveApp {
                                                     .text_sm()
                                                     .text_color(Color::Muted.get(cx))
                                                     .child(tr(
-                                                        "检查本机 Agent，再选择要打开的项目。",
+                                                        "检查本机 Agent，选择项目或直接开始聊天。",
                                                     )),
                                             ),
                                     )
@@ -491,12 +570,18 @@ impl HiveApp {
                                             .small()
                                             .label(if self.welcome_setup.starting {
                                                 tr("正在创建会话…")
+                                            } else if project.is_none() {
+                                                tr("无项目开始聊天")
                                             } else {
                                                 tr("开始聊天")
                                             })
                                             .disabled(!can_start)
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.start_welcome_conversation(window, cx)
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.start_welcome_conversation(
+                                                    project.as_deref(),
+                                                    window,
+                                                    cx,
+                                                )
                                             })),
                                     ),
                             ),
@@ -662,12 +747,17 @@ impl HiveApp {
                         .child(format!("{} · {}", tr("将打开此项目"), item.name)),
                 )
             })
+            .when(self.welcome_projects_target().is_none(), |panel| {
+                panel.child(div().text_sm().text_color(Color::Muted.get(cx)).child(tr(
+                    "不选择项目也可以聊天。Hive 会打开本机临时工作区，并保留你在其中保存的文件。",
+                )))
+            })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{COMPLETION_FILE, completed, save_completed};
+    use super::{COMPLETION_FILE, Setup, completed, save_completed};
     use std::fs;
 
     #[test]
@@ -686,5 +776,18 @@ mod tests {
         assert!(completed(dir.path()).is_err());
         assert!(save_completed(dir.path()).is_err());
         assert!(dir.path().join(COMPLETION_FILE).is_dir());
+    }
+
+    #[test]
+    fn scratch_retries_reuse_an_id_until_the_attempt_is_confirmed() {
+        let mut setup = Setup::default();
+        let attempt = ("pi-rpc", "default-pi-rpc".to_string(), 1);
+        let next_revision = ("pi-rpc", "default-pi-rpc".to_string(), 2);
+        let first = setup.scratch_request_id(&attempt);
+        assert_eq!(uuid::Uuid::parse_str(&first).unwrap().get_version_num(), 4);
+        assert_ne!(setup.scratch_request_id(&next_revision), first);
+        assert_eq!(setup.scratch_request_id(&attempt), first);
+        setup.scratch_attempts.remove(&attempt);
+        assert_ne!(setup.scratch_request_id(&attempt), first);
     }
 }

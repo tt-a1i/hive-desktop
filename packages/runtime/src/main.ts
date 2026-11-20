@@ -25,6 +25,7 @@ import { remoteCommands } from './remote-commands.js';
 import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
 import { DesktopImport } from './desktop-import.js';
+import { scratchWorkspace } from './scratch-workspace.js';
 import { desktopHistoryMessage } from './desktop-history.js';
 import { boundOversizedToolOutput, sliceHistoryWindow, StaleHistorySnapshotError } from './history-cursor.js';
 import { collectReadinessReport } from './readiness.js';
@@ -413,6 +414,13 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       }
     }
     case 'hive.request': return runtime.requestHive(text(params, 'method'), text(params, 'path'), params.body);
+    case 'inbox.actionableQuestions': {
+      const ids = params.workspaceIds;
+      if (!Array.isArray(ids) || ids.length > 32 || !ids.every(id => typeof id === 'string' && id.length <= 64)) {
+        throw new Error('Expected up to 32 inbox workspace identities');
+      }
+      return runtime.hive.inboxQuestions(ids);
+    }
     case 'chat.pinned': return chats.pinned();
     case 'chat.attachments.add': {
       const workspace = text(params, 'workspaceId');
@@ -549,6 +557,16 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       exact(params, ['workspaceId', 'sessionId', 'backend', 'memberId', 'profile']);
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
       return chats.recoverWorktreeRecord(text(params, 'workspaceId'), text(params, 'sessionId'), params.backend, params.memberId === undefined ? undefined : text(params, 'memberId'), optionalProfile(params).profile);
+    }
+    case 'chat.createScratchRecord': {
+      exact(params, ['backend', 'profile', 'requestId']);
+      if (!isAgentDriver(params.backend)) throw new TypeError('Unsupported chat backend');
+      const requestId = text(params, 'requestId').toLowerCase();
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(requestId)) {
+        throw new TypeError('A UUIDv4 request identity is required');
+      }
+      return chats.createScratchRecord(params.backend, optionalProfile(params).profile, requestId,
+        () => scratchWorkspace(dataDir, runtime.requestHive));
     }
     case 'chat.createRecord':
     case 'chat.create': {

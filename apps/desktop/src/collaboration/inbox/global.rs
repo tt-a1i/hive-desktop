@@ -1,6 +1,10 @@
+#[path = "badge.rs"]
+mod badge;
 #[path = "placement.rs"]
 mod placement;
 
+use self::badge::BadgeItem;
+pub(in crate::collaboration) use self::badge::InboxBadge;
 use self::placement::{InboxSections, RowId, RowPlacement};
 use super::snoozes::{Reminder, now_ms};
 use super::{
@@ -117,14 +121,29 @@ async fn read_list<T: DeserializeOwned>(
 
 impl HiveApp {
     pub(crate) fn global_inbox_button(&self, id: &'static str, cx: &Context<Self>) -> Button {
+        let attention = self.has_new_global_inbox_items(cx);
+        let title = tr("跨项目收件箱");
+        let description = if attention {
+            format!("{title} · {}", tr("有新事项需要关注"))
+        } else {
+            title.to_owned()
+        };
         Button::new(id)
             .ghost()
             .compact()
             .small()
             .icon(Glyph::Inbox)
             .label(tr("收件箱"))
-            .tooltip(tr("跨项目收件箱"))
-            .accessibility_label(tr("跨项目收件箱"))
+            .tooltip(description.clone())
+            .accessibility_label(description)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .size(px(6.))
+                    .rounded_full()
+                    .bg(Color::Success.get(cx))
+                    .opacity(if attention { 1. } else { 0. }),
+            )
             .disabled(self.closing)
             .on_click(cx.listener(|this, _, window, cx| this.open_global_inbox(window, cx)))
     }
@@ -153,6 +172,8 @@ impl HiveApp {
                 scroll: ScrollHandle::new(),
             }
         });
+        self.collaboration.inbox_badge.dialog = Some(inbox.downgrade());
+        cx.notify();
         inbox.update(cx, |inbox, cx| inbox.poll(cx));
         let width = (window.viewport_size().width - px(36.)).min(px(740.));
         window.open_dialog(cx, move |dialog, _, _| {
@@ -251,7 +272,11 @@ impl GlobalInbox {
                 .or_else(|| self.restore_position.clone()),
         };
         if let Some(app) = self.app.upgrade() {
-            app.update(cx, |app, _| app.collaboration.inbox_view = saved);
+            app.update(cx, |app, cx| {
+                app.collaboration.inbox_view = saved;
+                app.collaboration.inbox_badge.dialog = None;
+                cx.notify();
+            });
         }
     }
 
@@ -668,13 +693,20 @@ impl Render for GlobalInbox {
         }
 
         let connection = self.connection;
-        let render_row = |(id, entry): (&str, Entry)| {
+        let mut acknowledged = Vec::new();
+        let mut render_row = |(id, entry): (&str, Entry)| {
             let project = projects.iter().find(|project| project.id == id)?;
             let row_id = RowId::for_entry(id, &entry);
             let layout_id = row_id.clone();
             let title = display_project(project, &app.workspaces);
             let reminders = &self.projects[id].reminders;
             let snoozed = is_snoozed(&entry, reminders, now);
+            if !snoozed
+                && let Some(item) = BadgeItem::from_entry(id, &entry, app)
+                && !app.collaboration.inbox_badge.sees(&item)
+            {
+                acknowledged.push(item);
+            }
             let target = entry.target.clone();
             let id = id.to_owned();
             let button_workspace = id.clone();
@@ -787,7 +819,7 @@ impl Render for GlobalInbox {
                 )
                 .into_any_element(),
             ));
-            items.extend(sections.attention.into_iter().filter_map(render_row));
+            items.extend(sections.attention.into_iter().filter_map(&mut render_row));
         }
         if !sections.waiting.is_empty() {
             let count = sections.waiting.len();
@@ -818,7 +850,7 @@ impl Render for GlobalInbox {
                 .into_any_element(),
             ));
             if self.show_waiting {
-                items.extend(sections.waiting.into_iter().filter_map(render_row));
+                items.extend(sections.waiting.into_iter().filter_map(&mut render_row));
             }
         }
         if self.show_snoozed && has_snoozed {
@@ -832,7 +864,19 @@ impl Render for GlobalInbox {
                 )
                 .into_any_element(),
             ));
-            items.extend(sections.snoozed.into_iter().filter_map(render_row));
+            items.extend(sections.snoozed.into_iter().filter_map(&mut render_row));
+        }
+        if !acknowledged.is_empty() {
+            let parent = parent.downgrade();
+            cx.defer(move |cx| {
+                let _ = parent.update(cx, |app, cx| {
+                    if app.connection_generation == connection
+                        && app.collaboration.inbox_badge.acknowledge(acknowledged)
+                    {
+                        cx.notify();
+                    }
+                });
+            });
         }
         let (ids, elements): (Vec<_>, Vec<_>) = items.into_iter().unzip();
         self.row_ids = ids;

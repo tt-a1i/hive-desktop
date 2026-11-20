@@ -2298,6 +2298,35 @@ export class Chats implements StructuredSessionPort {
       return this.saveNewRecord(workspace, {id: randomUUID(), workspaceId, backend, profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new'}, options);
     });
   }
+  async createScratchRecord(backend: ChatBackend, profile: AgentProfileRef | undefined, requestId: string,
+    ensureWorkspace: () => Promise<WorkspaceSummary>) {
+    this.closeAbort.signal.throwIfAborted();
+    const prior = this.index.peek(requestId);
+    const selected = await this.selectedProfile(backend, profile ?? prior?.profile);
+    this.closeAbort.signal.throwIfAborted();
+    const workspace = await ensureWorkspace();
+    const session = await this.withWorkspace(workspace.id, async () => {
+      this.assertWorkspaceAvailable(workspace.id);
+      this.closeAbort.signal.throwIfAborted();
+      const current = await this.workspace(workspace.id);
+      if (current.path !== workspace.path || await realpath(current.path) !== workspace.path) {
+        throw new Error('The Scratch workspace folder changed before the conversation was created.');
+      }
+      this.assertWorkspaceAvailable(workspace.id);
+      this.closeAbort.signal.throwIfAborted();
+      const existing = this.index.peek(requestId);
+      if (existing) {
+        if (existing.workspaceId !== workspace.id || existing.backend !== backend ||
+          !isDeepStrictEqual(existing.profile, selected.ref) || existing.execution || existing.nativeImport || existing.handoff) {
+          throw new Error('The Scratch request identity already belongs to a different conversation.');
+        }
+        return existing;
+      }
+      return this.saveNewRecord(workspace, {id: requestId, workspaceId: workspace.id, backend,
+        profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new'}, {});
+    });
+    return {workspace, session};
+  }
   /** Create only: never binds, stops or starts the Worker's currently selected conversation. */
   async createMemberWorktree(workspaceId: string, memberId: string, options: {profile?: AgentProfileRef; branch?: string; backend?: ChatBackend; skipSetup?: boolean; expectedSetupRevision?: string} = {}) {
     return this.withWorkspace(workspaceId, async () => {

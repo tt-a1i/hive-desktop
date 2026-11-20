@@ -377,6 +377,7 @@ pub struct HiveApp {
 impl HiveApp {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::register_local_notifications(window, cx);
+        Self::start_global_inbox_badge(cx);
         let weak = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             let _ = weak.update(cx, |this, cx| this.request_exit(Some(window), cx));
