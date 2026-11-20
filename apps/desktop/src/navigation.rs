@@ -195,6 +195,7 @@ impl HiveApp {
                 )
             })
             .child(self.global_search_button(cx))
+            .child(self.command_palette_button(cx))
             .when(!self.connected && self.runtime.is_some(), |view| {
                 view.child(
                     h_flex()
@@ -237,6 +238,26 @@ impl HiveApp {
             .disabled(!self.connected)
             .on_click(cx.listener(|this, _, window, cx| {
                 this.open_session_search(window, cx);
+            }))
+    }
+
+    pub(crate) fn command_palette_button(&self, cx: &Context<Self>) -> Button {
+        Button::new("open-command-palette")
+            .custom(palette::quiet_icon_variant(cx))
+            .compact()
+            .xsmall()
+            .h(px(24.))
+            .w(px(24.))
+            .rounded_md()
+            .icon(Glyph::Sparkles)
+            .tooltip(crate::keybindings::hint(
+                crate::keybindings::Target::CommandPalette,
+                "快捷命令面板",
+                cx,
+            ))
+            .accessibility_label(tr("快捷命令面板"))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.open_command_palette(window, cx);
             }))
     }
 

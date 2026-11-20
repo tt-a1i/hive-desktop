@@ -686,6 +686,151 @@ impl HiveApp {
         .detach();
     }
 
+    pub(crate) fn open_project_mcp_form(
+        &mut self,
+        editing_name: Option<String>,
+        initial_transport: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name_val = editing_name.clone().unwrap_or_default();
+        let name_state = cx.new(|cx| {
+            let mut s = gpui_kit::component::input::InputState::new(window, cx)
+                .placeholder(tr("服务名称，如 context7"));
+            if !name_val.is_empty() {
+                s.set_value(name_val, window, cx);
+            }
+            s
+        });
+        let command_state = cx.new(|cx| {
+            gpui_kit::component::input::InputState::new(window, cx)
+                .placeholder(tr("启动命令，如 npx"))
+        });
+        let args_state = cx.new(|cx| {
+            gpui_kit::component::input::InputState::new(window, cx)
+                .placeholder(tr("参数（空格分隔），如 -y @upstash/context7-mcp"))
+        });
+        let url_state = cx.new(|cx| {
+            gpui_kit::component::input::InputState::new(window, cx)
+                .placeholder("https://example.com/mcp")
+        });
+        let env_state = cx.new(|cx| {
+            gpui_kit::component::input::InputState::new(window, cx)
+                .masked(true)
+                .placeholder(tr("可选环境变量（脱敏输入），如 API_KEY=xxx, ENV=prod"))
+        });
+        self.mcp_action_error = None;
+        self.mcp_form = Some(crate::app::ProjectMcpForm {
+            editing_name,
+            transport: if initial_transport == "http" { "http" } else { "stdio" },
+            name: name_state,
+            command: command_state,
+            args: args_state,
+            url: url_state,
+            env: env_state,
+            saving: false,
+        });
+        cx.notify();
+    }
+
+    fn save_project_mcp_form(&mut self, cx: &mut Context<Self>) {
+        let Some(workspace_id) = self.workspace.clone() else {
+            return;
+        };
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        if !self.connected {
+            return;
+        }
+        let Some(form) = self.mcp_form.as_mut() else {
+            return;
+        };
+        if form.saving {
+            return;
+        }
+        let name = form.name.read(cx).value().trim().to_owned();
+        let transport = form.transport;
+        let command = form.command.read(cx).value().trim().to_owned();
+        let args_raw = form.args.read(cx).value().trim().to_owned();
+        let url = form.url.read(cx).value().trim().to_owned();
+        let env_raw = form.env.read(cx).value().trim().to_owned();
+
+        if name.is_empty() {
+            self.mcp_action_error = Some(tr("请填写 MCP 服务名称").to_owned());
+            cx.notify();
+            return;
+        }
+        if transport == "stdio" && command.is_empty() {
+            self.mcp_action_error = Some(tr("stdio 类型 MCP 必须填写启动命令").to_owned());
+            cx.notify();
+            return;
+        }
+        if transport == "http" && !url.starts_with("http://") && !url.starts_with("https://") {
+            self.mcp_action_error = Some(tr("HTTP 类型 MCP 必须填写 http:// 或 https:// 地址").to_owned());
+            cx.notify();
+            return;
+        }
+
+        let args: Vec<String> = args_raw
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        let mut env_map = serde_json::Map::new();
+        for pair in env_raw.split([',', ';', '\n']) {
+            let trimmed = pair.trim();
+            if let Some((k, v)) = trimmed.split_once('=') {
+                let key = k.trim();
+                if !key.is_empty() {
+                    env_map.insert(key.to_owned(), serde_json::Value::String(v.trim().to_owned()));
+                }
+            }
+        }
+
+        form.saving = true;
+        self.mcp_action_error = None;
+        cx.notify();
+
+        let mut payload = serde_json::Map::new();
+        payload.insert("workspaceId".into(), serde_json::json!(workspace_id));
+        payload.insert("name".into(), serde_json::json!(name));
+        payload.insert("transport".into(), serde_json::json!(transport));
+        if transport == "stdio" {
+            payload.insert("command".into(), serde_json::json!(command));
+            if !args.is_empty() {
+                payload.insert("args".into(), serde_json::json!(args));
+            }
+        } else {
+            payload.insert("url".into(), serde_json::json!(url));
+        }
+        if !env_map.is_empty() {
+            payload.insert("env".into(), serde_json::Value::Object(env_map));
+        }
+
+        cx.spawn(async move |this, cx| {
+            let res = runtime
+                .request("mcp.upsertProjectServer", serde_json::Value::Object(payload))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match res {
+                    Ok(_) => {
+                        this.mcp_form = None;
+                        this.mcp_action_error = None;
+                        this.refresh_readiness(cx);
+                    }
+                    Err(err) => {
+                        if let Some(form) = this.mcp_form.as_mut() {
+                            form.saving = false;
+                        }
+                        this.mcp_action_error = Some(err);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn render_readiness_and_mcp_card(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let report = self.readiness.as_ref();
         v_flex()
@@ -700,6 +845,7 @@ impl HiveApp {
             .child(
                 h_flex()
                     .w_full()
+                    .flex_wrap()
                     .items_center()
                     .justify_between()
                     .gap_2()
@@ -720,26 +866,194 @@ impl HiveApp {
                                     .child(tr("只读检查各后端路径、凭据存在性与已配置 MCP 服务器，不发起模型推理或修改全局配置。")),
                             ),
                     )
-                    .child(
-                        Button::new("programs-refresh-readiness")
-                            .outline()
-                            .compact()
-                            .xsmall()
-                            .h(px(26.))
-                            .px_2p5()
-                            .rounded_md()
-                            .icon(gpui_kit::assets::IconName::RefreshCw)
-                            .label(if self.readiness_loading {
-                                tr("诊断中…")
-                            } else {
-                                tr("重新诊断")
+                    .child({
+                        let workspace_mcp_path = self
+                            .workspace
+                            .as_ref()
+                            .and_then(|id| self.workspaces.iter().find(|w| &w.id == id))
+                            .map(|w| std::path::Path::new(&w.path).join(".mcp.json"));
+                        h_flex()
+                            .flex_shrink_0()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_1p5()
+                            .when_some(workspace_mcp_path, |row, mcp_path| {
+                                let reveal_path = mcp_path.clone();
+                                row.child(
+                                    Button::new("programs-add-project-mcp")
+                                        .outline()
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(26.))
+                                        .px_2p5()
+                                        .rounded_md()
+                                        .icon(gpui_kit::assets::IconName::Plus)
+                                        .label(tr("添加项目 MCP"))
+                                        .accessibility_label(tr("添加项目 MCP"))
+                                        .disabled(!self.connected)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.open_project_mcp_form(None, "stdio", window, cx);
+                                        })),
+                                )
+                                .when(mcp_path.exists(), |r| {
+                                    r.child(
+                                        Button::new("programs-reveal-project-mcp")
+                                            .custom(crate::palette::subtle_icon_variant(cx))
+                                            .compact()
+                                            .xsmall()
+                                            .h(px(26.))
+                                            .px_2()
+                                            .rounded_md()
+                                            .label(tr("打开 .mcp.json"))
+                                            .accessibility_label(tr("打开 .mcp.json"))
+                                            .on_click(move |_, _, cx| {
+                                                cx.reveal_path(&reveal_path);
+                                            }),
+                                    )
+                                })
                             })
-                            .disabled(!self.connected || self.readiness_loading)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.refresh_readiness(cx);
-                            })),
-                    ),
+                            .child(
+                                Button::new("programs-refresh-readiness")
+                                    .outline()
+                                    .compact()
+                                    .xsmall()
+                                    .h(px(26.))
+                                    .px_2p5()
+                                    .rounded_md()
+                                    .icon(gpui_kit::assets::IconName::RefreshCw)
+                                    .label(if self.readiness_loading {
+                                        tr("诊断中…")
+                                    } else {
+                                        tr("重新诊断")
+                                    })
+                                    .accessibility_label(tr("重新诊断"))
+                                    .disabled(!self.connected || self.readiness_loading)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.refresh_readiness(cx);
+                                    })),
+                            )
+                    }),
             )
+            .when_some(self.mcp_form.as_ref(), |view, form| {
+                let is_stdio = form.transport == "stdio";
+                let editing = form.editing_name.is_some();
+                view.child(
+                    v_flex()
+                        .w_full()
+                        .gap_2()
+                        .p_3()
+                        .rounded_lg()
+                        .bg(Color::Inset.get(cx))
+                        .border_1()
+                        .border_color(Color::Divider.get(cx))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(Color::Text.get(cx))
+                                        .child(if editing {
+                                            tr("编辑项目级 MCP 服务器（.mcp.json）")
+                                        } else {
+                                            tr("添加项目级 MCP 服务器（.mcp.json）")
+                                        }),
+                                )
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            Button::new("mcp-form-transport-stdio")
+                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(22.))
+                                                .px_2()
+                                                .rounded_sm()
+                                                .label("stdio")
+                                                .disabled(form.saving || is_stdio)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    if let Some(f) = this.mcp_form.as_mut() {
+                                                        f.transport = "stdio";
+                                                    }
+                                                    cx.notify();
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("mcp-form-transport-http")
+                                                .custom(crate::palette::subtle_icon_variant(cx))
+                                                .compact()
+                                                .xsmall()
+                                                .h(px(22.))
+                                                .px_2()
+                                                .rounded_sm()
+                                                .label("HTTP / SSE")
+                                                .disabled(form.saving || !is_stdio)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    if let Some(f) = this.mcp_form.as_mut() {
+                                                        f.transport = "http";
+                                                    }
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                ),
+                        )
+                        .child(gpui_kit::component::input::Input::new(&form.name).small())
+                        .when(is_stdio, |col| {
+                            col.child(gpui_kit::component::input::Input::new(&form.command).small())
+                                .child(gpui_kit::component::input::Input::new(&form.args).small())
+                        })
+                        .when(!is_stdio, |col| {
+                            col.child(gpui_kit::component::input::Input::new(&form.url).small())
+                        })
+                        .child(gpui_kit::component::input::Input::new(&form.env).small())
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_end()
+                                .gap_1p5()
+                                .child(
+                                    Button::new("mcp-form-cancel")
+                                        .custom(crate::palette::subtle_icon_variant(cx))
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(26.))
+                                        .px_2p5()
+                                        .rounded_md()
+                                        .label(tr("取消"))
+                                        .disabled(form.saving)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.mcp_form = None;
+                                            this.mcp_action_error = None;
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    Button::new("mcp-form-save")
+                                        .primary()
+                                        .compact()
+                                        .xsmall()
+                                        .h(px(26.))
+                                        .px_3()
+                                        .rounded_md()
+                                        .label(if form.saving {
+                                            tr("保存中…")
+                                        } else {
+                                            tr("保存到 .mcp.json")
+                                        })
+                                        .disabled(form.saving || !self.connected)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.save_project_mcp_form(cx);
+                                        })),
+                                ),
+                        ),
+                )
+            })
             .when_some(self.readiness_error.as_ref(), |view, err| {
                 view.child(
                     div()
@@ -900,6 +1214,7 @@ impl HiveApp {
                                 .id(("readiness-mcp", i))
                                 .w_full()
                                 .min_w_0()
+                                .flex_wrap()
                                 .items_center()
                                 .justify_between()
                                 .gap_2()
@@ -1081,7 +1396,33 @@ impl HiveApp {
                                             )
                                         })
                                         .when(is_project_mcp_json && self.workspace.is_some(), |row| {
+                                            let edit_name = res.name.clone();
+                                            let edit_transport: &'static str =
+                                                if res.transport == "http" || res.transport == "sse" {
+                                                    "http"
+                                                } else {
+                                                    "stdio"
+                                                };
                                             row.child(
+                                                Button::new(("readiness-mcp-edit", i))
+                                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                                    .compact()
+                                                    .xsmall()
+                                                    .h(px(22.))
+                                                    .px_1p5()
+                                                    .rounded_sm()
+                                                    .label(tr("编辑"))
+                                                    .accessibility_label(tr("编辑"))
+                                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                                        this.open_project_mcp_form(
+                                                            Some(edit_name.clone()),
+                                                            edit_transport,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })),
+                                            )
+                                            .child(
                                                 Button::new(("readiness-mcp-toggle", i))
                                                     .custom(crate::palette::subtle_icon_variant(cx))
                                                     .compact()

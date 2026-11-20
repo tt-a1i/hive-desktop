@@ -79,10 +79,11 @@ impl HiveApp {
             }
         });
         let focus = palette_view.read(cx).query.read(cx).focus_handle(cx);
+        let palette_width = (window.viewport_size().width - px(40.)).min(px(580.));
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
                 .title(tr("快捷命令面板"))
-                .w(px(580.))
+                .w(palette_width)
                 .on_ok(|_, _, _| false)
                 .child(palette_view.clone())
         });
@@ -476,7 +477,11 @@ impl Render for CommandPalette {
                     } else {
                         "↑↓ / Tab 选择 · Enter 执行 · Esc 关闭"
                     })
-                    .child(if cfg!(target_os = "macos") { "⌘K" } else { "Ctrl+K" }),
+                    .child(crate::keybindings::hint(
+                        crate::keybindings::Target::CommandPalette,
+                        tr("快捷命令面板"),
+                        cx,
+                    )),
             )
     }
 }

@@ -35,12 +35,35 @@ pub enum SettingsSection {
     About,
 }
 
+pub struct ProjectMcpForm {
+    pub editing_name: Option<String>,
+    pub transport: &'static str,
+    pub name: Entity<InputState>,
+    pub command: Entity<InputState>,
+    pub args: Entity<InputState>,
+    pub url: Entity<InputState>,
+    pub env: Entity<InputState>,
+    pub saving: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ToolOutputWindow {
+    pub history_message_id: String,
+    pub window_start_bytes: u64,
+    pub loaded_bytes: u64,
+    pub total_bytes: u64,
+    pub has_more: bool,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
 pub struct ToolPresentation {
     pub patch: Option<String>,
     pub name: String,
     pub status: &'static str,
     pub expanded: bool,
     pub details_scroll: ScrollHandle,
+    pub output_window: Option<ToolOutputWindow>,
 }
 pub struct DeliveryCard {
     pub dispatch_id: Option<String>,
@@ -277,6 +300,7 @@ pub struct HiveApp {
     pub mcp_probing: HashSet<String>,
     pub mcp_probe_results: HashMap<String, crate::protocol::McpProbeResult>,
     pub mcp_action_error: Option<String>,
+    pub mcp_form: Option<ProjectMcpForm>,
     pub pending_events: Vec<PiEvent>,
     pub choosing_model: bool,
     pub usage: crate::usage::Usage,
@@ -803,6 +827,7 @@ impl HiveApp {
             mcp_probing: HashSet::new(),
             mcp_probe_results: HashMap::new(),
             mcp_action_error: None,
+            mcp_form: None,
             pending_events: vec![],
             choosing_model: false,
             usage: Default::default(),

@@ -1532,6 +1532,7 @@ impl Render for HiveApp {
                                                     })),
                                             )
                                             .child(self.global_search_button(cx))
+                                            .child(self.command_palette_button(cx))
                                         })
                                         .when(!welcome, |bar| {
                                             bar.when_some(

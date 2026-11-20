@@ -594,6 +594,22 @@ impl HiveApp {
             {
                 self.tool_inputs.insert(call.to_owned(), args.clone());
             }
+            let output_window = message["content"].as_array().and_then(|blocks| {
+                blocks.iter().find_map(|block| {
+                    let has_more = block.get("hasMoreBytes").and_then(|v| v.as_bool()) == Some(true);
+                    let total_bytes = block.get("totalBytes").and_then(|v| v.as_u64())?;
+                    let loaded_bytes = block.get("loadedBytes").and_then(|v| v.as_u64())?;
+                    (has_more && total_bytes > loaded_bytes).then(|| crate::app::ToolOutputWindow {
+                        history_message_id: id.clone(),
+                        window_start_bytes: 0,
+                        loaded_bytes,
+                        total_bytes,
+                        has_more: true,
+                        loading: false,
+                        error: None,
+                    })
+                })
+            });
             self.upsert_tool(
                 message["toolCallId"].as_str().unwrap_or(&id).into(),
                 message["toolName"].as_str().unwrap_or("工具").into(),
@@ -601,6 +617,11 @@ impl HiveApp {
                 text,
                 cx,
             );
+            if let Some(rendered) = self.message_mut(message["toolCallId"].as_str().unwrap_or(&id)) {
+                if let Some(tool) = &mut rendered.tool {
+                    tool.output_window = output_window;
+                }
+            }
             self.retain_tool_patch(message["toolCallId"].as_str().unwrap_or(&id), message, cx);
         } else {
             self.upsert(id.clone(), role, text, false, cx);
@@ -655,6 +676,7 @@ impl HiveApp {
                     status,
                     expanded: false,
                     details_scroll: ScrollHandle::new(),
+                    output_window: None,
                 });
             }
         }

@@ -342,6 +342,18 @@ pub struct GitStashEntry {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ToolOutputSliceResponse {
+    pub chunk: String,
+    #[serde(default)]
+    pub next_byte_offset: u64,
+    #[serde(default)]
+    pub total_bytes: u64,
+    #[serde(default)]
+    pub has_more: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReadinessReport {
     #[serde(default)]
     pub backends: Vec<BackendReadiness>,

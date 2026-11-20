@@ -70,7 +70,101 @@ fn tool_glyph(name: &str) -> Glyph {
     }
 }
 
+const TOOL_OUTPUT_SLICE_BYTES: u64 = 32_768;
+const MAX_DISPLAYED_TOOL_OUTPUT_BYTES: usize = 262_144;
+
+fn format_byte_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 impl HiveApp {
+    pub(crate) fn load_more_tool_output(&mut self, rendered_id: String, cx: &mut Context<Self>) {
+        if !self.connected || self.closing {
+            return;
+        }
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let Some(session_id) = self.session.as_ref().map(|s| s.id.clone()) else {
+            return;
+        };
+        let generation = self.connection_generation;
+        let open_request = self.open_request;
+        let Some((history_message_id, byte_offset)) = self.message_mut(&rendered_id).and_then(|msg| {
+            let tool = msg.tool.as_mut()?;
+            let win = tool.output_window.as_mut()?;
+            if win.loading || !win.has_more {
+                return None;
+            }
+            win.loading = true;
+            win.error = None;
+            Some((win.history_message_id.clone(), win.loaded_bytes))
+        }) else {
+            return;
+        };
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let res = runtime
+                .request(
+                    "chat.toolOutputSlice",
+                    serde_json::json!({
+                        "sessionId": session_id,
+                        "messageId": history_message_id,
+                        "byteOffset": byte_offset,
+                        "byteLength": TOOL_OUTPUT_SLICE_BYTES,
+                    }),
+                )
+                .await
+                .and_then(|v| {
+                    serde_json::from_value::<crate::protocol::ToolOutputSliceResponse>(v)
+                        .map_err(|e| e.to_string())
+                });
+            let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != generation || this.open_request != open_request {
+                    return;
+                }
+                if let Some(msg) = this.message_mut(&rendered_id) {
+                    if let Some(tool) = &mut msg.tool {
+                        if let Some(win) = &mut tool.output_window {
+                            win.loading = false;
+                            match res {
+                                Ok(slice) => {
+                                    // Strip the initial truncation notice suffix before appending real bytes.
+                                    if let Some(marker) = msg.text.rfind("\n… [已截断 ") {
+                                        msg.text.truncate(marker);
+                                    }
+                                    if msg.text.len() + slice.chunk.len() > MAX_DISPLAYED_TOOL_OUTPUT_BYTES {
+                                        win.window_start_bytes = byte_offset;
+                                        msg.text = slice.chunk;
+                                    } else {
+                                        msg.text.push_str(&slice.chunk);
+                                    }
+                                    win.loaded_bytes = slice.next_byte_offset;
+                                    win.total_bytes = slice.total_bytes;
+                                    win.has_more = slice.has_more;
+                                    win.error = None;
+                                    msg.layout_revision += 1;
+                                }
+                                Err(err) => {
+                                    win.error = Some(err);
+                                }
+                            }
+                        }
+                    }
+                }
+                this.refresh_conversation_find(&rendered_id, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// T3 Code `WorkLog` compact group disclosure row.
     pub fn render_completed_tools_header(
         &self,
@@ -655,9 +749,112 @@ impl HiveApp {
                                                             SharedString::from(format!(
                                                                 "tool-output-{id}"
                                                             )),
-                                                            text,
+                                                            text.clone(),
                                                         )),
                                                 ),
+                                        )
+                                    })
+                                    .when_some(tool.output_window.clone(), |card, win| {
+                                        let range_label = if win.window_start_bytes > 0 {
+                                            if english() {
+                                                format!(
+                                                    "Showing {}–{} of {}",
+                                                    format_byte_size(win.window_start_bytes),
+                                                    format_byte_size(win.loaded_bytes),
+                                                    format_byte_size(win.total_bytes),
+                                                )
+                                            } else {
+                                                format!(
+                                                    "当前窗口 {}–{} / 共 {}",
+                                                    format_byte_size(win.window_start_bytes),
+                                                    format_byte_size(win.loaded_bytes),
+                                                    format_byte_size(win.total_bytes),
+                                                )
+                                            }
+                                        } else if english() {
+                                            format!(
+                                                "Loaded {} / {}",
+                                                format_byte_size(win.loaded_bytes),
+                                                format_byte_size(win.total_bytes),
+                                            )
+                                        } else {
+                                            format!(
+                                                "已加载 {} / {}",
+                                                format_byte_size(win.loaded_bytes),
+                                                format_byte_size(win.total_bytes),
+                                            )
+                                        };
+                                        let load_id = id.clone();
+                                        let copy_text = text.clone();
+                                        card.child(
+                                            v_flex()
+                                                .w_full()
+                                                .gap_1()
+                                                .pt_2()
+                                                .border_t_1()
+                                                .border_color(Color::Divider.get(cx).opacity(0.65))
+                                                .child(
+                                                    h_flex()
+                                                        .w_full()
+                                                        .flex_wrap()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(11.))
+                                                                .text_color(Color::Muted.get(cx))
+                                                                .child(range_label),
+                                                        )
+                                                        .child(
+                                                            h_flex()
+                                                                .items_center()
+                                                                .gap_1()
+                                                                .child(
+                                                                    Button::new(("tool-output-copy-loaded", index))
+                                                                        .custom(crate::palette::subtle_icon_variant(cx))
+                                                                        .compact()
+                                                                        .xsmall()
+                                                                        .h(px(22.))
+                                                                        .px_2()
+                                                                        .rounded_sm()
+                                                                        .label(tr("复制已加载内容"))
+                                                                        .accessibility_label(tr("复制已加载内容"))
+                                                                        .on_click(move |_, _, cx| {
+                                                                            cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
+                                                                        }),
+                                                                )
+                                                                .when(win.has_more, |row| {
+                                                                    row.child(
+                                                                        Button::new(("tool-output-load-more", index))
+                                                                            .outline()
+                                                                            .compact()
+                                                                            .xsmall()
+                                                                            .h(px(22.))
+                                                                            .px_2()
+                                                                            .rounded_sm()
+                                                                            .disabled(win.loading || !self.connected)
+                                                                            .label(if win.loading {
+                                                                                tr("正在加载输出…")
+                                                                            } else {
+                                                                                tr("加载更多输出 (+32 KB)")
+                                                                            })
+                                                                            .accessibility_label(tr("加载更多输出"))
+                                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                                this.load_more_tool_output(load_id.clone(), cx);
+                                                                            })),
+                                                                    )
+                                                                }),
+                                                        ),
+                                                )
+                                                .when_some(win.error, |col, err| {
+                                                    col.child(
+                                                        div()
+                                                            .text_size(px(11.))
+                                                            .text_color(Color::Error.get(cx))
+                                                            .child(err),
+                                                    )
+                                                }),
                                         )
                                     })
                                 }),

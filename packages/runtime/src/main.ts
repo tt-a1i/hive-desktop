@@ -293,7 +293,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return probeMcpServer(target, timeoutMs);
     }
     case 'mcp.upsertProjectServer': {
-      exact(params, ['workspaceId', 'name', 'transport', 'command', 'args', 'url', 'disabled']);
+      exact(params, ['workspaceId', 'name', 'transport', 'command', 'args', 'url', 'env', 'disabled']);
       const workspaceId = text(params, 'workspaceId');
       chats.assertWorkspaceAvailable(workspaceId);
       const workspaces = await runtime.requestHive('GET', '/api/workspaces') as Array<{ id: string; directory?: string; path?: string }>;
@@ -301,12 +301,16 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       const workspacePath = ws?.directory ?? ws?.path;
       if (!workspacePath) throw new Error('找不到目标项目目录');
       const transport = params.transport === 'http' ? 'http' : 'stdio';
+      const env = params.env && typeof params.env === 'object' && !Array.isArray(params.env)
+        ? Object.fromEntries(Object.entries(params.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]))
+        : undefined;
       return upsertProjectMcpServer(workspacePath, {
         name: text(params, 'name'),
         transport,
         ...(typeof params.command === 'string' ? { command: params.command } : {}),
         ...(Array.isArray(params.args) ? { args: params.args.map(String) } : {}),
         ...(typeof params.url === 'string' ? { url: params.url } : {}),
+        ...(env ? { env } : {}),
         ...(typeof params.disabled === 'boolean' ? { disabled: params.disabled } : {}),
       });
     }

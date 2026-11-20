@@ -38,6 +38,7 @@ export interface ProjectMcpServerInput {
   command?: string;
   args?: string[];
   url?: string;
+  env?: Record<string, string>;
   disabled?: boolean;
 }
 
@@ -89,6 +90,13 @@ export function upsertProjectMcpServer(
     ? { ...(root.mcpServers as Record<string, unknown>) }
     : {};
 
+  const envEntries = input.env && typeof input.env === 'object'
+    ? Object.entries(input.env)
+        .map(([k, v]) => [k.trim(), String(v)] as const)
+        .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
+    : [];
+  const envObj = envEntries.length > 0 ? Object.fromEntries(envEntries) : undefined;
+
   if (input.transport === 'stdio') {
     const command = (input.command ?? '').trim();
     if (!command) throw new Error('stdio 类型 MCP 必须填写启动命令');
@@ -98,6 +106,7 @@ export function upsertProjectMcpServer(
     existing[name] = {
       command,
       ...(args.length > 0 && { args }),
+      ...(envObj && { env: envObj }),
       ...(input.disabled ? { disabled: true } : {}),
     };
   } else if (input.transport === 'http') {
@@ -108,6 +117,7 @@ export function upsertProjectMcpServer(
     existing[name] = {
       type: 'http',
       url,
+      ...(envObj && { env: envObj }),
       ...(input.disabled ? { disabled: true } : {}),
     };
   } else {

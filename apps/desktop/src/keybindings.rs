@@ -45,6 +45,7 @@ impl TargetGroup {
 pub(crate) enum Target {
     NewSession,
     Search,
+    CommandPalette,
     Find,
     PreviousSession,
     NextSession,
@@ -57,9 +58,10 @@ pub(crate) enum Target {
     Preferences,
 }
 
-const TARGETS: [Target; 12] = [
+const TARGETS: [Target; 13] = [
     Target::NewSession,
     Target::Search,
+    Target::CommandPalette,
     Target::Find,
     Target::PreviousSession,
     Target::NextSession,
@@ -77,16 +79,17 @@ impl Target {
         match self {
             Self::NewSession => 0,
             Self::Search => 1,
-            Self::Find => 2,
-            Self::PreviousSession => 3,
-            Self::NextSession => 4,
-            Self::ToggleSidebar => 5,
-            Self::ToggleTerminal => 6,
-            Self::OpenGitWorkspace => 7,
-            Self::SearchProjectFiles => 8,
-            Self::ChooseModel => 9,
-            Self::ToggleMode => 10,
-            Self::Preferences => 11,
+            Self::CommandPalette => 2,
+            Self::Find => 3,
+            Self::PreviousSession => 4,
+            Self::NextSession => 5,
+            Self::ToggleSidebar => 6,
+            Self::ToggleTerminal => 7,
+            Self::OpenGitWorkspace => 8,
+            Self::SearchProjectFiles => 9,
+            Self::ChooseModel => 10,
+            Self::ToggleMode => 11,
+            Self::Preferences => 12,
         }
     }
 
@@ -94,6 +97,7 @@ impl Target {
         match self {
             Self::NewSession
             | Self::Search
+            | Self::CommandPalette
             | Self::Find
             | Self::PreviousSession
             | Self::NextSession => TargetGroup::Navigation,
@@ -110,6 +114,7 @@ impl Target {
         match self {
             Self::NewSession => tr("新建会话"),
             Self::Search => tr("搜索会话"),
+            Self::CommandPalette => tr("快捷命令面板"),
             Self::Find => tr("查找会话内容"),
             Self::PreviousSession => tr("上一个会话"),
             Self::NextSession => tr("下一个会话"),
@@ -127,6 +132,7 @@ impl Target {
         match self {
             Self::NewSession => tr("在当前工作区以最近使用的 Agent 发起新对话"),
             Self::Search => tr("打开全局会话搜索窗口"),
+            Self::CommandPalette => tr("打开全局快捷命令面板，快速切换会话、项目、面板与设置"),
             Self::Find => tr("在当前对话消息中搜索内容"),
             Self::PreviousSession => tr("按侧边栏顺序切换到上一条会话"),
             Self::NextSession => tr("按侧边栏顺序切换到下一条会话"),
@@ -144,6 +150,7 @@ impl Target {
         match self {
             Self::NewSession => "shortcut-new-session",
             Self::Search => "shortcut-search",
+            Self::CommandPalette => "shortcut-command-palette",
             Self::Find => "shortcut-find",
             Self::PreviousSession => "shortcut-previous-session",
             Self::NextSession => "shortcut-next-session",
@@ -164,6 +171,8 @@ impl Target {
             (Self::NewSession, false) => "ctrl-n",
             (Self::Search, true) => "cmd-k",
             (Self::Search, false) => "ctrl-k",
+            (Self::CommandPalette, true) => "cmd-shift-p",
+            (Self::CommandPalette, false) => "ctrl-shift-p",
             (Self::Find, true) => "cmd-f",
             (Self::Find, false) => "ctrl-f",
             (Self::PreviousSession, true) => "cmd-;",
@@ -191,6 +200,7 @@ impl Target {
         match self {
             Self::NewSession => Box::new(crate::NewSessionShortcut),
             Self::Search => Box::new(crate::OpenSessionSearch),
+            Self::CommandPalette => Box::new(crate::OpenCommandPalette),
             Self::Find => Box::new(crate::OpenConversationFind),
             Self::PreviousSession => Box::new(crate::SelectPreviousSession),
             Self::NextSession => Box::new(crate::SelectNextSession),
@@ -209,6 +219,7 @@ impl Target {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Bindings {
     pub search: Option<String>,
+    pub command_palette: Option<String>,
     pub find: Option<String>,
     pub preferences: Option<String>,
     pub new_session: Option<String>,
@@ -233,6 +244,8 @@ where
 #[serde(deny_unknown_fields)]
 struct StoredBindings {
     search: Option<String>,
+    #[serde(default, deserialize_with = "some_present")]
+    command_palette: Option<Option<String>>,
     find: Option<String>,
     preferences: Option<String>,
     #[serde(default, deserialize_with = "some_present")]
@@ -265,6 +278,7 @@ impl StoredBindings {
         let mut missing = Vec::new();
         for (target, value) in [
             (Target::Search, Some(self.search)),
+            (Target::CommandPalette, self.command_palette),
             (Target::Find, Some(self.find)),
             (Target::Preferences, Some(self.preferences)),
             (Target::NewSession, self.new_session),
@@ -318,6 +332,7 @@ impl Bindings {
     pub(crate) fn defaults(os: OperatingSystem) -> Self {
         Self {
             search: Some(Target::Search.default(os).to_owned()),
+            command_palette: Some(Target::CommandPalette.default(os).to_owned()),
             find: Some(Target::Find.default(os).to_owned()),
             preferences: Some(Target::Preferences.default(os).to_owned()),
             new_session: Some(Target::NewSession.default(os).to_owned()),
@@ -336,6 +351,7 @@ impl Bindings {
         match target {
             Target::NewSession => &self.new_session,
             Target::Search => &self.search,
+            Target::CommandPalette => &self.command_palette,
             Target::Find => &self.find,
             Target::PreviousSession => &self.previous_session,
             Target::NextSession => &self.next_session,
@@ -353,6 +369,7 @@ impl Bindings {
         let slot = match target {
             Target::NewSession => &mut self.new_session,
             Target::Search => &mut self.search,
+            Target::CommandPalette => &mut self.command_palette,
             Target::Find => &mut self.find,
             Target::PreviousSession => &mut self.previous_session,
             Target::NextSession => &mut self.next_session,

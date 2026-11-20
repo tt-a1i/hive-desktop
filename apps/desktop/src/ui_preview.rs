@@ -60,6 +60,12 @@ fn apply_screen(
         "settings:notifications" => open_section(app, SettingsSection::Notifications, window, cx),
         "settings:remote" => open_section(app, SettingsSection::Remote, window, cx),
         "settings:programs" => open_section(app, SettingsSection::Programs, window, cx),
+        "settings:programs-mcp-form" => {
+            open_section(app, SettingsSection::Programs, window, cx);
+            app.open_project_mcp_form(None, "stdio", window, cx);
+        }
+        "settings:keybindings" => open_section(app, SettingsSection::Keybindings, window, cx),
+        "command-palette" => app.open_command_palette(window, cx),
         "settings:search" => {
             app.open_settings(window, cx);
             app.settings_search
@@ -92,6 +98,38 @@ fn apply_screen(
         }
         "chat:resources" => app.open_session_resources(window, cx),
         "chat:git-drawer" => app.preview_seed_git_workspace(window, cx),
+        "chat:history-and-tool-window" => {
+            app.history_page = Some(crate::protocol::HistoryPageMeta {
+                start_index: 1380,
+                has_older: true,
+                next_before_index: Some(1380),
+                next_before_message_id: Some("preview-m-1380".into()),
+            });
+            app.upsert_tool(
+                "preview-large-tool".into(),
+                "Bash".into(),
+                "完成",
+                "Running test suite...\n[ok] 144 passed\n… [已截断 98304 字符以保持流畅；可按字节窗口继续加载或导出完整 Markdown]".into(),
+                cx,
+            );
+            if let Some(msg) = app.message_mut("preview-large-tool") {
+                if let Some(tool) = &mut msg.tool {
+                    tool.expanded = true;
+                    tool.output_window = Some(crate::app::ToolOutputWindow {
+                        history_message_id: "preview-large-tool".into(),
+                        window_start_bytes: 0,
+                        loaded_bytes: 32_768,
+                        total_bytes: 131_072,
+                        has_more: true,
+                        loading: false,
+                        error: None,
+                    });
+                }
+            }
+            app.expanded_tool_groups.insert("preview-large-tool".into());
+            app.sync_conversation_list(cx);
+            cx.notify();
+        }
         "chat:expanded-worklog" => {
             let mut ids = Vec::new();
             for message in &mut app.messages {

@@ -1462,6 +1462,11 @@ impl GitWorkspace {
             .and_then(|b| b.current.clone())
             .or_else(|| self.status.as_ref().map(|s| s.identity.branch_label()))
             .unwrap_or_else(|| tr("分支").to_owned());
+        let branch_button_label: String = if current_branch.chars().count() > 20 {
+            format!("{}…", current_branch.chars().take(19).collect::<String>())
+        } else {
+            current_branch.clone()
+        };
         let stash_count = self.stashes.len();
         let ws_id = self.workspace.clone();
         let ws_fetch = ws_id.clone();
@@ -1497,7 +1502,9 @@ impl GitWorkspace {
                                     .px_2()
                                     .rounded_md()
                                     .icon(Glyph::GitBranch)
-                                    .label(current_branch)
+                                    .label(branch_button_label)
+                                    .tooltip(current_branch.clone())
+                                    .accessibility_label(current_branch)
                                     .disabled(self.ops_busy)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.branch_panel_open = !this.branch_panel_open;

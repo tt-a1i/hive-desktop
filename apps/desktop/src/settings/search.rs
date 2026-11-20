@@ -149,6 +149,14 @@ const ENTRIES: &[Entry] = &[
     Entry {
         section: Some(SettingsSection::Keybindings),
         anchor: None,
+        keybinding: Some(KeyTarget::CommandPalette),
+        title: "快捷键 · 快捷命令面板",
+        description: "打开全局快捷命令面板，快速切换会话、项目、面板与设置",
+        keywords: "shortcut command palette cmd-shift-p ctrl-shift-p 快捷键 命令面板",
+    },
+    Entry {
+        section: Some(SettingsSection::Keybindings),
+        anchor: None,
         keybinding: Some(KeyTarget::Find),
         title: "快捷键 · 查找会话内容",
         description: "在当前会话中搜索内容",
