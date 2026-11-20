@@ -95,6 +95,7 @@ impl HiveApp {
         self.pi_models.localize_placeholders(window, cx);
         self.interactions.localize_placeholders(window, cx);
         self.localize_find_placeholder(window, cx);
+        self.localize_welcome_project_search(window, cx);
         self.keybinding_settings
             .update(cx, |editor, cx| editor.localize_placeholders(window, cx));
         for (input, label) in [

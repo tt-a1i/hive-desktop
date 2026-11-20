@@ -21,7 +21,13 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{cell::Cell, collections::HashMap, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 
 const PAGE_SIZE: usize = 100;
 const DOCK_WIDTH: f32 = 320.;
@@ -58,7 +64,6 @@ struct DirectoryEntry {
 #[derive(Default)]
 struct Directory {
     entries: Vec<DirectoryEntry>,
-    expanded: bool,
     loading: bool,
     loaded: bool,
     next_offset: usize,
@@ -97,18 +102,81 @@ struct Preview {
     scroll: ScrollHandle,
 }
 
+#[derive(Clone, Hash, PartialEq, Eq)]
+enum TreeSource {
+    Directory(String),
+    Session(String),
+    Project,
+}
+
+impl TreeSource {
+    fn new(session: Option<&crate::protocol::Session>, project_path: Option<&str>) -> Self {
+        match session {
+            Some(session) => session
+                .execution_path
+                .as_deref()
+                .filter(|path| !path.is_empty())
+                .or_else(|| {
+                    session
+                        .execution
+                        .as_ref()
+                        .filter(|execution| {
+                            execution.kind == "worktree" && !execution.path.is_empty()
+                        })
+                        .map(|execution| execution.path.as_str())
+                })
+                .map(|path| Self::Directory(path.to_owned()))
+                .unwrap_or_else(|| Self::Session(session.id.clone())),
+            None => project_path
+                .map(|path| Self::Directory(path.to_owned()))
+                .unwrap_or(Self::Project),
+        }
+    }
+
+    fn directory(&self) -> Option<&str> {
+        match self {
+            Self::Directory(path) => Some(path),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct TreeScope {
+    workspace: String,
+    source: TreeSource,
+}
+
+#[derive(Default)]
+pub(crate) struct FileTreeExpansions {
+    paths: HashMap<TreeScope, HashSet<String>>,
+}
+
+impl FileTreeExpansions {
+    fn toggle(&mut self, scope: TreeScope, path: String) -> bool {
+        let paths = self.paths.entry(scope.clone()).or_default();
+        if paths.remove(&path) {
+            if paths.is_empty() {
+                self.paths.remove(&scope);
+            }
+            return false;
+        }
+        paths.insert(path);
+        true
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct Scope {
-    workspace: String,
+    tree: TreeScope,
     session: Option<String>,
     connection: u64,
     open_request: u64,
-    source_directory: Option<String>,
 }
 
 impl Scope {
     fn params(&self, mut params: Value) -> Value {
-        params["workspaceId"] = json!(self.workspace);
+        params["workspaceId"] = json!(self.tree.workspace);
         if let Some(session) = &self.session {
             params["sessionId"] = json!(session);
         }
@@ -146,6 +214,59 @@ impl TreeRow<'_> {
     }
 }
 
+fn visible_tree<'a>(
+    directories: &'a HashMap<String, Directory>,
+    expanded: Option<&HashSet<String>>,
+) -> Vec<TreeRow<'a>> {
+    fn append<'a>(
+        directories: &'a HashMap<String, Directory>,
+        expanded: Option<&HashSet<String>>,
+        path: &'a str,
+        depth: usize,
+        rows: &mut Vec<TreeRow<'a>>,
+    ) {
+        let Some(folder) = directories.get(path) else {
+            return;
+        };
+        for entry in &folder.entries {
+            rows.push(TreeRow::Entry(entry, depth));
+            if entry.directory && expanded.is_some_and(|paths| paths.contains(&entry.path)) {
+                append(directories, expanded, &entry.path, depth + 1, rows);
+            }
+        }
+        if folder.loading || folder.error.is_some() || folder.entries.is_empty() {
+            rows.push(TreeRow::Status(folder, depth));
+        }
+        if (!folder.loading && folder.error.is_some()) || folder.next_offset < folder.total {
+            rows.push(TreeRow::LoadMore(path, folder, depth));
+        }
+    }
+    let mut rows = Vec::new();
+    append(directories, expanded, "", 0, &mut rows);
+    rows
+}
+
+fn unrequested_expansions(
+    directories: &HashMap<String, Directory>,
+    expanded: &HashSet<String>,
+) -> Vec<String> {
+    // Follow fresh parent pages. A remembered path might be hidden by a
+    // collapsed parent, moved, or on a page that hasn't been loaded yet.
+    visible_tree(directories, Some(expanded))
+        .into_iter()
+        .filter_map(|row| match row {
+            TreeRow::Entry(entry, _)
+                if entry.directory
+                    && expanded.contains(&entry.path)
+                    && !directories.contains_key(&entry.path) =>
+            {
+                Some(entry.path.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 pub(crate) struct FileBrowser {
     app: WeakEntity<HiveApp>,
     docked: bool,
@@ -156,6 +277,7 @@ pub(crate) struct FileBrowser {
     query: Entity<InputState>,
     contents: bool,
     directories: HashMap<String, Directory>,
+    expansions: Entity<FileTreeExpansions>,
     root_focus: FocusHandle,
     resize_focus: FocusHandle,
     tree_focus: FocusHandle,
@@ -190,22 +312,19 @@ impl HiveApp {
             .session
             .as_ref()
             .filter(|session| session.workspace_id == workspace);
-        let source_directory = session
-            .and_then(|session| session.execution.as_ref())
-            .filter(|execution| execution.kind == "worktree")
-            .map(|execution| execution.path.clone())
-            .or_else(|| {
-                self.workspaces
-                    .iter()
-                    .find(|project| project.id == workspace)
-                    .map(|project| project.path.clone())
-            });
+        let project_path = self
+            .workspaces
+            .iter()
+            .find(|project| project.id == workspace)
+            .map(|project| project.path.as_str());
         Some(Scope {
-            workspace,
+            tree: TreeScope {
+                workspace,
+                source: TreeSource::new(session, project_path),
+            },
             session: session.map(|session| session.id.clone()),
             connection: self.connection_generation,
             open_request: self.open_request,
-            source_directory,
         })
     }
 
@@ -273,6 +392,7 @@ impl HiveApp {
             return;
         };
         let app = cx.weak_entity();
+        let expansions = self.project_file_tree_expansions.clone();
         let browser = cx.new(|cx| {
             let query = cx.new(|cx| InputState::new(window, cx).placeholder(tr("搜索项目文件…")));
             cx.subscribe(
@@ -284,6 +404,11 @@ impl HiveApp {
                     }
                 },
             )
+            .detach();
+            cx.observe(&expansions, |this: &mut FileBrowser, _, cx| {
+                this.restore_visible_expansions(cx);
+                cx.notify();
+            })
             .detach();
             if !docked {
                 if let Some(parent) = app.upgrade() {
@@ -306,6 +431,7 @@ impl HiveApp {
                 query,
                 contents: false,
                 directories: HashMap::new(),
+                expansions,
                 root_focus: cx.focus_handle(),
                 resize_focus: cx.focus_handle(),
                 tree_focus: cx.focus_handle(),
@@ -587,7 +713,6 @@ impl FileBrowser {
         if folder.loading {
             return;
         }
-        folder.expanded = true;
         folder.loading = true;
         folder.error = None;
         let offset = folder.next_offset;
@@ -636,6 +761,7 @@ impl FileBrowser {
                 {
                     this.select_tree_item(TreeItem::Entry(path), cx);
                 }
+                this.restore_visible_expansions(cx);
                 cx.notify();
             });
         })
@@ -643,12 +769,53 @@ impl FileBrowser {
     }
 
     fn toggle_directory(&mut self, path: String, cx: &mut Context<Self>) {
-        let folder = self.directories.entry(path.clone()).or_default();
-        folder.expanded = !folder.expanded;
-        if folder.expanded && !folder.loaded {
+        if !self.current(cx) {
+            return;
+        }
+        let scope = self
+            .scope
+            .as_ref()
+            .expect("current file scope")
+            .tree
+            .clone();
+        let opened = self.expansions.update(cx, |expansions, cx| {
+            let opened = expansions.toggle(scope, path.clone());
+            cx.notify();
+            opened
+        });
+        if opened
+            && !self
+                .directories
+                .get(&path)
+                .is_some_and(|folder| folder.loaded)
+        {
             self.load_directory(path, cx);
         } else {
             cx.notify();
+        }
+    }
+
+    fn expanded_paths<'a>(&self, cx: &'a App) -> Option<&'a HashSet<String>> {
+        self.expansions
+            .read(cx)
+            .paths
+            .get(&self.scope.as_ref()?.tree)
+    }
+
+    fn directory_expanded(&self, path: &str, cx: &App) -> bool {
+        self.expanded_paths(cx)
+            .is_some_and(|expanded| expanded.contains(path))
+    }
+
+    fn restore_visible_expansions(&mut self, cx: &mut Context<Self>) {
+        let Some(expanded) = self.expanded_paths(cx).filter(|paths| !paths.is_empty()) else {
+            return;
+        };
+        if !self.current(cx) {
+            return;
+        }
+        for path in unrequested_expansions(&self.directories, expanded) {
+            self.load_directory(path, cx);
         }
     }
 
@@ -741,7 +908,7 @@ impl FileBrowser {
     }
 
     fn move_tree_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let rows = self.tree_rows();
+        let rows = self.tree_rows(cx);
         let selectable = rows
             .iter()
             .enumerate()
@@ -768,7 +935,7 @@ impl FileBrowser {
 
     fn select_tree_item(&mut self, item: TreeItem, cx: &mut Context<Self>) {
         let index = self
-            .tree_rows()
+            .tree_rows(cx)
             .iter()
             .position(|row| row.matches_item(&item));
         if let Some(index) = index {
@@ -823,11 +990,7 @@ impl FileBrowser {
         };
         match (event.keystroke.key.as_str(), item) {
             ("left", TreeItem::Entry(path)) => {
-                if self
-                    .directories
-                    .get(&path)
-                    .is_some_and(|folder| folder.expanded)
-                {
+                if self.directory_expanded(&path, cx) {
                     self.toggle_directory(path, cx);
                 } else if let Some((parent, _)) = path.rsplit_once('/') {
                     self.select_tree_item(TreeItem::Entry(parent.to_owned()), cx);
@@ -837,10 +1000,18 @@ impl FileBrowser {
                 self.select_tree_item(TreeItem::Entry(path), cx);
             }
             ("right", TreeItem::Entry(path)) if self.is_directory(&path) => {
-                if let Some(folder) = self.directories.get(&path).filter(|folder| folder.expanded) {
-                    if let Some(child) = folder.entries.first() {
+                if self.directory_expanded(&path, cx) {
+                    if let Some(child) = self
+                        .directories
+                        .get(&path)
+                        .and_then(|folder| folder.entries.first())
+                    {
                         self.select_tree_item(TreeItem::Entry(child.path.clone()), cx);
-                    } else if folder.error.is_some() {
+                    } else if self
+                        .directories
+                        .get(&path)
+                        .is_some_and(|folder| folder.error.is_some())
+                    {
                         self.select_tree_item(TreeItem::LoadMore(path), cx);
                     }
                 } else {
@@ -951,28 +1122,8 @@ impl FileBrowser {
         }))
     }
 
-    fn tree_rows(&self) -> Vec<TreeRow<'_>> {
-        let mut rows = Vec::new();
-        self.directory_rows("", 0, &mut rows);
-        rows
-    }
-
-    fn directory_rows<'a>(&'a self, path: &'a str, depth: usize, rows: &mut Vec<TreeRow<'a>>) {
-        let Some(folder) = self.directories.get(path).filter(|folder| folder.expanded) else {
-            return;
-        };
-        for entry in &folder.entries {
-            rows.push(TreeRow::Entry(entry, depth));
-            if entry.directory {
-                self.directory_rows(&entry.path, depth + 1, rows);
-            }
-        }
-        if folder.loading || folder.error.is_some() || folder.entries.is_empty() {
-            rows.push(TreeRow::Status(folder, depth));
-        }
-        if (!folder.loading && folder.error.is_some()) || folder.next_offset < folder.total {
-            rows.push(TreeRow::LoadMore(path, folder, depth));
-        }
+    fn tree_rows(&self, cx: &App) -> Vec<TreeRow<'_>> {
+        visible_tree(&self.directories, self.expanded_paths(cx))
     }
 
     fn tree_row(&self, row: &TreeRow<'_>, cx: &Context<Self>) -> AnyElement {
@@ -980,11 +1131,7 @@ impl FileBrowser {
             TreeRow::Entry(entry, depth) => {
                 let path = entry.path.clone();
                 let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
-                let expanded = entry.directory.then(|| {
-                    self.directories
-                        .get(&path)
-                        .is_some_and(|folder| folder.expanded)
-                });
+                let expanded = entry.directory.then(|| self.directory_expanded(&path, cx));
                 let icon = match expanded {
                     None => Glyph::FileText,
                     Some(false) => Glyph::ChevronRight,
@@ -1256,7 +1403,7 @@ impl Render for FileBrowser {
         let rows = if searching {
             self.search_rows(cx)
         } else {
-            let rows = self.tree_rows();
+            let rows = visible_tree(&self.directories, self.expanded_paths(cx));
             if self
                 .tree_selected
                 .as_ref()
@@ -1264,7 +1411,6 @@ impl Render for FileBrowser {
             {
                 self.tree_selected = None;
             }
-            let rows = self.tree_rows();
             rows.iter().map(|row| self.tree_row(row, cx)).collect()
         };
         let narrow = self.docked || window.viewport_size().width < px(690.);
@@ -1412,7 +1558,8 @@ impl Render for FileBrowser {
         let source = self
             .scope
             .as_ref()
-            .and_then(|scope| scope.source_directory.clone());
+            .and_then(|scope| scope.tree.source.directory())
+            .map(str::to_owned);
         view = view.when_some(source, |view, source| {
             view.child(text_reading::selectable_text("browser-directory", source).text_xs())
         });
@@ -1468,7 +1615,11 @@ impl Render for FileBrowser {
 
 #[cfg(test)]
 mod tests {
-    use super::{dock_width, px};
+    use super::{
+        Directory, DirectoryEntry, FileError, FileTreeExpansions, TreeRow, TreeScope, TreeSource,
+        dock_width, json, px, unrequested_expansions, visible_tree,
+    };
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn file_dock_preserves_chat_space_and_the_existing_dialog_threshold() {
@@ -1485,5 +1636,101 @@ mod tests {
         assert_eq!(dock_width(preferred, px(1000.)), Some(px(400.)));
         assert_eq!(dock_width(preferred, px(900.)), None);
         assert_eq!(dock_width(preferred, px(1200.)), preferred);
+    }
+
+    fn session_with_execution_path(id: &str, path: Option<&str>) -> crate::protocol::Session {
+        serde_json::from_value(json!({
+            "id": id,
+            "title": id,
+            "workspaceId": "w",
+            "executionPath": path,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn expansions_follow_the_execution_directory_of_each_workspace() {
+        let root = "/project";
+        let key = |workspace: &str, session: Option<&crate::protocol::Session>| TreeScope {
+            workspace: workspace.to_owned(),
+            source: TreeSource::new(session, Some(root)),
+        };
+        let root_chat = session_with_execution_path("root-chat", Some(root));
+        let imported = session_with_execution_path("imported", Some("/project/subfolder"));
+        let worktree = session_with_execution_path("worktree", Some("/managed/worktree"));
+        let unknown = session_with_execution_path("unknown", None);
+        let other_unknown = session_with_execution_path("other-unknown", None);
+        let mut expansions = FileTreeExpansions::default();
+        assert!(expansions.toggle(key("w", Some(&root_chat)), "docs".into()));
+        assert!(
+            expansions
+                .paths
+                .get(&key("w", None))
+                .unwrap()
+                .contains("docs")
+        );
+        assert!(
+            !expansions
+                .paths
+                .contains_key(&key("other-workspace", Some(&root_chat)))
+        );
+        assert!(!expansions.paths.contains_key(&key("w", Some(&imported))));
+        assert!(!expansions.paths.contains_key(&key("w", Some(&worktree))));
+        assert!(expansions.toggle(key("w", Some(&unknown)), "docs".into()));
+        assert!(
+            !expansions
+                .paths
+                .contains_key(&key("w", Some(&other_unknown)))
+        );
+    }
+
+    #[test]
+    fn remembered_expansions_wait_for_fresh_parent_entries_and_skip_failures() {
+        let dir = |path: &str| DirectoryEntry {
+            path: path.into(),
+            directory: true,
+        };
+        let mut expanded = HashSet::from(["docs".into(), "docs/nested".into(), "removed".into()]);
+        let mut directories = HashMap::from([(
+            "".into(),
+            Directory {
+                entries: vec![dir("docs")],
+                loaded: true,
+                ..Default::default()
+            },
+        )]);
+        assert_eq!(unrequested_expansions(&directories, &expanded), ["docs"]);
+        directories.insert(
+            "docs".into(),
+            Directory {
+                loaded: true,
+                total: 101,
+                next_offset: 100,
+                ..Default::default()
+            },
+        );
+        assert!(unrequested_expansions(&directories, &expanded).is_empty());
+        directories
+            .get_mut("docs")
+            .unwrap()
+            .entries
+            .push(dir("docs/nested"));
+        assert_eq!(
+            unrequested_expansions(&directories, &expanded),
+            ["docs/nested"]
+        );
+        expanded.remove("docs");
+        assert!(unrequested_expansions(&directories, &expanded).is_empty());
+        expanded.insert("docs".into());
+        directories.insert(
+            "docs/nested".into(),
+            Directory {
+                error: Some(FileError::Request("Offline".into())),
+                ..Default::default()
+            },
+        );
+        assert!(unrequested_expansions(&directories, &expanded).is_empty());
+        let rows = visible_tree(&directories, Some(&expanded));
+        assert!(rows.iter().any(|row| matches!(row, TreeRow::LoadMore("docs/nested", folder, _) if folder.error.is_some())));
     }
 }

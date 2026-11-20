@@ -9,6 +9,7 @@ use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
+        input::{Input, InputEvent, InputState},
         scroll::ScrollableElement,
         *,
     },
@@ -18,6 +19,9 @@ use gpui_kit::{
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
+
+const RECENT_PROJECTS: usize = 5;
+const PROJECT_SEARCH: &str = "按名称或路径搜索项目…";
 
 #[derive(Deserialize)]
 struct Discovery {
@@ -34,6 +38,22 @@ struct Project {
     session_count: usize,
     backends: Vec<String>,
     workspace_id: Option<String>,
+}
+
+impl Discovery {
+    fn shown(&self, query: Option<&str>) -> impl Iterator<Item = &Project> {
+        let limit = if query.is_some() {
+            self.projects.len()
+        } else {
+            RECENT_PROJECTS
+        };
+        let query = query.unwrap_or_default().trim().to_lowercase();
+        self.projects.iter().take(limit).filter(move |project| {
+            query.is_empty()
+                || project.name.to_lowercase().contains(&query)
+                || project.path.to_lowercase().contains(&query)
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -64,6 +84,11 @@ enum Pending {
     Applying,
 }
 
+struct ProjectSearch {
+    input: Entity<InputState>,
+    _subscription: Subscription,
+}
+
 #[derive(Default)]
 pub(super) struct ProjectImport {
     connection: u64,
@@ -71,6 +96,7 @@ pub(super) struct ProjectImport {
     discovery: Option<Discovery>,
     selected: HashSet<String>,
     results: HashMap<String, ApplyResult>,
+    search: Option<ProjectSearch>,
     scroll: ScrollHandle,
     notice: Option<ErrorNotice>,
 }
@@ -90,6 +116,32 @@ impl ProjectImport {
             .flat_map(|discovery| &discovery.projects)
             .filter(|project| self.selected.contains(&project.id) && !self.completed(&project.id))
     }
+
+    fn selectable_shown<'a>(
+        &'a self,
+        discovery: &'a Discovery,
+        query: Option<&str>,
+    ) -> impl Iterator<Item = &'a Project> {
+        discovery
+            .shown(query)
+            .filter(|project| !self.completed(&project.id) && !self.selected.contains(&project.id))
+    }
+
+    fn search_text(&self, cx: &App) -> Option<SharedString> {
+        self.search
+            .as_ref()
+            .map(|search| search.input.read(cx).value())
+    }
+
+    fn select_shown(&mut self, query: Option<&str>) {
+        if let Some(discovery) = &self.discovery {
+            let selected: Vec<_> = self
+                .selectable_shown(discovery, query)
+                .map(|project| project.id.clone())
+                .collect();
+            self.selected.extend(selected);
+        }
+    }
 }
 
 fn backend_label(backend: &str) -> &str {
@@ -102,6 +154,40 @@ fn backend_label(backend: &str) -> &str {
 }
 
 impl HiveApp {
+    pub(crate) fn localize_welcome_project_search(&self, window: &mut Window, cx: &mut App) {
+        if let Some(search) = &self.welcome_setup.project_import.search {
+            search.input.update(cx, |input, cx| {
+                input.set_placeholder(tr(PROJECT_SEARCH), window, cx)
+            });
+        }
+    }
+
+    fn toggle_welcome_project_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.showing_welcome_guide || self.welcome_busy() {
+            return;
+        }
+        let import = &mut self.welcome_setup.project_import;
+        if import.search.take().is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder(tr(PROJECT_SEARCH)));
+            let subscription = cx.subscribe(&input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.welcome_setup
+                        .project_import
+                        .scroll
+                        .set_offset(point(px(0.), px(0.)));
+                    cx.notify();
+                }
+            });
+            window.focus(&input.read(cx).focus_handle(cx), cx);
+            import.search = Some(ProjectSearch {
+                input,
+                _subscription: subscription,
+            });
+        }
+        import.scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
     fn discover_welcome_projects(&mut self, cx: &mut Context<Self>) {
         if !self.showing_welcome_guide || !self.connected || self.welcome_busy() {
             return;
@@ -320,17 +406,24 @@ impl HiveApp {
         cx: &Context<Self>,
     ) -> Div {
         let count = import.selected_projects().count();
+        let review_all = discovery.projects.len() > RECENT_PROJECTS;
+        let search_text = import.search_text(cx);
+        let query = search_text.as_deref();
+        let shown: Vec<_> = discovery.shown(query).collect();
+        let hidden_selected = count
+            - shown
+                .iter()
+                .filter(|project| {
+                    import.selected.contains(&project.id) && !import.completed(&project.id)
+                })
+                .count();
+        let can_select_more = import.selectable_shown(discovery, query).next().is_some();
         let finished = import
             .results
             .values()
             .filter(|result| result.complete())
             .count();
         let incomplete = import.results.len() - finished;
-        let available = discovery
-            .projects
-            .iter()
-            .filter(|project| !import.completed(&project.id))
-            .count();
         v_flex()
             .gap_2()
             .when(discovery.limited, |panel| {
@@ -369,6 +462,52 @@ impl HiveApp {
             })
             .when(!discovery.projects.is_empty(), |panel| {
                 panel
+                    .when(review_all, |panel| {
+                        panel.child(Reveal::new(
+                            "welcome-import-review-reveal",
+                            &self.welcome_scroll,
+                            h_flex()
+                                .justify_between()
+                                .items_center()
+                                .flex_wrap()
+                                .gap_2()
+                                .child(div().text_xs().text_color(Color::Muted.get(cx)).child(
+                                    if import.search.is_some() {
+                                        tr("所有找到的项目")
+                                    } else {
+                                        tr("最近项目")
+                                    },
+                                ))
+                                .child(
+                                    Button::new("welcome-import-review-all")
+                                        .ghost()
+                                        .small()
+                                        .label(if import.search.is_some() {
+                                            tr("只看最近项目")
+                                        } else {
+                                            tr("查看所有项目")
+                                        })
+                                        .disabled(!enabled)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.toggle_welcome_project_search(window, cx)
+                                        })),
+                                ),
+                        ))
+                    })
+                    .when_some(import.search.as_ref(), |panel, search| {
+                        panel.child(
+                            Reveal::new(
+                                "welcome-import-search-reveal",
+                                &self.welcome_scroll,
+                                Input::new(&search.input)
+                                    .small()
+                                    .cleanable(true)
+                                    .aria_label(tr(PROJECT_SEARCH))
+                                    .disabled(!enabled),
+                            )
+                            .track_focus(&search.input.read(cx).focus_handle(cx)),
+                        )
+                    })
                     .child(Reveal::new(
                         "welcome-import-selection-reveal",
                         &self.welcome_scroll,
@@ -380,18 +519,16 @@ impl HiveApp {
                                 Button::new("welcome-import-select-all")
                                     .ghost()
                                     .small()
-                                    .label(tr("全选项目"))
-                                    .disabled(!enabled || count == available)
+                                    .label(if shown.len() == discovery.projects.len() {
+                                        tr("全选项目")
+                                    } else {
+                                        tr("全选当前显示的项目")
+                                    })
+                                    .disabled(!enabled || !can_select_more)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let import = &mut this.welcome_setup.project_import;
-                                        if let Some(discovery) = &import.discovery {
-                                            import.selected = discovery
-                                                .projects
-                                                .iter()
-                                                .filter(|project| !import.completed(&project.id))
-                                                .map(|project| project.id.clone())
-                                                .collect();
-                                        }
+                                        let query = import.search_text(cx);
+                                        import.select_shown(query.as_deref());
                                         cx.notify();
                                     })),
                             )
@@ -407,30 +544,46 @@ impl HiveApp {
                                     })),
                             ),
                     ))
-                    .child(Reveal::new(
-                        "welcome-import-projects-reveal",
-                        &self.welcome_scroll,
-                        Viewport::new(
-                            "welcome-import-viewport",
-                            &import.scroll,
-                            v_flex()
-                                .id("welcome-import-list")
-                                .role(Role::List)
-                                .aria_label(tr("最近项目"))
-                                .w_full()
-                                .max_h(px(300.))
-                                .overflow_y_scroll()
-                                .track_scroll(&import.scroll)
-                                .vertical_scrollbar(&import.scroll)
-                                .children(discovery.projects.iter().map(|project| {
-                                    Reveal::new(
-                                        format!("welcome-import-reveal-{}", project.id),
-                                        &import.scroll,
-                                        self.render_import_project(import, project, enabled, cx),
-                                    )
-                                })),
-                        ),
-                    ))
+                    .when(shown.is_empty(), |panel| {
+                        panel.child(
+                            div()
+                                .text_xs()
+                                .text_color(Color::Muted.get(cx))
+                                .child(tr("没有匹配的项目。")),
+                        )
+                    })
+                    .when(!shown.is_empty(), |panel| {
+                        panel.child(Reveal::new(
+                            "welcome-import-projects-reveal",
+                            &self.welcome_scroll,
+                            Viewport::new(
+                                "welcome-import-viewport",
+                                &import.scroll,
+                                v_flex()
+                                    .id("welcome-import-list")
+                                    .role(Role::List)
+                                    .aria_label(if import.search.is_some() {
+                                        tr("所有找到的项目")
+                                    } else {
+                                        tr("最近项目")
+                                    })
+                                    .w_full()
+                                    .max_h(px(300.))
+                                    .overflow_y_scroll()
+                                    .track_scroll(&import.scroll)
+                                    .vertical_scrollbar(&import.scroll)
+                                    .children(shown.into_iter().map(|project| {
+                                        Reveal::new(
+                                            format!("welcome-import-reveal-{}", project.id),
+                                            &import.scroll,
+                                            self.render_import_project(
+                                                import, project, enabled, cx,
+                                            ),
+                                        )
+                                    })),
+                            ),
+                        ))
+                    })
                     .child(Reveal::new(
                         "welcome-import-apply-reveal",
                         &self.welcome_scroll,
@@ -439,12 +592,17 @@ impl HiveApp {
                             .justify_between()
                             .items_center()
                             .flex_wrap()
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(Color::Muted.get(cx))
-                                    .child(format!("{} {count}", tr("已选项目"))),
-                            )
+                            .child(div().text_xs().text_color(Color::Muted.get(cx)).child(
+                                if hidden_selected == 0 {
+                                    format!("{} {count}", tr("已选项目"))
+                                } else {
+                                    format!(
+                                        "{} {count} · {} {hidden_selected}",
+                                        tr("已选项目"),
+                                        tr("当前未显示")
+                                    )
+                                },
+                            ))
                             .child(
                                 Button::new("welcome-import-apply")
                                     .primary()
@@ -592,5 +750,60 @@ impl HiveApp {
                         })
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[core::prelude::v1::test]
+    fn selecting_filtered_projects_keeps_hidden_selections_and_skips_finished_projects() {
+        let discovery = Discovery {
+            projects: (0..RECENT_PROJECTS + 2)
+                .map(|index| Project {
+                    id: index.to_string(),
+                    name: format!("Project {index}"),
+                    path: format!("/Source/repo-{index}"),
+                    session_count: 1,
+                    backends: Vec::new(),
+                    workspace_id: None,
+                })
+                .collect(),
+            limited: false,
+        };
+        let latest = (RECENT_PROJECTS + 1).to_string();
+        let finished = RECENT_PROJECTS.to_string();
+        assert_eq!(discovery.shown(None).count(), RECENT_PROJECTS);
+        assert_eq!(discovery.shown(Some("")).count(), RECENT_PROJECTS + 2);
+        assert_eq!(discovery.shown(Some("missing")).count(), 0);
+        assert_eq!(
+            discovery.shown(Some("  PRoJecT 0  ")).next().unwrap().id,
+            "0"
+        );
+        let mut import = ProjectImport {
+            discovery: Some(discovery),
+            ..Default::default()
+        };
+        import.results.insert(
+            finished.clone(),
+            ApplyResult {
+                id: finished.clone(),
+                workspace: Some(Workspace {
+                    id: finished.clone(),
+                    name: String::new(),
+                    path: String::new(),
+                }),
+                imported: 1,
+                already_imported: 0,
+                skipped: 0,
+                error: None,
+            },
+        );
+        import.select_shown(Some(&format!(" /source/REPO-{latest} ")));
+        import.select_shown(None);
+        assert!(!import.selected.contains(&finished));
+        assert_eq!(import.selected_projects().count(), RECENT_PROJECTS + 1);
+        assert_eq!(import.selected_projects().last().unwrap().id, latest);
     }
 }

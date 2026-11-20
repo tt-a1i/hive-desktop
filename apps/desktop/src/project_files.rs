@@ -23,7 +23,7 @@ use std::{sync::Arc, time::Duration};
 
 mod browser;
 
-pub(crate) use browser::FileBrowser;
+pub(crate) use browser::{FileBrowser, FileTreeExpansions};
 
 enum FileError {
     Owned(&'static str),

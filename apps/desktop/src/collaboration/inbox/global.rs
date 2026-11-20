@@ -1,11 +1,13 @@
 use super::snoozes::{Reminder, now_ms};
 use super::{
-    ActionCenter, Destination, Entry, Reminders, inbox_row, inbox_status, is_snoozed,
+    ActionCenter, Destination, Entry, Priority, Reminders, inbox_row, inbox_status, is_snoozed,
     read_action_center, same_wake_target, sort_entries, toggle_button,
 };
 use crate::{
     app::HiveApp,
+    focus_scroll::Reveal,
     language::{localize_owned_error, tr},
+    palette::Color,
     protocol::{Member, Session, Workspace},
     transport::Runtime,
 };
@@ -28,6 +30,7 @@ struct GlobalInbox {
     connection: u64,
     projects: HashMap<String, ProjectInbox>,
     project_filter: Option<String>,
+    show_waiting: bool,
     show_snoozed: bool,
     dismissed: bool,
     scroll: ScrollHandle,
@@ -111,6 +114,7 @@ impl HiveApp {
                 connection,
                 projects: HashMap::new(),
                 project_filter: None,
+                show_waiting: false,
                 show_snoozed: false,
                 dismissed: false,
                 scroll: ScrollHandle::new(),
@@ -370,6 +374,46 @@ fn selected_project<'a>(
     workspaces.iter().find(|project| project.id == id)
 }
 
+#[derive(Default)]
+struct InboxSections<'a> {
+    attention: Vec<(&'a str, Entry)>,
+    waiting: Vec<(&'a str, Entry)>,
+    snoozed: Vec<(&'a str, Entry)>,
+}
+
+impl<'a> InboxSections<'a> {
+    fn from_rows(
+        mut rows: Vec<(&'a str, Entry)>,
+        mut snoozed: impl FnMut(&str, &Entry) -> bool,
+    ) -> Self {
+        sort_entries(&mut rows);
+        let mut sections = Self::default();
+        for (project, entry) in rows {
+            let section = if snoozed(project, &entry) {
+                &mut sections.snoozed
+            } else if entry.priority == Priority::Active {
+                &mut sections.waiting
+            } else {
+                &mut sections.attention
+            };
+            section.push((project, entry));
+        }
+        sections
+    }
+}
+
+fn section_title(id: &'static str, title: &str, count: usize, cx: &App) -> impl IntoElement {
+    div()
+        .id(id)
+        .role(Role::Heading)
+        .aria_level(2)
+        .px_2()
+        .text_xs()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(Color::Text.get(cx))
+        .child(format!("{title} ({count})"))
+}
+
 impl Render for GlobalInbox {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut body = v_flex().gap_2().min_w_0();
@@ -394,7 +438,7 @@ impl Render for GlobalInbox {
             .filter(|project| selected.is_none_or(|selected| project.id == selected.id))
             .collect();
         let now = now_ms();
-        let mut rows: Vec<_> = if ready {
+        let rows: Vec<_> = if ready {
             projects
                 .iter()
                 .filter_map(|workspace| {
@@ -412,13 +456,10 @@ impl Render for GlobalInbox {
         } else {
             Vec::new()
         };
-        sort_entries(&mut rows);
-        let has_snoozed = rows
-            .iter()
-            .any(|(id, entry)| is_snoozed(entry, &self.projects[*id].reminders, now));
-        rows.retain(|(id, entry)| {
-            self.show_snoozed || !is_snoozed(entry, &self.projects[*id].reminders, now)
+        let sections = InboxSections::from_rows(rows, |id, entry| {
+            is_snoozed(entry, &self.projects[id].reminders, now)
         });
+        let has_snoozed = !sections.snoozed.is_empty();
         let status = if !ready {
             Some("后台连接后将显示跨项目收件箱。")
         } else if projects
@@ -426,7 +467,9 @@ impl Render for GlobalInbox {
             .any(|project| !self.projects.contains_key(&project.id))
         {
             Some("正在读取收件箱…")
-        } else if rows.is_empty()
+        } else if sections.attention.is_empty()
+            && sections.waiting.is_empty()
+            && !(has_snoozed && self.show_snoozed)
             && projects.iter().all(|workspace| {
                 self.projects
                     .get(&workspace.id)
@@ -551,10 +594,8 @@ impl Render for GlobalInbox {
         }
 
         let connection = self.connection;
-        for (id, entry) in rows {
-            let Some(project) = projects.iter().find(|project| project.id == id) else {
-                continue;
-            };
+        let render_row = |(id, entry): (&str, Entry)| {
+            let project = projects.iter().find(|project| project.id == id)?;
             let title = display_project(project, &app.workspaces);
             let reminders = &self.projects[id].reminders;
             let snoozed = is_snoozed(&entry, reminders, now);
@@ -581,7 +622,7 @@ impl Render for GlobalInbox {
                         )
                     });
                 }));
-            list = list.child(inbox_row(
+            Some(inbox_row(
                 &id,
                 Some(title),
                 entry,
@@ -628,7 +669,53 @@ impl Render for GlobalInbox {
                         cx.notify();
                     }
                 },
+            ))
+        };
+        if !sections.attention.is_empty() {
+            list = list
+                .child(section_title(
+                    "global-inbox-attention",
+                    tr("需要你关注"),
+                    sections.attention.len(),
+                    cx,
+                ))
+                .children(sections.attention.into_iter().filter_map(render_row));
+        }
+        if !sections.waiting.is_empty() {
+            let count = sections.waiting.len();
+            let (icon, action) = if self.show_waiting {
+                (Glyph::ChevronDown, tr("收起等待 Agent 的事项"))
+            } else {
+                (Glyph::ChevronRight, tr("展开等待 Agent 的事项"))
+            };
+            list = list.child(Reveal::new(
+                "global-inbox-waiting",
+                &self.scroll,
+                Button::new("toggle-waiting-inbox")
+                    .ghost()
+                    .compact()
+                    .xsmall()
+                    .icon(icon)
+                    .label(format!("{} ({count})", tr("等待 Agent")))
+                    .accessibility_label(format!("{action} ({count})"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.show_waiting = !this.show_waiting;
+                        cx.notify();
+                    })),
             ));
+            if self.show_waiting {
+                list = list.children(sections.waiting.into_iter().filter_map(render_row));
+            }
+        }
+        if self.show_snoozed && has_snoozed {
+            list = list
+                .child(section_title(
+                    "global-inbox-snoozed",
+                    tr("已暂缓事项"),
+                    sections.snoozed.len(),
+                    cx,
+                ))
+                .children(sections.snoozed.into_iter().filter_map(render_row));
         }
         body.child(list)
     }
@@ -636,8 +723,12 @@ impl Render for GlobalInbox {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_project, selected_project};
+    use super::{
+        ActionCenter, Destination, Entry, InboxSections, Priority, display_project,
+        selected_project,
+    };
     use crate::protocol::Workspace;
+    use serde_json::json;
 
     fn workspace(id: &str, path: &str) -> Workspace {
         Workspace {
@@ -669,5 +760,66 @@ mod tests {
         assert!(selected_project(&projects, Some("left"), Some("left")).is_none());
         assert!(selected_project(&projects, None, Some("right")).is_none());
         assert!(selected_project(&projects, None, None).is_none());
+    }
+
+    #[test]
+    fn inbox_sections_keep_actions_and_failures_ahead_of_waiting_items() {
+        let dispatch = "70035fa8-80a3-4215-b86c-9d940ae01610";
+        let snapshot: ActionCenter = serde_json::from_value(json!({
+            "workspace_id": "left",
+            "generated_at": 200,
+            "attention": [
+                { "kind": "dispatch_waiting_report", "dispatch_id": dispatch, "submitted_at": 190 },
+                { "kind": "message_delivery_pending", "dispatch_id": dispatch, "message_id": "queued", "submitted_at": 180 },
+                { "kind": "question_waiting_answer", "dispatch_id": dispatch, "message_id": "question", "submitted_at": 5 },
+                { "kind": "stopped_with_queue", "worker_id": "stopped", "submitted_at": 72 }
+            ],
+            "recent_dispatch_messages": []
+        })).unwrap();
+        let mut rows: Vec<_> = snapshot
+            .entries(str::to_owned)
+            .into_iter()
+            .map(|entry| ("left", entry))
+            .collect();
+        rows.extend(
+            [
+                ("投递失败", Priority::NeedsUser, 1),
+                ("未读会话", Priority::Unread, 220),
+            ]
+            .map(|(label, priority, updated_at)| {
+                (
+                    "right",
+                    Entry {
+                        label,
+                        subject: label.into(),
+                        target: Destination::Member(label.into()),
+                        snooze_key: None,
+                        wake: None,
+                        priority,
+                        updated_at,
+                    },
+                )
+            }),
+        );
+        let sections = InboxSections::from_rows(rows, |project, entry| {
+            project == "left" && entry.snooze_key.as_deref() == Some("message:queued")
+        });
+        let labels = |entries: Vec<(&str, Entry)>| {
+            entries
+                .into_iter()
+                .map(|(_, entry)| entry.label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            labels(sections.attention),
+            [
+                "成员已停止，仍有待办",
+                "等待答复的协作问题",
+                "投递失败",
+                "未读会话"
+            ]
+        );
+        assert_eq!(labels(sections.waiting), ["等待汇报的派单"]);
+        assert_eq!(labels(sections.snoozed), ["等待投递的协作消息"]);
     }
 }
