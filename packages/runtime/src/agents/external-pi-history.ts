@@ -103,10 +103,10 @@ export async function readPiTranscriptTailWindow(
     await handle.close();
   }
 
-  options.signal?.throwIfAborted();
   const windowResult = await readJsonlTailWindow(file, {
     maxLines: Math.max(1, options.maxEntries) + 1,
     ...(options.beforeByteOffset !== undefined && { beforeByteOffset: options.beforeByteOffset }),
+    ...(options.signal && { signal: options.signal }),
   });
 
   const entries: SessionEntry[] = [];

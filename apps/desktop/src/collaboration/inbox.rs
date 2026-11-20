@@ -2,7 +2,7 @@ use super::read_dispatch;
 use crate::{
     app::{ErrorNotice, HiveApp},
     focus_scroll::Reveal,
-    language::tr,
+    language::{localize_owned_error, tr},
     palette::Color,
     protocol::Session,
 };
@@ -14,9 +14,14 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashSet;
+use std::{
+    collections::BTreeSet,
+    fs,
+    io::{self, ErrorKind},
+    path::{Path, PathBuf},
+};
 
 #[derive(Default)]
 pub(super) struct Inbox {
@@ -28,7 +33,8 @@ pub(super) struct Inbox {
     attention: Vec<Attention>,
     recent_messages: Vec<RecentMessage>,
     error: Option<String>,
-    snoozed: HashSet<(String, String)>,
+    snoozes: Option<io::Result<Snoozes>>,
+    snooze_write_error: Option<io::Error>,
     show_snoozed: bool,
 }
 
@@ -36,6 +42,96 @@ impl Inbox {
     pub(super) fn invalidate(&mut self) {
         self.generation += 1;
         self.loading = false;
+    }
+
+    fn snoozes(&self) -> Option<&Snoozes> {
+        self.snoozes.as_ref()?.as_ref().ok()
+    }
+
+    fn snooze_notice(&self) -> Option<(&'static str, &io::Error)> {
+        if let Some(Err(error)) = &self.snoozes {
+            return Some(("无法读取已暂缓事项", error));
+        }
+        self.snooze_write_error
+            .as_ref()
+            .map(|error| ("无法保存已暂缓事项", error))
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Snoozes {
+    workspace_id: String,
+    keys: BTreeSet<String>,
+}
+
+impl Snoozes {
+    fn path(root: &Path, workspace: &str) -> io::Result<PathBuf> {
+        let id = uuid::Uuid::try_parse(workspace)
+            .map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
+        Ok(root
+            .join("desktop-inbox-snoozes")
+            .join(format!("{id}.json")))
+    }
+
+    fn read(path: &Path, workspace: &str) -> io::Result<Option<Self>> {
+        let file = match fs::File::open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let saved: Self = serde_json::from_reader(file)?;
+        if saved.workspace_id != workspace {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                tr("收件箱返回了其他工作区的数据。"),
+            ));
+        }
+        Ok(Some(saved))
+    }
+
+    fn empty(workspace: &str) -> Self {
+        Self {
+            workspace_id: workspace.to_owned(),
+            keys: BTreeSet::new(),
+        }
+    }
+
+    fn load(root: &Path, workspace: &str) -> io::Result<Self> {
+        Ok(Self::read(&Self::path(root, workspace)?, workspace)?
+            .unwrap_or_else(|| Self::empty(workspace)))
+    }
+
+    fn set(root: &Path, workspace: &str, key: &str, snoozed: bool) -> io::Result<Self> {
+        let path = Self::path(root, workspace)?;
+        let dir = path.parent().expect("snooze path has a directory");
+        fs::create_dir_all(dir)?;
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path.with_extension("lock"))?;
+        lock.try_lock().map_err(io::Error::from)?;
+        let existing = Self::read(&path, workspace)?;
+        let create = existing.is_none();
+        let mut saved = existing.unwrap_or_else(|| Self::empty(workspace));
+        let changed = if snoozed {
+            saved.keys.insert(key.to_owned())
+        } else {
+            saved.keys.remove(key)
+        };
+        if changed {
+            let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+            serde_json::to_writer(temp.as_file_mut(), &saved)?;
+            temp.as_file().sync_all()?;
+            if create {
+                temp.persist_noclobber(path)?;
+            } else {
+                temp.persist(path)?;
+            }
+        }
+        Ok(saved)
     }
 }
 
@@ -152,12 +248,18 @@ impl HiveApp {
             inbox.attention.clear();
             inbox.recent_messages.clear();
             inbox.error = None;
+            inbox.snoozes = None;
+            inbox.snooze_write_error = None;
             inbox.show_snoozed = false;
             inbox.loaded = false;
         }
         if inbox.loading {
             return;
         }
+        inbox.snoozes = self
+            .data_dir
+            .as_deref()
+            .map(|root| Snoozes::load(root, &workspace));
         inbox.loading = true;
         inbox.generation += 1;
         let generation = inbox.generation;
@@ -178,8 +280,8 @@ impl HiveApp {
                 inbox.loading = false;
                 match result {
                     Ok(snapshot) if snapshot.workspace_id == workspace => {
-                        let active: HashSet<_> = snapshot.attention.iter().filter_map(Attention::snooze_key).collect();
-                        inbox.snoozed.retain(|(id, key)| id != &workspace || active.contains(key));
+                        // The action center caps its results. An absent item
+                        // can still be pending, so refresh never deletes snoozes.
                         inbox.attention = snapshot.attention;
                         inbox.recent_messages = snapshot.recent_dispatch_messages;
                         inbox.error = None;
@@ -191,6 +293,36 @@ impl HiveApp {
                 cx.notify();
             });
         }).detach();
+    }
+
+    fn set_inbox_snooze(
+        &mut self,
+        workspace: &str,
+        key: &str,
+        snoozed: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let inbox = &mut self.collaboration.inbox;
+        if self.workspace.as_deref() != Some(workspace)
+            || inbox.workspace.as_deref() != Some(workspace)
+            || inbox.snoozes().is_none()
+            || !inbox
+                .attention
+                .iter()
+                .any(|row| row.snooze_key().as_deref() == Some(key))
+        {
+            return;
+        }
+        if let Some(root) = self.data_dir.as_deref() {
+            match Snoozes::set(root, workspace, key, snoozed) {
+                Ok(saved) => {
+                    inbox.snoozes = Some(Ok(saved));
+                    inbox.snooze_write_error = None;
+                }
+                Err(error) => inbox.snooze_write_error = Some(error),
+            }
+            cx.notify();
+        }
     }
 
     fn open_inbox_dispatch(&mut self, id: String, cx: &mut Context<Self>) {
@@ -284,12 +416,11 @@ impl HiveApp {
             );
         }
         let is_snoozed = |entry: &Entry| {
-            self.workspace
-                .as_ref()
-                .zip(entry.snooze_key.as_ref())
-                .is_some_and(|(workspace, key)| {
-                    state.snoozed.contains(&(workspace.clone(), key.clone()))
-                })
+            current
+                && state
+                    .snoozes()
+                    .zip(entry.snooze_key.as_ref())
+                    .is_some_and(|(snoozes, key)| snoozes.keys.contains(key))
         };
         let snoozed_count = entries.iter().filter(|entry| is_snoozed(entry)).count();
         entries.retain(|entry| state.show_snoozed || !is_snoozed(entry));
@@ -361,6 +492,21 @@ impl HiveApp {
                     )
                 },
             )
+            .when_some(
+                current.then(|| state.snooze_notice()).flatten(),
+                |panel, (label, error)| {
+                    panel.child(
+                        div()
+                            .text_xs()
+                            .text_color(Color::Muted.get(cx))
+                            .child(format!(
+                                "{} · {}",
+                                tr(label),
+                                localize_owned_error(&error.to_string())
+                            )),
+                    )
+                },
+            )
             .children(entries.into_iter().map(|entry| {
                 let label = tr(entry.label);
                 let target = self.history_link_target();
@@ -422,6 +568,7 @@ impl HiveApp {
                                             .ghost()
                                             .compact()
                                             .xsmall()
+                                            .disabled(state.snoozes().is_none() || self.closing)
                                             .label(if snoozed {
                                                 tr("取消暂缓")
                                             } else {
@@ -436,15 +583,9 @@ impl HiveApp {
                                                 }
                                             ))
                                             .on_click(cx.listener(move |this, _, _, cx| {
-                                                if this.workspace.as_ref() != Some(&workspace) {
-                                                    return;
-                                                }
-                                                let records = &mut this.collaboration.inbox.snoozed;
-                                                let record = (workspace.clone(), key.clone());
-                                                if !records.remove(&record) {
-                                                    records.insert(record);
-                                                }
-                                                cx.notify();
+                                                this.set_inbox_snooze(
+                                                    &workspace, &key, !snoozed, cx,
+                                                );
                                             })),
                                     )
                                 })
@@ -484,11 +625,16 @@ impl HiveApp {
 
 #[cfg(test)]
 mod tests {
-    use super::Attention;
+    use super::{Attention, Snoozes};
     use serde_json::json;
+    use std::{collections::BTreeSet, fs};
+
+    const WORKSPACE: &str = "a3b2cb99-3959-4adc-a770-b70f9d2a4cb9";
+    const OTHER_WORKSPACE: &str = "c7761168-b30c-4020-80bb-23c1c357e111";
 
     #[test]
-    fn snooze_tracks_the_same_message_across_delivery_but_allows_fresh_input() {
+    fn snooze_survives_restart_tracks_delivery_and_leaves_fresh_messages_visible() {
+        let root = tempfile::tempdir().unwrap();
         let mut row = json!({
             "kind":"message_delivery_pending",
             "dispatch_id":"eecc5d9c-4874-4286-8f73-ea6143246780",
@@ -500,11 +646,73 @@ mod tests {
                 .snooze_key()
         };
         let snoozed = decode(row.clone()).unwrap();
+        Snoozes::set(root.path(), WORKSPACE, &snoozed, true).unwrap();
+        let reopened = Snoozes::load(root.path(), WORKSPACE).unwrap();
         row["kind"] = json!("question_waiting_answer");
-        assert_eq!(decode(row.clone()).as_deref(), Some(snoozed.as_str()));
+        assert!(reopened.keys.contains(&decode(row.clone()).unwrap()));
         row["message_id"] = json!("fresh-question");
-        assert_ne!(decode(row.clone()).as_deref(), Some(snoozed.as_str()));
+        assert!(!reopened.keys.contains(&decode(row.clone()).unwrap()));
         row["kind"] = json!("remote_error");
         assert!(decode(row).is_none());
+        assert!(
+            Snoozes::load(root.path(), OTHER_WORKSPACE)
+                .unwrap()
+                .keys
+                .is_empty()
+        );
+
+        Snoozes::set(root.path(), WORKSPACE, &snoozed, false).unwrap();
+        assert!(
+            Snoozes::load(root.path(), WORKSPACE)
+                .unwrap()
+                .keys
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn corrupt_workspace_data_is_preserved_and_other_workspaces_remain_writable() {
+        let root = tempfile::tempdir().unwrap();
+        let path = Snoozes::path(root.path(), WORKSPACE).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let invalid = b"{invalid json";
+        fs::write(&path, invalid).unwrap();
+        assert!(Snoozes::load(root.path(), WORKSPACE).is_err());
+        assert!(Snoozes::set(root.path(), WORKSPACE, "message:one", true).is_err());
+        assert_eq!(fs::read(&path).unwrap(), invalid);
+        Snoozes::set(root.path(), OTHER_WORKSPACE, "message:one", true).unwrap();
+        assert!(
+            Snoozes::load(root.path(), OTHER_WORKSPACE)
+                .unwrap()
+                .keys
+                .contains("message:one")
+        );
+        assert_eq!(fs::read(&path).unwrap(), invalid);
+    }
+
+    #[test]
+    fn a_busy_writer_preserves_committed_state_and_retry_merges_exact_items() {
+        let root = tempfile::tempdir().unwrap();
+        let path = Snoozes::path(root.path(), WORKSPACE).unwrap();
+        Snoozes::set(root.path(), WORKSPACE, "message:one", true).unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.with_extension("lock"))
+            .unwrap();
+        lock.try_lock().unwrap();
+        assert!(Snoozes::set(root.path(), WORKSPACE, "report:two", true).is_err());
+        assert_eq!(
+            Snoozes::load(root.path(), WORKSPACE).unwrap().keys,
+            BTreeSet::from(["message:one".to_owned()])
+        );
+        drop(lock);
+
+        Snoozes::set(root.path(), WORKSPACE, "report:two", true).unwrap();
+        Snoozes::set(root.path(), WORKSPACE, "message:one", false).unwrap();
+        assert_eq!(
+            Snoozes::load(root.path(), WORKSPACE).unwrap().keys,
+            BTreeSet::from(["report:two".to_owned()])
+        );
     }
 }

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   boundOversizedToolOutput,
+  MAX_PAGED_TOOL_OUTPUT_CHARS,
   readJsonlTailWindow,
   readToolOutputByteWindow,
   sliceHistoryWindow,
@@ -108,6 +109,22 @@ assert.ok(boundedTool.content[0]!.text.includes('已截断 38976 字符'));
 const normalAssistant = { role: 'assistant', content: [{ type: 'text', text: 'B'.repeat(40_000) }] };
 assert.equal(boundOversizedToolOutput(normalAssistant, 1024), normalAssistant);
 
+// The byte cursor continues at the same character where the tool preview ends.
+const previewText = 'a'.repeat(MAX_PAGED_TOOL_OUTPUT_CHARS - 1);
+const fullToolText = `${previewText}🚀汉`;
+const preview = boundOversizedToolOutput({
+  role: 'toolResult',
+  content: [{ type: 'text', text: fullToolText }],
+}).content[0]!;
+assert.ok('loadedBytes' in preview && typeof preview.loadedBytes === 'number');
+assert.equal(preview.loadedBytes, Buffer.byteLength(previewText));
+assert.ok(preview.text.startsWith(`${previewText}\n`));
+assert.equal((preview as { truncatedChars?: number }).truncatedChars, 3);
+const remainingToolText = readToolOutputByteWindow(fullToolText, preview.loadedBytes);
+assert.equal(remainingToolText.byteOffset, preview.loadedBytes);
+assert.equal(remainingToolText.chunk, '🚀汉');
+assert.equal(remainingToolText.nextByteOffset, Buffer.byteLength(fullToolText));
+
 // 6. UTF-8 safe byte-window streaming reconstructs multi-byte Chinese/emoji tool output byte-for-byte.
 const multiByteOutput = '中文日志输出🚀'.repeat(600);
 let offset = 0;
@@ -162,6 +179,42 @@ try {
   assert.ok(piTail.entries.length >= 30);
   assert.equal(piTail.entries.at(-1)?.id, 'e-239');
   assert.equal(piTail.hasEarlierBytes, true);
+
+  // Page over a record that spans several chunks, with a chunk ending inside
+  // an emoji. Include CRLF, blank lines, malformed bytes and an unterminated tail.
+  const file = join(tmp, 'mixed.jsonl');
+  const first = Buffer.from(' {"id":"first"} \r\n\t \r\n');
+  const largePrefix = '{"id":"large","text":"';
+  const large = `${largePrefix}${'🚀'.repeat(4500)}"}`;
+  const largeLine = Buffer.from(`${large}\r\n`);
+  const malformed = Buffer.concat([Buffer.from(' {malformed} '), Buffer.from([0xf0, 0x9f]), Buffer.from(' \r\n')]);
+  const last = '{"id":"last"}';
+  const transcript = Buffer.concat([first, largeLine, malformed, Buffer.from(last)]);
+  writeFileSync(file, transcript);
+
+  const chunkBytes = transcript.length - (first.length + Buffer.byteLength(largePrefix) + 4 * 3300 + 1);
+  const latest = await readJsonlTailWindow(file, { maxLines: 3, chunkBytes });
+  assert.deepEqual(latest, {
+    lines: [large, '{malformed} �', last],
+    startByteOffset: first.length,
+    endByteOffset: transcript.length,
+    hasEarlierBytes: true,
+    fileSize: transcript.length,
+  });
+  const earliest = await readJsonlTailWindow(file, { maxLines: 3, beforeByteOffset: latest.startByteOffset, chunkBytes });
+  assert.deepEqual(earliest, {
+    lines: ['{"id":"first"}'],
+    startByteOffset: 0,
+    endByteOffset: first.length,
+    hasEarlierBytes: false,
+    fileSize: transcript.length,
+  });
+
+  const controller = new AbortController();
+  const canceled = readJsonlTailWindow(file, { maxLines: 3, chunkBytes, signal: controller.signal });
+  const reason = new Error('Canceled history read');
+  controller.abort(reason);
+  await assert.rejects(canceled, error => error === reason);
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }

@@ -231,6 +231,7 @@ impl HiveApp {
         self.readiness = None;
         self.readiness_error = None;
         self.welcome_setup.adding = false;
+        self.welcome_setup.starting = false;
         self.agent_diagnostic = None;
         self.program_checks.clear();
         self.codex_account = Default::default();

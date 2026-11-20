@@ -66,6 +66,11 @@ try {
     await assert.rejects(previewProjectFile(nested, 'escape/repository/.gitignore'));
     assert(!(await searchProjectFiles(nested, 'escape')).paths.length);
   }
+  const ignoredRoot = join(repo, 'ignored-project'); await mkdir(ignoredRoot);
+  await writeFile(join(ignoredRoot, 'keyboard-alpha.txt'), 'searchable content');
+  assert.deepEqual((await searchProjectFiles(ignoredRoot, 'keyboard')).paths, ['keyboard-alpha.txt']);
+  assert.deepEqual((await searchProjectContents(ignoredRoot, 'searchable')).matches, [{path: 'keyboard-alpha.txt', line: 1}]);
+  assert(!(await searchProjectFiles(repo, 'keyboard')).paths.length);
   const plain = join(dir, 'plain'); await mkdir(plain); await mkdir(join(plain, 'node_modules'));
   await writeFile(join(plain, 'yes.txt'), 'x'); await writeFile(join(plain, 'node_modules', 'no.txt'), 'x');
   assert.deepEqual((await searchProjectFiles(plain, '')).paths, ['yes.txt']);

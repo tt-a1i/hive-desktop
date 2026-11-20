@@ -32,6 +32,8 @@
   "未读成员会话": "Unread member conversation",
   "协作收件箱": "Collaboration inbox",
   "无法刷新协作收件箱": "Could not refresh the collaboration inbox",
+  "无法读取已暂缓事项": "Could not load snoozed items",
+  "无法保存已暂缓事项": "Could not save snoozed items",
   "正在读取收件箱…": "Loading inbox…",
   "暂无需要关注的协作事项": "No collaboration items need attention",
   "显示已暂缓事项": "Show snoozed items",
@@ -2458,5 +2460,12 @@
   "也可以查找在本机 Agent 中用过的文件夹。": "You can look for folders you used with local agents.",
   "没有找到最近使用的项目文件夹。": "No recent project folders found.",
   "查找最近项目": "Find recent projects",
-  "正在查找…": "Searching…"
+  "正在查找…": "Searching…",
+  "为新会话选择 Agent": "Choose Agent for the new conversation",
+  "选择已有项目": "Choose an existing project",
+  "配置未验证": "Configuration unverified",
+  "重新读取 Agent 配置": "Reload Agent configurations",
+  "开始聊天": "Start chatting",
+  "正在创建会话…": "Creating conversation…",
+  "无法打开刚创建的会话": "Could not open the new conversation"
 }

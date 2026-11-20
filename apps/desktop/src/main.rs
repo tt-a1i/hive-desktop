@@ -152,6 +152,8 @@ fn main() {
                 KeyBinding::new("escape", CloseConversationFind, Some("HiveConversation")),
                 KeyBinding::new("down", NextSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("up", PreviousSessionResult, Some("HiveSessionSearch")),
+                KeyBinding::new("down", NextSessionResult, Some("HiveProjectFileSearch")),
+                KeyBinding::new("up", PreviousSessionResult, Some("HiveProjectFileSearch")),
                 KeyBinding::new("escape", CancelSessionRename, Some("HiveSessionName")),
                 KeyBinding::new("escape", ClosePreferences, Some("HivePreferences")),
                 KeyBinding::new(

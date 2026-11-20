@@ -1,5 +1,9 @@
 # 完整目标的当前验收状态
 
+## 2026-11-21 首次会话与日常操作
+
+欢迎页增加项目和 Agent 选择，可直接进入空白会话。协作收件箱保存暂缓状态，文件搜索支持键盘选择，长历史的记录分割与 Unicode 续读得到修正。对比与验收见 [#55](https://github.com/tt-a1i/hive-desktop/issues/55) 和[本轮记录](validation/2026-11-21-first-chat-and-usability.md)。
+
 ## 2026-11-21 日常工作流程与首次打开
 
 本轮围绕首次引导、协作追溯、代码评审和项目工具补齐操作入口。范围和各项验收证据见 [#54](https://github.com/tt-a1i/hive-desktop/issues/54) 与[本轮验收记录](validation/2026-11-21-workflow-followups.md)。

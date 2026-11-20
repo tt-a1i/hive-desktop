@@ -86,6 +86,7 @@ struct FileBrowser {
     scroll: ScrollHandle,
     search: SearchPage,
     search_offset: usize,
+    search_selected: usize,
     search_loading: bool,
     search_error: Option<FileError>,
     search_task: Option<Task<()>>,
@@ -162,7 +163,7 @@ impl HiveApp {
                         secondary: false,
                         shift: false,
                     } => {
-                        if let Some(hit) = this.search.matches.first().cloned() {
+                        if let Some(hit) = this.search.matches.get(this.search_selected).cloned() {
                             this.select(hit, cx);
                         }
                     }
@@ -198,6 +199,7 @@ impl HiveApp {
                 scroll: ScrollHandle::new(),
                 search: SearchPage::default(),
                 search_offset: 0,
+                search_selected: 0,
                 search_loading: false,
                 search_error: None,
                 search_task: None,
@@ -324,6 +326,7 @@ impl FileBrowser {
     fn load_search(&mut self, debounce: bool, cx: &mut Context<Self>) {
         self.search_task = None;
         self.search = SearchPage::default();
+        self.search_selected = 0;
         self.search_error = None;
         self.search_loading = false;
         self.scroll = ScrollHandle::new();
@@ -368,6 +371,25 @@ impl FileBrowser {
                 cx.notify();
             });
         }));
+    }
+
+    fn move_search_selection(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.query.read(cx).focus_handle(cx).is_focused(window)
+            || self.query.update(cx, |input, cx| {
+                input.marked_text_range(window, cx).is_some()
+            })
+            || self.query.read(cx).value().trim().is_empty()
+            || self.search.matches.is_empty()
+        {
+            cx.propagate();
+            return;
+        }
+        self.search_selected = self
+            .search_selected
+            .saturating_add_signed(delta)
+            .min(self.search.matches.len() - 1);
+        self.scroll.scroll_to_item(self.search_selected);
+        cx.notify();
     }
 
     fn select(&mut self, selection: Match, cx: &mut Context<Self>) {
@@ -446,25 +468,43 @@ impl FileBrowser {
         }
     }
 
-    fn file_row(&self, hit: Match, label: String, depth: usize, cx: &Context<Self>) -> Button {
+    fn file_row(
+        &self,
+        hit: Match,
+        label: String,
+        depth: usize,
+        active: Option<usize>,
+        cx: &Context<Self>,
+    ) -> Button {
         let path = hit.path.clone();
-        let selected = self
-            .preview
-            .as_ref()
-            .is_some_and(|preview| preview.selection.path == path);
-        Button::new(SharedString::from(format!("browser-file-{}", hit.path)))
-            .ghost()
-            .compact()
-            .w_full()
-            .min_w_0()
-            .justify_start()
-            .pl(px(8. + depth.min(12) as f32 * 12.))
-            .selected(selected)
-            .icon(Glyph::FileText)
-            .tooltip(label.clone())
-            .accessibility_label(label.clone())
-            .child(div().min_w_0().truncate().child(label))
-            .on_click(cx.listener(move |this, _, _, cx| this.select(hit.clone(), cx)))
+        let selected = active
+            .map(|index| index == self.search_selected)
+            .unwrap_or_else(|| {
+                self.preview
+                    .as_ref()
+                    .is_some_and(|preview| preview.selection.path == path)
+            });
+        Button::new(SharedString::from(format!(
+            "browser-file-{}-{:?}",
+            hit.path, hit.line
+        )))
+        .ghost()
+        .compact()
+        .w_full()
+        .min_w_0()
+        .justify_start()
+        .pl(px(8. + depth.min(12) as f32 * 12.))
+        .selected(selected)
+        .icon(Glyph::FileText)
+        .tooltip(label.clone())
+        .accessibility_label(label.clone())
+        .child(div().min_w_0().truncate().child(label))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if let Some(index) = active {
+                this.search_selected = index;
+            }
+            this.select(hit.clone(), cx);
+        }))
     }
 
     fn directory_rows(
@@ -493,6 +533,7 @@ impl FileBrowser {
                         },
                         name,
                         depth,
+                        None,
                         cx,
                     )
                     .into_any_element(),
@@ -625,11 +666,13 @@ impl FileBrowser {
         self.search
             .matches
             .iter()
-            .map(|hit| {
+            .enumerate()
+            .map(|(index, hit)| {
                 let label = hit
                     .line
                     .map_or_else(|| hit.path.clone(), |line| format!("{}:{line}", hit.path));
-                self.file_row(hit.clone(), label, 0, cx).into_any_element()
+                self.file_row(hit.clone(), label, 0, Some(index), cx)
+                    .into_any_element()
             })
             .collect()
     }
@@ -738,7 +781,20 @@ impl FileBrowser {
 
 impl Render for FileBrowser {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut view = v_flex().min_w_0().gap_2();
+        let mut view = v_flex()
+            .key_context("HiveProjectFileSearch")
+            .min_w_0()
+            .gap_2()
+            .on_action(
+                cx.listener(|this, _: &crate::NextSessionResult, window, cx| {
+                    this.move_search_selection(1, window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &crate::PreviousSessionResult, window, cx| {
+                    this.move_search_selection(-1, window, cx)
+                }),
+            );
         if !self.current(cx) {
             return view.child(
                 div()

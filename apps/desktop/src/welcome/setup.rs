@@ -1,13 +1,15 @@
 use crate::{
+    agent_profiles::{ProfileRef, supported_driver},
     app::{ErrorNotice, HiveApp, SettingsSection},
     language::tr,
     palette::Color,
-    protocol::Workspace,
+    protocol::{Session, Workspace},
 };
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         button::{Button, ButtonVariants},
+        menu::{DropdownMenu, PopupMenuItem},
         *,
     },
     prelude::FluentBuilder,
@@ -24,10 +26,19 @@ const COMPLETION_FILE: &str = "desktop-welcome.complete";
 pub(crate) struct Setup {
     startup_checked: bool,
     preferred_workspace: Option<String>,
+    preferred_agent: Option<ProfileRef>,
     suggestions: Option<Vec<PathBuf>>,
     discovering: bool,
     pub(crate) adding: bool,
+    pub(crate) starting: bool,
     notice: Option<ErrorNotice>,
+}
+
+struct AgentChoice {
+    reference: ProfileRef,
+    backend: &'static str,
+    name: String,
+    detected: bool,
 }
 
 fn completed(root: &Path) -> io::Result<bool> {
@@ -76,17 +87,18 @@ impl HiveApp {
     pub(crate) fn open_welcome_setup(&mut self, cx: &mut Context<Self>) {
         self.welcome_setup.startup_checked = true;
         self.welcome_setup.preferred_workspace = None;
+        self.welcome_setup.preferred_agent = None;
         self.welcome_setup.notice = None;
         self.welcome_scroll.set_offset(point(px(0.), px(0.)));
         self.showing_welcome_guide = true;
         self.refresh_readiness(cx);
+        if self.profiles.snapshot.is_none() {
+            self.load_profiles(cx);
+        }
         cx.notify();
     }
 
-    fn finish_welcome_setup(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if self.welcome_setup.adding {
-            return;
-        }
+    fn save_welcome_completion(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(root) = &self.data_dir
             && let Err(error) = save_completed(root)
         {
@@ -95,11 +107,24 @@ impl HiveApp {
                 error.to_string(),
             ));
             cx.notify();
+            return false;
+        }
+        true
+    }
+
+    fn finish_welcome_setup(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.welcome_setup.adding
+            || self.welcome_setup.starting
+            || !self.save_welcome_completion(cx)
+        {
             return;
         }
         self.showing_welcome_guide = false;
         self.welcome_setup.notice = None;
-        if let Some(id) = self.welcome_setup.preferred_workspace.take() {
+        if let Some(id) = self.welcome_setup.preferred_workspace.take()
+            && self.workspace.as_ref() != Some(&id)
+            && self.workspaces.iter().any(|item| item.id == id)
+        {
             self.select_workspace(id, cx);
         }
         if window.viewport_size().width < px(820.) {
@@ -107,6 +132,155 @@ impl HiveApp {
         }
         self.focus_project_input = true;
         cx.notify();
+    }
+
+    fn welcome_projects_target(&self) -> Option<&Workspace> {
+        let selected = self
+            .welcome_setup
+            .preferred_workspace
+            .as_ref()
+            .or(self.workspace.as_ref())?;
+        self.workspaces
+            .iter()
+            .find(|project| &project.id == selected)
+    }
+
+    fn welcome_agents(&self) -> Vec<AgentChoice> {
+        let mut choices = Vec::new();
+        let Some(snapshot) = self.profiles.snapshot.as_ref() else {
+            return choices;
+        };
+        for profile in snapshot.profiles.iter().filter(|item| item.enabled) {
+            let Some(backend) = supported_driver(&profile.driver) else {
+                continue;
+            };
+            let Some(revision) = profile
+                .revisions
+                .iter()
+                .find(|item| item.revision == profile.current_revision)
+            else {
+                continue;
+            };
+            let reference = ProfileRef {
+                id: profile.id.clone(),
+                revision: profile.current_revision,
+            };
+            let detected = self.readiness_error.is_none()
+                && profile.id == format!("default-{backend}")
+                && revision.launch.config_dir.is_none()
+                && revision.launch.args.is_empty()
+                && self.backend_readiness(backend).is_some_and(|entry| {
+                    entry.level == "ready"
+                        && entry.credential_state == "present"
+                        && revision
+                            .launch
+                            .command
+                            .as_ref()
+                            .is_none_or(|command| entry.executable.as_ref() == Some(command))
+                });
+            choices.push(AgentChoice {
+                name: self.profile_label(&reference),
+                reference,
+                backend,
+                detected,
+            });
+        }
+        choices.sort_by_key(|choice| !choice.detected);
+        choices
+    }
+
+    fn selected_welcome_agent<'a>(&self, choices: &'a [AgentChoice]) -> Option<&'a AgentChoice> {
+        match &self.welcome_setup.preferred_agent {
+            Some(selected) => choices.iter().find(|choice| &choice.reference == selected),
+            None => choices.iter().find(|choice| choice.detected),
+        }
+    }
+
+    fn start_welcome_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.welcome_setup.adding
+            || self.welcome_setup.starting
+            || !self.connected
+            || self.closing
+            || self.profiles.loading
+            || !self.showing_welcome_guide
+        {
+            return;
+        }
+        let Some(project) = self.welcome_projects_target().map(|item| item.id.clone()) else {
+            return;
+        };
+        if self.workspace_removing.as_ref() == Some(&project) {
+            return;
+        }
+        let choices = self.welcome_agents();
+        let Some(choice) = self.selected_welcome_agent(&choices) else {
+            return;
+        };
+        let reference = choice.reference.clone();
+        let backend = choice.backend;
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        self.welcome_setup.starting = true;
+        self.welcome_setup.notice = None;
+        cx.notify();
+        let window = window.window_handle();
+        let connection = self.connection_generation;
+        let open_request = self.open_request;
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request(
+                    "chat.createRecord",
+                    serde_json::json!({
+                        "workspaceId": project, "backend": backend, "profile": reference,
+                    }),
+                )
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<Session>(value).map_err(|error| error.to_string())
+                });
+            let _ = window.update(cx, |_, window, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    if this.connection_generation != connection {
+                        return;
+                    }
+                    this.welcome_setup.starting = false;
+                    if !this.showing_welcome_guide
+                        || this.open_request != open_request
+                        || this.settings_panel
+                    {
+                        this.refresh_sessions(cx);
+                        cx.notify();
+                        return;
+                    }
+                    match result {
+                        Ok(session)
+                            if session.workspace_id == project
+                                && session.backend.wire() == backend
+                                && session.profile.as_ref() == Some(&reference) =>
+                        {
+                            if this.navigate_to_session(session, window, cx) {
+                                this.focus_project_input = true;
+                                if !this.save_welcome_completion(cx) {
+                                    this.error = this.welcome_setup.notice.take();
+                                }
+                            } else {
+                                this.welcome_setup.notice = Some("无法打开刚创建的会话".into());
+                            }
+                        }
+                        Ok(_) => {
+                            this.welcome_setup.notice = Some("创建会话返回的配置引用不匹配".into())
+                        }
+                        Err(error) => {
+                            this.welcome_setup.notice =
+                                Some(ErrorNotice::Detail("创建会话失败", error))
+                        }
+                    }
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
     }
 
     fn discover_welcome_projects(&mut self, cx: &mut Context<Self>) {
@@ -127,7 +301,11 @@ impl HiveApp {
     }
 
     pub(crate) fn add_welcome_project(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.welcome_setup.adding || !self.connected || self.closing {
+        if self.welcome_setup.adding
+            || self.welcome_setup.starting
+            || !self.connected
+            || self.closing
+        {
             return;
         }
         let (Some(path_text), Some(runtime)) = (path.to_str(), self.runtime.clone()) else {
@@ -178,10 +356,17 @@ impl HiveApp {
     }
 
     pub(crate) fn render_welcome_setup(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let ready = ["pi", "codex", "pi-rpc"].into_iter().any(|backend| {
-            self.backend_readiness(backend)
-                .is_some_and(|entry| entry.level == "ready" && entry.credential_state == "present")
-        });
+        let agents = self.welcome_agents();
+        let selected = self
+            .selected_welcome_agent(&agents)
+            .map(|choice| choice.reference.clone());
+        let busy = self.welcome_setup.adding || self.welcome_setup.starting || self.closing;
+        let can_start = selected.is_some()
+            && self.welcome_projects_target().is_some()
+            && self.connected
+            && !self.profiles.loading
+            && !busy;
+        let agent_picker = self.render_welcome_agent_picker(agents, selected.as_ref(), busy, cx);
         let notice = self
             .welcome_setup
             .notice
@@ -238,12 +423,14 @@ impl HiveApp {
                                             .small()
                                             .icon(Glyph::Settings)
                                             .label(tr("设置"))
+                                            .disabled(busy)
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.open_settings(window, cx)
                                             })),
                                     ),
                             )
                             .child(self.render_welcome_guide_panel(cx))
+                            .child(agent_picker)
                             .child(self.render_welcome_projects(cx))
                             .when_some(notice, |panel, notice| {
                                 panel.child(
@@ -276,6 +463,7 @@ impl HiveApp {
                                     .ghost()
                                     .small()
                                     .label(tr("连接其他设备"))
+                                    .disabled(busy)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.select_settings_section(
                                             SettingsSection::Remote,
@@ -285,25 +473,157 @@ impl HiveApp {
                                     })),
                             )
                             .child(
-                                Button::new("finish-welcome-setup")
-                                    .primary()
-                                    .small()
-                                    .disabled(self.welcome_setup.adding || self.closing)
-                                    .label(if ready {
-                                        tr("进入工作区")
-                                    } else {
-                                        tr("先进入工作区，稍后配置 Agent")
-                                    })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.finish_welcome_setup(window, cx)
-                                    })),
+                                h_flex()
+                                    .gap_2()
+                                    .flex_wrap()
+                                    .child(
+                                        Button::new("finish-welcome-setup")
+                                            .outline()
+                                            .small()
+                                            .disabled(busy)
+                                            .label(tr("进入工作区"))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.finish_welcome_setup(window, cx)
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("welcome-start-conversation")
+                                            .primary()
+                                            .small()
+                                            .label(if self.welcome_setup.starting {
+                                                tr("正在创建会话…")
+                                            } else {
+                                                tr("开始聊天")
+                                            })
+                                            .disabled(!can_start)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.start_welcome_conversation(window, cx)
+                                            })),
+                                    ),
                             ),
                     ),
             )
     }
 
+    fn render_welcome_agent_picker(
+        &self,
+        agents: Vec<AgentChoice>,
+        selected: Option<&ProfileRef>,
+        busy: bool,
+        cx: &Context<Self>,
+    ) -> Div {
+        let title = agents
+            .iter()
+            .find(|choice| Some(&choice.reference) == selected)
+            .map(|choice| choice.name.clone())
+            .unwrap_or_else(|| tr("选择 Agent").to_owned());
+        let selected = selected.cloned();
+        let owner = cx.weak_entity();
+        h_flex()
+            .w_full()
+            .gap_2()
+            .items_center()
+            .flex_wrap()
+            .child(
+                Button::new("welcome-agent-choice")
+                    .outline()
+                    .small()
+                    .label(title)
+                    .icon(Glyph::ChevronDown)
+                    .disabled(busy || !self.connected || self.profiles.loading || agents.is_empty())
+                    .accessibility_label(tr("为新会话选择 Agent"))
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for choice in &agents {
+                            let reference = choice.reference.clone();
+                            let owner = owner.clone();
+                            let name = if choice.detected {
+                                choice.name.clone()
+                            } else {
+                                format!("{} · {}", choice.name, tr("配置未验证"))
+                            };
+                            menu = menu.item(
+                                PopupMenuItem::new(name)
+                                    .checked(selected.as_ref() == Some(&reference))
+                                    .on_click(move |_, _, cx| {
+                                        let _ = owner.update(cx, |app, cx| {
+                                            if app.showing_welcome_guide
+                                                && !app.welcome_setup.starting
+                                            {
+                                                app.welcome_setup.preferred_agent =
+                                                    Some(reference.clone());
+                                                cx.notify();
+                                            }
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    }),
+            )
+            .when(
+                !self.profiles.loading && self.profiles.error.is_some(),
+                |row| {
+                    row.child(
+                        Button::new("retry-welcome-profiles")
+                            .ghost()
+                            .small()
+                            .label(tr("重新读取 Agent 配置"))
+                            .disabled(busy || !self.connected)
+                            .on_click(cx.listener(|this, _, _, cx| this.load_profiles(cx))),
+                    )
+                },
+            )
+    }
+
+    fn render_welcome_project_picker(
+        &self,
+        enabled: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let owner = cx.weak_entity();
+        let projects: Vec<_> = self
+            .workspaces
+            .iter()
+            .map(|project| (project.id.clone(), project.name.clone()))
+            .collect();
+        let selected_id = self
+            .welcome_projects_target()
+            .map(|project| project.id.clone());
+        Button::new("welcome-existing-projects")
+            .ghost()
+            .small()
+            .label(tr("选择已有项目"))
+            .icon(Glyph::ChevronDown)
+            .disabled(!enabled)
+            .dropdown_menu(move |mut menu, _, _| {
+                for (id, name) in &projects {
+                    let id = id.clone();
+                    let owner = owner.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(name.clone())
+                            .checked(selected_id.as_ref() == Some(&id))
+                            .on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |app, cx| {
+                                    if app.showing_welcome_guide
+                                        && !app.welcome_setup.adding
+                                        && !app.welcome_setup.starting
+                                    {
+                                        app.welcome_setup.preferred_workspace = Some(id.clone());
+                                        cx.notify();
+                                    }
+                                });
+                            }),
+                    );
+                }
+                menu
+            })
+    }
+
     fn render_welcome_projects(&self, cx: &Context<Self>) -> Div {
-        let can_add = self.connected && !self.welcome_setup.adding && !self.closing;
+        let can_add = self.connected
+            && !self.welcome_setup.adding
+            && !self.welcome_setup.starting
+            && !self.closing;
         let suggestions = self.welcome_setup.suggestions.as_ref();
         v_flex()
             .w_full()
@@ -339,22 +659,19 @@ impl HiveApp {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.choose_workspace_folder(window, cx)
                             })),
-                    ),
-            )
-            .when_some(
-                self.welcome_setup
-                    .preferred_workspace
-                    .as_ref()
-                    .and_then(|id| self.workspaces.iter().find(|workspace| &workspace.id == id)),
-                |panel, item| {
-                    panel.child(
-                        div()
-                            .text_sm()
-                            .text_color(Color::Success.get(cx))
-                            .child(format!("{} · {}", tr("将打开此项目"), item.name)),
                     )
-                },
+                    .when(!self.workspaces.is_empty(), |row| {
+                        row.child(self.render_welcome_project_picker(can_add, cx))
+                    }),
             )
+            .when_some(self.welcome_projects_target(), |panel, item| {
+                panel.child(
+                    div()
+                        .text_sm()
+                        .text_color(Color::Success.get(cx))
+                        .child(format!("{} · {}", tr("将打开此项目"), item.name)),
+                )
+            })
             .when(
                 suggestions.is_none() || suggestions.is_some_and(Vec::is_empty),
                 |panel| {
@@ -408,7 +725,7 @@ impl HiveApp {
                     Button::new("welcome-find-recent-projects")
                         .ghost()
                         .small()
-                        .disabled(self.welcome_setup.discovering)
+                        .disabled(self.welcome_setup.discovering || self.welcome_setup.starting)
                         .label(if self.welcome_setup.discovering {
                             tr("正在查找…")
                         } else {

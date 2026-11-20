@@ -64,7 +64,7 @@ fn localized_profile_label<'a>(id: &str, label: &'a str) -> &'a str {
         _ => label,
     }
 }
-fn supported_driver(driver: &str) -> Option<&'static str> {
+pub(crate) fn supported_driver(driver: &str) -> Option<&'static str> {
     match driver {
         "pi" => Some("pi"),
         "codex" => Some("codex"),

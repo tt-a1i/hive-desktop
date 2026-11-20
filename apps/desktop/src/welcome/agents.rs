@@ -188,7 +188,11 @@ impl HiveApp {
                             } else {
                                 tr("重新诊断")
                             })
-                            .disabled(!self.connected || self.readiness_loading)
+                            .disabled(
+                                !self.connected
+                                    || self.readiness_loading
+                                    || self.welcome_setup.starting,
+                            )
                             .on_click(cx.listener(|this, _, _, cx| this.refresh_readiness(cx))),
                     ),
             )
@@ -265,7 +269,9 @@ impl HiveApp {
                             .small()
                             .label(tr("配置"))
                             .accessibility_label(format!("{} · {name}", tr("配置")))
-                            .disabled(!self.connected || self.closing)
+                            .disabled(
+                                !self.connected || self.closing || self.welcome_setup.starting,
+                            )
                             .on_click(cx.listener(move |this, _, window, cx| match backend {
                                 "pi" => this.select_settings_section(
                                     SettingsSection::PiAccounts,

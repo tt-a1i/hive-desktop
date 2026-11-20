@@ -51,6 +51,14 @@ async function gitFiles(root: string, signal?: AbortSignal): Promise<string[] | 
     if (e.code === 'ENOENT' || (e.code === 128 && e.stderr?.includes('not a git repository'))) return null;
     throw error;
   }
+  // An explicitly opened directory may itself be ignored by a containing repo.
+  // In that case Git would hide every untracked file beneath the project root.
+  try {
+    await exec('git', [...prefix, 'check-ignore', '-q', '--', '.'], options);
+    return null;
+  } catch (error) {
+    if ((error as { code?: string | number }).code !== 1) throw error;
+  }
   const { stdout } = await exec('git', [...prefix, 'ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', '.'], options);
   return stdout.split('\0').filter(Boolean);
 }

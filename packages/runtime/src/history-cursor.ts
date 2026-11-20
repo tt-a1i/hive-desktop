@@ -61,11 +61,14 @@ export async function readJsonlTailWindow(
     maxLines: number;
     beforeByteOffset?: number;
     chunkBytes?: number;
+    signal?: AbortSignal;
   },
 ): Promise<JsonlTailWindowResult> {
   const maxLines = Math.max(1, Math.floor(options.maxLines));
   const chunkBytes = Math.max(4096, Math.floor(options.chunkBytes ?? REVERSE_CHUNK_BYTES));
+  options.signal?.throwIfAborted();
   const info = await stat(filePath);
+  options.signal?.throwIfAborted();
   const fileSize = info.size;
   const endByteOffset = options.beforeByteOffset === undefined
     ? fileSize
@@ -78,59 +81,56 @@ export async function readJsonlTailWindow(
   const handle = await open(filePath, 'r');
   try {
     let cursor = endByteOffset;
-    let carry: Buffer = Buffer.alloc(0);
-    const collectedReversed: { text: string; startByte: number }[] = [];
+    let firstLineStart: number | undefined;
+    const lines: string[] = [];
+    // Chunks are read newest first. Keep each unfinished line in fragments so
+    // its bytes are copied and decoded only after finding the start of the line.
+    const fragments: Buffer[] = [];
 
-    while (cursor > 0 && collectedReversed.length < maxLines) {
+    function collectLine(head: Buffer, startByte: number) {
+      let line = head;
+      if (fragments.length > 0) {
+        fragments.push(head);
+        line = Buffer.concat(fragments.reverse());
+        fragments.length = 0;
+      }
+      const trimmed = line.toString('utf8').trim();
+      if (trimmed.length > 0) {
+        lines.push(trimmed);
+        firstLineStart = startByte;
+      }
+    }
+
+    options.signal?.throwIfAborted();
+    while (cursor > 0 && lines.length < maxLines) {
       const readLen = Math.min(chunkBytes, cursor);
       const readPos = cursor - readLen;
       const buf = Buffer.allocUnsafe(readLen);
       const { bytesRead } = await handle.read(buf, 0, readLen, readPos);
+      options.signal?.throwIfAborted();
       if (bytesRead <= 0) break;
 
-      const slice = buf.subarray(0, bytesRead);
-      const combined = carry.length > 0 ? Buffer.concat([slice, carry]) : slice;
-
-      let lineEnd = combined.length;
-      for (let i = combined.length - 1; i >= 0; i--) {
-        if (combined[i] === 0x0a) {
-          const lineBuf = combined.subarray(i + 1, lineEnd);
-          const trimmed = lineBuf.toString('utf8').trim();
-          if (trimmed.length > 0) {
-            collectedReversed.push({ text: trimmed, startByte: readPos + i + 1 });
-            if (collectedReversed.length >= maxLines) {
-              const earliest = collectedReversed[collectedReversed.length - 1]!;
-              return {
-                lines: collectedReversed.reverse().map(x => x.text),
-                startByteOffset: earliest.startByte,
-                endByteOffset,
-                hasEarlierBytes: earliest.startByte > 0,
-                fileSize,
-              };
-            }
-          }
-          lineEnd = i;
-        }
+      let lineEnd = bytesRead;
+      while (lineEnd > 0 && lines.length < maxLines) {
+        const newline = buf.lastIndexOf(0x0a, lineEnd - 1);
+        if (newline < 0) break;
+        collectLine(buf.subarray(newline + 1, lineEnd), readPos + newline + 1);
+        lineEnd = newline;
       }
 
-      carry = Buffer.from(combined.subarray(0, lineEnd));
+      if (lines.length >= maxLines) break;
+      if (lineEnd > 0) fragments.push(buf.subarray(0, lineEnd));
       cursor = readPos;
     }
 
-    if (cursor === 0 && carry.length > 0 && collectedReversed.length < maxLines) {
-      const trimmed = carry.toString('utf8').trim();
-      if (trimmed.length > 0) {
-        collectedReversed.push({ text: trimmed, startByte: 0 });
-      }
+    if (cursor === 0 && lines.length < maxLines) {
+      const firstFragment = fragments.pop();
+      if (firstFragment) collectLine(firstFragment, 0);
     }
 
-    const lines = collectedReversed.reverse().map(x => x.text);
-    const startByteOffset = collectedReversed.length > 0
-      ? collectedReversed[0]!.startByte
-      : cursor;
-
+    const startByteOffset = firstLineStart ?? cursor;
     return {
-      lines,
+      lines: lines.reverse(),
       startByteOffset,
       endByteOffset,
       hasEarlierBytes: startByteOffset > 0,
@@ -199,9 +199,15 @@ export function boundOversizedToolOutput<T>(message: T, maxChars = MAX_PAGED_TOO
     if (item.type === 'text' && typeof item.text === 'string' && item.text.length > maxChars) {
       changed = true;
       const totalBytes = Buffer.byteLength(item.text, 'utf8');
-      const head = item.text.slice(0, maxChars);
+      let head = item.text.slice(0, maxChars);
+      const lastCodeUnit = head.charCodeAt(head.length - 1);
+      const nextCodeUnit = item.text.charCodeAt(head.length);
+      if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff
+        && nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) {
+        head = head.slice(0, -1);
+      }
       const loadedBytes = Buffer.byteLength(head, 'utf8');
-      const omitted = item.text.length - maxChars;
+      const omitted = item.text.length - head.length;
       return {
         ...item,
         text: `${head}\n… [已截断 ${omitted} 字符以保持流畅；可按字节窗口继续加载或导出完整 Markdown]`,
