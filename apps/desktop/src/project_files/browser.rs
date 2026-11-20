@@ -574,14 +574,15 @@ fn preview_text(id: &'static str, text: &TextPages, cx: &App) -> Stateful<Div> {
         .font_family_name()
         .map(SharedString::from)
         .unwrap_or_else(|| Theme::global(cx).mono_font_family.clone());
-    let content = if text.full.is_empty() {
-        tr("此文件为空").into()
-    } else {
-        text.visible.clone()
-    };
-    text_reading::selectable_text(id, content)
+    let view = div()
+        .id(SharedString::from(format!("{id}-container")))
         .text_sm()
-        .font_family(font)
+        .font_family(font);
+    if text.full.is_empty() {
+        view.child(text_reading::selectable_text(id, tr("此文件为空")))
+    } else {
+        view.child(text_reading::numbered_source(id, text, cx))
+    }
 }
 
 fn step_preview(text: &mut TextPages, scroll: &mut ScrollHandle, step: isize) -> bool {

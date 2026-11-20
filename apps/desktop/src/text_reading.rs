@@ -65,6 +65,122 @@ pub(crate) fn selectable_text(
         .child(gpui_kit::base::SelectableText::new(id, text))
 }
 
+pub(crate) fn numbered_source(id: &'static str, page: &TextPages, cx: &App) -> Div {
+    let numbers = page.line_numbers();
+    let digits = numbers.end.saturating_sub(1).to_string().len().max(2) as f32;
+    let gutter = rems(0.6 * digits + 0.625);
+    let text = page.visible.clone();
+    h_flex()
+        .min_w_0()
+        .items_start()
+        .child(div().w(gutter).flex_shrink_0())
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .relative()
+                .child(selectable_text(id, text.clone()))
+                .child(
+                    v_flex()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .child(SourceLineNumbers {
+                            source: StyledText::new(text),
+                            numbers,
+                            color: Color::Muted.get(cx).into(),
+                        }),
+                ),
+        )
+}
+
+/// Use the same text layout as the selectable source so wrapping and font metrics
+/// agree. Only paint the gutter, leaving the raw source as one selection run.
+struct SourceLineNumbers {
+    source: StyledText,
+    numbers: std::ops::Range<usize>,
+    color: Hsla,
+}
+
+impl IntoElement for SourceLineNumbers {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for SourceLineNumbers {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        self.source.request_layout(id, inspector, window, cx)
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.source
+            .prepaint(id, inspector, bounds, &mut (), window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let layout = self.source.layout();
+        let line_height = layout.line_height();
+        let mut y = bounds.top();
+        let viewport = window.content_mask().bounds;
+        let style = window.text_style();
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        for (number, line) in self.numbers.clone().zip(layout.line_layouts()) {
+            if y >= viewport.bottom() {
+                break;
+            }
+            if y + line_height > viewport.top() {
+                let label = number.to_string();
+                let mut run = style.to_run(label.len());
+                run.color = self.color;
+                let label = window
+                    .text_system()
+                    .shape_line(label.into(), font_size, &[run], None);
+                let origin = point(bounds.left() - label.width() - px(8.), y);
+                let _ = label.paint(origin, line_height, TextAlign::Left, None, window, cx);
+            }
+            y += line.size(line_height).height;
+        }
+    }
+}
+
 const PAGE_BYTES: usize = 32 * 1024;
 const PAGE_LINES: usize = 256;
 
@@ -96,6 +212,11 @@ impl TextPages {
 
     pub fn count(&self) -> usize {
         self.boundaries.len() - 1
+    }
+
+    fn line_numbers(&self) -> std::ops::Range<usize> {
+        let lines = self.visible.split_terminator('\n').count();
+        self.first_line..self.first_line + lines
     }
 
     pub fn show(&mut self, page: usize) -> bool {
@@ -241,5 +362,35 @@ mod tests {
         assert!(pages.show(0));
         assert_eq!(pages.visible.as_ref(), "one\n");
         assert_eq!(pages.full.as_ref(), original);
+    }
+
+    #[test]
+    fn gutter_counts_logical_source_lines_after_jump_and_on_later_pages() {
+        let mut pages = TextPages::new(format!("one\r\n\n{}", "    文🦀\r\n".repeat(698)).into());
+        assert_eq!(pages.line_numbers(), 1..257);
+        pages.show_line(350);
+        assert_eq!(pages.line_numbers(), 350..513);
+        assert!(pages.show(pages.page + 1));
+        assert_eq!(pages.line_numbers(), 513..701);
+
+        let pages = TextPages::new("\n\n".into());
+        assert_eq!(pages.line_numbers(), 1..3);
+        assert!(TextPages::new("".into()).line_numbers().is_empty());
+    }
+
+    #[test]
+    fn gutter_keeps_the_same_number_for_a_line_split_across_pages() {
+        let line = "文🦀".repeat(PAGE_BYTES);
+        let full = format!("header\n{line}\r\nlast");
+        let mut pages = TextPages::new(full.clone().into());
+        assert_eq!(pages.line_numbers(), 1..2);
+        let mut source = pages.visible.to_string();
+        for page in 1..pages.count() {
+            assert!(pages.show(page));
+            let end = if page == pages.count() - 1 { 4 } else { 3 };
+            assert_eq!(pages.line_numbers(), 2..end);
+            source.push_str(&pages.visible);
+        }
+        assert_eq!(source, full);
     }
 }

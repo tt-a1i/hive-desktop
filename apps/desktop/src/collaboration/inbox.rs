@@ -574,6 +574,7 @@ struct Attention {
     worker_name: Option<String>,
     message_sender_id: Option<String>,
     message_created_at: Option<u64>,
+    message_preview: Option<String>,
     dispatch_backend: Option<Backend>,
     submitted_at: Option<u64>,
     task_title: Option<String>,
@@ -880,16 +881,31 @@ impl Attention {
                 &message.id == id && Some(&message.dispatch_id) == self.dispatch_id.as_ref()
             })
         });
-        let subject = if let Some(message) = message {
-            let preview: String = message
-                .text
-                .lines()
-                .next()
-                .unwrap_or_default()
+        let sender = self
+            .message_sender_id
+            .as_deref()
+            .or_else(|| message.map(|message| message.from_agent_id.as_str()));
+        let subject = if let Destination::DispatchMessage {
+            message: message_id,
+            ..
+        } = &target
+        {
+            let snippet = self
+                .message_preview
+                .as_deref()
+                .or_else(|| message.and_then(|message| message.text.trim_start().lines().next()))
+                .map(str::trim)
+                .filter(|line| !line.is_empty());
+            let text = snippet
+                .unwrap_or(message_id)
                 .chars()
-                .take(120)
-                .collect();
-            format!("{} · {preview}", name(&message.from_agent_id))
+                .take(if snippet.is_some() { 120 } else { 8 })
+                .collect::<String>();
+            if let Some(sender) = sender {
+                format!("{} · {text}", name(sender))
+            } else {
+                text
+            }
         } else {
             let member = self
                 .worker_name
@@ -904,13 +920,7 @@ impl Attention {
                     format!("{title} · {member}")
                 }
             } else {
-                self.message_id.as_ref().map_or_else(
-                    || member.clone(),
-                    |id| {
-                        let short_id: String = id.chars().take(8).collect();
-                        format!("{member} · {short_id}")
-                    },
-                )
+                member
             }
         };
         let snooze_key = self.snooze_key();
@@ -918,34 +928,27 @@ impl Attention {
             .dispatch_id
             .as_deref()
             .map(|id| snapshot.dispatch_wake(id));
+        let activity_at = self
+            .message_created_at
+            .filter(|time| *time > 0)
+            .or_else(|| {
+                message
+                    .map(|message| message.created_at)
+                    .filter(|time| *time > 0)
+            })
+            .or(self.submitted_at)
+            .unwrap_or(0);
         Some(Entry {
             label,
             subject,
             target,
             dispatch_backend: self.dispatch_backend,
-            related_members: [
-                self.worker_id.clone(),
-                self.message_sender_id
-                    .clone()
-                    .or_else(|| message.map(|message| message.from_agent_id.clone())),
-            ],
+            related_members: [self.worker_id.clone(), sender.map(str::to_owned)],
             snooze_key,
             wake,
             priority,
-            updated_at: message
-                .map(|message| message.created_at)
-                .or(self.submitted_at)
-                .unwrap_or(0),
-            activity_at: self
-                .message_created_at
-                .filter(|time| *time > 0)
-                .or_else(|| {
-                    message
-                        .map(|message| message.created_at)
-                        .filter(|time| *time > 0)
-                })
-                .or(self.submitted_at)
-                .unwrap_or(0),
+            updated_at: activity_at,
+            activity_at,
         })
     }
 }
@@ -1955,6 +1958,47 @@ mod tests {
         let delivery = row("delivery", "message_delivery_pending");
         assert!(validate_actionable_rows([&delivery], true, no_continuation, &mut seen).is_err());
         assert!(validate_actionable_rows([&delivery], false, no_continuation, &mut seen).is_ok());
+    }
+
+    #[test]
+    fn old_question_rows_keep_the_exact_sender_preview_and_newest_first_order() {
+        let dispatch = "11111111-0000-4000-8000-0000aaaabbbb";
+        let row = |id: &str, time: u64, preview: Option<&str>| {
+            json!({
+                "kind":"question_waiting_answer", "dispatch_id":dispatch, "message_id":id,
+                "worker_id":"orchestrator", "worker_name":"Wrong sender",
+                "message_sender_id":"reviewer", "message_created_at":time, "message_preview":preview,
+            })
+        };
+        let snapshot: ActionCenter = serde_json::from_value(json!({
+            "workspace_id":"workspace", "generated_at":1000, "recent_dispatch_messages":[],
+            "attention":[
+                row("a-older", 110, Some("Refresh the diagram?")),
+                row("z-newer", 210, Some("Approve the report?")),
+                row("b-empty-preview", 100, None)
+            ],
+        }))
+        .unwrap();
+        let mut rows: Vec<_> = snapshot
+            .entries(str::to_owned)
+            .into_iter()
+            .map(|entry| ("workspace", entry))
+            .collect();
+        sort_entries(&mut rows);
+        for ((_, entry), (message, subject, created_at)) in rows.iter().zip([
+            ("z-newer", "reviewer · Approve the report?", 210),
+            ("a-older", "reviewer · Refresh the diagram?", 110),
+            ("b-empty-preview", "reviewer · b-empty-", 100),
+        ]) {
+            assert_eq!(entry.subject, subject);
+            assert_eq!(entry.updated_at, created_at);
+            assert_eq!(entry.activity_at, created_at);
+            assert_eq!(entry.snooze_key, Some(format!("message:{message}")));
+            assert!(
+                matches!(&entry.target, Destination::DispatchMessage { dispatch: d, message: m }
+                if d == dispatch && m == message)
+            );
+        }
     }
 
     #[test]

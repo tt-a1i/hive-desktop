@@ -49,6 +49,7 @@ interface InboxActionableRow {
     worker_id?: string;
     message_sender_id?: string;
     message_created_at?: number;
+    message_preview?: string | null;
     dispatch_backend?: ChatBackend | null;
     severity?: 'warning';
 }
@@ -68,21 +69,24 @@ type OpenDispatchSource = {
 // Match Hive's action-center definition of a wait, not a task timeout.
 const WAITING_REPORT_MS = 10 * 60 * 1_000;
 const INBOX_ACTIONABLE_LIMIT = 100;
+const INBOX_PREVIEW_LIMIT = 96;
+const INBOX_MESSAGE_SAMPLE = 384;
+
+function inboxLinePreview(text: string | null | undefined): string | null {
+    const line = text?.trimStart().split(/[\r\n\u2028\u2029]/u, 1)[0]?.replace(/\s+/gu, ' ').trim();
+    if (!line) return null;
+    let length = 0;
+    let end = 0;
+    for (const character of line) {
+        if (length === INBOX_PREVIEW_LIMIT) return `${line.slice(0, end).trimEnd()}…`;
+        end += character.length;
+        length++;
+    }
+    return line;
+}
 
 function dispatchTitlePreview(dispatch: WaitingReportDispatch): string | null {
-    for (const text of [dispatch.label, dispatch.text]) {
-        const line = text?.trimStart().split(/[\r\n\u2028\u2029]/u, 1)[0]?.replace(/\s+/gu, ' ').trim();
-        if (!line) continue;
-        let length = 0;
-        let end = 0;
-        for (const character of line) {
-            if (length === 96) return `${line.slice(0, end).trimEnd()}…`;
-            end += character.length;
-            length++;
-        }
-        return line;
-    }
-    return null;
+    return inboxLinePreview(dispatch.label) ?? inboxLinePreview(dispatch.text);
 }
 
 export function withInboxWaitingReports(
@@ -159,7 +163,8 @@ function readInboxActionablePage(
     // on every page.
     const projection = questionsOnly
         ? ''
-        : ', m.recipient_agent_id AS worker_id, m.from_agent_id AS message_sender_id, m.created_at AS message_created_at';
+        : `, m.recipient_agent_id AS worker_id, m.from_agent_id AS message_sender_id, m.created_at AS message_created_at,
+            substr(m.text, 1, ${INBOX_MESSAGE_SAMPLE}) AS message_sample`;
     const records = db.prepare(`
         SELECT m.rowid AS cursor,
             CASE WHEN o.state = 'queued' THEN 'message_delivery_pending' ELSE 'question_waiting_answer' END AS kind,
@@ -174,10 +179,10 @@ function readInboxActionablePage(
           )) OR o.state IN ('queued','delivering'))
           AND ${scope}
         ORDER BY m.rowid LIMIT ?
-    `).all(workspaceId, after, through, INBOX_ACTIONABLE_LIMIT + 1) as (InboxActionableRow & {cursor: number})[];
+    `).all(workspaceId, after, through, INBOX_ACTIONABLE_LIMIT + 1) as (InboxActionableRow & {cursor: number; message_sample?: string})[];
     const page = records.slice(0, INBOX_ACTIONABLE_LIMIT);
-    const rows = page.map(({cursor: _cursor, ...row}): InboxActionableRow =>
-        questionsOnly ? row : {...row, severity: 'warning'});
+    const rows = page.map(({cursor: _cursor, message_sample, ...row}): InboxActionableRow =>
+        questionsOnly ? row : {...row, severity: 'warning', message_preview: inboxLinePreview(message_sample)});
     const nextAfter = records.length > page.length ? page[page.length - 1]!.cursor : null;
     return {workspaceId, questionsOnly, through, nextAfter, rows};
 }

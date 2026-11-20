@@ -1,3 +1,4 @@
+mod list_continuation;
 mod preferences;
 mod settings;
 use crate::app::HiveApp;
@@ -18,6 +19,12 @@ impl HiveApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if action.shift && !action.secondary {
+            if self.continue_composer_list(window, cx) {
+                cx.stop_propagation();
+            }
+            return;
+        }
         if !action.secondary && !action.shift && self.command_picker.open {
             if self.accept_selected_command(window, cx) {
                 cx.stop_propagation();

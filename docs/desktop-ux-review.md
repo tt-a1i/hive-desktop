@@ -419,8 +419,23 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 搜索 `archive` 并开启整词。实际请求启用高亮范围，前两条结果分别返回目录和文件名的准确字节范围。用方向键和 Return 打开了第二条的正确文件。实窗截图未取得，颜色待截图复验。证据在 `.artifacts/batch30-files-qa`。
 - 293 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、项目文件、工作树引用及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十一批
+
+本轮从 Hive Desktop `7a08116` 开始。参考 T3 Code `21d7fea`、Cindy `6b05493`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **收件箱中的旧问题保留发问者、摘要和实际提问时间。** 两个桌面收件箱按待答问题本身读取发问者和正文首行，点击打开或暂缓继续使用准确的消息标识。摘要最多取 96 个 Unicode 码点并在较长时标记省略。后台待办数量检查沿用轻量的原请求。 [Cindy 任务行显示标题](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L1106-L1111)
+- **用 `Shift+Enter` 续写 Markdown 列表。** 项目符号保留缩进，有序列表继续编号，待办的下一项从未勾选开始。在空项按键会退出列表。自动修改可以一次撤销。普通段落和围栏代码使用原有换行行为。 [T3 Code 列表续写](https://github.com/pingdotgg/t3code/blob/21d7feaff7edb445855c91e0d4526b9cce63d83a/docs/user/composer.md#L31-L36)
+- **文件源码预览显示原始行号。** 正文搜索和翻页后从实际原始行开始编号。很长的原始行占用多个显示行时，编号只显示在它的开头。字号、字体和换行沿用正文布局，行号在可选源码外绘制。 [Beluga 源码行号](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/components/markdown/CodeLines.tsx#L34-L70)
+
+- 生产运行时测试把两个旧问题放在 13 条较新普通消息之前。两个问题均从正确工作区读取摘要、提问者和时间，第 101 条也可从第二页读取。原 HTTP 及后台简版待办响应沿用原字段。另核对了 Unicode 截断。
+- macOS 在同一工作区写入 14 条更新的普通消息后，跨项目收件箱仍按实际时间显示两个旧问题、正确成员和各自摘要。暂缓 A 写入 A 的消息标识，打开 B 读取 B 的原文。项目收件箱也显示 B 和已暂缓的 A。证据在 `.artifacts/batch31-inbox-qa`。
+- macOS 实际按 `Shift+Enter` 续写含中文和 emoji 的有序项、待办和缩进项目符号。再次按键退出空项，`Cmd+Z` 一次恢复。代码围栏内的项目符号只换行。本次未发送消息。证据在 `.artifacts/batch31-composer-qa`。
+- macOS 从正文搜索定位第 350 行。实窗截图中，折行后的剩余行没有重复编号，下一页的 513、514 等编号与正文对齐。展开阅读器后留在同一页。拖选复制两行得到与原始文件完全相同的 49 字节。截图已查看，未保存到本地。证据在 `.artifacts/batch31-source-qa`。
+- Rust 专项验证待答问题按实际提问时间排序，以及列表的连续编号、缩进、任务框、UTF‑8 与 CRLF、插入位置和代码围栏。文件专项核对从第 350 行定位、后页第 513 行、空行，以及超长源码跨页时保留同一个行号。
+- 300 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、Hive HTTP 与 SQLite、桌面视图和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **补齐旧协作问题的摘要和发问者。** macOS 在同一成员发出的 100 条问题中，当前只有最新 12 条显示摘要和发问者，其余显示收件人和编号。验收用两条不同旧问题及之后的 12 条普通消息，核对两个收件箱仍可按原文识别、打开及暂缓，同时按实际消息时间排列。 [Cindy 展示任务标题](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L1062-L1067)
-- **用 `Shift+Enter` 续写 Markdown 列表。** Hive 在 `1. 确认文件` 后只换行。验收续写项目符号、递增序号、新待办保持未勾选，空项再次按键会退出，同时覆盖撤销、普通正文及代码块。 [T3 Code 列表续写](https://github.com/pingdotgg/t3code/blob/46b626263fcfaa13d09448272dd749c82c95023a/docs/user/composer.md#L31-L36)
-- **为文件源码预览显示原始行号。** 从正文搜索打开一份 700 行源码中的第 350 行，目前只能在结果或标题看到行号。验收逐行显示准确编号，翻页及在停靠和展开界面切换时保留原位置，跨行复制只复制源码。 [Beluga 源码行号](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/components/markdown/CodeLines.tsx#L34-L70)
+- **让长收件箱里的后续分区容易到达。** 目前第 30 批的 macOS 窗口把 100 条待答都展开放在前面，等待事项和已处理入口落在窗口下方约 4,500 像素。验收保留完整计数，默认显示前 20 条，键盘可加载更多。打开第 21 条后可返回原位置，暂时隐藏的条目保持未查看。 [Cindy 分区显示上限](https://github.com/makecindy/cindy/blob/6b05493ec138477f23828d76cc90e2a86f5f88aa/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L181-L243)
+- **允许单行按 `Enter` 发送，多行用 `Cmd/Ctrl+Enter` 发送。** 目前所有草稿共用同一种发送键。验收短消息和只有显示换行的草稿仍用 `Enter` 发送，真正多行时普通 `Enter` 继续换行，组合键只发送一次。原有两项设置可继续使用。 [T3 Code 发送键规则](https://github.com/pingdotgg/t3code/blob/21d7feaff7edb445855c91e0d4526b9cce63d83a/docs/user/keybindings.md#L14-L18)
+- **展开源码阅读器可关闭长行换行。** 目前打开超长日志行后只能分段读。验收关闭换行后可横向读到原行结尾，重新开启后保留文件、页码及搜索命中。跨行复制只包含源码，紧凑面板继续换行。 [Beluga 阅读器换行开关](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileFocus.tsx#L193-L213)
