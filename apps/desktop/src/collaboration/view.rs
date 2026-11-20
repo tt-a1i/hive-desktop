@@ -1,4 +1,4 @@
-use super::PAGE;
+use super::{PAGE, SelectedDispatchMessage};
 use crate::{
     app::HiveApp,
     chrome::{ResponsivePane, SubviewTopbar},
@@ -18,6 +18,88 @@ use gpui_kit::{
 };
 
 impl HiveApp {
+    fn render_selected_dispatch_message(
+        &self,
+        selected: &SelectedDispatchMessage,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let SelectedDispatchMessage::Found(message) = selected else {
+            let error = tr("无法打开所选协作消息");
+            return div()
+                .id("selected-dispatch-message-error")
+                .role(Role::Alert)
+                .aria_label(error)
+                .px_3()
+                .py_2()
+                .rounded_lg()
+                .bg(Color::ErrorSurface.get(cx))
+                .text_color(Color::Error.get(cx))
+                .child(error)
+                .into_any_element();
+        };
+        let title = tr("所选协作消息");
+        let participant_line = format!(
+            "{} → {} · {}",
+            self.agent_name(&message.from_agent_id),
+            self.agent_name(&message.recipient_agent_id),
+            super::message_kind(&message.kind),
+        );
+        v_flex()
+            .id("selected-dispatch-message")
+            .role(Role::Group)
+            .aria_label(title)
+            .gap_1p5()
+            .p_3()
+            .rounded_lg()
+            .bg(Color::Inset.get(cx))
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .child(
+                        Button::new("copy-selected-dispatch-message")
+                            .ghost()
+                            .compact()
+                            .xsmall()
+                            .icon(Glyph::Copy)
+                            .tooltip(tr("复制完整原文"))
+                            .accessibility_label(tr("复制协作消息"))
+                            .on_click({
+                                let text = message.text.clone();
+                                move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+                                }
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("selected-dispatch-participants")
+                    .role(Role::Label)
+                    .aria_value(participant_line.clone())
+                    .text_xs()
+                    .text_color(Color::Muted.get(cx))
+                    .child(participant_line),
+            )
+            .child(
+                div()
+                    .id("selected-dispatch-message-text")
+                    .role(Role::Label)
+                    .aria_value(message.text.clone())
+                    .text_sm()
+                    .child(message.text.clone()),
+            )
+            .into_any_element()
+    }
+
     pub(crate) fn render_collaboration(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let selected = self.collaboration.selected.as_ref();
         let narrow_overview = window.viewport_size().width < px(880.) && selected.is_none();
@@ -147,6 +229,9 @@ impl HiveApp {
                             .bg(Color::Card.get(cx))
                             .border_1()
                             .border_color(Color::Divider.get(cx))
+                            .when_some(self.collaboration.selected_message.as_ref(), |view, selected| {
+                                view.child(self.render_selected_dispatch_message(selected, cx))
+                            })
                             .when_some(
                                 self.collaboration.detail_error.as_ref().map(|(key, error)| {
                                     format!(

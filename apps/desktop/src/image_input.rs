@@ -1,5 +1,7 @@
 use crate::app::HiveApp;
+use crate::attachments::clipboard_text::{MAX_BYTES, MIN_BYTES};
 use base64::Engine;
+use gpui_kit::component::WindowExt;
 use gpui_kit::*;
 use serde_json::{Value, json};
 use std::{io::Cursor, path::PathBuf};
@@ -72,6 +74,45 @@ impl ImageSource {
 }
 
 impl HiveApp {
+    pub(crate) fn paste_composer_clipboard(&mut self, item: &ClipboardItem, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if item.entries().iter().any(|entry| !matches!(entry, ClipboardEntry::String(_))) {
+            return self.paste_images(item, cx);
+        }
+        item.text().is_some_and(|text| {
+            should_stage_text(&text)
+                && !self.input.update(cx, |state, cx| state.marked_text_range(window, cx).is_some())
+                && self.stage_clipboard_text(text, cx)
+        })
+    }
+
+    pub(crate) fn paste_composer_text(
+        &mut self,
+        _: &crate::PasteComposerText,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.conversation_is_read_only() || window.has_active_dialog(cx)
+            || !self.input.read(cx).focus_handle(cx).is_focused(window)
+            || self.draft_target != self.draft_owner
+        {
+            cx.propagate();
+            return;
+        }
+        let Some(text) = cx.read_from_clipboard().and_then(|item| {
+            let text = item.entries().iter().filter_map(|entry| match entry {
+                ClipboardEntry::String(value) => Some(value.text()),
+                _ => None,
+            }).map(String::as_str).collect::<String>();
+            (!text.is_empty()).then_some(text)
+        }) else { cx.propagate(); return; };
+        let inserted = self.input.update(cx, |input, cx| {
+            if input.marked_text_range(window, cx).is_some() { return false; }
+            input.replace(text, window, cx);
+            true
+        });
+        if inserted { cx.stop_propagation(); } else { cx.propagate(); }
+    }
+
     pub(crate) fn paste_images(&mut self, item: &ClipboardItem, cx: &mut Context<Self>) -> bool {
         let sources = item
             .entries()
@@ -101,12 +142,24 @@ impl HiveApp {
     }
 }
 
+fn should_stage_text(text: &str) -> bool {
+    (MIN_BYTES..=MAX_BYTES).contains(&text.len())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ImageSource,PrepareError};
+    use super::{ImageSource, MIN_BYTES, MAX_BYTES, PrepareError, should_stage_text};
     use base64::Engine;
     use gpui_kit::{Image, ImageFormat};
     use std::io::Cursor;
+
+    #[test]
+    fn long_paste_threshold_uses_exact_utf8_bytes() {
+        let near_limit = "界".repeat(MIN_BYTES / 3);
+        assert!(!should_stage_text(&near_limit));
+        assert!(should_stage_text(&(near_limit + "ab")));
+        assert!(!should_stage_text(&"x".repeat(MAX_BYTES + 1)));
+    }
     #[test]
     fn project_file_attachment_pins_optional_session_and_preview_digest() {
         let path = "docs/shared.txt";

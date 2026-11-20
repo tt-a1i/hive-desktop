@@ -379,6 +379,7 @@ impl HiveApp {
             }
         }
         self.draft_store = Some(store);
+        self.restore_clipboard_text_pastes(root)?;
         Ok(())
     }
 

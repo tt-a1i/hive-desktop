@@ -40,12 +40,13 @@ impl BadgeItem {
 
     pub(super) fn from_entry(workspace: &str, entry: &Entry, unread: bool) -> Option<Self> {
         match &entry.target {
-            Destination::Dispatch(dispatch) if entry.priority == Priority::NeedsUser => {
-                let message = entry.snooze_key.as_deref()?.strip_prefix("message:")?;
+            Destination::DispatchMessage { dispatch, message }
+                if entry.priority == Priority::NeedsUser =>
+            {
                 Some(Self::Question {
                     workspace: workspace.into(),
                     dispatch: dispatch.clone(),
-                    message: message.into(),
+                    message: message.clone(),
                 })
             }
             Destination::Session(session) if entry.priority == Priority::Unread && unread => {

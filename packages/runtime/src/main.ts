@@ -440,6 +440,10 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       exact(params, ['workspaceId', 'dispatchIds', 'timestampDispatchIds']);
       return runtime.hive.inboxDispatchInput(text(params, 'workspaceId'), params.dispatchIds, params.timestampDispatchIds);
     }
+    case 'inbox.dispatchMessage': {
+      exact(params, ['workspaceId', 'dispatchId', 'messageId']);
+      return runtime.hive.inboxDispatchMessage(text(params, 'workspaceId'), text(params, 'dispatchId'), text(params, 'messageId'));
+    }
     case 'chat.pinned': return chats.pinned();
     case 'chat.pins.move': {
       exact(params, ['source', 'target', 'position', 'expectedOrder']);
@@ -483,6 +487,12 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       const workspace = text(params, 'workspaceId');
       chats.assertWorkspaceAvailable(workspace);
       return chats.attachments.addClipboard(workspace, params.image);
+    }
+    case 'chat.attachments.clipboardText': {
+      exact(params, ['workspaceId', 'text']);
+      const workspace = text(params, 'workspaceId');
+      chats.assertWorkspaceAvailable(workspace);
+      return chats.attachments.addClipboardText(workspace, params.text);
     }
     case 'git.status': return chats.gitStatus(text(params, 'workspaceId'), params.offset, params.limit, params.sessionId);
     case 'git.branches': return chats.gitBranches(text(params, 'workspaceId'), params.sessionId);
@@ -546,7 +556,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'git.pr.create': return chats.gitPrApply(text(params, 'workspaceId'), 'create', params);
     case 'git.pr.update': return chats.gitPrApply(text(params, 'workspaceId'), 'update', params);
     case 'project.files.list': return chats.projectFilesList(text(params, 'workspaceId'), params.directory, params.offset, params.sessionId);
-    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.regex));
+    case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.regex, params.wholeWord));
     case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.wholeWord, params.regex));
     case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId, params.allowImage);
     case 'project.files.resolveOpen': return chats.projectFilesResolveOpen(text(params, 'workspaceId'), params.relativePath, params.sessionId);

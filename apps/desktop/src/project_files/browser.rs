@@ -1840,12 +1840,10 @@ impl FileBrowser {
         let runtime = self.runtime.clone().expect("current file runtime");
         let contents = self.contents;
         let offset = self.search_offset;
-        let mut params = scope.params(
-            json!({"query":query,"offset":offset,"caseSensitive":self.search_flags.case_sensitive,"regex":self.search_flags.regex}),
-        );
-        if contents {
-            params["wholeWord"] = json!(self.search_flags.whole_word);
-        }
+        let params = scope.params(json!({
+            "query":query,"offset":offset,"caseSensitive":self.search_flags.case_sensitive,
+            "regex":self.search_flags.regex,"wholeWord":self.search_flags.whole_word,
+        }));
         let scope_generation = self.scope_generation;
         let search_generation = self.search_generation;
         self.search_task = Some(cx.spawn(async move |this, cx| {
@@ -1926,17 +1924,15 @@ impl FileBrowser {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.contents {
-            self.set_search_flags(
-                SearchFlags {
-                    whole_word: !self.search_flags.whole_word,
-                    ..self.search_flags
-                },
-                event,
-                window,
-                cx,
-            );
-        }
+        self.set_search_flags(
+            SearchFlags {
+                whole_word: !self.search_flags.whole_word,
+                ..self.search_flags
+            },
+            event,
+            window,
+            cx,
+        );
     }
 
     fn toggle_search_regex(
@@ -4484,19 +4480,17 @@ impl Render for FileBrowser {
                                 .toggled(self.search_flags.case_sensitive)
                                 .on_click(cx.listener(Self::toggle_search_case)),
                         )
-                        .when(self.contents, |controls| {
-                            controls.child(
-                                Button::new("browser-whole-word")
-                                    .outline()
-                                    .small()
-                                    .label("ab")
-                                    .tooltip(tr("整词匹配"))
-                                    .accessibility_label(tr("整词匹配"))
-                                    .selected(self.search_flags.whole_word)
-                                    .toggled(self.search_flags.whole_word)
-                                    .on_click(cx.listener(Self::toggle_search_whole_word)),
-                            )
-                        })
+                        .child(
+                            Button::new("browser-whole-word")
+                                .outline()
+                                .small()
+                                .label("ab")
+                                .tooltip(tr("整词匹配"))
+                                .accessibility_label(tr("整词匹配"))
+                                .selected(self.search_flags.whole_word)
+                                .toggled(self.search_flags.whole_word)
+                                .on_click(cx.listener(Self::toggle_search_whole_word)),
+                        )
                         .child(
                             Button::new("browser-search-regex")
                                 .outline()

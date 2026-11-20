@@ -240,12 +240,13 @@ function lineSnippet(
 }
 
 /** Search is uncached; each request observes the current file list and ignore rules. */
-export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false, regex = false): Promise<{ paths: string[]; total: number }> {
+export async function searchProjectFiles(projectRoot: string, query: string, offset = 0, signal?: AbortSignal, caseSensitive = false, regex = false, wholeWord = false): Promise<{ paths: string[]; total: number }> {
   validateSearch(query, offset);
   const root = await rootDirectory(projectRoot);
-  const worker = regex && query ? await startProjectRegexSearch(query, caseSensitive, undefined, 0, signal) : undefined;
+  const worker = regex && query ? await startProjectRegexSearch(query, caseSensitive,
+    wholeWord ? WORD_CHARACTER.source : undefined, 0, signal) : undefined;
   try {
-    return await searchProjectFilePaths(root, query, offset, worker?.signal ?? signal, caseSensitive, worker);
+    return await searchProjectFilePaths(root, query, offset, worker?.signal ?? signal, caseSensitive, wholeWord, worker);
   } catch (error) {
     worker?.signal.throwIfAborted();
     throw error;
@@ -255,13 +256,13 @@ export async function searchProjectFiles(projectRoot: string, query: string, off
 }
 
 async function searchProjectFilePaths(
-  root: string, query: string, offset: number, signal: AbortSignal | undefined, caseSensitive: boolean,
+  root: string, query: string, offset: number, signal: AbortSignal | undefined, caseSensitive: boolean, wholeWord: boolean,
   worker: Awaited<ReturnType<typeof startProjectRegexSearch>> | undefined,
 ) {
   const candidates = await gitFiles(root, signal) ?? await walk(root, '', signal);
   const paths = eligibleProjectPaths(candidates, signal);
   const matches: string[] = [];
-  const listed = worker ? regexProjectPaths(paths, worker) : literalProjectPaths(paths, query, caseSensitive);
+  const listed = worker ? regexProjectPaths(paths, worker) : literalProjectPaths(paths, query, caseSensitive, wholeWord);
   for await (const path of listed) {
     signal?.throwIfAborted();
     try {
@@ -284,11 +285,11 @@ function* eligibleProjectPaths(candidates: string[], signal: AbortSignal | undef
   }
 }
 
-function* literalProjectPaths(paths: Iterable<string>, query: string, caseSensitive: boolean) {
+function* literalProjectPaths(paths: Iterable<string>, query: string, caseSensitive: boolean, wholeWord: boolean) {
   const needle = searchText(query, caseSensitive);
   for (const path of paths) {
     // Normalize only for matching. The listed path is also used to open the file.
-    if (searchText(path, caseSensitive).includes(needle)) yield path;
+    if (!needle || nextLiteralMatch(searchText(path, caseSensitive), needle, 0, wholeWord) !== -1) yield path;
   }
 }
 

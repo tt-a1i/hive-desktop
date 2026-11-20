@@ -384,11 +384,28 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - 生产通信验证同成员同一提交时间、不同标题、重名、空标题和超过 96 个码点的标题。原 HTTP 摘要保持原格式。macOS 跨项目收件箱按标题打开展示 `Audit migration` 的派单、暂缓 `Review billing` 的派单，两个操作命中各自的派单标识。证据在 `.artifacts/batch28-inbox-qa`。
 - macOS 用受控 Codex 排入 A、B，输入框保留草稿 C。光标在末尾按 `Option+↑` 时未打开编辑框，移到开头后打开 B。保存并释放前一回合后，对端依次收到 A 与修改后的 B，C 保留且未发送。证据在 `.artifacts/batch28-steer-qa`。
 - macOS 打开 3200×1800 PNG，从适应窗口切到原尺寸，并在展开阅读器中保留模式。这段操作只发出一次文件预览请求。代码检查发现停靠面板的图片区域需要显式接收焦点，已补上焦点入口。证据在 `.artifacts/batch28-image-qa`。
+- 补记第 28 批的屏幕观察。原生截图工具中，适应窗口显示四色角，原尺寸显示放大的左上红色区域。未保存截图，横向和纵向的实窗位移仍待复验。记录在 `.artifacts/batch28-image-qa/receipt.md`。
 - Rust 专项覆盖输入框位置、选区、输入法状态和队尾不可编辑，以及图片的 1×、2×、1.25× 显示缩放和两个方向的滚动边界。实窗无障碍接口只提供图片控件和缩放操作，不能直接读取滚动偏移。
 - 285 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、Hive HTTP/SQLite、桌面视图和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十九批
+
+本轮从 Hive Desktop `566a86d` 开始。参考 T3 Code `c53ac23`、Cindy `90e373d`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **收件箱直达所选协作消息。** 项目和跨项目收件箱打开问题时，派单详情顶部显示完整的所选消息。读取使用准确的工作区、派单和消息标识，原历史和成员会话入口仍可用。 [Cindy 待答直达对话](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/docs/product-rules/task-inbox.md#L89-L98) · [Hive 上游消息定位](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/routes-dispatches.ts#L105-L136)
+- **普通粘贴把长纯文本保存为附件。** 32 KiB 至 8 MiB 的纯文本保存为 `pasted-text.txt`，保留输入框的原文和选区。用 `Cmd/Ctrl+Shift+V` 可在原位置直接粘贴文本。保存中断可在原草稿重试或复制原文。不能开始保存附件时沿用直接粘贴行为。 [T3 Code 长文本粘贴](https://github.com/pingdotgg/t3code/blob/c53ac237a0af3d48229a509945edb0168fc92df1/docs/user/composer.md#L6-L13)
+- **文件名搜索提供整词匹配。** 整词匹配针对完整相对路径，可与大小写和正则组合。换匹配条件时重算结果，返回的排序、分页和路径标识保持一致。 [Beluga 文件名搜索选项](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L73-L85)
+
+- 生产运行时以同一派单在 100 条旧消息后收到两个问题为例，验证原文读取准确，拒绝错工作区、错派单、已取消和找不到的消息。macOS 从项目和跨项目两个入口逐条打开两个问题，详情显示各自原文。证据在 `.artifacts/batch29-inbox-qa`。
+- 附件运行时通过真实本地通信和附件存储验证 UTF‑8、CRLF 和 NUL 字节、大小上限、跨项目拒绝和冷恢复。Rust 专项覆盖粘贴阈值、图片兼容和附件保存中断后按草稿恢复。
+- macOS 实测普通粘贴 64,800 字节的多语言日志，生成附件并保留原指令和选区。上传文件的 SHA‑256 与原文一致，冷开后仍有草稿和附件。`Cmd+Shift+V` 按原编辑器行为替换选区，附件数量保持为一。证据在 `.artifacts/batch29-paste-qa`。
+- macOS 用隔离通信对端拒绝第一次粘贴附件请求，原草稿保留并显示重试。重试上传后，附件 SHA‑256 再次与原文一致。证据在 `.artifacts/batch29-paste-failure-qa`。
+- 文件运行时验证整词、大小写和正则、Unicode 分词边界、分页及工作树范围。旧客户端省略整词选项时沿用原默认行为。
+- macOS 在文件名中启用整词，`cat` 命中目录 `cat/README.md` 和文件 `docs/CAT-notes.md`，排除 `scatter` 与 `cat_id`，并返回分页结果。加上大小写匹配后排除大写文件。打开目录匹配核对了准确的项目文件内容。证据在 `.artifacts/batch29-files-qa`。
+- 288 项 Rust 测试通过，1 项原有忽略。TypeScript、桌面和运行时构建、桌面视图、Hive 附件、项目文件、工作树引用和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **从收件箱直接打开对应的协作问题。** 实际消息存储复现了同一派单在 100 条历史之后收到两个未回答问题。两个收件箱按钮都只打开历史第一页。验收从两个收件箱分别打开两个问题，立即看到对应消息及可用的回复入口，并验证其他工作区或派单的消息无法混入。 [Cindy 待答直达对话](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/docs/product-rules/task-inbox.md#L89-L98) · [Hive 上游消息定位](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/routes-dispatches.ts#L105-L136)
-- **将较长的粘贴文本保存为普通文件附件。** Hive 当前会将纯文本全部放进草稿。用 40 KiB 的多语言日志验证普通粘贴创建文本附件、原指令保留、重启后字节一致，以及选择按文本粘贴时仍使用原有选区行为。暂时无法保存附件时，原文本应可恢复。 [T3 Code 长文本粘贴](https://github.com/pingdotgg/t3code/blob/ccabed086ad47294173769c77d2d44e55bb8bd0d/docs/user/composer.md#L6-L13)
-- **给文件名搜索加入整词匹配。** 搜索 `cat` 目前会返回 `cat.txt`、`CAT-notes.md`、`cat_id.txt` 和 `scatter.txt`。验收开启整词后只剩前两项，核对与大小写和正则组合、分页重置、按 Return 打开正确的文件。 [Beluga 文件名搜索选项](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L73-L85)
+- **补回第 101 条及之后的待答协作问题。** 实际 Hive 运行时显示，前 100 条旧问题会同时挤掉收件箱和后台新事项提示里的第 101 条。回答最旧的一条后，新问题才出现。验收须覆盖同一项目内的两条派单、按新事项进入、分页失败时保留已知状态。 [Hive 待办读取上限](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/dispatch-message-store.ts#L115-L126) · [Cindy 完整分区计数](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L181-L243)
+- **用方向键取回本会话已发送的提示词。** Hive 当前需要回到旧消息复制。用本地对端发送 A 和带附件的 B，从空输入框按 `↑`、`↑`、`↓`、`↓` 应依次看到 B、A、B、空白。验收只取回文字，覆盖已输入草稿、输入法和其他会话的历史。 [T3 Code 提示词历史](https://github.com/pingdotgg/t3code/blob/c53ac237a0af3d48229a509945edb0168fc92df1/docs/user/composer.md#L152-L163)
+- **高亮文件名搜索的命中部分。** 搜索 `archive` 会返回 `archive/readme.md` 和 `docs/archive-readme.md`，两行目前无法直接看出匹配的是目录还是文件名。验收需高亮相对路径上的确切位置，覆盖 Unicode、整词、正则、分页和 Return 打开原路径。 [Beluga 文件名高亮](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L50-L65)

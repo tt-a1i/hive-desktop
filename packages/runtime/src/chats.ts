@@ -1290,10 +1290,10 @@ export class Chats implements StructuredSessionPort {
       }
     });
   }
-  async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal, caseSensitive: unknown = false, regex: unknown = false) {
-    if (typeof query !== 'string' || typeof offset !== 'number' || typeof caseSensitive !== 'boolean' || typeof regex !== 'boolean') throw new TypeError('Invalid project file search');
+  async projectFilesSearch(workspaceId: string, query: unknown, offset: unknown = 0, sessionId?: unknown, signal?: AbortSignal, caseSensitive: unknown = false, regex: unknown = false, wholeWord: unknown = false) {
+    if (typeof query !== 'string' || typeof offset !== 'number' || typeof caseSensitive !== 'boolean' || typeof regex !== 'boolean' || typeof wholeWord !== 'boolean') throw new TypeError('Invalid project file search');
     const directory = await this.executionDirectory(workspaceId, sessionId);
-    return searchProjectFiles(directory, query, offset, signal, caseSensitive, regex);
+    return searchProjectFiles(directory, query, offset, signal, caseSensitive, regex, wholeWord);
   }
   async projectFilesList(workspaceId: string, directory: unknown, offset: unknown = 0, sessionId?: unknown) {
     if (typeof directory !== 'string' || typeof offset !== 'number') throw new TypeError('Invalid project file search');

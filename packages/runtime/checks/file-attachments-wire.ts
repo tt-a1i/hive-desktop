@@ -12,6 +12,18 @@ try{
  const staged=await rpc('chat.attachments.add',{workspaceId:workspaces[0].id,path:source});assert.equal(staged.error,undefined);assert.equal(staged.result.image,undefined);assert.ok(staged.result.filePath);assert.deepEqual(await readFile(staged.result.filePath),bytes);const id=staged.result.attachment.id;await unlink(source);
  const saved=await rpc('chat.attachments.get',{workspaceId:workspaces[0].id,ids:[id]});assert.equal(saved.result[0].filePath,staged.result.filePath);assert.equal(saved.result[0].image,undefined);assert.equal(saved.result[0].attachment.name,'说明 中文.md');
  const path=await rpc('chat.attachments.path',{workspaceId:workspaces[0].id,id});assert.equal(path.result.path,staged.result.filePath);
+ const clipboard='\uFEFFCLIPBOARD LOG\r\n'+('中文 🐝\t\r\n\u0000'.repeat(3500));
+ const pasted=await rpc('chat.attachments.clipboardText',{workspaceId:workspaces[0].id,text:clipboard});
+ assert.equal(pasted.error,undefined);assert.equal(pasted.result.image,undefined);
+ assert.equal(pasted.result.attachment.name,'pasted-text.txt');assert.equal(pasted.result.attachment.mimeType,'text/plain');
+ assert.equal(pasted.result.attachment.size,Buffer.byteLength(clipboard));
+ assert.deepEqual(await readFile(pasted.result.filePath),Buffer.from(clipboard,'utf8'));
+ const pastedId=pasted.result.attachment.id;
+ assert.equal((await rpc('chat.attachments.get',{workspaceId:workspaces[0].id,ids:[pastedId]})).result[0].filePath,pasted.result.filePath);
+ assert.ok((await rpc('chat.attachments.get',{workspaceId:workspaces[1].id,ids:[pastedId]})).error);
+ for(const invalid of ['', 42, '\uD800', 'x'.repeat(8*1024*1024+1)]){
+  assert.ok((await rpc('chat.attachments.clipboardText',{workspaceId:workspaces[0].id,text:invalid})).error);
+ }
  assert.ok((await rpc('chat.attachments.path',{workspaceId:workspaces[1].id,id})).error);assert.ok((await rpc('chat.attachments.path',{workspaceId:workspaces[0].id,id:'../bad'})).error);
  const remote=await rpc('hive.request',{method:'GET',path:`/api/workspaces/${workspaces[0].id}/uploads`});assert.ok(Array.isArray(remote.result));assert.ok(remote.result.some((row:any)=>row.id===id));assert.ok(remote.result.every((row:any)=>!('localPath'in row)&&!('path'in row)&&!('storage_key'in row)),'Internal path must not leak through the unchanged HTTP upload list');
  await unlink(staged.result.filePath);assert.ok((await rpc('chat.attachments.path',{workspaceId:workspaces[0].id,id})).error);

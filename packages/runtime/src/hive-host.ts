@@ -1,6 +1,8 @@
 import WebSocket from "ws";
 import { isAbsolute, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { Database } from "@tt-a1i/hive/dist/src/server/sqlite.js";
+import { readDispatchMessage } from "@tt-a1i/hive/dist/src/server/dispatch-message-store.js";
+import { serializeDispatchMessage } from "@tt-a1i/hive/dist/src/server/dispatch-message-serializer.js";
 import { readPackageVersion } from "@tt-a1i/hive/dist/src/server/package-version.js";
 import { createVersionService } from "@tt-a1i/hive/dist/src/server/version-service.js";
 import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
@@ -157,6 +159,7 @@ export function withInboxDispatchBackends(
 export interface SavedScriptContext {scriptRunId: string; cwd: string; command: string; sessionId?: string}
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
+    inboxDispatchMessage(workspaceId: string, dispatchId: string, messageId: string): ReturnType<typeof serializeDispatchMessage> | null;
     inboxDispatchInput(workspaceId: string, dispatchIds: unknown, timestampDispatchIds?: unknown): {workspaceId: string; inputs: InboxDispatchInput[]};
     inboxQuestions(workspaceIds: readonly string[]): InboxQuestion[];
     readonly projectScriptState: import('./project-script-settings.js').ProjectScriptStatePort;
@@ -255,9 +258,19 @@ export async function createHiveHost({
 	}
 
 	let closing: Promise<void> | undefined;
-	let inboxStore: DatabaseSync | undefined;
+	let inboxStore: Database | undefined;
+    const readInboxStore = () => inboxStore ??= new Database(join(dataDir, 'runtime.sqlite'), {readOnly: true});
 	return {
 		port: runtime.port,
+        inboxDispatchMessage(workspaceId, dispatchId, messageId) {
+            if (closing) throw new Error('Hive host is closed');
+            if (!runtime.store.getDispatch(workspaceId, dispatchId)) return null;
+            const message = readDispatchMessage(readInboxStore(), workspaceId, messageId);
+            return message?.id === messageId && message.workspaceId === workspaceId
+                && message.dispatchId === dispatchId && message.deliveryState !== 'cancelled'
+                ? serializeDispatchMessage(message)
+                : null;
+        },
         inboxDispatchInput(workspaceId, dispatchIds, timestampDispatchIds) {
             if (closing) throw new Error('Hive host is closed');
             if (!Array.isArray(dispatchIds) || dispatchIds.length > 64 || dispatchIds.some(id =>
@@ -272,7 +285,7 @@ export async function createHiveHost({
             }
             const timestamps = new Set<string>(timestampDispatchIds as string[] | undefined);
             if (!ids.size) return {workspaceId, inputs: []};
-            inboxStore ??= new DatabaseSync(join(dataDir, 'runtime.sqlite'), {readOnly: true});
+            const db = readInboxStore();
             // Use the dispatch/sequence index for the usual cursor. Only an
             // older timestamp-only anchor needs the exact dispatch's max time.
             const eligible = `
@@ -281,15 +294,15 @@ export async function createHiveHost({
                 WHERE m.dispatch_id = ? AND m.workspace_id = ?
                   AND COALESCE(o.state, 'recorded') <> 'cancelled'
             `;
-            const newest = inboxStore.prepare(`SELECT m.sequence ${eligible} ORDER BY m.sequence DESC LIMIT 1`);
-            const newestTime = timestamps.size ? inboxStore.prepare(`SELECT MAX(m.created_at) AS createdAt ${eligible}`) : undefined;
+            const newest = db.prepare(`SELECT m.sequence ${eligible} ORDER BY m.sequence DESC LIMIT 1`);
+            const newestTime = timestamps.size ? db.prepare(`SELECT MAX(m.created_at) AS createdAt ${eligible}`) : undefined;
             const inputs = [...ids].map(dispatchId => {
                 if (!runtime.store.getDispatch(workspaceId, dispatchId)) {
                     return {dispatchId, sequence: null, createdAt: null};
                 }
-                const sequence = newest.get(dispatchId, workspaceId)?.sequence as number | undefined;
+                const sequence = (newest.get(dispatchId, workspaceId) as {sequence: number} | undefined)?.sequence;
                 const createdAt = timestamps.has(dispatchId)
-                    ? newestTime?.get(dispatchId, workspaceId)?.createdAt as number | null | undefined
+                    ? (newestTime?.get(dispatchId, workspaceId) as {createdAt: number | null} | undefined)?.createdAt
                     : undefined;
                 return {dispatchId, sequence: sequence ?? null, createdAt: createdAt ?? null};
             });

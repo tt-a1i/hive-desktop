@@ -192,7 +192,7 @@ try {
     sqlite.close();
   }
   type Attention = {
-    kind: string; dispatch_id?: string; worker_id?: string; worker_name?: string;
+    kind: string; dispatch_id?: string; message_id?: string; worker_id?: string; worker_name?: string;
     dispatch_backend?: string | null; severity?: string; submitted_at?: number; minutes_ago?: number; task_title?: string | null;
   };
   type Center = {summary: {waiting_reports: number}; attention: Attention[]; recent_dispatch_messages: {dispatch_id: string}[]};
@@ -274,6 +274,49 @@ try {
   await wire.request('initialize');
   assert.deepEqual(await queryInput(workspace.id), {workspaceId: workspace.id, inputs: [{dispatchId: watched, sequence: 9, createdAt: stamp + 50}]});
   console.log('INBOX_DISPATCH_INPUT_OK: exact eligible input behind workspace preview, ask scope isolation, and cold restart');
+
+  const detailed = waiting[2]!;
+  const questions = [randomUUID(), randomUUID()];
+  const cancelledQuestion = randomUUID();
+  const detailSqlite = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'));
+  try {
+    const add = detailSqlite.prepare(`INSERT INTO dispatch_messages
+      (id, workspace_id, dispatch_id, sequence, from_agent_id, recipient_agent_id, kind, text, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insert = (id: string, sequence: number, kind: string, text: string) =>
+      add.run(id, workspace.id, detailed, sequence, early.id, `${workspace.id}:orchestrator`, kind, text, stamp + sequence);
+    for (let i = 1; i <= 100; i++) insert(randomUUID(), i, 'note', `Older note ${i}`);
+    for (const [index, id] of questions.entries()) insert(id, 101 + index, 'question', `Exact question ${index + 1}\nPrivate second line`);
+    insert(cancelledQuestion, 103, 'question', 'Cancelled question');
+    detailSqlite.prepare("INSERT INTO dispatch_message_outbox (message_id, state) VALUES (?, 'cancelled')").run(cancelledQuestion);
+  } finally {
+    detailSqlite.close();
+  }
+  const askCenter = await wire.request<Center>('hive.request', {method: 'GET', path: actionCenter});
+  assert.deepEqual(askCenter.attention.filter(row => row.kind === 'question_waiting_answer').map(row => row.message_id), questions);
+  const history = await wire.request<{messages: {id: string; kind: string}[]; next_after_message_id: string}>(
+    'hive.request', {method: 'GET', path: `/api/ui/workspaces/${workspace.id}/dispatches/${detailed}/messages?scope=collaboration`});
+  assert.equal(history.messages.length, 100);
+  assert.ok(history.next_after_message_id);
+  assert.ok(history.messages.every(message => message.kind === 'note'));
+  const readSelected = (messageId: string, workspaceId = workspace.id, dispatchId = detailed) => wire!.request<{
+    id: string; workspace_id: string; dispatch_id: string; kind: string; text: string;
+  } | null>('inbox.dispatchMessage', {workspaceId, dispatchId, messageId});
+  for (const index of [1, 0]) {
+    const id = questions[index]!;
+    const message = await readSelected(id);
+    assert.ok(message);
+    assert.equal(message.id, id);
+    assert.equal(message.dispatch_id, detailed);
+    assert.equal(message.workspace_id, workspace.id);
+    assert.equal(message.kind, 'question');
+    assert.equal(message.text, `Exact question ${index + 1}\nPrivate second line`);
+  }
+  assert.equal(await readSelected(questions[0]!, foreign.id), null);
+  assert.equal(await readSelected(questions[0]!, workspace.id, unrelated), null);
+  assert.equal(await readSelected(randomUUID()), null);
+  assert.equal(await readSelected(cancelledQuestion), null);
+  console.log('INBOX_EXACT_QUESTION_OK: two questions past the 100-row history, exact full text and workspace/dispatch isolation');
 } finally {
   await wire?.close();
   await rm(root, {recursive: true, force: true});

@@ -32,6 +32,7 @@ export interface QuestionAttachmentReference {
 }
 const MARKER = '\n\n<!-- hive-desktop-images:v1 ';
 const END = ' -->';
+const MAX_CLIPBOARD_TEXT_BYTES = 8 * 1024 * 1024;
 export function attachmentIds(value: unknown): string[] {
   if (value === undefined) return [];
   if (
@@ -169,6 +170,13 @@ export class ChatAttachments {
       Buffer.from(image.data, 'base64'),
     );
   }
+  async addClipboardText(workspaceId: string, value: unknown): Promise<StagedAttachment> {
+    if (typeof value !== 'string' || !value || Buffer.byteLength(value, 'utf8') > MAX_CLIPBOARD_TEXT_BYTES)
+      throw new TypeError('粘贴文本必须非空且不能超过 8 MiB。');
+    const bytes = Buffer.from(value, 'utf8');
+    if (bytes.toString('utf8') !== value) throw new TypeError('粘贴文本不是有效的 Unicode。');
+    return this.storeFile(workspaceId, 'pasted-text.txt', 'text/plain', bytes);
+  }
   async add(workspaceId: string, path: unknown): Promise<StagedAttachment> {
     if (typeof path !== 'string' || !isAbsolute(path)) throw new TypeError('请选择本地文件的绝对路径。');
     if (!(await stat(path)).isFile()) throw new TypeError('所选路径不是普通文件。');
@@ -193,7 +201,10 @@ export class ChatAttachments {
       return this.store(workspaceId, basename(path), image, bytes);
     }
     if (['.png','.jpg','.jpeg','.gif','.webp'].includes(extname(path).toLowerCase())) throw new TypeError('图片文件内容与格式不匹配，请检查文件后重试。');
-    const record = await this.hive.saveDesktopUpload(workspaceId, basename(path), 'application/octet-stream', bytes);
+    return this.storeFile(workspaceId, basename(path), 'application/octet-stream', bytes);
+  }
+  private async storeFile(workspaceId: string, name: string, mimeType: string, bytes: Buffer): Promise<StagedAttachment> {
+    const record = await this.hive.saveDesktopUpload(workspaceId, name, mimeType, bytes);
     const saved = await this.hive.locateUpload(workspaceId,record.id);
     if (!saved || typeof saved.localPath !== 'string' || !isAbsolute(saved.localPath)) throw new Error('文件保存后无法定位，请重新选择。');
     return {attachment:this.ref(workspaceId,record.id,record.originalName,record.mimeType,record.sizeBytes),filePath:saved.localPath};

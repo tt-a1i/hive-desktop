@@ -918,6 +918,7 @@ impl HiveApp {
                                     ))
                                     .capture_action(cx.listener(Self::composer_enter))
                                     .capture_action(cx.listener(Self::edit_latest_queued_input))
+                                    .capture_action(cx.listener(Self::paste_composer_text))
                                     .capture_action(cx.listener(Self::command_up))
                                     .capture_action(cx.listener(Self::command_down))
                                     .capture_action(cx.listener(Self::command_escape))
@@ -929,12 +930,12 @@ impl HiveApp {
                                             .aria_label(tr("聊天消息"))
                                             .on_paste({
                                                 let app = cx.weak_entity();
-                                                move |item, _, cx| {
+                                                move |item, window, cx| {
                                                     app.update(cx, |this, cx| {
                                                         if this.workspace.is_none() {
                                                             return false;
                                                         }
-                                                        this.paste_images(item, cx)
+                                                        this.paste_composer_clipboard(item, window, cx)
                                                     })
                                                     .unwrap_or(false)
                                                 }

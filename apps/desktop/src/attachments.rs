@@ -1,5 +1,6 @@
 use crate::language::{english,tr};
 mod files;
+pub(crate) mod clipboard_text;
 use crate::{app::HiveApp, palette::Color};
 use base64::Engine;
 use gpui_kit::{
@@ -74,6 +75,7 @@ pub(crate) struct Attachments {
     pub loading: HashSet<String>,
     preparing: HashSet<String>,
     verified: HashSet<String>,
+    clipboard_text: HashMap<String, clipboard_text::ClipboardTextPaste>,
 }
 async fn prepare_preview(data: String) -> Result<ImagePreview, String> {
     static DECODERS: smol::lock::Semaphore = smol::lock::Semaphore::new(2);
@@ -166,6 +168,7 @@ impl Attachments {
     pub fn ready(&self, key: Option<&String>) -> bool {
         key.is_none_or(|key| {
             !self.loading.contains(key)
+                && !self.clipboard_text.contains_key(key)
                 && self.drafts.get(key).is_none_or(|items| {
                     items.iter().all(|item| {
                         self.previews.contains_key(&item.id) || self.verified.contains(&item.id)
@@ -434,12 +437,14 @@ impl HiveApp {
             .as_ref()
             .is_some_and(|session| self.inflight_inputs.contains_key(&session.id));
         let empty = refs.is_empty();
+        let pending_paste = self.render_pending_clipboard_text(cx);
         let content = h_flex()
             .flex_shrink_0()
             .w_full()
             .min_w_0()
             .flex_wrap()
             .gap_2()
+            .when_some(pending_paste, |row, pending| row.child(pending))
             .when(
                 self.draft_target
                     .as_ref()
@@ -616,7 +621,7 @@ impl HiveApp {
                     })
                     .into_any_element()
             }));
-        if empty
+        if empty && self.pending_clipboard_text().is_none()
             && !self
                 .draft_target
                 .as_ref()

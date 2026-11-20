@@ -579,7 +579,7 @@ impl HiveApp {
                 self.member_details_open
                     .insert(member.clone(), ScrollHandle::new());
             }
-            Destination::Dispatch(id) => {
+            Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
                 // Open the actual workspace first. The dispatch detail then
                 // resolves its original execution session through Hive's existing route.
                 if self.workspace.as_deref() != Some(workspace) {
@@ -589,7 +589,7 @@ impl HiveApp {
                 if window.viewport_size().width < px(820.) {
                     self.sidebar_open = false;
                 }
-                self.open_inbox_dispatch(id.clone(), cx);
+                self.open_inbox_dispatch(target, cx);
             }
         }
     }
@@ -2582,7 +2582,8 @@ mod tests {
             })
         ));
         assert!(
-            matches!(row.target, Destination::Dispatch(ref id) if id == "123e4567-e89b-12d3-a456-426614174000")
+            matches!(row.target, Destination::DispatchMessage { ref dispatch, ref message }
+                if dispatch == "123e4567-e89b-12d3-a456-426614174000" && message == "older-than-preview")
         );
     }
 

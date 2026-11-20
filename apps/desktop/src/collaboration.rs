@@ -37,6 +37,10 @@ pub struct DispatchMessage {
     pub delivery_state: String,
     pub delivery_error: Option<String>,
 }
+enum SelectedDispatchMessage {
+    Found(DispatchMessage),
+    Unavailable,
+}
 #[derive(Deserialize)]
 pub struct Responsibility {
     pub id: String,
@@ -87,6 +91,7 @@ pub struct Collaboration {
     detail_generation: u64,
     pub detail_loading: bool,
     pub messages: Vec<DispatchMessage>,
+    selected_message: Option<SelectedDispatchMessage>,
     pub responsibilities: Vec<Responsibility>,
     pub next_message: Option<String>,
     pub message_loading: bool,
@@ -130,6 +135,7 @@ impl Collaboration {
             detail_generation: 0,
             detail_loading: false,
             messages: vec![],
+            selected_message: None,
             responsibilities: vec![],
             next_message: None,
             message_loading: false,
@@ -150,6 +156,7 @@ impl HiveApp {
         self.collaboration.task_refreshing = false;
         self.collaboration.list_refreshing = false;
         self.collaboration.message_refreshing = false;
+        self.collaboration.selected_message = None;
         self.collaboration.detail_loading = false;
         self.collaboration.detail_generation += 1;
         self.collaboration.list_generation += 1;
@@ -174,6 +181,7 @@ impl HiveApp {
         self.collaboration.selected = None;
         self.collaboration.missing_session_source = None;
         self.collaboration.messages.clear();
+        self.collaboration.selected_message = None;
         self.collaboration.responsibilities.clear();
         self.collaboration.next_message = None;
         self.collaboration.message_generation += 1;
@@ -252,6 +260,7 @@ impl HiveApp {
         c.dispatches.clear();
         c.selected = None;
         c.messages.clear();
+        c.selected_message = None;
         c.responsibilities.clear();
         c.next_message = None;
         c.message_generation += 1;
@@ -325,6 +334,7 @@ impl HiveApp {
         c.focus_navigation = true;
         c.detail_loading = false;
         c.messages.clear();
+        c.selected_message = None;
         c.responsibilities.clear();
         c.next_message = None;
         self.load_dispatch_messages(None, cx);

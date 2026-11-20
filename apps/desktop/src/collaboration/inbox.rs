@@ -5,7 +5,7 @@ mod snoozes;
 mod undo;
 pub(super) use global::{GlobalInboxView, InboxBadge};
 
-use super::read_dispatch;
+use super::{DispatchMessage, SelectedDispatchMessage, read_dispatch};
 use crate::{
     app::{ErrorNotice, HiveApp},
     focus_scroll::Reveal,
@@ -440,6 +440,20 @@ async fn read_action_center(
     Ok(snapshot)
 }
 
+fn exact_message(
+    value: serde_json::Value,
+    workspace: &str,
+    dispatch: &str,
+    id: &str,
+) -> Option<DispatchMessage> {
+    if value.get("workspace_id")?.as_str()? != workspace {
+        return None;
+    }
+    let message = serde_json::from_value::<DispatchMessage>(value).ok()?;
+    (message.id == id && message.dispatch_id == dispatch && message.delivery_state != "cancelled")
+        .then_some(message)
+}
+
 #[derive(Deserialize)]
 struct RecentMessage {
     id: String,
@@ -475,6 +489,7 @@ fn short_dispatch_id(id: &str) -> &str {
 enum Destination {
     Session(Session),
     Dispatch(String),
+    DispatchMessage { dispatch: String, message: String },
     Member(String),
 }
 
@@ -482,7 +497,7 @@ impl Destination {
     fn action(&self) -> &'static str {
         match self {
             Self::Session(_) => "打开会话",
-            Self::Dispatch(_) => "派单详情",
+            Self::Dispatch(_) | Self::DispatchMessage { .. } => "派单详情",
             Self::Member(_) => "团队成员",
         }
     }
@@ -491,6 +506,7 @@ impl Destination {
         match self {
             Self::Session(session) => format!("session:{}", session.id),
             Self::Dispatch(id) => format!("dispatch:{id}"),
+            Self::DispatchMessage { message, .. } => format!("message:{message}"),
             Self::Member(id) => format!("member:{id}"),
         }
     }
@@ -590,7 +606,9 @@ impl Entry {
     fn matches_backend(&self, selected: Option<Backend>) -> bool {
         selected.is_none_or(|backend| match &self.target {
             Destination::Session(session) => session.backend == backend,
-            Destination::Dispatch(_) => self.dispatch_backend == Some(backend),
+            Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
+                self.dispatch_backend == Some(backend)
+            }
             Destination::Member(_) => false,
         })
     }
@@ -731,7 +749,20 @@ impl Attention {
             _ => return None,
         };
         let target = match &self.dispatch_id {
-            Some(id) if uuid::Uuid::try_parse(id).is_ok() => Destination::Dispatch(id.clone()),
+            Some(id) if uuid::Uuid::try_parse(id).is_ok() => match self.message_id.as_ref() {
+                Some(message)
+                    if matches!(
+                        self.kind.as_str(),
+                        "question_waiting_answer" | "message_delivery_pending"
+                    ) =>
+                {
+                    Destination::DispatchMessage {
+                        dispatch: id.clone(),
+                        message: message.clone(),
+                    }
+                }
+                _ => Destination::Dispatch(id.clone()),
+            },
             None if self.kind == "stopped_with_queue" => {
                 Destination::Member(self.worker_id.clone()?)
             }
@@ -937,7 +968,14 @@ impl HiveApp {
         .detach();
     }
 
-    fn open_inbox_dispatch(&mut self, id: String, cx: &mut Context<Self>) {
+    fn open_inbox_dispatch(&mut self, destination: &Destination, cx: &mut Context<Self>) {
+        let (id, message) = match destination {
+            Destination::Dispatch(id) => (id.clone(), None),
+            Destination::DispatchMessage { dispatch, message } => {
+                (dispatch.clone(), Some(message.clone()))
+            }
+            _ => return,
+        };
         let Some(target) = self.history_link_target() else {
             return;
         };
@@ -948,13 +986,37 @@ impl HiveApp {
         self.collaboration.detail_generation += 1;
         let generation = self.collaboration.detail_generation;
         cx.spawn(async move |this, cx| {
-            let result = read_dispatch(&runtime, &workspace, &id).await;
+            let (result, selected_message) =
+                smol::future::zip(read_dispatch(&runtime, &workspace, &id), async {
+                    let message = message.as_ref()?;
+                    let result = runtime
+                        .request(
+                            "inbox.dispatchMessage",
+                            json!({
+                                "workspaceId":workspace, "dispatchId":id, "messageId":message,
+                            }),
+                        )
+                        .await;
+                    Some(
+                        result
+                            .ok()
+                            .and_then(|value| exact_message(value, &workspace, &id, message))
+                            .map_or(
+                                SelectedDispatchMessage::Unavailable,
+                                SelectedDispatchMessage::Found,
+                            ),
+                    )
+                })
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if !target.current(this) || this.collaboration.detail_generation != generation {
                     return;
                 }
                 match result {
-                    Ok(dispatch) if dispatch.id == id => this.show_dispatch(dispatch, cx),
+                    Ok(dispatch) if dispatch.id == id => {
+                        this.show_dispatch(dispatch, cx);
+                        this.collaboration.selected_message = selected_message;
+                    }
                     Ok(_) => this.error = Some("收到的派单与所选派单不一致。".into()),
                     Err(error) => this.error = Some(ErrorNotice::Detail("无法打开派单", error)),
                 }
@@ -1300,7 +1362,9 @@ impl HiveApp {
                             return;
                         }
                         match &target {
-                            Destination::Dispatch(id) => this.open_inbox_dispatch(id.clone(), cx),
+                            Destination::Dispatch(_) | Destination::DispatchMessage { .. } => {
+                                this.open_inbox_dispatch(&target, cx);
+                            }
                             Destination::Session(session) => {
                                 this.open_member_session(session.id.clone(), window, cx)
                             }
@@ -1747,11 +1811,54 @@ fn inbox_row<T: 'static>(
 mod tests {
     use super::{
         ActionCenter, ArchiveInboxSession, Attention, Delay, Destination, Entry, MarkInboxRead,
-        Priority, Reminders, SnoozeEdit, Snoozes, UNREAD_CONVERSATION, Wake, now_ms, sort_entries,
+        Priority, Reminders, SnoozeEdit, Snoozes, UNREAD_CONVERSATION, Wake, exact_message, now_ms,
+        sort_entries,
     };
     use crate::protocol::MemberDesktopActivity;
     use serde_json::json;
     use std::collections::HashSet;
+
+    #[test]
+    fn two_questions_on_one_dispatch_keep_distinct_exact_open_targets() {
+        let dispatch = "11111111-0000-4000-8000-0000aaaabbbb";
+        let attention: Vec<_> = ["question-a", "question-b"]
+            .into_iter()
+            .map(|id| {
+                json!({
+                    "kind": "question_waiting_answer", "dispatch_id": dispatch, "message_id": id,
+                    "worker_id": "worker",
+                })
+            })
+            .collect();
+        let snapshot: ActionCenter = serde_json::from_value(json!({
+            "workspace_id": "workspace", "generated_at": 1000, "attention": attention,
+            "recent_dispatch_messages": [],
+        }))
+        .unwrap();
+        let destinations = snapshot.entries(str::to_owned);
+        for (entry, selected) in destinations.iter().zip(["question-a", "question-b"]) {
+            assert!(
+                matches!(&entry.target, Destination::DispatchMessage {dispatch: d, message: m}
+                if d == dispatch && m == selected)
+            );
+            let response = json!({
+                "id": selected, "dispatch_id": dispatch, "workspace_id":"workspace",
+                "from_agent_id":"worker", "recipient_agent_id":"workspace:orchestrator",
+                "kind":"question", "text": format!("Exact text for {selected}"),
+                "delivery_state":"recorded",
+            });
+            let message = exact_message(response.clone(), "workspace", dispatch, selected).unwrap();
+            assert_eq!(message.text, format!("Exact text for {selected}"));
+            assert!(
+                exact_message(response.clone(), "other-workspace", dispatch, selected).is_none()
+            );
+            assert!(
+                exact_message(response.clone(), "workspace", "sibling-dispatch", selected)
+                    .is_none()
+            );
+            assert!(exact_message(response, "workspace", dispatch, "other-question").is_none());
+        }
+    }
 
     #[test]
     fn waiting_report_titles_distinguish_same_member_at_same_time_and_keep_exact_targets() {
