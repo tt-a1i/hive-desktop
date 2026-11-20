@@ -29,6 +29,28 @@ function Read-Focus {
     if ($null -eq $focused) { return $null }
     return [ordered]@{name=$focused.Current.Name;processId=$focused.Current.ProcessId;geometry=(Read-Geometry $focused)}
 }
+function Observe-Focus {
+    try {
+        $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+        if ($null -eq $focused) { return @{valid=$false;name=$null} }
+        $id = ($focused.GetRuntimeId() -join ',')
+        $inTree = $id -ne '' -and @(All-Controls | Where-Object { ($_.GetRuntimeId() -join ',') -ceq $id }).Count -gt 0
+        $actionable = $focused.Current.ProcessId -eq $AppProcessId -and $focused.Current.IsEnabled -and
+            $focused.Current.IsKeyboardFocusable -and (Visible-InWindow $focused)
+        return [ordered]@{name=$focused.Current.Name;processId=$focused.Current.ProcessId;geometry=(Read-Geometry $focused);inTree=$inTree;actionable=$actionable;valid=($inTree -and $actionable)}
+    } catch { return @{valid=$false;error=$_.Exception.Message} }
+}
+function Wait-UsableFocus([int]$Seconds) {
+    $until = [DateTime]::UtcNow.AddSeconds($Seconds)
+    $first = Observe-Focus
+    $last = $first
+    do {
+        if ($last.valid) { break }
+        Start-Sleep -Milliseconds 150
+        $last = Observe-Focus
+    } while ([DateTime]::UtcNow -lt $until)
+    return @{first=$first;final=$last;valid=$last.valid}
+}
 $result = [ordered]@{status='failed';phase=$Phase;stages=[ordered]@{};error=$null;controls=@()}
 $root = $null
 try {
@@ -45,8 +67,16 @@ try {
     if ($window -eq [IntPtr]::Zero -or $app.MainWindowTitle -ne 'Hive') { throw 'Fixture window unavailable.' }
     if (-not [NativeFixtureWindow]::SetForegroundWindow($window)) { throw 'Cannot focus fixture window.' }
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($window)
-    $composer = Wait-Name 'Conversation messages'
-    if ($composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -cne $Draft) { throw 'Initial chat draft differs.' }
+    # Startup can initially show an empty new thread before navigation restores.
+    # Require the original conversation and exact draft before continuing.
+    [void](Wait-Name 'Pi · Git preview fixture · Conversation')
+    $composer = Wait-Control {
+        param($c)
+        $pattern = $null
+        $c.Current.Name -ceq 'Conversation messages' -and
+            $c.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
+            $pattern.Current.Value -ceq $Draft
+    } 'original conversation draft'
     $result.stages.draftVisible = $true
     if ($Phase -eq 'select') {
         Invoke-Control (Wait-Name 'Git status and diff')
@@ -90,8 +120,17 @@ try {
         [void](Wait-Name 'Hide staged patch')
         Invoke-Control $cancel
         [void](Wait-Name 'Commit…')
-        $result.stages.focusAfterCancel = Read-Focus
+        $result.stages.focusAfterCancel = Wait-UsableFocus 3
+        if (-not $result.stages.focusAfterCancel.valid) {
+            # A normal Tab probes whether keyboard navigation can recover.
+            if ([NativeFixtureWindow]::GetForegroundWindow() -ne $window) { throw 'Fixture lost foreground before Tab.' }
+            [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+            $result.stages.focusAfterTab = Wait-UsableFocus 3
+        }
         $result.stages.cancelledExpandedPatch = $true
+        if (-not $result.stages.focusAfterCancel.valid -and -not $result.stages.focusAfterTab.valid) {
+            throw 'Focus did not reach an actionable current-window control after Cancel or Tab.'
+        }
         Invoke-Control (Wait-Name 'Close Git drawer')
         $composer = Wait-Name 'Conversation messages'
         if ($composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -cne $Draft) { throw 'Chat draft changed after cancel.' }
