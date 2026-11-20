@@ -42,7 +42,7 @@ try {
   for (let i = 0; i < 101; i++) await seed(0, `Ordinary ${i}`, 'Needle marker 世界 café');
   await seed(1, 'Other project', 'Needle marker 世界 café');
   const metadata = await seed(1, 'Re\u0301sume\u0301-only label', 'unrelated body');
-  const archived = await seed(0, 'Archived ordinary', 'Needle marker 世界 café', true);
+  const archived = await seed(0, 'Archived ordinary', 'İ'.repeat(400) + ' Needle marker 世界 café ' + 'z'.repeat(500), true);
   const broken = await seed(0, 'Broken history', 'old');
   await writeFile(broken.sessionFile!, '{broken\n');
   const legacy = JSON.parse(await readFile(join(data, 'chats', 'index.json'), 'utf8')) as ChatRecord[];
@@ -77,6 +77,8 @@ try {
   const archives = await runtime.chats.search('needle 世界', true, 0, workspaces[0]);
   assert.deepEqual(archives.matches.map(hit => hit.session.id), [archived.id]);
   assert.equal(archives.incompleteHistoryCount, 0);
+  assert.equal(archives.matches[0]?.bodyMatch?.messageId, `${archived.id}-message`);
+  assert.ok(archives.matches[0]?.bodyMatch?.snippet.includes('Needle marker 世界 café'));
   const absent = await runtime.chats.search('genuinely-absent', false, 0, workspaces[0]);
   assert.equal(absent.total, 0);
   assert.equal(absent.incompleteHistoryCount, 1, 'Unreadable history cannot silently become no matches');

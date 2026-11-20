@@ -52,7 +52,7 @@ async function freshRows(paths: string[], load: () => Promise<{ rows: Row[]; com
   return { rows: compact, complete: loaded.complete, truncated: projected.truncated, unresolved: projected.unresolved };
 }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
-export function foldSearchText(value: string): string { return value.normalize('NFC').toLocaleLowerCase(); }
+export function foldSearchText(value: string): string { return value.normalize('NFC').toLowerCase(); }
 // Match conversation.rs's serde presentation contract before replacing the ID.
 function desktopPresentation(value: unknown): Record<string, unknown> | undefined {
   if (!object(value) || value.version !== 1 || typeof value.deliveryId !== 'string' || !value.deliveryId ||
@@ -213,14 +213,22 @@ function find(rows: readonly { id: string; text: string }[], first: string, rest
   const context = Math.max(0, Math.min(12, maxSnippetLength - [...first].length));
   for (const row of rows) {
     const normalized = row.text.normalize('NFC');
-    const folded = normalized.toLocaleLowerCase();
+    const folded = normalized.toLowerCase();
     const position = folded.indexOf(first);
     if (position < 0 || !rest.every(term => folded.includes(term))) continue;
-    const display = snippetWindow(normalized, position, context);
-    // Locale-dependent lowercasing can change the length before the hit. If
-    // the display window lost the hit, use the window in the matched string.
-    const {excerpt, hasBefore, hasAfter} = display.excerpt.toLocaleLowerCase().includes(first)
-      ? display : snippetWindow(folded, position, context);
+    // A lowercase expansion such as İ → i + combining dot can move the
+    // match. Map it to the original text so the excerpt keeps its spelling.
+    let sourceOffset = position;
+    if (normalized.length !== folded.length) {
+      sourceOffset = 0;
+      let foldedOffset = 0;
+      for (const character of normalized) {
+        foldedOffset += character.toLowerCase().length;
+        if (foldedOffset > position) break;
+        sourceOffset += character.length;
+      }
+    }
+    const { excerpt, hasBefore, hasAfter } = snippetWindow(normalized, sourceOffset, context);
     const slice = excerpt.replace(/\s+/gu, ' ').trim();
     matches.push({ messageId: row.id, snippet: `${hasBefore ? '…' : ''}${slice}${hasAfter ? '…' : ''}` });
     if (firstMatchOnly) break;

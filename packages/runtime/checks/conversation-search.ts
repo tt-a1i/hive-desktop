@@ -93,7 +93,7 @@ try {
 
   const snippetCases = [
     {body: 'a\u0301'.repeat(400) + ' Café Marker', query: 'CAFE\u0301', contains: 'Café Marker'},
-    {body: 'İ'.repeat(400) + ' Case Marker', query: 'Case', contains: 'case'},
+    {body: 'İ'.repeat(400) + ' Case Marker ' + 'z'.repeat(500), query: 'Case', contains: 'Case Marker'},
     {body: '👩'.repeat(80) + ' ' + '𐀀'.repeat(200) + ' end', query: '𐀀'.repeat(200), contains: '𐀀'.repeat(200)},
   ];
   for (const {body, query, contains} of snippetCases) {
@@ -102,7 +102,7 @@ try {
     assert.equal(found.complete, true);
     assert.deepEqual(found.matches.map(match => match.messageId), ['snippet']);
     const snippet = found.matches[0]!.snippet;
-    assert.ok(snippet.includes(contains) || snippet.toLocaleLowerCase().includes(contains),
+    assert.ok(snippet.includes(contains),
       'the excerpt must contain the actual hit');
     assert.ok(snippet.isWellFormed() && [...snippet].length <= 222);
   }
