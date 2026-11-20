@@ -6,6 +6,7 @@ use crate::{
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
+        menu::{ContextMenuExt, PopupMenuItem},
         text::{TextView, TextViewState},
         *,
     },
@@ -267,19 +268,55 @@ impl HiveApp {
             .when_some(
                 markdown,
                 |view, markdown| {
-                    view.child(
-                        div()
-                            .id(("message-body", i))
-                            .role(Role::Label)
-                            .aria_value(markdown.read(cx).rendered_text().as_str().to_string())
-                            .child(TextView::new(markdown).selectable(true).stream_fade(true)),
-                    )
+                    let body = div()
+                        .id(("message-body", i))
+                        .role(Role::Label)
+                        .aria_value(markdown.read(cx).rendered_text().as_str().to_string())
+                        .child(TextView::new(markdown).selectable(true).stream_fade(true));
+                    if message.role != "assistant" || self.current_worktree_released() {
+                        return view.child(body);
+                    }
+                    let app = cx.weak_entity();
+                    let markdown = markdown.clone();
+                    let id = message.id.clone();
+                    view.child(body.context_menu(move |menu, _, cx| {
+                        // Build the action from this exact selection before the
+                        // menu takes focus away from the response text.
+                        let selection = app
+                            .read_with(cx, |app, cx| {
+                                app.capture_assistant_quote(&id, &markdown, cx)
+                                    .map(|quote| (quote, app.open_request))
+                            })
+                            .ok()
+                            .flatten();
+                        let app = app.clone();
+                        menu.item(
+                            PopupMenuItem::new(tr("引用选中的文字"))
+                                .disabled(selection.is_none())
+                                .on_click(move |_, window, cx| {
+                                    let Some((quote, revision)) = selection.clone() else {
+                                        return;
+                                    };
+                                    let app = app.clone();
+                                    window.defer(cx, move |window, cx| {
+                                        let _ = app.update(cx, |app, cx| {
+                                            app.insert_assistant_quote(quote, revision, window, cx);
+                                        });
+                                    });
+                                }),
+                        )
+                    }))
                 },
             )
             .when(
                 markdown.is_none() && !message.display_body().is_empty(),
                 |view| {
-                    let body = message.display_body().to_owned();
+                    let body = if is_plain_user && message.explicit_user {
+                        crate::quote_source::body_without_quote_source(message.display_body())
+                            .to_string()
+                    } else {
+                        message.display_body().to_owned()
+                    };
                     view.child(
                         div()
                             .id(("message-body", i))
@@ -303,6 +340,12 @@ impl HiveApp {
                             .child(body),
                     )
                 },
+            )
+            .when_some(
+                (is_plain_user && message.explicit_user)
+                    .then(|| self.render_assistant_quote_sources(message.display_body(), cx))
+                    .flatten(),
+                |view, sources| view.child(sources),
             )
             .when(message.images_loading
                 || (message.history_images.is_some() && message.images.is_empty() && message.images_error.is_none()), |view| {

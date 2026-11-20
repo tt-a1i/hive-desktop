@@ -19,6 +19,7 @@ use gpui_kit::{
     base::InteractiveElementExt as _,
     component::{
         button::{Button, ButtonVariants},
+        dialog::Cancel,
         input::{Input, InputEvent, InputState},
         menu::{DropdownMenu, PopupMenuItem},
         resizable::{HandleEdge, resize_handle},
@@ -53,6 +54,15 @@ const FILE_SPLIT_HANDLE: f32 = 8.;
 const FILE_SPLIT_STEP: f32 = 24.;
 const FILE_SPLIT_MIN_LIST: f32 = 104.;
 const FILE_SPLIT_MIN_PREVIEW: f32 = 148.;
+const COMPACT_PREVIEW_CONTEXT: &str = "HiveCompactFilePreview";
+
+fn tree_key_context(has_preview: bool) -> &'static str {
+    if has_preview {
+        "HiveProjectFileTree HiveCompactFilePreview"
+    } else {
+        "HiveProjectFileTree"
+    }
+}
 
 #[derive(Clone, Copy)]
 struct FileSplit {
@@ -503,6 +513,13 @@ fn is_expand_preview_chord(keystroke: &Keystroke, mac: bool) -> bool {
             })
 }
 
+fn is_close_preview_key(event: &KeyDownEvent) -> bool {
+    !event.is_held
+        && !event.prefer_character_input
+        && event.keystroke.key == "escape"
+        && event.keystroke.modifiers == Modifiers::default()
+}
+
 fn expand_preview_hint(cx: &App) -> String {
     let shortcut = if cx.platform_info().is_mac() {
         "Cmd+Enter"
@@ -939,6 +956,7 @@ pub(crate) struct FileBrowser {
     expansions: Entity<FileTreeExpansions>,
     root_focus: FocusHandle,
     browser_focus: FocusHandle,
+    preview_focus: FocusHandle,
     dialog_focus: Option<FocusHandle>,
     resize_focus: FocusHandle,
     split_focus: FocusHandle,
@@ -1167,6 +1185,7 @@ impl HiveApp {
                 expansions,
                 root_focus: cx.focus_handle(),
                 browser_focus: cx.focus_handle(),
+                preview_focus: cx.focus_handle(),
                 dialog_focus: None,
                 resize_focus: cx.focus_handle(),
                 split_focus: cx.focus_handle(),
@@ -1436,12 +1455,55 @@ impl FileBrowser {
 
     fn dismiss(&mut self) {
         self.dismissed = true;
-        self.split_drag = None;
         self.search_task = None;
+        self.clear_preview();
+        self.reset_git_status();
+    }
+
+    fn clear_preview(&mut self) {
+        self.split_drag = None;
+        self.preview_generation += 1;
         self.preview_task = None;
         self.tree_preview = None;
         self.preview = None;
-        self.reset_git_status();
+    }
+
+    fn has_compact_preview(&self) -> bool {
+        self.preview.is_some() || self.tree_preview.is_some()
+    }
+
+    fn close_compact_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.current(cx)
+            || !self.has_compact_preview()
+            || if self.docked {
+                window.has_active_dialog(cx)
+            } else {
+                !self
+                    .dialog_focus
+                    .as_ref()
+                    .is_some_and(|focus| focus.contains_focused(window, cx))
+            }
+        {
+            return false;
+        }
+        self.clear_preview();
+        let query = self.query.read(cx);
+        let focus = if query.value().trim().is_empty() {
+            self.tree_focus.clone()
+        } else if self.contents {
+            self.content_results_focus.clone()
+        } else {
+            query.focus_handle(cx)
+        };
+        focus.focus(window, cx);
+        cx.notify();
+        true
+    }
+
+    fn close_preview_from_key(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        (self.tree_focus.contains_focused(window, cx)
+            || self.preview_focus.contains_focused(window, cx))
+            && self.close_compact_preview(window, cx)
     }
 
     fn set_scope(
@@ -1456,7 +1518,6 @@ impl FileBrowser {
         self.scope = scope;
         self.runtime = runtime;
         self.scope_generation += 1;
-        self.split_drag = None;
         self.directories.clear();
         self.tree_selected = None;
         self.reveal = None;
@@ -1470,9 +1531,7 @@ impl FileBrowser {
         self.search_error = None;
         self.search_scroll = ScrollHandle::new();
         self.search_task = None;
-        self.preview_task = None;
-        self.tree_preview = None;
-        self.preview = None;
+        self.clear_preview();
         if self.scope.is_some() {
             // Scope changes can happen during the parent view update.
             let generation = self.scope_generation;
@@ -3512,7 +3571,17 @@ impl FileBrowser {
     }
 
     fn preview_view(&self, height: Pixels, stretch: bool, cx: &Context<Self>) -> impl IntoElement {
-        let mut panel = v_flex().flex_1().min_w_0().min_h_0().gap_2();
+        let mut panel = v_flex()
+            .id("browser-compact-preview")
+            .when(self.has_compact_preview(), |panel| {
+                panel.key_context(COMPACT_PREVIEW_CONTEXT)
+            })
+            .track_focus(&self.preview_focus)
+            .tab_stop(false)
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .gap_2();
         let Some(preview) = &self.preview else {
             return panel.child(
                 div()
@@ -3523,6 +3592,7 @@ impl FileBrowser {
         };
         let selection = preview.selection.clone();
         let path = preview.selection.path.clone();
+        let preview_generation = self.preview_generation;
         panel = panel.child(
             h_flex()
                 .justify_between()
@@ -3562,7 +3632,22 @@ impl FileBrowser {
                         .children(self.attach_button(cx))
                         .children(self.reveal_in_file_manager_button(cx.weak_entity(), None, cx))
                         .children(self.copy_path_menu(cx.weak_entity(), None, cx))
-                        .children(self.editor_menu(cx.weak_entity(), None, cx)),
+                        .children(self.editor_menu(cx.weak_entity(), None, cx))
+                        .child(
+                            Button::new("browser-close-preview")
+                                .custom(palette::quiet_icon_variant(cx))
+                                .compact()
+                                .xsmall()
+                                .size(px(24.))
+                                .icon(Glyph::X)
+                                .accessibility_label(tr("关闭文件预览"))
+                                .tooltip(format!("{} (Esc)", tr("关闭文件预览")))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if this.preview_generation == preview_generation {
+                                        this.close_compact_preview(window, cx);
+                                    }
+                                })),
+                        ),
                 ),
         );
         if let Some(error) = &preview.editor_error {
@@ -3972,6 +4057,16 @@ impl Render for FileBrowser {
             .track_focus(&self.browser_focus)
             .tab_stop(false)
             .capture_key_down(cx.listener(Self::handle_expand_preview_key))
+            .on_action(cx.listener(|this, _: &Cancel, window, cx| {
+                if !this.close_preview_from_key(window, cx) {
+                    cx.propagate();
+                }
+            }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if is_close_preview_key(event) && this.close_preview_from_key(window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .min_w_0()
             .gap_2()
             .when(self.docked, |view| view.size_full().min_h_0());
@@ -4018,12 +4113,6 @@ impl Render for FileBrowser {
         let narrow = self.docked || window.viewport_size().width < px(690.);
         let stacked = narrow && self.preview.is_some();
         let body = window.viewport_size().height * 0.62;
-        let list_height = if narrow { body * 0.40 } else { body };
-        let preview_height = if narrow {
-            (body * 0.60 - px(62.)).max(px(60.))
-        } else {
-            body - px(64.)
-        };
         let name = if searching {
             tr("项目文件搜索结果")
         } else {
@@ -4049,7 +4138,7 @@ impl Render for FileBrowser {
                     })
                     .aria_label(name)
                     .when(self.docked || stacked, |list| list.flex_1().min_h_0())
-                    .when(!self.docked && !stacked, |list| list.h(list_height))
+                    .when(!self.docked && !stacked, |list| list.h(body))
                     .min_w_0()
                     .overflow_y_scroll()
                     .track_scroll(scroll)
@@ -4063,7 +4152,7 @@ impl Render for FileBrowser {
                             .capture_key_down(cx.listener(Self::content_results_key))
                     })
                     .when(!searching, |list| {
-                        list.key_context("HiveProjectFileTree")
+                        list.key_context(tree_key_context(self.has_compact_preview()))
                             .track_focus(&self.tree_focus)
                             .tab_stop(true)
                             .focus(|style| style.border_color(Color::Secondary.get(cx)))
@@ -4180,20 +4269,14 @@ impl Render for FileBrowser {
                     });
                 })
                 .into_any_element()
-        } else if self.docked {
-            list.into_any_element()
         } else if narrow {
-            v_flex()
-                .gap_2()
-                .child(list)
-                .child(self.preview_view(preview_height, false, cx))
-                .into_any_element()
+            list.into_any_element()
         } else {
             h_flex()
                 .items_start()
                 .gap_3()
                 .child(list)
-                .child(self.preview_view(preview_height, false, cx))
+                .child(self.preview_view(body - px(64.), false, cx))
                 .into_any_element()
         };
         let source = self
@@ -4464,6 +4547,79 @@ mod tests {
             true
         ));
         assert!(!is_expand_preview_chord(&key("escape", command), true));
+    }
+
+    #[test]
+    fn close_preview_key_only_accepts_an_unmodified_escape_press() {
+        let event = |key: &str, modifiers, is_held| gpui_kit::KeyDownEvent {
+            keystroke: Keystroke {
+                key: key.into(),
+                key_char: None,
+                modifiers,
+            },
+            is_held,
+            prefer_character_input: false,
+        };
+        let plain = Modifiers::default();
+        assert!(super::is_close_preview_key(&event("escape", plain, false)));
+        assert!(!super::is_close_preview_key(&event("escape", plain, true)));
+        assert!(!super::is_close_preview_key(&gpui_kit::KeyDownEvent {
+            prefer_character_input: true,
+            ..event("escape", plain, false)
+        }));
+        assert!(!super::is_close_preview_key(&event("enter", plain, false)));
+        assert!(!super::is_close_preview_key(&event(
+            "escape",
+            Modifiers {
+                shift: true,
+                ..plain
+            },
+            false,
+        )));
+    }
+
+    #[test]
+    fn active_file_preview_escape_precedes_the_outer_conversation_binding() {
+        use gpui_kit::{KeyBinding, KeyContext, Keymap, component::dialog::Cancel};
+
+        let keymap = Keymap::new(vec![
+            KeyBinding::new(
+                "escape",
+                crate::CloseConversationFind,
+                Some("HiveConversation"),
+            ),
+            KeyBinding::new("escape", Cancel, Some(super::COMPACT_PREVIEW_CONTEXT)),
+        ]);
+        let first_binding = |context| {
+            let (bindings, _) = keymap.bindings_for_input(
+                &[Keystroke::parse("escape").unwrap()],
+                &[
+                    KeyContext::parse("HiveConversation").unwrap(),
+                    KeyContext::parse(context).unwrap(),
+                ],
+            );
+            bindings.into_iter().next().unwrap()
+        };
+
+        for context in [
+            super::tree_key_context(true),
+            super::COMPACT_PREVIEW_CONTEXT,
+        ] {
+            assert!(first_binding(context).action().as_any().is::<Cancel>());
+        }
+        for context in [super::tree_key_context(false), "HiveProjectFileSearch"] {
+            assert!(
+                first_binding(context)
+                    .action()
+                    .as_any()
+                    .is::<crate::CloseConversationFind>()
+            );
+        }
+        assert!(
+            KeyContext::parse(super::tree_key_context(true))
+                .unwrap()
+                .contains("HiveProjectFileTree")
+        );
     }
 
     fn session_with_execution_path(id: &str, path: Option<&str>) -> crate::protocol::Session {

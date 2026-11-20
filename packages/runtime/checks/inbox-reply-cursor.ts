@@ -1,14 +1,17 @@
 /** Exact inbox reply cursor through the production wire and a controlled ACP peer. */
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
+import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createInterface} from 'node:readline';
+import {DatabaseSync} from 'node:sqlite';
 import {fileURLToPath} from 'node:url';
 import {setTimeout as delay} from 'node:timers/promises';
 import type {ChatRecord} from '../src/chat-index.js';
+import {DispatchExecutionOrigins} from '../src/dispatch-execution-origins.js';
 
 const root = await mkdtemp(join(tmpdir(), 'hive-inbox-replies-'));
 const dataDir = join(root, 'desktop');
@@ -140,7 +143,7 @@ try {
   }
   await writeFile(index, JSON.stringify(archived));
   wire = launch();
-  await wire.request('initialize');
+  const {hivePort} = await wire.request<{hivePort: number}>('initialize');
   const query = {query: '', archived: true, navigationOnly: true, workspaceId: workspace.id,
     backend: 'acp', limit: 1, activitySinceMs: second.receivedAt};
   const page = await wire.request<{total: number; matches: {session: ChatRecord}[]}>('chat.search', query);
@@ -150,6 +153,68 @@ try {
   const afterBoundary = await wire.request<{total: number}>('chat.search', {...query, activitySinceMs: second.receivedAt + 1});
   assert.equal(afterBoundary.total, 0);
   console.log('INBOX_REPLY_CURSOR_OK: exact finalized ACP replies, cold activity timestamps and archive filtering at the inclusive boundary');
+
+  const early = await wire.request<{id: string}>('team.member.create', {
+    workspaceId: workspace.id, name: 'First reviewer', role: 'reviewer', backend: 'pi',
+  });
+  const later = await wire.request<{id: string}>('team.member.create', {
+    workspaceId: workspace.id, name: 'Fourth reviewer', role: 'reviewer', backend: 'pi',
+  });
+  const foreignPath = join(root, 'other-project');
+  await mkdir(foreignPath);
+  const foreign = await wire.request<{id: string}>('hive.request', {
+    method: 'POST', path: '/api/workspaces', body: {path: foreignPath, name: 'Other project', autostart_orchestrator: false},
+  });
+  const historical = await wire.request<{id: string}>('chat.createRecord', {workspaceId: workspace.id, backend: 'codex'});
+  const waiting = Array.from({length: 4}, () => randomUUID());
+  new DispatchExecutionOrigins(join(dataDir, 'chats', 'dispatch-execution-origins')).put({
+    workspaceId: workspace.id, dispatchId: waiting[3]!, sourceSessionId: historical.id, sourceAgentId: later.id,
+  });
+  const sqlite = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'));
+  try {
+    const insert = sqlite.prepare(`INSERT INTO dispatches
+      (id, workspace_id, from_agent_id, to_agent_id, text, status, created_at, submitted_at, root_dispatch_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const now = Date.now();
+    function seed(workspaceId: string, member: string, dispatchId: string, status: string, time: number) {
+      insert.run(dispatchId, workspaceId, `${workspaceId}:orchestrator`, member, 'Private fixture dispatch', status, time, time, dispatchId);
+    }
+    waiting.forEach((dispatchId, index) => seed(workspace.id, index === 3 ? later.id : early.id, dispatchId, 'submitted', now - 720_000 + index));
+    seed(workspace.id, later.id, randomUUID(), 'submitted', now);
+    seed(workspace.id, later.id, randomUUID(), 'reported', now - 720_000);
+    seed(workspace.id, later.id, randomUUID(), 'cancelled', now - 720_000);
+    seed(foreign.id, `${foreign.id}:orchestrator`, randomUUID(), 'submitted', now - 720_000);
+  } finally {
+    sqlite.close();
+  }
+  type Attention = {
+    kind: string; dispatch_id?: string; worker_id?: string; worker_name?: string;
+    dispatch_backend?: string | null; severity?: string; submitted_at?: number; minutes_ago?: number;
+  };
+  type Center = {summary: {waiting_reports: number}; attention: Attention[]};
+  const actionCenter = `/api/ui/workspaces/${workspace.id}/action-center`;
+  const base = `http://127.0.0.1:${hivePort}`;
+  const rawUnauthorized = await fetch(base + actionCenter);
+  assert.ok(!rawUnauthorized.ok);
+  await rawUnauthorized.body?.cancel();
+  const session = await fetch(base + '/api/ui/session');
+  const cookie = session.headers.get('set-cookie')?.split(';', 1)[0];
+  await session.body?.cancel();
+  assert.ok(cookie);
+  const raw = await fetch(base + actionCenter, {headers: {cookie, origin: base}});
+  assert.ok(raw.ok);
+  const upstream: Center = await raw.json();
+  const desktop = await wire.request<Center>('hive.request', {method: 'GET', path: actionCenter});
+  const reportRows = (center: Center) => center.attention.filter(row => row.kind === 'dispatch_waiting_report');
+  assert.equal(upstream.summary.waiting_reports, 4);
+  assert.deepEqual(reportRows(upstream).map(row => row.dispatch_id), waiting.slice(0, 3));
+  assert.equal(desktop.summary.waiting_reports, 4);
+  assert.deepEqual(reportRows(desktop).map(row => row.dispatch_id), waiting);
+  const scoped = reportRows(desktop).filter(row => row.worker_id === later.id && row.dispatch_backend === 'codex');
+  assert.deepEqual(scoped.map(row => [row.dispatch_id, row.worker_name]), [[waiting[3], 'Fourth reviewer']]);
+  assert.deepEqual(Object.keys(scoped[0]!).sort(),
+    ['dispatch_backend', 'dispatch_id', 'kind', 'minutes_ago', 'severity', 'submitted_at', 'worker_id', 'worker_name']);
+  console.log('INBOX_WAITING_REPORTS_OK: production wire includes the fourth exact member/backend while the authenticated HTTP preview remains capped');
 } finally {
   await wire?.close();
   await rm(root, {recursive: true, force: true});

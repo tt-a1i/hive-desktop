@@ -4,7 +4,7 @@ import { mkdtemp, realpath, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DispatchMessageRecord } from "@tt-a1i/hive/dist/src/shared/team-collaboration.js";
-import { createHiveHost, HiveHttpError, withInboxDispatchBackends, withInboxMessageSenders } from "../src/hive-host.js";
+import { createHiveHost, HiveHttpError, withInboxDispatchBackends, withInboxMessageSenders, withInboxWaitingReports } from "../src/hive-host.js";
 
 const olderQuestion = {kind: 'question_waiting_answer', message_id: 'older-question', dispatch_id: 'first-dispatch'};
 const snapshot = {
@@ -42,6 +42,39 @@ assert.deepEqual(withInboxDispatchBackends(backendSnapshot, 'workspace-a', (work
 	...row, dispatch_backend: index < 2 ? 'codex' : null,
 }))});
 assert.deepEqual(lookups, [['workspace-a', dispatchId], ['workspace-a', unattributed]]);
+
+const now = 1_000_000;
+const boundary = now - 600_000;
+const older = {...olderQuestion, kind: 'dispatch_waiting_report'};
+const remote = {kind: 'remote_rejected', reason: 'unchanged'};
+const truncated = {
+	workspace_id: 'workspace-a', generated_at: now, summary: {waiting_reports: 2},
+	attention: [olderQuestion, older, remote], workers: [{id: 'reviewer', name: 'Reviewer'}],
+};
+const oldDispatch = {id: older.dispatch_id, status: 'submitted' as const, workspaceId: 'workspace-a',
+	submittedAt: boundary - 10_000, toAgentId: 'reviewer'};
+const ledger = {listOpenDispatches(workspaceId: string) {
+	assert.equal(workspaceId, 'workspace-a');
+	return [oldDispatch, {...oldDispatch, id: 'cutoff', submittedAt: boundary},
+		{...oldDispatch, id: 'fresh', submittedAt: boundary + 1},
+		{...oldDispatch, id: 'reported', status: 'reported' as const},
+		{...oldDispatch, id: 'cancelled', status: 'cancelled' as const},
+		{...oldDispatch, id: 'queued', status: 'queued' as const},
+		{...oldDispatch, id: 'foreign', workspaceId: 'workspace-b'}];
+}};
+const waitingRow = (id: string, submitted: number) => ({
+	kind: 'dispatch_waiting_report', dispatch_id: id, severity: 'info', minutes_ago: 10,
+	submitted_at: submitted, worker_id: 'reviewer', worker_name: 'Reviewer',
+});
+assert.deepEqual(withInboxWaitingReports(truncated, 'workspace-a', ledger), {
+	...truncated,
+	attention: [olderQuestion, waitingRow(oldDispatch.id, boundary - 10_000), waitingRow('cutoff', boundary), remote],
+});
+assert.equal(withInboxWaitingReports(truncated, 'workspace-b', ledger), truncated);
+const complete = {...truncated, summary: {waiting_reports: 1}};
+assert.equal(withInboxWaitingReports(complete, 'workspace-a', {listOpenDispatches() {
+	assert.fail('a complete attention summary needs no supplemental ledger query');
+}}), complete);
 
 const root = await mkdtemp(join(tmpdir(), "hive-desktop-host-check-"));
 const previousDataDir = process.env.HIVE_DATA_DIR;

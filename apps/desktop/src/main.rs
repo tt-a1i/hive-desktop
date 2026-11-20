@@ -1,6 +1,7 @@
 mod app;
 mod agent_profiles;
 mod appearance;
+mod assistant_quote;
 mod chrome;
 mod language;
 mod local_notifications;
@@ -11,6 +12,7 @@ mod workflows;
 mod composer;
 mod composer_controls;
 mod queued_inputs;
+mod quote_source;
 mod command_palette;
 mod command_picker;
 mod conversation;
@@ -158,6 +160,11 @@ fn main() {
             cx.bind_keys(keybindings::startup_bindings(cx));
             cx.bind_keys([
                 KeyBinding::new("escape", CloseConversationFind, Some("HiveConversation")),
+                KeyBinding::new(
+                    "escape",
+                    gpui_kit::component::dialog::Cancel,
+                    Some("HiveCompactFilePreview"),
+                ),
                 KeyBinding::new("enter", NextConversationMatch, Some("HiveConversationFind")),
                 KeyBinding::new("shift-enter", PreviousConversationMatch, Some("HiveConversationFind")),
                 KeyBinding::new("down", NextSessionResult, Some("HiveSessionSearch")),

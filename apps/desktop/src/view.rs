@@ -894,6 +894,13 @@ impl HiveApp {
                                     attachments,
                                 ))
                             })
+                            .when_some(self.render_assistant_quote_sources(&self.input.read(cx).value(), cx), |body, sources| {
+                                body.child(crate::focus_scroll::Reveal::new(
+                                    "composer-quote-sources-reveal",
+                                    &self.composer_scroll,
+                                    sources,
+                                ))
+                            })
                             .child(crate::focus_scroll::Reveal::new(
                                 "composer-input-reveal",
                                 &self.composer_scroll,

@@ -6,6 +6,7 @@ import { runHiveCommand } from "@tt-a1i/hive/dist/src/cli/hive.js";
 import { HttpError } from "@tt-a1i/hive/dist/src/server/http-errors.js";
 import type { DesktopDraftCopyReceipt, DesktopDraftUploadCopy, WorkspaceUploadRecord } from "@tt-a1i/hive/dist/src/server/workspace-upload-store.js";
 import type { DispatchMessageRecord } from "@tt-a1i/hive/dist/src/shared/team-collaboration.js";
+import type { DispatchRecord } from "@tt-a1i/hive/dist/src/server/dispatch-ledger-store.js";
 import { getDefaultRoleDescription } from '@tt-a1i/hive/dist/src/server/role-templates.js';
 import { resolveWorkspaceUiLanguage } from '@tt-a1i/hive/dist/src/server/workspace-ui-language.js';
 import type { HiveAgentRuntimeFactory } from "./hive-runtime-contract.js";
@@ -36,6 +37,52 @@ export interface HiveUploadLocation {
 export interface HiveUserInputRow { type: 'user_input' | 'user_input_cancelled'; text: string }
 interface InboxQuestion { workspaceId: string; dispatchId: string; messageId: string }
 type ActionableMessageSource = {listActionableDispatchMessages(workspaceId: string): DispatchMessageRecord[]};
+type OpenDispatchSource = {listOpenDispatches(workspaceId: string):
+    Pick<DispatchRecord, 'id' | 'workspaceId' | 'status' | 'submittedAt' | 'toAgentId'>[]};
+
+// Match Hive's action-center definition of a wait, not a task timeout.
+const WAITING_REPORT_MS = 10 * 60 * 1_000;
+
+export function withInboxWaitingReports(
+    result: unknown, workspaceId: string, store: OpenDispatchSource,
+): unknown {
+    if (!result || typeof result !== 'object' || !('workspace_id' in result) || result.workspace_id !== workspaceId
+        || !('attention' in result) || !Array.isArray(result.attention)
+        || !('generated_at' in result) || typeof result.generated_at !== 'number' || !Number.isSafeInteger(result.generated_at)
+        || !('summary' in result) || !result.summary || typeof result.summary !== 'object'
+        || !('waiting_reports' in result.summary)) return result;
+    const {attention, generated_at: now, summary} = result;
+    const count = summary.waiting_reports;
+    const isWaitingReport = (row: {kind?: unknown} | null) => row?.kind === 'dispatch_waiting_report';
+    const firstWaiting = attention.findIndex(isWaitingReport);
+    if (firstWaiting < 0 || typeof count !== 'number' || count <= attention.filter(isWaitingReport).length) return result;
+
+    const workerNames = new Map<string, string>();
+    if ('workers' in result && Array.isArray(result.workers)) {
+        for (const worker of result.workers) {
+            if (typeof worker?.id === 'string' && typeof worker.name === 'string') workerNames.set(worker.id, worker.name);
+        }
+    }
+    const waiting = store.listOpenDispatches(workspaceId).flatMap(dispatch => {
+        const submitted = dispatch.submittedAt;
+        if (dispatch.workspaceId !== workspaceId || dispatch.status !== 'submitted' || submitted === null
+            || submitted > now - WAITING_REPORT_MS) return [];
+        return [{
+            kind: 'dispatch_waiting_report',
+            severity: 'info',
+            dispatch_id: dispatch.id,
+            submitted_at: submitted,
+            minutes_ago: Math.floor((now - submitted) / 60_000),
+            worker_id: dispatch.toAgentId,
+            worker_name: workerNames.get(dispatch.toAgentId) ?? null,
+        }];
+    });
+    return {
+        ...result,
+        summary: {...summary, waiting_reports: waiting.length},
+        attention: [...attention.slice(0, firstWaiting), ...waiting, ...attention.slice(firstWaiting).filter(row => !isWaitingReport(row))],
+    };
+}
 
 export function withInboxMessageSenders(
     result: unknown, workspaceId: string, store: ActionableMessageSource,
@@ -306,7 +353,9 @@ export async function createHiveHost({
 			// attention message without another runtime request or more text.
 			const inbox = method === "GET" && /^\/api\/ui\/workspaces\/([^/]+)\/action-center$/.exec(url.pathname);
 			if (inbox) {
-				return withInboxMessageSenders(result, decodeURIComponent(inbox[1]!), runtime.store as typeof runtime.store & ActionableMessageSource);
+				const workspace = decodeURIComponent(inbox[1]!);
+				const store = runtime.store as typeof runtime.store & ActionableMessageSource & OpenDispatchSource;
+				return withInboxMessageSenders(withInboxWaitingReports(result, workspace, store), workspace, store);
 			}
 			return result;
 		},

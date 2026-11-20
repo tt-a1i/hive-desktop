@@ -344,8 +344,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在工作树 A 搜索到 `docs/nested/note.txt`，从停靠预览打开准确的暂存改动。在 640×600 窄窗，从展开阅读器进入 Git 比较，文件弹层随交接关闭，暂存内容仍来自 A。工作树 B 中同路径的干净文件未出现 Diff 入口。证据在 `.artifacts/search-diff-qa`。
 - 273 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建、工作树、会话标识、桌面视图、原生推理控制协议和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十六批
+
+本轮从 Hive Desktop `9e5be1f` 开始。参考 T3 Code `6f5293f`、Cindy `90e373d`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **两个桌面收件箱都能看到第四条及之后的等待汇报派单。** 桌面发现汇总的等待条数超出明细时，从同一个工作区的派单账本补齐。成员取自派单，后端取自该次执行的来源。沿用超过或达到 10 分钟的已提交状态。 [Hive 上游明细限制](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/action-center-summary.ts#L98-L112) · [Cindy 完整分组](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L186-L249)
+- **只引用选中的助手回复。** 选中一段文字并右键选择「引用选中的文字」，在当前光标插入可编辑的 Markdown 引用，草稿前后的文字保留。草稿及发出的消息提供「引用原消息」，旧消息未加载时按项目、会话和消息标识打开附近历史。引用片段随文字保存，源消息无法打开时仍可阅读。 [T3 Code 选区及返回原文](https://github.com/pingdotgg/t3code/blob/6f5293fbdca476cddbc37466450983ba1dd2ada2/docs/user/composer.md#L129-L143)
+- **收起文件预览时保留文件面板。** 停靠面板和窄窗可点关闭，预览或目录树聚焦时可按 Esc。列表查询、已加载页和选中行保留，Return 可再次打开。展开阅读器的 Esc 仍返回紧凑预览。 [Beluga 关闭预览](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L108-L114) · [Beluga Esc 行为](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L295-L310)
+
+- 真实 Hive SQLite 和 JSONL 运行时验证授权 HTTP 预览仍只含前三条，桌面返回完整四条，第四条按其成员和实际 Codex 后端准确归类。验证时间门槛、新近、已汇报、已取消和不同项目的派单均排除，补充字段与原有明细一致。证据在 `.artifacts/competitive-ux/twenty-sixth/inbox-wire.log`。
+- macOS 跨项目收件箱显示五条满足时间门槛的派单。按第四位成员和 Codex 筛选后只剩目标派单，暂缓和恢复记录绑定同一标识，打开后的派单详情也使用该标识。本次实窗覆盖跨项目入口，排除条件由运行时验证。证据在 `.artifacts/batch26-inbox-qa`。
+- macOS 实际双击选择助手回复中的 `selected`，右键引用到 `Before` 和 `之后` 之间。冷开后文字和来源入口保留。从历史搜索跳到旧页，原回复移出已加载范围。再点击「引用原消息」，后台按准确标识请求附近记录，页上限为 120 条，原回复和草稿重现。使用合成 Pi 历史，未发送消息。证据在 `.artifacts/batch26-quote-qa`。
+- macOS 在停靠面板与 640×600 窄窗用 Esc 关闭紧凑预览，再按 Return 从原选中行打开 `docs/nested/note.txt`。展开阅读器按 Esc 回到紧凑预览，点击关闭按钮后列表获得空间。实窗发现会话查找提前接收了停靠面板的 Esc，修正按键范围后两种布局均通过。证据在 `.artifacts/batch26-preview-qa`。
+- 278 项 Rust 测试通过，1 项原有忽略。TypeScript、桌面构建、Hive 运行时、桌面视图、收件箱的生产通信入口和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **补回第四条起的等待汇报派单。** 用四条已提交 11 分钟的派单调用当前 Hive 汇总，计数为 4，明细只返回前三条。桌面两个收件箱都依赖明细。验收时按第四条的成员筛选、打开并暂缓该派单，同时核对已汇报、已取消和未达到时间门槛的派单。复现在 `.artifacts/competitive-ux/twenty-fifth/waiting-reports-repro.mjs`。 [Hive 上游明细上限](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/action-center-summary.ts#L98-L112) · [Cindy 分组与展开](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L186-L249)
-- **把一段助手回复引用到草稿。** 目前「引用消息到草稿」把整条回复加在开头。用两段回复和带光标的多行草稿复现，验收只引用所选文字、保留光标两侧原输入，并能回到原消息。原消息暂时无法打开时仍应可读引用。 [T3 Code 引用选区和返回原文](https://github.com/pingdotgg/t3code/blob/392526768806ab7b36854ad9a401955c4bec6a85/docs/user/composer.md#L129-L143)
-- **在文件面板单独关闭预览。** 打开一份长文件后，目前关闭预览需要关掉文件面板，或离开当前范围。用超过 30 行的文件列表在停靠面板和窄窗验收，关闭预览后文件列表获得空间，查询、选中行和位置保留，按 Return 可以打开原文件。另核对展开阅读器的 Esc 仍返回到紧凑预览。 [Beluga 关闭按钮](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L108-L114) · [Beluga Esc 行为](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L295-L310)
+- **用派单账本可靠唤回有新输入的暂缓事项。** 当前工作区预览只返回最近 12 条消息。用内存 SQLite 复现派单 A 新增消息后，派单 B 的 12 条更新挤掉了 A 的新消息。重开收件箱时应唤回已无限期暂缓的 A。仅 B 新增消息时，A 应继续暂缓。 [Cindy 新输入唤回规则](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/docs/product-rules/task-inbox.md#L79-L87) · [Hive 最近消息限制](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/action-center-summary.ts#L190-L195)
+- **把最早的排队用户消息送进当前回合。** Hive 目前只允许编辑或撤回排队行。用受控 Codex 保持主回合活动，排入 A 和 B，再在编辑器输入未发送的 C。触发后核对 A 使用原投递标识进入当前回合且只送一次，C 原样保留，B 在当前回合结束后继续。 [T3 Code 当前回合追加排队消息](https://github.com/pingdotgg/t3code/blob/6f5293fbdca476cddbc37466450983ba1dd2ada2/docs/user/composer.md#L76-L84)
+- **给文件面板加本地 PNG 和 JPEG 预览。** 当前运行时能搜索到有效 PNG，打开预览会报文件并非文本。在两个工作树各放一张路径相同、颜色不同的图片，覆盖停靠面板、窄窗和展开阅读，验证实际像素与工作树一致。另核对切换范围时迟到结果、损坏文件和尺寸限制。 [Beluga 文件读图](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/views/reader/FileReader.tsx#L89-L105)

@@ -160,6 +160,7 @@ pub enum ConversationSource {
 
 pub struct HiveApp {
     pub conversation_find: Option<crate::conversation_find::ConversationFind>,
+    pub(crate) assistant_quote_navigation: Option<Task<()>>,
     pub conversation_sources: Vec<ConversationSource>,
     pub navigation: NavigationSelection,
     pub sidebar_open: bool,
@@ -764,6 +765,7 @@ impl HiveApp {
             codex_command,
             claude_command,
             conversation_find: None,
+            assistant_quote_navigation: None,
             settings_panel: false,
             preferences_focus: cx.focus_handle(),
             preferences_modal_open: false,

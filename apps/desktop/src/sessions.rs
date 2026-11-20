@@ -14,6 +14,7 @@ enum ConversationOpen {
     AttachFiles(Vec<PathBuf>),
     Focus(String),
     Find(String),
+    Quote(String),
     Latest,
     Connect(NativeSessionPanel),
 }
@@ -1108,6 +1109,16 @@ impl HiveApp {
         self.navigate_to_session_at(hit.session, target, window.viewport_size().width < px(820.), cx)
     }
 
+    pub(crate) fn navigate_to_assistant_quote(
+        &mut self,
+        session: Session,
+        message: String,
+        narrow: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.navigate_to_session_at(session, ConversationOpen::Quote(message), narrow, cx)
+    }
+
     pub fn open_session(&mut self, id: String, cx: &mut Context<Self>) {
         self.close_collaboration();
         self.conversation_sources.clear();
@@ -1261,7 +1272,7 @@ impl HiveApp {
             self.status = "正在打开会话…".into();
         }
         let around_message_id = match &target {
-            ConversationOpen::Focus(id) | ConversationOpen::Find(id) => Some(id.clone()),
+            ConversationOpen::Focus(id) | ConversationOpen::Find(id) | ConversationOpen::Quote(id) => Some(id.clone()),
             ConversationOpen::Latest => None,
             ConversationOpen::Resume | ConversationOpen::AttachFiles(_) | ConversationOpen::Connect(_) => self.reading_positions.anchor(&request_workspace, &id)
                 .and_then(anchor_message)
@@ -1362,6 +1373,7 @@ impl HiveApp {
                                 this.attach_open_conversation_files(&request_workspace, &id, paths, cx);
                             }
                             ConversationOpen::Find(message) => this.finish_conversation_find_jump(&message, cx),
+                            ConversationOpen::Quote(message) => this.finish_assistant_quote_jump(&message, cx),
                             ConversationOpen::Focus(message_id) => {
                                 if let Some(message) = this.message_mut(&message_id)
                                     && let Some(failure) = &mut message.failure
