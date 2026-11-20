@@ -61,14 +61,27 @@ pub(in crate::collaboration) struct GlobalInboxView {
 }
 
 #[derive(Clone)]
-struct ReadingPosition {
+struct ReadingPosition(Vec<ReadingAnchor>);
+
+#[derive(Clone)]
+struct ReadingAnchor {
     row: RowId,
     viewport_offset: Pixels,
 }
 
 impl ReadingPosition {
-    fn item_index(&self, row_ids: &[Option<RowId>]) -> Option<usize> {
-        row_ids.iter().position(|id| id.as_ref() == Some(&self.row))
+    fn first_visible(&self, row_ids: &[Option<RowId>]) -> Option<(usize, Pixels)> {
+        self.0.iter().find_map(|anchor| {
+            let index = row_ids
+                .iter()
+                .position(|id| id.as_ref() == Some(&anchor.row))?;
+            Some((index, anchor.viewport_offset))
+        })
+    }
+
+    fn without(mut self, excluded: Option<&RowId>) -> Option<Self> {
+        self.0.retain(|anchor| Some(&anchor.row) != excluded);
+        (!self.0.is_empty()).then_some(self)
     }
 }
 
@@ -333,7 +346,7 @@ impl HiveApp {
                 inbox.restore_position = inbox
                     .restore_position
                     .take()
-                    .filter(|position| Some(&position.row) != removed.as_ref())
+                    .and_then(|position| position.without(removed.as_ref()))
                     .or_else(|| inbox.reading_position_without(removed.as_ref()));
                 inbox.completed.refresh_loaded(session);
                 cx.notify();
@@ -921,22 +934,29 @@ impl GlobalInbox {
         }
         let viewport = self.scroll.bounds();
         let last_visible = self.scroll.bottom_item();
-        self.row_ids
+        let anchors: Vec<_> = self
+            .row_ids
             .iter()
             .enumerate()
             .skip(self.scroll.top_item())
             .take_while(|(index, _)| *index <= last_visible)
-            .find_map(|(index, row)| {
+            .filter_map(|(index, row)| {
                 let row = row.as_ref()?;
                 if !matches(row) {
                     return None;
                 }
                 let bounds = self.scroll.bounds_for_item(index)?;
-                Some(ReadingPosition {
+                let top = bounds.top() + offset;
+                if top >= viewport.bottom() || bounds.bottom() + offset <= viewport.top() {
+                    return None;
+                }
+                Some(ReadingAnchor {
                     row: row.clone(),
-                    viewport_offset: bounds.top() + offset - viewport.top(),
+                    viewport_offset: top - viewport.top(),
                 })
             })
+            .collect();
+        (!anchors.is_empty()).then_some(ReadingPosition(anchors))
     }
 
     fn reserve_completed_row(&mut self, row: &RowId) {
@@ -2331,9 +2351,9 @@ impl Render for GlobalInbox {
         self.row_ids = ids;
         let restore = if ready && !loading {
             self.restore_position.take().and_then(|position| {
-                let index = position.item_index(&self.row_ids)?;
+                let (index, viewport_offset) = position.first_visible(&self.row_ids)?;
                 self.scroll.scroll_to_top_of_item(index);
-                Some((index, position.viewport_offset))
+                Some((index, viewport_offset))
             })
         } else {
             None
@@ -2452,8 +2472,8 @@ impl Render for GlobalInbox {
 mod tests {
     use super::{
         ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxFilter, InboxSections,
-        MemberFilter, ProjectInbox, ReadingPosition, RowId, display_project, matches_member,
-        member_choices, row_is_visible, selected_project, update_new_items,
+        MemberFilter, ProjectInbox, ReadingAnchor, ReadingPosition, RowId, display_project,
+        matches_member, member_choices, row_is_visible, selected_project, update_new_items,
     };
     use crate::collaboration::inbox::Priority;
     use crate::collaboration::inbox::placement::SnoozedUntil;
@@ -2666,16 +2686,63 @@ mod tests {
         };
         let anchor = RowId::for_entry("beacon", &entry);
         let atlas = RowId::for_entry("atlas", &entry);
-        let saved = ReadingPosition {
+        let saved = ReadingPosition(vec![ReadingAnchor {
             row: anchor.clone(),
             viewport_offset: px(-8.),
-        };
-        assert_eq!(saved.item_index(&[None, Some(anchor.clone())]), Some(1));
+        }]);
         assert_eq!(
-            saved.item_index(&[None, Some(atlas.clone()), None, Some(anchor)]),
-            Some(3)
+            saved.first_visible(&[None, Some(anchor.clone())]),
+            Some((1, px(-8.)))
         );
-        assert_eq!(saved.item_index(&[None, Some(atlas)]), None);
+        assert_eq!(
+            saved.first_visible(&[None, Some(atlas.clone()), None, Some(anchor)]),
+            Some((3, px(-8.)))
+        );
+        assert_eq!(saved.first_visible(&[None, Some(atlas)]), None);
+    }
+
+    #[test]
+    fn reading_position_uses_each_surviving_neighbor_at_its_original_offset() {
+        let opened = RowId::from_key("beacon", "session:opened".into());
+        let second = RowId::from_key("beacon", "session:second".into());
+        let third = RowId::from_key("beacon", "session:third".into());
+        let same_id_in_another_project = RowId::from_key("atlas", "session:opened".into());
+        let position = ReadingPosition(vec![
+            ReadingAnchor {
+                row: opened.clone(),
+                viewport_offset: px(-5.),
+            },
+            ReadingAnchor {
+                row: second.clone(),
+                viewport_offset: px(29.),
+            },
+            ReadingAnchor {
+                row: third.clone(),
+                viewport_offset: px(65.),
+            },
+        ]);
+        let rows_after_opening = [
+            Some(same_id_in_another_project),
+            Some(third.clone()),
+            None,
+            Some(second.clone()),
+        ];
+        assert_eq!(
+            position.first_visible(&rows_after_opening),
+            Some((3, px(29.)))
+        );
+        let rows_after_both_removed = [None, Some(third)];
+        assert_eq!(
+            position.first_visible(&rows_after_both_removed),
+            Some((1, px(65.)))
+        );
+        assert_eq!(
+            position
+                .without(Some(&opened))
+                .unwrap()
+                .first_visible(&[Some(opened), Some(second)]),
+            Some((1, px(29.)))
+        );
     }
 
     #[test]

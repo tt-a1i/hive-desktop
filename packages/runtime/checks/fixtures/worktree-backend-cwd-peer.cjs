@@ -10,7 +10,7 @@ log({event: 'start', args});
 let state, entries = [], servers = [], parentUuid = null;
 if (backend === 'codex') {
   const id = crypto.randomUUID();
-  state = {id, path: path.join(cwd, `.fixture-codex-thread-${id}.json`), cwd, historyMode: 'paginated', turns: [], model: 'fixture-cwd'};
+  state = {id, path: path.join(cwd, `.fixture-codex-thread-${id}.json`), cwd, historyMode: 'paginated', turns: [], model: 'fixture-cwd', reasoningEffort: 'medium'};
 } else if (backend === 'pi-rpc') {
   const file = arg('--session') ?? path.join(arg('--session-dir'), crypto.randomUUID() + '.jsonl');
   if (fs.existsSync(file)) {
@@ -26,10 +26,11 @@ if (backend === 'codex') {
 } else {
   const sid = arg('--session-id') ?? arg('--resume');
   const file = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), sid + '.jsonl');
-  state = {sid, file, model: process.env.HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE ? 'fixture-cwd' : arg('--model') ?? 'fixture-cwd'};
+  state = {sid, file, model: process.env.HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE ? 'fixture-cwd' : arg('--model') ?? 'fixture-cwd', effort: 'medium'};
   if (fs.existsSync(file)) for (const raw of fs.readFileSync(file, 'utf8').trim().split('\n')) { const row = JSON.parse(raw); if (row.uuid) parentUuid = row.uuid; }
 }
 const availableModels = ['fixture-cwd', 'fixture-inherited'];
+const availableEfforts = process.env.HIVE_CWD_FIXTURE_EFFORT_MISSING ? ['medium'] : ['low', 'medium', 'high'];
 const codexModel = () => ({model: state.model, modelProvider: 'openai'});
 const saveCodex = () => fs.writeFileSync(state.path, JSON.stringify(state));
 const notify = (method, params) => send({method, params: {threadId: state.id, ...params}});
@@ -38,13 +39,14 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
     const q = JSON.parse(raw);
     if (backend === 'codex') {
       if (!q.method) return;
-      log({event: 'request', method: q.method, params: q.params, ...(q.method === 'turn/start' && {effectiveModel: state.model, effectiveMode: state.collaborationMode?.mode})});
+      log({event: 'request', method: q.method, params: q.params, ...(q.method === 'turn/start' && {effectiveModel: state.model, effectiveMode: state.collaborationMode?.mode, effectiveEffort: state.reasoningEffort})});
       const answer = result => send({id: q.id, result});
       if (q.method === 'initialize') answer({});
       else if (q.method === 'model/list') {
         const missing = process.env.HIVE_CWD_FIXTURE_MODEL_MISSING;
         const ids = q.params.cursor ? availableModels.slice(1) : availableModels.slice(0, 1);
-        answer({data: ids.map(id => ({id, model:id, displayName: id, hidden: false})), nextCursor: q.params.cursor || missing ? null : 'second-page'});
+        answer({data: ids.map(id => ({id, model:id, displayName: id, hidden: false,
+          supportedReasoningEfforts: availableEfforts.map(reasoningEffort => ({reasoningEffort, description:reasoningEffort}))})), nextCursor: q.params.cursor || missing ? null : 'second-page'});
       }
       else if (q.method === 'configRequirements/read') answer({requirements: null});
       else if (q.method === 'collaborationMode/list')
@@ -62,12 +64,13 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
       else if (q.method === 'thread/read') answer({thread: {...state, turns: []}, ...codexModel()});
       else if (q.method === 'thread/settings/update') {
         if (q.params.model) state.model = q.params.model;
+        if (q.params.effort && !process.env.HIVE_CWD_FIXTURE_EFFORT_MISMATCH) state.reasoningEffort = q.params.effort;
         if (q.params.collaborationMode) {
           state.collaborationMode = {...q.params.collaborationMode};
           if (process.env.HIVE_CWD_FIXTURE_MODE_MISMATCH) state.collaborationMode.mode = 'default';
         }
         saveCodex(); answer({});
-        const threadSettings = {model: state.model, collaborationMode: state.collaborationMode};
+        const threadSettings = {model: state.model, effort: state.reasoningEffort, collaborationMode: state.collaborationMode};
         log({event: 'notification', method: 'thread/settings/updated', params: {threadId: state.id, threadSettings}});
         notify('thread/settings/updated', {threadSettings});
       }
@@ -106,10 +109,11 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
       log({event: 'incoming', type: q.type, subtype: q.request?.subtype, shouldQuery: q.shouldQuery});
       if (q.type === 'control_request') {
         const sub = q.request.subtype; let response = {};
-        if (sub === 'initialize') { servers = q.request.sdkMcpServers ?? []; response = {commands: [], models: availableModels.map(id => ({value:id, displayName:id, description: 'No inference'})), account: {}}; }
+        if (sub === 'initialize') { servers = q.request.sdkMcpServers ?? []; response = {commands: [], models: availableModels.map(id => ({value:id, displayName:id, description: 'No inference', supportsEffort: true, supportedEffortLevels: availableEfforts})), account: {}}; }
         else if (sub === 'mcp_status') response = {mcpServers: servers.map(name => ({name, status: 'connected', serverInfo: {name, version: '1'}, config: {type: 'sdk', name}}))};
         else if (sub === 'set_model') state.model = q.request.model;
-        else if (sub === 'get_settings') response = {applied: {model: state.model, effort: 'medium'}};
+        else if (sub === 'get_settings') response = {applied: {model: state.model, effort: state.effort}};
+        else if (sub === 'apply_flag_settings' && !process.env.HIVE_CWD_FIXTURE_EFFORT_MISMATCH) state.effort = q.request.settings.effortLevel;
         send({type: 'control_response', response: {subtype: 'success', request_id: q.request_id, response}});
       } else if (q.type === 'user') {
         if (q.shouldQuery !== false) throw Error('Claude model query is forbidden in this fixture');

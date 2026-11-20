@@ -1386,7 +1386,8 @@ impl HiveApp {
                             ConversationOpen::Connect(panel)
                                 if !this.conversation_is_read_only()
                                     && this.unavailable_inherited_model().is_none()
-                                    && this.unavailable_inherited_work_mode().is_none() => match panel {
+                                    && this.unavailable_inherited_work_mode().is_none()
+                                    && this.unavailable_inherited_reasoning().is_none() => match panel {
                                 NativeSessionPanel::Models => {
                                     this.choosing_model = true;
                                     this.load_reasoning(None, cx);

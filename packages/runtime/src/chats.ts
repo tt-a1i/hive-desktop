@@ -160,6 +160,7 @@ function isVisibleInboxReply(message: unknown): boolean {
 type SessionSnapshotError = SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError | CodexSavedModeError;
 const inheritedModelUnavailable = '继承的模型无法使用。请选择其他模型，或修复 Agent 配置后重试。';
 const inheritedWorkModeUnavailable = '继承的工作模式无法使用。请选择其他模式，或修复 Agent 配置后重试。';
+const inheritedReasoningUnavailable = '继承的推理强度无法使用。请选择其他强度，或修复 Agent 配置后重试。';
 function inheritedModelFrom(backend: ChatBackend, model: ChatRecord['model']): Pick<ChatRecord, 'model' | 'inheritedDraftModel'> {
   return backend !== 'acp' && model && !(backend === 'pi' && isUnsetPiModel(model)) ? {model: {...model}, inheritedDraftModel: true} : {};
 }
@@ -169,6 +170,11 @@ function inheritedWorkModeFrom(backend: ChatBackend, mode?: string): Pick<ChatRe
   if (backend !== 'codex' || mode === undefined) return {};
   if (!isCodexWorkMode(mode)) throw new SessionIdentityError('FRESH_DRAFT_WORK_MODE_UNAVAILABLE', inheritedWorkModeUnavailable);
   return {nativeMode: {backend, mode}, inheritedDraftWorkMode: mode};
+}
+function inheritedReasoningFrom(backend: ChatBackend, model: ChatRecord['model'], reasoning: ChatRecord['reasoning']): Pick<ChatRecord, 'reasoning' | 'inheritedDraftReasoning'> {
+  if ((backend !== 'codex' && backend !== 'claude') || !model || !reasoning || model.provider !== reasoning.provider
+    || model.id !== reasoning.modelId || reasoning.level === 'native' || reasoning.level === 'default') return {};
+  return {reasoning: {...reasoning}, inheritedDraftReasoning: reasoning.level};
 }
 function isSessionSnapshotError(error: unknown): error is SessionSnapshotError {
   return error instanceof SessionIdentityError || error instanceof DispatchOriginError ||
@@ -500,6 +506,8 @@ export class Chats implements StructuredSessionPort {
       ...(record.unavailableDraftModel && {unavailableModel: record.model}),
       ...(record.inheritedDraftWorkMode && {inheritedDraftWorkMode: record.inheritedDraftWorkMode}),
       ...(record.unavailableWorkMode && {unavailableWorkMode: record.unavailableWorkMode}),
+      ...(record.inheritedDraftReasoning && {inheritedDraftReasoning: record.inheritedDraftReasoning}),
+      ...(record.unavailableReasoning && {unavailableReasoning: record.unavailableReasoning}),
       ...(record.worktreeReleased && {worktreeReleased: true as const}),
       ...(record.scratch && {scratch: true as const}), executionPath,
       ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.handoff&&{handoff:{...record.handoff}}), identityState: record.identityState ?? 'unknown'};
@@ -857,7 +865,8 @@ export class Chats implements StructuredSessionPort {
         ...(creation?.prReview && {prReview: creation.prReview, customTitle: true}),
         ...(creation?.profile && {profile: creation.profile}), ...(creation?.legacyConfiguration && {legacyConfiguration: true}),
         ...(creation?.freshDraftSourceSessionId && {deferFirstConnection: true as const, freshDraftSourceSessionId: creation.freshDraftSourceSessionId,
-          ...inheritedModelFrom(creation.backend, creation.model), ...inheritedWorkModeFrom(creation.backend, creation.freshDraftWorkMode)}),
+          ...inheritedModelFrom(creation.backend, creation.model), ...inheritedWorkModeFrom(creation.backend, creation.freshDraftWorkMode),
+          ...inheritedReasoningFrom(creation.backend, creation.model, creation.freshDraftReasoning)}),
         identityState: creation?.identityState ?? 'new', ...(creation?.originAgentId && {originAgentId: creation.originAgentId}), ...(creation?.model && {model: creation.model}),
         execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
       this.assertWorkspaceAvailable(workspaceId);
@@ -1860,17 +1869,29 @@ export class Chats implements StructuredSessionPort {
         this.index.save({...this.index.get(record.id),capabilities:acpCapabilities(acp,true)});
       }
       let reasoningFailure = recoveryFailure;
-      if (!recoveryFailure && record.reasoning && handle.reasoning && handle.setReasoning) {
+      if (record.inheritedDraftReasoning || (!recoveryFailure && record.reasoning && handle.reasoning && handle.setReasoning)) {
         let applying = false;
         try {
+          if (!record.reasoning || !handle.reasoning || !handle.setReasoning) throw new Error('No native reasoning controls');
           const state = await handle.reasoning();
           const model = handle.currentModel();
           if (model && model.provider === record.reasoning.provider && model.id === record.reasoning.modelId) {
             if (!state.levels.includes(record.reasoning.level)) throw new Error('保存的推理档位已不在当前原生模型能力中，请重新选择。');
             applying = true;
-            await handle.setReasoning(record.reasoning.level);
-          }
+            const applied = await handle.setReasoning(record.reasoning.level);
+            const confirmedModel = handle.currentModel();
+            if (record.inheritedDraftReasoning && (applied.level !== record.reasoning.level
+              || confirmedModel?.provider !== record.reasoning.provider || confirmedModel.id !== record.reasoning.modelId))
+              throw new Error('Agent did not confirm the inherited reasoning effort for the selected model');
+          } else if (record.inheritedDraftReasoning) throw new Error('Agent changed the model identity during reasoning verification');
         } catch (error) {
+          if (record.inheritedDraftReasoning) {
+            this.closeAbort.signal.throwIfAborted();
+            const current = this.index.get(record.id);
+            if (current.inheritedDraftReasoning && !current.unavailableReasoning)
+              this.index.save({...current, unavailableReasoning: current.inheritedDraftReasoning});
+            throw new SessionIdentityError('FRESH_DRAFT_REASONING_UNAVAILABLE', inheritedReasoningUnavailable, {cause: error});
+          }
           reasoningFailure = error instanceof Error ? error : new Error(String(error));
           if (applying) {
             await handle.dispose();
@@ -1898,6 +1919,7 @@ export class Chats implements StructuredSessionPort {
       const ready = this.index.get(record.id);
       delete ready.unavailableDraftModel;
       delete ready.unavailableWorkMode;
+      delete ready.unavailableReasoning;
       this.index.save({ ...ready, ...(record.backend === 'codex'
         ? (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}
         : record.backend === 'claude' ? { sessionFile: null, nativeclaudeSessionId: handle.sessionId }
@@ -2615,6 +2637,7 @@ export class Chats implements StructuredSessionPort {
       const creation: WorktreeCreation = {version: setup ? 2 : 1, ...(setup && {setup}), workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
         ...(record.freshDraftSourceSessionId && {freshDraftSourceSessionId: record.freshDraftSourceSessionId}),
         ...(record.inheritedDraftWorkMode && {freshDraftWorkMode: record.inheritedDraftWorkMode}),
+        ...(record.inheritedDraftReasoning && record.reasoning && {freshDraftReasoning: record.reasoning}),
         identityState: record.originAgentId ? 'known' : 'new', ...(record.prReview && {prReview: record.prReview}), ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.model && {model: record.model})};
       const owned = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id, creation,
         ...(options.branch !== undefined && {branch: options.branch}),
@@ -2642,7 +2665,7 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
       const selected = await this.selectedProfile(backend, options.profile);
-      let inheritance: ReturnType<typeof inheritedModelFrom> & ReturnType<typeof inheritedWorkModeFrom> = {};
+      let inheritance: ReturnType<typeof inheritedModelFrom> & ReturnType<typeof inheritedWorkModeFrom> & ReturnType<typeof inheritedReasoningFrom> = {};
       if (options.sourceSessionId !== undefined) {
         const source = this.index.peek(options.sourceSessionId);
         const lead = `${workspaceId}:orchestrator`;
@@ -2652,7 +2675,8 @@ export class Chats implements StructuredSessionPort {
           || source.execution || source.scratch || (source.originAgentId && source.originAgentId !== lead)
           || (source.agentId && source.agentId !== lead) || await isScratchWorkspace(this.dataDir, workspace.path))
           throw new SessionIdentityError('FRESH_DRAFT_SOURCE_INVALID', '请选择当前项目中使用同一后端和配置的会话来创建后续草稿。');
-        inheritance = {...inheritedModelFrom(backend, source.model), ...inheritedWorkModeFrom(backend, source.nativeMode?.mode)};
+        inheritance = {...inheritedModelFrom(backend, source.model), ...inheritedWorkModeFrom(backend, source.nativeMode?.mode),
+          ...inheritedReasoningFrom(backend, source.model, source.reasoning)};
       }
       return this.saveNewRecord(workspace, {
         id: randomUUID(), workspaceId, backend, profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new',
@@ -2682,7 +2706,7 @@ export class Chats implements StructuredSessionPort {
         if (existing) return this.publicSession(existing, await this.executionPath(existing, workspace));
         if (owned.projectRoot !== await realpath(workspace.path)) throw conflict();
         const recovered = await recoverManagedWorktree(this.dataDir, owned);
-        const record: ChatRecord = {...this.freshWorktreeDraft(requestId, workspaceId, creation.backend, creation.profile, sourceSessionId, creation.model, creation.freshDraftWorkMode),
+        const record: ChatRecord = {...this.freshWorktreeDraft(requestId, workspaceId, creation.backend, creation.profile, sourceSessionId, creation.model, creation.freshDraftWorkMode, creation.freshDraftReasoning),
           execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
         this.assertWorkspaceAvailable(workspaceId);
         this.closeAbort.signal.throwIfAborted();
@@ -2699,17 +2723,17 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       this.closeAbort.signal.throwIfAborted();
       if (this.index.peek(requestId)) throw conflict();
-      const record = await this.saveNewRecord(workspace, this.freshWorktreeDraft(requestId, workspaceId, source.backend, selected.ref, source.id, source.model, source.nativeMode?.mode), {
+      const record = await this.saveNewRecord(workspace, this.freshWorktreeDraft(requestId, workspaceId, source.backend, selected.ref, source.id, source.model, source.nativeMode?.mode, source.reasoning), {
         isolation: 'worktree', worktreeStart: {oid: owned.baseOid, commonDir: owned.repoCommonDir},
       });
       return this.publicSession(record, record.execution!.path);
     });
   }
 
-  private freshWorktreeDraft(id: string, workspaceId: string, backend: ChatBackend, profile: AgentProfileRef, freshDraftSourceSessionId: string, model?: ChatRecord['model'], mode?: string): ChatRecord {
+  private freshWorktreeDraft(id: string, workspaceId: string, backend: ChatBackend, profile: AgentProfileRef, freshDraftSourceSessionId: string, model?: ChatRecord['model'], mode?: string, reasoning?: ChatRecord['reasoning']): ChatRecord {
     return {id, workspaceId, backend, profile, title: '新会话', sessionFile: null,
       updatedAt: Date.now(), identityState: 'new', deferFirstConnection: true, freshDraftSourceSessionId,
-      ...inheritedModelFrom(backend, model), ...inheritedWorkModeFrom(backend, mode)};
+      ...inheritedModelFrom(backend, model), ...inheritedWorkModeFrom(backend, mode), ...inheritedReasoningFrom(backend, model, reasoning)};
   }
 
   resetFreshDraftModel(workspaceId: string, id: string, expectedProvider: string, expectedModelId: string) {
@@ -2731,6 +2755,8 @@ export class Chats implements StructuredSessionPort {
       delete record.inheritedDraftModel;
       delete record.unavailableDraftModel;
       delete record.reasoning;
+      delete record.inheritedDraftReasoning;
+      delete record.unavailableReasoning;
       // A picker connection may have prepared an unbound native session. The
       // explicit reset must not resume that session's stale model settings.
       // Its files are retained, and this draft has never sent a user turn.
@@ -2762,6 +2788,31 @@ export class Chats implements StructuredSessionPort {
       delete record.unavailableWorkMode;
       if (record.nativeMode?.permissionMode) delete record.nativeMode.mode;
       else delete record.nativeMode;
+      this.index.save(record);
+      return this.publicSession(this.index.get(id), path);
+    });
+  }
+  resetFreshDraftReasoning(workspaceId: string, id: string, expectedLevel: string) {
+    return this.withWorkspace(workspaceId, async () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      this.closeAbort.signal.throwIfAborted();
+      const getDraft = () => {
+        const record = this.index.peek(id);
+        if (record?.workspaceId !== workspaceId || !record.inheritedDraftReasoning || record.inheritedDraftReasoning !== expectedLevel
+          || !this.isUnstartedDraft(record))
+          throw new SessionIdentityError('FRESH_DRAFT_REASONING_CHANGED', '此草稿的推理强度或会话状态已变化，请重新打开草稿后重试。');
+        return record;
+      };
+      getDraft();
+      const path = await this.executionDirectory(workspaceId, id);
+      this.closeAbort.signal.throwIfAborted();
+      const record = getDraft();
+      delete record.reasoning;
+      delete record.inheritedDraftReasoning;
+      delete record.unavailableReasoning;
+      // An offline Claude picker may have persisted a pre-turn SDK session.
+      // Reapplying the profile default must not resume that native override.
+      if (record.backend === 'claude') delete record.nativeclaudeSessionId;
       this.index.save(record);
       return this.publicSession(this.index.get(id), path);
     });
@@ -3072,7 +3123,7 @@ export class Chats implements StructuredSessionPort {
       && !record.agentId && !record.originAgentId && !record.nativeImport && !record.handoff && !record.lineage
       // The user can connect to inspect an inherited selection before sending.
       // Such an unbound conversation may have a native ID but still has no turns.
-      && (record.inheritedDraftModel || record.inheritedDraftWorkMode || (!record.sessionFile && !record.piSessionId && !record.externalPiSessionId
+      && (record.inheritedDraftModel || record.inheritedDraftWorkMode || !!record.inheritedDraftReasoning || (!record.sessionFile && !record.piSessionId && !record.externalPiSessionId
         && !record.codexThreadId && !record.nativeclaudeSessionId && !record.acpSessionId))
       && this.canBrowseSavedHistory(record);
   }
@@ -3173,7 +3224,8 @@ export class Chats implements StructuredSessionPort {
       const live = this.live.get(id);
       if (live) await this.stopLive(id, live);
       const current=this.index.get(id);
-      if (error instanceof SessionIdentityError && (error.code === 'FRESH_DRAFT_MODEL_UNAVAILABLE' || error.code === 'FRESH_DRAFT_WORK_MODE_UNAVAILABLE')
+      if (error instanceof SessionIdentityError && (error.code === 'FRESH_DRAFT_MODEL_UNAVAILABLE' || error.code === 'FRESH_DRAFT_WORK_MODE_UNAVAILABLE'
+        || error.code === 'FRESH_DRAFT_REASONING_UNAVAILABLE')
         && this.isUnstartedDraft(current)) {
         return {...await this.readOnlySnapshot(current, error, {includeHistory: false}), readOnly: false, passive: true, savedHistoryPassive: true};
       }
@@ -3398,7 +3450,7 @@ export class Chats implements StructuredSessionPort {
   }
   private async activateOnce(id: string, forUserInput = false, forSettings = false) {
     const {record, agentId, previous} = await this.activationAvailable(id);
-    if (record.inheritedDraftModel || record.inheritedDraftWorkMode) await this.require(id);
+    if (record.inheritedDraftModel || record.inheritedDraftWorkMode || record.inheritedDraftReasoning) await this.require(id);
     const active = this.runtime.getActiveRunByAgentId(record.workspaceId, agentId);
     if (previous?.id !== id && active) {
       if (forSettings) throw new Error('Stop the member’s current conversation before connecting another for ACP settings');
@@ -4148,7 +4200,14 @@ export class Chats implements StructuredSessionPort {
         if (record.backend === 'codex' || record.backend === 'claude') {
           const model = chat.handle.currentModel();
           if (!model) throw new Error('原生会话未提供可保存推理设置的模型身份。');
-          this.index.save({...this.index.get(id),model,reasoning:{provider:model.provider,modelId:model.id,level:level as string}});
+          const current = this.index.get(id);
+          delete current.inheritedDraftReasoning;
+          delete current.unavailableReasoning;
+          // An explicit picker may accept the backend's advertised clamped
+          // value. Only the level that actually applied is eligible to inherit.
+          if (state.levels.includes(state.level)) current.reasoning = {provider:model.provider,modelId:model.id,level:state.level};
+          else delete current.reasoning;
+          this.index.save({...current, model});
         }
         delete chat.reasoningFailure;
         return decorate(state);
@@ -4187,6 +4246,8 @@ export class Chats implements StructuredSessionPort {
         delete record.inheritedDraftModel;
         delete record.unavailableDraftModel;
         delete record.reasoning;
+        delete record.inheritedDraftReasoning;
+        delete record.unavailableReasoning;
         this.index.save(record);
         delete chat.reasoningFailure;
         if (record.agentId) this.hive.configureAgentLaunch(record.workspaceId, record.agentId, this.launchConfig(record));

@@ -1,7 +1,7 @@
 import { isGithubPrReviewSeed, type GithubPrReviewSeed } from './github-pr-review.js';
 import type { AgentCapabilities } from './agent-capabilities.js';
 import type { AgentProfileRef } from './agent-profiles.js';
-import { isCodexWorkMode, type CodexWorkMode } from './agents/types.js';
+import { isCodexWorkMode, isSavedReasoning, type CodexWorkMode, type SavedReasoning } from './agents/types.js';
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -33,6 +33,8 @@ export interface ChatRecord {
   unavailableDraftModel?: true;
   inheritedDraftWorkMode?: CodexWorkMode;
   unavailableWorkMode?: CodexWorkMode;
+  inheritedDraftReasoning?: string;
+  unavailableReasoning?: string;
   handoff?: {operationId:string;snapshotId:string;snapshotHash:string;sourceSessionId:string};
   profile?: AgentProfileRef;
   legacyConfiguration?: true;
@@ -58,7 +60,7 @@ export interface ChatRecord {
   lastDeliveryFailure?: DeliveryFailure;
   inboxReply?: {revision: number; messageId: string; receivedAt?: number};
   nativeMode?: {backend: 'codex' | 'claude'; mode?: string; permissionMode?: string};
-  reasoning?: {provider:string;modelId:string;level:string};
+  reasoning?: SavedReasoning;
   sessionFile: string | null;
   agentId?: string;
   /** The first binding is immutable; agentId remains only the current binding. */
@@ -148,7 +150,8 @@ export class ChatIndex {
     assertWorktreeUse(original);
     if (original.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its history is read-only; create a new conversation to continue.');
     if (original.originAgentId && original.originAgentId !== agentId) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'A historical conversation cannot be rebound to a different agent.');
-    const {deferFirstConnection, inheritedDraftModel, unavailableDraftModel, inheritedDraftWorkMode, unavailableWorkMode, ...session} = original;
+    const {deferFirstConnection, inheritedDraftModel, unavailableDraftModel, inheritedDraftWorkMode, unavailableWorkMode,
+      inheritedDraftReasoning, unavailableReasoning, ...session} = original;
     const bound: ChatRecord = { ...session, agentId, originAgentId: original.originAgentId ?? agentId, identityState: 'known' };
     const next = this.records.map(record => {
       if (record.id === id) return bound;
@@ -375,6 +378,14 @@ function isChatRecord(value: unknown): value is ChatRecord {
     || record.deferFirstConnection !== true || (record.nativeMode as ChatRecord['nativeMode'])?.mode !== record.inheritedDraftWorkMode
     || record.agentId || record.originAgentId)
     || record.unavailableWorkMode !== undefined && record.unavailableWorkMode !== record.inheritedDraftWorkMode) return false;
+  if (record.inheritedDraftReasoning !== undefined) {
+    const model = record.model as ChatRecord['model'];
+    if (!isSavedReasoning(record.reasoning) || record.reasoning.level !== record.inheritedDraftReasoning
+      || model?.provider !== record.reasoning.provider || model.id !== record.reasoning.modelId
+      || (record.backend !== 'codex' && record.backend !== 'claude') || record.deferFirstConnection !== true
+      || record.agentId || record.originAgentId) return false;
+  }
+  if (record.unavailableReasoning !== undefined && record.unavailableReasoning !== record.inheritedDraftReasoning) return false;
   if (record.deferFirstConnection !== undefined && record.deferFirstConnection !== true || !validFreshWorktreeDraft(record)) return false;
   if (record.draftCopy !== undefined && (typeof record.draftCopy !== 'string' || !/^[a-f0-9]{64}$/.test(record.draftCopy))) return false;
   if (record.handoff !== undefined) {
@@ -429,10 +440,7 @@ function isChatRecord(value: unknown): value is ChatRecord {
       || (mode.permissionMode !== undefined && (mode.backend !== 'codex' || typeof mode.permissionMode !== 'string' || !mode.permissionMode))
       || (mode.mode === undefined && mode.permissionMode === undefined)) return false;
   }
-  if (record.reasoning !== undefined) {
-    const setting = record.reasoning as Record<string,unknown> | null;
-    if (!setting || typeof setting !== 'object' || Array.isArray(setting) || !['provider','modelId','level'].every(key=>typeof setting[key]==='string' && (setting[key] as string).length>0)) return false;
-  }
+  if (record.reasoning !== undefined && !isSavedReasoning(record.reasoning)) return false;
   if (record.customTitle !== undefined && typeof record.customTitle !== 'boolean') return false;
   if (record.backend !== undefined && record.backend !== 'pi' && record.backend !== 'codex' && record.backend !== 'pi-rpc' && record.backend !== 'claude' && record.backend !== 'acp') return false;
   if (record.nativeclaudeSessionId !== undefined && typeof record.nativeclaudeSessionId !== 'string') return false;

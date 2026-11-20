@@ -1,6 +1,6 @@
 import { isGithubPrReviewSeed, type GithubPrReviewSeed } from './github-pr-review.js';
 import type { AgentProfileRef } from './agent-profiles.js';
-import { isCodexWorkMode, type CodexWorkMode } from './agents/types.js';
+import { isCodexWorkMode, isSavedReasoning, type CodexWorkMode, type SavedReasoning } from './agents/types.js';
 import { readGitRemote, remoteBranchOid, remoteVersion, type VerifiedGitPush } from './git-remotes.js';
 import { getGitWorkspaceStatus } from './git-workspace.js';
 import { validateInitializationPlan, type InitializationPlan } from './project-worktree-initialization.js';
@@ -42,6 +42,7 @@ export interface WorktreeCreation {
   /** Source conversation retained for idempotent successor creation. */
   freshDraftSourceSessionId?: string;
   freshDraftWorkMode?: CodexWorkMode;
+  freshDraftReasoning?: SavedReasoning;
 }
 type RemovalIntent = {headOid: string; repositoryIdentity: string};
 type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation; forkPublished?: boolean; handoffPublished?: boolean; removal?: RemovalIntent; removed?: true };
@@ -81,6 +82,10 @@ function validateCreation(creation: WorktreeCreation | undefined): void {
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fresh worktree draft provenance');
   if (creation.freshDraftWorkMode !== undefined && (!creation.freshDraftSourceSessionId || creation.backend !== 'codex' || !isCodexWorkMode(creation.freshDraftWorkMode)))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fresh worktree draft collaboration mode');
+  if (creation.freshDraftReasoning !== undefined && (!creation.freshDraftSourceSessionId
+    || (creation.backend !== 'codex' && creation.backend !== 'claude') || !isSavedReasoning(creation.freshDraftReasoning)
+    || creation.model?.provider !== creation.freshDraftReasoning.provider || creation.model.id !== creation.freshDraftReasoning.modelId))
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fresh worktree draft reasoning setting');
   if (creation.version === 2) validateInitializationPlan(creation.setup);
   else if (creation.setup !== undefined) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Legacy intent cannot carry setup');
 }

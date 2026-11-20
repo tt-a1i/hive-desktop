@@ -431,6 +431,14 @@ impl HiveApp {
                 cx,
                 move |this, _, _| {
                     if this.session.as_ref().map(|s| &s.id) == Some(&id) {
+                        let changing_model = this.model.as_ref().is_none_or(|current| {
+                            current.provider != model.provider || current.id != model.id
+                        });
+                        if changing_model && let Some(session) = &mut this.session {
+                            session.inherited_draft_model = false;
+                            session.inherited_draft_reasoning = None;
+                            session.unavailable_reasoning = None;
+                        }
                         this.choosing_model = false;
                         this.reasoning_picker = Default::default();
                         this.mode_picker = Default::default();

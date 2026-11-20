@@ -9,6 +9,8 @@ const UNAVAILABLE_INHERITED_MODEL: &str =
     "继承的模型无法使用。请选择其他模型，或修复 Agent 配置后重试。";
 const UNAVAILABLE_INHERITED_MODE: &str =
     "继承的工作模式无法使用。请选择其他模式，或修复 Agent 配置后重试。";
+const UNAVAILABLE_INHERITED_REASONING: &str =
+    "继承的推理强度无法使用。请选择其他强度，或修复 Agent 配置后重试。";
 
 fn is_unavailable_error(error: &str, prefix: &str, message: &str) -> bool {
     error.strip_prefix(prefix).unwrap_or(error) == message
@@ -17,6 +19,7 @@ fn is_unavailable_error(error: &str, prefix: &str, message: &str) -> bool {
 enum DraftSetting {
     Model(ModelIdentity),
     WorkMode(DraftWorkMode),
+    Reasoning(String),
 }
 
 impl DraftSetting {
@@ -39,6 +42,14 @@ impl DraftSetting {
                     "expectedMode": mode,
                 }),
             ),
+            Self::Reasoning(level) => (
+                "chat.resetFreshDraftReasoning",
+                json!({
+                    "workspaceId": source.workspace_id,
+                    "sessionId": source.id,
+                    "expectedLevel": level,
+                }),
+            ),
         }
     }
 
@@ -47,11 +58,20 @@ impl DraftSetting {
             Self::Model(_) => {
                 !updated.inherited_draft_model
                     && updated.inherited_draft_work_mode == source.inherited_draft_work_mode
+                    && updated.inherited_draft_reasoning.is_none()
+                    && updated.unavailable_reasoning.is_none()
             }
             Self::WorkMode(_) => {
                 updated.inherited_draft_work_mode.is_none()
                     && updated.unavailable_work_mode.is_none()
                     && updated.inherited_draft_model == source.inherited_draft_model
+                    && updated.inherited_draft_reasoning == source.inherited_draft_reasoning
+            }
+            Self::Reasoning(_) => {
+                updated.inherited_draft_reasoning.is_none()
+                    && updated.unavailable_reasoning.is_none()
+                    && updated.inherited_draft_model == source.inherited_draft_model
+                    && updated.inherited_draft_work_mode == source.inherited_draft_work_mode
             }
         }
     }
@@ -60,6 +80,7 @@ impl DraftSetting {
         match self {
             Self::Model(_) => "无法使用配置默认模型",
             Self::WorkMode(_) => "无法使用配置默认工作模式",
+            Self::Reasoning(_) => "无法使用默认推理强度",
         }
     }
 }
@@ -77,6 +98,14 @@ impl HiveApp {
         session.unavailable_work_mode.filter(|mode| {
             self.workspace.as_ref() == Some(&session.workspace_id)
                 && session.inherited_draft_work_mode == Some(*mode)
+        })
+    }
+
+    pub(crate) fn unavailable_inherited_reasoning(&self) -> Option<&str> {
+        let session = self.session.as_ref()?;
+        session.unavailable_reasoning.as_deref().filter(|level| {
+            self.workspace.as_ref() == Some(&session.workspace_id)
+                && session.inherited_draft_reasoning.as_deref() == Some(*level)
         })
     }
 
@@ -108,6 +137,18 @@ impl HiveApp {
             session.unavailable_work_mode = Some(mode);
             return true;
         }
+        if session.inherited_draft_reasoning.is_some()
+            && is_unavailable_error(
+                message,
+                "[FRESH_DRAFT_REASONING_UNAVAILABLE] ",
+                UNAVAILABLE_INHERITED_REASONING,
+            )
+        {
+            session
+                .unavailable_reasoning
+                .clone_from(&session.inherited_draft_reasoning);
+            return true;
+        }
         false
     }
 
@@ -134,6 +175,12 @@ impl HiveApp {
     pub(crate) fn reset_inherited_work_mode(&mut self, cx: &mut Context<Self>) {
         if let Some(mode) = self.unavailable_inherited_work_mode() {
             self.reset_draft_setting(DraftSetting::WorkMode(mode), cx);
+        }
+    }
+
+    pub(crate) fn reset_inherited_reasoning(&mut self, cx: &mut Context<Self>) {
+        if let Some(level) = self.unavailable_inherited_reasoning().map(str::to_owned) {
+            self.reset_draft_setting(DraftSetting::Reasoning(level), cx);
         }
     }
 
@@ -199,7 +246,7 @@ impl HiveApp {
 mod tests {
     use super::{
         DraftSetting, DraftWorkMode, Session, UNAVAILABLE_INHERITED_MODE,
-        UNAVAILABLE_INHERITED_MODEL, is_unavailable_error,
+        UNAVAILABLE_INHERITED_MODEL, UNAVAILABLE_INHERITED_REASONING, is_unavailable_error,
     };
     use serde_json::json;
 
@@ -213,6 +260,10 @@ mod tests {
             (
                 "[FRESH_DRAFT_WORK_MODE_UNAVAILABLE] ",
                 UNAVAILABLE_INHERITED_MODE,
+            ),
+            (
+                "[FRESH_DRAFT_REASONING_UNAVAILABLE] ",
+                UNAVAILABLE_INHERITED_REASONING,
             ),
         ] {
             assert!(is_unavailable_error(message, prefix, message));
@@ -251,5 +302,30 @@ mod tests {
         assert!(mode.matches_reset(&source, &updated));
         updated.inherited_draft_model = false;
         assert!(!mode.matches_reset(&source, &updated));
+    }
+
+    #[test]
+    fn restoring_default_reasoning_keeps_the_model_and_work_mode() {
+        let source: Session = serde_json::from_value(json!({
+            "id": "draft", "title": "Draft", "workspaceId": "project", "backend": "codex",
+            "inheritedDraftModel": true, "inheritedDraftWorkMode": "native-plan",
+            "inheritedDraftReasoning": "high", "unavailableReasoning": "high",
+        }))
+        .unwrap();
+        let choice = DraftSetting::Reasoning("high".into());
+        assert_eq!(
+            choice.request(&source),
+            (
+                "chat.resetFreshDraftReasoning",
+                json!({"workspaceId":"project","sessionId":"draft","expectedLevel":"high"}),
+            )
+        );
+        let mut updated = source.clone();
+        updated.inherited_draft_reasoning = None;
+        assert!(!choice.matches_reset(&source, &updated));
+        updated.unavailable_reasoning = None;
+        assert!(choice.matches_reset(&source, &updated));
+        updated.inherited_draft_work_mode = None;
+        assert!(!choice.matches_reset(&source, &updated));
     }
 }

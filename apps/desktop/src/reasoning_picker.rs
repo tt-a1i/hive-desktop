@@ -1,5 +1,6 @@
 use crate::app::HiveApp;
 mod view;
+pub(crate) use view::reasoning_level_label;
 use gpui_kit::*;
 use serde_json::json;
 #[derive(serde::Deserialize)]
@@ -79,6 +80,10 @@ impl HiveApp {
                         this.reasoning_picker.state = Some(state);
                         if failure.is_none() {
                             this.reasoning_picker.error = None;
+                            if mutation && let Some(session) = &mut this.session {
+                                session.inherited_draft_reasoning = None;
+                                session.unavailable_reasoning = None;
+                            }
                         }
                     }
                     Err(error) => {

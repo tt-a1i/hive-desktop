@@ -50,6 +50,12 @@ export interface PiSessionOptions {
 export interface NativeCommand { name: string; description?: string; source: 'extension' | 'prompt' | 'skill'; sourceInfo: import('@earendil-works/pi-coding-agent').SourceInfo }
 
 export interface ReasoningState { level: string; levels: string[]; description?: string }
+export interface SavedReasoning {provider: string; modelId: string; level: string}
+export function isSavedReasoning(value: unknown): value is SavedReasoning {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const setting = value as Record<string, unknown>;
+  return ['provider', 'modelId', 'level'].every(key => typeof setting[key] === 'string' && setting[key].length > 0);
+}
 
 export type CodexWorkMode = 'native-default' | 'native-plan';
 export function isCodexWorkMode(value: unknown): value is CodexWorkMode {

@@ -280,6 +280,31 @@ impl PreviewIdentity {
     }
 }
 
+#[derive(Clone)]
+enum FileDiffTarget {
+    Tree(String),
+    Preview {
+        identity: PreviewIdentity,
+        reader: Option<WeakEntity<ExpandedFilePreview>>,
+    },
+}
+
+impl FileDiffTarget {
+    fn path(&self) -> &str {
+        match self {
+            Self::Tree(path) => path,
+            Self::Preview { identity, .. } => &identity.selection.path,
+        }
+    }
+
+    fn matches_preview(&self, current: Option<&PreviewIdentity>) -> bool {
+        match self {
+            Self::Tree(_) => true,
+            Self::Preview { identity, .. } => current == Some(identity),
+        }
+    }
+}
+
 struct PreviewAttachment {
     identity: PreviewIdentity,
     target: Target,
@@ -299,6 +324,7 @@ struct ExpandedFilePreview {
     scroll: ScrollHandle,
     focus: FocusHandle,
     return_focus: Option<FocusHandle>,
+    dialog_focus: Option<FocusHandle>,
     dismissed: bool,
 }
 
@@ -913,6 +939,7 @@ pub(crate) struct FileBrowser {
     expansions: Entity<FileTreeExpansions>,
     root_focus: FocusHandle,
     browser_focus: FocusHandle,
+    dialog_focus: Option<FocusHandle>,
     resize_focus: FocusHandle,
     split_focus: FocusHandle,
     split_height: Pixels,
@@ -1140,6 +1167,7 @@ impl HiveApp {
                 expansions,
                 root_focus: cx.focus_handle(),
                 browser_focus: cx.focus_handle(),
+                dialog_focus: None,
                 resize_focus: cx.focus_handle(),
                 split_focus: cx.focus_handle(),
                 split_height: px(0.),
@@ -1189,6 +1217,7 @@ impl HiveApp {
 
         let width = (window.viewport_size().width - px(44.)).min(px(1040.));
         let dismiss = browser.downgrade();
+        let dialog_browser = browser.clone();
         window.open_dialog(cx, move |dialog, _, _| {
             let dismiss = dismiss.clone();
             dialog
@@ -1198,9 +1227,10 @@ impl HiveApp {
                 .on_close(move |_, _, cx| {
                     let _ = dismiss.update(cx, |this, _| this.dismiss());
                 })
-                .child(browser.clone())
+                .child(dialog_browser.clone())
         });
         let dialog_focus = window.focused(cx);
+        browser.update(cx, |browser, _| browser.dialog_focus = dialog_focus.clone());
         window.on_next_frame(move |window, cx| {
             if dialog_focus.is_some_and(|root| root.contains_focused(window, cx)) {
                 focus.focus(window, cx);
@@ -2875,12 +2905,14 @@ impl FileBrowser {
                 scroll,
                 focus: cx.focus_handle(),
                 return_focus,
+                dialog_focus: None,
                 dismissed: false,
             }
         });
         self.expanded_preview = Some(reader.downgrade());
         let focus = reader.read(cx).focus.clone();
         let reader_owner = reader.downgrade();
+        let dialog_reader = reader.clone();
         // Keep the Files dialog mounted below the expanded reader in narrow windows.
         window.open_dialog(cx, move |dialog, window, _| {
             let reader_owner = reader_owner.clone();
@@ -2893,9 +2925,10 @@ impl FileBrowser {
                         reader.restore_focus_after_close(window, cx)
                     });
                 })
-                .child(reader.clone())
+                .child(dialog_reader.clone())
         });
         let dialog_focus = window.focused(cx);
+        reader.update(cx, |reader, _| reader.dialog_focus = dialog_focus.clone());
         window.on_next_frame(move |window, cx| {
             if dialog_focus.is_some_and(|dialog| dialog.contains_focused(window, cx)) {
                 focus.focus(window, cx);
@@ -3050,39 +3083,116 @@ impl FileBrowser {
     }
 
     fn open_changed_file_diff(
-        &self,
-        path: String,
+        browser: WeakEntity<Self>,
+        target: FileDiffTarget,
         generation: u64,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) {
-        let browser = cx.weak_entity();
         window.defer(cx, move |window, cx| {
             let Some(browser) = browser.upgrade() else {
                 return;
             };
-            let browser = browser.read(cx);
-            if browser.git_generation != generation
-                || !browser.current(cx)
-                || browser.git_busy(cx)
-                || !browser
-                    .git_mark(&path, false)
-                    .is_some_and(mark_allows_file_diff)
+            let path = target.path();
+            let (scope, docked, app, dialog_focus) = {
+                let browser = browser.read(cx);
+                if browser.git_generation != generation
+                    || !browser.current(cx)
+                    || browser.git_busy(cx)
+                    || !browser
+                        .git_mark(path, false)
+                        .is_some_and(mark_allows_file_diff)
+                    || !target.matches_preview(browser.file_path_identity().as_ref())
+                {
+                    return;
+                }
+                (
+                    browser.scope.clone(),
+                    browser.docked,
+                    browser.app.clone(),
+                    browser.dialog_focus.clone(),
+                )
+            };
+
+            if let FileDiffTarget::Preview {
+                reader: Some(reader),
+                ..
+            } = &target
             {
-                return;
-            }
-            let scope = browser.scope.clone();
-            let docked = browser.docked;
-            let app = browser.app.clone();
-            if !docked {
+                let Some(reader) = reader.upgrade() else {
+                    return;
+                };
+                let state = reader.read(cx);
+                if !state.current(cx)
+                    || !state
+                        .dialog_focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.contains_focused(window, cx))
+                {
+                    return;
+                }
+                reader.update(cx, |reader, cx| {
+                    reader.dismissed = true;
+                    reader.cancel_path_request(cx);
+                });
                 window.close_dialog(cx);
+            }
+            if !docked {
+                if !dialog_focus.is_some_and(|focus| focus.contains_focused(window, cx)) {
+                    return;
+                }
+                window.close_dialog(cx);
+                browser.update(cx, |browser, _| browser.dismiss());
             }
             let _ = app.update(cx, |app, cx| {
                 if app.project_file_scope() == scope {
-                    app.open_git_file_diff(path, docked, window, cx);
+                    app.open_git_file_diff(path.to_owned(), docked, window, cx);
                 }
             });
         });
+    }
+
+    fn preview_diff_button(
+        &self,
+        browser: WeakEntity<Self>,
+        reader: Option<WeakEntity<ExpandedFilePreview>>,
+        cx: &App,
+    ) -> Option<Button> {
+        let identity = self.file_path_identity()?;
+        if self.git_busy(cx)
+            || !self
+                .git_mark(&identity.selection.path, false)
+                .is_some_and(mark_allows_file_diff)
+        {
+            return None;
+        }
+        let id = if reader.is_some() {
+            "file-reader-show-diff"
+        } else {
+            "browser-preview-show-diff"
+        };
+        let target = FileDiffTarget::Preview { identity, reader };
+        let generation = self.git_generation;
+        let label = tr("查看 Diff");
+        Some(
+            Button::new(id)
+                .custom(palette::quiet_icon_variant(cx))
+                .compact()
+                .xsmall()
+                .size(px(24.))
+                .icon(Glyph::FileDiff)
+                .tooltip(label)
+                .accessibility_label(label)
+                .on_click(move |_, window, cx| {
+                    Self::open_changed_file_diff(
+                        browser.clone(),
+                        target.clone(),
+                        generation,
+                        window,
+                        cx,
+                    );
+                }),
+        )
     }
 
     fn tree_row(&self, row: &TreeRow<'_>, cx: &Context<Self>) -> AnyElement {
@@ -3222,9 +3332,10 @@ impl FileBrowser {
                                 .tooltip(title.clone())
                                 .accessibility_label(title)
                                 .child(div().text_xs().text_color(color.get(cx)).child(marker))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_changed_file_diff(
-                                        path.clone(),
+                                .on_click(cx.listener(move |_, _, window, cx| {
+                                    Self::open_changed_file_diff(
+                                        cx.weak_entity(),
+                                        FileDiffTarget::Tree(path.clone()),
                                         generation,
                                         window,
                                         cx,
@@ -3447,6 +3558,7 @@ impl FileBrowser {
                                     })),
                             )
                         })
+                        .children(self.preview_diff_button(cx.weak_entity(), None, cx))
                         .children(self.attach_button(cx))
                         .children(self.reveal_in_file_manager_button(cx.weak_entity(), None, cx))
                         .children(self.copy_path_menu(cx.weak_entity(), None, cx))
@@ -3745,6 +3857,10 @@ impl Render for ExpandedFilePreview {
             cx,
         );
         let attach = self.attach_button(browser.read(cx), cx);
+        let diff =
+            browser
+                .read(cx)
+                .preview_diff_button(self.browser.clone(), Some(cx.weak_entity()), cx);
         let copy_path =
             browser
                 .read(cx)
@@ -3769,6 +3885,7 @@ impl Render for ExpandedFilePreview {
                     h_flex()
                         .items_center()
                         .gap_2()
+                        .children(diff)
                         .children(attach)
                         .children(reveal)
                         .children(copy_path)
@@ -4688,6 +4805,13 @@ mod tests {
             },
         };
         assert!(requested == requested.clone());
+        let diff = super::FileDiffTarget::Preview {
+            identity: requested.clone(),
+            reader: None,
+        };
+        assert_eq!(diff.path(), "docs/note.txt");
+        assert!(diff.matches_preview(Some(&requested)));
+        assert!(!diff.matches_preview(None));
         for changed in [
             PreviewIdentity {
                 preview_generation: 4,
@@ -4696,6 +4820,16 @@ mod tests {
             PreviewIdentity {
                 scope: Scope {
                     session: Some("other-session".into()),
+                    ..requested.scope.clone()
+                },
+                ..requested.clone()
+            },
+            PreviewIdentity {
+                scope: Scope {
+                    tree: TreeScope {
+                        source: TreeSource::Directory("/other-worktree".into()),
+                        ..requested.scope.tree.clone()
+                    },
                     ..requested.scope.clone()
                 },
                 ..requested.clone()
@@ -4723,6 +4857,7 @@ mod tests {
             },
         ] {
             assert!(requested != changed);
+            assert!(!diff.matches_preview(Some(&changed)));
         }
     }
 

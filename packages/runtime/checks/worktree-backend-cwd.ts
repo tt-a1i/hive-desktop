@@ -17,14 +17,14 @@ import type { PiSessionHandle } from '../src/agents/types.js';
 assert.ok(!process.argv.includes('--live'), 'This check must never run native vendor CLIs or models');
 const directory = await realpath(await mkdtemp(join(tmpdir(), 'hive-backend-worktree-cwd-')));
 const repo = join(directory, 'repo'), project = join(repo, 'sub project'), data = join(directory, 'state');
-const keys = ['PI_CODING_AGENT_DIR', 'PI_OFFLINE', 'CLAUDE_CONFIG_DIR', 'HIVE_CWD_FIXTURE_WIRE', 'HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE', 'HIVE_CWD_FIXTURE_MODEL_MISSING', 'HIVE_CWD_FIXTURE_MODE_MISSING', 'HIVE_CWD_FIXTURE_MODE_MISMATCH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'] as const;
+const keys = ['PI_CODING_AGENT_DIR', 'PI_OFFLINE', 'CLAUDE_CONFIG_DIR', 'HIVE_CWD_FIXTURE_WIRE', 'HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE', 'HIVE_CWD_FIXTURE_MODEL_MISSING', 'HIVE_CWD_FIXTURE_MODE_MISSING', 'HIVE_CWD_FIXTURE_MODE_MISMATCH', 'HIVE_CWD_FIXTURE_EFFORT_MISSING', 'HIVE_CWD_FIXTURE_EFFORT_MISMATCH', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'] as const;
 const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 let runtime: Awaited<ReturnType<typeof createDesktopRuntime>> | undefined;
 let requests = 0;
 const server = createServer((_request, response) => { requests++; response.writeHead(500).end('Unexpected model request'); });
 const live = (chats: Chats) => (chats as unknown as {live: Map<string, {handle: PiSessionHandle}>}).live;
 const records = new Map<ChatBackend, {record: ChatRecord; root: string; nativeId: string; historyIds: string[]; file?: string}>();
-type Wire = {backend: ChatBackend; cwd: string; event: string; args?: string[]; method?: string; params?: Record<string, unknown>; type?: string; action?: string; shouldQuery?: boolean; effectiveModel?: string; effectiveMode?: string};
+type Wire = {backend: ChatBackend; cwd: string; event: string; args?: string[]; method?: string; params?: Record<string, unknown>; type?: string; action?: string; shouldQuery?: boolean; effectiveModel?: string; effectiveMode?: string; effectiveEffort?: string};
 try {
   await mkdir(project, {recursive: true}); await mkdir(join(directory, 'pi')); await writeFile(join(directory, 'gitconfig'), '');
   process.env.GIT_CONFIG_GLOBAL = join(directory, 'gitconfig'); process.env.GIT_CONFIG_NOSYSTEM = '1';
@@ -142,29 +142,56 @@ try {
   await runtime.chats.mode(rootSource.id, 'read-only', true);
   await runtime.chats.mode(isolatedSource.id, 'workspace-write', true);
   const rootOptions = {profile: rootSource.profile, deferFirstConnection: true, sourceSessionId: rootSource.id};
+  const neutralDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
+  assert.equal(neutralDraft.inheritedDraftReasoning, undefined);
+  await runtime.chats.reasoning(rootSource.id, 'high');
+  await runtime.chats.reasoning(isolatedSource.id, 'low');
   await assert.rejects(runtime.chats.createRecord(workspace.id, 'codex', {...rootOptions, deferFirstConnection: false}), {code: 'FRESH_DRAFT_SOURCE_INVALID'});
   const rootDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
   const staleDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
   const missingModelDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
   const missingModeDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
   const unconfirmedModeDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
-  const worktreeDraft = await runtime.chats.createFreshWorktreeDraftRecord(workspace.id, isolatedSource.id, randomUUID());
+  const missingEffortDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
+  const unconfirmedEffortDraft = await runtime.chats.createRecord(workspace.id, 'codex', rootOptions);
+  const worktreeRequestId = randomUUID();
+  const worktreeDraft = await runtime.chats.createFreshWorktreeDraftRecord(workspace.id, isolatedSource.id, worktreeRequestId);
   const inheritedControlDrafts = [];
   for (const backend of ['pi', 'pi-rpc', 'claude'] as const) {
     const source = records.get(backend)!.record;
     await runtime.chats.setModel(source.id, backend === 'claude' ? 'claude' : 'openai', chosen);
-    if (backend === 'claude') await runtime.chats.mode(source.id, 'plan');
+    if (backend === 'claude') {
+      await runtime.chats.mode(source.id, 'plan');
+      await runtime.chats.reasoning(source.id, 'high');
+    }
     inheritedControlDrafts.push(await runtime.chats.createFreshWorktreeDraftRecord(workspace.id, source.id, randomUUID()));
   }
   const getWire = async () => (await readFile(process.env.HIVE_CWD_FIXTURE_WIRE!, 'utf8')).trim().split('\n').map(line => JSON.parse(line) as Wire);
+  const interruptedRequestId = randomUUID();
+  const indexFile = join(data, 'chats', 'index.json');
+  await rename(indexFile, indexFile + '.retained');
+  await mkdir(indexFile);
+  try {
+    await assert.rejects(runtime.chats.createFreshWorktreeDraftRecord(workspace.id, isolatedSource.id, interruptedRequestId), /工作树已保留/);
+  } finally {
+    await rm(indexFile, {recursive: true});
+    await rename(indexFile + '.retained', indexFile);
+  }
   const wireBeforeBrowse = (await getWire()).length;
   await runtime.close(); runtime = await createDesktopRuntime(data, () => {}, options);
+  assert.deepEqual(await runtime.chats.createFreshWorktreeDraftRecord(workspace.id, isolatedSource.id, worktreeRequestId), worktreeDraft);
+  const recoveredWorktree = await runtime.chats.createFreshWorktreeDraftRecord(workspace.id, isolatedSource.id, interruptedRequestId);
+  assert.equal(recoveredWorktree.id, interruptedRequestId);
+  assert.equal(recoveredWorktree.inheritedDraftReasoning, 'low');
+  assert.equal(recoveredWorktree.inheritedDraftWorkMode, 'native-default');
+  assert.equal(recoveredWorktree.model?.id, chosen);
   for (const draft of [rootDraft, worktreeDraft, staleDraft, ...inheritedControlDrafts]) {
     const passive = await runtime.chats.open(draft.id);
     assert.ok('passive' in passive && passive.passive);
     assert.equal(passive.model?.id, chosen);
     assert.equal(passive.inheritedDraftModel, true);
     assert.equal(passive.inheritedDraftWorkMode, draft.id === worktreeDraft.id ? 'native-default' : draft.backend === 'codex' ? 'native-plan' : undefined);
+    assert.equal(passive.inheritedDraftReasoning, draft.id === worktreeDraft.id ? 'low' : (draft.backend === 'codex' || draft.backend === 'claude') ? 'high' : undefined);
     assert.equal(passive.nativeMode?.permissionMode, undefined);
     if (draft.backend === 'claude') assert.equal(passive.nativeMode, undefined, 'Claude plan is a permission mode');
     assert.equal(passive.codexThreadId, undefined);
@@ -174,12 +201,14 @@ try {
     const connected = await runtime.chats.open(draft.id, true, true, {limit: 5}, 'connect');
     assert.equal(connected.model?.id, chosen);
     assert.equal(connected.inheritedDraftModel, true);
+    if (draft.backend === 'claude') assert.equal((await runtime.chats.reasoning(draft.id)).level, 'high');
   }
-  const send = async (id: string, text: string, cwd: string, model: string, mode?: string) => {
+  const send = async (id: string, text: string, cwd: string, model: string, mode?: string, effort = 'medium') => {
     const before = (await getWire()).length;
     const accepted = await runtime!.chats.prompt(id, text);
     assert.equal(accepted.session.model?.id, model);
     assert.equal(accepted.session.inheritedDraftModel, undefined);
+    assert.equal(accepted.session.inheritedDraftReasoning, undefined);
     const deadline = Date.now() + 8_000;
     while (Date.now() < deadline) {
       const rows = (await getWire()).slice(before);
@@ -188,7 +217,12 @@ try {
         assert.equal(turn.effectiveModel, model);
         assert.equal(turn.cwd, cwd);
         assert.equal(turn.effectiveMode, mode);
+        assert.equal(turn.effectiveEffort, effort);
         assert.equal(Reflect.get((turn.params?.collaborationMode ?? {}) as object, 'mode'), mode);
+        if (mode) {
+          const settings = Reflect.get(turn.params?.collaborationMode as object, 'settings');
+          assert.equal(settings.reasoning_effort, effort);
+        }
         for (const row of rows.filter(row => ['thread/start', 'thread/settings/update', 'turn/start'].includes(row.method ?? ''))) {
           assert.equal(row.params?.approvalPolicy, undefined);
           assert.equal(row.params?.sandbox, undefined);
@@ -203,8 +237,18 @@ try {
     }
     throw new Error('Controlled first turn did not settle');
   };
-  await send(rootDraft.id, 'first root draft input', project, chosen, 'plan');
-  await send(worktreeDraft.id, 'first isolated draft input', worktreeDraft.executionPath, chosen, 'default');
+  await send(rootDraft.id, 'first root draft input', project, chosen, 'plan', 'high');
+  await send(worktreeDraft.id, 'first isolated draft input', worktreeDraft.executionPath, chosen, 'default', 'low');
+  for (const [key, draft] of [['HIVE_CWD_FIXTURE_EFFORT_MISSING', missingEffortDraft], ['HIVE_CWD_FIXTURE_EFFORT_MISMATCH', unconfirmedEffortDraft]] as const) {
+    process.env[key] = '1';
+    const before = (await getWire()).length;
+    await assert.rejects(runtime.chats.prompt(draft.id, 'do not send with unconfirmed effort'), {code: 'FRESH_DRAFT_REASONING_UNAVAILABLE'});
+    const rows = (await getWire()).slice(before);
+    assert.ok(rows.some(row => row.method === 'thread/read'));
+    assert.equal(rows.some(row => row.method === 'thread/settings/update' && row.params?.effort === 'high'), draft.id === unconfirmedEffortDraft.id);
+    assert.ok(rows.every(row => row.method !== 'turn/start'));
+    delete process.env[key];
+  }
 
   process.env.HIVE_CWD_FIXTURE_MODE_MISSING = '1';
   const beforeMissingMode = (await getWire()).length;
@@ -245,6 +289,7 @@ try {
   assert.equal(resetMode.inheritedDraftWorkMode, undefined);
   assert.equal(resetMode.inheritedDraftModel, true);
   assert.equal(resetMode.model?.id, chosen);
+  assert.equal(resetMode.inheritedDraftReasoning, 'high');
   assert.equal((await getWire()).length, beforeWorkModeReset, 'work-mode reset stays passive');
   const failedConnect = await runtime.chats.open(staleDraft.id, true, true, {limit: 5}, 'connect');
   assert.ok('passive' in failedConnect && failedConnect.passive && !failedConnect.readOnly);
@@ -266,13 +311,31 @@ try {
   assert.equal(reset.model, undefined);
   assert.equal(reset.inheritedDraftModel, undefined);
   assert.equal(reset.inheritedDraftWorkMode, 'native-plan');
+  assert.equal(reset.inheritedDraftReasoning, undefined, 'effort was bound to the reset model');
   assert.equal((await getWire()).length, wireBeforeReset, 'explicit reset needs no running provider');
   await send(staleDraft.id, 'send after explicit model reset', project, 'fixture-cwd', 'plan');
   delete process.env.HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE;
-  await send(unconfirmedModeDraft.id, 'send after explicit work mode reset', project, chosen);
+  await send(unconfirmedModeDraft.id, 'send after explicit work mode reset', project, chosen, undefined, 'high');
+  assert.equal((await runtime.chats.open(unconfirmedEffortDraft.id)).unavailableReasoning, 'high');
+  await assert.rejects(runtime.chats.resetFreshDraftReasoning(workspace.id, unconfirmedEffortDraft.id, 'low'), {code:'FRESH_DRAFT_REASONING_CHANGED'});
+  const beforeEffortReset = (await getWire()).length;
+  const resetEffort = await runtime.chats.resetFreshDraftReasoning(workspace.id, unconfirmedEffortDraft.id, 'high');
+  assert.equal(resetEffort.inheritedDraftReasoning, undefined);
+  assert.equal(resetEffort.inheritedDraftWorkMode, 'native-plan');
+  assert.equal(resetEffort.model?.id, chosen);
+  assert.equal((await getWire()).length, beforeEffortReset, 'reasoning reset stays passive');
+  await send(unconfirmedEffortDraft.id, 'send after explicit reasoning reset', project, chosen, 'plan');
+  const claudeEffortDraft = await runtime.chats.createFreshWorktreeDraftRecord(workspace.id, records.get('claude')!.record.id, randomUUID());
+  process.env.HIVE_CWD_FIXTURE_EFFORT_MISMATCH = '1';
+  const failedClaudeEffort = await runtime.chats.open(claudeEffortDraft.id, true, true, {limit: 5}, 'connect');
+  assert.ok('passive' in failedClaudeEffort && failedClaudeEffort.passive);
+  assert.equal(failedClaudeEffort.unavailableReasoning, 'high');
+  assert.equal(failedClaudeEffort.model?.id, chosen);
+  delete process.env.HIVE_CWD_FIXTURE_EFFORT_MISMATCH;
   assert.equal(requests, 0);
   console.log('FRESH_DRAFT_MODEL_OK: project and worktree first turns use the persisted selected model after restart; unavailable selection prevents a turn until explicit reset.');
   console.log('FRESH_DRAFT_WORK_MODE_OK: root/worktree modes confirmed before their first turns; approvals excluded, failures retain passive drafts, model/work-mode resets are independent.');
+  console.log('FRESH_DRAFT_REASONING_OK: root/worktree first turns use independently verified effort after restart; unsupported and clamped effort prevent admission until explicit reset.');
   console.log('WORKTREE_BACKEND_CWD_OK: four actual Chats.open adapters, real Pi SDK header, controlled Codex/Pi-RPC child cwd+restore args and official Claude SDK transcript; cold native identity/path retained, one unchanged Hive workspace, read-only open of missing checkout. Synthetic protocol only; zero model requests.');
 } finally {
   await runtime?.close();

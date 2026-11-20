@@ -58,7 +58,9 @@ impl HiveApp {
             .map(|profile| format!("\n{}", self.profile_label(profile)))
             .unwrap_or_default();
         let picker_label = tr("选择会话模型与推理强度");
-        let accessibility = if self.session.as_ref().is_some_and(|session| session.inherited_draft_model) {
+        let accessibility = if self.session.as_ref().is_some_and(|session| {
+            session.inherited_draft_model || session.inherited_draft_reasoning.is_some()
+        }) {
             format!("{picker_label} · {label}")
         } else {
             picker_label.to_owned()

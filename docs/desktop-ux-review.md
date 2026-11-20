@@ -329,8 +329,23 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在工作树 A 同时展开 `docs/specs` 和 `src/components`，打开 600 行文件预览后批量折叠。子行消失，预览和分隔条位置保持。单独重新打开 `docs` 时，`specs` 仍折叠。另在工作树 B 展开 `docs`，切到 A 全部折叠后再返回 B，B 的 `specs` 行仍可见。证据在 `.artifacts/collapse-tree-qa`。
 - 271 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建、工作树、会话模式、桌面视图和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十五批
+
+本轮从 Hive Desktop `26f2d99` 开始。参考 T3 Code `3925267`、Cindy `90e373d`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **后续草稿保留同一模型的推理强度。** Codex 和 Claude 的项目根及独立工作树草稿继承已确认、与模型匹配的强度。后端缺少该档位或实际应用其他值时，首轮发送会暂停，原输入保留。可以在输入区单独恢复配置默认强度，已有模型和工作模式仍生效。 [T3 Code 模型选项与默认值](https://github.com/pingdotgg/t3code/blob/392526768806ab7b36854ad9a401955c4bec6a85/docs/user/composer.md#L121-L127)
+- **重开跨项目收件箱时回到附近事项。** 第一条可见事项因已读等原因移出列表后，选用仍在当前范围内的下一条可见事项，恢复它原来的屏幕偏移。候选记录包含项目和事项标识，并遵守列表滚动范围。 [Cindy 相邻行补位](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/docs/product-rules/task-inbox.md#L47-L51)
+- **从当前文件预览查看 Diff。** 停靠面板、窄窗文件弹层和展开阅读器都提供入口。打开时重新核对当前工作树的文件状态，仅有暂存改动就进入暂存比较。干净文件隐藏该入口。 [Beluga 预览改动入口](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L90-L113)
+
+- 运行时验证项目根和独立工作树的首次实际协议请求使用重启后恢复的档位，服务端删去档位或应用了其他值时原输入保留。另核对档位重置与模型、模式独立，以及工作树创建中断后的恢复。Codex 和 Claude 通过本地受控对端验证，全程无模型推理请求。证据在 `.artifacts/batch25-fresh-draft-reasoning.log` 和 `.artifacts/batch25-native-reasoning-controls.log`。
+- macOS 从使用「高」推理和「计划」模式的会话新开草稿，即时与冷开均显示两个已选项。本地受控对端确认设置，再以「高」档接收新草稿的首轮输入。证据在 `.artifacts/fresh-effort-qa`。
+- macOS 在后继草稿冷开前从受控对端移除「高」档。首轮发送没有到达对端，输入区显示不可用提示。点击「使用默认推理强度」后，原文、模型和「计划」模式仍在。证据在 `.artifacts/fresh-effort-missing-qa`。
+- macOS 用 32 条未读会话验证从首屏打开、改为已读并返回，项目筛选保留，下一条会话出现在原行位置。Rust 回归覆盖首个及第二个候选移除、跨项目同标识和列表重排时的偏移恢复。本次实窗的合成滚轮和拖动没有移动视口，滚到中段之后的恢复待手动复验。证据在 `.artifacts/inbox-next-qa`。
+- macOS 在工作树 A 搜索到 `docs/nested/note.txt`，从停靠预览打开准确的暂存改动。在 640×600 窄窗，从展开阅读器进入 Git 比较，文件弹层随交接关闭，暂存内容仍来自 A。工作树 B 中同路径的干净文件未出现 Diff 入口。证据在 `.artifacts/search-diff-qa`。
+- 273 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建、工作树、会话标识、桌面视图、原生推理控制协议和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **后续草稿保留已选模型的推理强度。** Hive 已按模型记录手动选定的档位，后台发送后的新草稿尚未继承。用相同模型的两个强度验收，检查重启与首次实际发送，以及切换模型、档位失效和未设置时的处理。 [T3 Code 模型选项与默认值](https://github.com/pingdotgg/t3code/blob/271357040676ea578f134493169df4b27ee080f6/docs/user/composer.md#L121-L127)
-- **从未读会话返回收件箱时保留附近位置。** Hive 当前只保存第一条可见事项。如果打开该项会使它移出未读列表，返回时就会回顶。用至少 25 条未读跳到列表中段，打开首条可见会话，再检查仍可见的相邻事项是否保留在原屏幕位置。 [Cindy 相邻行补位](https://github.com/makecindy/cindy/blob/02fb09bf9fbe787ed863bbca285408232589dd49/docs/product-rules/task-inbox.md#L47-L51)
-- **从当前文件预览查看 Diff。** 目前入口在文件树改动行，搜索结果和折叠目录后的预览缺少直接操作。用两个工作树里的同名文件验收，确认打开准确的路径、工作树和暂存状态，再用干净文件和窄窗复验。 [Beluga 预览改动入口](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L90-L113)
+- **补回第四条起的等待汇报派单。** 用四条已提交 11 分钟的派单调用当前 Hive 汇总，计数为 4，明细只返回前三条。桌面两个收件箱都依赖明细。验收时按第四条的成员筛选、打开并暂缓该派单，同时核对已汇报、已取消和未达到时间门槛的派单。复现在 `.artifacts/competitive-ux/twenty-fifth/waiting-reports-repro.mjs`。 [Hive 上游明细上限](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/action-center-summary.ts#L98-L112) · [Cindy 分组与展开](https://github.com/makecindy/cindy/blob/90e373d5d6561a9e40bf944e70e89a018522dbeb/apps/desktop/src/renderer/features/cc-agent/sidebar/TaskInbox.tsx#L186-L249)
+- **把一段助手回复引用到草稿。** 目前「引用消息到草稿」把整条回复加在开头。用两段回复和带光标的多行草稿复现，验收只引用所选文字、保留光标两侧原输入，并能回到原消息。原消息暂时无法打开时仍应可读引用。 [T3 Code 引用选区和返回原文](https://github.com/pingdotgg/t3code/blob/392526768806ab7b36854ad9a401955c4bec6a85/docs/user/composer.md#L129-L143)
+- **在文件面板单独关闭预览。** 打开一份长文件后，目前关闭预览需要关掉文件面板，或离开当前范围。用超过 30 行的文件列表在停靠面板和窄窗验收，关闭预览后文件列表获得空间，查询、选中行和位置保留，按 Return 可以打开原文件。另核对展开阅读器的 Esc 仍返回到紧凑预览。 [Beluga 关闭按钮](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L108-L114) · [Beluga Esc 行为](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L295-L310)

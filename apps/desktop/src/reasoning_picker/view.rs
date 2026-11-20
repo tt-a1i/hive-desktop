@@ -8,7 +8,7 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
-fn label(level: &str) -> &str {
+pub(crate) fn reasoning_level_label(level: &str) -> &str {
     match level {
         "native" => tr("原生配置"),
         "max" => tr("最高"),
@@ -24,8 +24,10 @@ fn label(level: &str) -> &str {
 impl HiveApp {
     pub(crate) fn reasoning_label(&self) -> Option<String> {
         self.reasoning_picker.state.as_ref()
-            .filter(|state| state.levels.len() > 1 || state.level != "native")
-            .map(|state| label(&state.level).to_owned())
+            .filter(|state| !state.level.is_empty() && (state.levels.len() > 1 || state.level != "native"))
+            .map(|state| state.level.as_str())
+            .or_else(|| self.session.as_ref().and_then(|session| session.inherited_draft_reasoning.as_deref()))
+            .map(|level| reasoning_level_label(level).to_owned())
     }
 
     pub(crate) fn render_reasoning_settings(
@@ -174,7 +176,7 @@ impl HiveApp {
                         .gap_0p5()
                         .children(state.levels.iter().enumerate().map(|(i, level)| {
                             let active = state.level == *level;
-                            let level_label = label(level).to_owned();
+                            let level_label = reasoning_level_label(level).to_owned();
                             let level = level.clone();
                             crate::focus_scroll::Reveal::new(
                                 ("reasoning-option-reveal", i),

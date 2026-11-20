@@ -83,6 +83,8 @@ pub struct Session {
     pub inherited_draft_model: bool,
     pub inherited_draft_work_mode: Option<DraftWorkMode>,
     pub unavailable_work_mode: Option<DraftWorkMode>,
+    pub inherited_draft_reasoning: Option<String>,
+    pub unavailable_reasoning: Option<String>,
     #[serde(default)]
     pub execution_path: Option<String>,
     #[serde(default)]
