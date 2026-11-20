@@ -1,4 +1,4 @@
-use super::{Entry, Priority, sort_entries};
+use super::{Entry, Priority, snoozes::Reminder, sort_entries};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -115,7 +115,7 @@ impl<'a> InboxSections<'a> {
         })
     }
 
-    fn hold(self, order: &[(Section, RowId)]) -> Self {
+    fn hold(self, order: &[(Section, RowId)], expired: &HashMap<RowId, Reminder>) -> Self {
         let groups = [
             (Section::Attention, self.attention),
             (Section::Waiting, self.waiting),
@@ -138,6 +138,7 @@ impl<'a> InboxSections<'a> {
             };
             if *previous != current
                 && (current == Section::Snoozed || *previous == Section::Snoozed)
+                && !(*previous == Section::Snoozed && expired.contains_key(id))
             {
                 moved.push((current, row));
             } else {
@@ -165,6 +166,7 @@ pub(super) struct RowPlacement {
     show_snoozed: bool,
     hovered: Option<RowId>,
     menu_open: Option<RowId>,
+    expired: HashMap<RowId, Reminder>,
 }
 
 impl RowPlacement {
@@ -183,6 +185,7 @@ impl RowPlacement {
                     self.section_visible(*old)
                         && latest.section_of(id).is_some_and(|current| {
                             (*old == Section::Snoozed) == (current == Section::Snoozed)
+                                || self.expired.contains_key(id)
                         })
                 })
         };
@@ -190,8 +193,9 @@ impl RowPlacement {
         let menu_open = self.menu_open.clone().filter(stays_visible);
         let held = hovered.is_some() || menu_open.is_some() || focused.is_some_and(stays_visible);
         let displayed = if held {
-            latest.hold(&self.order)
+            latest.hold(&self.order, &self.expired)
         } else {
+            self.expired.clear();
             latest
         };
         self.hovered = hovered;
@@ -204,6 +208,20 @@ impl RowPlacement {
 
     pub(super) fn shows(&self, id: &RowId) -> bool {
         self.visible_rows().any(|visible| visible == id)
+    }
+
+    pub(super) fn hold_expired(&mut self, id: RowId, reminder: &Reminder) {
+        if self
+            .order
+            .iter()
+            .any(|(section, row)| *section == Section::Snoozed && row == &id)
+        {
+            self.expired.insert(id, reminder.clone());
+        }
+    }
+
+    pub(super) fn held_reminder(&self, id: &RowId) -> Option<Reminder> {
+        self.expired.get(id).cloned()
     }
 
     pub(super) fn visible_rows(&self) -> impl Iterator<Item = &RowId> {
@@ -244,7 +262,7 @@ impl RowPlacement {
 #[cfg(test)]
 mod tests {
     use super::{InboxSections, Row, RowId, RowPlacement, SnoozedUntil};
-    use crate::collaboration::inbox::{Destination, Entry, Priority};
+    use crate::collaboration::inbox::{Destination, Entry, Priority, snoozes::Reminder};
 
     fn row(
         workspace: &'static str,
@@ -302,6 +320,42 @@ mod tests {
                 "indefinite"
             ]
         );
+    }
+
+    #[test]
+    fn automatic_expiry_keeps_exact_focused_row_and_section_until_interaction_ends() {
+        let snoozed = row("atlas", "snoozed question", Priority::NeedsUser, 10);
+        let id = RowId::for_entry(snoozed.0, &snoozed.1);
+        let mut placement = RowPlacement::default();
+        let sections = |before| {
+            InboxSections::from_rows(
+                vec![
+                    row("atlas", "snoozed question", Priority::NeedsUser, 10),
+                    row("beacon", "attention question", Priority::NeedsUser, 5),
+                ],
+                |workspace, _| (before && workspace == "atlas").then_some(SnoozedUntil::At(20)),
+            )
+        };
+        let before = placement.arrange(sections(true), Some(&id), false, true);
+        assert_eq!(labels(&before.snoozed), ["snoozed question"]);
+        placement.hold_expired(
+            id.clone(),
+            &Reminder {
+                expires_at: Some(20),
+                wake: None,
+            },
+        );
+        let held = placement.arrange(sections(false), Some(&id), false, true);
+        assert_eq!(labels(&held.attention), ["attention question"]);
+        assert_eq!(labels(&held.snoozed), ["snoozed question"]);
+        assert_eq!(placement.held_reminder(&id).unwrap().expires_at, Some(20));
+        let released = placement.arrange(sections(false), None, false, true);
+        assert_eq!(
+            labels(&released.attention),
+            ["snoozed question", "attention question"]
+        );
+        assert!(released.snoozed.is_empty());
+        assert!(placement.held_reminder(&id).is_none());
     }
 
     #[test]

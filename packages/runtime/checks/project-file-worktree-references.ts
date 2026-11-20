@@ -60,6 +60,18 @@ try {
   assert(!(await runtime.chats.projectFilesList(ws.id, '', 0, b.id)).entries.some(entry => entry.path === 'only-one.txt'));
   assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, 'one', 0, a.id)).matches, [{path: name, line: 1}]);
   assert.deepEqual((await runtime.chats.projectFilesSearchContent(ws.id, 'one', 0, b.id)).matches, []);
+  const contentName = '同名 search.md';
+  const token = 'MULTI_SCOPE_HIT';
+  await writeFile(join(project, contentName), `${token} main\n`);
+  await writeFile(join(aDir, contentName), `\n${token} alpha 2\n\n${token} alpha 4`);
+  await writeFile(join(bDir, contentName), `${token} beta 1\n\n${token} beta 3\n`);
+  for (const [sessionId, lines] of [[undefined, [1]], [a.id, [2, 4]], [b.id, [1, 3]]] as const) {
+    const result = await runtime.chats.projectFilesSearchContent(ws.id, token, 0, sessionId);
+    assert.deepEqual(result, {matches: lines.map(line => ({path: contentName, line})), total: lines.length, limited: false});
+    const preview = await runtime.chats.projectFilesPreview(ws.id, contentName, sessionId);
+    for (const line of lines) assert(preview.text.split('\n')[line - 1]?.startsWith(token));
+  }
+  await assert.rejects(runtime.chats.projectFilesSearchContent(otherWs.id, token, 0, a.id));
   await assert.rejects(runtime.chats.projectFilesPreview(otherWs.id, name, a.id));
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, a.id)).paths, ['only-one.txt']);
   assert.deepEqual((await runtime.chats.projectFilesSearch(ws.id, 'only-', 0, b.id)).paths, ['only-two.txt']);

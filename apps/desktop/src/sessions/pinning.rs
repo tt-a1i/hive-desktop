@@ -1,4 +1,17 @@
 use super::*;
+use crate::{
+    language::{english, tr},
+    palette::Color,
+};
+use gpui_kit::{
+    assets::IconName as Glyph,
+    component::{
+        Icon, WindowExt as _,
+        menu::{PopupMenu, PopupMenuItem},
+    },
+    prelude::FluentBuilder,
+};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
 pub(crate) struct PinnedSessions {
@@ -7,6 +20,8 @@ pub(crate) struct PinnedSessions {
     pub loading: bool,
     pub dirty: bool,
     pub error: Option<String>,
+    pub reordering: bool,
+    manually_ordered: bool,
     generation: u64,
 }
 
@@ -16,10 +31,311 @@ struct PinResult {
     sessions: Vec<Session>,
 }
 
-use crate::language::{english, tr};
-use gpui_kit::component::WindowExt as _;
+#[derive(Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PinIdentity {
+    workspace_id: String,
+    session_id: String,
+}
+
+impl From<&Session> for PinIdentity {
+    fn from(session: &Session) -> Self {
+        Self {
+            workspace_id: session.workspace_id.clone(),
+            session_id: session.id.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum PinPlacement {
+    Before,
+    After,
+}
+
+#[derive(Clone)]
+struct PinDrag {
+    source: PinIdentity,
+    order: Arc<[String]>,
+    connection: u64,
+    title: String,
+}
+
+impl Render for PinDrag {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .max_w(px(224.))
+            .truncate()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .border_1()
+            .border_color(Color::Divider.get(cx))
+            .bg(Color::Surface.get(cx))
+            .text_color(Color::Text.get(cx))
+            .text_xs()
+            .child(self.title.clone())
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PinMoveResult {
+    ordered_ids: Vec<String>,
+}
+
+fn move_order(
+    order: &[String],
+    source: &str,
+    target: &str,
+    placement: PinPlacement,
+) -> Option<Vec<String>> {
+    if source == target {
+        return None;
+    }
+    let mut moved = order.to_vec();
+    let from = moved.iter().position(|id| id == source)?;
+    let item = moved.remove(from);
+    let target = moved.iter().position(|id| id == target)?;
+    moved.insert(target + usize::from(placement == PinPlacement::After), item);
+    (moved != order).then_some(moved)
+}
 
 impl HiveApp {
+    pub(crate) fn pin_order_snapshot(&self) -> Arc<[String]> {
+        self.pinned_sessions
+            .records
+            .iter()
+            .map(|entry| entry.session.id.clone())
+            .collect()
+    }
+
+    fn can_move_pins(&self) -> bool {
+        self.connected
+            && !self.closing
+            && !self.pinned_sessions.reordering
+            && self.pinned_sessions.records.len() > 1
+    }
+
+    fn has_reorderable_pin(&self, pin: &PinIdentity) -> bool {
+        self.workspace_removing.as_ref() != Some(&pin.workspace_id)
+            && !self.removed_sessions.contains(&pin.session_id)
+            && !self.session_pin_loading.contains(&pin.session_id)
+            && !self.session_archive_loading.contains(&pin.session_id)
+            && self.pinned_sessions.records.iter().any(|entry| {
+                let session = &entry.session;
+                session.id == pin.session_id
+                    && session.workspace_id == pin.workspace_id
+                    && session.pinned
+                    && !session.archived
+            })
+    }
+
+    pub(crate) fn pin_move_menu(
+        &self,
+        mut menu: PopupMenu,
+        session: &Session,
+        app: WeakEntity<Self>,
+    ) -> PopupMenu {
+        let source = PinIdentity::from(session);
+        if !self.can_move_pins() || !self.has_reorderable_pin(&source) {
+            return menu;
+        }
+        let records = &self.pinned_sessions.records;
+        let Some(index) = records
+            .iter()
+            .position(|entry| entry.session.id == source.session_id)
+        else {
+            return menu;
+        };
+        let origin = PinDrag {
+            source,
+            order: self.pin_order_snapshot(),
+            connection: self.connection_generation,
+            title: session.title.clone(),
+        };
+        for (neighbor, placement, label) in [
+            (index.checked_sub(1), PinPlacement::Before, "上移置顶会话"),
+            (Some(index + 1), PinPlacement::After, "下移置顶会话"),
+        ] {
+            let Some(neighbor) = neighbor.and_then(|index| records.get(index)) else {
+                continue;
+            };
+            let target = PinIdentity::from(&neighbor.session);
+            let app = app.clone();
+            let origin = origin.clone();
+            menu = menu.item(
+                PopupMenuItem::new(tr(label))
+                    .disabled(!self.has_reorderable_pin(&target))
+                    .on_click(move |_, _, cx| {
+                        let _ = app.update(cx, |this, cx| {
+                            this.move_pinned_session(&origin, &target, placement, cx)
+                        });
+                    }),
+            );
+        }
+        menu
+    }
+
+    pub(crate) fn pin_drag_handle(
+        &self,
+        session: &Session,
+        order: Arc<[String]>,
+        title: &str,
+        workspace: &str,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        if order.len() < 2 {
+            return None;
+        }
+        let source = PinIdentity::from(session);
+        let enabled = self.can_move_pins() && self.has_reorderable_pin(&source);
+        let drag = PinDrag {
+            source,
+            order,
+            connection: self.connection_generation,
+            title: title.to_owned(),
+        };
+        let instruction = tr("拖动以调整置顶顺序");
+        Some(
+            div()
+                .id(SharedString::from(format!("pin-drag-{}", session.id)))
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(18.))
+                .h(px(30.))
+                .flex_shrink_0()
+                .role(Role::Group)
+                .aria_label(format!("{instruction} · {title} · {workspace}"))
+                .opacity(if enabled { 1. } else { 0.45 })
+                .child(
+                    Icon::new(Glyph::GripVertical)
+                        .size(px(13.))
+                        .text_color(Color::Muted.get(cx)),
+                )
+                .when(enabled, |handle| {
+                    handle
+                        .cursor_grab()
+                        .on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()))
+                })
+                .into_any_element(),
+        )
+    }
+
+    pub(crate) fn pin_drop_zones(&self, session: &Session, cx: &Context<Self>) -> Vec<AnyElement> {
+        let target = PinIdentity::from(session);
+        if !cx.has_active_drag() || !self.can_move_pins() || !self.has_reorderable_pin(&target) {
+            return Vec::new();
+        }
+        [PinPlacement::Before, PinPlacement::After]
+            .into_iter()
+            .map(|placement| {
+                let target = target.clone();
+                let hover = target.clone();
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .h(px(15.))
+                    .when(placement == PinPlacement::Before, |zone| zone.top_0())
+                    .when(placement == PinPlacement::After, |zone| zone.bottom_0())
+                    .drag_over::<PinDrag>(move |style, drag, _, cx| {
+                        if drag.source == hover {
+                            return style;
+                        }
+                        let style = style.border_color(Color::Accent.get(cx));
+                        match placement {
+                            PinPlacement::Before => style.border_t_2(),
+                            PinPlacement::After => style.border_b_2(),
+                        }
+                    })
+                    .on_drop(cx.listener(move |this, drag: &PinDrag, _, cx| {
+                        this.move_pinned_session(drag, &target, placement, cx)
+                    }))
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    fn move_pinned_session(
+        &mut self,
+        drag: &PinDrag,
+        target: &PinIdentity,
+        placement: PinPlacement,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.can_move_pins()
+            || self.connection_generation != drag.connection
+            || !self.has_reorderable_pin(&drag.source)
+            || !self.has_reorderable_pin(target)
+        {
+            return;
+        }
+        if self.pin_order_snapshot() != drag.order {
+            self.error = Some("置顶顺序已变化，请重试。".into());
+            self.refresh_pinned_sessions(cx);
+            return;
+        }
+        let Some(wanted) = move_order(
+            &drag.order,
+            &drag.source.session_id,
+            &target.session_id,
+            placement,
+        ) else {
+            return;
+        };
+        let Some(runtime) = self.runtime.clone() else {
+            return;
+        };
+        let connection = drag.connection;
+        let prior = drag.order.clone();
+        let params = json!({"source":drag.source,"target":target,"position":placement,"expectedOrder":prior.as_ref()});
+        self.pinned_sessions.reordering = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = runtime
+                .request("chat.pins.move", params)
+                .await
+                .and_then(|value| {
+                    serde_json::from_value::<PinMoveResult>(value)
+                        .map_err(|error| error.to_string())
+                });
+            let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection {
+                    return;
+                }
+                this.pinned_sessions.reordering = false;
+                match result {
+                    Ok(result) if result.ordered_ids == wanted => {
+                        this.pinned_sessions.manually_ordered = true;
+                        if this.pin_order_snapshot() == prior {
+                            let positions: HashMap<_, _> = wanted
+                                .iter()
+                                .enumerate()
+                                .map(|(index, id)| (id.as_str(), index))
+                                .collect();
+                            this.pinned_sessions
+                                .records
+                                .sort_by_key(|entry| positions[entry.session.id.as_str()]);
+                        }
+                    }
+                    Ok(_) => this.error = Some("返回的置顶顺序与请求不一致。".into()),
+                    Err(error) => {
+                        this.error = Some(crate::app::ErrorNotice::Detail(
+                            "保存置顶顺序失败",
+                            error.to_string(),
+                        ))
+                    }
+                }
+                this.refresh_pinned_sessions(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn request_session_pinned(
         &mut self,
         session: Session,
@@ -123,7 +439,12 @@ impl HiveApp {
                             }
                         }
                     }
-                    Err(error) => this.error = Some(crate::app::ErrorNotice::Detail("保存会话置顶失败",error.to_string())),
+                    Err(error) => {
+                        this.error = Some(crate::app::ErrorNotice::Detail(
+                            "保存会话置顶失败",
+                            error.to_string(),
+                        ))
+                    }
                 }
                 cx.notify();
             });
@@ -174,6 +495,8 @@ impl HiveApp {
                     {
                         match result {
                             Ok(records) => {
+                                this.pinned_sessions.manually_ordered =
+                                    records.iter().any(|entry| entry.session.pin_rank.is_some());
                                 this.pinned_sessions.records = records;
                                 this.pinned_sessions.error = None;
                             }
@@ -228,11 +551,13 @@ impl HiveApp {
         self.pinned_sessions
             .records
             .retain(|hit| !hit.session.archived);
-        self.pinned_sessions.records.sort_by(|a, b| {
-            b.session
-                .updated_at
-                .cmp(&a.session.updated_at)
-                .then_with(|| a.session.id.cmp(&b.session.id))
-        });
+        if !self.pinned_sessions.manually_ordered {
+            self.pinned_sessions.records.sort_by(|a, b| {
+                b.session
+                    .updated_at
+                    .cmp(&a.session.updated_at)
+                    .then_with(|| a.session.id.cmp(&b.session.id))
+            });
+        }
     }
 }

@@ -691,9 +691,23 @@ impl GlobalInbox {
                     if let Some(reading) = reading {
                         this.restore_position = Some(reading);
                     }
-                    if state.workspace.as_ref() == Some(&workspace) && state.collaboration.visible {
-                        app.update(cx, |app, cx| app.refresh_collaboration_inbox(cx));
-                    }
+                    let refresh_scoped =
+                        state.workspace.as_ref() == Some(&workspace) && state.collaboration.visible;
+                    app.update(cx, |app, cx| {
+                        if let Some(saved) = this
+                            .projects
+                            .get(&workspace)
+                            .and_then(|project| project.reminders.saved.as_ref())
+                        {
+                            app.collaboration
+                                .inbox_badge
+                                .remember_reminders(&workspace, saved);
+                            app.sync_inbox_deadlines(cx);
+                        }
+                        if refresh_scoped {
+                            app.refresh_collaboration_inbox(cx);
+                        }
+                    });
                 }
                 let generation = this.undo.finish(result);
                 expire_later(cx, generation, |inbox| &mut inbox.undo);
@@ -754,6 +768,7 @@ impl GlobalInbox {
                 &project.sessions,
             );
         }
+        let refreshed_questions = snapshot.is_some();
         if let Some(snapshot) = snapshot {
             project.action_center = Some(snapshot);
         }
@@ -772,16 +787,54 @@ impl GlobalInbox {
                 &app.collaboration.inbox_badge,
             );
         }
-        if let Some(saved) = &project.reminders.saved {
-            parent.update(cx, |app, _| {
+        parent.update(cx, |app, cx| {
+            if refreshed_questions && let Some(snapshot) = &project.action_center {
+                app.collaboration.inbox_badge.remember_questions(snapshot);
+            }
+            if let Some(saved) = &project.reminders.saved {
                 app.collaboration
                     .inbox_badge
-                    .remember_unread_reminders(workspace, saved)
-            });
-        }
+                    .remember_reminders(workspace, saved);
+                app.sync_inbox_deadlines(cx);
+            }
+        });
         if selected_member_removed {
             self.clear_filter_position();
         }
+        cx.notify();
+    }
+
+    fn apply_local_expiry(
+        &mut self,
+        workspace: &str,
+        outcome: Result<&super::Snoozes, &std::io::Error>,
+        app: &HiveApp,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.projects.get_mut(workspace) else {
+            return;
+        };
+        let now = now_ms();
+        if let Some(saved) = &project.reminders.saved {
+            for (key, reminder) in saved.expired_reminders(now) {
+                if !outcome.as_ref().is_ok_and(|latest| latest.active(key, now)) {
+                    self.placement
+                        .hold_expired(RowId::from_key(workspace, key.to_owned()), reminder);
+                }
+            }
+        }
+        project.reminders.apply_expiry(outcome);
+        let eligible = project
+            .entries(app)
+            .iter()
+            .filter_map(|entry| project.badge_item(app, workspace, entry, now))
+            .collect();
+        update_new_items(
+            &mut self.new_items,
+            workspace,
+            eligible,
+            &app.collaboration.inbox_badge,
+        );
         cx.notify();
     }
 }
@@ -1076,6 +1129,7 @@ impl Render for GlobalInbox {
             self.preferences.values.show_waiting,
             self.preferences.values.show_snoozed,
         );
+        let has_snoozed = !sections.snoozed.is_empty();
         self.row_focus.retain(|id, _| self.placement.shows(id));
         for id in self.placement.visible_rows() {
             self.row_focus.entry(id.clone()).or_insert_with(|| {
@@ -1317,7 +1371,9 @@ impl Render for GlobalInbox {
             let title = display_project(project, &app.workspaces);
             let data = &self.projects[id];
             let reminders = &data.reminders;
-            let reminder = reminders.active_reminder(&entry, now);
+            let reminder = reminders
+                .active_reminder(&entry, now)
+                .or_else(|| self.placement.held_reminder(&row_id));
             if !awaiting_position
                 && let Some(item) = data.badge_item(app, id, &entry, now)
                 && !app.collaboration.inbox_badge.sees(&item)
@@ -1437,14 +1493,11 @@ impl Render for GlobalInbox {
                             if let Some(saved) = &project.reminders.saved {
                                 app.collaboration
                                     .inbox_badge
-                                    .remember_unread_reminders(workspace, saved);
-                                if delay.is_some()
-                                    && let Some(session) = edit.key.strip_prefix("unread-session:")
-                                {
-                                    app.collaboration
-                                        .inbox_badge
-                                        .forget_unread(workspace, session);
+                                    .remember_reminders(workspace, saved);
+                                if delay.is_some() {
+                                    app.collaboration.inbox_badge.forget_snoozed(edit);
                                 }
+                                app.sync_inbox_deadlines(cx);
                             }
                             if refresh_scoped {
                                 app.refresh_collaboration_inbox(cx);

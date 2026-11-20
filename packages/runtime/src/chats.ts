@@ -40,7 +40,7 @@ import { CodexModes, CodexSavedModeError, type CodexModeReplacement } from './ag
 import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
 import type { PiEvent, PiSessionHandle } from './agents/types.js';
-import { ChatIndex, SessionIdentityError, declaredExecutionPath, type ChatRecord, type ChatBackend } from './chat-index.js';
+import { ChatIndex, SessionIdentityError, comparePinnedSessions, declaredExecutionPath, type ChatRecord, type ChatBackend, type PinnedSessionRef } from './chat-index.js';
 import { createScratchConversation, isScratchWorkspace, validateScratchConversation } from './scratch-workspace.js';
 import { ScratchProjectLinks, type ScratchProjectRequest } from './scratch-project-links.js';
 import { externalPiBranch, externalPiMessage, piHistoryMessageId, readPiTranscript, verifyPiTranscriptIdentity } from './agents/external-pi-history.js';
@@ -469,7 +469,7 @@ export class Chats implements StructuredSessionPort {
   }
   private publicSession(record: ChatRecord, executionPath: string) {
     return {id: record.id, title: record.title, workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
-      pinned: !!record.pinned, archived: !!record.archived, updatedAt: record.updatedAt,
+      pinned: !!record.pinned, ...(record.pinRank !== undefined && {pinRank: record.pinRank}), archived: !!record.archived, updatedAt: record.updatedAt,
       ...(record.customTitle !== undefined && {customTitle: record.customTitle}), ...(record.agentId && {agentId: record.agentId}),
       ...(record.execution && {execution: {kind: record.execution.kind, path: record.execution.path, branch: record.execution.branch}}),
       ...(record.scratch && {scratch: true as const}), executionPath,
@@ -1331,24 +1331,34 @@ export class Chats implements StructuredSessionPort {
   private async navigationEntries(onlyPinned: boolean, archived = false, workspaceId?: string) {
     if (this.closing) throw new Error('Chat runtime is closing');
     const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
-    const groups = await Promise.all(workspaces.filter(workspace => !this.removing.has(workspace.id) && (workspaceId === undefined || workspace.id === workspaceId)).map(async workspace => {
-      const records = () => this.index.list(workspace.id).filter(session => !!session.archived === archived && (!onlyPinned || session.pinned));
-      if (!records().length) return [];
-      const members = await this.hive.request('GET', `/api/ui/workspaces/${workspace.id}/team`) as { id: string; name: string }[];
-      const names = new Map(members.map(member => [member.id, member.name]));
+    const candidates = workspaces.filter(workspace => !this.removing.has(workspace.id) && (workspaceId === undefined || workspace.id === workspaceId));
+    const records = (id: string) => this.index.list(id).filter(session => !!session.archived === archived && (!onlyPinned || session.pinned));
+    const memberNames = await Promise.all(candidates.map(async workspace => {
+      const members = records(workspace.id).length
+        ? await this.hive.request('GET', `/api/ui/workspaces/${workspace.id}/team`) as { id: string; name: string }[] : [];
+      return new Map(members.map(member => [member.id, member.name]));
+    }));
+    // Resolve all rows from one local index state after the metadata reads.
+    return candidates.map((workspace, index) => {
       if (this.removing.has(workspace.id)) return [];
-      return records().map(session => ({
+      return records(workspace.id).map(session => ({
         session,
         workspaceName: workspace.name,
         workspacePath: workspace.path,
-        title: !session.customTitle && session.agentId ? names.get(session.agentId) ?? session.title : session.title,
+        title: !session.customTitle && session.agentId ? memberNames[index]?.get(session.agentId) ?? session.title : session.title,
       }));
-    }));
-    return groups;
+    });
   }
   async pinned() {
     return (await this.navigationEntries(true)).flat()
-      .sort((a, b) => b.session.updatedAt - a.session.updatedAt || a.session.id.localeCompare(b.session.id));
+      .sort((a, b) => comparePinnedSessions(a.session, b.session));
+  }
+  async movePinned(source: PinnedSessionRef, target: PinnedSessionRef, position: 'before' | 'after', expectedOrder: string[]) {
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const workspaces = await this.hive.request('GET', '/api/workspaces') as WorkspaceSummary[];
+    if (this.closing) throw new Error('Chat runtime is closing');
+    const visible = new Set(workspaces.filter(workspace => !this.removing.has(workspace.id)).map(workspace => workspace.id));
+    return {orderedIds: this.index.movePinned(source, target, position, expectedOrder, visible)};
   }
   rename(id: string, title: unknown): ChatRecord {
     if (this.closing) throw new Error('Chat runtime is closing');
@@ -1368,10 +1378,7 @@ export class Chats implements StructuredSessionPort {
     const current = this.index.get(id);
     this.assertWorkspaceAvailable(current.workspaceId);
     if (typeof pinned !== 'boolean') throw new TypeError('Pinned state must be a boolean');
-    if (!!current.pinned === pinned) return current;
-    const changed = { ...current, pinned };
-    this.index.save(changed);
-    return changed;
+    return this.index.setPinned(id, pinned);
   }
   async setArchived(id: string, archived: unknown): Promise<ChatRecord> {
     return (await this.changeArchive(id, archived)).session;

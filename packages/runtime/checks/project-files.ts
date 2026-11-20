@@ -55,6 +55,20 @@ try {
   assert.deepEqual(nextContentPage.matches, Array.from({length: 5}, (_, i) => ({
     path: `nested/file-${i + 100}.txt`, line: 1,
   })));
+  const scatteredLines = [3, 350, 620, ...Array.from({length: 101}, (_, i) => 701 + i)];
+  const many = 'nested/many matching lines.md';
+  const matching = new Set(scatteredLines);
+  await writeFile(join(repo, many), Array.from({length: 801}, (_, i) => matching.has(i + 1)
+    ? 'Répété marker · réPÉTÉ MARKER'
+    : '').join('\r\n'));
+  const laterPath = 'nested/more matching lines.txt';
+  await writeFile(join(repo, laterPath), '\nRÉPÉTÉ MARKER\n');
+  const expected = [...scatteredLines.map(line => ({path: many, line})), {path: laterPath, line: 2}];
+  for (const offset of [0, 100, 104, expected.length]) {
+    assert.deepEqual(await searchProjectContents(repo, 'RÉPÉTÉ MARKER', offset), {
+      matches: expected.slice(offset, offset + 100), total: expected.length, limited: true,
+    });
+  }
   const preview = await previewProjectFile(repo, 'nested/unicode.txt');
   assert.equal(preview.text, 'first line\nCafe\u0301 MATCH\n');
   assert.equal(preview.sha256, createHash('sha256').update(preview.text).digest('hex'));

@@ -1,4 +1,10 @@
-use super::super::{Destination, Entry, Priority, snoozes::Snoozes};
+#[path = "deadline.rs"]
+mod deadline;
+
+use self::deadline::DeadlineWake;
+use super::super::{
+    ActionCenter, Destination, Entry, Priority, SnoozeEdit, Wake, snoozes::Snoozes,
+};
 use super::{GlobalInbox, now_ms};
 use crate::app::HiveApp;
 use gpui_kit::*;
@@ -6,7 +12,6 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
     time::Duration,
 };
 
@@ -61,14 +66,8 @@ struct Question {
     message_id: String,
 }
 
-fn collect_questions(
-    root: &Path,
-    scope: &[String],
-    questions: Vec<Question>,
-    now: u64,
-) -> HashSet<BadgeItem> {
+fn collect_questions(scope: &[String], questions: Vec<Question>) -> HashSet<BadgeItem> {
     let scope: HashSet<_> = scope.iter().map(String::as_str).collect();
-    let mut reminders = HashMap::new();
     questions
         .into_iter()
         .filter_map(|question| {
@@ -78,17 +77,11 @@ fn collect_questions(
             {
                 return None;
             }
-            let snoozes = reminders
-                .entry(question.workspace_id.clone())
-                .or_insert_with(|| Snoozes::load(root, &question.workspace_id).ok());
-            let snoozes = snoozes.as_ref()?;
-            (!snoozes.active(&format!("message:{}", question.message_id), now)).then_some(
-                BadgeItem::Question {
-                    workspace: question.workspace_id,
-                    dispatch: question.dispatch_id,
-                    message: question.message_id,
-                },
-            )
+            Some(BadgeItem::Question {
+                workspace: question.workspace_id,
+                dispatch: question.dispatch_id,
+                message: question.message_id,
+            })
         })
         .collect()
 }
@@ -99,7 +92,8 @@ pub(in crate::collaboration) struct InboxBadge {
     pub(super) dialog: Option<WeakEntity<GlobalInbox>>,
     pending: HashSet<BadgeItem>,
     seen: HashSet<BadgeItem>,
-    unread_reminders: HashMap<String, Snoozes>,
+    reminders: HashMap<String, Snoozes>,
+    wake: DeadlineWake,
     live_replies: HashMap<String, HashMap<String, u64>>,
 }
 
@@ -141,21 +135,59 @@ impl InboxBadge {
         self.seen.len() != before
     }
 
-    pub(in crate::collaboration::inbox) fn remember_unread_reminders(
+    pub(in crate::collaboration::inbox) fn remember_reminders(
         &mut self,
         workspace: &str,
         saved: &Snoozes,
     ) {
-        if saved.has_tracked_unread() {
-            self.unread_reminders
-                .insert(workspace.to_owned(), saved.clone());
-        } else {
-            self.unread_reminders.remove(workspace);
+        self.reminders.insert(workspace.to_owned(), saved.clone());
+    }
+
+    pub(in crate::collaboration::inbox) fn remember_questions(&mut self, snapshot: &ActionCenter) {
+        let scope = [snapshot.workspace_id.clone()];
+        let known = snapshot
+            .attention
+            .iter()
+            .filter_map(|item| {
+                (item.kind == "question_waiting_answer").then_some(())?;
+                Some(Question {
+                    workspace_id: snapshot.workspace_id.clone(),
+                    dispatch_id: item.dispatch_id.clone()?,
+                    message_id: item.message_id.clone()?,
+                })
+            })
+            .collect();
+        self.replace(&scope, Some(collect_questions(&scope, known)));
+    }
+
+    pub(in crate::collaboration::inbox) fn forget_snoozed(&mut self, edit: &SnoozeEdit) {
+        if let Some(session) = edit.key.strip_prefix("unread-session:") {
+            self.forget_unread(&edit.workspace, session);
+        } else if let Some(message) = edit.key.strip_prefix("message:")
+            && let Some(Wake::Dispatch { id, .. }) = &edit.wake
+        {
+            self.seen.remove(&BadgeItem::Question {
+                workspace: edit.workspace.clone(),
+                dispatch: id.clone(),
+                message: message.to_owned(),
+            });
         }
     }
 
+    fn question_visible(&self, item: &BadgeItem, now: u64) -> bool {
+        let BadgeItem::Question {
+            workspace, message, ..
+        } = item
+        else {
+            return false;
+        };
+        self.reminders
+            .get(workspace)
+            .is_some_and(|saved| !saved.active(&format!("message:{message}"), now))
+    }
+
     pub(super) fn tracks_unread(&self, workspace: &str, session: &str) -> bool {
-        self.unread_reminders
+        self.reminders
             .get(workspace)
             .is_some_and(|saved| saved.tracks_unread(session))
     }
@@ -272,7 +304,14 @@ mod tests {
                 make("outside", "new"),
             ]
         };
-        let current = collect_questions(root.path(), &scope, pending(), 19);
+        let mut badge = InboxBadge::default();
+        badge.remember_reminders(workspace, &Snoozes::load(root.path(), workspace).unwrap());
+        let known = collect_questions(&scope, pending());
+        let current: HashSet<_> = known
+            .iter()
+            .filter(|item| badge.question_visible(item, 19))
+            .cloned()
+            .collect();
         assert_eq!(current.len(), 1);
         assert!(current.contains(&BadgeItem::Question {
             workspace: workspace.into(),
@@ -280,7 +319,10 @@ mod tests {
             message: "new".into()
         }));
         assert_eq!(
-            collect_questions(root.path(), &scope, pending(), 20).len(),
+            known
+                .iter()
+                .filter(|item| badge.question_visible(item, 20))
+                .count(),
             2
         );
     }
@@ -309,14 +351,17 @@ impl HiveApp {
         badge
             .pending
             .iter()
-            .filter(move |_| badge.connection == self.connection_generation)
+            .filter(move |item| {
+                badge.connection == self.connection_generation
+                    && badge.question_visible(item, now_ms())
+            })
             .cloned()
             .chain(
                 self.sessions
                     .iter()
                     .chain(self.project_sessions.values().flatten())
                     .filter_map(move |session| {
-                        let saved = badge.unread_reminders.get(&session.workspace_id);
+                        let saved = badge.reminders.get(&session.workspace_id);
                         let deferred = saved.is_some_and(|saved| saved.tracks_unread(&session.id));
                         if (!self.unread.contains(&session.id) && !deferred)
                             || !active_project(&session.workspace_id)
@@ -352,6 +397,7 @@ impl HiveApp {
     }
 
     pub(crate) fn start_global_inbox_badge(cx: &mut Context<Self>) {
+        cx.observe_self(Self::sync_inbox_deadlines).detach();
         cx.spawn(async move |this, cx| {
             let mut start = 0;
             loop {
@@ -361,7 +407,6 @@ impl HiveApp {
                     if badge.connection != app.connection_generation {
                         badge.connection = app.connection_generation;
                         badge.pending.clear();
-                        badge.unread_reminders.clear();
                         start = 0;
                     }
                     let active: Vec<_> = app
@@ -373,15 +418,15 @@ impl HiveApp {
                     badge
                         .pending
                         .retain(|item| active.iter().any(|id| id == item.workspace()));
-                    badge.unread_reminders.retain(|id, _| active.contains(id));
+                    badge.reminders.retain(|id, _| active.contains(id));
                     badge.live_replies.retain(|id, _| active.contains(id));
-                    let unread_reminders = &badge.unread_reminders;
+                    let reminders = &badge.reminders;
                     badge.seen.retain(|item| {
                         active.iter().any(|id| id == item.workspace())
                             && match item {
                                 BadgeItem::UnreadSession { session, workspace } => {
                                     app.unread.contains(session)
-                                        || unread_reminders
+                                        || reminders
                                             .get(workspace)
                                             .is_some_and(|saved| saved.tracks_unread(session))
                                 }
@@ -440,17 +485,17 @@ impl HiveApp {
                                 })
                                 .collect();
                             let before = app.has_new_global_inbox_items(cx);
-                            let fresh = result.map(|questions| {
-                                collect_questions(root, &scope, questions, now_ms())
-                            });
+                            let fresh =
+                                result.map(|questions| collect_questions(&scope, questions));
                             for workspace in &scope {
                                 if let Ok(saved) = Snoozes::load(root, workspace) {
                                     app.collaboration
                                         .inbox_badge
-                                        .remember_unread_reminders(workspace, &saved);
+                                        .remember_reminders(workspace, &saved);
                                 }
                             }
                             app.collaboration.inbox_badge.replace(&scope, fresh);
+                            app.sync_inbox_deadlines(cx);
                             if before != app.has_new_global_inbox_items(cx) {
                                 cx.notify();
                             }

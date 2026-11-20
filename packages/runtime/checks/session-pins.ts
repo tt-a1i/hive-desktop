@@ -97,6 +97,14 @@ try {
       child.stdin.write(JSON.stringify({id, method, params}) + '\n');
     });
   }
+  const ref = (workspaceId: string, sessionId: string) => ({workspaceId, sessionId});
+  async function globalPins(): Promise<Array<{session: {id: string; title: string; pinRank?: number}; workspaceName: string}>> {
+    const reply = await rpc('chat.pinned');
+    assert.equal(reply.error, undefined);
+    return reply.result;
+  }
+  const orderedIds = async () => (await globalPins()).map(hit => hit.session.id);
+  let expectedAfterRestart: string[] = [];
   try {
     assert.ok((await rpc('initialize')).result.hivePort);
     const pinned = await rpc('chat.pin', {sessionId: foreign.id, pinned: true});
@@ -110,15 +118,88 @@ try {
     assert.deepEqual((await rpc('chat.list', {workspaceId: alpha})).result, before);
     for (const invalid of [null, 'false', 0]) assert.ok((await rpc('chat.pin', {sessionId: foreign.id, pinned: invalid})).error);
     assert.ok((await rpc('chat.pin', {sessionId: 'missing', pinned: true})).error);
+
+    // Equal conversation titles and pins spanning Alpha and Beta exercise
+    // the persisted IDs rather than titles or any workspace's local sequence.
+    const archived = records[2]!;
+    for (const original of [target, second, foreign, archived]) {
+      assert.equal((await rpc('chat.rename', {sessionId:original.id, title:'Same title'})).error, undefined);
+    }
+    assert.equal((await rpc('chat.pin', {sessionId:archived.id, pinned:true})).error, undefined);
+    const legacyPins = await globalPins();
+    assert.ok(legacyPins.every(({session}) => session.title === 'Same title' && !('pinRank' in session)));
+    const legacyOrder = legacyPins.map(hit => hit.session.id);
+    const archivedSlot = legacyOrder.indexOf(archived.id);
+    const archivedReply = await rpc('chat.archive', {sessionId:archived.id, archived:true});
+    assert.equal(archivedReply.error, undefined);
+    const expectedOrder = legacyOrder.filter(id => id !== archived.id);
+    const source = ref(beta, foreign.id), anchor = ref(alpha, target.id);
+    const position = expectedOrder.indexOf(foreign.id) < expectedOrder.indexOf(target.id) ? 'after' : 'before';
+    const move = {source, target:anchor, position, expectedOrder};
+    const nextOrder = expectedOrder.filter(id => id !== foreign.id);
+    nextOrder.splice(nextOrder.indexOf(target.id) + Number(position === 'after'), 0, foreign.id);
+    const reordered = await rpc('chat.pins.move', move);
+    assert.equal(reordered.error, undefined);
+    assert.deepEqual(reordered.result, {orderedIds:nextOrder});
+    assert.deepEqual(await orderedIds(), nextOrder);
+    const ranks = (await globalPins()).map(hit => hit.session.pinRank);
+    assert.ok(ranks.every(rank => rank !== undefined && Number.isSafeInteger(rank)));
+    assert.deepEqual(ranks, ranks.slice().sort((a, b) => a! - b!));
+
+    const committed = await readFile(file, 'utf8');
+    assert.equal((await rpc('chat.pins.move', move)).error.code, 'PIN_ORDER_STALE');
+    assert.equal((await rpc('chat.pins.move', {...move, source:ref(alpha, foreign.id), expectedOrder:nextOrder})).error.code, 'PIN_SOURCE_UNAVAILABLE');
+    assert.equal((await rpc('chat.pins.move', {...move, target:ref(alpha, archived.id), expectedOrder:nextOrder})).error.code, 'PIN_SOURCE_UNAVAILABLE');
+    assert.equal((await rpc('chat.pins.move', {...move, target:ref(alpha, 'missing'), expectedOrder:nextOrder})).error.code, 'PIN_SOURCE_UNAVAILABLE');
+    assert.ok((await rpc('chat.pins.move', {...move, position:'above'})).error);
+    assert.ok((await rpc('chat.pins.move', {...move, expectedOrder:[...nextOrder, nextOrder[0]]})).error);
+    assert.equal(await readFile(file, 'utf8'), committed);
+    assert.deepEqual(await orderedIds(), nextOrder);
+    assert.equal(agentEvents, 1, 'Moving pins cannot publish agent events');
+
+    const restored = await rpc('chat.archive', {sessionId:archived.id, archived:false,
+      undo:{workspaceId:alpha, version:archivedReply.result.mutation.version}});
+    assert.equal(restored.error, undefined, 'Freezing a hidden pin must preserve its Archive Undo receipt');
+    const restoredOrder = nextOrder.slice();
+    restoredOrder.splice(archivedSlot, 0, archived.id);
+    assert.deepEqual(await orderedIds(), restoredOrder);
+    assert.equal(restored.result.session.pinRank, archivedSlot);
+
+    const another = records[3]!;
+    const manualPin = await rpc('chat.pin', {sessionId: another.id, pinned: true});
+    assert.equal(manualPin.error, undefined);
+    assert.equal(manualPin.result.session.pinRank, -1);
+    assert.deepEqual(await orderedIds(), [another.id, ...restoredOrder]);
     const unpinned = await rpc('chat.pin', {sessionId: target.id, pinned: false});
+    assert.equal(unpinned.error, undefined);
     assert.equal(unpinned.result.session.pinned, false);
-    assert.equal(unpinned.result.sessions[0].id, second.id);
+    assert.equal(unpinned.result.session.pinRank, undefined);
     assert.equal(unpinned.result.session.updatedAt, target.updatedAt);
-    assert.equal(agentEvents, 0);
+    expectedAfterRestart = [another.id, ...restoredOrder.filter(id => id !== target.id)];
+    assert.deepEqual(await orderedIds(), expectedAfterRestart);
+    assert.equal(agentEvents, 2);
     await rpc('shutdown'); assert.equal((await exited)[0], 0, stderr);
   } finally { lines.close(); if (child.exitCode === null) {child.kill(); await exited;} }
   const finalIndex = new ChatIndex(join(state, 'chats'));
   assert.equal(finalIndex.get(target.id).pinned, false);
   assert.equal(finalIndex.get(foreign.id).pinned, true);
-  console.log('SESSION_PINS_OK: four backends, real HTTP/SQLite and JSONL, sorting, restart, legacy/invalid records, disk failure preserves memory and clears temporary files. No Agent or model request.');
+  const foreignRank = finalIndex.get(foreign.id).pinRank;
+  finalIndex.save({...foreign, updatedAt: Date.now() + 500_000, title:'Late activity save'});
+  assert.equal(finalIndex.get(foreign.id).pinned, true, 'A stale save cannot unpin a conversation');
+  assert.equal(finalIndex.get(foreign.id).pinRank, foreignRank, 'A stale save cannot replace a rank');
+  assert.equal(finalIndex.noteInboxReply(foreign.id, 'late-reply')?.revision, 1);
+  assert.equal(finalIndex.get(foreign.id).pinRank, foreignRank);
+
+  const frozen = finalIndex.all();
+  await rename(file, file + '.retained'); await mkdir(file);
+  try {
+    assert.throws(() => finalIndex.movePinned(ref(beta, foreign.id), ref(alpha, records[3]!.id), 'before',
+      expectedAfterRestart, new Set([alpha, beta])));
+    assert.deepEqual(finalIndex.all(), frozen, 'A failed publication cannot affect the visible pin set or order');
+  } finally { await rm(file, {recursive:true}); await rename(file + '.retained', file); }
+  runtime = await createDesktopRuntime(state, () => { events++; });
+  assert.deepEqual((await runtime.chats.pinned()).map(hit => hit.session.id), expectedAfterRestart);
+  assert.deepEqual(await readdir(join(state, 'chats/pi')), []);
+  assert.equal(events, 0);
+  console.log('SESSION_PINS_OK: legacy order, same titles across workspaces, durable explicit rank, stale and crossed claims, Archive Undo, pin-to-top, late metadata and atomic disk failure. No Agent or model request.');
 } finally { await runtime?.close(); await rm(directory, {recursive:true, force:true}); }

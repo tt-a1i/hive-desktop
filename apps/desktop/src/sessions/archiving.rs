@@ -346,6 +346,15 @@ impl HiveApp {
         let order = |a: &Session, b: &Session| {
             b.pinned
                 .cmp(&a.pinned)
+                .then_with(|| {
+                    if a.pinned && b.pinned {
+                        a.pin_rank
+                            .unwrap_or(i64::MAX)
+                            .cmp(&b.pin_rank.unwrap_or(i64::MAX))
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
                 .then_with(|| b.updated_at.cmp(&a.updated_at))
         };
         self.sessions.sort_by(order);

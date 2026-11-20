@@ -90,6 +90,19 @@ impl SnoozeEdit {
 }
 
 impl Reminders {
+    fn apply_expiry(&mut self, outcome: Result<&Snoozes, &io::Error>) {
+        match outcome {
+            Ok(saved) => {
+                self.saved = Some(saved.clone());
+                self.read_error = None;
+                self.write_error = None;
+            }
+            Err(error) => {
+                self.write_error = Some(io::Error::new(error.kind(), error.to_string()));
+            }
+        }
+    }
+
     fn reconcile(
         &mut self,
         root: &std::path::Path,
@@ -604,7 +617,7 @@ impl HiveApp {
         }
         self.collaboration
             .inbox_badge
-            .remember_unread_reminders(workspace, &saved);
+            .remember_reminders(workspace, &saved);
         Ok(Some(saved))
     }
 
@@ -684,10 +697,11 @@ impl HiveApp {
                     if let Some(saved) = &inbox.reminders.saved {
                         this.collaboration
                             .inbox_badge
-                            .remember_unread_reminders(&workspace, saved);
+                            .remember_reminders(&workspace, saved);
                     }
                 }
                 if let Some(snapshot) = snapshot {
+                    this.collaboration.inbox_badge.remember_questions(&snapshot);
                     inbox.action_center = Some(snapshot);
                 }
                 cx.notify();
@@ -1051,13 +1065,9 @@ impl HiveApp {
                         {
                             this.collaboration
                                 .inbox_badge
-                                .remember_unread_reminders(workspace, saved);
-                            if delay.is_some()
-                                && let Some(session) = edit.key.strip_prefix("unread-session:")
-                            {
-                                this.collaboration
-                                    .inbox_badge
-                                    .forget_unread(workspace, session);
+                                .remember_reminders(workspace, saved);
+                            if delay.is_some() {
+                                this.collaboration.inbox_badge.forget_snoozed(edit);
                             }
                         }
                         cx.notify();
@@ -1117,6 +1127,13 @@ impl HiveApp {
                     let root = this.data_dir.as_ref().ok_or("无法保存已暂缓事项")?;
                     this.collaboration.inbox.reminders.restore(root, &change)
                 })();
+                if result.is_ok()
+                    && let Some(saved) = &this.collaboration.inbox.reminders.saved
+                {
+                    this.collaboration
+                        .inbox_badge
+                        .remember_reminders(workspace, saved);
+                }
                 let generation = this.collaboration.inbox.undo.finish(result);
                 expire_later(cx, generation, |app| &mut app.collaboration.inbox.undo);
                 this.refresh_collaboration_inbox(cx);

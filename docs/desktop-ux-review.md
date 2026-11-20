@@ -201,8 +201,21 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 从暂存 Diff 切到「当前文件」，看到同一路径更新后的 Markdown 内容，切回仍显示原暂存比较。外部修改后再次切入可读取更新的内容。独立工作树的同名文件显示工作树独有标题，选中删除文件后回到 Diff。核对了项目和两个工作树的暂存内容。证据在 `.artifacts/git-current-file-qa`。
 - 247 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、TypeScript 检查、受控 ACP 回复游标冷恢复、会话归档和项目文件工作树专项通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第十六批
+
+本轮从 Hive Desktop `3e50d9c` 开始。参考默认分支为 T3 Code `f0a2aa1`、Cindy `9602463`、Beluga `45a484b`，Hive 上游为 `18861b8`。
+
+- **手动排列置顶会话。** 可以拖动置顶行左侧手柄，也可以从会话菜单上移或下移。Hive 以准确的项目和会话标识保存顺序，读取新回复和重启后仍按手动顺序展示。归档后撤销可以回到原位置。 [T3 Code 手动排列](https://github.com/pingdotgg/t3code/blob/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/docs/user/thread-sidebar.md#L98-L105)
+- **本地计时唤回到期的暂缓事项。** 项目和跨项目收件箱按本机时间处理已保存的暂缓。即使后台回包延迟，到期事项仍会回到对应列表。跨项目收件箱会先保留正在用鼠标或键盘操作的行。 [Cindy 到期处理](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L140-L146)
+- **显示文件中的每一条正文命中。** 同一文件的每个命中行都能独立打开，按路径和行号排序，单页最多 100 条。切换会话执行目录会按该项目或工作树重新搜索。 [Beluga 正文命中](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L192-L225)
+
+- macOS 使用会话菜单移动 Alpha 项目的同名会话，再拖动 Beta 项目的同名会话到置顶区首位。四条置顶在重启和归档撤销后顺序一致，当前草稿保留。证据在 `.artifacts/pin-order-qa`。
+- macOS 跨项目收件箱拦住会话列表与协作事项回包后，Beacon 的待答复问题先到期并返回，Atlas 的普通未读会话等到自己的截止时间才返回。单独打开 Atlas 项目收件箱，拦住协作事项回包后也能看到到期的未读会话回来。证据在 `.artifacts/snooze-deadlines-qa`。
+- macOS 从同一文件的正文结果打开第 3、350、620 行。切到独立工作树后，用方向键和回车打开该工作树的第 350 行。只在项目目录出现的词组在工作树中没有命中，切回项目后恢复三条结果。另在同一文件的 130 条命中中翻到第 2 页，打开第 103 行。证据在 `.artifacts/file-search-jump-qa`。
+- 250 项桌面 Rust 测试通过，1 项原有忽略。Windows x64 MSVC 交叉类型检查、TypeScript 检查、置顶顺序与归档协议，以及项目和工作树文件正文专项通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **手动排列置顶会话。** 当前按最近活动排。用两个项目的同名置顶会话验证移动到指定位置，随后读取新回复、冷启动和归档撤销都应保留用户排好的顺序。 [T3 Code 手动排列](https://github.com/pingdotgg/t3code/blob/e668e6141faef533509e1d38d0f984bb38431d3f/docs/user/thread-sidebar.md#L98-L105)
-- **本地计时唤回到期的暂缓事项。** 用两个不同到期时间的事项验证：后台回包延迟时，到期事项仍回到列表，另一条保持暂缓。 [Cindy 到期处理](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L140-L146)
-- **显示文件中的每一条正文命中。** Hive 当前只返回每个文件的首个匹配行。用同一个文件第 3、350、620 行的命中和跨页结果验证：每项打开对应行，切换工作树时按它的内容重新搜索。 [Beluga 正文命中](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L192-L225)
+- **折叠正在工作的会话。** 侧栏可以单独收起后台还在执行的会话。用准备回复、等待授权和已经置顶的三个会话验收：收起后仍能看到待回应会话，回复完成时相应会话回到列表，当前选中的草稿保持。 [T3 Code 工作区段](https://github.com/pingdotgg/t3code/blob/f0a2aa10f5165413e863db9f1502dc4bb6fa42e8/docs/user/thread-sidebar.md#L134-L149)
+- **从收件箱归档已完成的会话。** 沿用已有确认和撤销。用跨项目同名会话验收：归档和撤销只作用于选中会话，另一个未读会话和当前草稿保持，仍待回应的事项保有原入口。 [Cindy 收件箱归档](https://github.com/makecindy/cindy/blob/96024635d21ad07772501610c933f4d34536d09f/docs/product-rules/task-inbox.md#L48-L59)
+- **文件搜索支持区分大小写。** 用同一文件的 `TOKEN` 与 `token` 及混合大小写文件名验证：切换开关更新命中和分页，选择后打开正确工作树中的准确行。 [Beluga 大小写开关](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/ContentSearch.tsx#L114-L125)

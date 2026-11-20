@@ -17,6 +17,7 @@ export function isUnsetPiModel(model: { provider: string; id: string } | undefin
 
 export interface DeliveryFailure {deliveryId:string;message:string}
 export interface ChatExecution { kind: 'worktree'; path: string; branch: string }
+export interface PinnedSessionRef { workspaceId: string; sessionId: string }
 export class SessionIdentityError extends Error {
   constructor(readonly code: string, message: string) { super(`[${code}] ${message}`); this.name = 'SessionIdentityError'; }
 }
@@ -43,6 +44,7 @@ export interface ChatRecord {
   title: string;
   customTitle?: boolean;
   pinned?: boolean;
+  pinRank?: number;
   archived?: boolean;
   lastDeliveryFailure?: DeliveryFailure;
   inboxReply?: {revision: number; messageId: string};
@@ -66,6 +68,14 @@ export interface ChatRecord {
 export function declaredExecutionPath(record: ChatRecord, workspacePath: string): string {
   return record.scratch ? scratchConversationPath(workspacePath, record.workspaceId, record.id)
     : record.execution?.path ?? workspacePath;
+}
+
+export function comparePinnedSessions(a: ChatRecord, b: ChatRecord): number {
+  if (a.pinRank !== undefined && b.pinRank !== undefined && a.pinRank !== b.pinRank)
+    return a.pinRank < b.pinRank ? -1 : 1;
+  if ((a.pinRank === undefined) !== (b.pinRank === undefined))
+    return a.pinRank === undefined ? 1 : -1;
+  return b.updatedAt - a.updatedAt || a.id.localeCompare(b.id);
 }
 
 // Desktop navigation metadata only. Hive owns workspaces/team state and each
@@ -98,7 +108,8 @@ export class ChatIndex {
     return this.generations.get(id)!;
   }
   list(workspaceId: string): ChatRecord[] {
-    return this.records.filter(record => record.workspaceId === workspaceId).map(recordSnapshot).sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt);
+    return this.records.filter(record => record.workspaceId === workspaceId).map(recordSnapshot).sort((a, b) =>
+      Number(!!b.pinned) - Number(!!a.pinned) || (a.pinned && b.pinned ? comparePinnedSessions(a, b) : b.updatedAt - a.updatedAt));
   }
   peek(id:string):ChatRecord|undefined {const record=this.records.find(record=>record.id===id);return record && recordSnapshot(record);}
   get(id: string): ChatRecord {
@@ -155,7 +166,64 @@ export class ChatIndex {
     // this cursor, and a new chat cannot inherit the source chat's cursor.
     if (existing?.inboxReply) normalized.inboxReply = existing.inboxReply;
     else delete normalized.inboxReply;
+    // A turn or metadata update can hold a copy from before a pin change.
+    if (existing?.pinned !== undefined) normalized.pinned = existing.pinned;
+    else if (existing) delete normalized.pinned;
+    if (existing?.pinRank !== undefined) normalized.pinRank = existing.pinRank;
+    else delete normalized.pinRank;
     this.commit([...this.records.filter(item => item.id !== record.id), normalized],record.id);
+  }
+  setPinned(id: string, pinned: boolean): ChatRecord {
+    const current = this.get(id);
+    if (!!current.pinned === pinned) return current;
+    const changed = {...current, pinned};
+    const order = this.records.filter(record => record.pinned).sort(comparePinnedSessions);
+    const firstRank = order[0]?.pinRank;
+    let records = this.records;
+    delete changed.pinRank;
+    if (pinned && firstRank !== undefined) {
+      if (firstRank > Number.MIN_SAFE_INTEGER) changed.pinRank = firstRank - 1;
+      else {
+        // Rebuild ranks from the explicit order before the next signed rank
+        // would exceed the JSON-safe integer range.
+        records = this.withPinRanks(order.map(record => record.id));
+        changed.pinRank = -1;
+      }
+    }
+    this.commit(records.map(record => record.id === id ? changed : record), id, true);
+    return recordSnapshot(changed);
+  }
+  movePinned(source: PinnedSessionRef, target: PinnedSessionRef, position: 'before' | 'after',
+      expectedOrder: string[], workspaceIds: ReadonlySet<string>): string[] {
+    const order = this.records.filter(record => record.pinned).sort(comparePinnedSessions);
+    const visible = (record: ChatRecord) => !record.archived && workspaceIds.has(record.workspaceId);
+    const current = order.filter(visible);
+    if (expectedOrder.length !== current.length || current.some((session, index) => session.id !== expectedOrder[index]))
+      throw new SessionIdentityError('PIN_ORDER_STALE', 'The pinned conversations changed. Refresh their order and try again.');
+    const matches = (ref: PinnedSessionRef) => current.some(session => session.id === ref.sessionId && session.workspaceId === ref.workspaceId);
+    if (source.sessionId === target.sessionId || !matches(source) || !matches(target))
+      throw new SessionIdentityError('PIN_SOURCE_UNAVAILABLE', 'Select two distinct pinned conversations in their original workspaces.');
+    const orderedIds = expectedOrder.filter(id => id !== source.sessionId);
+    const slot = orderedIds.indexOf(target.sessionId) + Number(position === 'after');
+    orderedIds.splice(slot, 0, source.sessionId);
+
+    // Archived pins stay in their existing slots. Reordering visible pins
+    // cannot indirectly move a hidden pin or invalidate its archive receipt.
+    let next = 0;
+    const rankedIds = order.map(session => visible(session) ? orderedIds[next++]! : session.id);
+    const slots = order.map(session => session.pinRank);
+    const reusableSlots = slots.every(rank => rank !== undefined) && new Set(slots).size === slots.length;
+    const records = this.withPinRanks(rankedIds, reusableSlots ? slots : undefined);
+    if (records.some((record, index) => record !== this.records[index]))
+      this.commit(records, undefined, true);
+    return orderedIds;
+  }
+  private withPinRanks(orderedIds: string[], slots?: number[]): ChatRecord[] {
+    const ranks = new Map(orderedIds.map((id, rank) => [id, slots?.[rank] ?? rank]));
+    return this.records.map(record => {
+      const pinRank = ranks.get(record.id);
+      return pinRank === undefined || pinRank === record.pinRank ? record : {...record, pinRank};
+    });
   }
   noteInboxReply(id: string, messageId: string): {workspaceId: string; revision: number} | undefined {
     const record = this.peek(id);
@@ -190,7 +258,7 @@ export class ChatIndex {
   removeWorkspace(workspaceId: string): void {
     this.commit(this.records.filter(record => record.workspaceId !== workspaceId));
   }
-  private commit(next: ChatRecord[], touchedId?:string): void {
+  private commit(next: ChatRecord[], touchedId?:string, rankOnlyForOtherRecords = false): void {
     const temporary = `${this.file}.${randomUUID()}.tmp`;
     try {
       writeFileSync(temporary, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600, flush: true });
@@ -198,7 +266,8 @@ export class ChatIndex {
       // A successful rename publishes the new index even if directory sync
       // later fails. Keep retries and subsequent changes on that revision.
       const previous=new Map(this.records.map(record=>[record.id,record]));
-      for(const record of next)if(record.id===touchedId||!previous.has(record.id)||!isDeepStrictEqual(previous.get(record.id),record))this.generations.set(record.id,++this.generation);
+      for(const record of next)if(record.id===touchedId||!previous.has(record.id)||
+        !rankOnlyForOtherRecords&&!isDeepStrictEqual(previous.get(record.id),record))this.generations.set(record.id,++this.generation);
       const ids=new Set(next.map(record=>record.id));for(const id of this.generations.keys())if(!ids.has(id))this.generations.delete(id);
       this.records = next.map(recordSnapshot);
       if(process.platform!=='win32'){const directory=openSync(dirname(this.file),'r');try{fsyncSync(directory);}finally{closeSync(directory);}}
@@ -259,6 +328,7 @@ function isChatRecord(value: unknown): value is ChatRecord {
   if (record.prReview !== undefined && !isGithubPrReviewSeed(record.prReview)) return false;
   if(record.forkDraft!==undefined){const draft=record.forkDraft as ChatRecord['forkDraft'];if(!draft||typeof draft.text!=='string'||![draft.attachmentIds,draft.missingAttachments].every(ids=>Array.isArray(ids)&&ids.every(id=>typeof id==='string')))return false;}
   if (record.pinned !== undefined && typeof record.pinned !== 'boolean') return false;
+  if (record.pinRank !== undefined && (!Number.isSafeInteger(record.pinRank) || record.pinned !== true)) return false;
   if (record.archived !== undefined && typeof record.archived !== 'boolean') return false;
   if (record.execution !== undefined) {
     const execution = record.execution as Record<string, unknown> | null;

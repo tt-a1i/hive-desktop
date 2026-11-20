@@ -113,9 +113,9 @@ function exact(params: Record<string, unknown>, allowed: string[]) {
   if (Object.keys(params).some(key => !allowed.includes(key))) throw new Error('Unexpected request field');
 }
 function navigationSearchSession(session: ChatRecord) {
-  const {id, title, customTitle, pinned, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
+  const {id, title, customTitle, pinned, pinRank, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
     backend, execution, scratch, profile} = session;
-  return {id, title, customTitle, pinned, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
+  return {id, title, customTitle, pinned, pinRank, archived, updatedAt, workspaceId, agentId, originAgentId, identityState,
     backend, execution, scratch, profile};
 }
 function viewRevision(value: unknown): number {
@@ -427,6 +427,19 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       return runtime.hive.inboxQuestions(ids);
     }
     case 'chat.pinned': return chats.pinned();
+    case 'chat.pins.move': {
+      exact(params, ['source', 'target', 'position', 'expectedOrder']);
+      const reference = (value: unknown) => {
+        const ref = record(value);
+        exact(ref, ['workspaceId', 'sessionId']);
+        return {workspaceId: text(ref, 'workspaceId'), sessionId: text(ref, 'sessionId')};
+      };
+      const {position, expectedOrder} = params;
+      if (position !== 'before' && position !== 'after') throw new TypeError('Expected a before or after pin position');
+      if (!Array.isArray(expectedOrder) || !expectedOrder.every(id => typeof id === 'string' && id.trim())
+        || new Set(expectedOrder).size !== expectedOrder.length) throw new TypeError('Expected the ordered IDs of the visible pins');
+      return chats.movePinned(reference(params.source), reference(params.target), position, expectedOrder);
+    }
     case 'chat.attachments.add': {
       const workspace = text(params, 'workspaceId');
       chats.assertWorkspaceAvailable(workspace);
@@ -806,7 +819,7 @@ input.on('line', line => {
       }
       await writeFrame({ id, error: {
         code: (method === 'chat.search' || method === 'chat.searchMessages' || method === 'project.files.search' || method === 'project.files.searchContent') && error instanceof Error && error.name === 'AbortError' ? 'SEARCH_CANCELLED'
-          : error instanceof StaleHistorySnapshotError ? error.code : error instanceof ProjectCopyChangedError ? 'PROJECT_COPY_CHANGED' : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && error.code.startsWith('HANDOFF_') ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
+          : error instanceof StaleHistorySnapshotError ? error.code : error instanceof ProjectCopyChangedError ? 'PROJECT_COPY_CHANGED' : error instanceof HandoffError ? error.code : error instanceof SessionIdentityError && (error.code.startsWith('HANDOFF_') || error.code.startsWith('PIN_')) ? error.code : error instanceof HistoryOperationError ? `HISTORY_${error.code}` : error instanceof CodeCheckpointError ? `CHECKPOINT_${error.code}` : error instanceof WorktreeInitializationError || error instanceof GitWorktreeError ? error.code : error instanceof ProjectScriptRunError ? error.wireCode : error instanceof ProjectScriptSettingsError ? `SCRIPT_SETTINGS_${error.code}` : error instanceof HiveHttpError ? `HIVE_HTTP_${error.status}` : error instanceof CodexInteractionError ? error.code : 'DESKTOP_ERROR',
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof HiveHttpError ? { details: error.body } : {}),
       } });

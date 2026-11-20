@@ -123,17 +123,28 @@ impl Snoozes {
             .unwrap_or_else(|| Self::empty(workspace)))
     }
 
+    pub(super) fn next_expiry(&self) -> Option<u64> {
+        self.reminders
+            .values()
+            .filter_map(|reminder| reminder.expires_at)
+            .min()
+    }
+
+    pub(super) fn expired_reminders(&self, now: u64) -> impl Iterator<Item = (&str, &Reminder)> {
+        self.reminders.iter().filter_map(move |(key, reminder)| {
+            reminder.expired(now).then_some((key.as_str(), reminder))
+        })
+    }
+
+    pub(super) fn expire(root: &Path, workspace: &str, now: u64) -> io::Result<Self> {
+        Self::load(root, workspace)?
+            .reconcile(root, now, None, &BTreeMap::new(), &BTreeMap::new())
+            .map_err(|(_, error)| error)
+    }
+
     pub(super) fn tracks_unread(&self, session: &str) -> bool {
         self.released_unread.contains(session)
             || self.reminders.contains_key(&unread_session_key(session))
-    }
-
-    pub(super) fn has_tracked_unread(&self) -> bool {
-        !self.released_unread.is_empty()
-            || self
-                .reminders
-                .keys()
-                .any(|key| key.starts_with("unread-session:"))
     }
 
     pub(super) fn hides_unread(&self, session: &str, revision: u64, now: u64) -> bool {
@@ -342,6 +353,40 @@ mod tests {
     const WORKSPACE: &str = "a3b2cb99-3959-4adc-a770-b70f9d2a4cb9";
     const OTHER_WORKSPACE: &str = "c7761168-b30c-4020-80bb-23c1c357e111";
     const DISPATCH: &str = "eecc5d9c-4874-4286-8f73-ea6143246780";
+
+    #[test]
+    fn local_deadline_reads_rescheduled_file_and_releases_only_due_unread() {
+        let root = tempfile::tempdir().unwrap();
+        let unread = unread_session_key("first");
+        let reminder = |expires_at| Reminder {
+            expires_at,
+            wake: Some(Wake::UnreadReply { revision: 1 }),
+        };
+        Snoozes::set(root.path(), WORKSPACE, &unread, Some(reminder(Some(20)))).unwrap();
+        Snoozes::set(
+            root.path(),
+            WORKSPACE,
+            "message:indefinite",
+            Some(Reminder::default()),
+        )
+        .unwrap();
+        let armed = Snoozes::load(root.path(), WORKSPACE).unwrap();
+        assert_eq!(armed.next_expiry(), Some(20));
+        Snoozes::set(root.path(), WORKSPACE, &unread, Some(reminder(Some(40)))).unwrap();
+        let reloaded = Snoozes::expire(root.path(), WORKSPACE, 20).unwrap();
+        assert!(reloaded.active(&unread, 20));
+        assert_eq!(reloaded.next_expiry(), Some(40));
+        assert!(
+            Snoozes::expire(root.path(), WORKSPACE, 40)
+                .unwrap()
+                .next_expiry()
+                .is_none()
+        );
+        let reopened = Snoozes::load(root.path(), WORKSPACE).unwrap();
+        assert!(reopened.tracks_unread("first"));
+        assert!(!reopened.active(&unread, 40));
+        assert!(reopened.active("message:indefinite", 40));
+    }
 
     #[test]
     fn unread_reply_wakes_exact_snooze_across_reopen_without_losing_the_item() {

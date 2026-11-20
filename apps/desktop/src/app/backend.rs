@@ -226,6 +226,7 @@ impl HiveApp {
         self.release_attachment_previews(false, cx);
         self.pinned_sessions.loading = false;
         self.pinned_sessions.dirty = false;
+        self.pinned_sessions.reordering = false;
         self.refreshing_models = false;
         self.settings_loading = false;
         self.readiness_loading = false;

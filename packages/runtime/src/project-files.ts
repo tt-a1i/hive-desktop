@@ -175,10 +175,17 @@ export async function searchProjectContents(projectRoot: string, query: string, 
       if (error instanceof TypeError) continue;
       throw error;
     }
-    const line = text.split('\n').findIndex(line => line.normalize('NFC').toLowerCase().includes(needle));
-    if (line < 0) continue;
-    if (total >= offset && matches.length < PAGE_SIZE) matches.push({path, line: line + 1});
-    total += 1;
+    signal?.throwIfAborted();
+    // Walk line boundaries without allocating an array for the entire file.
+    for (let start = 0, line = 1; start < text.length; line++) {
+      const newline = text.indexOf('\n', start);
+      const end = newline === -1 ? text.length : newline;
+      if (end > start && text.slice(start, end).normalize('NFC').toLowerCase().includes(needle)) {
+        if (total >= offset && matches.length < PAGE_SIZE) matches.push({path, line});
+        total += 1;
+      }
+      start = end + 1;
+    }
   }
   return {matches, total, limited};
 }

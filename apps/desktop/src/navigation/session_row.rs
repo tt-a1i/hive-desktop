@@ -1,6 +1,7 @@
 use super::*;
 use crate::language::{english, tr};
 use gpui_kit::component::menu::PopupMenu;
+use std::sync::Arc;
 
 // Button has a stable id and forwards InteractiveElement to its base, but
 // does not expose StatefulInteractiveElement's accessibility setters. This
@@ -136,6 +137,11 @@ impl HiveApp {
         let linked = app
             .upgrade()
             .is_some_and(|app| app.read(cx).scratch_project_target(&session).is_some());
+        let menu = if let Some(view) = app.upgrade() {
+            view.read(cx).pin_move_menu(menu, &session, app.clone())
+        } else {
+            menu
+        };
         menu.item(
             PopupMenuItem::new(if session.pinned {
                 tr("取消置顶")
@@ -254,7 +260,7 @@ impl HiveApp {
             session,
             self.session_title(session).to_owned(),
             workspace_name,
-            false,
+            None,
             cx,
         )
     }
@@ -264,9 +270,10 @@ impl HiveApp {
         session: &crate::protocol::Session,
         title: String,
         workspace_name: String,
-        is_pinned_group: bool,
+        pin_order: Option<Arc<[String]>>,
         cx: &Context<Self>,
     ) -> impl IntoElement + use<> {
+        let is_pinned_group = pin_order.is_some();
         let scope = if is_pinned_group { "pinned" } else { "session" };
         let project = session.workspace_id.clone();
         let id = session.id.clone();
@@ -345,6 +352,8 @@ impl HiveApp {
             disabled: menu_disabled,
             app: weak,
         };
+        let pin_handle = pin_order.and_then(|order| self.pin_drag_handle(session, order, &title, &workspace_name, cx));
+        let pin_targets = is_pinned_group.then(|| self.pin_drop_zones(session, cx)).unwrap_or_default();
         h_flex()
             .id(row_group.clone())
             .relative()
@@ -360,6 +369,7 @@ impl HiveApp {
                     this.drop_files_on_session(drop_session.clone(), paths.paths().to_vec(), window, cx);
                 }))
             })
+            .when_some(pin_handle, |row, handle| row.child(handle))
             .child(
                 div().flex_1().min_w_0().child(
                     Button::new(SharedString::from(format!("{scope}-{id}")))
@@ -503,10 +513,12 @@ impl HiveApp {
                 ),
             )
             .child(menu)
+            .children(pin_targets)
     }
 
     pub(super) fn render_pinned_navigation(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let state = &self.pinned_sessions;
+        let pin_order = self.pin_order_snapshot();
         v_flex().min_w_0().gap_0p5().when(
             !state.records.is_empty() || state.loading || state.error.is_some(),
             |section| {
@@ -641,7 +653,7 @@ impl HiveApp {
                                         .unwrap_or(&hit.title)
                                         .to_owned(),
                                     project,
-                                    true,
+                                    Some(pin_order.clone()),
                                     cx,
                                 )
                             }))

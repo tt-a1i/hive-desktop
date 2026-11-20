@@ -58,6 +58,7 @@ pub struct Session {
     pub custom_title: bool,
     #[serde(default)]
     pub pinned: bool,
+    pub pin_rank: Option<i64>,
     #[serde(default)]
     pub archived: bool,
     #[serde(default)]
