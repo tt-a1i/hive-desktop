@@ -22,9 +22,9 @@ use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
     ActionCenter, ArchiveInboxSession, Destination, Entry, InboxRowInteraction, MarkInboxRead,
-    OPEN_INBOX_MEMBER_FAILED, Reminders, SNOOZE_CHANGED, WorkflowFailures, activity_matches,
+    OPEN_INBOX_MEMBER_FAILED, Reminders, SNOOZE_CHANGED, WorkflowRuns, activity_matches,
     inbox_open_button, inbox_row, inbox_status, is_snoozed, read_action_center,
-    read_workflow_failures, session_inbox_activity, show_more_button, toggle_button,
+    read_workflow_runs, session_inbox_activity, show_more_button, toggle_button,
     verify_inbox_member,
 };
 use crate::{
@@ -246,8 +246,8 @@ struct ArchiveUndoOffer {
 #[derive(Default)]
 struct ProjectInbox {
     action_center: Option<ActionCenter>,
-    workflow_failures: Option<WorkflowFailures>,
-    workflow_failures_error: bool,
+    workflow_runs: Option<WorkflowRuns>,
+    workflow_runs_error: bool,
     sessions: Vec<Session>,
     members: Vec<Member>,
     reminders: Reminders,
@@ -258,7 +258,7 @@ struct ProjectRead {
     action_center: Result<ActionCenter, String>,
     sessions: Result<Vec<Session>, String>,
     members: Result<Vec<Member>, String>,
-    workflow_failures: Option<WorkflowFailures>,
+    workflow_runs: Option<WorkflowRuns>,
 }
 
 async fn read_project(
@@ -266,10 +266,10 @@ async fn read_project(
     workspace: &str,
     root: Option<&std::path::Path>,
 ) -> ProjectRead {
-    let ((action_center, workflow_failures), (sessions, members)) = smol::future::zip(
+    let ((action_center, workflow_runs), (sessions, members)) = smol::future::zip(
         smol::future::zip(
             read_action_center(runtime, workspace, root),
-            read_workflow_failures(runtime, workspace),
+            read_workflow_runs(runtime, workspace),
         ),
         smol::future::zip(
             read_list(runtime, "chat.list", workspace),
@@ -290,7 +290,7 @@ async fn read_project(
         action_center,
         sessions,
         members,
-        workflow_failures,
+        workflow_runs,
     }
 }
 
@@ -1702,10 +1702,10 @@ impl GlobalInbox {
             return;
         }
         let project = self.projects.entry(workspace.to_owned()).or_default();
-        let refreshed_workflows = result.workflow_failures.is_some();
-        project.workflow_failures_error = !refreshed_workflows;
-        if let Some(workflows) = result.workflow_failures {
-            project.workflow_failures = Some(workflows);
+        let refreshed_workflows = result.workflow_runs.is_some();
+        project.workflow_runs_error = !refreshed_workflows;
+        if let Some(workflows) = result.workflow_runs {
+            project.workflow_runs = Some(workflows);
         }
         let mut errors = Vec::new();
         let snapshot = match result.action_center {
@@ -1762,7 +1762,7 @@ impl GlobalInbox {
                 &app.collaboration.inbox_badge,
             );
         }
-        if refreshed_workflows && let Some(snapshot) = &project.workflow_failures {
+        if refreshed_workflows && let Some(snapshot) = &project.workflow_runs {
             update_workflow_new_items(
                 &mut self.new_items,
                 snapshot,
@@ -1773,10 +1773,10 @@ impl GlobalInbox {
             if refreshed_questions && let Some(snapshot) = &project.action_center {
                 app.collaboration.inbox_badge.remember_questions(snapshot);
             }
-            if refreshed_workflows && let Some(snapshot) = &project.workflow_failures {
+            if refreshed_workflows && let Some(snapshot) = &project.workflow_runs {
                 app.collaboration
                     .inbox_badge
-                    .remember_workflow_failures(workspace, snapshot.runs.iter().map(|run| &run.id));
+                    .remember_workflow_runs(workspace, snapshot.runs.iter().map(|run| &run.id));
             }
             if let Some(saved) = &project.reminders.saved {
                 app.collaboration
@@ -1881,7 +1881,7 @@ impl ProjectInbox {
                     })
             }));
         }
-        if let Some(snapshot) = &self.workflow_failures {
+        if let Some(snapshot) = &self.workflow_runs {
             rows.extend(snapshot.entries());
         }
         rows
@@ -1994,32 +1994,32 @@ fn update_new_items(
 ) {
     // Seen rows stay in this dialog's review until they are answered, snoozed, or removed.
     items.retain(|item| {
-        matches!(item, BadgeItem::WorkflowFailure { .. })
+        matches!(item, BadgeItem::WorkflowRun { .. })
             || item.workspace() != workspace
             || eligible.contains(item)
     });
     items.extend(
         eligible
             .into_iter()
-            .filter(|item| !matches!(item, BadgeItem::WorkflowFailure { .. }) && !badge.sees(item)),
+            .filter(|item| !matches!(item, BadgeItem::WorkflowRun { .. }) && !badge.sees(item)),
     );
 }
 
 fn update_workflow_new_items(
     items: &mut HashSet<BadgeItem>,
-    snapshot: &WorkflowFailures,
+    snapshot: &WorkflowRuns,
     badge: &InboxBadge,
 ) {
     let eligible: HashSet<_> = snapshot
         .runs
         .iter()
-        .map(|run| BadgeItem::WorkflowFailure {
+        .map(|run| BadgeItem::WorkflowRun {
             workspace: snapshot.workspace_id.clone(),
             run: run.id.clone(),
         })
         .collect();
     items.retain(|item| {
-        !matches!(item, BadgeItem::WorkflowFailure { workspace, .. }
+        !matches!(item, BadgeItem::WorkflowRun { workspace, .. }
         if workspace == &snapshot.workspace_id)
             || eligible.contains(item)
     });
@@ -2136,7 +2136,7 @@ impl Render for GlobalInbox {
             && !(has_snoozed && self.preferences.values.show_snoozed)
             && projects.iter().all(|workspace| {
                 self.projects.get(&workspace.id).is_none_or(|project| {
-                    project.errors.is_empty() && !project.workflow_failures_error
+                    project.errors.is_empty() && !project.workflow_runs_error
                 })
             })
         {
@@ -2297,14 +2297,14 @@ impl Render for GlobalInbox {
                     continue;
                 };
                 let title = display_project(workspace, &app.workspaces);
-                let workflow_status = if project.workflow_failures_error {
-                    Some(tr("无法读取失败的工作流"))
+                let workflow_status = if project.workflow_runs_error {
+                    Some(tr("无法读取需关注的工作流运行"))
                 } else if project
-                    .workflow_failures
+                    .workflow_runs
                     .as_ref()
                     .is_some_and(|runs| runs.limited)
                 {
-                    Some(tr("仅显示最近 20 条工作流失败"))
+                    Some(tr("仅显示最近 20 条失败或中断的工作流运行"))
                 } else {
                     None
                 };
@@ -2362,7 +2362,7 @@ impl Render for GlobalInbox {
                     BadgeItem::UnreadSession { session, .. } => {
                         app.background_sequences.get(session).copied()
                     }
-                    BadgeItem::Question { .. } | BadgeItem::WorkflowFailure { .. } => None,
+                    BadgeItem::Question { .. } | BadgeItem::WorkflowRun { .. } => None,
                 };
                 candidates.insert(row_id.clone(), (item, revision));
             }
@@ -2789,7 +2789,7 @@ impl Render for GlobalInbox {
 mod tests {
     use super::{
         ActionCenter, BadgeItem, Destination, Entry, InboxBadge, InboxFilter, InboxSections,
-        MemberFilter, ProjectInbox, ReadingAnchor, ReadingPosition, RowId, WorkflowFailures,
+        MemberFilter, ProjectInbox, ReadingAnchor, ReadingPosition, RowId, WorkflowRuns,
         display_project, matches_member, member_choices, row_is_visible, selected_project,
         update_new_items, update_workflow_new_items,
     };
@@ -2811,7 +2811,7 @@ mod tests {
     #[test]
     fn new_items_update_workflow_and_question_projections_independently() {
         let badge = InboxBadge::default();
-        let failure = |workspace: &str, run: &str| BadgeItem::WorkflowFailure {
+        let workflow = |workspace: &str, run: &str| BadgeItem::WorkflowRun {
             workspace: workspace.into(),
             run: run.into(),
         };
@@ -2821,33 +2821,33 @@ mod tests {
             message: "question".into(),
         };
         let mut current = HashSet::from([
-            failure("atlas", "stale"),
-            failure("beacon", "same"),
+            workflow("atlas", "stale"),
+            workflow("beacon", "same"),
             question.clone(),
         ]);
-        let atlas: WorkflowFailures = serde_json::from_value(json!({
-            "workspaceId":"atlas","runs":[{"id":"same","name":"Daily audit","finishedAt":111}],"limited":false
+        let atlas: WorkflowRuns = serde_json::from_value(json!({
+            "workspaceId":"atlas","runs":[{"id":"same","name":"Daily audit","finishedAt":111,"status":"interrupted"}],"limited":false
         })).unwrap();
         update_workflow_new_items(&mut current, &atlas, &badge);
         assert_eq!(
             current,
             HashSet::from([
-                failure("atlas", "same"),
-                failure("beacon", "same"),
+                workflow("atlas", "same"),
+                workflow("beacon", "same"),
                 question
             ])
         );
         update_new_items(&mut current, "atlas", HashSet::new(), &badge);
         assert_eq!(
             current,
-            HashSet::from([failure("atlas", "same"), failure("beacon", "same")])
+            HashSet::from([workflow("atlas", "same"), workflow("beacon", "same")])
         );
-        let empty: WorkflowFailures = serde_json::from_value(json!({
+        let empty: WorkflowRuns = serde_json::from_value(json!({
             "workspaceId":"atlas","runs":[],"limited":false
         }))
         .unwrap();
         update_workflow_new_items(&mut current, &empty, &badge);
-        assert_eq!(current, HashSet::from([failure("beacon", "same")]));
+        assert_eq!(current, HashSet::from([workflow("beacon", "same")]));
     }
 
     #[test]

@@ -45,8 +45,8 @@ pub(super) struct Inbox {
     loading: bool,
     action_center: Option<ActionCenter>,
     error: Option<String>,
-    workflow_failures: Option<WorkflowFailures>,
-    workflow_failures_error: bool,
+    workflow_runs: Option<WorkflowRuns>,
+    workflow_runs_error: bool,
     reminders: Reminders,
     show_snoozed: bool,
     section_depth: SectionDepth,
@@ -95,21 +95,29 @@ struct ProjectInboxPosition {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkflowFailure {
+struct WorkflowRun {
     id: String,
     name: Option<String>,
     finished_at: u64,
+    status: WorkflowRunStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum WorkflowRunStatus {
+    Failed,
+    Interrupted,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkflowFailures {
+struct WorkflowRuns {
     workspace_id: String,
-    runs: Vec<WorkflowFailure>,
+    runs: Vec<WorkflowRun>,
     limited: bool,
 }
 
-impl WorkflowFailures {
+impl WorkflowRuns {
     fn verified(&self, workspace: &str) -> bool {
         let mut ids = HashSet::new();
         self.workspace_id == workspace
@@ -130,14 +138,17 @@ impl WorkflowFailures {
     }
 }
 
-impl WorkflowFailure {
+impl WorkflowRun {
     fn entry(&self, id_label: &str) -> Entry {
         let subject = self.name.as_ref().map_or_else(
             || self.id.clone(),
             |name| format!("{name} · {id_label}"),
         );
         Entry {
-            label: "工作流运行失败",
+            label: match self.status {
+                WorkflowRunStatus::Failed => "工作流运行失败",
+                WorkflowRunStatus::Interrupted => "工作流运行中断",
+            },
             subject,
             target: Destination::WorkflowRun(self.id.clone()),
             dispatch_backend: None,
@@ -151,12 +162,15 @@ impl WorkflowFailure {
     }
 }
 
-async fn read_workflow_failures(runtime: &Runtime, workspace: &str) -> Option<WorkflowFailures> {
+async fn read_workflow_runs(runtime: &Runtime, workspace: &str) -> Option<WorkflowRuns> {
     let value = runtime
-        .request("inbox.workflowFailures", json!({"workspaceId": workspace}))
+        .request(
+            "inbox.workflowFailures",
+            json!({"workspaceId": workspace, "includeInterrupted": true}),
+        )
         .await
         .ok()?;
-    let snapshot: WorkflowFailures = serde_json::from_value(value).ok()?;
+    let snapshot: WorkflowRuns = serde_json::from_value(value).ok()?;
     snapshot.verified(workspace).then_some(snapshot)
 }
 
@@ -1270,9 +1284,9 @@ impl HiveApp {
         inbox.generation += 1;
         let generation = inbox.generation;
         cx.spawn(async move |this, cx| {
-            let (result, workflow_failures) = smol::future::zip(
+            let (result, workflow_runs) = smol::future::zip(
                 read_action_center(&runtime, &workspace, root.as_deref()),
-                read_workflow_failures(&runtime, &workspace),
+                read_workflow_runs(&runtime, &workspace),
             ).await;
             let _ = this.update(cx, |this, cx| {
                 if this.workspace.as_ref() != Some(&workspace)
@@ -1285,9 +1299,9 @@ impl HiveApp {
                 let interactions = this.inbox_interactions(&this.sessions, &this.members);
                 let inbox = &mut this.collaboration.inbox;
                 inbox.loading = false;
-                inbox.workflow_failures_error = workflow_failures.is_none();
-                if let Some(workflow_failures) = workflow_failures {
-                    inbox.workflow_failures = Some(workflow_failures);
+                inbox.workflow_runs_error = workflow_runs.is_none();
+                if let Some(workflow_runs) = workflow_runs {
+                    inbox.workflow_runs = Some(workflow_runs);
                 }
                 let snapshot = match result {
                     Ok(snapshot) => {
@@ -1519,7 +1533,7 @@ impl HiveApp {
         {
             entries.extend(snapshot.entries(|id| self.agent_name(id)));
         }
-        if let Some(failures) = self.collaboration.inbox.workflow_failures.as_ref()
+        if let Some(failures) = self.collaboration.inbox.workflow_runs.as_ref()
             && failures.workspace_id == workspace
         {
             entries.extend(failures.entries());
@@ -1726,18 +1740,18 @@ impl HiveApp {
             .when(current && inbox.member_open_error, |panel| {
                 panel.child(inbox_status(tr(OPEN_INBOX_MEMBER_FAILED), cx))
             })
-            .when(current && inbox.workflow_failures_error, |panel| {
-                panel.child(inbox_status(tr("无法读取失败的工作流"), cx))
+            .when(current && inbox.workflow_runs_error, |panel| {
+                panel.child(inbox_status(tr("无法读取需关注的工作流运行"), cx))
             })
             .when(
-                current && inbox.workflow_failures.as_ref().is_some_and(|runs| runs.limited),
+                current && inbox.workflow_runs.as_ref().is_some_and(|runs| runs.limited),
                 |panel| {
                     panel.child(
                         h_flex()
                             .gap_2()
                             .flex_wrap()
                             .items_center()
-                            .child(inbox_status(tr("仅显示最近 20 条工作流失败"), cx))
+                            .child(inbox_status(tr("仅显示最近 20 条失败或中断的工作流运行"), cx))
                             .child(
                                 inbox_open_button(
                                     "inbox-all-workflows",
@@ -1912,7 +1926,7 @@ impl HiveApp {
                                 Destination::WorkflowRun(id) => {
                                     let inbox = &this.collaboration.inbox;
                                     if this.workspace_removing.as_deref() == Some(&workspace)
-                                        || !inbox.workflow_failures.as_ref().is_some_and(|runs| {
+                                        || !inbox.workflow_runs.as_ref().is_some_and(|runs| {
                                             runs.workspace_id == workspace
                                                 && runs.runs.iter().any(|run| run.id == *id)
                                         })
@@ -2380,7 +2394,7 @@ mod tests {
     use super::{
         ActionCenter, ActionableCursor, ActionablePage, ArchiveInboxSession, Attention, Delay,
         Destination, Entry, MarkInboxRead, Priority, Reminders, SnoozeEdit, Snoozes,
-        UNREAD_CONVERSATION, Wake, WorkflowFailures, exact_inbox_member, exact_message, now_ms,
+        UNREAD_CONVERSATION, Wake, WorkflowRuns, exact_inbox_member, exact_message, now_ms,
         sort_entries, validate_actionable_rows,
     };
     use crate::protocol::{Member, MemberDesktopActivity};
@@ -2388,13 +2402,13 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn project_inbox_workflow_failures_keep_exact_same_name_runs() {
+    fn project_inbox_distinguishes_exact_same_name_workflow_runs() {
         let earlier = "12345678-1234-1234-1234-123456789001";
         let later = "12345678-1234-1234-1234-123456789002";
-        let mut snapshot: WorkflowFailures = serde_json::from_value(json!({
+        let mut snapshot: WorkflowRuns = serde_json::from_value(json!({
             "workspaceId": "atlas", "limited": false, "runs": [
-                {"id": earlier, "name": "Daily audit", "finishedAt": 10},
-                {"id": later, "name": "Daily audit", "finishedAt": 20},
+                {"id": earlier, "name": "Daily audit", "finishedAt": 10, "status": "failed"},
+                {"id": later, "name": "Daily audit", "finishedAt": 20, "status": "interrupted"},
             ],
         }))
         .unwrap();
@@ -2407,6 +2421,8 @@ mod tests {
             [format!("workflow-run:{later}"), format!("workflow-run:{earlier}")],
         );
         assert_ne!(rows[0].1.subject, rows[1].1.subject);
+        assert_eq!(rows[0].1.label, "工作流运行中断");
+        assert_eq!(rows[1].1.label, "工作流运行失败");
         assert!(rows.iter().all(|(_, row)| {
             row.priority == Priority::NeedsUser && row.snooze_key.is_none()
         }));

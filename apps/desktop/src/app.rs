@@ -534,15 +534,8 @@ impl HiveApp {
                 }
                 this.choosing_model = !this.choosing_model;
                 if this.choosing_model {
-                    this.model_search
-                        .update(cx, |input, cx| input.set_value("", window, cx));
-                    this.reasoning_picker
-                        .model_scroll
-                        .set_offset(point(px(0.), px(0.)));
-                    this.reasoning_picker.scroll.set_offset(point(px(0.), px(0.)));
+                    this.reset_model_picker_search(window, cx);
                     this.load_reasoning(None, cx);
-                    let focus = this.model_search.read(cx).focus_handle(cx);
-                    window.on_next_frame(move |window, cx| focus.focus(window, cx));
                 }
                 cx.notify();
             },
@@ -611,9 +604,14 @@ impl HiveApp {
             cx.new(|cx| InputState::new(window, cx).placeholder("搜索模型、提供商…"));
         let model_search_subscription =
             cx.subscribe_in(&model_search, window, |this, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.reasoning_picker.model_scroll.set_offset(point(px(0.), px(0.)));
-                    cx.notify();
+                match event {
+                    InputEvent::Change => this.model_picker_search_changed(cx),
+                    InputEvent::Focus => cx.notify(),
+                    InputEvent::Blur => {
+                        this.reasoning_picker.model_search_navigation.cancel_enter();
+                        cx.notify();
+                    }
+                    _ => {}
                 }
             });
         let member_search =

@@ -13,6 +13,7 @@ pub struct ReasoningState {
 #[derive(Default)]
 pub struct ReasoningPicker {
     pub model_scroll: ScrollHandle,
+    pub(crate) model_search_navigation: crate::model_picker::ModelSearchNavigation,
     pub scroll: ScrollHandle,
     pub loading: bool,
     state: Option<ReasoningState>,

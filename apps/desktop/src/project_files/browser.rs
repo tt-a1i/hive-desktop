@@ -1,6 +1,7 @@
 use super::{FileError, Target};
 mod content_results;
 mod image_preview;
+mod markdown_links;
 mod reader_find;
 mod search_snippet;
 use crate::{
@@ -33,6 +34,7 @@ use gpui_kit::{
     *,
 };
 use image_preview::{ExpandedImageViewport, ImageViewport, ZoomAction};
+use markdown_links::relative_markdown_target;
 use reader_find::ReaderFind;
 use search_snippet::{SearchSnippet, path_highlights};
 use serde::Deserialize;
@@ -265,6 +267,7 @@ impl SearchPage {
 
 struct Preview {
     selection: Match,
+    execution_directory: Option<String>,
     loading: bool,
     text: Option<TextPages>,
     image: Option<ImageViewport>,
@@ -414,7 +417,12 @@ impl MarkdownPreview {
         self.mode == FilePreviewMode::Markdown
     }
 
-    fn render(&self, id: &'static str, cx: &App) -> Stateful<Div> {
+    fn render(
+        &self,
+        id: &'static str,
+        open_project_link: impl Fn(&str, &mut Window, &mut App) + Send + Sync + 'static,
+        cx: &App,
+    ) -> Stateful<Div> {
         let document = self.document.as_ref().expect("active Markdown document");
         div()
             .id(id)
@@ -433,7 +441,7 @@ impl MarkdownPreview {
                             )))
                         }))
                     })
-                    .on_link_click(|destination, event, _, cx| {
+                    .on_link_click(move |destination, event, window, cx| {
                         let activate = match event {
                             ClickEvent::Mouse(click) => {
                                 matches!(click.up.button, MouseButton::Left | MouseButton::Middle)
@@ -441,8 +449,13 @@ impl MarkdownPreview {
                             ClickEvent::Keyboard(_) => true,
                             ClickEvent::Touch(click) => !click.long_press,
                         };
-                        if activate && let Some(url) = external_markdown_url(destination) {
+                        if !activate {
+                            return;
+                        }
+                        if let Some(url) = external_markdown_url(destination) {
                             cx.open_url(url.as_str());
+                        } else {
+                            open_project_link(destination, window, cx);
                         }
                     }),
             )
@@ -680,7 +693,7 @@ impl ProjectFilePreviewText {
                 )
                 .child(rendered.map_or_else(
                     || preview_text("git-current-source", &self.text, true, None, cx),
-                    |markdown| markdown.render("git-current-markdown", cx),
+                    |markdown| markdown.render("git-current-markdown", |_, _, _| {}, cx),
                 )),
             )
             .when(rendered.is_none() && self.text.count() > 1, |view| {
@@ -2302,7 +2315,7 @@ impl FileBrowser {
                 preview
             });
         self.tree_preview = Some(TreePreview::Reading { previous });
-        self.read_preview(Match { path, line: None }, cx);
+        self.read_preview(Match { path, line: None }, None, cx);
     }
 
     fn selected_tree_file(&self) -> Option<&str> {
@@ -2364,10 +2377,38 @@ impl FileBrowser {
 
     fn select(&mut self, selection: Match, cx: &mut Context<Self>) {
         self.cancel_tree_preview(cx);
-        self.read_preview(selection, cx);
+        self.read_preview(selection, None, cx);
     }
 
-    fn read_preview(&mut self, selection: Match, cx: &mut Context<Self>) {
+    fn open_markdown_link(
+        &mut self,
+        source: &PreviewIdentity,
+        destination: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.current(cx) || self.preview_identity().as_ref() != Some(source) {
+            return false;
+        }
+        let Some(execution_directory) = self.preview.as_ref().and_then(|preview| {
+            preview.markdown.as_ref()?;
+            preview.execution_directory.clone()
+        }) else {
+            return false;
+        };
+        let Some(path) = relative_markdown_target(&source.selection.path, destination) else {
+            return false;
+        };
+        self.cancel_tree_preview(cx);
+        self.read_preview(Match { path, line: None }, Some(execution_directory), cx);
+        true
+    }
+
+    fn read_preview(
+        &mut self,
+        selection: Match,
+        expected_directory: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         if !self.current(cx) {
             return;
         }
@@ -2375,11 +2416,16 @@ impl FileBrowser {
         self.reveal_missing = None;
         let scope = self.scope.as_ref().expect("current file scope");
         let allow_image = selection.line.is_none();
-        let params = scope.params(json!({"relativePath":selection.path,"allowImage":allow_image}));
+        let params = scope.params(json!({
+            "relativePath":selection.path,
+            "allowImage":allow_image,
+            "expectedDirectory":expected_directory,
+        }));
         let runtime = self.runtime.clone().expect("current file runtime");
         self.preview_generation += 1;
         self.preview = Some(Preview {
             selection,
+            execution_directory: None,
             loading: true,
             text: None,
             image: None,
@@ -2414,6 +2460,7 @@ impl FileBrowser {
                                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
                     })
                     .map(str::to_owned);
+                let execution_directory = value["executionDirectory"].as_str().map(str::to_owned);
                 let preview = if allow_image
                     && let Some(image) = value
                         .as_object_mut()
@@ -2424,7 +2471,7 @@ impl FileBrowser {
                     let text = value["text"].as_str().ok_or(FileError::Owned("读取失败"))?;
                     PreparedPreview::Text(TextPages::new(text.to_owned().into()))
                 };
-                Ok((preview, sha256))
+                Ok((preview, sha256, execution_directory))
             }
             .await;
             let _ = this.update(cx, |this, cx| {
@@ -2451,7 +2498,7 @@ impl FileBrowser {
                 };
                 preview.loading = false;
                 match result {
-                    Ok((PreparedPreview::Text(mut text), sha256)) => {
+                    Ok((PreparedPreview::Text(mut text), sha256, execution_directory)) => {
                         if let Some(line) = preview.selection.line {
                             text.show_line(line);
                         }
@@ -2466,8 +2513,9 @@ impl FileBrowser {
                         }
                         preview.text = Some(text);
                         preview.sha256 = sha256;
+                        preview.execution_directory = execution_directory;
                     }
-                    Ok((PreparedPreview::Image(image), _)) => {
+                    Ok((PreparedPreview::Image(image), _, _)) => {
                         preview.image = Some(ImageViewport::new(image, cx));
                     }
                     Err(error) => preview.error = Some(error),
@@ -3813,6 +3861,8 @@ impl FileBrowser {
         let scroll = rendered.map_or(&preview.scroll, |markdown| &markdown.scroll);
         let show_jump = preview.markdown.is_some() && preview.selection.line.is_some();
         let show_pages = rendered.is_none() && text.count() > 1;
+        let browser = cx.weak_entity();
+        let source = self.preview_identity();
         panel
             .when_some(preview.markdown.as_ref(), |panel, markdown| {
                 panel.child(markdown_mode_controls(
@@ -3830,7 +3880,26 @@ impl FileBrowser {
                     .when(stretch, |region| region.flex_1().min_h_0())
                     .child(rendered.map_or_else(
                         || preview_text("browser-text-preview", text, true, None, cx),
-                        |markdown| markdown.render("browser-markdown-preview", cx),
+                        |markdown| {
+                            markdown.render(
+                                "browser-markdown-preview",
+                                move |destination, _, cx| {
+                                    if let Some(source) = &source {
+                                        let _ = browser.update(cx, |browser, cx| {
+                                            if browser
+                                                .preview
+                                                .as_ref()
+                                                .and_then(|preview| preview.markdown.as_ref())
+                                                .is_some_and(MarkdownPreview::active)
+                                            {
+                                                browser.open_markdown_link(source, destination, cx);
+                                            }
+                                        });
+                                    }
+                                },
+                                cx,
+                            )
+                        },
                     )),
             )
             .when(show_jump || show_pages, |panel| {
@@ -3897,6 +3966,36 @@ impl ExpandedFilePreview {
                         preview.selection == self.selection && preview.loaded()
                     })
             })
+    }
+
+    fn open_markdown_link(
+        &mut self,
+        destination: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.current(cx) || !self.markdown.as_ref().is_some_and(MarkdownPreview::active) {
+            return;
+        }
+        let source = PreviewIdentity {
+            scope: self.scope.clone(),
+            preview_generation: self.preview_generation,
+            selection: self.selection.clone(),
+        };
+        let target_focus = self
+            .browser
+            .update(cx, |browser, cx| {
+                browser
+                    .open_markdown_link(&source, destination, cx)
+                    .then(|| browser.preview_focus.clone())
+            })
+            .ok()
+            .flatten();
+        if let Some(focus) = target_focus {
+            self.dismissed = true;
+            window.close_dialog(cx);
+            focus.focus(window, cx);
+        }
     }
 
     fn copy_file_text(&mut self, cx: &mut Context<Self>) {
@@ -4110,6 +4209,7 @@ impl Render for ExpandedFilePreview {
             && is_markdown_file(&self.selection.path)
             && self.text.as_ref().is_some_and(|text| !text.full.is_empty());
         let rendered = self.markdown.as_ref().filter(|markdown| markdown.active());
+        let reader = cx.weak_entity();
         let source_visible =
             rendered.is_none() && self.text.as_ref().is_some_and(|text| !text.full.is_empty());
         let wrap = !source_visible
@@ -4294,7 +4394,17 @@ impl Render for ExpandedFilePreview {
                             cx,
                         )
                     },
-                    |markdown| markdown.render("file-reader-markdown", cx),
+                    |markdown| {
+                        markdown.render(
+                            "file-reader-markdown",
+                            move |destination, window, cx| {
+                                let _ = reader.update(cx, |reader, cx| {
+                                    reader.open_markdown_link(destination, window, cx);
+                                });
+                            },
+                            cx,
+                        )
+                    },
                 )),
         )
         .child(

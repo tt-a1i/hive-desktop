@@ -98,6 +98,10 @@ try {
   assert.match(wrongDigest.error?.message ?? '', /文件在预览后已更改/);
   assert.deepEqual(sourceUploads.get(workspaceId), countBeforePreview);
   const preview = await runtime.ok('project.files.preview', previewParams);
+  const scopedPreview = await runtime.ok('project.files.preview', {...previewParams, expectedDirectory: null});
+  assert.equal(scopedPreview.executionDirectory, source.path);
+  const wrongDirectory = await runtime.rpc('project.files.preview', {...previewParams, expectedDirectory: target.path});
+  assert.match(wrongDirectory.error?.message ?? '', /execution directory changed/);
   const snapshot = await runtime.ok('project.files.attach', {...previewParams, expectedSha256: preview.sha256});
   assert.equal(snapshot.attachment.projectFile?.sha256, preview.sha256);
   const [regularId, imageId, snapshotId] = [regular, image, snapshot].map(item => item.attachment.id);

@@ -490,8 +490,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - 运行时验收关闭后的提示每批最多查询 32 个项目，每个最多返回最近 20 个失败运行 ID。Rust 验证查询遗漏或无效只保留对应项目的上次结果，确认空结果只清除该项目。分支检索专项覆盖同名会话、两个真实工作树、项目过滤、归档及原工作树标识。缩放专项核对 100% 设备像素、从适应窗口进入档位、滚动后保持中心及两轴边缘裁限。
 - 318 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时和桌面构建、桌面视图、Hive HTTP 与 SQLite、会话搜索和归档及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十六批
+
+本轮从 Hive Desktop `8287e4e` 开始。参考 T3 Code `f2ec853`、Cindy `1db8327`、Beluga `eed1b7e`。Hive 上游 `main` 为 `18861b8`。
+
+- **重启中断的工作流进入两个收件箱。** Hive 冷启动后，已中断的顶层运行会出现独立状态和原日志入口，关闭收件箱时也会计入新事项。手动停止、已完成及子运行仍可在工作流历史中查看。 [Cindy 保留中止轮次](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/docs/product-rules/archive-pauses-automations.md#L4-L15) · [Hive 冷启动恢复](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/workflow-run-store.ts#L209-L215)
+- **用方向键与 Enter 选模型。** 在会话模型搜索框里按上下键移动高亮并滚动到该行。松开 Enter 时按提供商和模型 ID 应用选择。输入法组合和按键长按使用独立处理，草稿和光标跟随原有焦点恢复流程。 [T3 Code 模型搜索](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/apps/web/src/components/chat/ModelPickerContent.tsx#L941-L985)
+- **Markdown 预览可打开当前工作树中的相对文件。** 例如 `./guides/setup%20guide.md` 按当前文档所在目录解析。紧凑和展开预览都可跟随链接，原查询保持。展开预览跟随链接后，把焦点交给文件面板中的目标。预览沿用工作树范围及符号链接检查。 [Beluga 相对链接解析](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/md-paths.ts#L77-L92)
+
+- 运行时用实际父子工作流写入日志，在仍运行时强制结束隔离进程。冷重开后两条运行均标为中断，收件箱明细和提示只收录原父运行，原日志仍可读取。文件专项使用两个真实工作树核对相同路径、工作树切换及外部符号链接边界。
+- macOS 跨项目收件箱与 Atlas 的项目收件箱都只显示隔离夹具中应关注的顶层中断运行。两处都能打开「已中断」的原详情和原日志。点击「返回项目收件箱」回到原行。手动停止、完成及中断的子运行均未显示。证据在 `.artifacts/batch36-inbox-native`。
+- macOS 在模型框搜索 `Fixture`，方向键高亮第二项后用 Enter 选择。一次确认只为原会话设置一次 `openai / fixture-alternate`，没有发送草稿。返回后在原光标处输入能得到 `BEFOREx after`。恢复原文并冷重开，模型选择和草稿仍在。证据在 `.artifacts/batch36-model-native`。
+- macOS 在工作树 A 的紧凑与展开预览中跟随含空格的链接，均显示 A 的内容并保留 `start.md` 查询。切到工作树 B 后同一链接显示 B 的内容。点击越界路径和 `javascript:` 链接后，预览与请求数保持原样。夹具初次因默认配置启动本机 Codex CLI，进程在隔离目录初始化时退出，没有发出模型请求。将夹具配置改为本地模拟进程后重做验收。证据在 `.artifacts/batch36-markdown-native`。
+- 320 项 Rust 测试通过，1 项原有忽略。TypeScript、桌面运行时、真实 Hive HTTP 与 SQLite、文件预览及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **把运行时重启中断的工作流放进两个收件箱。** Hive 会在启动时把尚未结束的运行标为中断，当前收件箱只读取失败。验收隔离运行时冷启动后，原运行 ID、所属项目和原日志均保留。列表明确显示中断，排除手动停止、已完成和子运行。 [Cindy 保留中止轮次](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/docs/product-rules/archive-pauses-automations.md#L4-L15) · [Hive 冷启动恢复](https://github.com/tt-a1i/hive/blob/18861b80379bff0d658623a3aa6f1454159d6925/src/server/workflow-run-store.ts#L209-L215)
-- **在模型搜索框用方向键和 Enter 选模型。** 目前快捷键只能打开选择器并聚焦搜索。验收用两个匹配模型，方向键定位第二项，Enter 按提供商和模型 ID 提交一次，保留原草稿和光标，重启后选择仍有效。 [T3 Code 模型键盘选择](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/docs/user/keybindings.md#L46-L50)
-- **从 Markdown 预览打开当前工作树里的相对链接。** 现在 `./guides/setup%20guide.md` 无法打开。验收两个工作树里的同名目标，通过链接只打开当前工作树的准确内容，保留文件面板查询，并拦截越出当前目录范围的路径。 [Beluga 相对链接解析](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/md-paths.ts#L77-L92)
+- **暂缓失败或中断的工作流。** 两个收件箱的工作流行目前没有暂缓入口。验收两个项目同名运行时，只暂缓选中项目的运行，冷启动后提醒仍在，同名的新运行照常出现，到期后可以打开原日志。记录按工作区和运行 ID 保留，运行离开最近 20 条后仍可从暂缓列表定位。 [Cindy 错误行操作](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/bots/TeammateInboxRow.tsx#L14-L46)
+- **为项目设置普通新会话的默认模型。** 在项目 A 的普通会话切换模型，再分别新建 A 和 B 的会话，当前两处都会使用 Agent 配置默认值。验收显式设置 A 的默认模型后，冷重开及首次运行只在 A 的新会话使用该模型，B 和既有会话继续各自原模型，并可恢复 A 的配置默认。 [T3 Code 项目模型](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/apps/web/src/composerDraftStore.ts#L1214-L1233)
+- **从 Markdown 目录链接跳到同一文档的标题。** 打开长 README 点击 `[安装](#install)`，目前位置不动。验收紧凑和展开视图能定位重复标题以及中文标题，代码块中的文字不会被识别为标题，且无需重新读取文件。 [Beluga 标题定位](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/MarkdownDoc.tsx#L235-L241)

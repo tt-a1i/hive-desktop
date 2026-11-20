@@ -13,7 +13,8 @@ import {setTimeout as delay} from 'node:timers/promises';
 import type {ChatRecord} from '../src/chat-index.js';
 import {DispatchExecutionOrigins} from '../src/dispatch-execution-origins.js';
 
-const root = await mkdtemp(join(tmpdir(), 'hive-inbox-replies-'));
+// A short Unix path keeps the ACP socket inside the fixture, even after SIGKILL.
+const root = await mkdtemp(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'hive-inbox-replies-'));
 const dataDir = join(root, 'desktop');
 const peerDir = join(root, 'peer');
 const peer = fileURLToPath(new URL('./fixtures/acp-runtime-peer.cjs', import.meta.url));
@@ -22,7 +23,7 @@ const entry = fileURLToPath(new URL('../dist/main.js', import.meta.url));
 function launch() {
   const events: Array<{type: string; sessionId: string; messageId?: string; message?: {role: string}; inboxReply?: {workspaceId: string; revision: number; receivedAt?: number}}> = [];
   const processHandle = spawn(process.execPath, [entry], {
-    env: {...process.env, HIVE_DESKTOP_DATA_DIR: dataDir, PI_CODING_AGENT_DIR: join(root, 'pi'), PI_OFFLINE: '1'},
+    env: {...process.env, TMPDIR: root, HIVE_DESKTOP_DATA_DIR: dataDir, PI_CODING_AGENT_DIR: join(root, 'pi'), PI_OFFLINE: '1'},
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -53,6 +54,7 @@ function launch() {
     });
   }
   async function close() {
+    if (processHandle.exitCode !== null || processHandle.signalCode !== null) return;
     try { await request('shutdown'); }
     finally {
       processHandle.stdin.end();
@@ -61,7 +63,11 @@ function launch() {
       await exit;
     }
   }
-  return {request, events, close};
+  async function crash() {
+    assert.ok(processHandle.kill('SIGKILL'));
+    assert.deepEqual(await exit, [null, 'SIGKILL']);
+  }
+  return {request, events, close, crash};
 }
 
 async function reply(wire: ReturnType<typeof launch>, workspaceId: string, sessionId: string, revision: number) {
@@ -417,6 +423,12 @@ try {
   console.log('INBOX_ACTIONABLE_PAGES_OK: initial and next workspace pages, badge isolation, queued classification, stable boundary and 101st question');
   console.log('INBOX_ACTIONABLE_PREVIEWS_OK: exact old question snippets and sender outside the 12-message preview, including bounded Unicode on page two');
 
+  const workflowPath = join(root, 'workflow-project');
+  await mkdir(workflowPath);
+  const workflowWorkspace = await wire.request<{id: string}>('hive.request', {
+    method: 'POST', path: '/api/workspaces',
+    body: {path: workflowPath, name: 'Workflow Inbox', autostart_orchestrator: false},
+  });
   const workflowDb = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'));
   const workflowTime = Date.now() - 500;
   const runName = 'Nightly audit';
@@ -435,13 +447,13 @@ try {
       return runId;
     };
     for (let step = 0; step < 21; step++) {
-      seededFailures.push(seedWorkflow(workspace.id, step, step === 17 ? {name: `${'🐝'.repeat(120)}\nother line`}
+      seededFailures.push(seedWorkflow(workflowWorkspace.id, step, step === 17 ? {name: `${'🐝'.repeat(120)}\nother line`}
         : step === 20 ? {startedStep: -500} : {}));
     }
-    seedWorkflow(workspace.id, 21, {parent: seededFailures[20]!});
-    seedWorkflow(workspace.id, 22, {status: 'completed'});
-    seedWorkflow(workspace.id, 23, {status: 'interrupted'});
-    seedWorkflow(workspace.id, 24, {settled: false});
+    seedWorkflow(workflowWorkspace.id, 21, {parent: seededFailures[20]!});
+    seedWorkflow(workflowWorkspace.id, 22, {status: 'completed'});
+    seedWorkflow(workflowWorkspace.id, 23, {status: 'stopped'});
+    seedWorkflow(workflowWorkspace.id, 24, {settled: false});
     seedWorkflow(foreign.id, 25);
     const log = workflowDb.prepare('INSERT INTO workflow_run_logs (run_id, ts, message) VALUES (?, ?, ?)');
     log.run(seededFailures[18]!, workflowTime + 18, 'Exact older failure log');
@@ -451,8 +463,8 @@ try {
   const readFailures = (workspaceId: string) => wire!.request<{
     workspaceId: string; runs: {id: string; name: string | null; finishedAt: number}[]; limited: boolean;
   }>('inbox.workflowFailures', {workspaceId});
-  const failures = await readFailures(workspace.id);
-  assert.equal(failures.workspaceId, workspace.id);
+  const failures = await readFailures(workflowWorkspace.id);
+  assert.equal(failures.workspaceId, workflowWorkspace.id);
   assert.equal(failures.limited, true);
   assert.deepEqual(failures.runs.map(run => run.id), seededFailures.slice(1).reverse());
   assert.deepEqual(failures.runs.find(run => run.id === seededFailures[17]), {
@@ -468,22 +480,22 @@ try {
   const details = await wire.request<{run: {id: string; workspace_id: string; error: string}}>('hive.request', {
     method: 'GET', path: `/api/workflows/runs/${exactRun.id}`,
   });
-  assert.deepEqual([details.run.id, details.run.workspace_id, details.run.error], [exactRun.id, workspace.id, 'Run error 18']);
+  assert.deepEqual([details.run.id, details.run.workspace_id, details.run.error], [exactRun.id, workflowWorkspace.id, 'Run error 18']);
   const exactLogs = await wire.request<{logs: {message: string}[]}>('hive.request', {
     method: 'GET', path: `/api/workflows/runs/${exactRun.id}/logs`,
   });
   assert.deepEqual(exactLogs.logs.map(log => log.message), ['Exact older failure log']);
   const full = await wire.request<{runs: {id: string}[]}>('hive.request', {
-    method: 'GET', path: `/api/workspaces/${workspace.id}/workflows/runs`,
+    method: 'GET', path: `/api/workspaces/${workflowWorkspace.id}/workflows/runs`,
   });
   assert.ok(full.runs.some(run => run.id === seededFailures[0]), 'Older runs remain in Workflows');
-  assert.deepEqual(await readFailures(workspace.id), failures, 'Read-only inspection keeps failures intact');
+  assert.deepEqual(await readFailures(workflowWorkspace.id), failures, 'Read-only inspection keeps failures intact');
   console.log('INBOX_WORKFLOW_FAILURES_OK: bounded current workspace settled root failures, exact same-name run error and logs, older history preserved');
   const compactWorkflowFailures = (workspaceIds: string[]) => wire!.request<{
     workspaceId: string; runIds: string[];
   }[]>('inbox.workflowFailureBadge', {workspaceIds});
-  assert.deepEqual(await compactWorkflowFailures([workspace.id, foreign.id, workspace.id, randomUUID()]), [
-    {workspaceId: workspace.id, runIds: seededFailures.slice(1).reverse()},
+  assert.deepEqual(await compactWorkflowFailures([workflowWorkspace.id, foreign.id, workflowWorkspace.id, randomUUID()]), [
+    {workspaceId: workflowWorkspace.id, runIds: seededFailures.slice(1).reverse()},
     {workspaceId: foreign.id, runIds: foreignFailures.runs.map(run => run.id)},
   ]);
   await assert.rejects(compactWorkflowFailures(Array.from({length:33}, () => randomUUID())));
@@ -495,6 +507,99 @@ try {
   assert.deepEqual(await compactWorkflowFailures([without.id, randomUUID()]), [{workspaceId: without.id, runIds: []}]);
   assert.deepEqual(await readFailures(foreign.id), foreignFailures);
   console.log('INBOX_WORKFLOW_BADGE_OK: compact capped identities for both workspaces, verified empty versus omitted, no writes');
+
+  type Run = {id: string; workspace_id: string; script_path: string; status: string; finished_at: number | null; parent_run_id: string | null};
+  const readRun = async (id: string) => (await wire!.request<{run: Run}>('hive.request', {
+    method: 'GET', path: `/api/workflows/runs/${id}`,
+  })).run;
+  const readLogs = async (id: string) => (await wire!.request<{logs: {message: string}[]}>('hive.request', {
+    method: 'GET', path: `/api/workflows/runs/${id}/logs`,
+  })).logs;
+  const listRuns = async () => (await wire!.request<{runs: Run[]}>('hive.request', {
+    method: 'GET', path: `/api/workspaces/${workflowWorkspace.id}/workflows/runs`,
+  })).runs;
+  const readAttention = (workspaceId: string) => wire!.request<{
+    workspaceId: string; runs: {id: string; name: string | null; finishedAt: number; status: string}[]; limited: boolean;
+  }>('inbox.workflowFailures', {workspaceId, includeInterrupted: true});
+  const readAttentionBadge = (workspaceIds: string[]) => wire!.request<{
+    workspaceId: string; runIds: string[];
+  }[]>('inbox.workflowFailureBadge', {workspaceIds, includeInterrupted: true});
+  await assert.rejects(wire.request('inbox.workflowFailures', {workspaceId: workflowWorkspace.id, includeInterrupted: 'yes'}));
+  await assert.rejects(wire.request('inbox.workflowFailureBadge', {workspaceIds: [workflowWorkspace.id], includeInterrupted: 1}));
+  await wire.request('hive.request', {
+    method: 'PUT', path: '/api/settings/workflow-feature', body: {enabled: true},
+  });
+  const scripts = join(workflowPath, '.hive', 'workflows');
+  await mkdir(scripts, {recursive: true});
+  await writeFile(join(scripts, 'pending-child.ts'),
+    "export const meta = {name:'Pending child', description:'Inbox fixture'}; await log('Child workflow log'); while (true) {}");
+  const lead = await wire.request<{id: string}>('chat.createRecord', {
+    workspaceId: workflowWorkspace.id, backend: 'acp', profile: profile.ref,
+  });
+  const scriptName = 'inbox-cold-start';
+  const parentLog = 'Original cold-start run log';
+  const source = `export const meta = {name:${JSON.stringify(runName)}, description:'Inbox fixture', maxDurationMs:60000}; await log(${JSON.stringify(parentLog)}); return await workflow('pending-child');`;
+  const command = ['workflow', 'run', '--name', scriptName, '--inline', source];
+  await wire.request('chat.prompt', {sessionId: lead.id, text: `ACP_TEST_COMMAND:${JSON.stringify(command)}`});
+  let parent: Run | undefined;
+  let child: Run | undefined;
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    const runs = await listRuns();
+    parent = runs.find(run => run.script_path === `<inline:${scriptName}>`);
+    child = parent && runs.find(run => run.parent_run_id === parent!.id);
+    if (parent && child && (await readLogs(child.id)).some(log => log.message === 'Child workflow log')) break;
+    if (Date.now() >= deadline) {
+      const chat = await wire.request<{history: {role: string; content: unknown}[]}>('chat.open', {sessionId: lead.id});
+      const outcome = chat.history.filter(message => message.role === 'assistant').at(-1)?.content;
+      assert.fail(`Real workflows did not start: ${JSON.stringify({parent, child, outcome})}`);
+    }
+    await delay(40);
+  }
+  assert.equal(parent.status, 'running');
+  assert.equal(child.status, 'running');
+  assert.equal(parent.finished_at, null);
+  assert.equal(child.finished_at, null);
+  const originalLogs = await readLogs(parent.id);
+  assert.ok(originalLogs.some(log => log.message === parentLog));
+  assert.deepEqual((await readAttention(workflowWorkspace.id)).runs.map(run => run.id), failures.runs.map(run => run.id));
+  await wire.crash();
+  // Inspect the closed database before the replacement process applies its startup sweep.
+  const crashedDb = new DatabaseSync(join(dataDir, 'hive', 'runtime.sqlite'), {readOnly: true});
+  try {
+    const lookup = crashedDb.prepare('SELECT status, finished_at FROM workflow_runs WHERE id = ?');
+    for (const run of [parent, child]) {
+      const row = lookup.get(run.id);
+      assert.equal(row?.status, 'running');
+      assert.equal(row?.finished_at, null);
+    }
+  } finally { crashedDb.close(); }
+  wire = launch();
+  await wire.request('initialize');
+  const restored = await readRun(parent.id);
+  assert.equal(restored.id, parent.id);
+  assert.equal(restored.workspace_id, workflowWorkspace.id);
+  assert.equal(restored.status, 'interrupted');
+  assert.ok(restored.finished_at !== null && restored.finished_at > workflowTime);
+  assert.deepEqual(await readLogs(parent.id), originalLogs);
+  assert.equal((await readRun(child.id)).status, 'interrupted');
+  const expectedIds = [parent.id, ...failures.runs.slice(0, 19).map(run => run.id)];
+  const interrupted = await readAttention(workflowWorkspace.id);
+  assert.equal(interrupted.workspaceId, workflowWorkspace.id);
+  assert.equal(interrupted.limited, true);
+  assert.deepEqual(interrupted.runs[0], {id: parent.id, name: runName, finishedAt: restored.finished_at, status: 'interrupted'});
+  assert.ok(interrupted.runs.slice(1).every(run => run.status === 'failed'));
+  assert.deepEqual(interrupted.runs.map(run => run.id), expectedIds);
+  assert.deepEqual(await readAttentionBadge([workflowWorkspace.id, foreign.id, without.id, randomUUID()]), [
+    {workspaceId: workflowWorkspace.id, runIds: expectedIds},
+    {workspaceId: foreign.id, runIds: foreignFailures.runs.map(run => run.id)},
+    {workspaceId: without.id, runIds: []},
+  ]);
+  assert.deepEqual(await readFailures(workflowWorkspace.id), failures);
+  assert.deepEqual(await compactWorkflowFailures([workflowWorkspace.id]), [
+    {workspaceId: workflowWorkspace.id, runIds: failures.runs.map(run => run.id)},
+  ]);
+  console.log('INBOX_WORKFLOW_INTERRUPTED_OK: real running parent and child survived SIGKILL as unfinished and recovered as interrupted; both Inbox reads show the exact parent, original logs remain, and legacy failure projections match');
 } finally {
   await wire?.close();
   await rm(root, {recursive: true, force: true});

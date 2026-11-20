@@ -42,6 +42,24 @@ try {
   const bPreview = await runtime.chats.projectFilesPreview(ws.id, name, b.id);
   assert.deepEqual([mainPreview.text, aPreview.text, bPreview.text], ['main', 'one', 'two']);
   assert.equal(new Set([mainPreview.sha256, aPreview.sha256, bPreview.sha256]).size, 3);
+  const guide = 'docs/guides/setup guide.md';
+  for (const [directory, marker] of [[project, 'main guide'], [aDir, 'first guide'], [bDir, 'second guide']] as const) {
+    await mkdir(join(directory, 'docs', 'guides'), {recursive: true});
+    await writeFile(join(directory, guide), marker);
+  }
+  await writeFile(join(aDir, 'docs/start.md'), '[Setup](./guides/setup%20guide.md)');
+  const source = await runtime.chats.projectFilesPreview(ws.id, 'docs/start.md', a.id, false, null);
+  assert('executionDirectory' in source);
+  assert.equal(source.executionDirectory, aDir);
+  const linked = await runtime.chats.projectFilesPreview(ws.id, guide, a.id, true, source.executionDirectory);
+  assert.equal(linked.text, 'first guide');
+  await assert.rejects(runtime.chats.projectFilesPreview(ws.id, guide, b.id, true, source.executionDirectory), /execution directory changed/);
+  await assert.rejects(runtime.chats.projectFilesPreview(ws.id, guide, undefined, true, source.executionDirectory), /execution directory changed/);
+  await assert.rejects(runtime.chats.projectFilesPreview(ws.id, '../' + guide, a.id, true, source.executionDirectory), /Invalid project file path/);
+  if (process.platform !== 'win32') {
+    await symlink(join(bDir, guide), join(aDir, 'docs', 'outside.md'));
+    await assert.rejects(runtime.chats.projectFilesPreview(ws.id, 'docs/outside.md', a.id, true, source.executionDirectory), /outside project/);
+  }
   for (const [sessionId, directory, expected] of [[undefined, project, 'main'], [a.id, aDir, 'one'], [b.id, bDir, 'two']] as const) {
     const file = await runtime.chats.projectFilesResolveOpen(ws.id, name, sessionId);
     assert.deepEqual(file, {root: await realpath(directory), path: await realpath(join(directory, name))});

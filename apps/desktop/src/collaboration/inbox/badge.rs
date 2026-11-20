@@ -28,7 +28,7 @@ pub(super) enum BadgeItem {
         workspace: String,
         session: String,
     },
-    WorkflowFailure {
+    WorkflowRun {
         workspace: String,
         run: String,
     },
@@ -39,7 +39,7 @@ impl BadgeItem {
         match self {
             Self::Question { workspace, .. }
             | Self::UnreadSession { workspace, .. }
-            | Self::WorkflowFailure { workspace, .. } => workspace,
+            | Self::WorkflowRun { workspace, .. } => workspace,
         }
     }
 
@@ -61,7 +61,7 @@ impl BadgeItem {
                 })
             }
             Destination::WorkflowRun(run) if entry.priority == Priority::NeedsUser => {
-                Some(Self::WorkflowFailure {
+                Some(Self::WorkflowRun {
                     workspace: workspace.into(),
                     run: run.clone(),
                 })
@@ -73,14 +73,14 @@ impl BadgeItem {
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorkflowFailureBadge {
+struct WorkflowRunBadge {
     workspace_id: String,
     run_ids: Vec<String>,
 }
 
 fn checked_workflow_badges(
     scope: &[String],
-    response: Vec<WorkflowFailureBadge>,
+    response: Vec<WorkflowRunBadge>,
 ) -> BTreeMap<String, Vec<String>> {
     let mut checked = BTreeMap::new();
     for snapshot in response {
@@ -109,7 +109,10 @@ async fn read_badge_workflows(
     scope: &[String],
 ) -> BTreeMap<String, Vec<String>> {
     let result = runtime
-        .request("inbox.workflowFailureBadge", json!({"workspaceIds":scope}))
+        .request(
+            "inbox.workflowFailureBadge",
+            json!({"workspaceIds": scope, "includeInterrupted": true}),
+        )
         .await;
     let Some(response) = result
         .ok()
@@ -232,14 +235,14 @@ impl InboxBadge {
         }
     }
 
-    pub(super) fn remember_workflow_failures<'a>(
+    pub(super) fn remember_workflow_runs<'a>(
         &mut self,
         workspace: &str,
         runs: impl IntoIterator<Item = &'a String>,
     ) {
-        self.pending.retain(|item| !matches!(item, BadgeItem::WorkflowFailure { workspace: id, .. } if id == workspace));
+        self.pending.retain(|item| !matches!(item, BadgeItem::WorkflowRun { workspace: id, .. } if id == workspace));
         self.pending
-            .extend(runs.into_iter().map(|id| BadgeItem::WorkflowFailure {
+            .extend(runs.into_iter().map(|id| BadgeItem::WorkflowRun {
                 workspace: workspace.to_owned(),
                 run: id.clone(),
             }));
@@ -359,7 +362,7 @@ impl InboxBadge {
 #[cfg(test)]
 mod tests {
     use super::{
-        BadgeItem, InboxBadge, Question, WorkflowFailureBadge, checked_workflow_badges,
+        BadgeItem, InboxBadge, Question, WorkflowRunBadge, checked_workflow_badges,
         collect_questions,
     };
     use crate::collaboration::inbox::snoozes::{Reminder, Snoozes};
@@ -378,16 +381,16 @@ mod tests {
         let run = "11111111-0000-4000-8000-000012345678".to_owned();
         let other = "22222222-0000-4000-8000-000012345678".to_owned();
         let scope = ["atlas".into(), "beacon".into()];
-        let workflow = |workspace: &str, run: &str| BadgeItem::WorkflowFailure {
+        let workflow = |workspace: &str, run: &str| BadgeItem::WorkflowRun {
             workspace: workspace.into(),
             run: run.into(),
         };
         let mut badge = InboxBadge::default();
         let question = item("atlas", "question");
         badge.replace(&scope, Some(HashSet::from([question.clone()])));
-        badge.remember_workflow_failures("atlas", [&run]);
-        badge.remember_workflow_failures("beacon", [&other]);
-        let snapshot = |workspace: &str, run_ids| WorkflowFailureBadge {
+        badge.remember_workflow_runs("atlas", [&run]);
+        badge.remember_workflow_runs("beacon", [&other]);
+        let snapshot = |workspace: &str, run_ids| WorkflowRunBadge {
             workspace_id: workspace.into(),
             run_ids,
         };
@@ -401,7 +404,7 @@ mod tests {
         );
         assert_eq!(checked.len(), 1);
         for (workspace, runs) in checked {
-            badge.remember_workflow_failures(&workspace, &runs);
+            badge.remember_workflow_runs(&workspace, &runs);
         }
         assert_eq!(
             badge.pending,
@@ -541,7 +544,7 @@ impl HiveApp {
             .iter()
             .filter(move |item| {
                 badge.connection == self.connection_generation
-                    && (matches!(item, BadgeItem::WorkflowFailure { .. })
+                    && (matches!(item, BadgeItem::WorkflowRun { .. })
                         || badge.question_visible(item, now_ms()))
             })
             .cloned()
@@ -698,7 +701,7 @@ impl HiveApp {
                                 if let Some(runs) = workflows.remove(workspace) {
                                     app.collaboration
                                         .inbox_badge
-                                        .remember_workflow_failures(workspace, &runs);
+                                        .remember_workflow_runs(workspace, &runs);
                                 }
                                 if let Ok(saved) = Snoozes::load(root, workspace) {
                                     let saved = if let Some(inputs) = dispatch_inputs.get(workspace)

@@ -448,17 +448,20 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       exact(params, ['workspaceId', 'dispatchIds', 'timestampDispatchIds']);
       return runtime.hive.inboxDispatchInput(text(params, 'workspaceId'), params.dispatchIds, params.timestampDispatchIds);
     }
-    case 'inbox.workflowFailures': {
-      exact(params, ['workspaceId']);
-      return hive.inboxWorkflowFailures(text(params, 'workspaceId'));
-    }
+    case 'inbox.workflowFailures':
     case 'inbox.workflowFailureBadge': {
-      exact(params, ['workspaceIds']);
+      const detailed = method === 'inbox.workflowFailures';
+      exact(params, [detailed ? 'workspaceId' : 'workspaceIds', 'includeInterrupted']);
+      const {includeInterrupted} = params;
+      if (includeInterrupted !== undefined && typeof includeInterrupted !== 'boolean') {
+        throw new Error('includeInterrupted must be a boolean');
+      }
+      if (detailed) return hive.inboxWorkflowFailures(text(params, 'workspaceId'), includeInterrupted);
       const ids = params.workspaceIds;
       if (!Array.isArray(ids) || ids.length > 32 || !ids.every(id => typeof id === 'string' && id.length <= 64)) {
         throw new Error('Expected up to 32 inbox workspace identities');
       }
-      return hive.inboxWorkflowFailureBadge(ids);
+      return hive.inboxWorkflowFailureBadge(ids, includeInterrupted);
     }
     case 'inbox.dispatchMessage': {
       exact(params, ['workspaceId', 'dispatchId', 'messageId']);
@@ -578,7 +581,8 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'project.files.list': return chats.projectFilesList(text(params, 'workspaceId'), params.directory, params.offset, params.sessionId);
     case 'project.files.search': return runSearch(requestId, signal => chats.projectFilesSearch(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.regex, params.wholeWord, params.includeRanges));
     case 'project.files.searchContent': return runSearch(requestId, signal => chats.projectFilesSearchContent(text(params, 'workspaceId'), params.query, params.offset, params.sessionId, signal, params.caseSensitive, params.wholeWord, params.regex));
-    case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'), params.relativePath, params.sessionId, params.allowImage);
+    case 'project.files.preview': return chats.projectFilesPreview(text(params, 'workspaceId'),
+      params.relativePath, params.sessionId, params.allowImage, params.expectedDirectory);
     case 'project.files.resolveOpen': return chats.projectFilesResolveOpen(text(params, 'workspaceId'), params.relativePath, params.sessionId);
     case 'project.files.attach': return chats.projectFilesAttach(text(params, 'workspaceId'), params.relativePath, params.sessionId, params.expectedSha256);
     case 'project.files.status': return chats.projectFileStatus(text(params, 'workspaceId'), text(params, 'id'));

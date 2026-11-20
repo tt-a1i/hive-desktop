@@ -1,10 +1,10 @@
-use crate::{app::HiveApp, language::tr, palette::Color};
+use crate::{app::HiveApp, language::tr, palette::Color, protocol::Model};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
         Icon,
         button::{Button, ButtonVariants},
-        input::Input,
+        input::{Escape, Input, MoveDown, MoveUp},
         popover::Popover,
         scroll::ScrollableElement,
         *,
@@ -13,7 +13,160 @@ use gpui_kit::{
     *,
 };
 
+#[derive(Default)]
+pub(crate) struct ModelSearchNavigation {
+    active: Option<(String, String)>,
+    enter: Option<(String, String)>,
+}
+
+impl ModelSearchNavigation {
+    pub(crate) fn cancel_enter(&mut self) {
+        self.enter = None;
+    }
+
+    fn active_index(&self, models: &[&Model]) -> usize {
+        self.active
+            .as_ref()
+            .and_then(|(provider, id)| {
+                models
+                    .iter()
+                    .position(|model| model.provider == *provider && model.id == *id)
+            })
+            .unwrap_or(0)
+    }
+}
+
+fn model_key(model: &Model) -> (String, String) {
+    (model.provider.clone(), model.id.clone())
+}
+
 impl HiveApp {
+    fn matching_picker_models(&self, cx: &App) -> Vec<&Model> {
+        let query = self.model_search.read(cx).value().trim().to_lowercase();
+        let mut matching = self
+            .models
+            .iter()
+            .filter(|model| {
+                model.available
+                    && (query.is_empty()
+                        || format!("{} {} {}", model.provider, model.id, model.name)
+                            .to_lowercase()
+                            .contains(&query))
+            })
+            .collect::<Vec<_>>();
+        matching.sort_by_key(|model| {
+            !self.model.as_ref().is_some_and(|selected| {
+                selected.provider == model.provider && selected.id == model.id
+            })
+        });
+        matching
+    }
+
+    pub(crate) fn reset_model_picker_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.model_picker_search_changed(cx);
+        self.model_search
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.reasoning_picker.scroll.set_offset(point(px(0.), px(0.)));
+    }
+
+    pub(crate) fn model_picker_search_changed(&mut self, cx: &mut Context<Self>) {
+        self.reasoning_picker.model_search_navigation = Default::default();
+        self.reasoning_picker.model_scroll.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    fn model_search_is_composing(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.model_search.update(cx, |input, cx| {
+            input.marked_text_range(window, cx).is_some()
+        })
+    }
+
+    fn move_model_search(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.model_search_is_composing(window, cx) {
+            return;
+        }
+        cx.stop_propagation();
+        let matching = self.matching_picker_models(cx);
+        if matching.is_empty() {
+            return;
+        }
+        let current = self.reasoning_picker.model_search_navigation.active_index(&matching);
+        let index = current.saturating_add_signed(delta).min(matching.len() - 1);
+        let key = model_key(matching[index]);
+        self.reasoning_picker.model_search_navigation.active = Some(key);
+        self.reasoning_picker.model_search_navigation.cancel_enter();
+        self.reasoning_picker.model_scroll.scroll_to_item(index);
+        cx.notify();
+    }
+
+    fn model_search_enter_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key != "enter"
+            || event.keystroke.modifiers.modified()
+            || self.model_search_is_composing(window, cx)
+        {
+            return;
+        }
+        cx.stop_propagation();
+        if event.is_held
+            || self.reasoning_picker.loading
+            || self.reasoning_picker.model_search_navigation.enter.is_some()
+        {
+            return;
+        }
+        // Keep focus in the search until Enter is released. Otherwise a held key
+        // can land in the composer as soon as the popover closes and send its draft.
+        let matching = self.matching_picker_models(cx);
+        let index = self.reasoning_picker.model_search_navigation.active_index(&matching);
+        self.reasoning_picker.model_search_navigation.enter =
+            matching.get(index).map(|model| model_key(model));
+    }
+
+    fn model_search_enter_up(
+        &mut self,
+        event: &KeyUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key != "enter" {
+            return;
+        }
+        let Some((provider, id)) = self.reasoning_picker.model_search_navigation.enter.take() else {
+            return;
+        };
+        cx.stop_propagation();
+        if event.keystroke.modifiers.modified()
+            || !self.choosing_model
+            || self.reasoning_picker.loading
+            || self.model_search_is_composing(window, cx)
+        {
+            return;
+        }
+        if let Some(model) = self
+            .matching_picker_models(cx)
+            .into_iter()
+            .find(|model| model.provider == provider && model.id == id)
+        {
+            self.set_model(model.clone(), cx);
+        }
+    }
+
+    fn model_search_escape(&mut self, _: &Escape, window: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.reasoning_picker.model_search_navigation.cancel_enter();
+        if self.model_search_is_composing(window, cx) {
+            self.model_search
+                .update(cx, |input, cx| input.unmark_text(window, cx));
+            return;
+        }
+        self.choosing_model = false;
+        cx.notify();
+    }
+
     pub(crate) fn model_picker(
         &self,
         window: &Window,
@@ -141,9 +294,7 @@ impl HiveApp {
                 }
                 this.choosing_model = *open;
                 if *open {
-                    this.model_search.update(cx, |input, cx| input.set_value("", window, cx));
-                    this.reasoning_picker.model_scroll.set_offset(point(px(0.),px(0.)));
-                    this.reasoning_picker.scroll.set_offset(point(px(0.),px(0.)));
+                    this.reset_model_picker_search(window, cx);
                     this.load_reasoning(None, cx);
                     this.load_mode(None, cx);
                     this.load_permission_mode(None, cx);
@@ -151,10 +302,9 @@ impl HiveApp {
                 cx.notify();
             }))
             .when(self.choosing_model, |popover| {
-                let query = self.model_search.read(cx).value().trim().to_lowercase();
-                let mut matching = self.models.iter().filter(|model| model.available && (query.is_empty()
-                    || format!("{} {} {}",model.provider,model.id,model.name).to_lowercase().contains(&query))).collect::<Vec<_>>();
-                matching.sort_by_key(|model| !self.model.as_ref().is_some_and(|selected| selected.provider == model.provider && selected.id == model.id));
+                let matching = self.matching_picker_models(cx);
+                let active = self.reasoning_picker.model_search_navigation.active_index(&matching);
+                let search_focused = self.model_search.read(cx).focus_handle(cx).is_focused(window);
                 let empty = matching.is_empty();
                 let model_scroll = &self.reasoning_picker.model_scroll;
                 let reasoning_scroll = &self.reasoning_picker.scroll;
@@ -176,7 +326,13 @@ impl HiveApp {
                                         .border_b_1()
                                         .border_color(Color::Divider.get(cx))
                                         .child(
-                                            div().flex_1().min_w_0().child(
+                                            div().flex_1().min_w_0()
+                                                .capture_action(cx.listener(|this, _: &MoveUp, window, cx| this.move_model_search(-1, window, cx)))
+                                                .capture_action(cx.listener(|this, _: &MoveDown, window, cx| this.move_model_search(1, window, cx)))
+                                                .capture_action(cx.listener(Self::model_search_escape))
+                                                .capture_key_down(cx.listener(Self::model_search_enter_down))
+                                                .capture_key_up(cx.listener(Self::model_search_enter_up))
+                                                .child(
                                                 Input::new(&self.model_search)
                                                     .appearance(false)
                                                     .bordered(false)
@@ -235,6 +391,16 @@ impl HiveApp {
                                         .children(matching.into_iter().enumerate().map(|(i, model)| {
                                             let selected = self.model.as_ref().is_some_and(|m| m.id == model.id && m.provider == model.provider);
                                             let model = model.clone();
+                                            let separator = if crate::language::english() { ", " } else { "，" };
+                                            let mut label = format!("{}{separator}{} / {}", model.name, model.provider, model.id);
+                                            if selected {
+                                                label.push_str(separator);
+                                                label.push_str(tr("当前生效"));
+                                            }
+                                            if i == active && search_focused && !self.reasoning_picker.loading {
+                                                label.push_str(separator);
+                                                label.push_str(tr("按 Enter 选择"));
+                                            }
                                             crate::focus_scroll::Reveal::new(
                                                 ("model-option-reveal", i),
                                                 model_scroll,
@@ -250,11 +416,7 @@ impl HiveApp {
                                                     .py_1p5()
                                                     .rounded_lg()
                                                     .disabled(self.reasoning_picker.loading)
-                                                    .accessibility_label(if crate::language::english() {
-                                                        format!("{}, {} / {}", model.name, model.provider, model.id)
-                                                    } else {
-                                                        format!("{}，{} / {}", model.name, model.provider, model.id)
-                                                    })
+                                                    .accessibility_label(label)
                                                     .tooltip(format!("{}\n{} / {}", model.name, model.provider, model.id))
                                                     .child(
                                                         h_flex()
@@ -300,7 +462,7 @@ impl HiveApp {
                                                                 )
                                                             }),
                                                     )
-                                                    .selected(selected)
+                                                    .selected(i == active)
                                                     .on_click(cx.listener(move |this, _, _, cx| this.set_model(model.clone(), cx))),
                                             )
                                         })),

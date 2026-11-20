@@ -101,7 +101,7 @@ fn run_matches(run: &Run, workspace: &str, id: &str, inbox: bool) -> bool {
     run.id == id
         && run.workspace_id == workspace
         && (!inbox
-            || run.status == "failed"
+            || matches!(run.status.as_str(), "failed" | "interrupted")
                 && run.parent_run_id.is_none()
                 && run.finished_at.is_some_and(|time| time > 0))
 }
@@ -394,13 +394,15 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn inbox_workflow_detail_requires_the_exact_settled_root_failure() {
+    fn inbox_workflow_detail_requires_an_exact_settled_root_failure_or_interruption() {
         let mut run: Run = serde_json::from_value(json!({
             "id": "selected", "workspace_id": "atlas", "name": "Daily audit",
             "script_path": "check.ts", "status": "failed", "started_at": 10,
             "finished_at": 20, "agent_count": 0, "args": null, "result": null,
         }))
         .unwrap();
+        assert!(run_matches(&run, "atlas", "selected", true));
+        run.status = "interrupted".into();
         assert!(run_matches(&run, "atlas", "selected", true));
         assert!(!run_matches(&run, "beacon", "selected", true));
         assert!(!run_matches(&run, "atlas", "different", true));
@@ -411,7 +413,9 @@ mod tests {
         run.finished_at = None;
         assert!(!run_matches(&run, "atlas", "selected", true));
         run.finished_at = Some(20);
-        run.status = "completed".into();
-        assert!(!run_matches(&run, "atlas", "selected", true));
+        for status in ["completed", "stopped", "running"] {
+            run.status = status.into();
+            assert!(!run_matches(&run, "atlas", "selected", true));
+        }
     }
 }

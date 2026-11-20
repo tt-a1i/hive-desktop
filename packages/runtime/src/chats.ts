@@ -1305,13 +1305,21 @@ export class Chats implements StructuredSessionPort {
     const directory = await this.executionDirectory(workspaceId, sessionId);
     return searchProjectContents(directory, query, offset, signal, caseSensitive, wholeWord, regex);
   }
-  async projectFilesPreview(workspaceId: string, relativePath: unknown, sessionId?: unknown, allowImage: unknown = false) {
+  async projectFilesPreview(workspaceId: string, relativePath: unknown, sessionId?: unknown,
+    allowImage: unknown = false, expectedDirectory?: unknown) {
     if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
     if (typeof allowImage !== 'boolean') throw new TypeError('Invalid project file preview type');
+    if (expectedDirectory != null && (typeof expectedDirectory !== 'string' || !expectedDirectory)) {
+      throw new TypeError('Invalid project file preview directory');
+    }
     const root = await this.executionDirectory(workspaceId, sessionId);
+    if (typeof expectedDirectory === 'string' && root !== expectedDirectory) {
+      throw new Error('Session execution directory changed during preview');
+    }
     const preview = await previewProjectFile(root, relativePath, allowImage);
     if (await this.executionDirectory(workspaceId, sessionId) !== root) throw new Error('Session execution directory changed during preview');
-    return preview;
+    // A null expected directory requests the current directory for later linked reads.
+    return expectedDirectory === undefined ? preview : {...preview, executionDirectory: root};
   }
   async projectFilesResolveOpen(workspaceId: string, relativePath: unknown, sessionId?: unknown) {
     if (typeof relativePath !== 'string') throw new TypeError('Invalid project file path');
