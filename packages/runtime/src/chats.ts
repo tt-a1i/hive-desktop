@@ -28,6 +28,7 @@ import { ChatAttachments, attachmentIds, encodeImageInput, decodeImageInput } fr
 import { promptImages } from './prompt-images.js';
 import { isDeliveryPresentation, restoreHistoricalReport } from './delivery-presentation.js';
 import type { AgentModels } from './agent-models.js';
+import { ProjectModelDefaults } from './project-model-defaults.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { createHash,randomUUID } from 'node:crypto';
 import { setImmediate } from 'node:timers/promises';
@@ -354,6 +355,7 @@ export class Chats implements StructuredSessionPort {
   private readonly queueDir: string;
   private readonly dispatchOrigins: DispatchExecutionOrigins;
   private readonly scratchProjects: ScratchProjectLinks;
+  private readonly projectModelDefaults: ProjectModelDefaults;
   private readonly closeAbort = new AbortController();
   private closing = false;
   private disposing = false;
@@ -373,6 +375,7 @@ export class Chats implements StructuredSessionPort {
     this.queueDir = join(directory, 'deliveries');
     this.dispatchOrigins = new DispatchExecutionOrigins(join(directory, 'dispatch-execution-origins'));
     this.scratchProjects = new ScratchProjectLinks(dataDir);
+    this.projectModelDefaults = new ProjectModelDefaults(dataDir);
     mkdirSync(this.sessionDir, { recursive: true });
     this.index = new ChatIndex(directory);
     this.handoffDeliveries=new HandoffDeliveries(dataDir);
@@ -503,6 +506,7 @@ export class Chats implements StructuredSessionPort {
       ...worktreeDraftAvailability(record),
       ...(record.model && {model: {...record.model}}),
       ...(record.inheritedDraftModel && {inheritedDraftModel: true as const}),
+      ...(record.projectDefaultDraftModel && {projectDefaultDraftModel: true as const}),
       ...(record.unavailableDraftModel && {unavailableModel: record.model}),
       ...(record.inheritedDraftWorkMode && {inheritedDraftWorkMode: record.inheritedDraftWorkMode}),
       ...(record.unavailableWorkMode && {unavailableWorkMode: record.unavailableWorkMode}),
@@ -1870,6 +1874,8 @@ export class Chats implements StructuredSessionPort {
         const activeModel = handle.currentModel();
         if (activeModel?.provider !== inheritedModel.provider || activeModel.id !== inheritedModel.id)
           throw failedInheritedModel();
+        if (record.projectDefaultDraftModel && !handle.listModels().some(model => model.available
+          && model.provider === inheritedModel.provider && model.id === inheritedModel.id)) throw failedInheritedModel();
       }
       if (piNativeId && handle.sessionId !== piNativeId)
         throw new SessionIdentityError('PI_SESSION_IDENTITY_CONFLICT', 'Pi did not restore the original native session');
@@ -2676,7 +2682,7 @@ export class Chats implements StructuredSessionPort {
     }
     return record;
   }
-  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string; deferFirstConnection?: boolean; sourceSessionId?: string} = {}) {
+  async createRecord(workspaceId: string, backend: ChatBackend = 'pi', options: {profile?: AgentProfileRef; isolation?: 'worktree'; branch?: string; skipSetup?: boolean; expectedSetupRevision?: string; deferFirstConnection?: boolean; sourceSessionId?: string; useProjectDefaultModel?: boolean} = {}) {
     return this.withWorkspace(workspaceId, async () => {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
@@ -2685,6 +2691,7 @@ export class Chats implements StructuredSessionPort {
       if (this.closing) throw new Error('Chat runtime is closing');
       const selected = await this.selectedProfile(backend, options.profile);
       let inheritance: ReturnType<typeof inheritedModelFrom> & ReturnType<typeof inheritedWorkModeFrom> & ReturnType<typeof inheritedReasoningFrom> = {};
+      let projectDefaultDraftModel = false;
       if (options.sourceSessionId !== undefined) {
         const source = this.index.peek(options.sourceSessionId);
         const lead = `${workspaceId}:orchestrator`;
@@ -2696,11 +2703,59 @@ export class Chats implements StructuredSessionPort {
           throw new SessionIdentityError('FRESH_DRAFT_SOURCE_INVALID', '请选择当前项目中使用同一后端和配置的会话来创建后续草稿。');
         inheritance = {...inheritedModelFrom(backend, source.model), ...inheritedWorkModeFrom(backend, source.nativeMode?.mode),
           ...inheritedReasoningFrom(backend, source.model, source.reasoning)};
+      } else if (options.useProjectDefaultModel && !options.isolation && backend !== 'acp'
+        && !await isScratchWorkspace(this.dataDir, workspace.path)) {
+        const model = this.projectModelDefaults.get(workspaceId, backend, selected.ref);
+        if (model) {
+          inheritance = inheritedModelFrom(backend, model);
+          projectDefaultDraftModel = inheritance.inheritedDraftModel === true;
+        }
       }
       return this.saveNewRecord(workspace, {
         id: randomUUID(), workspaceId, backend, profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new',
-        ...(options.deferFirstConnection && {deferFirstConnection: true as const}), ...inheritance,
+        ...((options.deferFirstConnection || projectDefaultDraftModel) && {deferFirstConnection: true as const}),
+        ...(projectDefaultDraftModel && {projectDefaultDraftModel: true as const}), ...inheritance,
       }, options);
+    });
+  }
+
+  private projectModelSession(workspaceId: string, sessionId: string, profile: AgentProfileRef) {
+    this.assertWorkspaceAvailable(workspaceId);
+    this.closeAbort.signal.throwIfAborted();
+    const session = this.index.peek(sessionId);
+    const lead = `${workspaceId}:orchestrator`;
+    if (!session || session.workspaceId !== workspaceId || !isDeepStrictEqual(session.profile, profile)
+      || session.archived || session.scratch || session.worktreeReleased || session.backend === 'acp'
+      || session.identityState === 'unknown' || (session.agentId && session.agentId !== lead)
+      || (session.originAgentId && session.originAgentId !== lead)) {
+      throw new Error('请选择使用此 Agent 配置的项目会话。');
+    }
+    return session;
+  }
+
+  projectModelDefault(workspaceId: string, sessionId: string, profile: AgentProfileRef) {
+    const session = this.projectModelSession(workspaceId, sessionId, profile);
+    return {model: this.projectModelDefaults.get(workspaceId, session.backend, profile)};
+  }
+
+  setProjectModelDefault(workspaceId: string, sessionId: string, profile: AgentProfileRef, model: {provider: string; id: string} | null) {
+    return this.withWorkspace(workspaceId, async () => {
+      const session = this.projectModelSession(workspaceId, sessionId, profile);
+      if (!model) {
+        this.projectModelDefaults.set(workspaceId, session.backend, profile, null);
+        return {model: null};
+      }
+      const live = this.live.get(sessionId);
+      const selected = live?.handle.currentModel();
+      if (!live || live.failure || live.cleanup || live.queue.busy || live.modeChanging
+        || selected?.provider !== model.provider || selected.id !== model.id || isUnsetPiModel(selected)
+        || !live.handle.listModels().some(candidate => candidate.available
+          && candidate.provider === selected.provider && candidate.id === selected.id)) {
+        throw new Error('请先选择当前可用的会话模型。');
+      }
+      const confirmed = {provider: selected.provider, id: selected.id, name: selected.name};
+      this.projectModelDefaults.set(workspaceId, session.backend, profile, confirmed);
+      return {model: confirmed};
     });
   }
   async createFreshWorktreeDraftRecord(workspaceId: string, sourceSessionId: string, requestId: string) {
@@ -2772,6 +2827,7 @@ export class Chats implements StructuredSessionPort {
       const record = getDraft();
       delete record.model;
       delete record.inheritedDraftModel;
+      delete record.projectDefaultDraftModel;
       delete record.unavailableDraftModel;
       delete record.reasoning;
       delete record.inheritedDraftReasoning;
@@ -4369,6 +4425,7 @@ export class Chats implements StructuredSessionPort {
         const model = chat.handle.currentModel();
         const record = { ...this.index.get(id), ...(model ? { model } : {}), updatedAt: Date.now() };
         delete record.inheritedDraftModel;
+        delete record.projectDefaultDraftModel;
         delete record.unavailableDraftModel;
         delete record.reasoning;
         delete record.inheritedDraftReasoning;

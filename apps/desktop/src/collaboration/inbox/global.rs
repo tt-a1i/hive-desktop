@@ -269,7 +269,7 @@ async fn read_project(
     let ((action_center, workflow_runs), (sessions, members)) = smol::future::zip(
         smol::future::zip(
             read_action_center(runtime, workspace, root),
-            read_workflow_runs(runtime, workspace),
+            read_workflow_runs(runtime, workspace, root),
         ),
         smol::future::zip(
             read_list(runtime, "chat.list", workspace),
@@ -1766,7 +1766,9 @@ impl GlobalInbox {
             update_workflow_new_items(
                 &mut self.new_items,
                 snapshot,
+                &project.reminders,
                 &app.collaboration.inbox_badge,
+                now_ms(),
             );
         }
         parent.update(cx, |app, cx| {
@@ -1823,6 +1825,15 @@ impl GlobalInbox {
             eligible,
             &app.collaboration.inbox_badge,
         );
+        if let Some(snapshot) = &project.workflow_runs {
+            update_workflow_new_items(
+                &mut self.new_items,
+                snapshot,
+                &project.reminders,
+                &app.collaboration.inbox_badge,
+                now,
+            );
+        }
         cx.notify();
     }
 }
@@ -1845,8 +1856,9 @@ impl ProjectInbox {
             _ => false,
         };
         let item = BadgeItem::from_entry(workspace, entry, unread)?;
-        (!matches!(item, BadgeItem::Question { .. }) || self.reminders.saved.is_some())
-            .then_some(item)
+        (!matches!(item, BadgeItem::Question { .. } | BadgeItem::WorkflowRun { .. })
+            || self.reminders.saved.is_some())
+        .then_some(item)
     }
 
     fn entries(&self, app: &HiveApp) -> Vec<Entry> {
@@ -2008,11 +2020,19 @@ fn update_new_items(
 fn update_workflow_new_items(
     items: &mut HashSet<BadgeItem>,
     snapshot: &WorkflowRuns,
+    reminders: &Reminders,
     badge: &InboxBadge,
+    now: u64,
 ) {
     let eligible: HashSet<_> = snapshot
         .runs
         .iter()
+        .filter(|run| {
+            reminders
+                .saved
+                .as_ref()
+                .is_some_and(|saved| !saved.active(&super::workflow_run_key(&run.id), now))
+        })
         .map(|run| BadgeItem::WorkflowRun {
             workspace: snapshot.workspace_id.clone(),
             run: run.id.clone(),
@@ -2304,7 +2324,7 @@ impl Render for GlobalInbox {
                     .as_ref()
                     .is_some_and(|runs| runs.limited)
                 {
-                    Some(tr("仅显示最近 20 条失败或中断的工作流运行"))
+                    Some(tr("收件箱保留最近 20 条失败或中断的工作流运行，以及暂缓过的运行"))
                 } else {
                     None
                 };
@@ -2811,6 +2831,12 @@ mod tests {
     #[test]
     fn new_items_update_workflow_and_question_projections_independently() {
         let badge = InboxBadge::default();
+        let root = tempfile::tempdir().unwrap();
+        let workspace = "12345678-1234-1234-1234-123456789000";
+        let reminders = super::Reminders {
+            saved: Some(crate::collaboration::inbox::Snoozes::load(root.path(), workspace).unwrap()),
+            ..super::Reminders::default()
+        };
         let workflow = |workspace: &str, run: &str| BadgeItem::WorkflowRun {
             workspace: workspace.into(),
             run: run.into(),
@@ -2828,7 +2854,7 @@ mod tests {
         let atlas: WorkflowRuns = serde_json::from_value(json!({
             "workspaceId":"atlas","runs":[{"id":"same","name":"Daily audit","finishedAt":111,"status":"interrupted"}],"limited":false
         })).unwrap();
-        update_workflow_new_items(&mut current, &atlas, &badge);
+        update_workflow_new_items(&mut current, &atlas, &reminders, &badge, 0);
         assert_eq!(
             current,
             HashSet::from([
@@ -2846,7 +2872,7 @@ mod tests {
             "workspaceId":"atlas","runs":[],"limited":false
         }))
         .unwrap();
-        update_workflow_new_items(&mut current, &empty, &badge);
+        update_workflow_new_items(&mut current, &empty, &reminders, &badge, 0);
         assert_eq!(current, HashSet::from([workflow("beacon", "same")]));
     }
 

@@ -1,4 +1,9 @@
-use crate::{app::HiveApp, language::tr, palette::Color, protocol::Model};
+use crate::{
+    app::HiveApp,
+    language::tr,
+    palette::Color,
+    protocol::{Backend, Model, ModelIdentity},
+};
 use gpui_kit::{
     assets::IconName as Glyph,
     component::{
@@ -12,6 +17,21 @@ use gpui_kit::{
     prelude::FluentBuilder,
     *,
 };
+use serde_json::{Value, json};
+
+#[derive(Default)]
+pub(crate) enum ProjectModelDefaultState {
+    #[default]
+    Idle,
+    Loading,
+    Ready(Option<ModelIdentity>),
+    Failed(String),
+}
+
+#[derive(serde::Deserialize)]
+struct ProjectModelDefaultResponse {
+    model: Option<ModelIdentity>,
+}
 
 #[derive(Default)]
 pub(crate) struct ModelSearchNavigation {
@@ -41,6 +61,128 @@ fn model_key(model: &Model) -> (String, String) {
 }
 
 impl HiveApp {
+    fn project_model_scope(&self) -> Option<(&str, &str, &crate::agent_profiles::ProfileRef)> {
+        let session = self.session.as_ref()?;
+        let lead = format!("{}:orchestrator", session.workspace_id);
+        if self.workspace.as_ref() != Some(&session.workspace_id)
+            || session.backend == Backend::Acp
+            || session.scratch || session.archived || session.worktree_released
+            || !matches!(session.identity_state.as_deref(), Some("new" | "known"))
+            || session.agent_id.as_ref().is_some_and(|id| id != &lead)
+            || session.origin_agent_id.as_ref().is_some_and(|id| id != &lead)
+        {
+            return None;
+        }
+        Some((&session.workspace_id, &session.id, session.profile.as_ref()?))
+    }
+
+    fn confirmed_project_model(&self) -> Option<&ModelIdentity> {
+        if self.current_history_access().is_some_and(|access| access.saved_history_passive)
+            || self.unavailable_model.is_some()
+        {
+            return None;
+        }
+        let model = self.model.as_ref()?;
+        self.models.iter().any(|candidate| {
+            candidate.available && candidate.provider == model.provider && candidate.id == model.id
+        }).then_some(model)
+    }
+
+    pub(crate) fn unavailable_project_draft_model(&self) -> Option<&ModelIdentity> {
+        self.session.as_ref()?.project_default_draft_model.then_some(())?;
+        self.unavailable_inherited_model()
+    }
+
+    pub(crate) fn load_model_picker_contents(&mut self, cx: &mut Context<Self>) {
+        self.request_project_model_default(None, cx);
+        if self.unavailable_project_draft_model().is_none() {
+            self.load_reasoning(None, cx);
+            self.load_mode(None, cx);
+            self.load_permission_mode(None, cx);
+        }
+    }
+
+    fn request_project_model_default(&mut self, change: Option<Value>, cx: &mut Context<Self>) {
+        if !self.connected || self.closing || !self.conversation_ready
+            || matches!(self.project_model_default, ProjectModelDefaultState::Loading)
+            || change.is_some() && !self.workspace_writes_allowed()
+        {
+            return;
+        }
+        let (Some(runtime), Some((workspace, session, profile))) =
+            (self.runtime.clone(), self.project_model_scope()) else { return; };
+        let mut params = json!({"workspaceId": workspace, "sessionId": session, "profile": profile});
+        let (method, error_label) = if let Some(model) = change {
+            params["model"] = model;
+            ("chat.setProjectModelDefault", "无法保存项目默认模型")
+        } else {
+            ("chat.projectModelDefault", "无法读取项目默认模型")
+        };
+        let opened = self.open_request;
+        let connection = self.connection_generation;
+        self.project_model_default = ProjectModelDefaultState::Loading;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = runtime.request(method, params).await.and_then(|value| {
+                serde_json::from_value::<ProjectModelDefaultResponse>(value).map_err(|error| error.to_string())
+            });
+            let _ = this.update(cx, |this, cx| {
+                if this.connection_generation != connection || this.open_request != opened || this.closing {
+                    return;
+                }
+                this.project_model_default = match result {
+                    Ok(result) => ProjectModelDefaultState::Ready(result.model),
+                    Err(error) => ProjectModelDefaultState::Failed(format!("{}\n{error}", tr(error_label))),
+                };
+                cx.notify();
+            });
+        }).detach();
+    }
+
+    fn set_current_project_model_default(&mut self, cx: &mut Context<Self>) {
+        if let Some(model) = self.confirmed_project_model() {
+            self.request_project_model_default(Some(json!({"provider": model.provider, "id": model.id})), cx);
+        }
+    }
+
+    fn project_model_default_controls(&self, cx: &Context<Self>) -> impl IntoElement {
+        use ProjectModelDefaultState::{Failed, Idle, Loading, Ready};
+        let saved = match &self.project_model_default { Ready(model) => model.as_ref(), _ => None };
+        let current = self.confirmed_project_model();
+        let blocked = matches!(self.project_model_default, Idle | Loading) || !self.workspace_writes_allowed();
+        v_flex().gap_1p5().pb_2p5().mb_2p5().border_b_1().border_color(Color::Divider.get(cx))
+            .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).child(tr("项目默认模型")))
+            .child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("仅用于此项目文件夹中新建的会话。")))
+            .when_some(saved, |section, model| {
+                let identity = format!("{} / {}", model.provider, model.id);
+                let missing = self.unavailable_project_draft_model().is_some_and(|stale| {
+                    stale.provider == model.provider && stale.id == model.id
+                }) || (!self.models.is_empty() && !self.models.iter().any(|candidate| {
+                    candidate.available && candidate.provider == model.provider && candidate.id == model.id
+                }));
+                section.child(div().text_xs().text_color(if missing { Color::Error } else { Color::Muted }.get(cx))
+                    .child(if missing { tr("项目默认模型 {model} 暂不可用。").replace("{model}", &identity) } else { identity }))
+            })
+            .when(matches!(self.project_model_default, Ready(None)), |section| {
+                section.child(div().text_xs().text_color(Color::Muted.get(cx)).child(tr("使用配置默认模型")))
+            })
+            .when_some(match &self.project_model_default { Failed(error) => Some(error.clone()), _ => None }, |section, error| {
+                section.child(div().text_xs().text_color(Color::Error.get(cx)).child(error))
+            })
+            .child(Button::new("set-project-default-model").outline().compact().small()
+                .label(tr("使用当前模型作为项目默认"))
+                .disabled(blocked || current.is_none_or(|model| saved.is_some_and(|saved| {
+                    saved.provider == model.provider && saved.id == model.id
+                })))
+                .on_click(cx.listener(|this, _, _, cx| this.set_current_project_model_default(cx))))
+            .when(saved.is_some() || matches!(self.project_model_default, Failed(_)), |section| {
+                section.child(Button::new("reset-project-default-model").outline().compact().small()
+                    .label(tr("重置项目默认模型"))
+                    .disabled(blocked)
+                    .on_click(cx.listener(|this, _, _, cx| this.request_project_model_default(Some(Value::Null), cx))))
+            })
+    }
+
     fn matching_picker_models(&self, cx: &App) -> Vec<&Model> {
         let query = self.model_search.read(cx).value().trim().to_lowercase();
         let mut matching = self
@@ -289,15 +431,14 @@ impl HiveApp {
             .w(px(620.).min(window.viewport_size().width - px(32.)))
             .open(self.choosing_model).track_focus(&self.model_search.read(cx).focus_handle(cx)).trigger(trigger)
             .on_open_change(cx.listener(|this, open, window, cx| {
-                if *open && this.connect_saved_session(crate::sessions::NativeSessionPanel::Models, cx) {
+                if *open && this.unavailable_project_draft_model().is_none()
+                    && this.connect_saved_session(crate::sessions::NativeSessionPanel::Models, cx) {
                     return;
                 }
                 this.choosing_model = *open;
                 if *open {
                     this.reset_model_picker_search(window, cx);
-                    this.load_reasoning(None, cx);
-                    this.load_mode(None, cx);
-                    this.load_permission_mode(None, cx);
+                    this.load_model_picker_contents(cx);
                 }
                 cx.notify();
             }))
@@ -489,6 +630,7 @@ impl HiveApp {
                                         .overflow_y_scroll()
                                         .track_scroll(reasoning_scroll)
                                         .vertical_scrollbar(reasoning_scroll)
+                                        .when(self.project_model_scope().is_some(), |section| section.child(self.project_model_default_controls(cx)))
                                         .child(self.render_reasoning_settings(running, cx))
                                         .child(self.render_mode_settings(running, cx)),
                                 )),

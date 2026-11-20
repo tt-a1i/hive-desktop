@@ -73,11 +73,12 @@ const INBOX_ACTIONABLE_LIMIT = 100;
 const INBOX_PREVIEW_LIMIT = 96;
 const INBOX_MESSAGE_SAMPLE = 384;
 const INBOX_WORKFLOW_LIMIT = 20;
+const INBOX_WORKFLOW_ID_LIMIT = 64;
+const INBOX_WORKFLOW_PROJECTION = `id, substr(name, 1, ${INBOX_MESSAGE_SAMPLE}) AS name, finished_at AS finishedAt`;
 const INBOX_WORKFLOW_SCOPE = `
     FROM workflow_runs
     WHERE workspace_id = ? AND parent_run_id IS NULL AND finished_at > 0
       AND (status = 'failed' OR (? AND status = 'interrupted'))
-    ORDER BY finished_at DESC, rowid DESC LIMIT ?
 `;
 
 function inboxLinePreview(text: string | null | undefined): string | null {
@@ -228,6 +229,7 @@ export interface SavedScriptContext {scriptRunId: string; cwd: string; command: 
 export interface SavedScriptObserver {onCreated(runId: string): void; onOutput(chunk: string): void; onExit(exitCode: number | null, signal?: number): void}
 export interface HiveHost {
     inboxWorkflowFailures(workspaceId: string, includeInterrupted?: boolean): {workspaceId: string; runs: InboxWorkflowRun[]; limited: boolean};
+    inboxWorkflowRunsById(workspaceId: string, ids: unknown): {workspaceId: string; runs: InboxWorkflowRun[]};
     inboxWorkflowFailureBadge(workspaceIds: readonly string[], includeInterrupted?: boolean): {workspaceId: string; runIds: string[]}[];
     inboxDispatchMessage(workspaceId: string, dispatchId: string, messageId: string): ReturnType<typeof serializeDispatchMessage> | null;
     inboxDispatchInput(workspaceId: string, dispatchIds: unknown, timestampDispatchIds?: unknown): {workspaceId: string; inputs: InboxDispatchInput[]};
@@ -348,19 +350,37 @@ export async function createHiveHost({
             // Order by settlement time. A long-running workflow can
             // finish after newer runs. Nested runs stay in Workflows.
             const records = readInboxStore().prepare(`
-                SELECT id, substr(name, 1, ${INBOX_MESSAGE_SAMPLE}) AS name, finished_at AS finishedAt
-                    ${includeInterrupted ? ', status' : ''}
+                SELECT ${INBOX_WORKFLOW_PROJECTION} ${includeInterrupted ? ', status' : ''}
                 ${INBOX_WORKFLOW_SCOPE}
+                ORDER BY finished_at DESC, rowid DESC LIMIT ?
             `).all(workspaceId, Number(includeInterrupted), INBOX_WORKFLOW_LIMIT + 1) as InboxWorkflowRun[];
             return {workspaceId, runs: records.slice(0, INBOX_WORKFLOW_LIMIT)
                 .map(run => ({...run, name: inboxLinePreview(run.name)})), limited: records.length > INBOX_WORKFLOW_LIMIT};
+        },
+        inboxWorkflowRunsById(workspaceId, ids) {
+            if (closing) throw new Error('Hive host is closed');
+            if (!workspaceScope().has(workspaceId)) throw new Error('Unknown Inbox workspace');
+            if (!Array.isArray(ids) || ids.length < 1 || ids.length > INBOX_WORKFLOW_ID_LIMIT
+                || !ids.every(id => typeof id === 'string' && id.length === 36
+                    && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id))
+                || new Set(ids).size !== ids.length) {
+                throw new Error('Expected 1 to 64 exact inbox workflow run identities');
+            }
+            const runs = readInboxStore().prepare(`
+                SELECT ${INBOX_WORKFLOW_PROJECTION}, status
+                ${INBOX_WORKFLOW_SCOPE}
+                  AND id IN (${ids.map(() => '?').join(', ')})
+            `).all(workspaceId, 1, ...ids) as InboxWorkflowRun[];
+            return {workspaceId, runs: runs.map(run => ({...run, name: inboxLinePreview(run.name)}))};
         },
         inboxWorkflowFailureBadge(workspaceIds, includeInterrupted = false) {
             if (closing) throw new Error('Hive host is closed');
             const workspaces = workspaceScope();
             const scope = [...new Set(workspaceIds)].filter(workspaceId => workspaces.has(workspaceId));
             if (!scope.length) return [];
-            const read = readInboxStore().prepare(`SELECT id ${INBOX_WORKFLOW_SCOPE}`);
+            const read = readInboxStore().prepare(`
+                SELECT id ${INBOX_WORKFLOW_SCOPE} ORDER BY finished_at DESC, rowid DESC LIMIT ?
+            `);
             return scope.flatMap(workspaceId => {
                 try {
                     const runs = read.all(workspaceId, Number(includeInterrupted), INBOX_WORKFLOW_LIMIT) as {id: string}[];

@@ -30,6 +30,7 @@ export interface ChatRecord {
   worktreeReuse?: {sourceSessionId: string; ownerFingerprint: string};
   freshDraftSourceSessionId?: string;
   inheritedDraftModel?: true;
+  projectDefaultDraftModel?: true;
   unavailableDraftModel?: true;
   inheritedDraftWorkMode?: CodexWorkMode;
   unavailableWorkMode?: CodexWorkMode;
@@ -150,7 +151,7 @@ export class ChatIndex {
     assertWorktreeUse(original);
     if (original.identityState === 'unknown') throw new SessionIdentityError('SESSION_IDENTITY_UNKNOWN', 'This older conversation has no reliable original agent identity. Its history is read-only; create a new conversation to continue.');
     if (original.originAgentId && original.originAgentId !== agentId) throw new SessionIdentityError('SESSION_IDENTITY_CONFLICT', 'A historical conversation cannot be rebound to a different agent.');
-    const {deferFirstConnection, inheritedDraftModel, unavailableDraftModel, inheritedDraftWorkMode, unavailableWorkMode,
+    const {deferFirstConnection, inheritedDraftModel, projectDefaultDraftModel, unavailableDraftModel, inheritedDraftWorkMode, unavailableWorkMode,
       inheritedDraftReasoning, unavailableReasoning, ...session} = original;
     const bound: ChatRecord = { ...session, agentId, originAgentId: original.originAgentId ?? agentId, identityState: 'known' };
     const next = this.records.map(record => {
@@ -374,6 +375,8 @@ function isChatRecord(value: unknown): value is ChatRecord {
   if (record.inheritedDraftModel !== undefined && (record.inheritedDraftModel !== true || record.backend === 'acp'
     || record.deferFirstConnection !== true || !record.model || record.agentId || record.originAgentId)
     || record.unavailableDraftModel !== undefined && (record.unavailableDraftModel !== true || record.inheritedDraftModel !== true)) return false;
+  if (record.projectDefaultDraftModel !== undefined && (record.projectDefaultDraftModel !== true
+    || record.inheritedDraftModel !== true || !record.profile || record.scratch || record.freshDraftSourceSessionId)) return false;
   if (record.inheritedDraftWorkMode !== undefined && (!isCodexWorkMode(record.inheritedDraftWorkMode) || record.backend !== 'codex'
     || record.deferFirstConnection !== true || (record.nativeMode as ChatRecord['nativeMode'])?.mode !== record.inheritedDraftWorkMode
     || record.agentId || record.originAgentId)

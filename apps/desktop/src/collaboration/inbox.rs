@@ -27,7 +27,7 @@ use gpui_kit::{
 use placement::{InboxSections, Row, RowId, Section, SectionDepth, SnoozedUntil};
 use serde::Deserialize;
 use serde_json::json;
-use snoozes::{Delay, Reminder, Snoozes, Wake, now_ms, unread_session_key};
+use snoozes::{Delay, Reminder, Snoozes, Wake, now_ms, unread_session_key, workflow_run_key};
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -117,23 +117,42 @@ struct WorkflowRuns {
     limited: bool,
 }
 
+const RECENT_WORKFLOW_LIMIT: usize = 20;
+const EXACT_WORKFLOW_BATCH: usize = 64;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExactWorkflowRuns {
+    workspace_id: String,
+    runs: Vec<WorkflowRun>,
+}
+
+fn valid_workflow_runs(runs: &[WorkflowRun], valid_id: impl Fn(&str) -> bool) -> bool {
+    let mut seen = HashSet::new();
+    runs.iter().all(|run| {
+        run.finished_at > 0
+            && run.id.len() == 36
+            && uuid::Uuid::try_parse(&run.id).is_ok()
+            && seen.insert(&run.id)
+            && valid_id(&run.id)
+    })
+}
+
 impl WorkflowRuns {
     fn verified(&self, workspace: &str) -> bool {
-        let mut ids = HashSet::new();
         self.workspace_id == workspace
-            && self.runs.len() <= 20
-            && self.runs.iter().all(|run| {
-                uuid::Uuid::try_parse(&run.id).is_ok() && run.finished_at > 0 && ids.insert(&run.id)
-            })
+            && self.runs.len() <= RECENT_WORKFLOW_LIMIT
+            && valid_workflow_runs(&self.runs, |_| true)
     }
 
     fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
-        self.runs.iter().map(|run| {
+        let mut suffixes = BTreeMap::new();
+        for run in &self.runs {
+            *suffixes.entry(short_uuid(&run.id)).or_insert(0) += 1;
+        }
+        self.runs.iter().map(move |run| {
             let short = short_uuid(&run.id);
-            let duplicate_suffix = self.runs.iter().any(|other| {
-                other.id != run.id && short_uuid(&other.id) == short
-            });
-            run.entry(if duplicate_suffix { &run.id } else { short })
+            run.entry(if suffixes[short] > 1 { &run.id } else { short })
         })
     }
 }
@@ -153,8 +172,8 @@ impl WorkflowRun {
             target: Destination::WorkflowRun(self.id.clone()),
             dispatch_backend: None,
             related_members: [None, None],
-            snooze_key: None,
-            wake: None,
+            snooze_key: Some(workflow_run_key(&self.id)),
+            wake: Some(Wake::WorkflowRun),
             priority: Priority::NeedsUser,
             updated_at: self.finished_at,
             activity_at: self.finished_at,
@@ -162,7 +181,38 @@ impl WorkflowRun {
     }
 }
 
-async fn read_workflow_runs(runtime: &Runtime, workspace: &str) -> Option<WorkflowRuns> {
+async fn read_exact_workflow_runs(
+    runtime: &Runtime,
+    workspace: &str,
+    ids: &[&String],
+) -> Option<Vec<WorkflowRun>> {
+    let mut runs = Vec::new();
+    for batch in ids.chunks(EXACT_WORKFLOW_BATCH) {
+        let value = runtime
+            .request(
+                "inbox.workflowRunsById",
+                json!({"workspaceId": workspace, "runIds": batch}),
+            )
+            .await
+            .ok()?;
+        let snapshot: ExactWorkflowRuns = serde_json::from_value(value).ok()?;
+        if snapshot.workspace_id != workspace
+            || !valid_workflow_runs(&snapshot.runs, |id| {
+                batch.iter().any(|candidate| *candidate == id)
+            })
+        {
+            return None;
+        }
+        runs.extend(snapshot.runs);
+    }
+    Some(runs)
+}
+
+async fn read_workflow_runs(
+    runtime: &Runtime,
+    workspace: &str,
+    root: Option<&Path>,
+) -> Option<WorkflowRuns> {
     let value = runtime
         .request(
             "inbox.workflowFailures",
@@ -170,8 +220,20 @@ async fn read_workflow_runs(runtime: &Runtime, workspace: &str) -> Option<Workfl
         )
         .await
         .ok()?;
-    let snapshot: WorkflowRuns = serde_json::from_value(value).ok()?;
-    snapshot.verified(workspace).then_some(snapshot)
+    let mut snapshot: WorkflowRuns = serde_json::from_value(value).ok()?;
+    if !snapshot.verified(workspace) {
+        return None;
+    }
+    if let Some(saved) = root.and_then(|root| Snoozes::load(root, workspace).ok()) {
+        let recent: HashSet<_> = snapshot.runs.iter().map(|run| &run.id).collect();
+        let older_ids: Vec<_> = saved
+            .tracked_workflow_runs()
+            .filter(|id| !recent.contains(id))
+            .collect();
+        let older = read_exact_workflow_runs(runtime, workspace, &older_ids).await?;
+        snapshot.runs.extend(older);
+    }
+    Some(snapshot)
 }
 
 enum ProjectInboxItem<'a> {
@@ -743,7 +805,7 @@ impl Destination {
             Self::Dispatch(id) => format!("dispatch:{id}"),
             Self::DispatchMessage { message, .. } => format!("message:{message}"),
             Self::Member(id) => format!("member:{id}"),
-            Self::WorkflowRun(id) => format!("workflow-run:{id}"),
+            Self::WorkflowRun(id) => workflow_run_key(id),
         }
     }
 }
@@ -1286,7 +1348,7 @@ impl HiveApp {
         cx.spawn(async move |this, cx| {
             let (result, workflow_runs) = smol::future::zip(
                 read_action_center(&runtime, &workspace, root.as_deref()),
-                read_workflow_runs(&runtime, &workspace),
+                read_workflow_runs(&runtime, &workspace, root.as_deref()),
             ).await;
             let _ = this.update(cx, |this, cx| {
                 if this.workspace.as_ref() != Some(&workspace)
@@ -1326,6 +1388,11 @@ impl HiveApp {
                             .inbox_badge
                             .remember_reminders(&workspace, saved);
                     }
+                }
+                if !inbox.workflow_runs_error && let Some(snapshot) = &inbox.workflow_runs {
+                    this.collaboration
+                        .inbox_badge
+                        .remember_workflow_runs(&workspace, snapshot.runs.iter().map(|run| &run.id));
                 }
                 if let Some(snapshot) = snapshot {
                     this.collaboration.inbox_badge.remember_questions(&snapshot);
@@ -1751,7 +1818,7 @@ impl HiveApp {
                             .gap_2()
                             .flex_wrap()
                             .items_center()
-                            .child(inbox_status(tr("仅显示最近 20 条失败或中断的工作流运行"), cx))
+                            .child(inbox_status(tr("收件箱保留最近 20 条失败或中断的工作流运行，以及暂缓过的运行"), cx))
                             .child(
                                 inbox_open_button(
                                     "inbox-all-workflows",
@@ -2424,7 +2491,9 @@ mod tests {
         assert_eq!(rows[0].1.label, "工作流运行中断");
         assert_eq!(rows[1].1.label, "工作流运行失败");
         assert!(rows.iter().all(|(_, row)| {
-            row.priority == Priority::NeedsUser && row.snooze_key.is_none()
+            row.priority == Priority::NeedsUser
+                && row.snooze_key.as_ref() == Some(&row.target.key())
+                && row.wake == Some(Wake::WorkflowRun)
         }));
         snapshot.runs[1].id = format!("87654321{}", &earlier[8..]);
         let collision_labels: Vec<_> = snapshot.entries().map(|entry| entry.subject).collect();

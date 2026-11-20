@@ -448,6 +448,10 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       exact(params, ['workspaceId', 'dispatchIds', 'timestampDispatchIds']);
       return runtime.hive.inboxDispatchInput(text(params, 'workspaceId'), params.dispatchIds, params.timestampDispatchIds);
     }
+    case 'inbox.workflowRunsById': {
+      exact(params, ['workspaceId', 'runIds']);
+      return hive.inboxWorkflowRunsById(text(params, 'workspaceId'), params.runIds);
+    }
     case 'inbox.workflowFailures':
     case 'inbox.workflowFailureBadge': {
       const detailed = method === 'inbox.workflowFailures';
@@ -694,7 +698,7 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     }
     case 'chat.createRecord':
     case 'chat.create': {
-      exact(params, ['workspaceId', 'backend', 'profile', 'isolation', 'branch', 'skipSetup', 'expectedSetupRevision', ...(method === 'chat.createRecord' ? ['deferFirstConnection', 'sourceSessionId'] : [])]);
+      exact(params, ['workspaceId', 'backend', 'profile', 'isolation', 'branch', 'skipSetup', 'expectedSetupRevision', ...(method === 'chat.createRecord' ? ['deferFirstConnection', 'sourceSessionId', 'useProjectDefaultModel'] : [])]);
       if (params.backend !== undefined && params.backend !== 'pi' && params.backend !== 'codex' && params.backend !== 'pi-rpc' && params.backend !== 'claude' && params.backend !== 'acp') throw new Error('Unsupported chat backend');
       if (params.isolation !== undefined && params.isolation !== 'worktree') throw new Error('Unsupported session isolation');
       if (params.branch !== undefined && (params.isolation !== 'worktree' || typeof params.branch !== 'string')) throw new Error('A branch is only valid for a new worktree session');
@@ -702,9 +706,24 @@ async function dispatch(requestId: number | string, method: string, params: Reco
       if (params.expectedSetupRevision !== undefined && typeof params.expectedSetupRevision !== 'string') throw new Error('Invalid setup revision');
       if (params.skipSetup !== undefined && typeof params.skipSetup !== 'boolean') throw new Error('Invalid setup selection');
       if (params.deferFirstConnection !== undefined && typeof params.deferFirstConnection !== 'boolean') throw new TypeError('deferFirstConnection must be a boolean');
+      if (params.useProjectDefaultModel !== undefined && (params.useProjectDefaultModel !== true || params.isolation || params.sourceSessionId !== undefined))
+        throw new TypeError('Project model defaults are for ordinary new project conversations');
       const options = {...optionalProfile(params), ...(params.skipSetup !== undefined && {skipSetup: params.skipSetup as boolean}), ...(params.expectedSetupRevision !== undefined && {expectedSetupRevision: params.expectedSetupRevision as string}), ...(params.isolation === 'worktree' && {isolation: 'worktree' as const}), ...(typeof params.branch === 'string' && {branch: params.branch}), ...(params.deferFirstConnection === true && {deferFirstConnection: true}),
         ...(params.sourceSessionId !== undefined && {sourceSessionId: text(params, 'sourceSessionId')})};
-      return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend, options) : chats.create(workspace, params.backend, options);
+      return method === 'chat.createRecord' ? chats.createRecord(workspace, params.backend, {...options, useProjectDefaultModel: params.useProjectDefaultModel === true})
+        : chats.create(workspace, params.backend, options);
+    }
+    case 'chat.projectModelDefault':
+    case 'chat.setProjectModelDefault': {
+      const change = method === 'chat.setProjectModelDefault';
+      exact(params, ['workspaceId', 'sessionId', 'profile', ...(change ? ['model'] : [])]);
+      const workspace = text(params, 'workspaceId'), session = text(params, 'sessionId');
+      const profile = validateAgentProfileRef(params.profile);
+      if (!change) return chats.projectModelDefault(workspace, session, profile);
+      if (params.model === null) return chats.setProjectModelDefault(workspace, session, profile, null);
+      const {model} = optionalModel(params);
+      if (!model) throw new TypeError('model must be a model identity or null');
+      return chats.setProjectModelDefault(workspace, session, profile, model);
     }
     case 'chat.resetFreshDraftModel':
       exact(params, ['workspaceId', 'sessionId', 'expectedProvider', 'expectedModelId']);

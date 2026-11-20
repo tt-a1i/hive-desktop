@@ -504,8 +504,22 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在工作树 A 的紧凑与展开预览中跟随含空格的链接，均显示 A 的内容并保留 `start.md` 查询。切到工作树 B 后同一链接显示 B 的内容。点击越界路径和 `javascript:` 链接后，预览与请求数保持原样。夹具初次因默认配置启动本机 Codex CLI，进程在隔离目录初始化时退出，没有发出模型请求。将夹具配置改为本地模拟进程后重做验收。证据在 `.artifacts/batch36-markdown-native`。
 - 320 项 Rust 测试通过，1 项原有忽略。TypeScript、桌面运行时、真实 Hive HTTP 与 SQLite、文件预览及 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
 
+## 2026-11-21 第三十七批
+
+本轮从 Hive Desktop `ef3c9f5` 开始。参考 T3 Code `f2ec853`、Cindy `1db8327`、Beluga `eed1b7e`。Hive 上游 `main` 为 `18861b8`。
+
+- **暂缓失败或中断的工作流。** 项目和跨项目收件箱都可为单个运行设暂缓时间。按工作区和运行 ID 保存，冷启动后仍可打开原日志。同名新运行独立显示。已经暂缓过的运行可按 ID 找回，手动取消或到期后重新进入列表。 [Cindy 错误行操作](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/bots/TeammateInboxRow.tsx#L14-L46)
+- **给项目文件夹里的普通新会话设置默认模型。** 在模型菜单里可把当前可用模型设为此项目和 Agent 配置版本的默认值，也可以重置为配置默认。只在新建时应用，已有会话保留各自的模型。 [T3 Code 项目模型](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/apps/web/src/composerDraftStore.ts#L1214-L1233)
+- **Markdown 目录链接跳到同一文档的标题。** 紧凑和展开预览共用已渲染文档的标题位置，可以定位 `#repeat-1` 这样的重复标题和 URL 编码的中文标题。目标缺失时保留当前阅读位置。 [Beluga 文档内链接](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/MarkdownDoc.tsx#L225-L228)
+
+- 运行时专项核对工作区范围、最多 64 个精确运行 ID、冷启动后的原日志和近期列表以外的记录。模型专项以本地模拟 Codex 核对两个项目、配置版本、模型被移除后的恢复，以及发送后新草稿仍使用源会话的模型。Markdown 专项覆盖 ATX、Setext、重复标题、编码及代码围栏。
+- macOS 跨项目收件箱暂缓一个工作流，同名运行继续显示。写入 21 条较新运行后冷重开，暂缓列表仍能打开原日志，取消暂缓后原运行重新显示。项目收件箱也通过暂缓及取消暂缓实窗验证。精确查询的参数和上限另由运行时专项核对。证据在 `.artifacts/batch37-native-receipt.md`。
+- macOS 将 Alpha 的当前模型设为项目默认。普通新会话与冷重开后新建的会话都用 `fixture-alternate` 首次启动，使用同一 Agent 配置的 Beta 仍用配置默认。重置 Alpha 后新会话恢复配置默认，已打开过的会话仍保留 `fixture-alternate`。首次模拟进程因夹具缺少版本文件未连接，补齐后重测。证据在 `.artifacts/batch37-model-native`。
+- macOS 在紧凑和展开预览点击 `#repeat-1` 和编码的 `#章節`。布局记录确认两处都实际滚到第二个同名标题和中文标题。不存在的标题与代码围栏中的标题均未触发滚动，目录跳转也没有再次读取文件。诊断记录只用于隔离验收，已从应用源码移除。证据在 `.artifacts/batch37-markdown-native/layout.log`。
+- 323 项 Rust 测试通过，1 项原有忽略。TypeScript、桌面运行时、真实 Hive HTTP 与 SQLite、Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机验收。
+
 ## 接下来优先检查
 
-- **暂缓失败或中断的工作流。** 两个收件箱的工作流行目前没有暂缓入口。验收两个项目同名运行时，只暂缓选中项目的运行，冷启动后提醒仍在，同名的新运行照常出现，到期后可以打开原日志。记录按工作区和运行 ID 保留，运行离开最近 20 条后仍可从暂缓列表定位。 [Cindy 错误行操作](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/bots/TeammateInboxRow.tsx#L14-L46)
-- **为项目设置普通新会话的默认模型。** 在项目 A 的普通会话切换模型，再分别新建 A 和 B 的会话，当前两处都会使用 Agent 配置默认值。验收显式设置 A 的默认模型后，冷重开及首次运行只在 A 的新会话使用该模型，B 和既有会话继续各自原模型，并可恢复 A 的配置默认。 [T3 Code 项目模型](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/apps/web/src/composerDraftStore.ts#L1214-L1233)
-- **从 Markdown 目录链接跳到同一文档的标题。** 打开长 README 点击 `[安装](#install)`，目前位置不动。验收紧凑和展开视图能定位重复标题以及中文标题，代码块中的文字不会被识别为标题，且无需重新读取文件。 [Beluga 标题定位](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/MarkdownDoc.tsx#L235-L241)
+- **冷启动后保留工作流新事项的已读状态。** 在收件箱看到运行后退出重开，目前可能把旧运行重新提示为新事项。验收同名新运行独立提示，旧运行仍可打开原日志，暂缓到期可以再次提示。 [Cindy 恢复已读状态](https://github.com/makecindy/cindy/blob/1db8327d9cce5c66030c53662b93de4fbb166db6/apps/desktop/src/renderer/features/bots/botReadState.ts#L38-L56)
+- **用键盘翻看终端滚动记录并回到最新输出。** 终端有长输出时，当前只能用鼠标浏览。验收在两个标签中分别写入带首尾标记的 200 行，翻页和首尾跳转只移动当前视图，并保留全屏程序原有按键路由。 [T3 Code 终端翻页](https://github.com/pingdotgg/t3code/blob/f2ec853fbbb6ed84f6c08aa156d3b7d9e9f7385f/docs/user/terminal.md#L30-L47)
+- **从 Markdown 链接打开另一个文件的指定章节。** 点击 `./setup%20guide.md#linux` 当前不会打开。验收两个工作树的同名文档标题在不同位置时，只请求一次当前工作树里的文件，定位对应标题，切换工作树时延迟结果不会改变新预览。 [Beluga 跨文档跳转](https://github.com/beluga-labs/beluga/blob/eed1b7ea2ef127479f8fe8773e5516013a6e146f/packages/mac/src/components/markdown/MarkdownDoc.tsx#L225-L256)

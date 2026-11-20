@@ -433,6 +433,7 @@ try {
   const workflowTime = Date.now() - 500;
   const runName = 'Nightly audit';
   const seededFailures: string[] = [];
+  const excludedWorkflowRuns: string[] = [];
   try {
     const insert = workflowDb.prepare(`INSERT INTO workflow_runs
       (id, workspace_id, script_path, name, status, started_at, created_at, finished_at, error, parent_run_id)
@@ -450,12 +451,16 @@ try {
       seededFailures.push(seedWorkflow(workflowWorkspace.id, step, step === 17 ? {name: `${'🐝'.repeat(120)}\nother line`}
         : step === 20 ? {startedStep: -500} : {}));
     }
-    seedWorkflow(workflowWorkspace.id, 21, {parent: seededFailures[20]!});
-    seedWorkflow(workflowWorkspace.id, 22, {status: 'completed'});
-    seedWorkflow(workflowWorkspace.id, 23, {status: 'stopped'});
-    seedWorkflow(workflowWorkspace.id, 24, {settled: false});
-    seedWorkflow(foreign.id, 25);
+    excludedWorkflowRuns.push(
+      seedWorkflow(workflowWorkspace.id, 21, {parent: seededFailures[20]!}),
+      seedWorkflow(workflowWorkspace.id, 22, {status: 'completed'}),
+      seedWorkflow(workflowWorkspace.id, 23, {status: 'stopped'}),
+      seedWorkflow(workflowWorkspace.id, 24, {settled: false}),
+      seedWorkflow(foreign.id, 25),
+      randomUUID(),
+    );
     const log = workflowDb.prepare('INSERT INTO workflow_run_logs (run_id, ts, message) VALUES (?, ?, ?)');
+    log.run(seededFailures[0]!, workflowTime, 'Original failure outside the recent window');
     log.run(seededFailures[18]!, workflowTime + 18, 'Exact older failure log');
     log.run(seededFailures[20]!, workflowTime + 20, 'Newest same-name failure log');
   } finally { workflowDb.close(); }
@@ -524,6 +529,9 @@ try {
   const readAttentionBadge = (workspaceIds: string[]) => wire!.request<{
     workspaceId: string; runIds: string[];
   }[]>('inbox.workflowFailureBadge', {workspaceIds, includeInterrupted: true});
+  const readExactRuns = (workspaceId: string, runIds: string[]) => wire!.request<{
+    workspaceId: string; runs: {id: string; name: string | null; finishedAt: number; status: string}[];
+  }>('inbox.workflowRunsById', {workspaceId, runIds});
   await assert.rejects(wire.request('inbox.workflowFailures', {workspaceId: workflowWorkspace.id, includeInterrupted: 'yes'}));
   await assert.rejects(wire.request('inbox.workflowFailureBadge', {workspaceIds: [workflowWorkspace.id], includeInterrupted: 1}));
   await wire.request('hive.request', {
@@ -599,6 +607,22 @@ try {
   assert.deepEqual(await compactWorkflowFailures([workflowWorkspace.id]), [
     {workspaceId: workflowWorkspace.id, runIds: failures.runs.map(run => run.id)},
   ]);
+  const originalId = seededFailures[0]!;
+  const newestFailureId = seededFailures[20]!;
+  assert.deepEqual(await readExactRuns(workflowWorkspace.id, [originalId, child.id, ...excludedWorkflowRuns]), {
+    workspaceId: workflowWorkspace.id,
+    runs: [{id: originalId, name: runName, finishedAt: workflowTime + 1, status: 'failed'}],
+  });
+  const exactInboxRuns = await readExactRuns(workflowWorkspace.id, [originalId, newestFailureId, parent.id]);
+  assert.deepEqual(exactInboxRuns.runs.map(({id}) => id).sort(), [originalId, newestFailureId, parent.id].sort());
+  assert.deepEqual(exactInboxRuns.runs.find(({id}) => id === parent.id), interrupted.runs[0]);
+  assert.deepEqual(await readExactRuns(foreign.id, [originalId, parent.id]), {workspaceId: foreign.id, runs: []});
+  assert.deepEqual((await readLogs(originalId)).map(({message}) => message), ['Original failure outside the recent window']);
+  for (const ids of [[], ['invalid'], [originalId, originalId], Array.from({length:65}, () => randomUUID())]) {
+    await assert.rejects(readExactRuns(workflowWorkspace.id, ids));
+  }
+  assert.deepEqual(await readAttention(workflowWorkspace.id), interrupted, 'Exact lookup leaves workflow results intact');
+  console.log('INBOX_WORKFLOW_EXACT_IDS_OK: old and interrupted run identities after cold restart, original log, strictly bounded workspace-scoped read');
   console.log('INBOX_WORKFLOW_INTERRUPTED_OK: real running parent and child survived SIGKILL as unfinished and recovered as interrupted; both Inbox reads show the exact parent, original logs remain, and legacy failure projections match');
 } finally {
   await wire?.close();

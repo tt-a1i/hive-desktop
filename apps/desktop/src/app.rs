@@ -343,6 +343,7 @@ pub struct HiveApp {
     pub usage: crate::usage::Usage,
     pub command_picker: crate::command_picker::CommandPicker,
     pub reasoning_picker: crate::reasoning_picker::ReasoningPicker,
+    pub(crate) project_model_default: crate::model_picker::ProjectModelDefaultState,
     pub mode_picker: crate::mode_picker::ModePicker,
     pub closing: bool,
     pub restarting: bool,
@@ -529,13 +530,14 @@ impl HiveApp {
                 {
                     return;
                 }
-                if this.connect_saved_session(crate::sessions::NativeSessionPanel::Models, cx) {
+                if this.unavailable_project_draft_model().is_none()
+                    && this.connect_saved_session(crate::sessions::NativeSessionPanel::Models, cx) {
                     return;
                 }
                 this.choosing_model = !this.choosing_model;
                 if this.choosing_model {
                     this.reset_model_picker_search(window, cx);
-                    this.load_reasoning(None, cx);
+                    this.load_model_picker_contents(cx);
                 }
                 cx.notify();
             },
@@ -898,6 +900,7 @@ impl HiveApp {
             choosing_model: false,
             usage: Default::default(),
             reasoning_picker: Default::default(),
+            project_model_default: Default::default(),
             mode_picker: Default::default(),
             command_picker: Default::default(),
             closing: false,
@@ -1127,6 +1130,7 @@ impl HiveApp {
                 method,
                 "chat.open"
                     | "chat.list"
+                    | "chat.projectModelDefault"
                     | "chat.clearView"
                     | "chat.handoffTargetState"
                     | "chat.historyPage"

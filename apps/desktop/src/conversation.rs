@@ -436,6 +436,7 @@ impl HiveApp {
                         });
                         if changing_model && let Some(session) = &mut this.session {
                             session.inherited_draft_model = false;
+                            session.project_default_draft_model = false;
                             session.inherited_draft_reasoning = None;
                             session.unavailable_reasoning = None;
                         }

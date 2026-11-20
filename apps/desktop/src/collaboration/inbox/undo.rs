@@ -1,4 +1,7 @@
-use super::{ActionCenter, Reminder, SnoozeEdit, Wake, global::read_list, read_action_center};
+use super::{
+    ActionCenter, Reminder, SnoozeEdit, Wake, global::read_list, read_action_center,
+    read_exact_workflow_runs, snoozes::workflow_run_id,
+};
 use crate::{
     app::HiveApp,
     language::tr,
@@ -164,6 +167,7 @@ pub(super) fn expire_later<T: 'static>(
 
 pub(super) enum VerifiedUndo {
     Dispatch,
+    WorkflowRun,
     Session {
         sessions: Vec<Session>,
         members: Vec<Member>,
@@ -209,13 +213,23 @@ impl VerifiedUndo {
                     members: members.map_err(|_| CHECK_FAILED)?,
                 })
             }
+            Some(Wake::WorkflowRun) => {
+                let id = workflow_run_id(&edit.key).ok_or(UNDO_CHANGED)?.to_owned();
+                let runs = read_exact_workflow_runs(runtime, &edit.workspace, &[&id])
+                    .await
+                    .ok_or(CHECK_FAILED)?;
+                if runs.is_empty() {
+                    return Err(UNDO_CHANGED);
+                }
+                Ok(Self::WorkflowRun)
+            }
             None => Err(UNDO_CHANGED),
         }
     }
 
     pub(super) fn matches(&self, edit: &SnoozeEdit, app: &HiveApp) -> bool {
         match self {
-            Self::Dispatch => true,
+            Self::Dispatch | Self::WorkflowRun => true,
             Self::Session { sessions, members } => {
                 let deferred_unread = matches!(edit.wake, Some(Wake::UnreadReply { .. }));
                 let prefix = if deferred_unread {

@@ -81,6 +81,8 @@ pub struct Session {
     pub can_start_fresh_worktree_draft: bool,
     #[serde(default)]
     pub inherited_draft_model: bool,
+    #[serde(default)]
+    pub project_default_draft_model: bool,
     pub inherited_draft_work_mode: Option<DraftWorkMode>,
     pub unavailable_work_mode: Option<DraftWorkMode>,
     pub inherited_draft_reasoning: Option<String>,

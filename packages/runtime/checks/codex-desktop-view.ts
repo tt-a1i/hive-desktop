@@ -75,7 +75,7 @@ function startRuntime() {
   };
 }
 
-type PeerRequest = { method: string; pid: number; threadId?: string; cwd?: string; input?: { type: string; text?: string }[]; additionalContext?: unknown; deferGoalContinuation?: boolean; effort?: string };
+type PeerRequest = { method: string; pid: number; threadId?: string; cwd?: string; model?: string; modelProvider?: string; effectiveModel?: string; input?: { type: string; text?: string }[]; additionalContext?: unknown; deferGoalContinuation?: boolean; effort?: string };
 async function requests(): Promise<PeerRequest[]> {
   const wire = await readFile(join(directory, 'wire.jsonl'), 'utf8').catch((error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') throw error;
@@ -383,7 +383,90 @@ try {
   assert.ok(!sharedContext.includes(ownerOnly));
   await waitForSharedTurnToSettle(shared.id);
   await runtime.close();
-  console.log('CODEX_DESKTOP_VIEW_OK: stale selections, saved history and image bytes, durable queue, detached draft and cold reopen, model settings, Hive and legacy ownership');
+
+  // Use an exact, explicit fixture profile for every project-default operation.
+  runtime = startRuntime();
+  await runtime.rpc('initialize');
+  const modelProfileList = await runtime.rpc('agent.profiles.list');
+  const registered = await runtime.rpc('agent.profiles.create', {driver: 'codex', label: 'Project model fixture',
+    launch: {command, args: []}, expectedStoreVersion: modelProfileList.storeVersion});
+  const profile = registered.profile.ref;
+  const projectChat = (workspaceId: string, ref = profile, options = {useProjectDefaultModel: true}) => runtime.rpc('chat.createRecord', {
+    workspaceId, backend: 'codex', profile: ref, ...options,
+  });
+  const modelSource = await projectChat(workspace.id);
+  const scope = {workspaceId: workspace.id, sessionId: modelSource.id, profile};
+  const choice = {provider: 'openai', id: 'fixture-alternate'};
+  const readProjectDefault = () => runtime.rpc('chat.projectModelDefault', scope);
+  const writeProjectDefault = (model: typeof choice | null) => runtime.rpc('chat.setProjectModelDefault', {...scope, model});
+  const noProviderBefore = await peers();
+  assert.deepEqual(await readProjectDefault(), {model: null});
+  await assert.rejects(writeProjectDefault(choice), /请先选择当前可用的会话模型/);
+  assert.deepEqual(await peers(), noProviderBefore, 'Saving an unconfirmed model must not connect');
+  assert.equal((await runtime.rpc('chat.open', {sessionId: modelSource.id, viewRevision: 1})).model.id, 'gpt-6.1-terra');
+  await assert.rejects(writeProjectDefault(choice), /请先选择当前可用的会话模型/);
+  await runtime.rpc('chat.setModel', {sessionId: modelSource.id, provider: choice.provider, modelId: choice.id});
+  const beforeDefaultWrite = await requests();
+  const saved = await writeProjectDefault(choice);
+  assert.equal(saved.model.id, choice.id);
+  assert.deepEqual(await requests(), beforeDefaultWrite, 'Saving a project default changes no native settings and sends no turn');
+  assert.equal((await projectChat(sharedWorkspace.id)).model, undefined, 'Same profile in another project uses its default');
+  const generic = await runtime.rpc('chat.createRecord', {workspaceId: workspace.id, backend: 'codex', profile});
+  assert.equal(generic.model, undefined, 'A generic creation without the desktop opt-in is unaffected');
+  assert.equal((await runtime.rpc('chat.open', {sessionId: generic.id, viewRevision: 2})).model.id, 'gpt-6.1-terra');
+  const successor = await runtime.rpc('chat.createRecord', {workspaceId: workspace.id, backend: 'codex', profile,
+    sourceSessionId: generic.id, deferFirstConnection: true});
+  assert.equal(successor.model.id, 'gpt-6.1-terra', 'The next draft after sending inherits its source chat’s model');
+  assert.equal(successor.projectDefaultDraftModel, undefined);
+  const revised = await runtime.rpc('agent.profiles.update', {id: profile.id, launch: {command, args: ['fixture-revision-2']},
+    expectedStoreVersion: (await runtime.rpc('agent.profiles.list')).storeVersion});
+  assert.notEqual(revised.profile.ref.revision, profile.revision);
+  assert.equal((await projectChat(workspace.id, revised.profile.ref)).model, undefined, 'New profile revisions have their own default');
+  const beforeCold = await requests();
+  const modelDraft = await projectChat(workspace.id);
+  assert.equal(modelDraft.projectDefaultDraftModel, true);
+  assert.equal(modelDraft.model.id, choice.id);
+  assert.deepEqual(await requests(), beforeCold, 'Creating the draft does not connect');
+  await runtime.close();
+
+  runtime = startRuntime();
+  await runtime.rpc('initialize');
+  assert.deepEqual(await readProjectDefault(), saved);
+  const passive = await runtime.rpc('chat.open', {sessionId: modelDraft.id, viewRevision: 1, historyLimit: 1});
+  assert.equal(passive.savedHistoryPassive, true);
+  assert.equal(passive.model.id, choice.id);
+  const firstDefaultText = 'Project model first prompt ' + randomUUID();
+  assert.ok((await runtime.rpc('chat.prompt', {sessionId: modelDraft.id, text: firstDefaultText})).accepted);
+  const modelTurn = await turnWith(firstDefaultText);
+  const modelStart = (await requests()).find(row => row.method === 'thread/start' && row.pid === modelTurn.pid);
+  assert.equal(modelStart?.model, choice.id, 'First native thread launch receives the saved model');
+  assert.equal(modelStart?.modelProvider, choice.provider);
+  assert.equal(modelTurn.effectiveModel, choice.id, 'First actual turn uses the saved model');
+  await waitForSharedTurnToSettle(modelDraft.id);
+
+  const predecessor = await projectChat(workspace.id);
+  const stale = await projectChat(workspace.id);
+  await writeFile(join(directory, 'hide-alternate-model'), '');
+  const beforeStale = (await requests()).length;
+  await assert.rejects(runtime.rpc('chat.prompt', {sessionId: stale.id, text: 'This unavailable model must not run'}), /FRESH_DRAFT_MODEL_UNAVAILABLE/);
+  assert.ok(!(await requests()).slice(beforeStale).some(row => row.method === 'thread/start' || row.method === 'turn/start'),
+    'A stale project default must fail before launching a native thread or sending input');
+  const staleView = await runtime.rpc('chat.open', {sessionId: stale.id, viewRevision: 2, historyLimit: 1});
+  assert.equal(staleView.unavailableModel.id, choice.id);
+  assert.deepEqual(await readProjectDefault(), saved);
+  assert.deepEqual(await writeProjectDefault(null), {model: null});
+  assert.equal((await projectChat(workspace.id)).model, undefined);
+  assert.equal((await runtime.rpc('chat.open', {sessionId: predecessor.id, viewRevision: 3, historyLimit: 1})).model.id, choice.id,
+    'Resetting a project default does not change previously created drafts');
+  const repaired = await runtime.rpc('chat.resetFreshDraftModel', {workspaceId: workspace.id, sessionId: stale.id,
+    expectedProvider: choice.provider, expectedModelId: choice.id});
+  assert.equal(repaired.projectDefaultDraftModel, undefined);
+  const repairText = 'Repaired project model first prompt ' + randomUUID();
+  assert.ok((await runtime.rpc('chat.prompt', {sessionId: stale.id, text: repairText})).accepted);
+  assert.equal((await turnWith(repairText)).effectiveModel, 'gpt-6.1-terra');
+  assert.equal(new ChatIndex(join(data, 'chats')).get(modelSource.id).model?.id, choice.id, 'Resetting never rewrites the source chat');
+  await runtime.close();
+  console.log('CODEX_DESKTOP_VIEW_OK: stale selections, saved history and image bytes, durable queue, detached draft and cold reopen, model settings and project defaults, Hive and legacy ownership');
 } finally {
   await runtime.terminate();
   await rm(directory, { recursive: true, force: true });

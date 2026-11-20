@@ -40,6 +40,8 @@ createInterface({ input: process.stdin }).on('line', async line => {
   if (request.id === undefined) return;
   const { id, method, params } = request;
   log({ method, threadId: params?.threadId ?? thread?.id, cwd: params?.cwd,
+    ...(['thread/start', 'thread/resume', 'turn/start'].includes(method) && {model: params.model, modelProvider: params.modelProvider}),
+    ...(method === 'turn/start' && {effectiveModel: params.model ?? model}),
     ...(method === 'thread/resume' && { deferGoalContinuation: params.deferGoalContinuation }),
     ...(method === 'thread/settings/update' && {effort:params.effort}),
     ...(method === 'turn/start' && { input: params.input, additionalContext: params.additionalContext }) });
@@ -47,7 +49,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
   try {
     switch (method) {
       case 'initialize': return reply({ userAgent: `hive_desktop/${version} (controlled test)` });
-      case 'model/list': return reply({ data: [modelInfo('gpt-6.1-terra'), modelInfo('fixture-alternate')], nextCursor: null });
+      case 'model/list': return reply({ data: ['gpt-6.1-terra', ...(!existsSync(join(directory, 'hide-alternate-model')) ? ['fixture-alternate'] : [])].map(modelInfo), nextCursor: null });
       case 'thread/start':
       case 'thread/resume': {
         thread = setup(params.threadId ?? randomUUID(), method === 'thread/resume');

@@ -60,10 +60,20 @@ pub(super) enum Wake {
     UnreadReply {
         revision: u64,
     },
+    WorkflowRun,
 }
 
 pub(super) fn unread_session_key(session: &str) -> String {
     format!("unread-session:{session}")
+}
+
+pub(super) fn workflow_run_key(id: &str) -> String {
+    format!("workflow-run:{id}")
+}
+
+pub(super) fn workflow_run_id(key: &str) -> Option<&str> {
+    let id = key.strip_prefix("workflow-run:")?;
+    (id.len() == 36 && uuid::Uuid::try_parse(id).is_ok()).then_some(id)
 }
 
 impl Reminder {
@@ -82,6 +92,8 @@ pub(super) struct Snoozes {
     reminders: BTreeMap<String, Reminder>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     released_unread: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    tracked_workflow_runs: BTreeSet<String>,
 }
 
 impl Snoozes {
@@ -115,6 +127,7 @@ impl Snoozes {
             keys: BTreeSet::new(),
             reminders: BTreeMap::new(),
             released_unread: BTreeSet::new(),
+            tracked_workflow_runs: BTreeSet::new(),
         }
     }
 
@@ -145,6 +158,10 @@ impl Snoozes {
     pub(super) fn tracks_unread(&self, session: &str) -> bool {
         self.released_unread.contains(session)
             || self.reminders.contains_key(&unread_session_key(session))
+    }
+
+    pub(super) fn tracked_workflow_runs(&self) -> impl Iterator<Item = &String> {
+        self.tracked_workflow_runs.iter()
     }
 
     pub(super) fn hides_unread(&self, session: &str, revision: u64, now: u64) -> bool {
@@ -198,6 +215,10 @@ impl Snoozes {
                     } else {
                         saved.released_unread.remove(session);
                     }
+                }
+                if let Some(id) = workflow_run_id(key) {
+                    // After a wake the original run may be older than the recent-run limit.
+                    saved.tracked_workflow_runs.insert(id.to_owned());
                 }
                 saved.assign(key, next);
                 applied = true;
@@ -358,7 +379,7 @@ impl Snoozes {
                     .strip_prefix("unread-session:")
                     .and_then(|id| replies.get(id))
                     .is_some_and(|current| current > revision),
-                None => false,
+                Some(Wake::WorkflowRun) | None => false,
             }
     }
 
@@ -379,10 +400,12 @@ impl Snoozes {
         let before_keys = saved.keys.clone();
         let before_reminders = saved.reminders.clone();
         let before_released = saved.released_unread.clone();
+        let before_workflows = saved.tracked_workflow_runs.clone();
         change(&mut saved);
         if before_keys != saved.keys
             || before_reminders != saved.reminders
             || before_released != saved.released_unread
+            || before_workflows != saved.tracked_workflow_runs
         {
             // Upgrade old indefinite reminders on the first write.
             for key in std::mem::take(&mut saved.keys) {
@@ -409,6 +432,43 @@ mod tests {
     const WORKSPACE: &str = "a3b2cb99-3959-4adc-a770-b70f9d2a4cb9";
     const OTHER_WORKSPACE: &str = "c7761168-b30c-4020-80bb-23c1c357e111";
     const DISPATCH: &str = "eecc5d9c-4874-4286-8f73-ea6143246780";
+
+    #[test]
+    fn workflow_run_reminders_retain_the_exact_row_after_cold_expiry_and_manual_wake() {
+        let root = tempfile::tempdir().unwrap();
+        let original = "2b2cb2a9-3959-4adc-a770-b70f9d2a4cb9";
+        let later = "3b2cb2a9-3959-4adc-a770-b70f9d2a4cb9";
+        let key = workflow_run_key(original);
+        let reminder = Reminder {
+            expires_at: Some(20),
+            wake: Some(Wake::WorkflowRun),
+        };
+        let (_, applied) =
+            Snoozes::edit(root.path(), WORKSPACE, &key, None, Some(reminder.clone()), 10).unwrap();
+        assert!(applied);
+        let reopened = Snoozes::load(root.path(), WORKSPACE).unwrap();
+        assert!(reopened.active(&key, 19));
+        assert!(!reopened.active(&workflow_run_key(later), 19));
+        let foreign = Snoozes::load(root.path(), OTHER_WORKSPACE).unwrap();
+        assert!(!foreign.active(&key, 19));
+        assert!(foreign.tracked_workflow_runs().next().is_none());
+        let (_, applied) =
+            Snoozes::edit(root.path(), WORKSPACE, &key, Some(&reminder), None, 19).unwrap();
+        assert!(applied);
+        let manual = Snoozes::load(root.path(), WORKSPACE).unwrap();
+        assert!(!manual.active(&key, 19));
+        assert_eq!(manual.tracked_workflow_runs().collect::<Vec<_>>(), [original]);
+        let (_, applied) =
+            Snoozes::edit(root.path(), WORKSPACE, &key, None, Some(reminder), 19).unwrap();
+        assert!(applied);
+        let (_, applied) = Snoozes::edit(root.path(), WORKSPACE, &key, None, None, 19).unwrap();
+        assert!(!applied);
+        Snoozes::expire(root.path(), WORKSPACE, 20).unwrap();
+        let expired = Snoozes::load(root.path(), WORKSPACE).unwrap();
+        assert!(!expired.active(&key, 20));
+        assert_eq!(expired.next_expiry(), None);
+        assert_eq!(expired.tracked_workflow_runs().collect::<Vec<_>>(), [original]);
+    }
 
     #[test]
     fn local_deadline_reads_rescheduled_file_and_releases_only_due_unread() {

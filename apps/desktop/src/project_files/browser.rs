@@ -34,7 +34,7 @@ use gpui_kit::{
     *,
 };
 use image_preview::{ExpandedImageViewport, ImageViewport, ZoomAction};
-use markdown_links::relative_markdown_target;
+use markdown_links::{MarkdownHeadings, relative_markdown_target};
 use reader_find::ReaderFind;
 use search_snippet::{SearchSnippet, path_highlights};
 use serde::Deserialize;
@@ -45,7 +45,7 @@ use std::{
     ops::Range,
     path::PathBuf,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -392,6 +392,7 @@ pub(crate) enum FilePreviewMode {
 struct MarkdownPreview {
     mode: FilePreviewMode,
     document: Option<Entity<TextViewState>>,
+    headings: Arc<OnceLock<MarkdownHeadings>>,
     scroll: ScrollHandle,
 }
 
@@ -400,6 +401,7 @@ impl MarkdownPreview {
         let mut preview = Self {
             mode: FilePreviewMode::Source,
             document: None,
+            headings: Arc::default(),
             scroll: ScrollHandle::new(),
         };
         preview.switch(mode, text, cx);
@@ -424,6 +426,9 @@ impl MarkdownPreview {
         cx: &App,
     ) -> Stateful<Div> {
         let document = self.document.as_ref().expect("active Markdown document");
+        let heading_document = document.downgrade();
+        let headings = self.headings.clone();
+        let scroll = self.scroll.clone();
         div()
             .id(id)
             .min_w_0()
@@ -432,6 +437,19 @@ impl MarkdownPreview {
             .child(
                 TextView::new(document)
                     .selectable(true)
+                    .on_reveal(move |line, window, _| {
+                        let offset = scroll.offset();
+                        let top = scroll.bounds().top() + px(8.);
+                        let next =
+                            (offset.y + top - line.top()).clamp(-scroll.max_offset().y, px(0.));
+                        if next != offset.y {
+                            let scroll = scroll.clone();
+                            window.on_next_frame(move |window, _| {
+                                scroll.set_offset(point(offset.x, next));
+                                window.refresh();
+                            });
+                        }
+                    })
                     // Block all document images, including HTML and data URLs.
                     // A terminal result also avoids GPUI's pending-image redraw timer.
                     .image_source(|_| {
@@ -452,7 +470,19 @@ impl MarkdownPreview {
                         if !activate {
                             return;
                         }
-                        if let Some(url) = external_markdown_url(destination) {
+                        if let Some(fragment) = destination.strip_prefix('#') {
+                            let _ = heading_document.update(cx, |document, cx| {
+                                let rendered = document.rendered_text();
+                                let headings = headings
+                                    .get_or_init(|| MarkdownHeadings::parse(rendered.source()));
+                                if let Some(range) = headings
+                                    .range(fragment)
+                                    .and_then(|range| rendered.range_for_source(range))
+                                {
+                                    let _ = document.reveal_range(range, cx);
+                                }
+                            });
+                        } else if let Some(url) = external_markdown_url(destination) {
                             cx.open_url(url.as_str());
                         } else {
                             open_project_link(destination, window, cx);

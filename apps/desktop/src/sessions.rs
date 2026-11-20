@@ -299,6 +299,7 @@ impl HiveApp {
         self.pending_events = Vec::new();
         self.event_sequence = 0;
         self.models = Vec::new();
+        self.project_model_default = Default::default();
         self.refreshing_models = false;
         self.model = None;
         self.unavailable_model = None;
@@ -799,6 +800,8 @@ impl HiveApp {
             if let Some(target) = &fresh_after {
                 params["deferFirstConnection"] = json!(true);
                 params["sourceSessionId"] = json!(target.source.id);
+            } else if project.is_some() {
+                params["useProjectDefaultModel"] = json!(true);
             }
             (method, params)
         };
@@ -1395,6 +1398,11 @@ impl HiveApp {
                                 }
                             }
                             ConversationOpen::Latest => this.schedule_reading_position_save(cx),
+                            ConversationOpen::Connect(NativeSessionPanel::Models)
+                                if this.unavailable_project_draft_model().is_some() => {
+                                    this.choosing_model = true;
+                                    this.load_model_picker_contents(cx);
+                                }
                             ConversationOpen::Connect(panel)
                                 if !this.conversation_is_read_only()
                                     && this.unavailable_inherited_model().is_none()
@@ -1402,7 +1410,7 @@ impl HiveApp {
                                     && this.unavailable_inherited_reasoning().is_none() => match panel {
                                 NativeSessionPanel::Models => {
                                     this.choosing_model = true;
-                                    this.load_reasoning(None, cx);
+                                    this.load_model_picker_contents(cx);
                                 }
                                 NativeSessionPanel::Commands => {
                                     this.command_picker.open = true;

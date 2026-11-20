@@ -57,6 +57,7 @@ impl DraftSetting {
         match self {
             Self::Model(_) => {
                 !updated.inherited_draft_model
+                    && !updated.project_default_draft_model
                     && updated.inherited_draft_work_mode == source.inherited_draft_work_mode
                     && updated.inherited_draft_reasoning.is_none()
                     && updated.unavailable_reasoning.is_none()

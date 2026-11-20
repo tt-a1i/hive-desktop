@@ -977,7 +977,11 @@ impl HiveApp {
             .gap_1p5()
             .when_some(self.unavailable_inherited_model(), |surface, model| {
                 let identity = format!("{} / {}", model.provider, model.id);
-                let notice = tr("草稿继承的模型 {model} 暂不可用。").replace("{model}", &identity);
+                let notice = tr(if self.unavailable_project_draft_model().is_some() {
+                    "项目默认模型 {model} 暂不可用。"
+                } else {
+                    "草稿继承的模型 {model} 暂不可用。"
+                }).replace("{model}", &identity);
                 surface.child(h_flex().flex_wrap().items_center().gap_2().px_1()
                     .child(div().id("inherited-draft-model-unavailable").role(Role::Alert)
                         .aria_label(notice.clone()).text_xs().text_color(Color::Error.get(cx)).child(notice))

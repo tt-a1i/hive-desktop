@@ -4,7 +4,8 @@ mod deadline;
 use self::deadline::DeadlineWake;
 use super::super::{
     ActionCenter, ActionablePage, Attention, Destination, Entry, Priority, SnoozeEdit, Wake,
-    read_actionable_tail, read_dispatch_inputs, snoozes::Snoozes,
+    read_actionable_tail, read_dispatch_inputs, read_exact_workflow_runs,
+    snoozes::{Snoozes, workflow_run_id, workflow_run_key},
 };
 use super::{GlobalInbox, now_ms};
 use crate::{app::HiveApp, transport::Runtime};
@@ -235,7 +236,7 @@ impl InboxBadge {
         }
     }
 
-    pub(super) fn remember_workflow_runs<'a>(
+    pub(in crate::collaboration::inbox) fn remember_workflow_runs<'a>(
         &mut self,
         workspace: &str,
         runs: impl IntoIterator<Item = &'a String>,
@@ -291,6 +292,11 @@ impl InboxBadge {
     pub(in crate::collaboration::inbox) fn forget_snoozed(&mut self, edit: &SnoozeEdit) {
         if let Some(session) = edit.key.strip_prefix("unread-session:") {
             self.forget_unread(&edit.workspace, session);
+        } else if let Some(run) = workflow_run_id(&edit.key) {
+            self.seen.remove(&BadgeItem::WorkflowRun {
+                workspace: edit.workspace.clone(),
+                run: run.to_owned(),
+            });
         } else if let Some(message) = edit.key.strip_prefix("message:")
             && let Some(Wake::Dispatch { id, .. }) = &edit.wake
         {
@@ -302,16 +308,15 @@ impl InboxBadge {
         }
     }
 
-    fn question_visible(&self, item: &BadgeItem, now: u64) -> bool {
-        let BadgeItem::Question {
-            workspace, message, ..
-        } = item
-        else {
-            return false;
+    fn pending_visible(&self, item: &BadgeItem, now: u64) -> bool {
+        let hidden_key = match item {
+            BadgeItem::Question { message, .. } => format!("message:{message}"),
+            BadgeItem::WorkflowRun { run, .. } => workflow_run_key(run),
+            BadgeItem::UnreadSession { .. } => return false,
         };
         self.reminders
-            .get(workspace)
-            .is_some_and(|saved| !saved.active(&format!("message:{message}"), now))
+            .get(item.workspace())
+            .is_some_and(|saved| !saved.active(&hidden_key, now))
     }
 
     pub(super) fn tracks_unread(&self, workspace: &str, session: &str) -> bool {
@@ -362,8 +367,8 @@ impl InboxBadge {
 #[cfg(test)]
 mod tests {
     use super::{
-        BadgeItem, InboxBadge, Question, WorkflowRunBadge, checked_workflow_badges,
-        collect_questions,
+        BadgeItem, InboxBadge, Question, SnoozeEdit, Wake, WorkflowRunBadge,
+        checked_workflow_badges, collect_questions, workflow_run_key,
     };
     use crate::collaboration::inbox::snoozes::{Reminder, Snoozes};
     use std::collections::HashSet;
@@ -374,6 +379,52 @@ mod tests {
             dispatch: "dispatch".into(),
             message: message.into(),
         }
+    }
+
+    #[test]
+    fn snoozing_a_workflow_hides_only_its_badge_until_the_exact_deadline() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = "a3b2cb99-3959-4adc-a770-b70f9d2a4cb9";
+        let foreign = "c7761168-b30c-4020-80bb-23c1c357e111";
+        let original = "2b2cb2a9-3959-4adc-a770-b70f9d2a4cb9";
+        let later = "3b2cb2a9-3959-4adc-a770-b70f9d2a4cb9";
+        let workflow = |workspace: &str, run: &str| BadgeItem::WorkflowRun {
+            workspace: workspace.into(),
+            run: run.into(),
+        };
+        let original_item = workflow(workspace, original);
+        let later_item = workflow(workspace, later);
+        let foreign_item = workflow(foreign, original);
+        let edit = SnoozeEdit {
+            workspace: workspace.to_owned(),
+            key: workflow_run_key(original),
+            wake: Some(Wake::WorkflowRun),
+            previous: None,
+        };
+        let (saved, applied) = Snoozes::edit(
+            root.path(),
+            workspace,
+            &edit.key,
+            None,
+            Some(Reminder {
+                expires_at: Some(20),
+                wake: edit.wake.clone(),
+            }),
+            10,
+        )
+        .unwrap();
+        assert!(applied);
+        let mut badge = InboxBadge::default();
+        badge.remember_reminders(workspace, &saved);
+        badge.remember_reminders(foreign, &Snoozes::load(root.path(), foreign).unwrap());
+        badge.acknowledge([original_item.clone(), foreign_item.clone()]);
+        badge.forget_snoozed(&edit);
+        assert!(!badge.sees(&original_item));
+        assert!(badge.sees(&foreign_item));
+        assert!(!badge.pending_visible(&original_item, 19));
+        assert!(badge.pending_visible(&later_item, 19));
+        assert!(badge.pending_visible(&foreign_item, 19));
+        assert!(badge.pending_visible(&original_item, 20));
     }
 
     #[test]
@@ -500,7 +551,7 @@ mod tests {
         let known = collect_questions(&scope, pending());
         let current: HashSet<_> = known
             .iter()
-            .filter(|item| badge.question_visible(item, 19))
+            .filter(|item| badge.pending_visible(item, 19))
             .cloned()
             .collect();
         assert_eq!(current.len(), 1);
@@ -512,7 +563,7 @@ mod tests {
         assert_eq!(
             known
                 .iter()
-                .filter(|item| badge.question_visible(item, 20))
+                .filter(|item| badge.pending_visible(item, 20))
                 .count(),
             2
         );
@@ -544,8 +595,7 @@ impl HiveApp {
             .iter()
             .filter(move |item| {
                 badge.connection == self.connection_generation
-                    && (matches!(item, BadgeItem::WorkflowRun { .. })
-                        || badge.question_visible(item, now_ms()))
+                    && badge.pending_visible(item, now_ms())
             })
             .cloned()
             .chain(
@@ -665,6 +715,18 @@ impl HiveApp {
                             let inputs = read_dispatch_inputs(&runtime, workspace, &watched).await;
                             if !inputs.is_empty() {
                                 dispatch_inputs.insert(workspace.clone(), inputs);
+                            }
+                            if let Some(runs) = workflows.get_mut(workspace) {
+                                let older_ids: Vec<_> = saved
+                                    .tracked_workflow_runs()
+                                    .filter(|id| !runs.contains(id))
+                                    .collect();
+                                match read_exact_workflow_runs(&runtime, workspace, &older_ids).await {
+                                    Some(older) => runs.extend(older.into_iter().map(|run| run.id)),
+                                    None => {
+                                        workflows.remove(workspace);
+                                    }
+                                }
                             }
                         }
                     }
