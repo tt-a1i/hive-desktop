@@ -14,9 +14,11 @@ export type ReadinessLevel =
 
 export interface McpResourceStatus {
   name: string;
-  source: 'pi' | 'codex' | 'claude' | 'pi-rpc' | 'acp';
+  source: 'pi' | 'codex' | 'claude' | 'pi-rpc' | 'acp' | 'project';
+  scope: 'global' | 'project';
   transport: string;
   detail?: string;
+  configPath?: string;
   status: 'configured' | 'disabled' | 'error';
   error?: string;
 }
@@ -84,7 +86,39 @@ function safeHostOrBasename(value: unknown): string | undefined {
   return basename(trimmed);
 }
 
-function parseCodexMcpToml(filePath: string): { resources: McpResourceStatus[]; error?: string } {
+function stripTomlComment(line: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inDouble && ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (!inDouble && ch === '\'') {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (!inSingle && ch === '"') {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (!inSingle && !inDouble && ch === '#') {
+      return line.slice(0, i).trim();
+    }
+  }
+  return line.trim();
+}
+
+function parseCodexMcpToml(
+  filePath: string,
+  scope: 'global' | 'project' = 'global',
+): { resources: McpResourceStatus[]; error?: string } {
   if (!existsSync(filePath)) return { resources: [] };
   let raw: string;
   try {
@@ -101,14 +135,16 @@ function parseCodexMcpToml(filePath: string): { resources: McpResourceStatus[]; 
     resources.push({
       name: current.name,
       source: 'codex',
+      scope,
       transport,
       ...(detail && { detail }),
+      configPath: filePath,
       status: current.enabled === false ? 'disabled' : 'configured',
     });
     current = undefined;
   };
   for (const rawLine of raw.split(/\r?\n/)) {
-    const line = rawLine.replace(/#.*$/, '').trim();
+    const line = stripTomlComment(rawLine);
     if (!line) continue;
     const header = line.match(/^\[([^\]]+)\]$/);
     if (header) {
@@ -142,7 +178,8 @@ function parseCodexMcpToml(filePath: string): { resources: McpResourceStatus[]; 
 
 function parseJsonMcpServers(
   filePath: string,
-  source: 'claude' | 'pi',
+  source: 'claude' | 'pi' | 'project',
+  scope: 'global' | 'project' = 'global',
 ): { resources: McpResourceStatus[]; error?: string } {
   if (!existsSync(filePath)) return { resources: [] };
   let parsed: unknown;
@@ -153,7 +190,9 @@ function parseJsonMcpServers(
       resources: [{
         name: basename(filePath),
         source,
+        scope,
         transport: 'config',
+        configPath: filePath,
         status: 'error',
         error: error instanceof Error ? error.message : String(error),
       }],
@@ -177,8 +216,10 @@ function parseJsonMcpServers(
     resources.push({
       name,
       source,
+      scope,
       transport,
       ...(detail && { detail }),
+      configPath: filePath,
       status: disabled ? 'disabled' : 'configured',
     });
   }
@@ -195,8 +236,10 @@ function inspectPiExtensions(agentDir: string): McpResourceStatus[] {
       .map(entry => ({
         name: entry.name,
         source: 'pi' as const,
+        scope: 'global' as const,
         transport: 'extension',
         detail: entry.isDirectory() ? 'dir' : 'file',
+        configPath: join(extDir, entry.name),
         status: 'configured' as const,
       }));
   } catch {
@@ -207,6 +250,7 @@ function inspectPiExtensions(agentDir: string): McpResourceStatus[] {
 export async function collectReadinessReport(options: {
   settings: DesktopSettings;
   profiles: AgentProfiles;
+  workspacePath?: string;
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
 }): Promise<ReadinessReport> {
@@ -372,6 +416,23 @@ export async function collectReadinessReport(options: {
         : '检查 ACP 配置的命令路径是否可执行',
     mcpCount: 0,
   };
+
+  // 6. Project-level MCP configurations (when a workspace directory is active)
+  if (options.workspacePath?.trim()) {
+    const ws = options.workspacePath.trim();
+    const projectMcp = parseJsonMcpServers(join(ws, '.mcp.json'), 'project', 'project');
+    const projectClaude = parseJsonMcpServers(join(ws, '.claude', 'settings.json'), 'claude', 'project');
+    const projectClaudeLocal = parseJsonMcpServers(join(ws, '.claude', 'settings.local.json'), 'claude', 'project');
+    const projectCodex = parseCodexMcpToml(join(ws, '.codex', 'config.toml'), 'project');
+    mcpResources.push(
+      ...projectMcp.resources,
+      ...projectClaude.resources,
+      ...projectClaudeLocal.resources,
+      ...projectCodex.resources,
+    );
+    codexBackend.mcpCount += projectCodex.resources.length;
+    claudeBackend.mcpCount += projectClaude.resources.length + projectClaudeLocal.resources.length;
+  }
 
   return {
     checkedAt: Date.now(),

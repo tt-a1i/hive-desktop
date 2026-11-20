@@ -381,6 +381,16 @@ impl HiveApp {
                 });
             });
         });
+        let weak = cx.weak_entity();
+        let handle = window.window_handle();
+        gpui_kit::App::on_action(cx, move |_: &crate::OpenCommandPalette, cx| {
+            let weak = weak.clone();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, cx| {
+                    let _ = weak.update(cx, |this, cx| this.open_command_palette(window, cx));
+                });
+            });
+        });
         Self::register_guarded_action::<crate::NewSessionShortcut>(
             cx,
             |this, _window, cx| {

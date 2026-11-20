@@ -35,11 +35,16 @@ impl HiveApp {
             return;
         };
         let generation = self.connection_generation;
+        let workspace_id = self.workspace.clone();
         self.readiness_loading = true;
         self.readiness_error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = runtime.request("desktop.readiness", serde_json::json!({})).await;
+            let params = match workspace_id {
+                Some(ws) => serde_json::json!({ "workspaceId": ws }),
+                None => serde_json::json!({}),
+            };
+            let result = runtime.request("desktop.readiness", params).await;
             let _ = this.update(cx, |this, cx| {
                 if this.connection_generation != generation {
                     return;

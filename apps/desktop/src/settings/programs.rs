@@ -790,6 +790,31 @@ impl HiveApp {
                                                         .text_color(Color::Muted.get(cx))
                                                         .child(format!("{} · {}", res.source, res.transport)),
                                                 )
+                                                .when(!res.scope.is_empty(), |row| {
+                                                    let is_project = res.scope == "project";
+                                                    row.child(
+                                                        div()
+                                                            .px_1()
+                                                            .py(px(0.5))
+                                                            .rounded_sm()
+                                                            .bg(if is_project {
+                                                                Color::AccentSoft.get(cx)
+                                                            } else {
+                                                                Color::Card.get(cx)
+                                                            })
+                                                            .text_size(px(10.))
+                                                            .text_color(if is_project {
+                                                                Color::Accent.get(cx)
+                                                            } else {
+                                                                Color::Muted.get(cx)
+                                                            })
+                                                            .child(if is_project {
+                                                                tr("项目级")
+                                                            } else {
+                                                                tr("全局")
+                                                            }),
+                                                    )
+                                                })
                                                 .when_some(res.detail.as_ref(), |row, detail| {
                                                     row.child(
                                                         div()
@@ -811,15 +836,36 @@ impl HiveApp {
                                         }),
                                 )
                                 .child(
-                                    div()
+                                    h_flex()
                                         .flex_shrink_0()
-                                        .px_1p5()
-                                        .py(px(1.))
-                                        .rounded_sm()
-                                        .bg(Color::Card.get(cx))
-                                        .text_size(px(10.5))
-                                        .text_color(status_color)
-                                        .child(status_label.to_owned()),
+                                        .items_center()
+                                        .gap_1()
+                                        .when_some(res.config_path.clone(), |row, cfg_path| {
+                                            row.child(
+                                                Button::new(("readiness-mcp-reveal", i))
+                                                    .custom(crate::palette::subtle_icon_variant(cx))
+                                                    .compact()
+                                                    .xsmall()
+                                                    .h(px(22.))
+                                                    .px_1p5()
+                                                    .rounded_sm()
+                                                    .label(tr("打开配置"))
+                                                    .tooltip(cfg_path.clone())
+                                                    .on_click(move |_, _, cx| {
+                                                        cx.reveal_path(std::path::Path::new(&cfg_path));
+                                                    }),
+                                            )
+                                        })
+                                        .child(
+                                            div()
+                                                .px_1p5()
+                                                .py(px(1.))
+                                                .rounded_sm()
+                                                .bg(Color::Card.get(cx))
+                                                .text_size(px(10.5))
+                                                .text_color(status_color)
+                                                .child(status_label.to_owned()),
+                                        ),
                                 )
                         })),
                 )

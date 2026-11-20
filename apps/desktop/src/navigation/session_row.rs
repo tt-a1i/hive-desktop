@@ -264,6 +264,13 @@ impl HiveApp {
             .unwrap_or_else(|| format!(" · {workspace_name}"));
         let is_selected = self.viewing_conversation()
             && self.session.as_ref().is_some_and(|s| s.id == session.id);
+        let worktree_branch = session
+            .execution
+            .as_ref()
+            .filter(|e| e.kind == "worktree")
+            .map(|e| e.branch.trim())
+            .filter(|b| !b.is_empty())
+            .map(str::to_owned);
         let relative_time = palette::format_session_time(
             session.updated_at,
             crate::general::current(cx).session_time_format,
@@ -384,6 +391,21 @@ impl HiveApp {
                                                 )
                                             },
                                         )
+                                        .when_some(worktree_branch, |row, branch| {
+                                            row.child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .max_w(px(64.))
+                                                    .truncate()
+                                                    .px_1()
+                                                    .py(px(0.5))
+                                                    .rounded_sm()
+                                                    .bg(Color::Inset.get(cx))
+                                                    .text_size(px(10.))
+                                                    .text_color(Color::Muted.get(cx))
+                                                    .child(branch),
+                                            )
+                                        })
                                         .when_some(activity_label, |row, label| {
                                             row.child(
                                                 div()

@@ -25,7 +25,7 @@ import { remoteCommands } from './remote-commands.js';
 import { captureRuntimeInfo } from './runtime-info.js';
 import { DesktopUpdates } from './desktop-updates.js';
 import { desktopHistoryMessage } from './desktop-history.js';
-import { sliceHistoryWindow } from './history-cursor.js';
+import { boundOversizedToolOutput, sliceHistoryWindow } from './history-cursor.js';
 import { collectReadinessReport } from './readiness.js';
 
 const protocolWrite = process.stdout.write.bind(process.stdout);
@@ -241,7 +241,20 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'desktop.settings.codexAccount': { exact(params, ['command', 'profile']); if (params.profile !== undefined && params.command !== undefined) throw new Error('Select a saved profile or an executable draft'); return settings.codexAccount(params.command, optionalProfile(params).profile); }
     case 'desktop.settings.probe': { exact(params, ['backend', 'command', 'profile']); if (params.profile !== undefined && params.command !== undefined) throw new Error('Select a saved profile or an executable draft'); return settings.probe(params.backend, params.command, optionalProfile(params).profile); }
     case 'desktop.settings.get': return settings.get();
-    case 'desktop.readiness': { exact(params, []); return collectReadinessReport({ settings, profiles }); }
+    case 'desktop.readiness': {
+      exact(params, ['workspaceId']);
+      let workspacePath: string | undefined;
+      if (typeof params.workspaceId === 'string' && params.workspaceId.trim()) {
+        try {
+          const workspaces = await hive.request('GET', '/api/workspaces') as { id: string; directory?: string; path?: string }[];
+          const ws = workspaces.find(w => w.id === params.workspaceId);
+          workspacePath = ws?.directory ?? ws?.path;
+        } catch {
+          // Best-effort project-level MCP scan; global readiness still succeeds.
+        }
+      }
+      return collectReadinessReport({ settings, profiles, ...(workspacePath ? { workspacePath } : {}) });
+    }
     case 'desktop.settings.update': return settings.update(params);
     case 'worktree.initialization.get':
     case 'worktree.initialization.retry':
@@ -421,7 +434,12 @@ async function dispatch(requestId: number | string, method: string, params: Reco
               limit: params.historyLimit,
               ...(params.historyAroundMessageId ? { aroundMessageId: params.historyAroundMessageId } : {}),
             });
-            return { ...snapshot, history: sliced.history, historyMessageIds: sliced.historyMessageIds, historyPage: sliced.historyPage };
+            return {
+              ...snapshot,
+              history: sliced.history.map(m => boundOversizedToolOutput(m)),
+              historyMessageIds: sliced.historyMessageIds,
+              historyPage: sliced.historyPage,
+            };
           })()
         : snapshot;
       return params.deferHistoryImages ? {...paged, history: paged.history.map(
@@ -447,10 +465,11 @@ async function dispatch(requestId: number | string, method: string, params: Reco
         ...(params.beforeMessageId ? { beforeMessageId: params.beforeMessageId } : {}),
         ...(params.limit !== undefined ? { limit: params.limit } : {}),
       });
+      const boundedHistory = page.history.map(m => boundOversizedToolOutput(m));
       return params.deferHistoryImages ? {
         ...page,
-        history: page.history.map((message, index) => desktopHistoryMessage(message, page.historyMessageIds[index])),
-      } : page;
+        history: boundedHistory.map((message, index) => desktopHistoryMessage(message, page.historyMessageIds[index])),
+      } : { ...page, history: boundedHistory };
     }
     case 'chat.clearView': {
       exact(params, ['viewRevision']);

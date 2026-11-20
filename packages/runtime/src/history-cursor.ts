@@ -14,6 +14,34 @@ export interface HistorySliceResult<T> {
 
 export const DEFAULT_HISTORY_PAGE_LIMIT = 120;
 export const MAX_HISTORY_PAGE_LIMIT = 500;
+export const MAX_PAGED_TOOL_OUTPUT_CHARS = 32_768;
+
+/**
+ * Bounds oversized tool result text blocks on paginated history reads so a single
+ * 2 MB command output does not bloat IPC or desktop layout memory. Full unpaginated
+ * reads (such as Markdown export) remain untouched.
+ */
+export function boundOversizedToolOutput<T>(message: T, maxChars = MAX_PAGED_TOOL_OUTPUT_CHARS): T {
+  if (!message || typeof message !== 'object') return message;
+  const record = message as Record<string, unknown>;
+  if (record.role !== 'toolResult' || !Array.isArray(record.content)) return message;
+  let changed = false;
+  const nextContent = record.content.map(block => {
+    if (!block || typeof block !== 'object') return block;
+    const item = block as Record<string, unknown>;
+    if (item.type === 'text' && typeof item.text === 'string' && item.text.length > maxChars) {
+      changed = true;
+      const omitted = item.text.length - maxChars;
+      return {
+        ...item,
+        text: `${item.text.slice(0, maxChars)}\n… [已截断 ${omitted} 字符以保持流畅；完整内容请导出 Markdown 或查看源文件]`,
+        truncatedChars: omitted,
+      };
+    }
+    return block;
+  });
+  return changed ? ({ ...record, content: nextContent } as T) : message;
+}
 
 export function clampHistoryLimit(limit?: number): number {
   if (limit === undefined || !Number.isFinite(limit) || limit <= 0) {

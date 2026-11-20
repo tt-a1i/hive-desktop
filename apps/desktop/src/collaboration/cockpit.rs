@@ -26,6 +26,119 @@ pub(crate) fn live_state_dot(state: &str, cx: &App) -> Rgba {
 }
 
 impl HiveApp {
+    /// Subtle live team status pill shown in the main chat topbar ONLY when at
+    /// least one worker is actively executing, waiting for user interaction,
+    /// stopped with error, or has a pending report. Keeps single-agent chat serene.
+    pub(crate) fn render_topbar_team_status_pill(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let mut working = 0usize;
+        let mut waiting = 0usize;
+        let mut errored = 0usize;
+        let mut urgent_session: Option<String> = None;
+        for m in self.members.iter().filter(|m| !m.is_lead()) {
+            match m.live_state() {
+                "waiting_interaction" => {
+                    waiting += 1;
+                    if urgent_session.is_none() {
+                        urgent_session = self.member_session_id(&m.id);
+                    }
+                }
+                "error" => {
+                    errored += 1;
+                    if urgent_session.is_none() {
+                        urgent_session = self.member_session_id(&m.id);
+                    }
+                }
+                "working" => working += 1,
+                _ => {}
+            }
+        }
+        let pending_reports = self
+            .collaboration
+            .dispatches
+            .iter()
+            .filter(|d| d.state == "submitted")
+            .count();
+        if working == 0 && waiting == 0 && errored == 0 && pending_reports == 0 {
+            return None;
+        }
+        let mut parts = Vec::new();
+        if working > 0 {
+            parts.push(if english() {
+                format!("{working} active")
+            } else {
+                format!("{working} 执行中")
+            });
+        }
+        if waiting > 0 {
+            parts.push(if english() {
+                format!("{waiting} waiting")
+            } else {
+                format!("{waiting} 等待确认")
+            });
+        }
+        if errored > 0 {
+            parts.push(if english() {
+                format!("{errored} error")
+            } else {
+                format!("{errored} 异常")
+            });
+        }
+        if pending_reports > 0 {
+            parts.push(if english() {
+                format!("{pending_reports} report")
+            } else {
+                format!("{pending_reports} 待阅汇报")
+            });
+        }
+        let label = parts.join(" · ");
+        let dot_color = if waiting > 0 || pending_reports > 0 {
+            crate::chrome::attention_dot(cx)
+        } else if errored > 0 {
+            Color::Error.get(cx)
+        } else {
+            Color::Accent.get(cx)
+        };
+        let jump_target = urgent_session;
+        Some(
+            Button::new("topbar-live-team-pill")
+                .custom(palette::quiet_icon_variant(cx))
+                .compact()
+                .xsmall()
+                .h(px(24.))
+                .px_2()
+                .rounded_full()
+                .tooltip(if jump_target.is_some() {
+                    tr("点击直达需要关注的成员会话")
+                } else {
+                    tr("打开团队实时态势驾驶舱")
+                })
+                .accessibility_label(format!("{}: {label}", tr("团队实时态势")))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .px_1()
+                        .rounded_full()
+                        .child(div().size(px(6.)).rounded_full().bg(dot_color))
+                        .child(
+                            div()
+                                .text_size(px(11.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(Color::Secondary.get(cx))
+                                .child(label),
+                        ),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if let Some(sid) = jump_target.clone() {
+                        this.open_member_session(sid, window, cx);
+                    } else {
+                        this.open_collaboration(cx);
+                    }
+                }))
+                .into_any_element(),
+        )
+    }
+
     pub(crate) fn render_team_cockpit(&self, cx: &Context<Self>) -> AnyElement {
         if self.members.is_empty() {
             return div().into_any_element();

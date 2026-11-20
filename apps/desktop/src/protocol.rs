@@ -262,9 +262,13 @@ pub(crate) struct InitializationScript {
 pub struct McpResourceStatus {
     pub name: String,
     pub source: String,
+    #[serde(default)]
+    pub scope: String,
     pub transport: String,
     #[serde(default)]
     pub detail: Option<String>,
+    #[serde(default)]
+    pub config_path: Option<String>,
     pub status: String,
     #[serde(default)]
     pub error: Option<String>,

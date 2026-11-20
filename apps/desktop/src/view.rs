@@ -1538,6 +1538,10 @@ impl Render for HiveApp {
                                                 self.conversation_return(cx),
                                                 |header, back| header.child(back),
                                             )
+                                            .when_some(
+                                                self.render_topbar_team_status_pill(cx),
+                                                |header, pill| header.child(pill),
+                                            )
                                         })
                                         .when(!renaming, |header| {
                                             let show_conv_tools = self.conversation_ready

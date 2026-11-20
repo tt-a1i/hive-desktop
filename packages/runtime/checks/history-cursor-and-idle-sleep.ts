@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { sliceHistoryWindow } from '../src/history-cursor.js';
+import { boundOversizedToolOutput, sliceHistoryWindow } from '../src/history-cursor.js';
 
 const total = 1500;
 const history = Array.from({ length: total }, (_, i) => ({ role: i % 2 === 0 ? 'user' : 'assistant', content: `msg-${i}` }));
@@ -54,4 +54,15 @@ const reanchored = sliceHistoryWindow(shiftedHistory, shiftedIds, {
 assert.equal(reanchored.historyMessageIds.at(-1), 'm-1379');
 assert.ok(!reanchored.historyMessageIds.includes('m-1380'));
 
-console.log('HISTORY_CURSOR_OK: bounded open, anchored search/reading restore, full backward walk and shifted-ID reanchor verified.');
+// 5. Oversized toolResult output is bounded on paginated reads while user/assistant messages stay untouched.
+const hugeTool = {
+  role: 'toolResult',
+  content: [{ type: 'text', text: 'A'.repeat(40_000) }],
+};
+const boundedTool = boundOversizedToolOutput(hugeTool, 1024);
+assert.ok(boundedTool.content[0]!.text.length < 1200);
+assert.ok(boundedTool.content[0]!.text.includes('已截断 38976 字符'));
+const normalAssistant = { role: 'assistant', content: [{ type: 'text', text: 'B'.repeat(40_000) }] };
+assert.equal(boundOversizedToolOutput(normalAssistant, 1024), normalAssistant);
+
+console.log('HISTORY_CURSOR_OK: bounded open, anchored search/reading restore, full backward walk, shifted-ID reanchor, and oversized tool truncation verified.');

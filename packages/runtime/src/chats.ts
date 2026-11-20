@@ -30,7 +30,7 @@ import type { AgentModels } from './agent-models.js';
 import { WorkspaceRemovalError, workspaceRemovalBlocked, type WorkspaceRemovalStage } from './workspace-removal.js';
 import { createHash,randomUUID } from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { readSessionMessages as readClaudeSessionMessages, type ClaudeSessionHandle } from './agents/claude.js';
 import { type CodexSessionHandle } from './agents/codex.js';
@@ -1492,11 +1492,47 @@ export class Chats implements StructuredSessionPort {
     return slept;
   }
 
+  private historyPageCache?: {
+    sessionId: string;
+    sessionFile?: string;
+    mtimeMs: number;
+    size: number;
+    history: unknown[];
+    historyMessageIds: string[];
+  } | undefined;
+
   async historyPage(
     id: string,
     options: { beforeIndex: number; beforeMessageId?: string; limit?: number },
   ): Promise<{ history: unknown[]; historyMessageIds: string[]; historyPage: HistoryPageMeta }> {
+    const record = this.index.peek(id);
+    const live = this.live.get(id);
+    if (!live && record?.sessionFile && this.historyPageCache?.sessionId === id && this.historyPageCache.sessionFile === record.sessionFile) {
+      try {
+        const st = statSync(record.sessionFile);
+        if (st.mtimeMs === this.historyPageCache.mtimeMs && st.size === this.historyPageCache.size) {
+          return sliceHistoryWindow(this.historyPageCache.history, this.historyPageCache.historyMessageIds, options);
+        }
+      } catch {
+        this.historyPageCache = undefined;
+      }
+    }
     const snapshot = await this.open(id, true, true);
+    if (!this.live.has(id) && record?.sessionFile) {
+      try {
+        const st = statSync(record.sessionFile);
+        this.historyPageCache = {
+          sessionId: id,
+          sessionFile: record.sessionFile,
+          mtimeMs: st.mtimeMs,
+          size: st.size,
+          history: snapshot.history,
+          historyMessageIds: snapshot.historyMessageIds,
+        };
+      } catch {
+        this.historyPageCache = undefined;
+      }
+    }
     return sliceHistoryWindow(snapshot.history, snapshot.historyMessageIds, options);
   }
   private requireOpening(id: string): Promise<LiveChat> {
@@ -1532,7 +1568,10 @@ export class Chats implements StructuredSessionPort {
     const previous = this.desktopSession;
     this.desktopViewRevision = revision;
     this.desktopSession = id;
-    if (previous && previous !== id) this.releaseDesktopBrowse(previous);
+    if (previous && previous !== id) {
+      if (this.historyPageCache?.sessionId === previous) this.historyPageCache = undefined;
+      this.releaseDesktopBrowse(previous);
+    }
   }
 
   clearDesktopView(revision: number) {
@@ -2892,6 +2931,7 @@ export class Chats implements StructuredSessionPort {
     this.closeAbort.abort(new Error('Chat runtime is closing'));
   }
   async close() {
+    this.historyPageCache = undefined;
     if (this.idleSweepTimer) {
       clearInterval(this.idleSweepTimer);
       this.idleSweepTimer = undefined;

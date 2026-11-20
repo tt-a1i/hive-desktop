@@ -11,6 +11,7 @@ mod workflows;
 mod composer;
 mod composer_controls;
 mod queued_inputs;
+mod command_palette;
 mod command_picker;
 mod conversation;
 mod conversation_find;
@@ -77,6 +78,7 @@ actions!(
         ClosePreferences,
         CancelSessionRename,
         OpenSessionSearch,
+        OpenCommandPalette,
         OpenConversationFind,
         CloseConversationFind,
         NextSessionResult,
@@ -149,6 +151,11 @@ fn main() {
                 KeyBinding::new("up", PreviousSessionResult, Some("HiveSessionSearch")),
                 KeyBinding::new("escape", CancelSessionRename, Some("HiveSessionName")),
                 KeyBinding::new("escape", ClosePreferences, Some("HivePreferences")),
+                KeyBinding::new(
+                    if cfg!(target_os = "macos") { "cmd-k" } else { "ctrl-k" },
+                    OpenCommandPalette,
+                    None,
+                ),
                 KeyBinding::new(
                     if cfg!(target_os = "macos") {
                         "cmd-q"
