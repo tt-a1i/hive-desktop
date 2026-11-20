@@ -20,7 +20,7 @@ const repoDir = join(root, 'repo');
 const peerDir = join(root, 'peer');
 
 function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
+  return execFileSync('git', ['-c', 'core.autocrlf=false', ...args], {
     cwd,
     encoding: 'utf8',
     env: {
@@ -31,6 +31,10 @@ function git(cwd: string, args: string[]): string {
       GIT_COMMITTER_EMAIL: 'hive@example.com',
     },
   }).trim();
+}
+
+function readLf(filePath: string): string {
+  return readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
 }
 
 try {
@@ -73,7 +77,7 @@ try {
   const pushed = await pushGitStash(repoDir, { message: 'wip-changes', includeUntracked: true });
   assert.equal(pushed.ok, true);
   assert.equal(existsSync(join(repoDir, 'scratch.txt')), false);
-  assert.equal(readFileSync(join(repoDir, 'README.md'), 'utf8'), 'hello\n');
+  assert.equal(readLf(join(repoDir, 'README.md')), 'hello\n');
 
   const stashes = await listGitStashes(repoDir);
   assert.equal(stashes.stashes.length, 1);
@@ -82,8 +86,8 @@ try {
 
   const popped = await popGitStash(repoDir, { ref: 'stash@{0}' });
   assert.equal(popped.ok, true);
-  assert.equal(readFileSync(join(repoDir, 'README.md'), 'utf8'), 'hello dirty\n');
-  assert.equal(readFileSync(join(repoDir, 'scratch.txt'), 'utf8'), 'untracked work\n');
+  assert.equal(readLf(join(repoDir, 'README.md')), 'hello dirty\n');
+  assert.equal(readLf(join(repoDir, 'scratch.txt')), 'untracked work\n');
 
   // 5. Stash push + drop
   await pushGitStash(repoDir, { message: 'drop-me', includeUntracked: true });
@@ -105,7 +109,7 @@ try {
 
   const pulled = await pullGitBranch(repoDir, { rebase: false });
   assert.equal(pulled.ok, true);
-  assert.equal(readFileSync(join(repoDir, 'README.md'), 'utf8'), 'hello from peer\n');
+  assert.equal(readLf(join(repoDir, 'README.md')), 'hello from peer\n');
 
   console.log('GIT_BRANCHES_STASH_OK: branch list/create/switch, stash push/list/pop/drop, and fetch/pull --ff-only verified.');
 } finally {
