@@ -221,7 +221,7 @@ impl HiveApp {
         self.session_pin_loading.clear();
         self.session_archive_loading.clear();
         self.worktree_release_loading.clear();
-        self.resetting_inherited_model = None;
+        self.resetting_draft_setting = None;
         self.reasoning_picker = Default::default();
         self.mode_picker = Default::default();
         self.command_picker = Default::default();

@@ -22,8 +22,8 @@ use super::snoozes::now_ms;
 use super::undo::{UNDO_CHANGED, UndoSlot, VerifiedUndo, expire_later};
 use super::{
     ActionCenter, ArchiveInboxSession, Destination, Entry, InboxRowInteraction, MarkInboxRead,
-    Reminders, SNOOZE_CHANGED, activity_matches, inbox_row, inbox_status, is_snoozed,
-    read_action_center, session_inbox_activity, toggle_button,
+    Reminders, SNOOZE_CHANGED, activity_matches, inbox_open_button, inbox_row, inbox_status,
+    is_snoozed, read_action_center, session_inbox_activity, toggle_button,
 };
 use crate::{
     app::HiveApp,
@@ -2134,8 +2134,10 @@ impl Render for GlobalInbox {
             let id = id.to_owned();
             let button_workspace = id.clone();
             let open_id = row_id.clone();
-            let open =
-                Button::new("open-inbox-item").on_click(cx.listener(move |this, _, window, cx| {
+            let open = inbox_open_button(
+                "open-inbox-item",
+                !connected,
+                cx.listener(move |this, _, window, cx| {
                     if !this.is_current(connection, cx) {
                         return;
                     }
@@ -2164,7 +2166,8 @@ impl Render for GlobalInbox {
                             cx,
                         )
                     });
-                }));
+                }),
+            );
             let (focus, _) = self.row_focus.get(&row_id)?;
             let hovered_id = row_id.clone();
             let interaction = InboxRowInteraction {

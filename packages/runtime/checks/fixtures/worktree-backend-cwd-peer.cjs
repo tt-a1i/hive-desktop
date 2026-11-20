@@ -38,7 +38,7 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
     const q = JSON.parse(raw);
     if (backend === 'codex') {
       if (!q.method) return;
-      log({event: 'request', method: q.method, params: q.params, ...(q.method === 'turn/start' && {effectiveModel: state.model})});
+      log({event: 'request', method: q.method, params: q.params, ...(q.method === 'turn/start' && {effectiveModel: state.model, effectiveMode: state.collaborationMode?.mode})});
       const answer = result => send({id: q.id, result});
       if (q.method === 'initialize') answer({});
       else if (q.method === 'model/list') {
@@ -46,6 +46,9 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
         const ids = q.params.cursor ? availableModels.slice(1) : availableModels.slice(0, 1);
         answer({data: ids.map(id => ({id, model:id, displayName: id, hidden: false})), nextCursor: q.params.cursor || missing ? null : 'second-page'});
       }
+      else if (q.method === 'configRequirements/read') answer({requirements: null});
+      else if (q.method === 'collaborationMode/list')
+        answer({data: (process.env.HIVE_CWD_FIXTURE_MODE_MISSING ? ['default'] : ['default', 'plan']).map(mode => ({mode}))});
       else if (q.method === 'thread/start') {
         if (q.params.cwd !== cwd) throw Error('Codex thread/start cwd mismatch');
         if (q.params.model && !process.env.HIVE_CWD_FIXTURE_MODEL_UNAVAILABLE) state.model = q.params.model;
@@ -58,7 +61,15 @@ readline.createInterface({input: process.stdin}).on('line', raw => {
       }
       else if (q.method === 'thread/read') answer({thread: {...state, turns: []}, ...codexModel()});
       else if (q.method === 'thread/settings/update') {
-        state.model = q.params.model; saveCodex(); answer({}); notify('thread/settings/updated', {threadSettings: {model: state.model}});
+        if (q.params.model) state.model = q.params.model;
+        if (q.params.collaborationMode) {
+          state.collaborationMode = {...q.params.collaborationMode};
+          if (process.env.HIVE_CWD_FIXTURE_MODE_MISMATCH) state.collaborationMode.mode = 'default';
+        }
+        saveCodex(); answer({});
+        const threadSettings = {model: state.model, collaborationMode: state.collaborationMode};
+        log({event: 'notification', method: 'thread/settings/updated', params: {threadId: state.id, threadSettings}});
+        notify('thread/settings/updated', {threadSettings});
       }
       else if (q.method === 'thread/turns/list') answer({data: state.turns.map(turn => ({...turn, itemsView: 'full'})), nextCursor: null});
       else if (q.method === 'turn/start') {

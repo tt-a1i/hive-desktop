@@ -81,6 +81,8 @@ pub struct Session {
     pub can_start_fresh_worktree_draft: bool,
     #[serde(default)]
     pub inherited_draft_model: bool,
+    pub inherited_draft_work_mode: Option<DraftWorkMode>,
+    pub unavailable_work_mode: Option<DraftWorkMode>,
     #[serde(default)]
     pub execution_path: Option<String>,
     #[serde(default)]
@@ -610,6 +612,20 @@ pub struct ModelIdentity {
     pub provider: String,
     pub id: String,
     pub name: Option<String>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DraftWorkMode {
+    NativeDefault,
+    NativePlan,
+}
+impl DraftWorkMode {
+    pub(crate) fn label(self) -> &'static str {
+        crate::language::tr(match self {
+            Self::NativeDefault => "默认协作",
+            Self::NativePlan => "计划",
+        })
+    }
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

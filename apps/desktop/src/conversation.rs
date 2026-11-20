@@ -189,11 +189,7 @@ impl HiveApp {
                                 .push(text.clone());
                         }
                         this.schedule_draft_save(cx);
-                        let inherited_unavailable = showing_source && this.model.is_some()
-                            && this.session.as_ref().is_some_and(|session| session.inherited_draft_model)
-                            && matches!(&error, ErrorNotice::Raw(message) if crate::model_picker::is_unavailable_inherited_model_error(message));
-                        if inherited_unavailable {
-                            this.unavailable_model = this.model.clone();
+                        if showing_source && this.record_unavailable_draft_setting(&error) {
                             this.error = None;
                         } else {
                             this.error = Some(error);

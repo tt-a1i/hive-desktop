@@ -51,6 +51,11 @@ export interface NativeCommand { name: string; description?: string; source: 'ex
 
 export interface ReasoningState { level: string; levels: string[]; description?: string }
 
+export type CodexWorkMode = 'native-default' | 'native-plan';
+export function isCodexWorkMode(value: unknown): value is CodexWorkMode {
+  return value === 'native-default' || value === 'native-plan';
+}
+
 export interface SessionModeState {
   backend: string; selected: string | null; applied: string | null; pendingNextTurn: boolean;
   options: {id: string; label: string; description?: string}[]; description?: string; connectAvailable?: boolean;

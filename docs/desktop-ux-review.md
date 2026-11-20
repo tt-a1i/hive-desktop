@@ -314,8 +314,23 @@ macOS 隔离窗口已经验证，两个项目结果中可直接打开第二个�
 - macOS 在停靠面板打开 600 行文件，用上方向键和鼠标拖动调整列表与预览，固定的左右宽度保持。重启后再次打开同文件，恢复到保存的约 36% 比例。Home 恢复默认比例。在 640×600 窄窗弹层，按下方向键扩大列表，再按 Home 回到精确的原位置。证据在 `.artifacts/file-split-qa`。
 - 269 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建、工作树与桌面视图、Pi 模型、Codex 专项和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
 
+## 2026-11-21 第二十四批
+
+本轮从 Hive Desktop `9e6d723` 开始。参考 T3 Code `2713570`、Cindy `02fb09b`、Beluga `45a484b`。Hive 上游 `main` 为 `18861b8`。
+
+- **后续 Codex 草稿保留协作模式。** 项目根和独立工作树的后续草稿沿用「默认协作」或「计划」。模型和模式各自保存，访问权限由新会话配置决定。首次发送前核对后端公布的选项和实际生效的模式。模式不再可用时保留输入，可单独切回配置默认工作模式。 [T3 Code 新对话沿用模式](https://github.com/pingdotgg/t3code/blob/271357040676ea578f134493169df4b27ee080f6/docs/user/thread-sidebar.md#L8-L13)
+- **从收件箱标题直接打开事项。** 项目收件箱、跨项目收件箱和已处理行使用整块标题与摘要作为打开区域，支持点击和键盘。右侧的暂缓、已读、归档和恢复保持为独立动作。 [Cindy 收件箱行导航](https://github.com/makecindy/cindy/blob/02fb09bf9fbe787ed863bbca285408232589dd49/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L948-L986)
+- **一次折叠文件树的目录。** 文件树可见时可折叠当前项目或工作树的全部文件夹。选中的隐藏文件回到可见的祖先，焦点返回文件树。已打开的预览和阅读位置保留，延迟结果可以更新缓存，同时保持目录折叠。 [Beluga 全部折叠入口](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L320-L330)
+
+- 受控 Codex 运行时验证项目根的新草稿用「计划」、工作树的新草稿用「默认协作」启动。确认首轮本机协议使用准确模式，目录缺失和回包不匹配时保留输入。另验证模式和模型独立恢复，Claude 权限模式沿用原配置逻辑。证据在 `.artifacts/batch24-fresh-draft-work-mode.log` 和 `.artifacts/batch24-session-modes.log`。
+- macOS 从独立工作树以「计划」发送并打开新草稿。冷开显示原模式和输入。隔离测试后台退出后从界面重新连接，同一个后继草稿仍可发送。受控对端先确认计划设置，再用计划模式接收首轮输入。首次退出的触发原因未确认。证据在 `.artifacts/fresh-mode-qa`。
+- macOS 从受控对端的可用列表移除「计划」后，后继输入留在草稿中，发送未到达对端。输入区直接显示「使用配置默认工作模式」，点击后原文保留。证据在 `.artifacts/fresh-mode-missing-repeat-qa`。
+- macOS 在跨项目收件箱从左侧打开两个同名会话中的 Beacon，并打开 Beacon 的确切派单和问题。点击 Atlas 同名会话右侧的已读动作没有发出打开会话请求。在项目收件箱聚焦左区后按 Return，打开准确的 Atlas 会话。从已处理的左侧标题查看会话后，磁盘记录仍为归档。证据在 `.artifacts/inbox-row-activation-qa`。
+- macOS 在工作树 A 同时展开 `docs/specs` 和 `src/components`，打开 600 行文件预览后批量折叠。子行消失，预览和分隔条位置保持。单独重新打开 `docs` 时，`specs` 仍折叠。另在工作树 B 展开 `docs`，切到 A 全部折叠后再返回 B，B 的 `specs` 行仍可见。证据在 `.artifacts/collapse-tree-qa`。
+- 271 项 Rust 测试通过，1 项原有忽略。TypeScript、运行时构建、工作树、会话模式、桌面视图和 Windows x64 MSVC 交叉检查通过。Windows 原生交互待实机复验。
+
 ## 接下来优先检查
 
-- **后续草稿保留受支持的会话模式。** Hive 已保存源会话的模式，但后台发送后的草稿只继承模型。用同一配置下两个已公布的模式验收，验证默认与手动选择的差异、首次实际发送以及模式失效或后端不支持时的处理。 [T3 Code 新对话沿用模式](https://github.com/pingdotgg/t3code/blob/90c028c6fc4a9ecd3af048cb52432e819af6487c/docs/user/thread-sidebar.md#L6-L13)
-- **从收件箱标题直接打开事项。** 当前用户需要点右侧窄按钮。用两个项目的同名会话、一个派单和一条已处理记录验收标题点击和键盘操作，再确认右侧暂缓、已读和恢复各自只执行本来的动作。 [Cindy 收件箱行导航](https://github.com/makecindy/cindy/blob/e0350808b88301fc6355cdb7be731c1dd086ddbd/apps/desktop/src/renderer/features/cc-agent/sidebar/SessionItem.tsx#L946-L984)
-- **一次折叠文件树的目录。** 目前需要逐个折叠。用两个工作树中的同名嵌套目录验收批量折叠只影响当前范围，保留预览和阅读位置，目录回包延迟时也保持折叠。 [Beluga 全部折叠入口](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L320-L330)
+- **后续草稿保留已选模型的推理强度。** Hive 已按模型记录手动选定的档位，后台发送后的新草稿尚未继承。用相同模型的两个强度验收，检查重启与首次实际发送，以及切换模型、档位失效和未设置时的处理。 [T3 Code 模型选项与默认值](https://github.com/pingdotgg/t3code/blob/271357040676ea578f134493169df4b27ee080f6/docs/user/composer.md#L121-L127)
+- **从未读会话返回收件箱时保留附近位置。** Hive 当前只保存第一条可见事项。如果打开该项会使它移出未读列表，返回时就会回顶。用至少 25 条未读跳到列表中段，打开首条可见会话，再检查仍可见的相邻事项是否保留在原屏幕位置。 [Cindy 相邻行补位](https://github.com/makecindy/cindy/blob/02fb09bf9fbe787ed863bbca285408232589dd49/docs/product-rules/task-inbox.md#L47-L51)
+- **从当前文件预览查看 Diff。** 目前入口在文件树改动行，搜索结果和折叠目录后的预览缺少直接操作。用两个工作树里的同名文件验收，确认打开准确的路径、工作树和暂存状态，再用干净文件和窄窗复验。 [Beluga 预览改动入口](https://github.com/beluga-labs/beluga/blob/45a484b616a274a886e55bc28c1879719351a7c1/packages/mac/src/layout/panel/FilesTab.tsx#L90-L113)

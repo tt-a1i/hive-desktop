@@ -963,8 +963,18 @@ impl HiveApp {
                         .aria_label(notice.clone()).text_xs().text_color(Color::Error.get(cx)).child(notice))
                     .child(Button::new("reset-inherited-draft-model")
                         .outline().compact().small().label(tr("使用配置默认模型"))
-                        .disabled(!self.can_reset_inherited_model())
+                        .disabled(!self.can_reset_draft_setting())
                         .on_click(cx.listener(|this, _, _, cx| this.reset_inherited_model(cx)))))
+            })
+            .when_some(self.unavailable_inherited_work_mode(), |surface, mode| {
+                let notice = tr("草稿继承的工作模式 {mode} 暂不可用。").replace("{mode}", mode.label());
+                surface.child(h_flex().flex_wrap().items_center().gap_2().px_1()
+                    .child(div().id("inherited-draft-work-mode-unavailable").role(Role::Alert)
+                        .aria_label(notice.clone()).text_xs().text_color(Color::Error.get(cx)).child(notice))
+                    .child(Button::new("reset-inherited-draft-work-mode")
+                        .outline().compact().small().label(tr("使用配置默认工作模式"))
+                        .disabled(!self.can_reset_draft_setting())
+                        .on_click(cx.listener(|this, _, _, cx| this.reset_inherited_work_mode(cx)))))
             })
             .when(self.current_worktree_released(), |surface| {
                 let notice = tr("此会话已解除共用工作树，历史和草稿仍可查看。");
@@ -990,7 +1000,7 @@ impl HiveApp {
                         surface.child(div().id("read-only-conversation-status").role(Role::Status).aria_label(notice).px_1().text_xs().text_color(Color::Secondary.get(cx)).child(notice))
                     })
                     .when(self.conversation_is_read_only() && !self.current_worktree_released() && self.history_navigation.initialization.is_none() && !self.needs_codex_mode_recovery(), |surface| surface.child(div().px_1().text_xs().text_color(Color::Secondary.get(cx)).child(tr("只读历史不会启动原生成员，原生设置、命令与用量查询已停用。"))))
-                    .when_some(access.identity_error.as_ref().filter(|error| !matches!(error.code.as_str(), "PASSIVE_HANDOFF" | "WORKTREE_RELEASED" | "FRESH_DRAFT_MODEL_UNAVAILABLE")), |surface, error| {
+                    .when_some(access.identity_error.as_ref().filter(|error| !matches!(error.code.as_str(), "PASSIVE_HANDOFF" | "WORKTREE_RELEASED" | "FRESH_DRAFT_MODEL_UNAVAILABLE" | "FRESH_DRAFT_WORK_MODE_UNAVAILABLE")), |surface, error| {
                         let notice = format!("{}: {}", error.code, error.message);
                         surface.child(div().id("conversation-identity-error").role(Role::Alert).aria_label(notice.clone()).px_1().text_xs().text_color(Color::Error.get(cx)).child(notice))
                     })

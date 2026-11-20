@@ -1,4 +1,4 @@
-use super::super::{activity_matches, session_inbox_activity};
+use super::super::{activity_matches, inbox_open_button, session_inbox_activity};
 use super::{ActivityRange, GlobalInbox, RowId, display_project, inbox_status};
 use crate::{
     app::HiveApp,
@@ -390,53 +390,37 @@ impl Completed {
                         .rounded_md()
                         .bg(Color::Inset.get(cx))
                         .child(
-                            div()
-                                .min_w_0()
-                                .flex_1()
-                                .text_xs()
-                                .truncate()
-                                .child(subject.clone()),
+                            inbox_open_button(
+                                "open-inbox-completed-session",
+                                busy,
+                                cx.listener(move |this, _, window, cx| {
+                                    this.open_completed(&open_workspace, &open_id, window, cx)
+                                }),
+                            )
+                            .flex_1()
+                            .accessibility_label(format!("{} · {subject}", tr("打开会话")))
+                            .child(
+                                div()
+                                    .w_full()
+                                    .min_w_0()
+                                    .text_xs()
+                                    .truncate()
+                                    .child(subject.clone()),
+                            ),
                         )
                         .child(
-                            h_flex()
-                                .flex_wrap()
-                                .justify_end()
-                                .gap_1()
-                                .child(
-                                    Button::new("restore-inbox-completed-session")
-                                        .ghost()
-                                        .compact()
-                                        .xsmall()
-                                        .disabled(busy)
-                                        .label(tr("恢复会话"))
-                                        .accessibility_label(format!(
-                                            "{} · {subject}",
-                                            tr("恢复会话")
-                                        ))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.restore_completed(&workspace, &id, window, cx)
-                                        })),
-                                )
-                                .child(
-                                    Button::new("open-inbox-completed-session")
-                                        .ghost()
-                                        .compact()
-                                        .xsmall()
-                                        .disabled(busy)
-                                        .label(tr("打开会话"))
-                                        .accessibility_label(format!(
-                                            "{} · {subject}",
-                                            tr("打开会话")
-                                        ))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.open_completed(
-                                                &open_workspace,
-                                                &open_id,
-                                                window,
-                                                cx,
-                                            )
-                                        })),
-                                ),
+                            h_flex().flex_wrap().justify_end().gap_1().child(
+                                Button::new("restore-inbox-completed-session")
+                                    .ghost()
+                                    .compact()
+                                    .xsmall()
+                                    .disabled(busy)
+                                    .label(tr("恢复会话"))
+                                    .accessibility_label(format!("{} · {subject}", tr("恢复会话")))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.restore_completed(&workspace, &id, window, cx)
+                                    })),
+                            ),
                         ),
                 )
                 .into_any_element(),

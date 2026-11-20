@@ -26,10 +26,16 @@ const validApproval = (value: unknown) => {
 const unsupported = (error: unknown) => error instanceof CodexRpcError && error.code === -32601;
 
 export class CodexSavedModeError extends Error {
-  constructor(readonly code: 'CODEX_SAVED_MODE_UNAVAILABLE' | 'CODEX_PERMISSION_ACK_UNCONFIRMED', message: string) {
-    super(message);
+  constructor(readonly code: 'CODEX_SAVED_MODE_UNAVAILABLE' | 'CODEX_PERMISSION_ACK_UNCONFIRMED', message: string,
+    readonly axis?: 'mode' | 'permissionMode', options?: ErrorOptions) {
+    super(message, options);
   }
 }
+
+export type CodexCollaborationMode = {
+  mode: string;
+  settings: {model: string; reasoning_effort: string | null; developer_instructions: null};
+};
 
 type RecoveryAxis = {saved: string; options: SessionModeState['options']; canInherit: boolean};
 export type CodexModeRecoveryChoices = {mode?: RecoveryAxis; permissionMode?: RecoveryAxis};
@@ -112,11 +118,11 @@ export class CodexModes {
     if (this.collaboration && !this.collaborationOptions.includes(this.collaboration))
       throw new CodexSavedModeError('CODEX_SAVED_MODE_UNAVAILABLE', this.collaborationLoaded
         ? `Unsupported Codex collaboration mode: ${this.collaboration}`
-        : 'Could not verify the saved Codex collaboration mode.');
+        : 'Could not verify the saved Codex collaboration mode.', 'mode');
     if (this.permission && !this.permissionOptions.includes(this.permission))
       throw new CodexSavedModeError('CODEX_SAVED_MODE_UNAVAILABLE', this.permissionsLoaded
         ? `Unsupported Codex permission mode: ${this.permission}`
-        : 'Could not verify the saved Codex permission mode.');
+        : 'Could not verify the saved Codex permission mode.', 'permissionMode');
   }
   async recoveryChoices(): Promise<CodexModeRecoveryChoices> {
     await this.load();
@@ -145,13 +151,19 @@ export class CodexModes {
     // can still fill in its network access or writable roots until turn/start.
     this.appliedPermission = Object.entries(policies).find(([, policy]) =>
       approvalPolicy === policy.approvalPolicy && isDeepStrictEqual(sandbox, policy.sandboxPolicy))?.[0] ?? null;
-    const mode = collaborationMode?.mode;
+    this.confirmAppliedCollaboration(collaborationMode?.mode);
+  }
+  confirmAppliedCollaboration(mode: unknown) {
     this.appliedCollaboration = mode === 'default' || mode === 'plan' ? `native-${mode}` : null;
+  }
+  collaborationParams(model: string, effort: string | null): CodexCollaborationMode | undefined {
+    if (this.collaboration) return {mode: this.collaboration.slice(7), settings: {model, reasoning_effort: effort, developer_instructions: null}};
   }
   turnParams(model: string, effort: string | null) {
     const p = this.permission && policies[this.permission];
     const policy = p ? { approvalPolicy: p.approvalPolicy, sandboxPolicy: p.sandboxPolicy } : undefined;
-    return { ...policy, ...(this.collaboration && { collaborationMode: { mode: this.collaboration.slice(7), settings: { model, reasoning_effort: effort, developer_instructions: null } } }) };
+    const collaborationMode = this.collaborationParams(model, effort);
+    return { ...policy, ...(collaborationMode && {collaborationMode}) };
   }
   needsReasoning() { return this.collaboration !== null; }
   accepted() {

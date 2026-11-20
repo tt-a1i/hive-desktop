@@ -39,7 +39,7 @@ import { type CodexSessionHandle } from './agents/codex.js';
 import { CodexModes, CodexSavedModeError, type CodexModeReplacement } from './agents/codex-modes.js';
 import { CodexTransport } from './agents/codex-transport.js';
 import { type ExternalPiSessionHandle } from './agents/external-pi.js';
-import type { PiEvent, PiSessionHandle } from './agents/types.js';
+import { isCodexWorkMode, type PiEvent, type PiSessionHandle } from './agents/types.js';
 import { ChatIndex, SessionIdentityError, assertWorktreeUse, canStartFreshWorktreeDraft, comparePinnedSessions, declaredExecutionPath, isUnsetPiModel, worktreeDraftAvailability, type ChatRecord, type ChatBackend, type PinnedSessionRef } from './chat-index.js';
 import { createScratchConversation, isScratchWorkspace, validateScratchConversation } from './scratch-workspace.js';
 import { ScratchProjectLinks, type ScratchProjectRequest } from './scratch-project-links.js';
@@ -159,8 +159,16 @@ function isVisibleInboxReply(message: unknown): boolean {
 }
 type SessionSnapshotError = SessionIdentityError | DispatchOriginError | WorktreeInitializationError | HandoffError | GitWorktreeError | CodexSavedModeError;
 const inheritedModelUnavailable = '继承的模型无法使用。请选择其他模型，或修复 Agent 配置后重试。';
+const inheritedWorkModeUnavailable = '继承的工作模式无法使用。请选择其他模式，或修复 Agent 配置后重试。';
 function inheritedModelFrom(backend: ChatBackend, model: ChatRecord['model']): Pick<ChatRecord, 'model' | 'inheritedDraftModel'> {
   return backend !== 'acp' && model && !(backend === 'pi' && isUnsetPiModel(model)) ? {model: {...model}, inheritedDraftModel: true} : {};
+}
+function inheritedWorkModeFrom(backend: ChatBackend, mode?: string): Pick<ChatRecord, 'nativeMode' | 'inheritedDraftWorkMode'> {
+  // Claude's exposed modes are permissions. ACP and Pi offer no separate
+  // persisted collaboration setting that a fresh draft can safely inherit.
+  if (backend !== 'codex' || mode === undefined) return {};
+  if (!isCodexWorkMode(mode)) throw new SessionIdentityError('FRESH_DRAFT_WORK_MODE_UNAVAILABLE', inheritedWorkModeUnavailable);
+  return {nativeMode: {backend, mode}, inheritedDraftWorkMode: mode};
 }
 function isSessionSnapshotError(error: unknown): error is SessionSnapshotError {
   return error instanceof SessionIdentityError || error instanceof DispatchOriginError ||
@@ -490,6 +498,8 @@ export class Chats implements StructuredSessionPort {
       ...(record.model && {model: {...record.model}}),
       ...(record.inheritedDraftModel && {inheritedDraftModel: true as const}),
       ...(record.unavailableDraftModel && {unavailableModel: record.model}),
+      ...(record.inheritedDraftWorkMode && {inheritedDraftWorkMode: record.inheritedDraftWorkMode}),
+      ...(record.unavailableWorkMode && {unavailableWorkMode: record.unavailableWorkMode}),
       ...(record.worktreeReleased && {worktreeReleased: true as const}),
       ...(record.scratch && {scratch: true as const}), executionPath,
       ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.handoff&&{handoff:{...record.handoff}}), identityState: record.identityState ?? 'unknown'};
@@ -847,7 +857,7 @@ export class Chats implements StructuredSessionPort {
         ...(creation?.prReview && {prReview: creation.prReview, customTitle: true}),
         ...(creation?.profile && {profile: creation.profile}), ...(creation?.legacyConfiguration && {legacyConfiguration: true}),
         ...(creation?.freshDraftSourceSessionId && {deferFirstConnection: true as const, freshDraftSourceSessionId: creation.freshDraftSourceSessionId,
-          ...inheritedModelFrom(creation.backend, creation.model)}),
+          ...inheritedModelFrom(creation.backend, creation.model), ...inheritedWorkModeFrom(creation.backend, creation.freshDraftWorkMode)}),
         identityState: creation?.identityState ?? 'new', ...(creation?.originAgentId && {originAgentId: creation.originAgentId}), ...(creation?.model && {model: creation.model}),
         execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
       this.assertWorkspaceAvailable(workspaceId);
@@ -1802,6 +1812,7 @@ export class Chats implements StructuredSessionPort {
         ...(record.codexThreadId && { threadId: record.codexThreadId }), ...(record.nativeImport && { expectedTranscriptPath: record.nativeImport.path }), ...((record.lineage||record.rewound||record.rewindOperationId||deferCodexBrowseGoals)&&{deferGoalContinuation:true}), ...(record.nativeMode?.permissionMode && {permissionMode: record.nativeMode.permissionMode}), ...(record.nativeMode?.mode && {mode: record.nativeMode.mode}), ...(model && { model }), onEvent,
         onUnexpectedExit,
         ...(inheritedModel && {verifyInitialModel: true}),
+        ...(record.inheritedDraftWorkMode && {verifyInitialWorkMode: true}),
         onMaterialized: threadId => this.index.save({ ...this.index.get(record.id), codexThreadId: threadId }),
         customTools: [{ name: command.name, description: command.description, parameters: command.parameters,
           execute: (id, args, signal) => command.execute(id, args as { args: string[]; stdin?: string }, signal) }],
@@ -1819,6 +1830,14 @@ export class Chats implements StructuredSessionPort {
         ...(this.piVault && {vault: this.piVault}),
         ...(sessionFile && { sessionFile }), ...(model && { model }),
         customTools: [createTeamTool(binding)], onEvent, onUnexpectedExit }})}).catch(error => {
+      if (error instanceof CodexSavedModeError) {
+        if (!record.inheritedDraftWorkMode || error.axis !== 'mode') throw error;
+        this.closeAbort.signal.throwIfAborted();
+        const current = this.index.get(record.id);
+        if (current.inheritedDraftWorkMode && !current.unavailableWorkMode)
+          this.index.save({...current, unavailableWorkMode: current.inheritedDraftWorkMode});
+        throw new SessionIdentityError('FRESH_DRAFT_WORK_MODE_UNAVAILABLE', inheritedWorkModeUnavailable, {cause: error});
+      }
       throw inheritedModel ? failedInheritedModel(error) : error;
     });
     try {
@@ -1878,6 +1897,7 @@ export class Chats implements StructuredSessionPort {
       const model = handle.currentModel();
       const ready = this.index.get(record.id);
       delete ready.unavailableDraftModel;
+      delete ready.unavailableWorkMode;
       this.index.save({ ...ready, ...(record.backend === 'codex'
         ? (handle as CodexSessionHandle).materialized ? { codexThreadId: handle.sessionId } : {}
         : record.backend === 'claude' ? { sessionFile: null, nativeclaudeSessionId: handle.sessionId }
@@ -2594,6 +2614,7 @@ export class Chats implements StructuredSessionPort {
       const start = options.worktreeStart;
       const creation: WorktreeCreation = {version: setup ? 2 : 1, ...(setup && {setup}), workspaceId: record.workspaceId, backend: record.backend, ...(record.profile && {profile: record.profile}), ...(record.legacyConfiguration && {legacyConfiguration: true as const}),
         ...(record.freshDraftSourceSessionId && {freshDraftSourceSessionId: record.freshDraftSourceSessionId}),
+        ...(record.inheritedDraftWorkMode && {freshDraftWorkMode: record.inheritedDraftWorkMode}),
         identityState: record.originAgentId ? 'known' : 'new', ...(record.prReview && {prReview: record.prReview}), ...(record.originAgentId && {originAgentId: record.originAgentId}), ...(record.model && {model: record.model})};
       const owned = await createManagedWorktree({projectRoot: workspace.path, dataRoot: this.dataDir, chatId: record.id, creation,
         ...(options.branch !== undefined && {branch: options.branch}),
@@ -2621,7 +2642,7 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       if (this.closing) throw new Error('Chat runtime is closing');
       const selected = await this.selectedProfile(backend, options.profile);
-      let inheritance: ReturnType<typeof inheritedModelFrom> = {};
+      let inheritance: ReturnType<typeof inheritedModelFrom> & ReturnType<typeof inheritedWorkModeFrom> = {};
       if (options.sourceSessionId !== undefined) {
         const source = this.index.peek(options.sourceSessionId);
         const lead = `${workspaceId}:orchestrator`;
@@ -2631,7 +2652,7 @@ export class Chats implements StructuredSessionPort {
           || source.execution || source.scratch || (source.originAgentId && source.originAgentId !== lead)
           || (source.agentId && source.agentId !== lead) || await isScratchWorkspace(this.dataDir, workspace.path))
           throw new SessionIdentityError('FRESH_DRAFT_SOURCE_INVALID', '请选择当前项目中使用同一后端和配置的会话来创建后续草稿。');
-        inheritance = inheritedModelFrom(backend, source.model);
+        inheritance = {...inheritedModelFrom(backend, source.model), ...inheritedWorkModeFrom(backend, source.nativeMode?.mode)};
       }
       return this.saveNewRecord(workspace, {
         id: randomUUID(), workspaceId, backend, profile: selected.ref, title: '新会话', sessionFile: null, updatedAt: Date.now(), identityState: 'new',
@@ -2661,7 +2682,7 @@ export class Chats implements StructuredSessionPort {
         if (existing) return this.publicSession(existing, await this.executionPath(existing, workspace));
         if (owned.projectRoot !== await realpath(workspace.path)) throw conflict();
         const recovered = await recoverManagedWorktree(this.dataDir, owned);
-        const record: ChatRecord = {...this.freshWorktreeDraft(requestId, workspaceId, creation.backend, creation.profile, sourceSessionId, creation.model),
+        const record: ChatRecord = {...this.freshWorktreeDraft(requestId, workspaceId, creation.backend, creation.profile, sourceSessionId, creation.model, creation.freshDraftWorkMode),
           execution: {kind: 'worktree', path: recovered.executionPath, branch: recovered.branch}};
         this.assertWorkspaceAvailable(workspaceId);
         this.closeAbort.signal.throwIfAborted();
@@ -2678,16 +2699,17 @@ export class Chats implements StructuredSessionPort {
       this.assertWorkspaceAvailable(workspaceId);
       this.closeAbort.signal.throwIfAborted();
       if (this.index.peek(requestId)) throw conflict();
-      const record = await this.saveNewRecord(workspace, this.freshWorktreeDraft(requestId, workspaceId, source.backend, selected.ref, source.id, source.model), {
+      const record = await this.saveNewRecord(workspace, this.freshWorktreeDraft(requestId, workspaceId, source.backend, selected.ref, source.id, source.model, source.nativeMode?.mode), {
         isolation: 'worktree', worktreeStart: {oid: owned.baseOid, commonDir: owned.repoCommonDir},
       });
       return this.publicSession(record, record.execution!.path);
     });
   }
 
-  private freshWorktreeDraft(id: string, workspaceId: string, backend: ChatBackend, profile: AgentProfileRef, freshDraftSourceSessionId: string, model?: ChatRecord['model']): ChatRecord {
+  private freshWorktreeDraft(id: string, workspaceId: string, backend: ChatBackend, profile: AgentProfileRef, freshDraftSourceSessionId: string, model?: ChatRecord['model'], mode?: string): ChatRecord {
     return {id, workspaceId, backend, profile, title: '新会话', sessionFile: null,
-      updatedAt: Date.now(), identityState: 'new', deferFirstConnection: true, freshDraftSourceSessionId, ...inheritedModelFrom(backend, model)};
+      updatedAt: Date.now(), identityState: 'new', deferFirstConnection: true, freshDraftSourceSessionId,
+      ...inheritedModelFrom(backend, model), ...inheritedWorkModeFrom(backend, mode)};
   }
 
   resetFreshDraftModel(workspaceId: string, id: string, expectedProvider: string, expectedModelId: string) {
@@ -2717,6 +2739,29 @@ export class Chats implements StructuredSessionPort {
       delete record.externalPiSessionId;
       delete record.codexThreadId;
       delete record.nativeclaudeSessionId;
+      this.index.save(record);
+      return this.publicSession(this.index.get(id), path);
+    });
+  }
+  resetFreshDraftWorkMode(workspaceId: string, id: string, expectedMode: string) {
+    return this.withWorkspace(workspaceId, async () => {
+      this.assertWorkspaceAvailable(workspaceId);
+      this.closeAbort.signal.throwIfAborted();
+      const getDraft = () => {
+        const record = this.index.peek(id);
+        if (record?.workspaceId !== workspaceId || !record.inheritedDraftWorkMode || record.inheritedDraftWorkMode !== expectedMode
+          || !this.isUnstartedDraft(record))
+          throw new SessionIdentityError('FRESH_DRAFT_WORK_MODE_CHANGED', '此草稿的工作模式或会话状态已变化，请重新打开草稿后重试。');
+        return record;
+      };
+      getDraft();
+      const path = await this.executionDirectory(workspaceId, id);
+      this.closeAbort.signal.throwIfAborted();
+      const record = getDraft();
+      delete record.inheritedDraftWorkMode;
+      delete record.unavailableWorkMode;
+      if (record.nativeMode?.permissionMode) delete record.nativeMode.mode;
+      else delete record.nativeMode;
       this.index.save(record);
       return this.publicSession(this.index.get(id), path);
     });
@@ -3027,7 +3072,7 @@ export class Chats implements StructuredSessionPort {
       && !record.agentId && !record.originAgentId && !record.nativeImport && !record.handoff && !record.lineage
       // The user can connect to inspect an inherited selection before sending.
       // Such an unbound conversation may have a native ID but still has no turns.
-      && (record.inheritedDraftModel || (!record.sessionFile && !record.piSessionId && !record.externalPiSessionId
+      && (record.inheritedDraftModel || record.inheritedDraftWorkMode || (!record.sessionFile && !record.piSessionId && !record.externalPiSessionId
         && !record.codexThreadId && !record.nativeclaudeSessionId && !record.acpSessionId))
       && this.canBrowseSavedHistory(record);
   }
@@ -3128,7 +3173,8 @@ export class Chats implements StructuredSessionPort {
       const live = this.live.get(id);
       if (live) await this.stopLive(id, live);
       const current=this.index.get(id);
-      if (error instanceof SessionIdentityError && error.code === 'FRESH_DRAFT_MODEL_UNAVAILABLE' && this.isUnstartedDraft(current)) {
+      if (error instanceof SessionIdentityError && (error.code === 'FRESH_DRAFT_MODEL_UNAVAILABLE' || error.code === 'FRESH_DRAFT_WORK_MODE_UNAVAILABLE')
+        && this.isUnstartedDraft(current)) {
         return {...await this.readOnlySnapshot(current, error, {includeHistory: false}), readOnly: false, passive: true, savedHistoryPassive: true};
       }
       return {...await this.readOnlySnapshot(current, error, {...(historyOptions&&{historyOptions})}),
@@ -3352,7 +3398,7 @@ export class Chats implements StructuredSessionPort {
   }
   private async activateOnce(id: string, forUserInput = false, forSettings = false) {
     const {record, agentId, previous} = await this.activationAvailable(id);
-    if (record.inheritedDraftModel) await this.require(id);
+    if (record.inheritedDraftModel || record.inheritedDraftWorkMode) await this.require(id);
     const active = this.runtime.getActiveRunByAgentId(record.workspaceId, agentId);
     if (previous?.id !== id && active) {
       if (forSettings) throw new Error('Stop the member’s current conversation before connecting another for ACP settings');
@@ -4004,11 +4050,13 @@ export class Chats implements StructuredSessionPort {
             throw new Error('Select an available replacement for every unavailable saved mode');
           }
         }
-        if (nativeMode.mode || nativeMode.permissionMode) this.index.save({...current, nativeMode});
-        else {
-          const {nativeMode: _, ...rest} = current;
-          this.index.save(rest);
+        if (replacement.choices.mode !== undefined) {
+          delete current.inheritedDraftWorkMode;
+          delete current.unavailableWorkMode;
         }
+        if (nativeMode.mode || nativeMode.permissionMode) current.nativeMode = nativeMode;
+        else delete current.nativeMode;
+        this.index.save(current);
         return {ok: true};
       } finally {
         this.probingCodexModes.delete(id);
@@ -4060,8 +4108,13 @@ export class Chats implements StructuredSessionPort {
           if (state.selected !== selected || (state.applied !== selected && !state.pendingNextTurn))
             throw new Error('Native session did not confirm the requested mode');
           if (record.backend !== 'codex' && record.backend !== 'claude') throw new Error('Unsupported native mode backend');
-          const nativeMode: NonNullable<ChatRecord['nativeMode']> = {...this.index.get(id).nativeMode, backend: record.backend, [permission ? 'permissionMode' : 'mode']: selected as string};
-          this.index.save({...this.index.get(id), nativeMode});
+          const current = this.index.get(id);
+          current.nativeMode = {...current.nativeMode, backend: record.backend, [permission ? 'permissionMode' : 'mode']: selected as string};
+          if (!permission) {
+            delete current.inheritedDraftWorkMode;
+            delete current.unavailableWorkMode;
+          }
+          this.index.save(current);
           return state;
         });
       } finally {

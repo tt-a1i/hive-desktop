@@ -22,6 +22,7 @@ mod focus_scroll;
 mod conversation_list;
 mod conversation_reference;
 mod drafts;
+mod draft_settings;
 mod draft_stash;
 mod draft_copy;
 mod diagnostics;

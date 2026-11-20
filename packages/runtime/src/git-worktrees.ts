@@ -1,5 +1,6 @@
 import { isGithubPrReviewSeed, type GithubPrReviewSeed } from './github-pr-review.js';
 import type { AgentProfileRef } from './agent-profiles.js';
+import { isCodexWorkMode, type CodexWorkMode } from './agents/types.js';
 import { readGitRemote, remoteBranchOid, remoteVersion, type VerifiedGitPush } from './git-remotes.js';
 import { getGitWorkspaceStatus } from './git-workspace.js';
 import { validateInitializationPlan, type InitializationPlan } from './project-worktree-initialization.js';
@@ -40,6 +41,7 @@ export interface WorktreeCreation {
   handoffOperationId?: string;
   /** Source conversation retained for idempotent successor creation. */
   freshDraftSourceSessionId?: string;
+  freshDraftWorkMode?: CodexWorkMode;
 }
 type RemovalIntent = {headOid: string; repositoryIdentity: string};
 type Intent = { version?: 2 | 3; state: 'creating' | 'ready'; record: ManagedWorktree; creation?: WorktreeCreation; forkPublished?: boolean; handoffPublished?: boolean; removal?: RemovalIntent; removed?: true };
@@ -77,6 +79,8 @@ function validateCreation(creation: WorktreeCreation | undefined): void {
     || !chatIdValid(creation.freshDraftSourceSessionId) || creation.identityState !== 'new' || !creation.profile
     || creation.prReview || creation.forkOperationId || creation.handoffOperationId))
     throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fresh worktree draft provenance');
+  if (creation.freshDraftWorkMode !== undefined && (!creation.freshDraftSourceSessionId || creation.backend !== 'codex' || !isCodexWorkMode(creation.freshDraftWorkMode)))
+    throw new GitWorktreeError('IDENTITY_MISMATCH', 'Invalid fresh worktree draft collaboration mode');
   if (creation.version === 2) validateInitializationPlan(creation.setup);
   else if (creation.setup !== undefined) throw new GitWorktreeError('IDENTITY_MISMATCH', 'Legacy intent cannot carry setup');
 }

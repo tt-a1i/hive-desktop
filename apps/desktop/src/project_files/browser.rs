@@ -753,6 +753,10 @@ impl FileTreeExpansions {
     fn expand(&mut self, scope: TreeScope, path: String) {
         self.paths.entry(scope).or_default().insert(path);
     }
+
+    fn collapse_all(&mut self, scope: &TreeScope) -> bool {
+        self.paths.remove(scope).is_some()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -856,6 +860,22 @@ fn visible_tree<'a>(
     let mut rows = Vec::new();
     append(directories, expanded, "", 0, &mut rows);
     rows
+}
+
+fn collapsed_tree_selection(
+    directories: &HashMap<String, Directory>,
+    selected: &TreeItem,
+) -> Option<(usize, TreeItem)> {
+    let item = match selected {
+        TreeItem::Entry(path) | TreeItem::LoadMore(path) if !path.is_empty() => {
+            TreeItem::Entry(path.split('/').next()?.to_owned())
+        }
+        _ => selected.clone(),
+    };
+    visible_tree(directories, None)
+        .iter()
+        .position(|row| row.matches_item(&item))
+        .map(|index| (index, item))
 }
 
 fn unrequested_expansions(
@@ -1598,6 +1618,41 @@ impl FileBrowser {
             .read(cx)
             .paths
             .get(&self.scope.as_ref()?.tree)
+    }
+
+    fn collapse_all_folders(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.current(cx) || !self.query.read(cx).value().trim().is_empty() {
+            return;
+        }
+        let scope = &self.scope.as_ref().expect("current file scope").tree;
+        let collapsed = self.expansions.update(cx, |expansions, cx| {
+            let collapsed = expansions.collapse_all(scope);
+            if collapsed {
+                cx.notify();
+            }
+            collapsed
+        });
+        if !collapsed {
+            return;
+        }
+        self.cancel_tree_preview(cx);
+        self.reveal = None;
+        self.reveal_missing = None;
+        let selection = self
+            .tree_selected
+            .as_ref()
+            .and_then(|item| collapsed_tree_selection(&self.directories, item));
+        self.tree_selected = selection.map(|(index, item)| {
+            self.tree_scroll.scroll_to_item(index);
+            item
+        });
+        self.tree_focus.focus(window, cx);
+        cx.notify();
     }
 
     fn directory_expanded(&self, path: &str, cx: &App) -> bool {
@@ -4145,6 +4200,20 @@ impl Render for FileBrowser {
                                 .on_click(cx.listener(Self::toggle_search_regex)),
                         ),
                 )
+                .when(!searching, |view| {
+                    view.child(
+                        Button::new("file-tree-collapse-all")
+                            .custom(palette::quiet_icon_variant(cx))
+                            .compact()
+                            .xsmall()
+                            .size(px(26.))
+                            .icon(Glyph::ChevronUp)
+                            .tooltip(tr("折叠所有文件夹"))
+                            .accessibility_label(tr("折叠所有文件夹"))
+                            .disabled(self.expanded_paths(cx).is_none_or(HashSet::is_empty))
+                            .on_click(cx.listener(Self::collapse_all_folders)),
+                    )
+                })
                 .when(
                     !matches!(self.git_status, TreeGitStatus::NotRepository),
                     |view| {
@@ -4324,6 +4393,79 @@ mod tests {
                 .paths
                 .contains_key(&key("w", Some(&other_unknown)))
         );
+    }
+
+    #[test]
+    fn collapse_all_clears_only_the_current_scope_and_keeps_the_cursor_visible() {
+        let scope = |directory: &str| TreeScope {
+            workspace: "workspace".into(),
+            source: TreeSource::Directory(directory.into()),
+        };
+        let alpha = scope("/worktree/alpha");
+        let beta = scope("/worktree/beta");
+        let mut expansions = FileTreeExpansions::default();
+        for path in ["docs", "docs/specs", "src"] {
+            expansions.expand(alpha.clone(), path.into());
+        }
+        expansions.expand(beta.clone(), "docs".into());
+        assert!(expansions.collapse_all(&alpha));
+        assert!(!expansions.collapse_all(&alpha));
+        assert_eq!(
+            expansions.paths.get(&beta),
+            Some(&HashSet::from(["docs".into()]))
+        );
+
+        let entry = |path: &str, directory| DirectoryEntry {
+            path: path.into(),
+            directory,
+        };
+        let mut directories = HashMap::from([(
+            String::new(),
+            Directory {
+                entries: vec![entry("docs", true), entry("README.md", false)],
+                next_offset: 2,
+                total: 3,
+                ..Directory::default()
+            },
+        )]);
+        // Pages that arrive after collapse can populate the cache without
+        // making descendants visible or reselecting their old retry row.
+        directories.insert(
+            "docs".into(),
+            Directory {
+                entries: vec![entry("docs/specs", true)],
+                ..Directory::default()
+            },
+        );
+        assert_eq!(
+            visible_tree(&directories, expansions.paths.get(&alpha))
+                .iter()
+                .filter_map(TreeRow::item)
+                .collect::<Vec<_>>(),
+            [
+                TreeItem::Entry("docs".into()),
+                TreeItem::Entry("README.md".into()),
+                TreeItem::LoadMore(String::new())
+            ]
+        );
+        let selection = |item| super::collapsed_tree_selection(&directories, &item);
+        assert_eq!(
+            selection(TreeItem::Entry("docs/specs/note.md".into())),
+            Some((0, TreeItem::Entry("docs".into())))
+        );
+        assert_eq!(
+            selection(TreeItem::LoadMore("docs/specs".into())),
+            Some((0, TreeItem::Entry("docs".into())))
+        );
+        assert_eq!(
+            selection(TreeItem::Entry("README.md".into())),
+            Some((1, TreeItem::Entry("README.md".into())))
+        );
+        assert_eq!(
+            selection(TreeItem::LoadMore(String::new())),
+            Some((2, TreeItem::LoadMore(String::new())))
+        );
+        assert_eq!(selection(TreeItem::Entry("gone/notes.md".into())), None);
     }
 
     #[test]

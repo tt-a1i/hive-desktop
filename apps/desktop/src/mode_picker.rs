@@ -411,6 +411,25 @@ impl HiveApp {
             || self.conversation_is_read_only()
             || blocked;
         let mode_pill = self.render_composer_mode_pill(false, disabled, cx).or_else(|| {
+            session.inherited_draft_work_mode.map(|mode| {
+                let status = format!("{} · {} · {}", tr("会话模式"), tr("下回合使用"), mode.label());
+                Button::new("inherited-draft-work-mode")
+                    .custom(crate::palette::quiet_icon_variant(cx))
+                    .compact()
+                    .xsmall()
+                    .h(px(22.))
+                    .rounded_md()
+                    .icon(Glyph::Sparkles)
+                    .label(mode.label())
+                    .tooltip(status.clone())
+                    .accessibility_label(status)
+                    .disabled(disabled || self.unavailable_inherited_work_mode().is_some())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.connect_saved_session(crate::sessions::NativeSessionPanel::Models, cx);
+                    }))
+                    .into_any_element()
+            })
+        }).or_else(|| {
             self.mode_picker.mode.state.as_ref().is_some_and(|mode| mode.connect_available).then(|| {
                 Button::new("composer-connect-acp-modes").compact().xsmall()
                     .label(tr("连接 ACP 以设置模式"))

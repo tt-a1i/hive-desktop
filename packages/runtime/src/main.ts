@@ -671,6 +671,9 @@ async function dispatch(requestId: number | string, method: string, params: Reco
     case 'chat.resetFreshDraftModel':
       exact(params, ['workspaceId', 'sessionId', 'expectedProvider', 'expectedModelId']);
       return chats.resetFreshDraftModel(text(params, 'workspaceId'), text(params, 'sessionId'), text(params, 'expectedProvider'), text(params, 'expectedModelId'));
+    case 'chat.resetFreshDraftWorkMode':
+      exact(params, ['workspaceId', 'sessionId', 'expectedMode']);
+      return chats.resetFreshDraftWorkMode(text(params, 'workspaceId'), text(params, 'sessionId'), text(params, 'expectedMode'));
     case 'chat.pin': {
       const session = chats.setPinned(text(params, 'sessionId'), params.pinned);
       return { session, sessions: chats.list(session.workspaceId) };

@@ -8,7 +8,7 @@ import { CodexTransport, CodexRpcError, type CodexServerRequest } from './codex-
 import { updateCodexSettings } from './codex-settings.js';
 import { mkdirSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
-import { CodexModes, type CodexThreadModeReceipt } from './codex-modes.js';
+import { CodexModes, CodexSavedModeError, type CodexThreadModeReceipt } from './codex-modes.js';
 import { CodexInteractions } from './codex-interactions.js';
 import { CodexProjection } from './codex-projection.js';
 import { CodexEvents } from './codex-events.js';
@@ -35,6 +35,7 @@ export interface CodexSessionOptions {
   signal?: AbortSignal;
   model?: { provider: string; id: string };
   verifyInitialModel?: true;
+  verifyInitialWorkMode?: true;
   mode?: string;
   permissionMode?: string;
   customTools?: CodexTool[];
@@ -54,7 +55,7 @@ export interface CodexSessionHandle extends PiSessionHandle {
   dispose(): Promise<void>;
 }
 type Model = { id: string; model: string; displayName: string; hidden: boolean; supportedReasoningEfforts?: {reasoningEffort:string;description:string}[] };
-type ThreadLaunchReceipt = CodexThreadResponse & CodexThreadModeReceipt;
+type ThreadLaunchReceipt = CodexThreadResponse & CodexThreadModeReceipt & {reasoningEffort?: string | null};
 type InFlightDelivery = { id: string; text: string; presentation: DeliveryPresentation; itemId?: string; accepted?: boolean };
 type Run = { nativeUserItems: Map<string,string|undefined>; appended: InFlightDelivery[]; requests: Set<Promise<unknown>>; tools: Set<Promise<unknown>>; nativeTools: Map<string, { done: Promise<void>; complete(): void }>; interrupting?: Promise<void>; terminalComplete: boolean; turnId?: string; cancelled: boolean; controller: AbortController; delivery?: InFlightDelivery;
   terminal: Promise<CodexTurn>; resolve: (turn: CodexTurn) => void; reject: (error: Error) => void; done: Promise<void>; error?: Error };
@@ -326,6 +327,18 @@ export async function createCodexSession(options: CodexSessionOptions): Promise<
     if (options.model && (response!.model !== options.model.id || response!.modelProvider !== options.model.provider)) throw new Error('Codex did not select the requested model/provider');
     modes.confirmThreadSettings(response!);
     threadId = response!.thread.id;
+    if (options.verifyInitialWorkMode) {
+      const collaborationMode = modes.collaborationParams(response!.model, response!.reasoningEffort ?? response!.thread.reasoningEffort ?? null);
+      try {
+        if (!collaborationMode) throw new Error('No saved Codex collaboration mode');
+        const applied = await updateCodexSettings(transport, threadId, {collaborationMode}, lifetime.signal);
+        if (applied.collaborationMode !== collaborationMode.mode || applied.model !== response!.model)
+          throw new Error('Codex did not apply the requested collaboration mode and model');
+        modes.confirmAppliedCollaboration(applied.collaborationMode);
+      } catch (cause) {
+        throw new CodexSavedModeError('CODEX_SAVED_MODE_UNAVAILABLE', 'Codex did not confirm the inherited collaboration mode', 'mode', {cause});
+      }
+    }
     persist(metadata);
     projection ??= new CodexProjection(options.sessionDir, threadId);
     events = new CodexEvents(threadId, emit, (id, itemId) => {

@@ -17,6 +17,7 @@ use crate::{
 use gpui_kit::{
     component::{
         button::{Button, ButtonVariants},
+        dialog::Confirm,
         menu::{DropdownMenu, PopupMenuItem},
         *,
     },
@@ -1158,8 +1159,10 @@ impl HiveApp {
                     );
                 let target = entry.target.clone();
                 let origin = self.history_link_target();
-                let action = Button::new("open-inbox-item").on_click(cx.listener(
-                    move |this, _, window, cx| {
+                let action = inbox_open_button(
+                    "open-inbox-item",
+                    !self.connected || self.closing,
+                    cx.listener(move |this, _, window, cx| {
                         if !this.connected
                             || this.closing
                             || this.workspace.as_deref() != Some(&workspace)
@@ -1174,15 +1177,15 @@ impl HiveApp {
                             }
                             Destination::Member(_) => this.show_team(window, cx),
                         }
-                    },
-                ));
+                    }),
+                );
                 inbox_row(
                     &snooze_workspace,
                     None,
                     entry,
                     reminder,
                     current && inbox.reminders.saved.is_some() && !self.closing,
-                    action.disabled(!self.connected || self.closing),
+                    action,
                     mark_read,
                     archive,
                     scroll,
@@ -1352,6 +1355,34 @@ struct InboxRowInteraction {
     snooze_menu: InboxRowObserver,
 }
 
+fn inbox_open_button(
+    id: &'static str,
+    disabled: bool,
+    open: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Button {
+    let open = std::rc::Rc::new(open);
+    let confirm = open.clone();
+    Button::new(id)
+        .ghost()
+        .compact()
+        .xsmall()
+        .min_w_0()
+        .h_auto()
+        .px_1()
+        .py_0()
+        .cursor_pointer()
+        .disabled(disabled)
+        .on_click(move |event, window, cx| open(event, window, cx))
+        // The cross-project dialog binds Return to Confirm. Consume it at the
+        // focused primary button, so it invokes the same guarded action once.
+        .on_action(move |action: &Confirm, window, cx| {
+            if !disabled && !action.secondary {
+                cx.stop_propagation();
+                confirm(&ClickEvent::default(), window, cx);
+            }
+        })
+}
+
 fn inbox_row<T: 'static>(
     workspace: &str,
     project: Option<String>,
@@ -1418,18 +1449,27 @@ fn inbox_row<T: 'static>(
                     .flex_1()
                     .min_w_0()
                     .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .truncate()
-                            .child(label),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(Color::Muted.get(cx))
-                            .truncate()
-                            .child(subject.clone()),
+                        open.w_full()
+                            .accessibility_label(format!("{action} · {label} · {subject}"))
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .truncate()
+                                            .child(label),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(Color::Muted.get(cx))
+                                            .truncate()
+                                            .child(subject.clone()),
+                                    ),
+                            ),
                     )
                     .when_some(wake_label, |details, wake_label| {
                         details.child(
@@ -1437,8 +1477,10 @@ fn inbox_row<T: 'static>(
                                 .id("inbox-row-wake-time")
                                 .role(Role::Label)
                                 .aria_label(wake_label.clone())
+                                .pl_1()
                                 .text_xs()
                                 .text_color(Color::Muted.get(cx))
+                                .truncate()
                                 .child(wake_label),
                         )
                     }),
@@ -1447,6 +1489,7 @@ fn inbox_row<T: 'static>(
                 h_flex()
                     .id("inbox-row-actions")
                     .gap_1()
+                    .max_w(relative(0.55))
                     .flex_wrap()
                     .justify_end()
                     .when_some(interaction.as_ref(), |actions, interaction| {
@@ -1564,14 +1607,7 @@ fn inbox_row<T: 'static>(
                                     "{archive_label} · {label} · {subject}"
                                 )),
                         )
-                    })
-                    .child(
-                        open.ghost()
-                            .compact()
-                            .xsmall()
-                            .label(action)
-                            .accessibility_label(format!("{action} · {label} · {subject}")),
-                    ),
+                    }),
             ),
     );
     row.when_some(interaction, |row, state| row.track_focus(&state.focus))

@@ -1,6 +1,3 @@
-mod inherited;
-pub(crate) use inherited::is_unavailable_inherited_model_error;
-
 use crate::{app::HiveApp, language::tr, palette::Color};
 use gpui_kit::{
     assets::IconName as Glyph,
